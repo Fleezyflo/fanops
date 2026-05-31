@@ -45,6 +45,10 @@ class Accounts:
     def resolve_account_id(self, handle: str) -> str:
         for a in self.accounts:
             if a.handle == handle:
+                if not a.account_id:
+                    # Known handle but no Blotato id yet (e.g. planned/warming): fail loud
+                    # rather than return "" — an empty accountId must never reach Blotato.
+                    raise KeyError(f"{handle} has no account_id (status={a.status.value})")
                 return a.account_id
         raise KeyError(handle)
 
@@ -56,6 +60,11 @@ class Accounts:
                 problems.append(f"active account {a.handle} has no account_id")
             if not a.platforms:
                 problems.append(f"active account {a.handle} has no platforms")
+        seen = set()
+        for a in self.accounts:
+            if a.handle in seen:
+                problems.append(f"duplicate handle {a.handle} (handles must be unique)")
+            seen.add(a.handle)
         return problems
 
     def surfaces(self) -> list[Surface]:

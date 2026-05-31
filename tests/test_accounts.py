@@ -47,3 +47,43 @@ def test_surfaces_matrix_carries_id(tmp_path):
     accts = Accounts.load(cfg)
     pairs = {(s.account, s.account_id, s.platform.value) for s in accts.surfaces()}
     assert pairs == {("@a", "1", "instagram"), ("@a", "1", "tiktok"), ("@b", "2", "tiktok")}
+
+def test_resolve_account_id_raises_on_empty_id(tmp_path):
+    # A known handle with no Blotato id must fail loud, not return "".
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "planned"}])
+    accts = Accounts.load(cfg)
+    with pytest.raises(KeyError):
+        accts.resolve_account_id("@a")
+
+def test_validate_flags_missing_platforms(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": [], "status": "active"}])
+    problems = Accounts.load(cfg).validate()
+    assert any("platforms" in p for p in problems)
+
+def test_validate_flags_duplicate_handles(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@a", "account_id": "2", "platforms": ["tiktok"], "status": "active"},
+    ])
+    problems = Accounts.load(cfg).validate()
+    assert any("duplicate" in p for p in problems)
+
+def test_surfaces_excludes_planned_accounts(tmp_path):
+    # The load-bearing invariant: planned accounts NEVER produce surfaces (never post).
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [
+        {"handle": "@live", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@soon", "account_id": "2", "platforms": ["instagram", "tiktok"], "status": "planned"},
+    ])
+    accts = Accounts.load(cfg)
+    handles = {s.account for s in accts.surfaces()}
+    assert handles == {"@live"}            # @soon (planned) excluded entirely
+
+def test_load_missing_file_is_empty_registry(tmp_path):
+    # No accounts.json -> empty registry, not a crash.
+    cfg = Config(root=tmp_path)
+    accts = Accounts.load(cfg)             # nothing seeded
+    assert accts.accounts == [] and accts.active() == [] and accts.validate() == []
