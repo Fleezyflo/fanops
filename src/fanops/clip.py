@@ -43,9 +43,17 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     cid = child_id("clip", moment_id, aspect.value)      # content-addressed by aspect
     cfg.clips.mkdir(parents=True, exist_ok=True)
     dst = cfg.clips / f"{cid}.mp4"
-    subprocess.run(ffmpeg_clip_cmd(src.source_path, str(dst), m.start, m.end, aspect.value,
-                                   src_w=src.width or 0, src_h=src.height or 0),
-                   check=False, capture_output=True, text=True)
+    r = subprocess.run(ffmpeg_clip_cmd(src.source_path, str(dst), m.start, m.end, aspect.value,
+                                       src_w=src.width or 0, src_h=src.height or 0),
+                       check=False, capture_output=True, text=True)
+    if r.returncode != 0 or not dst.exists():
+        # ffmpeg failed: record the clip as errored (dangling path would otherwise
+        # masquerade as 'rendered' and blow up later in crosspost/media-upload).
+        # Leave the moment un-clipped so a re-run retries. Mirrors transcribe.py's pattern.
+        clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
+                    aspect=aspect, error_reason=f"ffmpeg rc={r.returncode}: {(r.stderr or '')[:200]}")
+        led.add_clip(clip)
+        return led, clip
     clip = Clip(id=cid, parent_id=moment_id, state=ClipState.rendered, path=str(dst), aspect=aspect)
     led.add_clip(clip)
     led.set_moment_state(moment_id, MomentState.clipped)

@@ -6,7 +6,6 @@ from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_a
 
 def test_clip_cmd_seek_is_output_relative_and_reframes():
     cmd = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 1.5, 8.0, "9:16", src_w=1920, src_h=1080)
-    s = " ".join(cmd)
     # -ss BEFORE -i (fast seek), -to AFTER -i (output-relative, version-stable)
     assert cmd.index("-ss") < cmd.index("-i") < cmd.index("-to")
     assert "1.5" in cmd and "6.5" in cmd          # -to is output-relative DURATION (end-start), not absolute end
@@ -62,3 +61,31 @@ def test_render_skips_retired_moment(tmp_path, mocker):
     led, clips = render_aspects_for(led, cfg, "mom_1", aspects={Fmt.r9x16})
     assert clips == []
     spy.assert_not_called()
+
+def test_render_moment_records_error_on_ffmpeg_failure(tmp_path, mocker):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided))
+    def fail_run(cmd, **kw):
+        class R: returncode = 1; stderr = "boom: no such file"
+        return R()   # note: writes NO output file
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fail_run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.error
+    assert "boom" in (clip.error_reason or "")
+    assert clip.id in led.clips
+    # moment must NOT advance to clipped on failure (so a re-run retries)
+    assert led.moments["mom_1"].state is MomentState.decided
+
+def test_reframe_branches_exact():
+    # 16:9 from a tall source -> crop height then scale to even 1920x1080
+    assert reframe_filter("16:9", 1080, 1920) == "crop=iw:iw*1080/1920,scale=1920:1080,setsar=1"
+    # 1:1 from a wide source -> crop width (square from height) then scale
+    assert reframe_filter("1:1", 1920, 1080) == "crop=ih*1080/1080:ih,scale=1080:1080,setsar=1"
+    # unknown source dims -> scale+pad fallback, never a crop
+    unknown = reframe_filter("9:16", 0, 0)
+    assert "pad=" in unknown and "crop" not in unknown
+    # near-exact aspect match -> scale only (no crop)
+    assert reframe_filter("16:9", 1920, 1080) == "scale=1920:1080,setsar=1"
