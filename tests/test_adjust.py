@@ -21,7 +21,7 @@ def _analyzed_post(led, lift, pid, cid, mid, sid):
     led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.analyzed, metrics={"lift_score": lift}))
 
-def test_classify_excludes_failed_and_lift_less(tmp_path):
+def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
     led = Ledger.load(Config(root=tmp_path))
     for pid, l in [("p1", 300), ("p2", 5), ("p3", 250), ("p4", 1)]:
         led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
@@ -31,9 +31,27 @@ def test_classify_excludes_failed_and_lift_less(tmp_path):
     led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
                       metrics={"error": "boom"}))
-    r = classify_outcomes(led, winner_pct=0.5)
-    assert set(r["winners"]) == {"p1", "p3"} and set(r["losers"]) == {"p2", "p4"}
+    # winner_pct=0.5 -> top 2 winners; retire_pct=0.5 + floor 20 -> bottom 2 that are <20
+    r = classify_outcomes(led, winner_pct=0.5, retire_pct=0.5, lift_floor=20.0)
+    assert set(r["winners"]) == {"p1", "p3"}
+    assert set(r["losers"]) == {"p2", "p4"}        # both below floor 20 and bottom-ranked
     assert "pf" not in r["winners"] and "pf" not in r["losers"]
+
+def test_classify_floor_protects_good_clips_from_retirement(tmp_path):
+    # A bottom-ranked post that still clears the lift_floor is NOT retired (conservative policy).
+    led = Ledger.load(Config(root=tmp_path))
+    for pid, l in [("hi", 500), ("mid", 100), ("ok", 60)]:   # all >= floor 20
+        led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          state=PostState.analyzed, metrics={"lift_score": l}))
+    r = classify_outcomes(led, winner_pct=0.34, retire_pct=0.34, lift_floor=20.0)
+    assert "hi" in r["winners"]
+    assert r["losers"] == []                        # 'ok' is bottom but lift 60 >= 20 -> spared
+
+def test_classify_empty_population(tmp_path):
+    led = Ledger.load(Config(root=tmp_path))
+    r = classify_outcomes(led)
+    assert r == {"winners": [], "losers": []}
 
 def test_amplify_then_ingest_then_render_produces_new_clip(tmp_path):
     # FIX F60: prove the learning loop's forward half end to end.
@@ -55,8 +73,13 @@ def test_amplify_then_ingest_then_render_produces_new_clip(tmp_path):
     # (in this unit test ffmpeg isn't mocked; assert the unit was created pre-render)
     assert new[0].id in {m.id for m in led.moments_of("src_1")}
 
-def test_retire_suppresses_lineage(tmp_path):
-    led = Ledger.load(Config(root=tmp_path))
+def test_retire_suppresses_lineage_including_moment(tmp_path):
+    from fanops.clip import render_aspects_for
+    from fanops.models import Fmt
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _analyzed_post(led, 1, "pL", "cL", "mL", "sL")
     led = retire(led, ["pL"])
-    assert led.is_retired_clip("cL")                    # FIX F55: observable, not write-only
+    assert led.is_retired_clip("cL")                 # leaf suppressed (FIX F55)
+    assert led.is_retired_moment("mL")               # lineage suppressed (the real fix)
+    led, clips = render_aspects_for(led, cfg, "mL", aspects={Fmt.r16x9})
+    assert clips == []                                # guard fires -> no resurrected clip

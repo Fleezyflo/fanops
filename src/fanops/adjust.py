@@ -6,17 +6,27 @@ no-opped. RETIRE = ledger.retire_clip, which clip/crosspost honor (FIX F55)."""
 from __future__ import annotations
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import MomentRequest, PostState, SourceState
+from fanops.models import MomentRequest, PostState, SourceState, MomentState
 from fanops.agentstep import write_request
 
-def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3) -> dict:
+def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float = 0.2,
+                      lift_floor: float = 20.0) -> dict:
+    # Rank ANALYZED posts that carry a real lift_score (failed posts have none — FIX F22).
     analyzed = [p for p in led.posts.values()
                 if p.state is PostState.analyzed and "lift_score" in p.metrics]
     if not analyzed:
         return {"winners": [], "losers": []}
     ranked = sorted(analyzed, key=lambda p: p.metrics.get("lift_score", 0.0), reverse=True)
-    cut = max(1, round(len(ranked) * winner_pct))
-    return {"winners": [p.id for p in ranked[:cut]], "losers": [p.id for p in ranked[cut:]]}
+    n = len(ranked)
+    win_cut = max(1, round(n * winner_pct))
+    winners = [p.id for p in ranked[:win_cut]]
+    # Conservative retirement: only the bottom retire_pct AND below an absolute lift_floor.
+    # (Decoupled from winners; a clip that clears the floor is never retired just for being
+    # bottom-ranked relative to a hit — avoids draining an artist's catalogue every pass.)
+    lose_n = round(n * retire_pct)
+    bottom = ranked[n - lose_n:] if lose_n > 0 else []
+    losers = [p.id for p in bottom if p.metrics.get("lift_score", 0.0) < lift_floor]
+    return {"winners": winners, "losers": losers}
 
 def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str]) -> Ledger:
     for pid in winner_post_ids:
@@ -42,6 +52,15 @@ def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str]) -> Ledger:
 def retire(led: Ledger, loser_post_ids: list[str]) -> Ledger:
     for pid in loser_post_ids:
         post = led.posts.get(pid)
-        if post is not None:
-            led.retire_clip(post.parent_id)             # observable suppression (FIX F55)
+        if post is None:
+            continue
+        led.retire_clip(post.parent_id)                 # suppress this clip (FIX F55)
+        clip = led.clips.get(post.parent_id)
+        if clip is not None:
+            # If no sibling clip of this moment is still live, retire the MOMENT too — else
+            # clip.py's render guard (which checks moment state) would re-render it into a
+            # fresh live clip on a later pass, silently undoing the retirement.
+            live_sibs = [c for c in led.clips_of(clip.parent_id) if not led.is_retired_clip(c.id)]
+            if not live_sibs:
+                led.set_moment_state(clip.parent_id, MomentState.retired)
     return led
