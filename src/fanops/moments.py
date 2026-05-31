@@ -22,7 +22,7 @@ def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
         return f"end<=start ({pick.start}->{pick.end})"
     if pick.start < 0:
         return f"start<0 ({pick.start})"
-    if duration and pick.end > duration + 0.5:          # tolerate tiny rounding past EOF
+    if duration and pick.end > duration + 0.5:          # duration==0 means unprobed: skip EOF check (tolerate tiny rounding past EOF)
         return f"end>{duration} ({pick.end})"
     if (pick.end - pick.start) < 0.5:
         return f"too short ({pick.end - pick.start:.2f}s)"
@@ -60,6 +60,8 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                            reason=pick.reason, transcript_excerpt=pick.transcript_excerpt,
                            signal_score=pick.signal_score)
     if not keep and dec.picks:
+        # Intentional: a wholly-invalid NEW decision quarantines the source but does NOT
+        # reconcile — prior valid moments/lineage are preserved, not cascade-deleted.
         src.state = SourceState.error
         src.error_reason = f"all {rejected} moment picks invalid"
         return led

@@ -91,3 +91,27 @@ def test_ingest_moments_noop_without_matching_response(tmp_path):
     led = ingest_moments(led, cfg, "src_1")     # no response yet
     assert led.moments_of("src_1") == []
     assert led.sources["src_1"].state is SourceState.moments_requested
+
+def test_ingest_partial_rejection_keeps_valid_drops_invalid(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moments", "src_1")
+    response_path(cfg, "moments", "src_1").write_text(MomentDecision(
+        source_id="src_1", request_id=rid,
+        picks=[MomentPick(start=14.0, end=18.0, reason="valid keep"),
+               MomentPick(start=5.0, end=3.0, reason="end<start invalid"),
+               MomentPick(start=6.0, end=8.0, reason="valid keep 2")]).model_dump_json())
+    led = ingest_moments(led, cfg, "src_1")
+    tokens = {m.content_token for m in led.moments_of("src_1")}
+    assert tokens == {"14.00-18.00", "6.00-8.00"}              # invalid dropped, two valid kept
+    assert led.sources["src_1"].state is SourceState.moments_decided
+
+def test_validate_pick_min_length_and_eof_tolerance():
+    # too-short rule: (end-start) < 0.5 is invalid; exactly 0.5 is OK
+    assert validate_pick(MomentPick(start=10.0, end=10.3, reason="r"), duration=20.0) is not None  # 0.30s too short
+    assert validate_pick(MomentPick(start=10.0, end=10.5, reason="r"), duration=20.0) is None       # 0.50s ok
+    # EOF +0.5 tolerance: end just past duration but within tolerance is OK; beyond is invalid
+    assert validate_pick(MomentPick(start=10.0, end=20.5, reason="r"), duration=20.0) is None        # exactly dur+0.5 ok
+    assert validate_pick(MomentPick(start=10.0, end=20.6, reason="r"), duration=20.0) is not None     # dur+0.6 invalid
+    # duration==0 disables the EOF ceiling (unprobed source): a large end is NOT rejected on EOF grounds
+    assert validate_pick(MomentPick(start=10.0, end=999.0, reason="r"), duration=0.0) is None
