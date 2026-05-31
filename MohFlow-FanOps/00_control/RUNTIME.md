@@ -183,12 +183,17 @@ the responder raises:
 
 - **`kind == "moments"`** → must validate as **`MomentDecision`**. Request `payload`
   fields available to your prompt: `source_id`, `duration`, `transcript`,
-  `signal_peaks`, `language`, `guidance`. Return `{picks: [{start, end, reason,
-  transcript_excerpt, signal_score}, ...]}` (the responder injects `request_id`).
+  `signal_peaks`, `language`, `guidance`. Return `{"source_id": <copy from the request
+  payload's `source_id`>, "picks": [{start, end, reason, transcript_excerpt,
+  signal_score}, ...]}`. The responder stamps `request_id` automatically. **Both
+  `source_id` and `request_id` are required by `MomentDecision`** (neither has a default),
+  so a response that omits `source_id` fails validation and is silently treated as "no
+  response yet" — the responder injects *only* `request_id`, not `source_id`.
 - **`kind == "captions"`** → must validate as **`CaptionSet`**. Request `payload` fields:
   `clip_id`, `surfaces` (list of `{surface, platform}`), `transcript_excerpt`,
-  `language`, `guidance`. Return `{items: [{surface, caption, hashtags}, ...]}` answering
-  **every** requested surface.
+  `language`, `guidance`. Return `{"items": [{surface, caption, hashtags}, ...]}` answering
+  **every** requested surface. The responder stamps `request_id` automatically
+  (`CaptionSet` needs only `request_id` + `items`).
 
 The `guidance` in both payloads is the verbatim text of `context.md` — your prompt
 template should pass it through so the model follows the creative brief.
@@ -285,9 +290,11 @@ deferred from the original plan, and surfaced during the build.
   (`track._W`) are hardcoded. Moving them to config/`context.md` lets the operator tune
   the HOLD gate and the optimization target without a code change.
 - **(c) REST backoff jitter + retry on network errors.** REST backoff is plain
-  exponential with **no jitter** (thundering-herd risk), and a `requests`
-  `Timeout`/`ConnectionError` currently **escapes to `error`** rather than being
-  retried. Add jitter and a transient-network retry.
+  exponential and **un-jittered** (`1→2→4→8`, thundering-herd risk), and a `requests`
+  `Timeout`/`ConnectionError` is **not** caught in `BlotatoRestPoster.publish` and is
+  **not** folded into the bounded-retry ladder — it propagates to `publish_due`, whose
+  `except Exception` lands the post in **`failed`** (retryable on the next run) rather than
+  `error`. Add jitter and retry transient network errors inside the ladder.
 - **(d) Per-source ranking in `adjust`.** Ranking is global; the `lift_floor` mostly
   neutralizes cross-source unfairness but does not fully solve it.
 - **(e) Media size cap / size-aware upload timeout.** The media PUT uses a fixed 120s
