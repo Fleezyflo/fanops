@@ -1,0 +1,23 @@
+"""Dry-run poster: writes the exact payload it WOULD send (with media + target fields),
+posts nothing. Active until Blotato is connected."""
+from __future__ import annotations
+import json
+from fanops.config import Config
+from fanops.ledger import Ledger
+from fanops.models import PostState
+from fanops.post.payload import build_blotato_payload, default_target_fields
+
+class DryRunPoster:
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+
+    def publish(self, led: Ledger, post_id: str) -> Ledger:
+        post = led.posts[post_id]
+        payload = build_blotato_payload(
+            account_id=post.account_id, platform=post.platform.value, text=post.caption,
+            media_urls=post.media_urls, scheduled_time=post.scheduled_time,
+            extra_target=default_target_fields(post.platform.value))
+        self.cfg.scheduled.mkdir(parents=True, exist_ok=True)
+        (self.cfg.scheduled / f"{post_id}.json").write_text(json.dumps(payload, indent=2))
+        post.state = PostState.submitted
+        return led
