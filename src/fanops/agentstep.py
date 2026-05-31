@@ -41,6 +41,10 @@ def write_request(cfg: Config, *, kind: str, key: str, payload: dict) -> str:
     payload = {**payload, "request_id": rid}
     p.write_text(json.dumps(payload, indent=2, default=str))
     # a freshly (re)written request invalidates any prior response on disk
+    # Single-writer, small JSON: a plain write + unlink is sufficient here. The
+    # request_id check in read_response/pending is the real safety net (a torn or
+    # stale response can never be *applied*), so we intentionally skip the
+    # temp-file+os.replace+lock machinery the ledger needs for its multi-stage state.
     rp = response_path(cfg, kind, key)
     if rp.exists():
         rp.unlink()
