@@ -38,11 +38,6 @@ PLATFORM_ASPECT = {
     Platform.tiktok: Fmt.r9x16, Platform.instagram: Fmt.r9x16, Platform.youtube: Fmt.r16x9,
     Platform.facebook: Fmt.r1x1, Platform.twitter: Fmt.r16x9,
 }
-# Per-platform max clip seconds (FIX F69 — moments were unclamped).
-PLATFORM_MAX_SECONDS = {
-    Platform.tiktok: 180.0, Platform.instagram: 90.0, Platform.youtube: 60.0,
-    Platform.facebook: 90.0, Platform.twitter: 140.0,
-}
 
 
 # ---- units ----

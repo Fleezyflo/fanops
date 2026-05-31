@@ -235,6 +235,8 @@ These cannot be automated and gate a live run:
    (begging / "official" / "link in bio", EN or AR) are held with a reason and never
    post until a human clears them.
 
+   **Clearing a brand-risk hold:** a clip in `held` state is paused for human review (it appears in the digest's "Brand-risk holds" section with the matched reason). To clear it: (1) edit the offending caption(s) in the clip's `*.response.json` under `04_agent_io/requests/` so they pass the EN+AR brand-risk screen, then (2) reset the clip's `state` from `held` back to `captions_requested` in `00_control/ledger.json` and re-run `fanops advance` — it will re-ingest the corrected captions. (A future `fanops unhold <clip_id>` command is on the backlog to automate step 2.)
+
 ---
 
 ## Integration checkpoints — confirm BEFORE the first live run
@@ -300,6 +302,11 @@ deferred from the original plan, and surfaced during the build.
 - **(e) Media size cap / size-aware upload timeout.** The media PUT uses a fixed 120s
   timeout and no size cap; large files need a size-aware timeout (and a cap to reject
   oversize uploads).
+- **(f) `fanops unhold <clip_id>` command.** Reset a held clip to `captions_requested`
+  (currently a manual ledger edit — see "Clearing a brand-risk hold" above).
+- **(g) Per-platform duration clamp.** Enforce a per-surface max clip length at crosspost
+  time (hold-vs-skip per surface) — needs knowing clip duration at crosspost time. The
+  earlier unenforced `PLATFORM_MAX_SECONDS` dict was removed as a false safety contract.
 - **(f) Externalize the hardcoded YouTube title fallback.** The yt-dlp path has a
   hardcoded title fallback (`"Moh Flow"`); move it to config.
 - **(g) Lint + dedup.** Add `ruff` to dev deps for lint enforcement, and consolidate the
