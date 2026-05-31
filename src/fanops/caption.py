@@ -1,0 +1,75 @@
+"""Caption stage. request_captions() asks the agent for a per-surface caption set (different
+wording per surface — opsec + platform fit). ingest_captions() validates each, runs the
+brand-risk HOLD in BOTH English and Arabic (FIX F33), REQUIRES a caption for every requested
+surface (FIX F74 — no silent default), stores clean captions keyed by the documented
+'account/platform' contract (FIX F43), and advances only if nothing is held."""
+from __future__ import annotations
+import re
+from fanops.config import Config
+from fanops.ledger import Ledger
+from fanops.models import ClipState, Platform, CaptionRequest, CaptionSet
+from fanops.agentstep import write_request, read_response
+
+# English off-brand / begging / main-brand-linkage anti-patterns.
+_OFFBRAND_EN = [r"\bsorry\b", r"\bpls\b", r"\bplease stream\b", r"🥺", r"\bbeg(ging)?\b",
+                r"\bofficial (drop|release)\b", r"\bfrom the label\b", r"\blink in bio\b"]
+# Arabic equivalents (FIX F33): please / please listen / link in bio / begging / sorry.
+_OFFBRAND_AR = [r"من فضلك", r"رجاء", r"أرجوكم?", r"اسمعوا", r"لينك في البايو", r"الرابط في البايو",
+                r"🥺", r"آسف", r"بليز"]
+_RE = re.compile("|".join(_OFFBRAND_EN + _OFFBRAND_AR), re.IGNORECASE)
+
+def brand_risk_flag(caption: str) -> str | None:
+    m = _RE.search(caption or "")
+    return (f"off-brand / breaks bravado guardrail: matched '{m.group(0)}'") if m else None
+
+def _guidance(cfg: Config) -> str:
+    return cfg.context_path.read_text() if cfg.context_path.exists() else ""
+
+def _surface_str(account: str, platform: Platform) -> str:
+    return f"{account}/{platform.value}"                  # the documented lookup contract
+
+def request_captions(led: Ledger, cfg: Config, clip_id: str,
+                     surfaces: list[tuple[str, Platform]]) -> Ledger:
+    clip = led.clips[clip_id]
+    moment = led.moments[clip.parent_id]
+    src = led.sources.get(moment.parent_id)
+    payload = {
+        "clip_id": clip_id,
+        "transcript_excerpt": moment.transcript_excerpt,
+        "language": src.language if src else None,
+        "guidance": _guidance(cfg),
+        "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value}
+                     for acct, plat in surfaces],
+    }
+    write_request(cfg, kind="captions", key=clip_id, payload=payload)
+    led.set_clip_state(clip_id, ClipState.captions_requested)
+    return led
+
+def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
+    cs = read_response(cfg, "captions", clip_id, CaptionSet)
+    if cs is None:
+        return led                                       # pending or stale
+    clip = led.clips[clip_id]
+    # what surfaces did we ask for?
+    import json
+    from fanops.agentstep import request_path
+    req = json.loads(request_path(cfg, "captions", clip_id).read_text())
+    requested = {s["surface"] for s in req.get("surfaces", [])}
+    answered = {item.surface for item in cs.items}
+    held_reason = None
+    for item in cs.items:
+        reason = brand_risk_flag(item.caption)
+        if reason and held_reason is None:
+            held_reason = reason
+        clip.meta_captions[item.surface] = {"caption": item.caption, "hashtags": item.hashtags}
+    missing = requested - answered
+    if missing and held_reason is None:
+        held_reason = f"missing caption for surfaces: {sorted(missing)}"
+    if held_reason:
+        clip.held = True
+        clip.held_reason = held_reason
+        clip.state = ClipState.held                      # FIX: explicit held state, not 'rendered'
+        return led
+    clip.held = False
+    led.set_clip_state(clip_id, ClipState.captioned)
+    return led
