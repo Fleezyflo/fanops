@@ -18,19 +18,31 @@ def render_digest(led: Ledger, cfg: Config) -> str:
     out.append(f"\n**Clips** ({len(led.clips)}):\n" + _counts(led.clips.values()))
     out.append(f"\n**Posts** ({len(led.posts)}):\n" + _counts(led.posts.values()))
 
-    holds = [f"- clip `{c.id}` (moment {c.parent_id}): {c.held_reason}"
+    holds = [f"- clip `{c.id}` (moment {c.parent_id}): {c.held_reason or '(no reason given)'}"
              for c in led.clips.values() if c.held]
     if holds:
         out.append("\n## Brand-risk holds (need Moh)\n" + "\n".join(holds) + "\n")
 
-    fails = ([f"- post `{p.id}` ({p.platform.value}): {p.error_reason}"
-              for p in led.posts.values() if p.state is PostState.failed] +
-             [f"- {kind} `{u.id}`: {u.error_reason}"
+    fails = ([f"- post `{p.id}` ({p.platform.value}): {p.error_reason or '(no reason given)'}"
+              for p in led.posts.values()
+              if p.state in (PostState.failed, PostState.error)] +          # M4: error too
+             [f"- {kind} `{u.id}`: {u.error_reason or '(no reason given)'}"
               for kind, store in (("source", led.sources), ("moment", led.moments),
                                   ("clip", led.clips))
-              for u in store.values() if getattr(u.state, "value", "") == "error"])
+              for u in store.values() if u.state.value == "error"])         # M3: drop getattr
     if fails:
         out.append("\n## Failures (need attention)\n" + "\n".join(fails) + "\n")
+
+    # Published but never measured: track.py flips published->analyzed only when a metrics row
+    # matches by submission_id, so a post that shipped but Blotato never returned metrics for
+    # stays 'published' with empty metrics forever. Surface it so the operator notices (the
+    # one stuck-state the pipeline can't auto-resolve — you can't fabricate metrics).
+    unmeasured = [f"- post `{p.id}` ({p.platform.value}): published, no metrics yet"
+                  for p in led.posts.values()
+                  if p.state is PostState.published and not p.metrics]
+    if unmeasured:
+        out.append("\n## Published but unmeasured (shipped, never measured)\n"
+                   + "\n".join(unmeasured) + "\n")
 
     awaiting = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +
                 [f"- captions: {k}" for k in pending(cfg, kind="captions")])
