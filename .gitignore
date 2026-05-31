@@ -25,3 +25,10 @@ __pycache__/
 .fanops-*.json
 .fanops-*.md
 .fanops-*.js
+
+# macOS
+.DS_Store
+
+# superseded plans (kept on disk, not tracked)
+2026-05-31-fanops-real-build.md
+2026-05-31-mohflow-fanops.md
