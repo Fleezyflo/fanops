@@ -1,0 +1,26 @@
+[project]
+name = "fanops"
+version = "0.2.0"
+description = "MOH FLOW FAN OPS — intelligent clip + cross-post engine"
+requires-python = ">=3.12,<3.14"
+dependencies = ["pydantic>=2.7", "requests>=2.31", "python-dotenv>=1.0", "yt-dlp>=2024.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-mock>=3.12"]
+# Local transcription. Installed into the venv in Task 2. (whisper CLI lands on PATH.)
+transcribe = ["openai-whisper>=20231117"]
+
+[project.scripts]
+fanops = "fanops.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = ["integration: hits real ffmpeg/whisper/Blotato sandbox (deselect with -m 'not integration')"]

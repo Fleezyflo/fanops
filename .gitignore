@@ -1,0 +1,27 @@
+# secrets
+.env
+*.key
+*-credentials.json
+.mcp-credentials/
+
+# media bank + agent IO + logs — large/private/regenerated, never committed
+MohFlow-FanOps/01_inbox/*
+MohFlow-FanOps/02_sources/*
+MohFlow-FanOps/03_clips/*
+MohFlow-FanOps/04_agent_io/*
+MohFlow-FanOps/05_scheduled/*
+MohFlow-FanOps/06_published/*
+MohFlow-FanOps/07_reports/*
+!MohFlow-FanOps/*/.gitkeep
+
+# python / venv
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+
+# review scratch
+.fanops-*.json
+.fanops-*.md
+.fanops-*.js
