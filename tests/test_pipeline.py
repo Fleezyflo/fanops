@@ -23,7 +23,9 @@ def _ff(mocker):
                           else "[scdet @ 0x] lavfi.scd.score: 28.0, lavfi.scd.time: 16.0")
             return R()
         if cmd[0] == "ffprobe":
-            class R: returncode=0; stdout="1920\n1080\n20.0\n"; stderr=""
+            class R:
+                returncode=0; stderr=""
+                stdout = "video" if "codec_type" in joined else "1920\n1080\n20.0\n"
             return R()
         out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
         class R: returncode=0; stderr=""; stdout=""
@@ -76,7 +78,9 @@ def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
     call = {"n": 0}
     def fake(cmd, **kw):
         if cmd[0] == "ffprobe":
-            class R: returncode=0; stdout="1920\n1080\n20.0\n"; stderr=""
+            class R:
+                returncode=0; stderr=""
+                stdout = "video" if "codec_type" in " ".join(cmd) else "1920\n1080\n20.0\n"
             return R()
         if cmd[0] == "whisper":
             call["n"] += 1

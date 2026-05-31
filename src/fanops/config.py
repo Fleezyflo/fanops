@@ -44,3 +44,11 @@ class Config:
     @property
     def responder_mode(self) -> str:
         return os.getenv("FANOPS_RESPONDER") or "manual"
+
+    @property
+    def whisper_model(self) -> str:
+        # Operator override for the local Whisper model. Default "turbo" (fast, good
+        # timestamps). Pin a smaller model (e.g. "tiny"/"base") for offline / air-gapped /
+        # CI hosts where the larger checkpoints cannot be downloaded.
+        v = os.getenv("FANOPS_WHISPER_MODEL")
+        return v.strip() if v and v.strip() else "turbo"

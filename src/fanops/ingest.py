@@ -40,6 +40,20 @@ def probe_dimensions(path: Path) -> tuple[int, int, float]:
     except (IndexError, ValueError):
         return 0, 0, 0.0
 
+def has_video_stream(path: Path) -> bool:
+    """True if the file carries a decodable video stream (a still image counts — it has a
+    video-type stream). Audio-only files (.wav/.mp3/.m4a with no picture) return False. Used
+    to keep audio-only drops out of the clip pipeline: ffmpeg's reframe -vf is silently
+    ignored on an audio-only input, so without this guard the renderer emits a *videoless*
+    'clip' (audio masquerading as a 9:16 post) — a real data-integrity bug confirmed on
+    ffmpeg 8.0.1. Audio extensions stay in MEDIA_EXT for a future audiogram path; they just
+    aren't catalogued as clip sources today."""
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True)
+    return r.stdout.strip() == "video"
+
 def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop") -> Ledger:
     cfg.sources.mkdir(parents=True, exist_ok=True)
     for f in sorted(cfg.inbox.rglob("*")):
@@ -47,6 +61,8 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop") -> Ledger:
             continue
         if is_excluded(f.name):
             continue
+        if not has_video_stream(f):
+            continue                              # audio-only (no video stream): not a clip source (FIX)
         digest = sha256_of(f)
         if led.already_seen(sha256=digest):
             continue
