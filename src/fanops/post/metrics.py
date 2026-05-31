@@ -22,4 +22,6 @@ class BlotatoMetricsClient:
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"blotato metrics {resp.status_code}: {resp.text[:200]}")
         data = resp.json()
-        return data.get("items", data if isinstance(data, list) else [])
+        if isinstance(data, list):
+            return data
+        return data.get("items", [])

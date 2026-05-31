@@ -24,6 +24,11 @@ class BlotatoMcpPoster:
             media_urls=post.media_urls, scheduled_time=post.scheduled_time,
             extra=default_target_fields(post.platform.value) or None)
         result = self._call("blotato_create_post", args) or {}
+        sid = result.get("postSubmissionId")
+        if not sid:
+            post.state = PostState.failed
+            post.error_reason = f"MCP blotato_create_post returned no postSubmissionId: {str(result)[:200]}"
+            return led
         post.state = PostState.submitted
-        post.submission_id = result.get("postSubmissionId")
+        post.submission_id = sid
         return led

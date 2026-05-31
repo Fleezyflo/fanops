@@ -50,3 +50,39 @@ def test_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.post.blotato_rest.time.sleep")    # no real backoff in tests
     led = BlotatoRestPoster(cfg).publish(led, "p4")
     assert led.posts["p4"].submission_id == "s9" and led.posts["p4"].state is PostState.submitted
+
+def test_2xx_without_submission_id_marks_failed(tmp_path, monkeypatch, mocker):
+    # A 2xx whose body lacks postSubmissionId is untrackable -> failed, not submitted.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pn", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued))
+    mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(200, {"noid": True}))
+    led = BlotatoRestPoster(cfg).publish(led, "pn")
+    assert led.posts["pn"].state is PostState.failed
+    assert led.posts["pn"].submission_id is None
+    assert "no postSubmissionId" in (led.posts["pn"].error_reason or "")
+
+def test_5xx_retries_then_succeeds(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p5", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued))
+    seq = [_R(503, {"e": "down"}), _R(200, {"postSubmissionId": "s5"})]
+    mocker.patch("fanops.post.blotato_rest.requests.post", side_effect=seq)
+    mocker.patch("fanops.post.blotato_rest.time.sleep")
+    led = BlotatoRestPoster(cfg).publish(led, "p5")
+    assert led.posts["p5"].state is PostState.submitted and led.posts["p5"].submission_id == "s5"
+
+def test_retry_exhaustion_marks_failed(tmp_path, monkeypatch, mocker):
+    # All attempts 429 -> failed (not raise, not hang). Proves _MAX_RETRIES bounds the loop.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="px", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued))
+    pm = mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(429, {"e": "rate"}))
+    mocker.patch("fanops.post.blotato_rest.time.sleep")
+    led = BlotatoRestPoster(cfg).publish(led, "px")
+    assert led.posts["px"].state is PostState.failed
+    assert "429" in (led.posts["px"].error_reason or "")
+    assert pm.call_count == 4                              # _MAX_RETRIES attempts, bounded

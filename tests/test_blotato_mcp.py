@@ -23,3 +23,12 @@ def test_raises_without_caller(tmp_path):
                       platform=Platform.twitter, caption="x", state=PostState.queued))
     with pytest.raises(RuntimeError):
         BlotatoMcpPoster(cfg, tool_caller=None).publish(led, "p2")
+
+def test_mcp_no_submission_id_marks_failed(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p3", parent_id="c", account="@a", account_id="1",
+                      platform=Platform.twitter, caption="x", state=PostState.queued))
+    poster = BlotatoMcpPoster(cfg, tool_caller=lambda n, a: {"unexpected": "no id"})
+    led = poster.publish(led, "p3")
+    assert led.posts["p3"].state is PostState.failed
+    assert "no postSubmissionId" in (led.posts["p3"].error_reason or "")

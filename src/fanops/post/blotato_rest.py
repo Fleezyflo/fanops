@@ -33,14 +33,17 @@ class BlotatoRestPoster:
             resp = requests.post(f"{BASE_URL}/posts", headers=self.headers, json=payload, timeout=30)
             last = resp
             if resp.status_code in (200, 201):
-                post.state = PostState.submitted
                 try:
                     sid = resp.json().get("postSubmissionId")
                 except Exception:
                     sid = None
                 if not sid:
-                    # INTEGRATION CHECKPOINT: confirm the real submission-id key.
-                    post.error_reason = f"no postSubmissionId in 2xx body: {resp.text[:200]}"
+                    # INTEGRATION CHECKPOINT: a 2xx with no submission id can't be tracked
+                    # by track.py — fail it (don't park it in 'submitted'), so it surfaces.
+                    post.state = PostState.failed
+                    post.error_reason = f"2xx but no postSubmissionId: {resp.text[:200]}"
+                    return led
+                post.state = PostState.submitted
                 post.submission_id = sid
                 return led
             if resp.status_code == 401:
