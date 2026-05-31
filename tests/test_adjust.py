@@ -83,3 +83,28 @@ def test_retire_suppresses_lineage_including_moment(tmp_path):
     assert led.is_retired_moment("mL")               # lineage suppressed (the real fix)
     led, clips = render_aspects_for(led, cfg, "mL", aspects={Fmt.r16x9})
     assert clips == []                                # guard fires -> no resurrected clip
+
+def test_amplify_preserves_winners_published_lineage(tmp_path):
+    # CRITICAL: amplifying a winner must NOT delete the winner's own published/analyzed post.
+    # The post is live on the platform; deleting its ledger record orphans it (untrackable).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.moments_decided, duration=30.0,
+                          transcript=[{"start":14,"end":18,"text":"they slept on me"}], signal_peaks=[]))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="14.00-18.00", start=14, end=18,
+                          reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
+    led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
+    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.published, submission_id="SUB123", metrics={"lift_score":400.0}))
+    led = amplify(led, cfg, ["p1"])
+    rid = latest_request_id(cfg, "moments", "s1")
+    response_path(cfg, "moments", "s1").write_text(MomentDecision(
+        source_id="s1", request_id=rid,
+        picks=[MomentPick(start=20.0, end=26.0, reason="second wave")]).model_dump_json())
+    led = ingest_moments(led, cfg, "s1")
+    # the winning published post + its clip MUST survive (still trackable on-platform)
+    assert "p1" in led.posts and led.posts["p1"].state is PostState.published
+    assert "c1" in led.clips
+    # its moment is RETIRED (suppressed from future work) but not erased
+    assert led.moments["m1"].state is MomentState.retired
+    # the NEW amplify moment was still created
+    assert any(m.content_token == "20.00-26.00" for m in led.moments_of("s1"))

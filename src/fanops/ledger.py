@@ -106,12 +106,36 @@ class Ledger:
             else:
                 self.moments[mid] = m
 
+    # Clip/Post states that mean "live on the platform / carries the performance record" —
+    # these are NEVER cascade-deleted (deleting them would orphan a live post: untrackable by
+    # track, unreclaimable by gc, and destroys the lift signal). A dropped moment that still has
+    # any such descendant is RETIRED (suppressed from future work) rather than deleted.
+    _LIVE_CLIP_STATES = (ClipState.published, ClipState.analyzed)
+    _LIVE_POST_STATES = (PostState.published, PostState.analyzed, PostState.submitted, PostState.submitting)
+
     def _delete_moment_cascade(self, moment_id: str) -> None:
+        survived = False
         for c in self.clips_of(moment_id):
+            clip_live = c.state in self._LIVE_CLIP_STATES
             for p in self.posts_of(c.id):
-                self.posts.pop(p.id, None)
-            self.clips.pop(c.id, None)
-        self.moments.pop(moment_id, None)
+                if clip_live or p.state in self._LIVE_POST_STATES:
+                    survived = True                      # preserve live posts (the performance record)
+                else:
+                    self.posts.pop(p.id, None)
+            if clip_live:
+                survived = True                          # preserve the live clip + its file
+            else:
+                # only drop the clip if no live post hangs off it
+                if not any(p.state in self._LIVE_POST_STATES for p in self.posts_of(c.id)):
+                    self.clips.pop(c.id, None)
+                else:
+                    survived = True
+        if survived:
+            # keep the moment but suppress it from future rendering/crossposting
+            if moment_id in self.moments:
+                self.moments[moment_id].state = MomentState.retired
+        else:
+            self.moments.pop(moment_id, None)
 
     # ---- retire (FIX F55 — now observable) ----
     def retire_clip(self, clip_id: str) -> None:
