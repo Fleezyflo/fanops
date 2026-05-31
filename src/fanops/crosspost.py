@@ -29,11 +29,17 @@ def surface_time(base: datetime, account: str, platform: str, date_str: str, ind
     t = anchor + timedelta(minutes=index * rng.randint(35, 95) + rng.randint(0, 7))
     return t.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
+# Clip states whose file is a usable render target. A denylist (everything-but-retired)
+# wrongly reused error-state clips (dangling file); an allowlist also future-proofs against
+# new ClipStates. Excludes error/held/captions_requested -> those fall through to a re-render.
+_REUSABLE_CLIP_STATES = (ClipState.rendered, ClipState.captioned, ClipState.queued,
+                         ClipState.published, ClipState.analyzed)
+
 def _clip_for_aspect(led: Ledger, cfg: Config, moment_id: str, aspect: Fmt):
     for c in led.clips_of(moment_id):
-        if c.aspect is aspect and c.state not in (ClipState.retired,):
+        if c.aspect is aspect and c.state in _REUSABLE_CLIP_STATES:
             return c
-    led2, clip = render_moment(led, cfg, moment_id, aspect=aspect)
+    led, clip = render_moment(led, cfg, moment_id, aspect=aspect)   # rebind led (was discarded as led2)
     return clip
 
 def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: str) -> Ledger:
@@ -49,11 +55,13 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         for i, surf in enumerate(surfaces):
             aspect = PLATFORM_ASPECT.get(surf.platform, Fmt.r9x16)
             target_clip = _clip_for_aspect(led, cfg, moment_id, aspect)
+            if target_clip.state not in _REUSABLE_CLIP_STATES:
+                continue   # on-demand render failed (error/dangling file) -> no post for this surface
             skey = surface_key(surf.account, surf.platform.value)
             pid = child_id("post", target_clip.id, skey)        # stable, content-addressed
             cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
             if cap is None:
-                continue                                         # no caption for this surface; skip (held earlier)
+                continue   # TODO(Task 23): log skipped surface — activated after captioning, no caption
             caption = cap["caption"]
             # subtle, non-synchronized artist tag on its own line (FIX F31)
             sched = surface_time(base, surf.account, surf.platform.value, date_str, i)

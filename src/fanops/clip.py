@@ -52,10 +52,13 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         # Leave the moment un-clipped so a re-run retries. Mirrors transcribe.py's pattern.
         clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
                     aspect=aspect, error_reason=f"ffmpeg rc={r.returncode}: {(r.stderr or '')[:200]}")
-        led.add_clip(clip)
+        led.clips[cid] = clip
         return led, clip
     clip = Clip(id=cid, parent_id=moment_id, state=ClipState.rendered, path=str(dst), aspect=aspect)
-    led.add_clip(clip)
+    # Overwrite any prior clip at this content-addressed id (e.g. a previous error-state
+    # render) so a re-render self-heals; setdefault would pin the stale clip. id is unique
+    # per (moment, aspect), so the latest successful render is authoritative.
+    led.clips[cid] = clip
     led.set_moment_state(moment_id, MomentState.clipped)
     return led, clip
 

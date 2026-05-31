@@ -111,3 +111,82 @@ def test_crosspost_skips_held_and_retired(tmp_path, mocker):
     led.retire_clip("clip_1")
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert [p for p in led.posts.values()] == []
+
+def test_crosspost_multi_account_fans_out_n_times_m(tmp_path, mocker):
+    # N accounts x M platforms = N*M posts, distinct account_ids.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram", "youtube"], "status": "active"},
+        {"handle": "@b", "account_id": "2", "platforms": ["instagram", "youtube"], "status": "active"},
+    ])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
+    clip.meta_captions = {
+        "@a/instagram": {"caption": "a ig", "hashtags": []}, "@a/youtube": {"caption": "a yt", "hashtags": []},
+        "@b/instagram": {"caption": "b ig", "hashtags": []}, "@b/youtube": {"caption": "b yt", "hashtags": []},
+    }
+    led.add_clip(clip)
+    def fake_run(cmd, **kw):
+        from pathlib import Path
+        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert len(led.posts) == 4
+    assert {p.account_id for p in led.posts.values()} == {"1", "2"}
+
+def test_crosspost_renders_missing_aspect_on_demand(tmp_path, mocker):
+    # Only a 9:16 clip exists; youtube needs 16:9 -> a NEW clip is created (rendered, file exists).
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["youtube"], "status": "active"}])
+    led = Ledger.load(cfg); _captioned(led, cfg, mocker)   # seeds one 9:16 clip + meta for @a/youtube
+    assert len(led.clips) == 1
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    # a 16:9 clip was rendered on demand
+    aspects = {c.aspect for c in led.clips.values()}
+    assert Fmt.r16x9 in aspects and len(led.clips) == 2
+    yt_post = next(p for p in led.posts.values() if p.platform is Platform.youtube)
+    assert yt_post.parent_id != "clip_1"                    # points at the new 16:9 clip
+    assert led.clips[yt_post.parent_id].state is ClipState.rendered
+
+def test_crosspost_does_not_reuse_error_clip_and_no_post_for_failed_render(tmp_path, mocker):
+    # FIX: a failed on-demand render must NOT yield a post pointing at a dangling file,
+    # and the error clip must not be reused as a render target.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["youtube"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/c_9x16.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
+    clip.meta_captions = {"@a/youtube": {"caption": "yt", "hashtags": []}}
+    led.add_clip(clip)
+    # ffmpeg FAILS for the on-demand 16:9 render (returncode 1, no output file written)
+    def failing_run(cmd, **kw):
+        class R: returncode = 1; stderr = "boom"
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=failing_run)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    # the 16:9 clip is in error state...
+    err_clips = [c for c in led.clips.values() if c.aspect is Fmt.r16x9]
+    assert len(err_clips) == 1 and err_clips[0].state is ClipState.error
+    # ...and NO post was created (a post pointing at a fileless error clip would be the bug)
+    assert all(led.clips[p.parent_id].state is not ClipState.error for p in led.posts.values())
+
+def test_crosspost_appends_artist_tag_when_decided(tmp_path, mocker):
+    # The \n@mohflow append branch must actually fire and be correct (own line, right handle).
+    from fanops.tagging import ARTIST_HANDLE
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _captioned(led, cfg, mocker)   # @a/instagram caption present
+    # Force the tag decision on by monkeypatching decide_tag to True for this clip.
+    import fanops.crosspost as xp
+    mocker.patch.object(xp, "decide_tag", return_value=True)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    ig = next(p for p in led.posts.values() if p.platform is Platform.instagram)
+    assert ig.caption.endswith(f"\n{ARTIST_HANDLE}")        # tag on its OWN line, never in the hook
+    assert ig.caption.startswith("ig cap")
