@@ -44,7 +44,9 @@ def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: fl
     return 0
 
 def cmd_gc(cfg: Config, keep_days: int) -> int:
-    # FIX F83: reclaim disk — drop clip files for retired/analyzed lineages and orphan transcripts.
+    # FIX F83: reclaim disk — drop the .mp4 files of retired/analyzed clips older than keep_days
+    # (the ledger record + the post's cached media_url persist; the local file is dead weight
+    # post-upload). Transcript JSONs are tiny and intentionally left.
     import os, time
     led = Ledger.load(cfg)
     removed = 0
@@ -89,11 +91,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
     if args.cmd == "run":
-        # unattended: respond to gates, advance, repeat until no progress
+        # unattended: respond to gates, advance, repeat until no progress.
+        # advance()'s deterministic stages are per-unit quarantined, but crosspost/publish
+        # run outside those guards and publish_due RE-RAISES on fatal auth (bad key/401) by
+        # design — so degrade cleanly here (log + stop) rather than crash the unattended loop.
+        s = None
         for _ in range(10):
             get_responder(cfg).answer_pending(cfg)
-            before = cmd_status(cfg)
-            s = advance(cfg, base_time=args.base_time)
+            try:
+                s = advance(cfg, base_time=args.base_time)
+            except Exception as e:
+                print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
+                return 1
             if s["awaiting"]["moments"] == 0 and s["awaiting"]["captions"] == 0:
                 break
         print(s); return 0

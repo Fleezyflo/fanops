@@ -36,8 +36,8 @@ class LlmResponder:
                 out = self._model(kind, payload)
                 rid = latest_request_id(cfg, kind, key)
                 out = {**out, "request_id": rid}
-                model_cls(**out)                    # validate or raise
-                response_path(cfg, kind, key).write_text(json.dumps(out, indent=2, default=str))
+                obj = model_cls(**out)              # validate or raise
+                response_path(cfg, kind, key).write_text(obj.model_dump_json(indent=2))
                 answered += 1
         return answered
 

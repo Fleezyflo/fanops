@@ -7,7 +7,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (SourceState, MomentState, ClipState, PostState, Fmt, PLATFORM_ASPECT)
 from fanops.accounts import Accounts
-from fanops.ingest import ingest_drops, probe_dimensions
+from fanops.ingest import ingest_drops
 from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments
