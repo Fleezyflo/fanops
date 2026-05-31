@@ -19,12 +19,19 @@ def upload_media(cfg: Config, path: Path) -> str:
     if not key:
         raise RuntimeError("BLOTATO_API_KEY missing — cannot upload media.")
     headers = {"blotato-api-key": key, "Content-Type": "application/json"}
-    presign = requests.post(f"{BASE_URL}/media/uploads", headers=headers,
-                            json={"filename": Path(path).name}, timeout=30).json()
+    resp = requests.post(f"{BASE_URL}/media/uploads", headers=headers,
+                         json={"filename": Path(path).name}, timeout=30)
+    if resp.status_code >= 300:
+        raise RuntimeError(f"Blotato presign failed ({resp.status_code}): {(resp.text or '')[:300]}")
+    presign = resp.json()
+    if "presignedUrl" not in presign or "publicUrl" not in presign:
+        raise RuntimeError(f"Blotato presign response missing presignedUrl/publicUrl; got keys {sorted(presign)}")
     ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     with open(path, "rb") as fh:
-        requests.put(presign["presignedUrl"], data=fh,
-                     headers={"Content-Type": ctype}, timeout=120)
+        put = requests.put(presign["presignedUrl"], data=fh,
+                           headers={"Content-Type": ctype}, timeout=120)
+    if put.status_code >= 300:
+        raise RuntimeError(f"Blotato media PUT failed ({put.status_code}): {(put.text or '')[:300]}")
     return presign["publicUrl"]
 
 def ensure_clip_media(led: Ledger, cfg: Config, clip_id: str) -> str:
