@@ -17,22 +17,36 @@ def _parse(ts: str) -> datetime:
 def _now(now: str | None) -> datetime:
     return _parse(now) if now else datetime.now(timezone.utc)
 
+def _is_fatal_auth_error(exc: Exception) -> bool:
+    """Auth/config errors mean EVERY post will fail — halt the run instead of marking one
+    post failed and grinding through the rest. (Bad/missing BLOTATO_API_KEY, 401.)"""
+    msg = str(exc)
+    return "401" in msg or "BLOTATO_API_KEY" in msg
+
 def publish_due(led: Ledger, cfg: Config, *, now: str | None = None) -> Ledger:
     poster = get_poster(cfg)
     cutoff = _now(now)
+    # Only 'queued' is iterated: a post stranded in 'submitting' by a crash is deliberately
+    # NOT re-driven here — recovering it is a separate reconcile/poll concern, because
+    # auto-resubmitting could double-post a live post (FIX F11).
     for post in led.posts_in_state(PostState.queued):
         if post.scheduled_time and _parse(post.scheduled_time) > cutoff:
             continue                                       # not due yet (FIX F12)
-        # ensure media once per clip
-        if not post.media_urls:
-            post.media_urls = [ensure_clip_media(led, cfg, post.parent_id)]
-        # crash-safe: record intent + persist BEFORE the irreversible network call (FIX F11)
-        post.state = PostState.submitting
-        led.save()
-        led = poster.publish(led, post.id)
-        if post.state is PostState.submitted:
-            post.state = PostState.published
-        elif post.state is PostState.failed:
-            led.save()                                     # keep the failure durable
-        led.save()
+        try:
+            # ensure media once per clip (FIX F44 — cached on the Clip)
+            if not post.media_urls:
+                post.media_urls = [ensure_clip_media(led, cfg, post.parent_id)]
+            # crash-safe: record intent + persist BEFORE the irreversible network call (FIX F11)
+            post.state = PostState.submitting
+            led.save()
+            led = poster.publish(led, post.id)
+            if post.state is PostState.submitted:
+                post.state = PostState.published
+        except Exception as exc:
+            if _is_fatal_auth_error(exc):
+                raise                                      # bad key/401: halt, don't burn the queue
+            # per-post failure (e.g. media upload 5xx): mark THIS post failed, keep going (FIX F54)
+            post.state = PostState.failed
+            post.error_reason = f"publish failed: {str(exc)[:200]}"
+        led.save()                                         # persist the post's terminal/failed state
     return led
