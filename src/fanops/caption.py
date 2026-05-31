@@ -4,18 +4,19 @@ brand-risk HOLD in BOTH English and Arabic (FIX F33), REQUIRES a caption for eve
 surface (FIX F74 — no silent default), stores clean captions keyed by the documented
 'account/platform' contract (FIX F43), and advances only if nothing is held."""
 from __future__ import annotations
+import json
 import re
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import ClipState, Platform, CaptionRequest, CaptionSet
-from fanops.agentstep import write_request, read_response
+from fanops.models import ClipState, Platform, CaptionSet
+from fanops.agentstep import write_request, read_response, request_path
 
 # English off-brand / begging / main-brand-linkage anti-patterns.
 _OFFBRAND_EN = [r"\bsorry\b", r"\bpls\b", r"\bplease stream\b", r"🥺", r"\bbeg(ging)?\b",
                 r"\bofficial (drop|release)\b", r"\bfrom the label\b", r"\blink in bio\b"]
 # Arabic equivalents (FIX F33): please / please listen / link in bio / begging / sorry.
 _OFFBRAND_AR = [r"من فضلك", r"رجاء", r"أرجوكم?", r"اسمعوا", r"لينك في البايو", r"الرابط في البايو",
-                r"🥺", r"آسف", r"بليز"]
+                r"آسف", r"بليز"]
 _RE = re.compile("|".join(_OFFBRAND_EN + _OFFBRAND_AR), re.IGNORECASE)
 
 def brand_risk_flag(caption: str) -> str | None:
@@ -50,9 +51,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     if cs is None:
         return led                                       # pending or stale
     clip = led.clips[clip_id]
-    # what surfaces did we ask for?
-    import json
-    from fanops.agentstep import request_path
+    # what surfaces did we ask for? (the request is the source of truth for completeness)
     req = json.loads(request_path(cfg, "captions", clip_id).read_text())
     requested = {s["surface"] for s in req.get("surfaces", [])}
     answered = {item.surface for item in cs.items}

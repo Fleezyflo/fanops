@@ -66,3 +66,45 @@ def test_ingest_captions_offbrand_holds(tmp_path):
     c = led.clips["clip_1"]
     assert c.held is True and "bravado" in (c.held_reason or "")
     assert c.state is ClipState.held
+
+def test_ingest_captions_brandrisk_wins_over_missing(tmp_path):
+    # When a caption is off-brand AND another surface is missing, the brand-risk reason wins.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram), ("@a", Platform.tiktok)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="pls stream 🥺")]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    c = led.clips["clip_1"]
+    assert c.held is True
+    assert "bravado" in (c.held_reason or "") and "missing caption" not in (c.held_reason or "")
+
+def test_ingest_captions_multi_surface_clean_advances(tmp_path):
+    # All requested surfaces answered, none off-brand -> captioned (completeness satisfied).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram), ("@a", Platform.tiktok)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="no warning. just impact."),
+        CaptionItem(surface="@a/tiktok", caption="they slept. not anymore.")]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    c = led.clips["clip_1"]
+    assert c.state is ClipState.captioned and c.held is False
+    assert set(c.meta_captions) == {"@a/instagram", "@a/tiktok"}
+
+def test_ingest_captions_stores_hashtags(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="no warning.", hashtags=["#mohflow", "#fyp"])]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    assert led.clips["clip_1"].meta_captions["@a/instagram"]["hashtags"] == ["#mohflow", "#fyp"]
+
+def test_ingest_captions_noop_without_response(tmp_path):
+    # No response on disk -> ledger untouched, not held (stale/pending guard).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    led = ingest_captions(led, cfg, "clip_1")
+    c = led.clips["clip_1"]
+    assert c.state is ClipState.captions_requested and c.held is False
