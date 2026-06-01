@@ -1,7 +1,8 @@
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Clip, Moment, Source, ClipState, Platform, CaptionSet, CaptionItem
+from fanops.models import (Clip, Moment, Source, SourceState, MomentState, ClipState, Platform,
+                           CaptionSet, CaptionItem)
 from fanops.agentstep import response_path, request_path, latest_request_id
 from fanops.caption import brand_risk_flag, request_captions, ingest_captions
 
@@ -108,3 +109,22 @@ def test_ingest_captions_noop_without_response(tmp_path):
     led = ingest_captions(led, cfg, "clip_1")
     c = led.clips["clip_1"]
     assert c.state is ClipState.captions_requested and c.held is False
+
+def _seed_clip_awaiting_captions(tmp_path, src_lang="en"):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.moments_decided,
+                          language=src_lang, transcript=[{"start":0,"end":1,"text":"x"}]))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-4", start=0, end=4,
+                          reason="r", state=MomentState.clipped))
+    led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.rendered))
+    led = request_captions(led, cfg, "c1", [("@a", Platform.instagram)])
+    return cfg, led
+
+def test_caption_in_wrong_language_is_held(tmp_path):
+    cfg, led = _seed_clip_awaiting_captions(tmp_path, src_lang="en")
+    rid = latest_request_id(cfg, "captions", "c1")
+    response_path(cfg, "captions", "c1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="bonjour le monde", language="fr")]).model_dump_json())
+    led = ingest_captions(led, cfg, "c1")
+    assert led.clips["c1"].state is ClipState.held
+    assert "language" in (led.clips["c1"].held_reason or "").lower()

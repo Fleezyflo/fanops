@@ -51,12 +51,23 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     if cs is None:
         return led                                       # pending or stale
     clip = led.clips[clip_id]
+    # the clip's source language is the contract the caption must match (AUDIT H5).
+    src = led.sources.get(led.moments[clip.parent_id].parent_id)
     # what surfaces did we ask for? (the request is the source of truth for completeness)
     req = json.loads(request_path(cfg, "captions", clip_id).read_text())
     requested = {s["surface"] for s in req.get("surfaces", [])}
     answered = {item.surface for item in cs.items}
     held_reason = None
     for item in cs.items:
+        # AUDIT H5: a caption declared in a language other than the source's is held for a human
+        # (conservative — hold the WHOLE clip on first mismatch). Only compare when BOTH languages
+        # are known; a None on either side must NOT trigger a hold.
+        if src and src.language and item.language and item.language != src.language:
+            clip.held = True
+            clip.held_reason = (f"caption language {item.language!r} != source language "
+                                f"{src.language!r} for {item.surface}")
+            led.set_clip_state(clip_id, ClipState.held)
+            return led
         reason = brand_risk_flag(item.caption)
         if reason and held_reason is None:
             held_reason = reason

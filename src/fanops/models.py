@@ -149,6 +149,7 @@ class CaptionItem(BaseModel):
     surface: str
     caption: str
     hashtags: list[str] = Field(default_factory=list)
+    language: Optional[str] = None      # AUDIT H5: the LLM declares the caption's language
 
 class CaptionSet(BaseModel):
     request_id: str
