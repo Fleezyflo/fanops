@@ -14,6 +14,14 @@ MohFlow-FanOps/06_published/*
 MohFlow-FanOps/07_reports/*
 !MohFlow-FanOps/*/.gitkeep
 
+# 00_control: regenerated runtime state holds PII (account_ids, transcripts, private
+# filenames) — never commit. The tracked control files (accounts.json, RISK.md,
+# RUNTIME.md, context.md, .gitkeep) are deliberately versioned and stay tracked.
+MohFlow-FanOps/00_control/ledger.json
+MohFlow-FanOps/00_control/ledger.lock
+MohFlow-FanOps/00_control/ledger_digest.md
+MohFlow-FanOps/00_control/run.log
+
 # python / venv
 __pycache__/
 *.pyc
