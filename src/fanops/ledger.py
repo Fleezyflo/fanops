@@ -81,7 +81,32 @@ class Ledger:
                 raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
         return led
 
-    def save(self) -> None:
+    @classmethod
+    @contextmanager
+    def transaction(cls, cfg: Config, *, timeout: float | None = None):
+        """Hold the ledger lock across the WHOLE load-mutate-save cycle (AUDIT B4). Acquiring the
+        lock here — BEFORE load — closes the lost-update window that the save()-only lock left open
+        (two overlapping passes both loaded a stale snapshot, last save() won, the other's updates
+        vanished — silently dropping/duplicating real posts under cron). On exit the ledger is saved
+        ONCE under the still-held lock. A second live process is excluded for the duration and gets a
+        typed LockBusyError (bounded by timeout), never a silent overwrite.
+
+        The save runs only on a CLEAN exit: if the with-block raises, the lock is still released
+        (the _file_lock contextmanager's finally), but we do NOT save partial in-memory state — the
+        on-disk ledger keeps the last committed snapshot. Callers wanting to persist progress despite
+        a per-unit failure must catch+continue inside the block (mirroring advance()'s per-unit
+        quarantine), exactly as they do today; an UNCAUGHT raise rolls back to the prior save."""
+        with _file_lock(cfg.lock_path, timeout=timeout):
+            led = cls.load(cfg)
+            yield led
+            led._save_unlocked()
+
+    def _save_unlocked(self) -> None:
+        """The write half of save(), WITHOUT re-acquiring the lock (the caller — transaction() —
+        already holds it; flock is per-fd, so a nested acquire on a NEW fd from the same process
+        would block against our own held lock and, under the LOCK_NB+timeout loop, raise
+        LockBusyError after the timeout — a self-inflicted failure). Atomic write preserved
+        (tmp + os.replace)."""
         doc = {
             "sources": {k: v.model_dump() for k, v in self.sources.items()},
             "moments": {k: v.model_dump() for k, v in self.moments.items()},
@@ -89,11 +114,18 @@ class Ledger:
             "posts": {k: v.model_dump() for k, v in self.posts.items()},
             "tag_log": self.tag_log,
         }
+        self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(doc, indent=2, default=str))
+        os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic on POSIX
+
+    def save(self) -> None:
+        """Standalone save for callers OUTSIDE a transaction (e.g. cmd_ingest, cmd_gc). Acquires
+        the lock, then delegates the write to _save_unlocked. A caller already inside
+        Ledger.transaction() must NOT call this (it would self-deadlock/LockBusyError) — it gets the
+        single exit-save instead; publish_due takes an in_transaction flag for its mid-loop saves."""
         with _file_lock(self.cfg.lock_path):
-            self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(doc, indent=2, default=str))
-            os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic on POSIX
+            self._save_unlocked()
 
     # ---- idempotent adds (by id) ----
     def add_source(self, s: Source) -> None: self.sources.setdefault(s.id, s)

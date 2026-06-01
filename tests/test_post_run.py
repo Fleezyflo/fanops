@@ -212,3 +212,57 @@ def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeyp
     led = publish_due(led, cfg, now="2026-06-02T18:00:00Z")   # must NOT raise
     assert led.posts["pbad"].state is PostState.failed         # isolated per-post failure
     assert led.posts["pok"].state is PostState.published        # the run continued
+
+
+def test_publish_due_inside_transaction_does_not_deadlock(tmp_path, monkeypatch):
+    # B2 (AUDIT B4): publish_due saves mid-loop for crash-safety (F11). Inside a transaction
+    # those save() calls would RE-ACQUIRE the held lock -> self-deadlock. With in_transaction=True
+    # it must use the unlocked save and complete (no hang). Run under `timeout 20` in CI: a hang
+    # is a FAILURE, never papered over.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)   # dryrun
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="c1", parent_id="m1", path=str(tmp_path / "c1.mp4"),
+                          state=ClipState.captioned))
+        (tmp_path / "c1.mp4").write_bytes(b"x")
+        led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.queued,
+                          scheduled_time="2020-01-01T00:00:00Z"))
+        # in_transaction=True must use the unlocked save -> no deadlock, completes
+        publish_due(led, cfg, now="2020-01-02T00:00:00Z", in_transaction=True)
+        assert led.posts["p1"].state is PostState.published
+
+
+def test_publish_due_malformed_scheduled_time_is_per_post_failure_not_escape(tmp_path, monkeypatch):
+    # AUDIT M2 / review finding: the schedule check `_parse(post.scheduled_time)` ran OUTSIDE the
+    # per-post try, so a malformed/timezone-naive scheduled_time on disk (hand-edit, corruption,
+    # older schema) raised TypeError/ValueError that ESCAPED publish_due — a NON-auth raise that
+    # (inside advance()'s transaction) would skip the exit-save and roll back the pass's progress.
+    # Fix: a malformed scheduled_time must be a per-post FAILURE (mark THIS post failed, keep going),
+    # never an uncaught escape. publish_due must NOT raise here.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
+    led.add_post(Post(id="bad", parent_id="c1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.queued,
+                      scheduled_time="2026-06-01 09:00"))   # naive: no 'T', no tz -> _parse trips
+    # must NOT raise; the bad post is marked failed, the loop survives
+    publish_due(led, cfg, now="2026-06-02T00:00:00Z")
+    assert led.posts["bad"].state is PostState.failed
+    assert "schedule" in (led.posts["bad"].error_reason or "").lower()
+
+
+def test_publish_due_garbage_scheduled_time_does_not_escape(tmp_path, monkeypatch):
+    # Same root cause, unparseable (ValueError) variant.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    f = cfg.clips / "c2.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    led.add_clip(Clip(id="c2", parent_id="m1", path=str(f), state=ClipState.captioned))
+    led.add_post(Post(id="garbage", parent_id="c2", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.queued,
+                      scheduled_time="not-a-timestamp"))
+    publish_due(led, cfg, now="2026-06-02T00:00:00Z")   # must NOT raise
+    assert led.posts["garbage"].state is PostState.failed
