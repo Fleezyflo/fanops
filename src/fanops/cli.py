@@ -131,13 +131,16 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc
         # unattended: respond to gates, advance, repeat until no progress.
-        # advance()'s deterministic stages are per-unit quarantined, but crosspost/publish
-        # run outside those guards and publish_due RE-RAISES on fatal auth (bad key/401) by
-        # design — so degrade cleanly here (log + stop) rather than crash the unattended loop.
+        # BOTH the responder and advance() are inside the guard: advance()'s deterministic
+        # stages are per-unit quarantined, but the responder (FIX H7 — the LLM model call or a
+        # response that fails validation can raise) and crosspost/publish run outside those
+        # guards, and publish_due RE-RAISES on fatal auth (bad key/401) by design. So a raise
+        # from either degrades cleanly here (log one line + stop) rather than crashing the
+        # unattended cron loop with a traceback.
         s = None
         for _ in range(10):
-            get_responder(cfg).answer_pending(cfg)
             try:
+                get_responder(cfg).answer_pending(cfg)
                 s = advance(cfg, base_time=args.base_time)
             except Exception as e:
                 print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)

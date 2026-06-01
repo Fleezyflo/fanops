@@ -84,6 +84,23 @@ def test_run_halts_cleanly_on_advance_error(tmp_path, monkeypatch, mocker):
     rc = cli.main(["run"])
     assert rc == 1                                   # halted cleanly with nonzero, no traceback
 
+
+def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
+    # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises
+    # (model call error, a malformed response failing validation), the run loop must DEGRADE
+    # cleanly — nonzero exit + one log line — not crash the cron loop with a raw traceback.
+    monkeypatch.chdir(tmp_path)
+    import fanops.cli as cli
+    class _Boom:
+        def answer_pending(self, cfg):
+            raise RuntimeError("LLM responder exploded mid-gate")
+    mocker.patch.object(cli, "get_responder", return_value=_Boom())
+    rc = cli.main(["run"])
+    assert rc == 1                                   # clean nonzero, loop did not crash
+    err = capsys.readouterr().err
+    assert "Traceback" not in err                    # degraded, not a stack dump
+    assert "RuntimeError" in err                     # the one-line halt message names the cause
+
 def test_gc_removes_old_analyzed_clip_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import os, time
