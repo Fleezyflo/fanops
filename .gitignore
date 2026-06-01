@@ -37,6 +37,9 @@ __pycache__/
 # claude harness — keep workflows, ignore transient locks
 .claude/scheduled_tasks.lock
 
+# git worktrees (isolated dev workspaces) — never tracked
+.worktrees/
+
 # macOS
 .DS_Store
 
