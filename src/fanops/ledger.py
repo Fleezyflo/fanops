@@ -118,7 +118,10 @@ class Ledger:
     # track, unreclaimable by gc, and destroys the lift signal). A dropped moment that still has
     # any such descendant is RETIRED (suppressed from future work) rather than deleted.
     _LIVE_CLIP_STATES = (ClipState.published, ClipState.analyzed)
-    _LIVE_POST_STATES = (PostState.published, PostState.analyzed, PostState.submitted, PostState.submitting)
+    # needs_reconcile included (AUDIT C1): such a post MAY be live on the platform (ambiguous
+    # publish), so deleting its ledger record would orphan a possibly-live post — preserve + retire.
+    _LIVE_POST_STATES = (PostState.published, PostState.analyzed, PostState.submitted,
+                         PostState.submitting, PostState.needs_reconcile)
 
     def _delete_moment_cascade(self, moment_id: str) -> None:
         survived = False

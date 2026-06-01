@@ -117,6 +117,37 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
     assert "503" in (led.posts["pa"].error_reason or "")
     assert led.posts["pb"].state is PostState.published        # healthy clip still shipped
 
+def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocker):
+    # AUDIT C1: a poster that parks a post in needs_reconcile (ambiguous 5xx/timeout) is NOT an
+    # exception — publish_due must leave that post in needs_reconcile and keep publishing the rest
+    # (a needs_reconcile post is terminal-for-now, like failed, never re-driven this pass).
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for pid, cid in [("prec", "c_rec"), ("pok", "c_ok")]:
+        f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+        led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
+        led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued))
+    import fanops.post.run as run
+    mocker.patch.object(run, "ensure_clip_media", return_value="https://cdn/ok.mp4")
+    class _ReconcileThenOkPoster:
+        def __init__(self, cfg): pass
+        def publish(self, led_, post_id):
+            if post_id == "prec":
+                led_.posts[post_id].state = PostState.needs_reconcile
+                led_.posts[post_id].error_reason = "blotato 503: ambiguous, may be live"
+            else:
+                led_.posts[post_id].state = PostState.submitted
+                led_.posts[post_id].submission_id = "s_ok"
+            return led_
+    mocker.patch.object(run, "get_poster", return_value=_ReconcileThenOkPoster(cfg))
+    led = publish_due(led, cfg, now="2026-06-02T18:00:00Z")
+    assert led.posts["prec"].state is PostState.needs_reconcile   # parked, not re-driven, not failed
+    assert led.posts["pok"].state is PostState.published          # healthy post still shipped
+    led2 = Ledger.load(cfg)                                       # durable across the save
+    assert led2.posts["prec"].state is PostState.needs_reconcile
+
 def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
     # A 401/auth error must HALT (raise), not mark one post failed and grind on.
     monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "badkey")

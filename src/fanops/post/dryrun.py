@@ -19,5 +19,11 @@ class DryRunPoster:
             extra_target=default_target_fields(post.platform.value))
         self.cfg.scheduled.mkdir(parents=True, exist_ok=True)
         (self.cfg.scheduled / f"{post_id}.json").write_text(json.dumps(payload, indent=2))
+        # Stamp a synthetic submission_id so dryrun emulates the real posters (rest/mcp set this
+        # from Blotato's postSubmissionId). Without it, track.py — which binds metrics rows by
+        # submission_id — can never reach a dryrun post, so classify/amplify/retire never fire and
+        # the learning loop is dead in the default backend (AUDIT C4). The `dryrun_` prefix mirrors
+        # dryrun_media_url's honest stand-in and is collision-free vs real Blotato ids.
+        post.submission_id = f"dryrun_{post_id}"
         post.state = PostState.submitted
         return led

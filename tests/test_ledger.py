@@ -56,6 +56,22 @@ def test_reconcile_moments_upserts_and_deletes_cascade(tmp_path):
     assert led.moments["m_b"].reason == "b2"                    # B updated in place
     assert "c_a" not in led.clips and "p_a" not in led.posts    # cascade deleted A's lineage
 
+def test_cascade_preserves_needs_reconcile_post(tmp_path):
+    # AUDIT C1: a needs_reconcile post MAY be live on the platform (ambiguous publish). If its
+    # moment is dropped by a re-decision, the cascade must NOT delete it — that would orphan a
+    # possibly-live post (untrackable, the exact class C1 guards against). A dropped moment with a
+    # needs_reconcile descendant is RETIRED, not erased — same treatment as published/submitting.
+    from fanops.models import Post, PostState, MomentState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s", source_path="/x"))
+    led.add_moment(Moment(id="m_r", parent_id="s", content_token="R", start=0, end=2, reason="r"))
+    led.add_clip(Clip(id="c_r", parent_id="m_r", path="/c", state=ClipState.queued))
+    led.add_post(Post(id="p_r", parent_id="c_r", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.needs_reconcile))
+    led._delete_moment_cascade("m_r")
+    assert "p_r" in led.posts, "a possibly-live needs_reconcile post must survive the cascade"
+    assert led.moments["m_r"].state is MomentState.retired   # moment suppressed, not erased
+
 def test_retired_lineage_is_queryable(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c"))

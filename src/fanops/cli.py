@@ -21,7 +21,11 @@ def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
     print(f"sources={len(led.sources)} moments={len(led.moments)} clips={len(led.clips)} "
           f"posts={len(led.posts)} published={len(led.posts_in_state(PostState.published))} "
-          f"failed={len(led.posts_in_state(PostState.failed))} backend={cfg.poster_backend} "
+          f"failed={len(led.posts_in_state(PostState.failed))} "
+          # AUDIT C1: parked-for-reconcile posts (may be live) are actionable — surface here
+          # so the operator sees them without opening the digest.
+          f"needs_reconcile={len(led.posts_in_state(PostState.needs_reconcile))} "
+          f"backend={cfg.poster_backend} "
           f"awaiting_moments={len(pending(cfg, kind='moments'))} "
           f"awaiting_captions={len(pending(cfg, kind='captions'))}")
     return 0

@@ -63,16 +63,40 @@ def test_2xx_without_submission_id_marks_failed(tmp_path, monkeypatch, mocker):
     assert led.posts["pn"].submission_id is None
     assert "no postSubmissionId" in (led.posts["pn"].error_reason or "")
 
-def test_5xx_retries_then_succeeds(tmp_path, monkeypatch, mocker):
+def test_5xx_is_ambiguous_marks_needs_reconcile_no_repost(tmp_path, monkeypatch, mocker):
+    # AUDIT C1: a 5xx arrives AFTER the request body was transmitted, so Blotato may have
+    # already created the post (Blotato's own docs: a publish timeout causes a duplicate post).
+    # Blotato has NO idempotency key, so a blind re-POST risks a SECOND live post on the artist's
+    # real account. The safe move is to STOP and mark the post needs_reconcile (a human/poll step
+    # checks GET /v2/posts/:id before any resubmit) — NOT retry. Exactly one POST must be sent.
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p5", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.queued))
-    seq = [_R(503, {"e": "down"}), _R(200, {"postSubmissionId": "s5"})]
-    mocker.patch("fanops.post.blotato_rest.requests.post", side_effect=seq)
-    mocker.patch("fanops.post.blotato_rest.time.sleep")
+    pm = mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(503, {"e": "down"}))
+    slept = mocker.patch("fanops.post.blotato_rest.time.sleep")
     led = BlotatoRestPoster(cfg).publish(led, "p5")
-    assert led.posts["p5"].state is PostState.submitted and led.posts["p5"].submission_id == "s5"
+    assert led.posts["p5"].state is PostState.needs_reconcile
+    assert led.posts["p5"].submission_id is None
+    assert "503" in (led.posts["p5"].error_reason or "")
+    assert pm.call_count == 1, "must NOT re-POST an ambiguous 5xx (double-publish risk)"
+    assert slept.call_count == 0, "no backoff/retry on an ambiguous failure"
+
+def test_network_timeout_marks_needs_reconcile_no_repost(tmp_path, monkeypatch, mocker):
+    # A connection error / read timeout mid-POST is also ambiguous — the request may have landed.
+    # Previously this escaped publish() entirely (uncaught), aborting the run; now it's caught and
+    # the post is parked for reconcile rather than blindly resubmitted.
+    import requests
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pt", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued))
+    pm = mocker.patch("fanops.post.blotato_rest.requests.post",
+                      side_effect=requests.exceptions.ConnectionError("conn reset"))
+    led = BlotatoRestPoster(cfg).publish(led, "pt")
+    assert led.posts["pt"].state is PostState.needs_reconcile
+    assert pm.call_count == 1, "a single ambiguous network failure must not fan into retries"
+    assert "conn reset" in (led.posts["pt"].error_reason or "")
 
 def test_retry_exhaustion_marks_failed(tmp_path, monkeypatch, mocker):
     # All attempts 429 -> failed (not raise, not hang). Proves _MAX_RETRIES bounds the loop.

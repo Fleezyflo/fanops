@@ -24,6 +24,12 @@ class ClipState(str, Enum):
 class PostState(str, Enum):
     queued = "queued"; submitting = "submitting"; submitted = "submitted"
     published = "published"; analyzed = "analyzed"; failed = "failed"; error = "error"
+    # needs_reconcile: an ambiguous publish failure (5xx / network timeout AFTER the request body
+    # was sent) — the post MAY already be live on the platform. Blotato has no idempotency key
+    # (AUDIT C1), so it must NOT be blindly re-POSTed (double-publish risk). A human/poll step
+    # checks GET /v2/posts/:id before resubmitting. Distinct from `failed` (definitely not posted,
+    # safe to re-queue) for exactly that reason.
+    needs_reconcile = "needs_reconcile"
 
 
 class Platform(str, Enum):

@@ -65,6 +65,10 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
 
     s = advance(cfg, base_time="2020-01-01T00:00:00Z")   # base in the PAST so posts are due
     assert s["posts"] == 2 and s["published"] == 2
+    # AUDIT C1: needs_reconcile is an actionable parked state (ambiguous publish — may be live).
+    # It must be visible in the advance() summary the unattended operator sees, not only the
+    # digest. The dryrun backend never produces it, so the count is 0, but the KEY must exist.
+    assert s["needs_reconcile"] == 0
     assert len(list(cfg.scheduled.glob("*.json"))) == 2
 
 def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):

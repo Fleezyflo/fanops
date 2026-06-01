@@ -84,6 +84,10 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         "clips": len(led.clips), "posts": len(led.posts),
         "published": len(led.posts_in_state(PostState.published)),
         "failed": len(led.posts_in_state(PostState.failed)),
+        # needs_reconcile (AUDIT C1): ambiguous publish failures parked for human reconcile —
+        # may be live on the platform, must NOT be blindly re-queued. Surfaced here so the
+        # unattended operator sees it in `fanops run`/`advance` output, not only the digest.
+        "needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
         "holds": sum(1 for c in led.clips.values() if c.held),
         "errors": sum(1 for s in led.sources.values() if s.state is SourceState.error),
         "awaiting": {"moments": len(pending(cfg, kind="moments")),

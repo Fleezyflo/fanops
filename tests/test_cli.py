@@ -53,6 +53,22 @@ def test_status_tolerates_incomplete_accounts(tmp_path, monkeypatch):
         {"accounts": [{"handle": "@x", "account_id": "", "platforms": ["instagram"], "status": "active"}]}))
     assert main(["status"]) == 0
 
+def test_status_surfaces_needs_reconcile(tmp_path, monkeypatch, capsys):
+    # AUDIT C1: a post parked in needs_reconcile (ambiguous publish — may be live on the platform)
+    # is actionable. The operator running `fanops status` must see it without opening the digest,
+    # alongside the published/failed counts.
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="prec", parent_id="c", account="@a", account_id="1",
+                      platform=Platform.twitter, caption="x", state=PostState.needs_reconcile))
+    led.save()
+    rc = main(["status"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "needs_reconcile=1" in out
+
 def test_main_has_track_adjust_gc(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # these subcommands must exist (FIX F04) — they no-op cleanly on an empty ledger

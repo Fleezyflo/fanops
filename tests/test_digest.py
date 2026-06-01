@@ -59,3 +59,18 @@ def test_published_unmeasured_surfaced(tmp_path):
     assert "Published but unmeasured" in md
     assert "`pm`" in md.split("Published but unmeasured")[1]
     assert "`pok`" not in md.split("Published but unmeasured")[1]   # measured one not listed
+
+def test_needs_reconcile_surfaced(tmp_path):
+    # AUDIT C1: a post parked in needs_reconcile (ambiguous publish failure — may be live on the
+    # platform) MUST surface so a human verifies via GET /v2/posts/:id before any resubmit. It is
+    # NOT a plain failure (re-queueing it could double-post), so it gets its own section.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="prec", parent_id="c", account="@a", account_id="1",
+                      platform=Platform.twitter, caption="x", state=PostState.needs_reconcile,
+                      error_reason="blotato 503: ambiguous, may be live"))
+    md = render_digest(led, cfg)
+    assert "Needs reconcile" in md
+    section = md.split("Needs reconcile")[1]
+    assert "`prec`" in section and "may be live" in section
+    # and it must NOT be lumped into the plain Failures bucket
+    assert "Failures" not in md or "`prec`" not in md.split("Failures")[1].split("##")[0]
