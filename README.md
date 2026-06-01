@@ -214,6 +214,13 @@ pipeline on **real tooling**: a `say`/`espeak`-synthesized spoken clip → **rea
 transcript** → **real ffmpeg** `1080×1920` render → dry-run publish — and skips cleanly when
 ffmpeg/whisper/TTS aren't present.
 
+**CI (`.github/workflows/ci.yml`)** runs the unit suite on every push/PR, plus a job that
+installs the toolchain (ffmpeg + espeak + whisper, with the `tiny` checkpoint cached) and runs
+the integration suite with **`FANOPS_REQUIRE_E2E=1`** — which turns the E2E's "tooling absent"
+skip into a **failure**. So the real-tooling path is guaranteed to actually execute in CI, never
+silently skipped (audit H10). Locally the skip stays graceful (set `FANOPS_REQUIRE_E2E=1` to opt
+into the strict behavior).
+
 ---
 
 ## Opsec / PII guardrails

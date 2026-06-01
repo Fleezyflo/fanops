@@ -1,0 +1,63 @@
+name: CI
+
+# AUDIT H10: the real-tooling E2E (tests/integration/test_e2e_real.py) is the proof the pipeline
+# is "not just mocks" — real ffmpeg + real whisper + a real clip render. Locally it SKIPS when the
+# toolchain is absent (a clean skip beats a cryptic failure), but if it skips everywhere a
+# regression in the real path is invisible. This workflow installs the toolchain and runs the E2E
+# with FANOPS_REQUIRE_E2E=1, which turns a skip into a FAILURE — so the real path is guaranteed to
+# actually execute in CI.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit:
+    name: unit (fast, no toolchain)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (dev only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+      - name: Unit tests
+        run: python -m pytest -q -m "not integration"
+
+  e2e:
+    name: real-tooling E2E (must run, not skip)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install real toolchain (ffmpeg + espeak TTS)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak
+      - name: Install (dev + transcribe = openai-whisper)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev,transcribe]'
+      - name: Cache whisper 'tiny' checkpoint
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/whisper
+          key: whisper-tiny-v1
+      - name: Pre-fetch whisper 'tiny' (so the E2E never needs a network fetch mid-test)
+        run: |
+          python -c "import whisper; whisper.load_model('tiny')"
+      - name: Verify toolchain on PATH
+        run: |
+          for b in ffmpeg ffprobe whisper espeak; do command -v "$b" || { echo "MISSING: $b"; exit 1; }; done
+      - name: Integration suite — E2E MUST run (FANOPS_REQUIRE_E2E=1 fails on skip)
+        env:
+          FANOPS_REQUIRE_E2E: "1"
+          FANOPS_WHISPER_MODEL: "tiny"
+        run: python -m pytest -q -m integration -rs

@@ -1,4 +1,4 @@
-import json, shutil, subprocess
+import json, os, shutil, subprocess
 import pytest
 from pathlib import Path
 from fanops.config import Config
@@ -18,6 +18,17 @@ pytestmark = pytest.mark.integration
 # fails on offline / air-gapped / TLS-proxied hosts, silently erroring the source and failing
 # this test with a cryptic `assert 0 == 1` instead of a clear skip.
 _PINNED_WHISPER_MODEL = "tiny"
+
+def _skip_or_fail(reason: str) -> None:
+    """AUDIT H10: locally, a missing real toolchain is a clean SKIP (the real tool is genuinely
+    absent — a skip beats a cryptic failure). But the whole point of this "not just mocks" test is
+    lost if EVERY environment skips it, so a regression in the real ffmpeg/whisper/clip path would
+    never be caught. In CI we set FANOPS_REQUIRE_E2E=1, which turns these skips into FAILURES — the
+    CI image is responsible for installing the toolchain, and if the E2E didn't actually run, that
+    is a CI failure, not a silent pass."""
+    if os.getenv("FANOPS_REQUIRE_E2E") == "1":
+        pytest.fail(f"FANOPS_REQUIRE_E2E=1 but the real-tooling E2E could not run: {reason}")
+    pytest.skip(reason)
 
 def _have(*bins): return all(shutil.which(b) for b in bins)
 
@@ -51,20 +62,20 @@ def _make_spoken_sample(dst: Path) -> bool:
 
 def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypatch):
     if not _have("ffmpeg", "ffprobe", "whisper"):
-        pytest.skip("needs ffmpeg + whisper on PATH")
+        _skip_or_fail("needs ffmpeg + whisper on PATH")
     # Pin the model in-test so the golden path is self-contained: `advance()` -> transcribe
     # reads FANOPS_WHISPER_MODEL, and this guarantees `tiny` regardless of the caller's env.
     monkeypatch.setenv("FANOPS_WHISPER_MODEL", _PINNED_WHISPER_MODEL)
     if not _whisper_model_runnable(_PINNED_WHISPER_MODEL):
-        pytest.skip(f"no cached whisper checkpoint for '{_PINNED_WHISPER_MODEL}' "
-                    "(would require a network download that fails offline)")
+        _skip_or_fail(f"no cached whisper checkpoint for '{_PINNED_WHISPER_MODEL}' "
+                      "(would require a network download that fails offline)")
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@mohflow.edits", "account_id": "999", "platforms": ["instagram", "tiktok"],
          "status": "active"}]}))
     if not _make_spoken_sample(cfg.inbox / "sample.mp4"):
-        pytest.skip("no TTS available to synthesize speech")
+        _skip_or_fail("no TTS available to synthesize speech")
 
     # pass 1: real whisper + real signals + real request
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
