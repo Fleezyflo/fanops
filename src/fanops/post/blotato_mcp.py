@@ -4,8 +4,10 @@ connected Blotato MCP tool; see RUNTIME.md 'wiring the MCP poster'. No caller ->
 from __future__ import annotations
 from typing import Callable
 from fanops.config import Config
+from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
 from fanops.models import PostState
+from fanops.post.blotato_rest import _extract_submission_id
 from fanops.post.payload import build_blotato_mcp_args, default_target_fields
 
 ToolCaller = Callable[[str, dict], dict]
@@ -23,11 +25,26 @@ class BlotatoMcpPoster:
             account_id=post.account_id, platform=post.platform.value, text=post.caption,
             media_urls=post.media_urls, scheduled_time=post.scheduled_time,
             extra=default_target_fields(post.platform.value) or None)
-        result = self._call("blotato_create_post", args) or {}
-        sid = result.get("postSubmissionId")
+        try:
+            result = self._call("blotato_create_post", args) or {}
+        except Exception as exc:
+            msg = str(exc).lower()
+            # AUDIT B3: an AUTH failure must halt loudly via the typed error (run.py halts by type,
+            # not by a fragile substring) — a bad key must never silently burn posts.
+            if ("401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg
+                    or "invalid token" in msg or "api key" in msg):
+                raise BlotatoAuthError(f"Blotato MCP auth failure: {str(exc)[:200]}") from exc
+            # PRIME DIRECTIVE: a NON-auth error is AMBIGUOUS (the tool MAY have posted, like a REST
+            # 5xx) -> PARK as needs_reconcile and RETURN. Never raise (aborts the run) and never
+            # mark failed (re-queueable => double-post to a real fan account).
+            post.state = PostState.needs_reconcile
+            post.error_reason = f"MCP publish error (may be live): {str(exc)[:200]}"
+            return led
+        sid = _extract_submission_id(result)   # AUDIT B3: reuse D2's helper — no divergent copy
         if not sid:
-            post.state = PostState.failed
-            post.error_reason = f"MCP blotato_create_post returned no postSubmissionId: {str(result)[:200]}"
+            # AUDIT B3: an MCP 2xx with no recognizable id is MAY-BE-LIVE -> park, NEVER failed.
+            post.state = PostState.needs_reconcile
+            post.error_reason = f"MCP 2xx but no recognizable submission id: {str(result)[:200]}"
             return led
         post.state = PostState.submitted
         post.submission_id = sid
