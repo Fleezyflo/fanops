@@ -44,6 +44,35 @@ def _resolve_model(model: str) -> str:
         return cached[0]
     return model                                      # nothing cached: let whisper try to fetch
 
+def real_transcript_signal(transcript: list[dict]) -> bool:
+    """True iff `transcript` is proof that REAL whisper ran on REAL audio — NOT that any one
+    specific word survived (CI-2). Used by the real-tooling E2E in place of a brittle single-token
+    check that bet on macOS `say`'s acoustics and failed under the Linux CI's espeak vocoder.
+
+    The contract has two parts, both required, so the check is robust across TTS engines yet still
+    rejects a fake/empty/stub transcript (the v1 bug this E2E guards against — "false safety is
+    worse than honest absence"):
+      1. STRUCTURE — at least one segment with whisper's real shape: numeric start/end and
+         end > start (a fabricated string with no timing is not whisper output).
+      2. SUBSTANCE — the joined text has >= 4 alphabetic word tokens (a one-word stub, which a
+         naive `len(text) > 0` would wrongly accept, is rejected).
+    A robust *content* anchor (the word "anymore", which survives both `say` and espeak in the
+    real run logs) is asserted by the E2E/its unit guard directly against the text, not here, so
+    this helper stays vocoder-agnostic.
+    """
+    import re
+    has_real_segment = any(
+        isinstance(seg.get("start"), (int, float))
+        and isinstance(seg.get("end"), (int, float))
+        and seg["end"] > seg["start"]
+        for seg in transcript
+    )
+    if not has_real_segment:
+        return False
+    joined = " ".join(str(seg.get("text", "")) for seg in transcript)
+    words = re.findall(r"[^\W\d_]+", joined)             # alphabetic tokens (Unicode-aware: EN+AR)
+    return len(words) >= 4
+
 def whisper_cmd(src: str, out_dir: str, model: str = "turbo") -> list[str]:
     return ["whisper", "--model", model, "--output_format", "json",
             "--output_dir", out_dir, "--task", "transcribe", src]

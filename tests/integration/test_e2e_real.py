@@ -7,7 +7,7 @@ from fanops.pipeline import advance
 from fanops.responder import LlmResponder
 from fanops.agentstep import pending, request_path, response_path, latest_request_id
 from fanops.models import MomentDecision, CaptionSet
-from fanops.transcribe import _cached_models, _resolve_model
+from fanops.transcribe import _cached_models, _resolve_model, real_transcript_signal
 
 pytestmark = pytest.mark.integration
 
@@ -82,9 +82,18 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     assert s["awaiting"]["moments"] == 1
     src_id = next(iter(Ledger.load(cfg).sources))
     req = json.loads(request_path(cfg, "moments", src_id).read_text())
-    # THE KEY ASSERTION v1 could not make: the transcript is non-empty and carries the words
+    # THE KEY ASSERTION v1 could not make: REAL whisper ran on REAL audio and produced a REAL,
+    # substantive transcript (not a fake/empty/stub one). We assert that CONTRACT — structure +
+    # substance — via real_transcript_signal, NOT a single literal token. The old check
+    # (`"slept" in joined`) over-specified one word that survived macOS `say` but not the Linux
+    # CI's espeak vocoder (whisper-tiny hears espeak's sample as "Nice lap, Tommy, not anymore.").
+    # See tests/test_e2e_transcript_assertion.py for the per-vocoder RED/GREEN proof.
+    assert real_transcript_signal(req["transcript"]), \
+        f"expected a real, substantive whisper transcript, got: {req['transcript']}"
+    # Robust content anchor: "anymore" is the distinctive tail BOTH `say` and espeak reproduce
+    # (verified against both engines' actual run output) — a content check that isn't vocoder-fragile.
     joined = " ".join(seg["text"].lower() for seg in req["transcript"])
-    assert "slept" in joined, f"expected real transcript, got: {req['transcript']}"
+    assert "anymore" in joined, f"expected the spoken tail in the transcript, got: {req['transcript']}"
 
     # answer via the LLM responder with a fake model (still proves the responder path)
     rid = latest_request_id(cfg, "moments", src_id)

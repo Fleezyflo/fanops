@@ -1,4 +1,5 @@
 import json
+import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Post, Clip, Moment, Source, PostState, ClipState, MomentState,
@@ -53,8 +54,16 @@ def test_classify_empty_population(tmp_path):
     r = classify_outcomes(led)
     assert r == {"winners": [], "losers": []}
 
+@pytest.mark.integration
 def test_amplify_then_ingest_then_render_produces_new_clip(tmp_path):
     # FIX F60: prove the learning loop's forward half end to end.
+    # CI-2/CI-1: this is an INTEGRATION test — render_aspects_for() below shells out to REAL
+    # ffmpeg, which is the repo's literal definition of the `integration` marker. The no-toolchain
+    # `unit` CI job (pytest -m "not integration") has no ffmpeg, so without this marker the call
+    # raised FileNotFoundError. Marked integration -> runs in the `e2e` job (ffmpeg installed),
+    # where it genuinely renders. The amplify->ingest forward half is ALSO covered as a true unit
+    # test by test_amplify_preserves_winners_published_lineage (no render call), so the unit suite
+    # keeps that coverage.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _analyzed_post(led, 400, "p1", "clip_1", "mom_1", "src_1")
     led = amplify(led, cfg, ["p1"])
@@ -69,8 +78,8 @@ def test_amplify_then_ingest_then_render_produces_new_clip(tmp_path):
     led = ingest_moments(led, cfg, "src_1")
     new = [m for m in led.moments_of("src_1") if m.content_token == "20.00-26.00"]
     assert len(new) == 1
-    led, clips = render_aspects_for(led, cfg, new[0].id, aspects={Fmt.r9x16})  # would shell ffmpeg
-    # (in this unit test ffmpeg isn't mocked; assert the unit was created pre-render)
+    led, clips = render_aspects_for(led, cfg, new[0].id, aspects={Fmt.r9x16})  # REAL ffmpeg (integration)
+    # The amplified moment is wired up for rendering and survives the render pass.
     assert new[0].id in {m.id for m in led.moments_of("src_1")}
 
 def test_retire_suppresses_lineage_including_moment(tmp_path):
