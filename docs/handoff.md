@@ -8,9 +8,9 @@ This file is the cross-session source of truth. It is **rewritten each session**
 - **Working tree:** clean. Check: `git status -sb`.
 - **HEAD:** `b3a49c4`. Check: `git log --oneline -1`.
 - **Unit tests:** 163 passed, 3 deselected. Check: `source .venv/bin/activate && python -m pytest -q -m "not integration"`.
-- **Integration tests:** 2 passed, 1 skipped (live Blotato smoke skips without creds). Check: `source .venv/bin/activate && FANOPS_WHISPER_MODEL=tiny python -m pytest -q -m integration`.
+- **Integration tests:** 2 passed, 1 skipped (live Blotato smoke skips without creds). Check: `source .venv/bin/activate && python -m pytest -q -m integration`. (The E2E now pins its own whisper model in-test — no `FANOPS_WHISPER_MODEL` needed; it skips cleanly if no checkpoint is cached.)
 - **Module/test parity:** 30 src modules, 30 test files. Check: `ls src/fanops/*.py src/fanops/post/*.py | wc -l && ls tests/*.py tests/integration/*.py | wc -l`.
-- **Real tooling present:** ffmpeg 8.0.1, ffprobe, whisper CLI, `say` (macOS TTS) all on PATH; whisper `tiny.pt` cached (model downloads blocked by proxy in this env → use `FANOPS_WHISPER_MODEL=tiny`). Check: `for b in ffmpeg ffprobe whisper say; do command -v $b; done`.
+- **Real tooling present:** ffmpeg 8.0.1, ffprobe, whisper CLI, `say` (macOS TTS) all on PATH; whisper `tiny.pt` cached (model downloads blocked by proxy in this env). The E2E pins `tiny` itself, so no env var is required; to override the model for a real `fanops` run, set `FANOPS_WHISPER_MODEL`. Check: `for b in ffmpeg ffprobe whisper say; do command -v $b; done`.
 - **Posting backend default:** `dryrun` (writes payload JSON to `05_scheduled/`, posts nothing). Switch via `FANOPS_POSTER=rest|mcp` + `BLOTATO_API_KEY`. Check: `grep -n "FANOPS_POSTER" src/fanops/config.py`.
 
 ## 1. What this is
@@ -36,7 +36,7 @@ An autonomous fan-account engine for Moh Flow (bilingual EN/AR rapper). It inges
 
 ## 4. Health checks
 
-Run the §State Check commands. The integration E2E (`tests/integration/test_e2e_real.py`) is the golden path: real `say` TTS → real whisper transcript (asserts "slept") → real ffmpeg 1080×1920 vertical clip → 2 dryrun posts published. Run it with `FANOPS_WHISPER_MODEL=tiny`.
+Run the §State Check commands. The integration E2E (`tests/integration/test_e2e_real.py`) is the golden path: real `say` TTS → real whisper transcript (asserts "slept") → real ffmpeg 1080×1920 vertical clip → 2 dryrun posts published. It pins the `tiny` whisper model in-test (no env var needed) and skips cleanly on a host with no cached checkpoint, so a fresh checkout / CI runner sees a clear skip rather than a cryptic `assert 0 == 1`.
 
 ## 5. Now (rewritten each session)
 

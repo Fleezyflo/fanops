@@ -7,10 +7,26 @@ from fanops.pipeline import advance
 from fanops.responder import LlmResponder
 from fanops.agentstep import pending, request_path, response_path, latest_request_id
 from fanops.models import MomentDecision, CaptionSet
+from fanops.transcribe import _cached_models, _resolve_model
 
 pytestmark = pytest.mark.integration
 
+# Whisper model this test pins itself to (see _make_spoken_sample / the monkeypatch below).
+# `tiny` is the smallest checkpoint and the one cached in the dev/CI image; pinning it in-test
+# means the golden path no longer depends on the operator remembering `FANOPS_WHISPER_MODEL=tiny`
+# on the command line — forgetting it would let the default `turbo` try a >1GB download that
+# fails on offline / air-gapped / TLS-proxied hosts, silently erroring the source and failing
+# this test with a cryptic `assert 0 == 1` instead of a clear skip.
+_PINNED_WHISPER_MODEL = "tiny"
+
 def _have(*bins): return all(shutil.which(b) for b in bins)
+
+def _whisper_model_runnable(model: str) -> bool:
+    """True iff `model` can actually transcribe here without a network fetch: its checkpoint is
+    cached, or the resolver can fall back to one that is. On a fresh host with no cached
+    checkpoint at all, whisper would have to download — which fails offline — so we skip
+    (real-tooling test, real tool genuinely unavailable) rather than fail."""
+    return _resolve_model(model) in _cached_models()
 
 def _make_spoken_sample(dst: Path) -> bool:
     """Render a short clip with REAL speech so whisper has something to transcribe."""
@@ -33,9 +49,15 @@ def _make_spoken_sample(dst: Path) -> bool:
                    check=False, capture_output=True)
     return dst.exists()
 
-def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path):
+def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypatch):
     if not _have("ffmpeg", "ffprobe", "whisper"):
         pytest.skip("needs ffmpeg + whisper on PATH")
+    # Pin the model in-test so the golden path is self-contained: `advance()` -> transcribe
+    # reads FANOPS_WHISPER_MODEL, and this guarantees `tiny` regardless of the caller's env.
+    monkeypatch.setenv("FANOPS_WHISPER_MODEL", _PINNED_WHISPER_MODEL)
+    if not _whisper_model_runnable(_PINNED_WHISPER_MODEL):
+        pytest.skip(f"no cached whisper checkpoint for '{_PINNED_WHISPER_MODEL}' "
+                    "(would require a network download that fails offline)")
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
