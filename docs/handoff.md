@@ -6,7 +6,8 @@ This file is the cross-session source of truth. It is **rewritten each session**
 
 - **Branch:** `main`. Check: `git branch --show-current`.
 - **Working tree:** clean. Check: `git status -sb`.
-- **HEAD:** `19c7b50`. Check: `git log --oneline -1`.
+- **HEAD:** `a8fe1a2` (+ this handoff commit on top). Check: `git log --oneline -1`.
+- **Remote:** `origin` → `github.com/Fleezyflo/fanops` (**PRIVATE**), `main` tracks `origin/main`. Pushed. Check: `git remote -v && gh repo view Fleezyflo/fanops --json isPrivate`.
 - **Unit tests:** 163 passed, 3 deselected. Check: `source .venv/bin/activate && python -m pytest -q -m "not integration"`.
 - **Integration tests:** 2 passed, 1 skipped (live Blotato smoke skips without creds). Check: `source .venv/bin/activate && python -m pytest -q -m integration`. (The E2E now pins its own whisper model in-test — no `FANOPS_WHISPER_MODEL` needed; it skips cleanly if no checkpoint is cached.)
 - **Module/test parity:** 30 src modules, 30 test files. Check: `ls src/fanops/*.py src/fanops/post/*.py | wc -l && ls tests/*.py tests/integration/*.py | wc -l`.
@@ -40,24 +41,30 @@ Run the §State Check commands. The integration E2E (`tests/integration/test_e2e
 
 ## 5. Now (rewritten each session)
 
-**As of 2026-06-01 (rev 2).**
+**As of 2026-06-01 (rev 3).**
 
-**Most recent shipped:** E2E golden-path hardening — `19c7b50` (`fix(e2e): pin whisper model in-test so the golden path can't silently rot off-host`). `tests/integration/test_e2e_real.py` previously passed here only because `tiny.pt` is cached AND the runner remembered `FANOPS_WHISPER_MODEL=tiny`; on a fresh checkout / CI / proxied host the default `turbo` checkpoint can't download, the source goes to `error` state, and the test failed with a cryptic `assert 0 == 1` (reproduced via empty `XDG_CACHE_HOME`). Fix pins `tiny` in-test via `monkeypatch` (self-contained, no env var) and skips cleanly with a clear reason when no checkpoint is cached. Full suite green both ways: `163 passed, 3 deselected` (unit) + `2 passed, 1 skipped` (integration), with and without the env var. Prior shipped: the **entire FAN OPS v2 build** (all 26 plan tasks, `f44284d` and earlier) — real-tooling E2E runs real whisper + real ffmpeg, so the green suite is proven NOT to be just mocks.
+**Most recent shipped (this session, 4 commits):**
+1. `19c7b50` — E2E golden-path hardening: `test_e2e_real.py` pins `tiny` in-test via `monkeypatch` (self-contained, no `FANOPS_WHISPER_MODEL` needed) and skips cleanly when no whisper checkpoint is cached, instead of failing `assert 0 == 1` on a fresh/CI/proxied host (reproduced via empty `XDG_CACHE_HOME`).
+2. `bdc3fea` — **security fix (audit C3):** gitignored `00_control/{ledger.json,ledger.lock,ledger_digest.md,run.log}` so a future `git add -A` can't commit the account roster + transcripts + private filenames into history. Tracked control files (accounts.json, RISK/RUNTIME/context.md, .gitkeep) stay tracked. Verified with `git check-ignore`.
+3. `32feba0` — **fix (audit M6):** clean one-line `<file> invalid: <reason>` + exit 2 on a corrupt ledger.json/accounts.json (was a raw traceback); active-account-missing-id now caught before a run via `_check_accounts`. New `fanops.errors.ControlFileError`. Verified via the real CLI. Suite 165 → **175 passed, 1 skipped** (+10 tests). [Provenance: an audit subagent over-stepped its read-only scope and drafted this; I verified + completed + own it — see `fanops-build-deviations.md`.]
+4. **Remote set up + pushed:** created **private** repo `github.com/Fleezyflo/fanops` via `gh`; `main` tracks `origin/main`. Verified private + no PII artifact in the pushed tree.
+
+Tests green: **175 passed, 1 skipped** (full suite). Unit-only: `163 passed, 3 deselected` + the new corrupt-control-file tests.
+
+**Also this session — DEEP AUDIT (not yet remediated):** ran a 6-lens multi-agent audit with 3-skeptic adversarial verification (31 confirmed, 13 refuted). Full findings + fixes + the solid/refuted lists are in `fanops-build-deviations.md` (§Deep audit findings). Headline: the deterministic core is genuinely strong, but the cross-stage / real-API / opsec paths are weaker than the prose claims. **C3 is now FIXED (above); C1/C2/C4 remain.**
 
 **What works right now:**
-- End-to-end pipeline runs: `fanops advance` drives ingest → transcribe → signals → moment gate → clip render → caption gate → crosspost → publish (dryrun), pausing at each agent gate.
-- The feedback loop is reachable and correct: `fanops track` (pulls metrics, needs `BLOTATO_API_KEY`) → `fanops adjust` (amplify winners / retire losers) — and amplifying a winner now PRESERVES its live published lineage (the Critical fix).
-- Per-unit error quarantine: one bad source/moment/clip → `error` state, the pass continues. The unattended `fanops run` loop degrades cleanly (exit 1 + stderr) on a fatal Blotato auth error instead of crashing.
-- The digest (`00_control/ledger_digest.md`) surfaces counts, brand-risk holds, failures/errors, pending agent steps, and published-but-unmeasured posts.
+- End-to-end pipeline runs (dryrun): ingest → transcribe → signals → moment gate → clip render → caption gate → crosspost → publish, pausing at each agent gate. Per-unit error quarantine inside the 3 explicit loops works.
+- Audit-confirmed solid: SHA content-addressed ids, request_id agent correlation, atomic ledger writes, cascade-preserves-live-lineage, clean secret handling, crash-between-submit-and-save (F11).
 
-**Live state caveats:** Nothing has been run against the REAL Blotato API — posting is `dryrun` by default. The four `INTEGRATION CHECKPOINT`s (media `/uploads` contract, the `postSubmissionId` response key, the metrics endpoint, the MCP tool name/args) are UNVERIFIED against live Blotato; `tests/integration/test_blotato_smoke.py::test_live_auth_and_schedule` confirms them but is skipped (needs `BLOTATO_API_KEY` + `BLOTATO_SMOKE_ACCOUNT_ID`). `accounts.json` holds only `@TBD-1`/`@TBD-2` placeholders (`status: planned`) — no real accounts connected.
+**Live state caveats:** Nothing run against REAL Blotato — `dryrun` default. The 4 INTEGRATION CHECKPOINTs are UNVERIFIED (smoke test skipped, needs `BLOTATO_API_KEY`+`BLOTATO_SMOKE_ACCOUNT_ID`). `accounts.json` = `@TBD` placeholders. **Audit C4 (verified): in dryrun the money loop is DEAD** — dryrun sets no `submission_id`, so `track` never matches → nothing ever reaches `analyzed` → amplify/retire never fire. So even staging today proves nothing about the learning loop until C4 is fixed.
 
-**Open items, in priority order (all backlog — the build is done):**
-1. **Before first LIVE run:** create fan accounts → connect each in Blotato, paste the numeric `account_id` into `MohFlow-FanOps/00_control/accounts.json` and set `status: active` → set `FANOPS_POSTER=rest` (or `mcp`) + `BLOTATO_API_KEY` → run the live smoke test to confirm the 4 integration checkpoints.
-2. **Submitting-recovery / reconcile step** (backlog item a) — a `submitting`-stranded post is never re-driven; needs a poll step.
-3. **Backlog** (in `RUNTIME.md §Backlog` + `fanops-build-deviations.md`): externalize brand-risk lists + lift weights to config; REST backoff jitter + retry on network Timeout; per-platform max-duration clamp (the deleted false `PLATFORM_MAX_SECONDS`); `fanops unhold <clip_id>` command; per-source ranking in adjust; media size cap; cover-art-audio slips `has_video_stream`; add `ruff` + consolidate duplicated `_parse`/`BASE_URL` helpers; plus the 6 plan enhancements (subtitle overlay, trending audio, daypart scheduling, best-window learning, multi-artist, secrets manager).
+**Open items, in priority order:**
+1. **Audit blockers before LIVE (see `fanops-build-deviations.md` for fixes):** C1 (idempotency key — first gateway timeout double-publishes to real accounts), C2 (per-account media derivative — identical bytes/URL across accounts defeats opsec), C4 (dryrun `submission_id` + publish→track→analyzed test — money loop dead in dryrun). Highest-leverage single action: run `test_blotato_smoke.py` against the Blotato sandbox (resolves C1/M5 + the whole unverified-contract risk).
+2. **Audit HIGH:** H4 (`submitting` reconcile + digest surfacing), H6 (self-healing ledger lock — orphaned lock hard-downs cron), H7 (wrap LLM responder — `fanops run` tracebacks if it raises), H8 (typed `BlotatoAuthError`), H1/H2 (staggering math), H3 (tag-cluster gate), H9 (pin lift_score weights), H10 (CI that fails when toolchain absent). *(M6 corrupt-control-files — DONE this session, `32feba0`.)*
+3. **Pre-existing backlog** (`RUNTIME.md §Backlog`): externalize brand-risk lists + lift weights; per-platform max-duration clamp; `fanops unhold`; ruff + helper consolidation; the 6 plan enhancements.
 
 **Pick up here:**
-- The build is shippable as-is for dry-run operation. To go LIVE: do Open item 1 (the three human-only steps + confirm integration checkpoints via the live smoke test). Reference: `MohFlow-FanOps/00_control/RUNTIME.md` "three human-only steps" + "integration checkpoints".
-- To extend the system: pick from the backlog (Open item 3); each is scoped in `fanops-build-deviations.md`.
-- Standing: nothing to push (no remote configured / not pushed); `main` is the only branch; working tree clean.
+- **Recommended next:** start remediating audit blockers, fastest-first — **C4** (dryrun `submission_id` gap + the missing publish→track→analyzed integration test, TDD) then **C1** (idempotency key on the Post + safe-retry split). Both are scoped with exact file:line + fix in `fanops-build-deviations.md`.
+- Before any LIVE run: the 3 human-only steps (create accounts → connect in Blotato → paste account_ids + set active) + run the sandbox smoke test. Reference: `RUNTIME.md` "three human-only steps".
+- Standing: `main` pushed to private `origin` (Fleezyflo/fanops); working tree clean. The audit workflow is saved at `.claude/workflows/fanops-deep-audit.js` (re-runnable).
