@@ -33,6 +33,8 @@ def claude_json(prompt: str, schema: dict, *, timeout: float = 180.0) -> dict:
         env = json.loads(r.stdout)
     except Exception as e:
         raise RuntimeError(f"claude -p output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
+    if not isinstance(env, dict):
+        raise RuntimeError(f"claude -p output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
     so = env.get("structured_output")
     if isinstance(so, dict):
         return so

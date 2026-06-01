@@ -44,3 +44,13 @@ def test_claude_json_raises_on_unparseable_output(mocker):
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
     with pytest.raises(RuntimeError, match="could not parse"):
         claude_json("q", _SCHEMA)
+
+def test_claude_json_raises_on_non_object_json(mocker):
+    # Valid JSON but not an object (null/array/number/string) must become the clean
+    # "could not parse" RuntimeError, not a raw AttributeError from env.get(...).
+    for stdout in ("null", "[1, 2]", "42", "\"hi\""):
+        class R: returncode = 0; stderr = ""
+        R.stdout = stdout
+        mocker.patch("fanops.llm.subprocess.run", return_value=R())
+        with pytest.raises(RuntimeError, match="could not parse"):
+            claude_json("q", _SCHEMA)
