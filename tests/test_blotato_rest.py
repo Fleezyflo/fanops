@@ -118,6 +118,22 @@ def test_5xx_with_submission_id_in_body_captures_it_for_reconcile(tmp_path, monk
     assert led.posts["p5b"].submission_id == "sub_amb"     # captured -> reconcile can poll it
     assert pm.call_count == 1
 
+def test_5xx_body_id_overwrites_preexisting_client_token(tmp_path, monkeypatch, mocker):
+    # AUDIT H4 + H1: posts now carry a CLIENT token (fanops_...) at birth (D1). When an ambiguous
+    # 5xx body still carries a REAL Blotato postSubmissionId, it MUST overwrite the client token —
+    # the real id is the authoritative key for GET /v2/posts/:id. The old guard (`not
+    # post.submission_id`) blocked this capture once a token preexisted; D1 drops that clause.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p5c", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued, submission_id="fanops_clienttoken"))
+    pm = mocker.patch("fanops.post.blotato_rest.requests.post",
+                      return_value=_R(503, {"postSubmissionId": "sub_real", "error": "upstream"}))
+    led = BlotatoRestPoster(cfg).publish(led, "p5c")
+    assert led.posts["p5c"].state is PostState.needs_reconcile
+    assert led.posts["p5c"].submission_id == "sub_real"    # real id BEATS the client token
+    assert pm.call_count == 1
+
 def test_retry_exhaustion_marks_failed(tmp_path, monkeypatch, mocker):
     # All attempts 429 -> failed (not raise, not hang). Proves _MAX_RETRIES bounds the loop.
     monkeypatch.setenv("BLOTATO_API_KEY", "k")

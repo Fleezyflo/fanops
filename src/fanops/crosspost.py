@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import Post, PostState, ClipState, MomentState, Platform, Fmt, PLATFORM_ASPECT
-from fanops.ids import child_id, surface_key
+from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 
@@ -90,6 +90,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 id=pid, parent_id=target_clip.id, state=PostState.queued,
                 account=surf.account, account_id=surf.account_id, platform=surf.platform,
                 caption=caption, hashtags=cap.get("hashtags", []), aspect=aspect,
-                scheduled_time=sched))
+                scheduled_time=sched,
+                # AUDIT H1: stamp a stable, content-addressed CLIENT idempotency token at birth so
+                # an ambiguous publish is ALWAYS pollable (a real Blotato id overwrites it in
+                # blotato_rest). pid is content-addressed -> a re-run computes the identical token.
+                submission_id=f"fanops_{_hash('idemp', pid)}"))
         led.set_clip_state(clip.id, ClipState.queued)
     return led

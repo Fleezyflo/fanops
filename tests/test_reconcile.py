@@ -79,6 +79,22 @@ def test_reconcile_ignores_terminal_and_queued_posts(tmp_path):
     assert led.posts["pub"].state is PostState.published
 
 
+def test_reconcile_polls_a_client_token_post(tmp_path):
+    # AUDIT H1: a post parked as needs_reconcile now ALWAYS carries a submission_id (the client
+    # idempotency token stamped at crosspost), so reconcile can poll it via GET /v2/posts/:id and
+    # resolve it automatically — no longer stranded for human-only reconcile. The token is the id
+    # the poll is keyed by until/unless a real Blotato id overwrites it.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "pt", PostState.needs_reconcile, sub="fanops_deadbeefcafe")
+    polled = []
+    def get_status(sid):
+        polled.append(sid)
+        return {"postSubmissionId": sid, "status": "published", "publicUrl": "https://ig.com/p/tok"}
+    led = reconcile_posts(led, cfg, get_status=get_status)
+    assert polled == ["fanops_deadbeefcafe"]               # the client token IS pollable
+    assert led.posts["pt"].state is PostState.published
+    assert led.posts["pt"].public_url == "https://ig.com/p/tok"
+
 def test_reconcile_durable_across_save(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "p5", PostState.submitting, sub="sub_5")
