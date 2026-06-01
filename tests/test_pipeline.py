@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import SourceState
+from fanops.models import Source, SourceState
 from fanops.pipeline import advance
 
 def _put(p, b): p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
@@ -151,39 +151,48 @@ def test_advance_persists_progress_when_crosspost_raises(tmp_path, monkeypatch, 
     # must NOT discard the pass's earlier in-memory progress. Before this guard, a crosspost raise
     # propagated past the single save -> the whole pass (transcribe/signal/moments/clips/captions)
     # was rolled back. With the try/except, the transaction still exits cleanly and the exit-save
-    # persists the completed transitions. We seed a source that will at least be catalogued, force
-    # crosspost_clips to raise, and assert the source survived in the saved ledger (not rolled back).
+    # persists the completed transitions. We inject a catalogued source as the "earlier in-pass
+    # progress" (mocking ingest_drops — NO real ffprobe, so this stays a true unit test that runs
+    # in the no-toolchain CI job; CI-1 lesson), force crosspost to raise, and assert the source
+    # survived in the saved ledger (not rolled back).
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    # drop one real-ish source file so ingest catalogues it (no toolchain needed for ingest of an mp4 stub
-    # is mocked below at the has_video_stream gate)
-    drop = cfg.inbox / "x.mp4"; drop.parent.mkdir(parents=True, exist_ok=True); drop.write_bytes(b"VIDEODATA")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)   # accept the stub as a video
+    # ingest_drops injects a catalogued source into the pass's ledger (no toolchain shelled)
+    def fake_ingest(led, cfg, **kw):
+        led.add_source(Source(id="src_prog", source_path=str(cfg.sources / "src_prog.mp4"),
+                              state=SourceState.error))   # terminal state: no further stage touches it
+        return led
+    mocker.patch("fanops.pipeline.ingest_drops", side_effect=fake_ingest)
     # make crosspost blow up mid-pass
     mocker.patch("fanops.pipeline.crosspost_clips", side_effect=RuntimeError("crosspost boom"))
     advance(cfg, base_time="2026-06-02T18:00:00Z")   # must NOT raise
     saved = Ledger.load(cfg)
-    assert len(saved.sources) == 1                    # the catalogued source was PERSISTED, not rolled back
+    assert "src_prog" in saved.sources                # the in-pass progress was PERSISTED, not rolled back
 
 
 def test_advance_persists_progress_when_publish_raises_nonauth(tmp_path, monkeypatch, mocker):
     # AUDIT M2 (review finding): publish_due is the one in-transaction stage that was NOT wrapped.
     # A NON-auth raise from it (e.g. an unforeseen error) must NOT skip the exit-save and roll back
-    # the pass. Mirror crosspost's guard: catch+log+continue, so completed work persists.
+    # the pass. Mirror crosspost's guard: catch+log+continue, so completed work persists. Inject a
+    # catalogued source as the earlier in-pass progress (mock ingest_drops — NO real ffprobe, so
+    # this runs in the no-toolchain CI unit job; CI-1 lesson).
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    drop = cfg.inbox / "x.mp4"; drop.parent.mkdir(parents=True, exist_ok=True); drop.write_bytes(b"VIDEODATA")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    def fake_ingest(led, cfg, **kw):
+        led.add_source(Source(id="src_prog", source_path=str(cfg.sources / "src_prog.mp4"),
+                              state=SourceState.error))   # terminal: no further stage touches it
+        return led
+    mocker.patch("fanops.pipeline.ingest_drops", side_effect=fake_ingest)
     mocker.patch("fanops.pipeline.publish_due", side_effect=RuntimeError("publish boom"))
     advance(cfg, base_time="2026-06-02T18:00:00Z")   # must NOT raise
     saved = Ledger.load(cfg)
-    assert len(saved.sources) == 1                    # catalogued source PERSISTED, not rolled back
+    assert "src_prog" in saved.sources                # in-pass progress PERSISTED, not rolled back
 
 
 def test_advance_still_halts_on_fatal_auth_error_from_publish(tmp_path, monkeypatch, mocker):
