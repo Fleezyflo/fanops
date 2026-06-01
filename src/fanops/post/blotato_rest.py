@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 import requests
 from fanops.config import Config
+from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.post.payload import build_blotato_payload, default_target_fields
@@ -35,7 +36,7 @@ class BlotatoRestPoster:
         self.cfg = cfg
         key = cfg.blotato_api_key
         if not key:
-            raise RuntimeError("BLOTATO_API_KEY missing — cannot use REST backend.")
+            raise BlotatoAuthError("BLOTATO_API_KEY missing — cannot use REST backend.")
         self.headers = {"blotato-api-key": key, "Content-Type": "application/json"}
 
     def _reconcile(self, post, detail: str) -> None:
@@ -76,7 +77,7 @@ class BlotatoRestPoster:
                 post.submission_id = sid
                 return led
             if resp.status_code == 401:
-                raise RuntimeError(f"Blotato 401 unauthorized — check BLOTATO_API_KEY ({resp.text[:120]})")
+                raise BlotatoAuthError(f"Blotato 401 unauthorized — check BLOTATO_API_KEY ({resp.text[:120]})")
             if 500 <= resp.status_code < 600:
                 # Ambiguous: Blotato may have created the post before the 5xx. No idempotency key
                 # exists, so DO NOT re-POST (double-publish risk) — park for reconcile.

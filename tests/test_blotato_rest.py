@@ -32,12 +32,15 @@ def test_4xx_marks_failed_not_analyzed(tmp_path, monkeypatch, mocker):
     assert "422" in (led.posts["p2"].error_reason or "")
 
 def test_401_raises_loudly(tmp_path, monkeypatch, mocker):
+    # AUDIT H8: a 401 raises the TYPED BlotatoAuthError (so run.py can halt by type, not by a
+    # fragile "401" substring match). Still loud — a bad key must halt, not silently fail.
+    from fanops.errors import BlotatoAuthError
     monkeypatch.setenv("BLOTATO_API_KEY", "badkey")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p3", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.queued))
     mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(401, {"e": "unauthorized"}))
-    with pytest.raises(RuntimeError):
+    with pytest.raises(BlotatoAuthError):
         BlotatoRestPoster(cfg).publish(led, "p3")          # bad key must halt, not silently fail
 
 def test_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):

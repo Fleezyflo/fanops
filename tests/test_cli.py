@@ -85,6 +85,24 @@ def test_run_halts_cleanly_on_advance_error(tmp_path, monkeypatch, mocker):
     assert rc == 1                                   # halted cleanly with nonzero, no traceback
 
 
+def test_advance_exits_cleanly_on_auth_error(tmp_path, monkeypatch, mocker, capsys):
+    # AUDIT H8: a BlotatoAuthError (bad/missing key) escaping advance is operator-actionable —
+    # `fanops advance` must print a clean one-line pointer and exit nonzero, not crash-dump.
+    from fanops.errors import BlotatoAuthError
+    monkeypatch.chdir(tmp_path)
+    import fanops.cli as cli
+    mocker.patch.object(cli, "advance", side_effect=BlotatoAuthError("Blotato 401 — check BLOTATO_API_KEY"))
+    # advance gates on _check_accounts first; give it a valid active account so we reach advance().
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    rc = cli.main(["advance"])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "Traceback" not in err and "BLOTATO_API_KEY" in err
+
+
 def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
     # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises
     # (model call error, a malformed response failing validation), the run loop must DEGRADE

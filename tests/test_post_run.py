@@ -11,6 +11,17 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z"):
                       platform=Platform.instagram, caption="ship it",
                       scheduled_time=when, state=PostState.queued))
 
+
+def test_is_fatal_auth_error_matches_by_type_not_substring():
+    # AUDIT H8: the halt decision is now a TYPE check (BlotatoAuthError), not "401"/"BLOTATO_API_KEY"
+    # in the message. So it fires on a reworded auth error (under-fire fixed) and does NOT fire on a
+    # non-auth error whose text happens to contain "401" (over-fire fixed).
+    from fanops.errors import BlotatoAuthError
+    from fanops.post.run import _is_fatal_auth_error
+    assert _is_fatal_auth_error(BlotatoAuthError("invalid credentials")) is True       # no "401" text
+    assert _is_fatal_auth_error(RuntimeError("Blotato 503: upstream 401abc")) is False  # "401" but not auth
+    assert _is_fatal_auth_error(RuntimeError("BLOTATO_API_KEY missing")) is False       # substring, not the type
+
 def test_publishes_only_due_posts(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)  # dryrun
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -149,7 +160,10 @@ def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocke
     assert led2.posts["prec"].state is PostState.needs_reconcile
 
 def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
-    # A 401/auth error must HALT (raise), not mark one post failed and grind on.
+    # AUDIT H8: a fatal auth failure must HALT (raise), not mark one post failed and grind on.
+    # The trigger is now the TYPE (BlotatoAuthError), not a substring in the message — so it fires
+    # even when the message doesn't literally contain "401" (fixes the F52 under-fire).
+    from fanops.errors import BlotatoAuthError
     monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "badkey")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_auth.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
@@ -162,8 +176,39 @@ def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
     class _AuthFailPoster:
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
-            raise RuntimeError("Blotato 401 unauthorized — check BLOTATO_API_KEY (bad)")
+            # worded WITHOUT "401" on purpose — a reworded auth error must still halt by type
+            raise BlotatoAuthError("Blotato rejected the api key (invalid credentials)")
     mocker.patch.object(run, "get_poster", return_value=_AuthFailPoster(cfg))
     import pytest
-    with pytest.raises(RuntimeError, match="401"):
+    with pytest.raises(BlotatoAuthError):
         publish_due(led, cfg, now="2026-06-02T18:00:00Z")
+
+
+def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeypatch, mocker):
+    # AUDIT H8 over-fire regression: a NON-auth error whose message merely CONTAINS "401" (e.g. a
+    # 503 body echoing an upstream id) must NOT halt the queue — it's a per-post failure. The old
+    # substring match wrongly tore down the whole run on this; the typed check must not.
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for pid, cid in [("pbad", "c_bad"), ("pok", "c_ok2")]:
+        f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+        led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
+        led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued))
+    import fanops.post.run as run
+    def fake_ensure(led_, cfg_, clip_id):
+        if clip_id == "c_bad":
+            raise RuntimeError("Blotato 503: upstream request 401abc timed out")  # 401 in text, NOT auth
+        return "https://cdn/ok.mp4"
+    mocker.patch.object(run, "ensure_clip_media", side_effect=fake_ensure)
+    class _OkPoster:
+        def __init__(self, cfg): pass
+        def publish(self, led_, post_id):
+            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id].submission_id = "s_ok"
+            return led_
+    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
+    led = publish_due(led, cfg, now="2026-06-02T18:00:00Z")   # must NOT raise
+    assert led.posts["pbad"].state is PostState.failed         # isolated per-post failure
+    assert led.posts["pok"].state is PostState.published        # the run continued

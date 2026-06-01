@@ -5,7 +5,7 @@ respond+advance until stable for unattended operation."""
 from __future__ import annotations
 import argparse, sys
 from fanops.config import Config
-from fanops.errors import ControlFileError, LockBusyError
+from fanops.errors import BlotatoAuthError, ControlFileError, LockBusyError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState, SourceState
@@ -95,6 +95,12 @@ def main(argv: list[str] | None = None) -> int:
         # reach here — the flock self-heals it (H6); this only ever means real contention.
         print(str(e), file=sys.stderr)
         return 1
+    except BlotatoAuthError as e:
+        # Bad/missing BLOTATO_API_KEY (or a 401) escaping a publish — operator-actionable. One
+        # clean line + exit 2 (config-level, like ControlFileError), not a stack dump (AUDIT H8).
+        # In `run` this is already caught by the loop guard; this covers advance/other commands.
+        print(str(e), file=sys.stderr)
+        return 2
 
 
 def _check_accounts(cfg: Config) -> int:

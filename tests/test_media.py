@@ -44,18 +44,34 @@ def test_ensure_clip_media_uploads_once(tmp_path, monkeypatch, mocker):
     assert led.clips["clip_1"].media_url == "https://cdn/clip_1.mp4"
 
 def test_upload_media_missing_key_raises(tmp_path, monkeypatch):
+    # AUDIT H8: missing key is a fatal AUTH condition -> typed BlotatoAuthError (halts the queue
+    # by type in run.py), not a generic RuntimeError.
+    from fanops.errors import BlotatoAuthError
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     cfg = Config(root=tmp_path); f = tmp_path / "c.mp4"; f.write_bytes(b"V")
     import pytest
-    with pytest.raises(RuntimeError, match="BLOTATO_API_KEY"):
+    with pytest.raises(BlotatoAuthError, match="BLOTATO_API_KEY"):
         upload_media(cfg, f)
 
 def test_upload_media_non_2xx_presign_raises_contextful(tmp_path, monkeypatch, mocker):
+    # A non-2xx, non-401 presign surfaces the status code in a RuntimeError (not a bare KeyError).
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); f = tmp_path / "c.mp4"; f.write_bytes(b"V")
+    mocker.patch("fanops.post.media.requests.post", return_value=_Resp(403, {"error": "forbidden"}))
+    import pytest
+    with pytest.raises(RuntimeError, match="403"):
+        upload_media(cfg, f)
+
+
+def test_upload_media_401_presign_raises_typed_auth(tmp_path, monkeypatch, mocker):
+    # AUDIT H8: a 401 on the media presign is the SAME fatal auth condition as a 401 on the post
+    # -> typed BlotatoAuthError so run.py halts the queue by type, not by a "401" substring.
+    from fanops.errors import BlotatoAuthError
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); f = tmp_path / "c.mp4"; f.write_bytes(b"V")
     mocker.patch("fanops.post.media.requests.post", return_value=_Resp(401, {"error": "bad key"}))
     import pytest
-    with pytest.raises(RuntimeError, match="401"):       # status surfaced, not a bare KeyError
+    with pytest.raises(BlotatoAuthError, match="401"):
         upload_media(cfg, f)
 
 def test_upload_media_missing_keys_in_presign_raises(tmp_path, monkeypatch, mocker):

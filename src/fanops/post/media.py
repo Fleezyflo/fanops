@@ -7,6 +7,7 @@ import mimetypes
 from pathlib import Path
 import requests
 from fanops.config import Config
+from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
 
 BASE_URL = "https://backend.blotato.com/v2"
@@ -17,10 +18,14 @@ def dryrun_media_url(path: Path) -> str:
 def upload_media(cfg: Config, path: Path) -> str:
     key = cfg.blotato_api_key
     if not key:
-        raise RuntimeError("BLOTATO_API_KEY missing — cannot upload media.")
+        raise BlotatoAuthError("BLOTATO_API_KEY missing — cannot upload media.")
     headers = {"blotato-api-key": key, "Content-Type": "application/json"}
     resp = requests.post(f"{BASE_URL}/media/uploads", headers=headers,
                          json={"filename": Path(path).name}, timeout=30)
+    if resp.status_code == 401:
+        # A 401 on the media presign is the SAME fatal auth condition as a 401 on the post —
+        # halt the whole queue by type (AUDIT H8), don't mark one post failed and grind on.
+        raise BlotatoAuthError(f"Blotato 401 on media presign — check BLOTATO_API_KEY: {(resp.text or '')[:200]}")
     if resp.status_code >= 300:
         raise RuntimeError(f"Blotato presign failed ({resp.status_code}): {(resp.text or '')[:300]}")
     presign = resp.json()

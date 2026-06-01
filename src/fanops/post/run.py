@@ -6,6 +6,7 @@ resume (FIX F11). Media is ensured ONCE PER CLIP (FIX F44). Failed submit -> Pos
 from __future__ import annotations
 from datetime import datetime, timezone
 from fanops.config import Config
+from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.post import get_poster
@@ -18,10 +19,13 @@ def _now(now: str | None) -> datetime:
     return _parse(now) if now else datetime.now(timezone.utc)
 
 def _is_fatal_auth_error(exc: Exception) -> bool:
-    """Auth/config errors mean EVERY post will fail — halt the run instead of marking one
-    post failed and grinding through the rest. (Bad/missing BLOTATO_API_KEY, 401.)"""
-    msg = str(exc)
-    return "401" in msg or "BLOTATO_API_KEY" in msg
+    """Auth/config errors mean EVERY post will fail — halt the run instead of marking one post
+    failed and grinding through the rest. Matched by TYPE (BlotatoAuthError), NOT by a substring
+    in the message (AUDIT H8): the old `"401" in msg or "BLOTATO_API_KEY" in msg` both UNDER-fired
+    (a reworded auth error slipped past and burned the whole queue — the F52 regression) and
+    OVER-fired (a 5xx whose body contained "401" wrongly halted the queue). The posters/media
+    uploader raise BlotatoAuthError on a real auth failure; everything else is a per-post failure."""
+    return isinstance(exc, BlotatoAuthError)
 
 def publish_due(led: Ledger, cfg: Config, *, now: str | None = None) -> Ledger:
     poster = get_poster(cfg)
