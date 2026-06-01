@@ -117,9 +117,12 @@ behavior:
 
 - **`--base-time T` is the schedule ANCHOR only.** Crosspost
   (`src/fanops/crosspost.py::surface_time`) staggers each surface's `scheduled_time` to a
-  point **after** T — a per-(account, platform) deterministic offset plus a spread of
-  35–95 minutes per index. Staggering is an **opsec** requirement: the "independent"
-  accounts must not post in lockstep.
+  point **after** T — a per-(account, platform, clip) deterministic offset (anchor up to
+  ~50 min) plus a fixed 40-min step per index with a bounded 0–29 min jitter. The step
+  strictly exceeds the jitter so the schedule is **monotonic** in index (a later post can
+  never land before an earlier one), and the clip is part of the seed so two clips never
+  collide on the same minute on one surface (AUDIT H1/H2). Staggering is an **opsec**
+  requirement: the "independent" accounts must not post in lockstep.
 - **The publish step publishes whatever is due as of REAL wall-clock NOW**, *not* as of
   `base_time`. `advance` calls `publish_due(led, cfg, now=None)`, and `now=None` means
   `datetime.now(timezone.utc)` (`src/fanops/post/run.py`). A post is published only when

@@ -17,16 +17,32 @@ from fanops.tagging import decide_tag, ARTIST_HANDLE
 def _parse(ts: str) -> datetime:
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
-def _seed(account: str, platform: str, date_str: str) -> int:
-    # SHA1, NOT builtin hash() (FIX F00) — deterministic across processes.
-    h = hashlib.sha1(f"{account}|{platform}|{date_str}".encode()).hexdigest()
+# Staggering constants. _STEP_MIN is the fixed per-index spacing; _JITTER_MAX is the bounded
+# random nudge. AUDIT H1/H2: _JITTER_MAX MUST stay strictly less than _STEP_MIN so that
+# index*_STEP + jitter is MONOTONIC in index — consecutive indices differ by at least
+# _STEP_MIN - (_JITTER_MAX-1) > 0, so a higher index can never land before a lower one.
+_STEP_MIN = 40
+_JITTER_MAX = 30          # < _STEP_MIN — do not raise past it without breaking monotonicity
+_ANCHOR_SPAN = 50         # per-(surface,clip) head start, 0.._ANCHOR_SPAN min after base
+
+def _seed(account: str, platform: str, date_str: str, clip_id: str = "") -> int:
+    # SHA1, NOT builtin hash() (FIX F00) — deterministic across processes. clip_id is part of the
+    # seed (AUDIT H1/H2) so two clips on the SAME surface get DIFFERENT times instead of colliding
+    # on the identical minute (the old seed ignored the clip -> lockstep fingerprint).
+    h = hashlib.sha1(f"{account}|{platform}|{date_str}|{clip_id}".encode()).hexdigest()
     return int(h[:8], 16)
 
-def surface_time(base: datetime, account: str, platform: str, date_str: str, index: int) -> str:
-    seed = _seed(account, platform, date_str)
-    rng = random.Random(seed + index * 7919)         # stable seed; index spreads deterministically
-    anchor = base + timedelta(minutes=seed % 50)
-    t = anchor + timedelta(minutes=index * rng.randint(35, 95) + rng.randint(0, 7))
+def surface_time(base: datetime, account: str, platform: str, date_str: str, index: int,
+                 *, clip_id: str = "") -> str:
+    seed = _seed(account, platform, date_str, clip_id)
+    rng = random.Random(seed)                        # ONE stable stream per (surface,clip) — NOT
+                                                     # reseeded per index (that made the step a
+                                                     # fresh draw each call -> non-monotonic).
+    anchor = base + timedelta(minutes=seed % _ANCHOR_SPAN)
+    # Draw the jitter sequence deterministically up to `index` so each index has its own nudge,
+    # but the dominant term is the FIXED step -> strictly increasing in index.
+    jitter = [rng.randint(0, _JITTER_MAX - 1) for _ in range(index + 1)][index]
+    t = anchor + timedelta(minutes=index * _STEP_MIN + jitter)
     return t.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 # Clip states whose file is a usable render target. A denylist (everything-but-retired)
@@ -64,7 +80,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 continue   # TODO(Task 23): log skipped surface — activated after captioning, no caption
             caption = cap["caption"]
             # subtle, non-synchronized artist tag on its own line (FIX F31)
-            sched = surface_time(base, surf.account, surf.platform.value, date_str, i)
+            # clip.id (the captioned seed clip) keys the schedule so two different clips don't
+            # collide on the same surface/minute (AUDIT H1/H2). Use the seed clip, not target_clip,
+            # so the same content schedules consistently across its per-platform aspect renders.
+            sched = surface_time(base, surf.account, surf.platform.value, date_str, i, clip_id=clip.id)
             if decide_tag(led, account=surf.account, clip_id=clip.id, when=_parse(sched)):
                 caption = f"{caption}\n{ARTIST_HANDLE}"
             led.add_post(Post(

@@ -45,6 +45,28 @@ def test_surface_time_reproducible_ordered_and_future():
     assert t0 > base.isoformat().replace("+00:00", "Z")  # in the future vs base
     assert t0.endswith("Z")
 
+
+def test_surface_time_is_monotonic_across_many_indices():
+    # AUDIT H1/H2: the per-index increment was a FRESH random draw per call (rng reseeded with
+    # seed + index*7919), so a higher index could draw a smaller step and land EARLIER than a
+    # lower index — non-monotonic. The old test only checked index 0 vs 1. Assert strict monotonic
+    # ordering across a full run of indices.
+    base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
+    times = [surface_time(base, "@a", "instagram", "2026-06-02", index=i) for i in range(12)]
+    assert times == sorted(times) and len(set(times)) == len(times)   # strictly increasing, no dupes
+
+
+def test_surface_time_differs_per_clip_no_minute_collision():
+    # AUDIT H1/H2: surface_time ignored the clip entirely, so two different clips posting to the
+    # SAME surface (same account/platform/index) got the IDENTICAL timestamp — a lockstep, exact-
+    # minute collision and a fingerprint. Threading clip_id must separate them.
+    base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
+    a = surface_time(base, "@a", "instagram", "2026-06-02", index=0, clip_id="clip_1")
+    b = surface_time(base, "@a", "instagram", "2026-06-02", index=0, clip_id="clip_2")
+    assert a != b                                     # distinct clips -> distinct times on a surface
+    # still deterministic per (clip, surface, index)
+    assert a == surface_time(base, "@a", "instagram", "2026-06-02", index=0, clip_id="clip_1")
+
 def test_surface_time_stable_across_processes():
     code = textwrap.dedent("""
         from datetime import datetime, timezone
@@ -138,6 +160,27 @@ def test_crosspost_multi_account_fans_out_n_times_m(tmp_path, mocker):
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert len(led.posts) == 4
     assert {p.account_id for p in led.posts.values()} == {"1", "2"}
+
+
+def test_crosspost_two_clips_same_surface_do_not_collide_on_time(tmp_path, mocker):
+    # AUDIT H1/H2: two clips (distinct moments) posting to the SAME surface must not land on the
+    # same minute (surface_time previously ignored the clip -> identical timestamps -> lockstep
+    # fingerprint across an account's posts).
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    for mid, cid in [("mom_1", "clip_1"), ("mom_2", "clip_2")]:
+        led.add_moment(Moment(id=mid, parent_id="src_1", content_token=cid, start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        c = Clip(id=cid, parent_id=mid, path=f"/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
+        c.meta_captions = {"@a/instagram": {"caption": f"{cid} cap", "hashtags": []}}
+        led.add_clip(c)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    ig_posts = [p for p in led.posts.values() if p.platform is Platform.instagram]
+    assert len(ig_posts) == 2
+    times = {p.scheduled_time for p in ig_posts}
+    assert len(times) == 2, "two clips on the same surface collided on the same scheduled_time"
 
 def test_crosspost_renders_missing_aspect_on_demand(tmp_path, mocker):
     # Only a 9:16 clip exists; youtube needs 16:9 -> a NEW clip is created (rendered, file exists).
