@@ -84,8 +84,17 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     out_dir = cfg.agent_io / "transcripts"
     out_dir.mkdir(parents=True, exist_ok=True)
     model = model or cfg.whisper_model               # env override (FANOPS_WHISPER_MODEL), default turbo
-    r = subprocess.run(whisper_cmd(src.source_path, str(out_dir), _resolve_model(model)),
-                       check=False, capture_output=True, text=True)
+    cmd = whisper_cmd(src.source_path, str(out_dir), _resolve_model(model))
+    try:
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except (FileNotFoundError, OSError) as e:
+        # whisper ABSENT from PATH (or unspawnable): subprocess.run raises before the process
+        # starts, which check=False does not cover (it only suppresses a nonzero RETURNCODE).
+        # Record SourceState.error gracefully — mirroring the no-JSON branch below — rather than
+        # letting the raise escape to the pipeline as an opaque "FileNotFoundError: whisper".
+        src.state = SourceState.error
+        src.error_reason = f"toolchain missing: {cmd[0]} ({type(e).__name__})"
+        return led
     js = out_dir / f"{Path(src.source_path).stem}.json"
     if not js.exists():
         src.state = SourceState.error

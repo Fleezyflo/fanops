@@ -55,6 +55,21 @@ def test_missing_json_goes_to_error_not_crash(tmp_path, mocker):
     assert led.sources["src_1"].state is SourceState.error
     assert "boom" in (led.sources["src_1"].error_reason or "")
 
+def test_whisper_absent_goes_to_error_not_crash(tmp_path, mocker):
+    # whisper binary off PATH -> subprocess.run raises FileNotFoundError before the process
+    # starts (check=False only suppresses a nonzero RETURNCODE). Mirror the no-JSON branch:
+    # record SourceState.error gracefully with a clear "toolchain missing: whisper" reason,
+    # NOT an uncaught raise that the pipeline reports as an opaque "FileNotFoundError: whisper".
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.catalogued))
+    def absent(cmd, **kw):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=absent)
+    led = transcribe_source(led, cfg, "src_1")     # must NOT raise
+    assert led.sources["src_1"].state is SourceState.error
+    assert "toolchain missing: whisper" in (led.sources["src_1"].error_reason or "")
+
 def test_transcribe_idempotent_when_already_done(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),

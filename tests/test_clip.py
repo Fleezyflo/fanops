@@ -79,6 +79,27 @@ def test_render_moment_records_error_on_ffmpeg_failure(tmp_path, mocker):
     # moment must NOT advance to clipped on failure (so a re-run retries)
     assert led.moments["mom_1"].state is MomentState.decided
 
+def test_render_moment_records_error_when_ffmpeg_absent(tmp_path, mocker):
+    # ffmpeg off PATH -> subprocess.run raises FileNotFoundError BEFORE the process starts
+    # (check=False suppresses a nonzero RETURNCODE, not a pre-launch FileNotFoundError). This
+    # must fail-safe exactly like the nonzero-rc branch: record ClipState.error and leave the
+    # moment at `decided` so the existing re-render path retries when ffmpeg returns — NOT a
+    # raised exception (which the pipeline would quarantine into the terminal MomentState.error).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided))
+    def absent(cmd, **kw):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+    mocker.patch("fanops.clip.subprocess.run", side_effect=absent)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)   # must NOT raise
+    assert clip.state is ClipState.error
+    assert "toolchain missing: ffmpeg" in (clip.error_reason or "")
+    assert clip.id in led.clips
+    # moment stays retriable (NOT MomentState.error, NOT clipped) — re-run renders again
+    assert led.moments["mom_1"].state is MomentState.decided
+
 def test_reframe_branches_exact():
     # 16:9 from a tall source -> crop height then scale to even 1920x1080
     assert reframe_filter("16:9", 1080, 1920) == "crop=iw:iw*1080/1920,scale=1920:1080,setsar=1"

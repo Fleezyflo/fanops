@@ -43,11 +43,24 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     cid = child_id("clip", moment_id, aspect.value)      # content-addressed by aspect
     cfg.clips.mkdir(parents=True, exist_ok=True)
     dst = cfg.clips / f"{cid}.mp4"
-    r = subprocess.run(ffmpeg_clip_cmd(src.source_path, str(dst), m.start, m.end, aspect.value,
-                                       src_w=src.width or 0, src_h=src.height or 0),
-                       check=False, capture_output=True, text=True)
+    cmd = ffmpeg_clip_cmd(src.source_path, str(dst), m.start, m.end, aspect.value,
+                          src_w=src.width or 0, src_h=src.height or 0)
+    try:
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except (FileNotFoundError, OSError) as e:
+        # ffmpeg ABSENT from PATH (or otherwise unspawnable): subprocess.run raises BEFORE the
+        # process starts, so check=False (which only suppresses a nonzero RETURNCODE) does not
+        # cover it. Treat it exactly like the nonzero-rc branch — record ClipState.error and
+        # leave the moment at `decided` so a re-run retries when ffmpeg returns. Otherwise the
+        # raise escapes to the pipeline's per-moment quarantine, parking the moment in the
+        # TERMINAL MomentState.error (never re-rendered) — a transient PATH glitch would wedge
+        # it permanently, contradicting this module's fail-safe philosophy.
+        clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
+                    aspect=aspect, error_reason=f"toolchain missing: {cmd[0]} ({type(e).__name__})")
+        led.clips[cid] = clip
+        return led, clip
     if r.returncode != 0 or not dst.exists():
-        # ffmpeg failed: record the clip as errored (dangling path would otherwise
+        # ffmpeg RAN and failed: record the clip as errored (dangling path would otherwise
         # masquerade as 'rendered' and blow up later in crosspost/media-upload).
         # Leave the moment un-clipped so a re-run retries. Mirrors transcribe.py's pattern.
         clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
