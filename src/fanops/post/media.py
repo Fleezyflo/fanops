@@ -1,7 +1,9 @@
-"""Upload a local file to Blotato -> public URL (POST /media/uploads -> presignedUrl/
-publicUrl; PUT binary). ensure_clip_media uploads ONCE PER CLIP and caches the URL on the
-Clip (FIX F44 — v1 re-uploaded per post). dryrun returns file:// so the pipeline runs
-offline. The /media/uploads contract is an INTEGRATION CHECKPOINT."""
+"""Upload a local file to Blotato -> public URL (presign -> presignedUrl/publicUrl; PUT binary).
+ensure_clip_media uploads ONCE PER CLIP and caches the URL on the Clip (FIX F44 — v1 re-uploaded
+per post). dryrun returns file:// so the pipeline runs offline. The presign contract (the
+presignedUrl + publicUrl response keys) was VERIFIED against the live Blotato
+`create_presigned_upload_url` MCP tool schema 2026-06-02 (AUDIT D5) — no longer an unverified
+checkpoint. (The POST URL path itself is the only remaining assumption.)"""
 from __future__ import annotations
 import mimetypes
 from pathlib import Path

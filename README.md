@@ -183,23 +183,36 @@ Everything is automated except the parts only a human can do:
 
 ## Integration checkpoints to confirm before going live
 
-A few Blotato-side contracts are marked **`INTEGRATION CHECKPOINT`** in the code and should be
-confirmed against the live API before the first real post:
+The **metrics** endpoint shape (`post/metrics.py`, `track.py`) is the one remaining
+`INTEGRATION CHECKPOINT` to confirm against the live API before relying on the learning loop:
+which engagement fields Blotato actually exposes (if saves/shares/retention are unavailable,
+re-weight `track._W` on the fields that are).
 
-- the **`/media/uploads`** presign contract (`presignedUrl` / `publicUrl`) — `post/media.py`
-- the **submission-id** response key (we expect **`postSubmissionId`**) — `post/blotato_rest.py`
-- the **metrics** endpoint shape — `post/metrics.py`, `track.py`
-- the **MCP** tool name + arg shape (the REST body is nested; the MCP args are flat) —
-  `post/blotato_mcp.py`, `post/payload.py`
+**Confirmed against the live Blotato MCP tool schemas (2026-06-02), no longer checkpoints:**
 
-**Confirmed (no longer a checkpoint):** the Blotato v2 `POST /v2/posts` contract has **no
-idempotency key** (the body accepts only `post` / `scheduledTime` / `useNextFreeSlot`), and
-Blotato's own docs note a publish timeout can produce a duplicate post. So the REST poster does
-**not** blindly retry an ambiguous failure: a `5xx` or a network timeout *after the request body
-was sent* parks the post in **`needs_reconcile`** (it may already be live) instead of re-POSTing,
-and the digest (plus the `fanops status` / `fanops run` count) surfaces it for a human to verify
-via `GET /v2/posts/:id` before any resubmit.
-Only a `429` (rejected pre-processing, so definitely not created) is retried. See `post/blotato_rest.py`.
+- the **submission-id** response key **is `postSubmissionId`** (`blotato_create_post` returns it;
+  `blotato_get_post_status` takes it) — `post/blotato_rest.py`, `post/blotato_mcp.py`. A 2xx with
+  no recognizable id is parked **`needs_reconcile`** (never `failed`), and the posters also accept
+  `submissionId` / `id` / nested `data.*` as defensive aliases.
+- the **`create_presigned_upload_url`** contract returns `presignedUrl` + `publicUrl` — `post/media.py`.
+- the **MCP** tool name (`blotato_create_post`) + flat arg shape — `post/blotato_mcp.py`, `post/payload.py`.
+- the **status enum** `in-progress → published | scheduled | failed`, with the live-post URL under
+  **`publicUrl` on `get_post_status`** but **`postUrl` on `list_posts`** (a real API divergence;
+  FanOps reads the URL only from `get_post_status` — at `reconcile.py` — so it reads the right key).
+- **No idempotency key** on `POST /v2/posts` (body accepts only `post` / `scheduledTime` /
+  `useNextFreeSlot`), and a publish timeout can produce a duplicate post. So the REST poster does
+  **not** blindly retry an ambiguous failure: a `5xx` or a network timeout *after the request body
+  was sent* parks the post in **`needs_reconcile`** (it may already be live) instead of re-POSTing,
+  and the digest (plus the `fanops status` / `fanops run` count) surfaces it for a human to verify
+  via `GET /v2/posts/:id` before any resubmit. Only a `429` (rejected pre-processing, so definitely
+  not created) is retried, with jittered backoff. Every crossposted post is also stamped at birth
+  with a stable **client idempotency token** (`submission_id = f"fanops_{_hash('idemp', post.id)}"`),
+  so an ambiguous publish is always reconcilable; a real `postSubmissionId` from the response
+  overwrites it. See `post/blotato_rest.py`, `crosspost.py`.
+
+A successful **data-returning** live verification (and any live test post) is still pending valid
+Blotato auth + an operator-named throwaway test account — `blotato_create_post` publishes to a real
+account with no dry-run, so it is never fired autonomously.
 
 Confirm them by running the live smoke test **manually** (it schedules a post far in the
 future so it can be deleted before it ever publishes):

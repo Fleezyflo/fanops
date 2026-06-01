@@ -266,10 +266,15 @@ BlotatoMcpPoster(cfg, tool_caller=...)
 ```
 
 `tool_caller(name, args) -> dict` must invoke the connected **`blotato_create_post`** MCP
-tool with the flat args the poster builds and return the tool's result dict. The result
-**must contain `postSubmissionId`** — if it does not, the poster marks the post
-**`failed`** (a post we can't track by submission id is surfaced, not parked). With no
-`tool_caller` wired the poster raises rather than silently no-op.
+tool with the flat args the poster builds and return the tool's result dict. The id is matched
+as `postSubmissionId` | `submissionId` | `id` (recursing into a nested `data` dict) via D2's
+shared `_extract_submission_id`. An MCP 2xx with **no recognizable id is parked
+`needs_reconcile`** (never `failed` — failed would be re-queueable and risk a double-post to a
+real account); the D1 client token is preserved so the post stays pollable. An **auth failure**
+must reach the poster as a typed `BlotatoAuthError` (the production wiring raises it) — it
+propagates so `run.py` halts the queue by type (F52/H8); an untyped auth message is best-effort
+substring-matched as a fallback. With no `tool_caller` wired the poster raises rather than
+silently no-op.
 
 (The `rest` backend, `FANOPS_POSTER=rest`, needs no wiring beyond `BLOTATO_API_KEY`; it
 POSTs to `https://backend.blotato.com/v2/posts` and raises loudly on 401. Retry is
@@ -301,22 +306,32 @@ These cannot be automated and gate a live run:
 
 ## Integration checkpoints — confirm BEFORE the first live run
 
-The following are marked `INTEGRATION CHECKPOINT` in the code. They are **assumptions
-about Blotato's API shape, not verified facts** — confirm each against current Blotato
-docs before trusting a live run, and fix the one spot noted if it differs:
+Most of these were **verified against the live Blotato MCP tool schemas (2026-06-02)** during
+Phase D (the MCP server connected mid-session; its tool schemas are authoritative API docs, though
+a data-returning call was auth-blocked — see "live verification" below). The one item still an
+unverified assumption is the **metrics fields**.
 
-- **Media upload contract** — `POST /v2/media/uploads` returning `presignedUrl` +
-  `publicUrl`, then a binary `PUT` to the presigned URL (`src/fanops/post/media.py`). A
-  response missing those keys raises.
-- **Submission-id response key** — the publish response (REST and MCP) must carry
-  **`postSubmissionId`**; a 2xx without it is failed, not parked
-  (`blotato_rest.py`, `blotato_mcp.py`).
-- **Metrics endpoint / fields** — `GET /v2/posts?window=...` returning rows keyed by
-  `postSubmissionId` with a `metrics` dict (`src/fanops/post/metrics.py`). If
-  saves/shares/retention are **not** exposed, re-weight `track._W` on the fields that are.
-- **MCP tool name / args** — the tool is assumed to be `blotato_create_post` taking the
-  flat args from `build_blotato_mcp_args`. Confirm the name and argument shape of the
-  connected tool.
+- **Media upload contract** — VERIFIED 2026-06-02: `create_presigned_upload_url` returns
+  `presignedUrl` + `publicUrl`, then a binary `PUT` to the presigned URL (`src/fanops/post/media.py`).
+  A response missing those keys raises. (Live schema confirms both keys.)
+- **Submission-id response key** — VERIFIED 2026-06-02: the id field **is `postSubmissionId`**
+  (`blotato_create_post` returns it; `blotato_get_post_status` takes it). A 2xx **without** a
+  recognizable id is parked **`needs_reconcile`, NOT `failed`** (it may be live — failed would be
+  re-queued and risk a double-post); the posters accept `postSubmissionId` | `submissionId` | `id`
+  (incl. nested `data`) via `_extract_submission_id` (`blotato_rest.py`, `blotato_mcp.py`).
+- **Status enum + live-post URL key** — VERIFIED 2026-06-02: `in-progress → published | scheduled
+  | failed`; the live-post URL is **`publicUrl` on `get_post_status`** (the single-post lookup
+  `reconcile.py` uses) but **`postUrl` on `list_posts`** (a real API divergence). FanOps reads the
+  URL only from `get_post_status` (`reconcile.py:64`), so it reads the correct key; `track.py` reads
+  only `postSubmissionId` + `metrics` from `list_posts` rows, never a URL — no mismatch. (A future
+  feature that reads a URL from a `list_posts` row WOULD need `postUrl`.)
+- **Metrics endpoint / fields** — STILL A CHECKPOINT: `GET /v2/posts?window=...` returning rows
+  keyed by `postSubmissionId` with a `metrics` dict (`src/fanops/post/metrics.py`). Which engagement
+  fields are exposed is unconfirmed; if saves/shares/retention are **not** exposed, re-weight
+  `track._W` on the fields that are.
+- **MCP tool name / args** — VERIFIED 2026-06-02: the tool is `blotato_create_post` taking the flat
+  args from `build_blotato_mcp_args`. (Live schema confirms the name + flat `accountId`/`platform`/
+  `text`/`mediaUrls` shape.)
 - **Signal weighting target** — saves/shares/retention > likes is the optimization
   target encoded in `track._W`. Re-weight there if Blotato's available fields differ or
   the desired target changes.
@@ -342,25 +357,29 @@ deferred from the original plan, and surfaced during the build.
 
 **Surfaced during the build**
 
-- **(a) Reconcile step (`submitting` + `needs_reconcile`) — DONE (audit H4).** `fanops
-  reconcile` (and an automatic pass inside `advance`/`run` before publishing) polls
+- **(a) Reconcile step (`submitting` + `needs_reconcile`) — DONE (audit H4; refined in Phase D).**
+  `fanops reconcile` (and an automatic pass inside `advance`/`run` before publishing) polls
   `GET /v2/posts/{postSubmissionId}` for any stranded post that **has a submission id** and
   resolves it: `published → published` (+ public_url), `failed → failed` (safe to re-queue),
-  `in-progress`/`scheduled → left parked`. **Honest limit:** that endpoint is the only post
-  lookup Blotato offers and it **requires the submission id** (no content/account search). A
-  post stranded **without** an id (a pure network timeout, or a crash before the poster
-  returned one) cannot be looked up programmatically, so it stays parked for **human**
-  reconcile (the digest's "Needs reconcile" section). To shrink that residue, the REST poster
-  now captures a `postSubmissionId` from an ambiguous-5xx body when one is present, making
-  those posts auto-reconcilable. We never guess a post's fate — a wrong guess would drop a live
-  post or double-publish one.
+  `in-progress`/`scheduled → left parked`. **Phase D (audit H1):** every crossposted post is now
+  stamped at birth with a stable **client idempotency token** (`submission_id = f"fanops_{_hash('idemp',
+  post.id)}"`), so a post parked after a pure network timeout is no longer id-less — it carries a
+  `fanops_` token and IS polled. A real `postSubmissionId` from the response (2xx or an ambiguous-5xx
+  body) overwrites the token. But a `fanops_` token is not a real Blotato id, so polling it **404s**;
+  `reconcile_posts` now **contains that per-post poll error** (mirrors `publish_due`): a
+  `BlotatoAuthError` propagates (halt — every poll will 401), any other poll error leaves THAT post
+  **parked, never `failed`** (a poll error is not evidence the post failed — it may be live) and the
+  loop continues so later posts still reconcile. The irreducible residue (a post with genuinely no
+  `submission_id` at all) is skipped for **human** reconcile (the digest's "Needs reconcile" section).
+  We never guess a post's fate — a wrong guess would drop a live post or double-publish one.
 - **(b) Externalize the tunable lists to config / `context.md`.** The brand-risk
   anti-pattern lists (`caption._OFFBRAND_EN` / `_OFFBRAND_AR`) and the lift weights
   (`track._W`) are hardcoded. Moving them to config/`context.md` lets the operator tune
   the HOLD gate and the optimization target without a code change.
-- **(c) REST backoff jitter.** The `429` backoff is plain exponential and **un-jittered**
-  (`1→2→4→8`, thundering-herd risk if many surfaces rate-limit at once) — add jitter
-  (`delay*2 + random.uniform(0, delay)`). *(Network-error handling is now resolved: C1 catches
+- **(c) REST backoff jitter — DONE (Phase D, D4).** The `429` backoff is now jittered:
+  `time.sleep(delay + random.uniform(0, delay)); delay *= 2` (`blotato_rest.py`), so retries no
+  longer fire in lockstep across surfaces. Still bounded by `_MAX_RETRIES` (exhaustion → `failed`,
+  re-queueable since a 429 is rejected pre-processing). *(Network-error handling was already resolved: C1 catches
   `requests.exceptions.RequestException` in `BlotatoRestPoster.publish` and parks the post in
   `needs_reconcile` rather than letting it escape to `publish_due`. Network errors are **not**
   retried in-ladder on purpose — a timeout after the body was sent is ambiguous, so retrying
