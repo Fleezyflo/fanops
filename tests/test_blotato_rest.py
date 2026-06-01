@@ -101,6 +101,23 @@ def test_network_timeout_marks_needs_reconcile_no_repost(tmp_path, monkeypatch, 
     assert pm.call_count == 1, "a single ambiguous network failure must not fan into retries"
     assert "conn reset" in (led.posts["pt"].error_reason or "")
 
+
+def test_5xx_with_submission_id_in_body_captures_it_for_reconcile(tmp_path, monkeypatch, mocker):
+    # AUDIT H4: if an ambiguous 5xx body still carries a postSubmissionId, CAPTURE it on the post
+    # so the reconcile step (GET /v2/posts/:id) can later resolve this post automatically. Without
+    # the id, reconcile can't poll it and a human must — so grabbing it when present is what makes
+    # auto-reconcile possible for this post. Still parks as needs_reconcile (no re-POST).
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p5b", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued))
+    pm = mocker.patch("fanops.post.blotato_rest.requests.post",
+                      return_value=_R(503, {"postSubmissionId": "sub_amb", "error": "upstream"}))
+    led = BlotatoRestPoster(cfg).publish(led, "p5b")
+    assert led.posts["p5b"].state is PostState.needs_reconcile
+    assert led.posts["p5b"].submission_id == "sub_amb"     # captured -> reconcile can poll it
+    assert pm.call_count == 1
+
 def test_retry_exhaustion_marks_failed(tmp_path, monkeypatch, mocker):
     # All attempts 429 -> failed (not raise, not hang). Proves _MAX_RETRIES bounds the loop.
     monkeypatch.setenv("BLOTATO_API_KEY", "k")

@@ -99,6 +99,7 @@ fanops advance                       # run the DAG; pauses at the moment + capti
 fanops respond                       # (LLM responder) drain all pending gates
 fanops advance                       # resume: render clips, crosspost, publish DUE posts
 # … on a cadence (e.g. nightly):
+fanops reconcile                     # resolve stranded submitting/needs_reconcile posts (GET /v2/posts/:id)
 fanops track  --window 30d           # pull real metrics back onto published posts
 fanops adjust                        # amplify winners (more moments like them), retire losers
 # … weekly:
@@ -129,6 +130,7 @@ halts the loop instead of burning the queue.
 | `fanops pull <url>` | yt-dlp a URL into the inbox, then ingest |
 | `fanops advance [--base-time T]` | run the DAG to the next gate / completion |
 | `fanops respond` | responder drains pending agent gates (manual = no-op) |
+| `fanops reconcile` | resolve stranded `submitting`/`needs_reconcile` posts via `GET /v2/posts/:id` (needs a key; id-less posts stay parked for human reconcile) |
 | `fanops track [--window 30d]` | pull metrics; mark posts analyzed with a whitelisted lift score |
 | `fanops adjust [--winner-pct 0.3] [--retire-pct 0.2] [--lift-floor 20.0]` | amplify winners / retire losers |
 | `fanops gc [--keep-days 30]` | delete local clip files of retired/analyzed clips older than N days |

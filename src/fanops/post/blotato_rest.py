@@ -39,8 +39,18 @@ class BlotatoRestPoster:
             raise BlotatoAuthError("BLOTATO_API_KEY missing — cannot use REST backend.")
         self.headers = {"blotato-api-key": key, "Content-Type": "application/json"}
 
-    def _reconcile(self, post, detail: str) -> None:
+    def _reconcile(self, post, detail: str, resp=None) -> None:
         # Ambiguous failure after the body was sent — park for human/poll reconcile, never re-POST.
+        # AUDIT H4: if the (5xx) body still carries a postSubmissionId, CAPTURE it so the reconcile
+        # step can later poll GET /v2/posts/:id and resolve this post automatically. Without an id
+        # the API can't look the post up at all (no content search) -> human reconcile only.
+        if resp is not None and not post.submission_id:
+            try:
+                sid = (resp.json() or {}).get("postSubmissionId")
+            except Exception:
+                sid = None
+            if sid:
+                post.submission_id = sid
         post.state = PostState.needs_reconcile
         post.error_reason = f"ambiguous publish, may be live (reconcile via GET /v2/posts/:id): {detail}"
 
@@ -80,8 +90,9 @@ class BlotatoRestPoster:
                 raise BlotatoAuthError(f"Blotato 401 unauthorized — check BLOTATO_API_KEY ({resp.text[:120]})")
             if 500 <= resp.status_code < 600:
                 # Ambiguous: Blotato may have created the post before the 5xx. No idempotency key
-                # exists, so DO NOT re-POST (double-publish risk) — park for reconcile.
-                self._reconcile(post, f"blotato {resp.status_code}: {resp.text[:160]}")
+                # exists, so DO NOT re-POST (double-publish risk) — park for reconcile, capturing a
+                # postSubmissionId from the body if present (AUDIT H4) so reconcile can poll it.
+                self._reconcile(post, f"blotato {resp.status_code}: {resp.text[:160]}", resp=resp)
                 return led
             if resp.status_code == 429:
                 time.sleep(delay); delay *= 2; continue        # safe to retry (rejected pre-processing)

@@ -76,6 +76,50 @@ def test_main_has_track_adjust_gc(tmp_path, monkeypatch):
     assert main(["adjust"]) == 0
     assert main(["gc"]) == 0
 
+
+def test_reconcile_command_skips_without_key(tmp_path, monkeypatch, capsys):
+    # AUDIT H4: `fanops reconcile` needs a key (no live status source in dryrun) — skip cleanly,
+    # like track, rather than crash.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
+    led.save()
+    rc = main(["reconcile"])
+    assert rc == 0 and "reconcile skipped" in capsys.readouterr().out
+
+
+def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, mocker):
+    # End-to-end through the CLI with a stubbed status client: a needs_reconcile post with an id
+    # is promoted to published.
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
+    led.save()
+    import fanops.cli as cli
+    mocker.patch.object(cli, "reconcile_posts",
+                        side_effect=lambda led_, cfg_: _promote(led_))
+    rc = main(["reconcile"])
+    assert rc == 0
+    again = Ledger.load(cfg)
+    assert again.posts["p"].state is PostState.published
+
+
+def _promote(led):
+    from fanops.models import PostState
+    for p in led.posts.values():
+        if p.state is PostState.needs_reconcile:
+            p.state = PostState.published
+    return led
+
 def test_run_halts_cleanly_on_advance_error(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli

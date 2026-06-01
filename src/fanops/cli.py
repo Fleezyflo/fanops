@@ -15,6 +15,7 @@ from fanops.digest import write_digest
 from fanops.agentstep import pending
 from fanops.responder import get_responder
 from fanops.track import pull_metrics
+from fanops.reconcile import reconcile_posts
 from fanops.adjust import classify_outcomes, amplify, retire
 
 def cmd_status(cfg: Config) -> int:
@@ -38,6 +39,19 @@ def cmd_track(cfg: Config, window: str) -> int:
         print(f"track skipped: {e}"); return 0
     led.save(); write_digest(led, cfg)
     print(f"tracked; analyzed={len(led.posts_in_state(PostState.analyzed))}")
+    return 0
+
+def cmd_reconcile(cfg: Config) -> int:
+    # AUDIT H4: resolve posts stranded in submitting/needs_reconcile by polling GET /v2/posts/:id.
+    # Needs a key (dryrun has no live status source) — skip cleanly if absent, like track.
+    led = Ledger.load(cfg)
+    try:
+        led = reconcile_posts(led, cfg)               # binds to BlotatoStatusClient
+    except RuntimeError as e:
+        print(f"reconcile skipped: {e}"); return 0
+    led.save(); write_digest(led, cfg)
+    print(f"reconciled; needs_reconcile={len(led.posts_in_state(PostState.needs_reconcile))} "
+          f"published={len(led.posts_in_state(PostState.published))}")
     return 0
 
 def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: float) -> int:
@@ -71,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fanops")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status"); sub.add_parser("ingest"); sub.add_parser("digest"); sub.add_parser("respond")
+    sub.add_parser("reconcile")
     p_adv = sub.add_parser("advance"); p_adv.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     p_pull = sub.add_parser("pull"); p_pull.add_argument("url")
     p_trk = sub.add_parser("track"); p_trk.add_argument("--window", default="30d")
@@ -132,6 +147,7 @@ def _dispatch(cfg: Config, args) -> int:
         if (rc := _check_accounts(cfg)):  return rc
         print(advance(cfg, base_time=args.base_time)); return 0
     if args.cmd == "track":    return cmd_track(cfg, args.window)
+    if args.cmd == "reconcile": return cmd_reconcile(cfg)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
     if args.cmd == "run":

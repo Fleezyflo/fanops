@@ -25,3 +25,22 @@ class BlotatoMetricsClient:
         if isinstance(data, list):
             return data
         return data.get("items", [])
+
+
+class BlotatoStatusClient:
+    """Single-post status lookup for the reconcile stage (AUDIT H4): GET /v2/posts/{id} ->
+    {status: in-progress|failed|published|scheduled, publicUrl, errorMessage}. Verified against
+    help.blotato.com. Rate-limited by Blotato to 60 req/min, so reconcile polls only stranded
+    posts that HAVE a submission id, not the whole ledger."""
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+        key = cfg.blotato_api_key
+        if not key:
+            raise RuntimeError("BLOTATO_API_KEY missing — cannot reconcile posts.")
+        self.headers = {"blotato-api-key": key}
+
+    def get_status(self, submission_id: str) -> dict:
+        resp = requests.get(f"{BASE_URL}/posts/{submission_id}", headers=self.headers, timeout=30)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"blotato status {resp.status_code}: {resp.text[:200]}")
+        return resp.json()

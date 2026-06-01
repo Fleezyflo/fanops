@@ -15,6 +15,7 @@ from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
 from fanops.crosspost import crosspost_clips
 from fanops.post.run import publish_due
+from fanops.reconcile import reconcile_posts
 from fanops.digest import write_digest
 from fanops.log import get_logger
 from fanops.agentstep import pending
@@ -75,6 +76,18 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                 led.clips[c.id].error_reason = f"{type(e).__name__}: {e}"
                 log("caption", c.id, "error", err=str(e)[:120])
     led = crosspost_clips(led, cfg, accts, base_time=base_time)
+    # Reconcile last pass's stranded posts BEFORE publishing this pass (AUDIT H4): resolve any
+    # submitting/needs_reconcile post that has a submission_id via GET /v2/posts/:id. Only when a
+    # live backend + key exist and there is actually something to reconcile (dryrun never produces
+    # these states, and constructing the status client without a key would raise).
+    reconcilable = (led.posts_in_state(PostState.submitting)
+                    + led.posts_in_state(PostState.submitted)
+                    + led.posts_in_state(PostState.needs_reconcile))
+    if reconcilable and cfg.poster_backend != "dryrun" and cfg.blotato_api_key:
+        try:
+            led = reconcile_posts(led, cfg)
+        except Exception as e:                       # status API hiccup must not wedge the pass
+            log("reconcile", "-", "error", err=str(e)[:120])
     led = publish_due(led, cfg, now=None)   # publish cutoff = real now (base_time is the SCHEDULE anchor for crosspost; publishing uses actual now)
 
     led.save()

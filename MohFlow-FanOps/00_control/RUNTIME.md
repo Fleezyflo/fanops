@@ -301,13 +301,18 @@ deferred from the original plan, and surfaced during the build.
 
 **Surfaced during the build**
 
-- **(a) Reconcile step (`submitting` + `needs_reconcile`).** Two states now await this
-  step, both "the post may be live; do not blindly re-POST": a post stranded in `submitting`
-  by a mid-publish crash, and a post parked in `needs_reconcile` by an ambiguous REST failure
-  (5xx / network timeout after the body was sent — see C1). A reconcile step should **poll
-  whether the submit actually landed** via `GET /v2/posts/:id` and either promote it
-  `→ published` or reset it `→ queued`/`failed`. (`publish_due` iterates only `queued`, so
-  neither is re-driven automatically; both are surfaced in the digest for now.)
+- **(a) Reconcile step (`submitting` + `needs_reconcile`) — DONE (audit H4).** `fanops
+  reconcile` (and an automatic pass inside `advance`/`run` before publishing) polls
+  `GET /v2/posts/{postSubmissionId}` for any stranded post that **has a submission id** and
+  resolves it: `published → published` (+ public_url), `failed → failed` (safe to re-queue),
+  `in-progress`/`scheduled → left parked`. **Honest limit:** that endpoint is the only post
+  lookup Blotato offers and it **requires the submission id** (no content/account search). A
+  post stranded **without** an id (a pure network timeout, or a crash before the poster
+  returned one) cannot be looked up programmatically, so it stays parked for **human**
+  reconcile (the digest's "Needs reconcile" section). To shrink that residue, the REST poster
+  now captures a `postSubmissionId` from an ambiguous-5xx body when one is present, making
+  those posts auto-reconcilable. We never guess a post's fate — a wrong guess would drop a live
+  post or double-publish one.
 - **(b) Externalize the tunable lists to config / `context.md`.** The brand-risk
   anti-pattern lists (`caption._OFFBRAND_EN` / `_OFFBRAND_AR`) and the lift weights
   (`track._W`) are hardcoded. Moving them to config/`context.md` lets the operator tune
