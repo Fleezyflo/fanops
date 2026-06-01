@@ -128,3 +128,14 @@ def test_caption_in_wrong_language_is_held(tmp_path):
     led = ingest_captions(led, cfg, "c1")
     assert led.clips["c1"].state is ClipState.held
     assert "language" in (led.clips["c1"].held_reason or "").lower()
+
+def test_caption_with_unknown_surface_key_is_held_with_specific_reason(tmp_path):
+    cfg, led = _seed_clip_awaiting_captions(tmp_path, src_lang="en")
+    rid = latest_request_id(cfg, "captions", "c1")
+    # typo: '@accounts/instagram' instead of the requested '@a/instagram'
+    response_path(cfg, "captions", "c1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@accounts/instagram", caption="hi", language="en")]).model_dump_json())
+    led = ingest_captions(led, cfg, "c1")
+    assert led.clips["c1"].state is ClipState.held
+    reason = (led.clips["c1"].held_reason or "")
+    assert "@accounts/instagram" in reason     # names the BAD surface, not a generic "missing"

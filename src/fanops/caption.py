@@ -57,6 +57,15 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     req = json.loads(request_path(cfg, "captions", clip_id).read_text())
     requested = {s["surface"] for s in req.get("surfaces", [])}
     answered = {item.surface for item in cs.items}
+    # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
+    # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
+    # logic so a typo'd-but-present caption is not mislabelled "missing".
+    unknown = [item.surface for item in cs.items if item.surface not in requested]
+    if unknown:
+        clip.held = True
+        clip.held_reason = f"caption(s) for unknown surface(s): {', '.join(unknown)}"
+        led.set_clip_state(clip_id, ClipState.held)
+        return led
     held_reason = None
     for item in cs.items:
         # AUDIT H5: a caption declared in a language other than the source's is held for a human
