@@ -37,6 +37,22 @@ def test_mcp_auth_failure_raises_blotato_auth_error(tmp_path):
     with pytest.raises(BlotatoAuthError):
         BlotatoMcpPoster(cfg, tool_caller=caller).publish(led, "p4")
 
+def test_mcp_typed_auth_error_propagates_even_with_nonmatching_message(tmp_path):
+    # ADVERSARIAL (D3 re-confirm): the substring set (401/403/unauthorized/forbidden/invalid token/
+    # api key) cannot anticipate every auth phrasing. A caller that already raises the TYPED
+    # BlotatoAuthError is the authoritative signal — it MUST propagate so run.py halts by type
+    # (F52/H8), even when its MESSAGE matches no substring. Before the fix, the broad `except
+    # Exception` swallowed it and re-parked as needs_reconcile (burn-the-queue regression). The
+    # production MCP wiring is documented to raise BlotatoAuthError on auth failures, so this is the
+    # realistic path, not a corner case. Note "credentials rejected" contains NONE of the substrings.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p7", parent_id="c", account="@a", account_id="1",
+                      platform=Platform.twitter, caption="x", state=PostState.queued))
+    def caller(n, a):
+        raise BlotatoAuthError("credentials rejected")   # typed, but message matches no substring
+    with pytest.raises(BlotatoAuthError):
+        BlotatoMcpPoster(cfg, tool_caller=caller).publish(led, "p7")
+
 def test_mcp_non_auth_failure_marks_post_needs_reconcile_not_raise(tmp_path):
     # PRIME DIRECTIVE: a NON-auth MCP error is AMBIGUOUS (the tool MAY have posted, like a REST 5xx)
     # -> PARK the post as needs_reconcile and RETURN (do NOT raise, do NOT mark failed). Raising

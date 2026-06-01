@@ -27,10 +27,21 @@ class BlotatoMcpPoster:
             extra=default_target_fields(post.platform.value) or None)
         try:
             result = self._call("blotato_create_post", args) or {}
+        except BlotatoAuthError:
+            # AUDIT B3 (adversarial re-confirm): a caller that ALREADY raised the typed
+            # BlotatoAuthError is the authoritative auth signal — re-raise it UNCHANGED so run.py
+            # halts by TYPE (F52/H8), regardless of its message. The broad `except Exception` below
+            # would otherwise SWALLOW this subclass and re-park it as needs_reconcile, silently
+            # defeating the halt-the-queue guarantee for any auth message the substring net misses
+            # (e.g. "credentials rejected", or "BLOTATO_API_KEY missing" — note 'api key' never
+            # matches the underscore form). The production MCP wiring is documented to raise this.
+            raise
         except Exception as exc:
             msg = str(exc).lower()
-            # AUDIT B3: an AUTH failure must halt loudly via the typed error (run.py halts by type,
-            # not by a fragile substring) — a bad key must never silently burn posts.
+            # AUDIT B3: an UNTYPED auth failure (a raw transport error) is best-effort matched by
+            # substring and mapped to the typed error so run.py halts by type — a bad key must never
+            # silently burn posts. A caller SHOULD raise BlotatoAuthError directly (handled above);
+            # this substring net is the fallback for transports that don't type their auth error.
             if ("401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg
                     or "invalid token" in msg or "api key" in msg):
                 raise BlotatoAuthError(f"Blotato MCP auth failure: {str(exc)[:200]}") from exc
