@@ -46,8 +46,8 @@ class LlmResponder:
                     out = self._model(kind, payload)
                     rid = latest_request_id(cfg, kind, key)
                     out = {**out, "request_id": rid}
-                    if kind == "moments":           # MomentDecision requires source_id (pre-flight gap)
-                        out.setdefault("source_id", payload.get("source_id"))
+                    if kind == "moments":           # MomentDecision requires source_id; the GATE is
+                        out["source_id"] = payload.get("source_id")   # authoritative (review Issue A) — gate wins, not the model
                     obj = model_cls(**out)          # decision (a): validate; ValidationError -> pending + log
                     response_path(cfg, kind, key).write_text(obj.model_dump_json(indent=2))
                     answered += 1

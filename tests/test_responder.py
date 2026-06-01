@@ -44,9 +44,6 @@ def test_llm_responder_invalid_output_leaves_gate_pending_not_raise(tmp_path, mo
     assert not response_path(cfg, "moments", "src_1").exists()   # gate stays pending
 
 
-import json as _json
-import pytest as _pytest
-
 def _seed_moment_request(cfg, key="s1"):
     from fanops.agentstep import write_request
     write_request(cfg, kind="moments", key=key,
@@ -67,7 +64,7 @@ def test_get_responder_llm_is_usable_without_explicit_model(tmp_path, monkeypatc
     n = r.answer_pending(cfg)
     assert n == 1
     from fanops.agentstep import response_path
-    written = _json.loads(response_path(cfg, "moments", "s1").read_text())
+    written = json.loads(response_path(cfg, "moments", "s1").read_text())
     assert written["picks"][0]["start"] == 1.0
     assert "request_id" in written
     assert written["source_id"] == "s1"            # source_id injected for the moments kind
@@ -105,3 +102,24 @@ def test_responder_toolchain_missing_is_quarantined_not_crash(tmp_path, monkeypa
     n = r.answer_pending(cfg)                       # must NOT raise
     assert n == 0
     assert not response_path(cfg, "moments", "s1").exists()
+
+def test_responder_forces_gate_source_id_over_model_value(tmp_path, monkeypatch):
+    # Issue A: the GATE is authoritative for source_id. The claude -p schema marks source_id required,
+    # so the model returns one; a hallucinated/mismatched model source_id must NOT win — the gate's
+    # source_id (the real lineage parent) must be what lands on disk.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    import json as J
+    write_request(cfg, kind="moments", key="real_src",
+                  payload={"source_id": "real_src", "duration": 10.0, "transcript": [],
+                           "signal_peaks": [], "language": "en", "guidance": ""})
+    # model HALLUCINATES a different source_id
+    r = LlmResponder(cfg, model=lambda kind, payload: {
+        "source_id": "HALLUCINATED_WRONG",
+        "picks": [{"start": 1.0, "end": 4.0, "reason": "r"}]})
+    n = r.answer_pending(cfg)
+    assert n == 1
+    written = J.loads(response_path(cfg, "moments", "real_src").read_text())
+    assert written["source_id"] == "real_src"   # the GATE wins, not the model's hallucination
