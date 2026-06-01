@@ -58,10 +58,13 @@ Who writes the response files is the responder (`FANOPS_RESPONDER`):
 
 - **Manual responder** (default) — a human (or an external cron) writes the response files.
   Use `fanops respond` as a no-op placeholder, or hand-edit / script the JSON.
-- **LLM responder** (`FANOPS_RESPONDER=llm`) — wraps an LLM call with a committed prompt
-  template, validates the model's output against `MomentDecision` / `CaptionSet`, and writes
-  the response. The model callable is injected (see `RUNTIME.md` → *wiring the LLM
-  responder*); in tests it needs no network.
+- **LLM responder** (`FANOPS_RESPONDER=llm`) — answers the gates autonomously by calling the
+  Claude Code CLI in headless mode (`claude -p`, via `src/fanops/llm.py`) with a committed
+  prompt template (`src/fanops/prompts.py`) and the gate's exact JSON schema, validates the
+  model's output against `MomentDecision` / `CaptionSet`, and writes the response. Requires the
+  `claude` binary on `PATH` (authenticated); each gate is quarantined so one bad/failed request
+  logs and stays pending without halting the rest. The model callable is injectable for tests
+  (no network/subprocess). See `RUNTIME.md` → *the autonomous LLM responder*.
 
 Either way the gate is the same files on disk, so you can mix and match (LLM for captions, a
 human spot-check for moments) without changing the pipeline.
@@ -71,7 +74,10 @@ human spot-check for moments) without changing the pipeline.
 ## Install
 
 Requires **Python 3.12** (`>=3.12,<3.14`), **ffmpeg ≥ 6**, the **Whisper** CLI, and
-**yt-dlp** (URL ingest, pulled in as a dependency).
+**yt-dlp** (URL ingest, pulled in as a dependency). For the **autonomous LLM responder**
+(`FANOPS_RESPONDER=llm`) you also need the **`claude`** CLI (Claude Code) on `PATH` and
+authenticated — it is invoked headlessly (`claude -p`) and reuses your existing Claude Code
+auth (no separate API key). Not needed for the default `manual` responder.
 
 ```bash
 python3.12 -m venv .venv

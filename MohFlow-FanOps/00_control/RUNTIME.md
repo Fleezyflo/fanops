@@ -48,8 +48,8 @@ This is the default, human-in-the-loop cadence (`FANOPS_RESPONDER=manual`).
    is a `CaptionSet`. (Each request carries a `request_id` you echo back so the response
    correlates — see `agentstep.py`.) The creative instructions you are answering *to*
    live in `context.md` and are injected into each request as `guidance`.
-   - Or, with the LLM responder wired and `FANOPS_RESPONDER=llm`, run **`fanops respond`**
-     to answer them automatically.
+   - Or, with `FANOPS_RESPONDER=llm` and `claude` on `PATH` (authenticated), run
+     **`fanops respond`** to answer them automatically (the autonomous LLM responder).
 3. **`fanops advance`** again — ingests the moment decisions, renders the per-aspect
    clips, and opens the **caption** requests. Answer those the same way (or `respond`),
    then `advance` once more to crosspost and publish what is due.
@@ -74,8 +74,9 @@ fanops run [--base-time T]
 `run` drives the gates with the configured responder and advances until the pipeline is
 **stable** (no pending moments **and** no pending captions), up to **10 iterations**. It
 only makes progress if the responder actually answers gates — so for unattended
-operation set `FANOPS_RESPONDER=llm` and wire the responder (below); with the default
-`manual` responder there is nothing to drain and it will stop after one pass.
+operation set `FANOPS_RESPONDER=llm` with `claude` on `PATH` and authenticated (the
+autonomous LLM responder — see below); with the default `manual` responder there is
+nothing to drain and it will stop after one pass.
 
 **Graceful degradation on a fatal auth error.** If a fatal Blotato auth error escapes
 the publish step (bad or missing `BLOTATO_API_KEY`, or a `401`), `run` does **not** crash
@@ -178,40 +179,62 @@ analyzed posts and acts on the tails (`src/fanops/adjust.py`):
 
 ---
 
-## Wiring the LLM responder (F02 / F13)
+## The autonomous LLM responder (F02 / F13; audit B1 / H2 / N1)
 
-The system can answer its own gates with a model. Set `FANOPS_RESPONDER=llm`. The
-responder (`src/fanops/responder.py::LlmResponder`) reads each pending request, calls a
-model, validates the model's output against the schema, and writes the response file.
+The system answers its own gates autonomously with a model — no human in the loop. Set
+`FANOPS_RESPONDER=llm`. The responder (`src/fanops/responder.py::LlmResponder`) reads each
+pending request, calls the model, validates the output against the gate's schema, and writes
+the response file. **`get_responder(cfg)` returns a working responder out of the box** — the
+default model is the Claude Code CLI (`claude -p`); there is no stub to fill.
 
-Two ways to supply the model:
+**Transport — `claude -p`, not the Anthropic SDK.** The default model
+(`_default_claude_model`) shells the Claude Code CLI in headless print mode via
+`src/fanops/llm.py::claude_json`:
+`claude --bare -p "<prompt>" --output-format json --json-schema '<schema>' --allowedTools ""`.
+Chosen over the SDK because it **reuses the operator's existing Claude Code auth (no app-level
+API key)** and fits the codebase's shell-a-binary idiom (like ffmpeg/whisper) — `claude` is
+just one more absence-guarded binary. `--bare` is cron-safe (no MCP/hooks/keychain);
+`--allowedTools ""` makes it a pure generator (no tool use / file access). The prompt is built
+from a **committed template** (`src/fanops/prompts.py::moment_prompt` / `caption_prompt`) and
+paired with the gate's exact pydantic JSON schema, so most "LLM returned malformed JSON" risk
+collapses into `structured_output`.
 
-1. **Implement `LlmResponder._default_model(self, kind, payload) -> dict`** to call the
-   Anthropic SDK with a **committed prompt template** built from the request `payload`.
-   It currently raises `RuntimeError("LlmResponder needs a model callable wired ...")` —
-   that is the seam to fill.
-2. **Inject a model callable** instead: `LlmResponder(cfg, model=my_callable)`, where
-   `my_callable(kind, payload) -> dict`. (Tests use this to avoid the network.)
+**Requirement:** the `claude` binary must be **on `PATH` and authenticated**. If `claude` is
+absent, `claude_json` raises `ToolchainMissingError`; if it is present but unauthenticated
+(`claude -p` → "Not logged in"), the call returns a non-zero exit → `RuntimeError`. Either way
+the failure is **quarantined per request** (see below), not a crash.
 
-Either way the returned dict must **validate against the schema** for the gate kind, or
-the responder raises:
+**Per-request quarantine (audit H2 / N1).** `answer_pending` isolates each gate: one bad
+request logs and leaves *that* gate pending, and never halts the others (mirrors `advance()`'s
+per-unit quarantine). A **present-but-schema-invalid** response (`ValidationError`) is logged
+with outcome `invalid` and the gate stays pending — distinct from a transient/CLI **`error`**
+(audit N1: a malformed answer must not look identical to an absent one). Validation happens
+*before* the write, so a rejected response leaves **no** `*.response.json` on disk (never a
+half-write). A persistently-failing gate is retried up to the `run` loop's bounded passes
+(`for _ in range(10)`), then `run` exits cleanly with the gate still awaiting.
 
-- **`kind == "moments"`** → must validate as **`MomentDecision`**. Request `payload`
-  fields available to your prompt: `source_id`, `duration`, `transcript`,
-  `signal_peaks`, `language`, `guidance`. Return `{"source_id": <copy from the request
-  payload's `source_id`>, "picks": [{start, end, reason, transcript_excerpt,
-  signal_score}, ...]}`. The responder stamps `request_id` automatically. **Both
-  `source_id` and `request_id` are required by `MomentDecision`** (neither has a default),
-  so a response that omits `source_id` fails validation and is silently treated as "no
-  response yet" — the responder injects *only* `request_id`, not `source_id`.
+**Schemas / payloads** (the model returns a dict that must validate against the gate kind):
+
+- **`kind == "moments"`** → must validate as **`MomentDecision`**. Request `payload` fields the
+  prompt sees: `source_id`, `duration`, `transcript`, `signal_peaks`, `language`, `guidance`.
+  The schema asks for `{"picks": [{start, end, reason, transcript_excerpt, signal_score}, ...]}`.
+  The responder stamps **both** `request_id` (from the live request) and `source_id` (forced
+  from the **gate** payload — the gate is authoritative, so a model-hallucinated `source_id`
+  cannot win), since both are required by `MomentDecision`.
 - **`kind == "captions"`** → must validate as **`CaptionSet`**. Request `payload` fields:
-  `clip_id`, `surfaces` (list of `{surface, platform}`), `transcript_excerpt`,
-  `language`, `guidance`. Return `{"items": [{surface, caption, hashtags}, ...]}` answering
-  **every** requested surface. The responder stamps `request_id` automatically
-  (`CaptionSet` needs only `request_id` + `items`).
+  `clip_id`, `surfaces` (list of `{surface, platform}`), `transcript_excerpt`, `language`,
+  `guidance`. The schema asks for `{"items": [{surface, caption, hashtags, language}, ...]}`
+  answering **every** requested surface with the surface key verbatim. The responder stamps
+  `request_id` automatically (`CaptionSet` needs only `request_id` + `items`).
 
-The `guidance` in both payloads is the verbatim text of `context.md` — your prompt
-template should pass it through so the model follows the creative brief.
+The `guidance` in both payloads is the verbatim text of `context.md` — the committed prompt
+templates pass it through so the model follows the creative brief. Semi-trusted transcript text
+is JSON-quoted inside the prompts (injection isolation), so a crafted transcript line cannot
+forge instructions.
+
+**To use a different model** (e.g. for tests or an alternate backend): inject a callable —
+`LlmResponder(cfg, model=my_callable)`, where `my_callable(kind, payload) -> dict`. The default
+`claude -p` path is used only when no model is injected.
 
 ---
 
