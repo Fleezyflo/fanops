@@ -139,3 +139,32 @@ def test_caption_with_unknown_surface_key_is_held_with_specific_reason(tmp_path)
     assert led.clips["c1"].state is ClipState.held
     reason = (led.clips["c1"].held_reason or "")
     assert "@accounts/instagram" in reason     # names the BAD surface, not a generic "missing"
+
+# --- C2 hardening (Phase C adversarial finding): the language match must normalize IETF tags ---
+# A skeptic proved the naive exact-string `!=` HELD legitimate same-language captions whose tag
+# carried a region subtag or different casing (en-US / EN / "en " vs en). That is a harmful
+# false-positive: it blocks correct work and, for an autonomous run, silently wedges the clip.
+import pytest
+
+@pytest.mark.parametrize("item_lang", ["en-US", "EN", "en-GB", "en ", " en", "En"])
+def test_caption_same_base_language_with_region_or_case_is_not_held(tmp_path, item_lang):
+    # en-US / EN / en-GB / "en " are all ENGLISH — they must NOT be held against an `en` source.
+    cfg, led = _seed_clip_awaiting_captions(tmp_path, src_lang="en")
+    rid = latest_request_id(cfg, "captions", "c1")
+    response_path(cfg, "captions", "c1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="no warning. just impact.",
+                    language=item_lang)]).model_dump_json())
+    led = ingest_captions(led, cfg, "c1")
+    assert led.clips["c1"].state is ClipState.captioned   # not a false-positive hold
+    assert led.clips["c1"].held is False
+
+def test_caption_genuine_mismatch_still_held_after_normalization(tmp_path):
+    # Normalization must NOT weaken the real control: fr vs en still holds (regression guard).
+    cfg, led = _seed_clip_awaiting_captions(tmp_path, src_lang="en")
+    rid = latest_request_id(cfg, "captions", "c1")
+    response_path(cfg, "captions", "c1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="bonjour le monde",
+                    language="fr-FR")]).model_dump_json())   # region tag on a TRUE mismatch
+    led = ingest_captions(led, cfg, "c1")
+    assert led.clips["c1"].state is ClipState.held
+    assert "language" in (led.clips["c1"].held_reason or "").lower()
