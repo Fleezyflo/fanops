@@ -43,6 +43,6 @@ def caption_prompt(payload: dict) -> str:
         f"  - Surfaces to caption (use these exact keys): {json.dumps(keys, ensure_ascii=False)}\n"
         "  - Keep it on-brand and platform-appropriate; no slurs, no off-brand claims.\n\n"
         f"BRAND GUIDANCE:\n{payload.get('guidance', '')}\n\n"
-        f"CLIP TRANSCRIPT EXCERPT: {payload.get('transcript_excerpt', '')}\n"
+        f"CLIP TRANSCRIPT EXCERPT: {json.dumps(payload.get('transcript_excerpt', ''), ensure_ascii=False)}\n"
         f"SURFACES (JSON):\n{json.dumps(surfaces, ensure_ascii=False)}\n"
     )
