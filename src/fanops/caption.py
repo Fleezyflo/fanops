@@ -70,7 +70,6 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     # what surfaces did we ask for? (the request is the source of truth for completeness)
     req = json.loads(request_path(cfg, "captions", clip_id).read_text())
     requested = {s["surface"] for s in req.get("surfaces", [])}
-    answered = {item.surface for item in cs.items}
     # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
     # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
     # logic so a typo'd-but-present caption is not mislabelled "missing".
@@ -103,6 +102,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         if reason and held_reason is None:
             held_reason = reason
         clip.meta_captions[item.surface] = {"caption": item.caption, "hashtags": item.hashtags}
+    answered = {item.surface for item in cs.items}
     missing = requested - answered
     if missing and held_reason is None:
         held_reason = f"missing caption for surfaces: {sorted(missing)}"

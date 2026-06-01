@@ -4,6 +4,7 @@ RECONCILES them into content-addressed Moment units (upsert + cascade-delete of 
 moments' lineage), so amplify actually changes the set instead of silently no-opping (the
 v1 bug). No tiers, no quotas — the agent returns as many valid picks as are worth posting."""
 from __future__ import annotations
+import math
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState
@@ -18,7 +19,6 @@ def _token(pick: MomentPick) -> str:
 
 def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
     """Return a reason string if the pick is invalid, else None."""
-    import math
     if not (math.isfinite(pick.start) and math.isfinite(pick.end)):
         return f"non-finite timestamp ({pick.start}->{pick.end})"   # AUDIT H4
     if pick.end <= pick.start:

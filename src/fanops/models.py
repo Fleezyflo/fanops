@@ -3,6 +3,7 @@
 Separate state enums per unit (no shared linear enum). failed (Post) is distinct from
 analyzed. Every unit has an `error` state for per-unit quarantine."""
 from __future__ import annotations
+import math
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
@@ -127,7 +128,6 @@ class MomentPick(BaseModel):
     @field_validator("start", "end")
     @classmethod
     def _finite(cls, v: float) -> float:
-        import math
         if not math.isfinite(v):
             raise ValueError("timestamp must be a finite number (no NaN/Infinity)")
         return v
