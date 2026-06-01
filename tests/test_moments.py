@@ -115,3 +115,10 @@ def test_validate_pick_min_length_and_eof_tolerance():
     assert validate_pick(MomentPick(start=10.0, end=20.6, reason="r"), duration=20.0) is not None     # dur+0.6 invalid
     # duration==0 disables the EOF ceiling (unprobed source): a large end is NOT rejected on EOF grounds
     assert validate_pick(MomentPick(start=10.0, end=999.0, reason="r"), duration=0.0) is None
+
+def test_validate_pick_rejects_nan_defense_in_depth():
+    # Even if a NaN reaches validate_pick by some other path, it is rejected (not None/valid).
+    import math
+    # Build via model_construct to bypass the field validator, proving validate_pick guards too.
+    p = MomentPick.model_construct(start=math.nan, end=math.nan, reason="r")
+    assert validate_pick(p, duration=120.0) is not None

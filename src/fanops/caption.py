@@ -29,6 +29,20 @@ def _guidance(cfg: Config) -> str:
 def _surface_str(account: str, platform: Platform) -> str:
     return f"{account}/{platform.value}"                  # the documented lookup contract
 
+def _lang_base(tag: str | None) -> str | None:
+    """Normalise an IETF-ish language tag to its base subtag for comparison (AUDIT H5 hardening).
+    A Phase-C skeptic proved the naive exact-string compare HELD legitimate same-language captions
+    whose tag carried a region subtag or different casing — `en-US`, `EN`, `en-GB`, `"en "` were all
+    wrongly held against an `en` source (a harmful false-positive that, for an autonomous run,
+    silently wedges the clip). Real LLM/Whisper language tags routinely use those variants. We
+    therefore compare BASE language only: lowercase, strip surrounding whitespace, and take the
+    primary subtag before the first '-' or '_'. None/empty stays None (callers treat unknown as
+    'not a declared mismatch' — see ingest_captions)."""
+    if not tag:
+        return None
+    base = tag.strip().lower().replace("_", "-").split("-", 1)[0]
+    return base or None
+
 def request_captions(led: Ledger, cfg: Config, clip_id: str,
                      surfaces: list[tuple[str, Platform]]) -> Ledger:
     clip = led.clips[clip_id]
@@ -51,16 +65,44 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     if cs is None:
         return led                                       # pending or stale
     clip = led.clips[clip_id]
+    # the clip's source language is the contract the caption must match (AUDIT H5).
+    src = led.sources.get(led.moments[clip.parent_id].parent_id)
     # what surfaces did we ask for? (the request is the source of truth for completeness)
     req = json.loads(request_path(cfg, "captions", clip_id).read_text())
     requested = {s["surface"] for s in req.get("surfaces", [])}
-    answered = {item.surface for item in cs.items}
+    # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
+    # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
+    # logic so a typo'd-but-present caption is not mislabelled "missing".
+    unknown = [item.surface for item in cs.items if item.surface not in requested]
+    if unknown:
+        clip.held = True
+        clip.held_reason = f"caption(s) for unknown surface(s): {', '.join(unknown)}"
+        led.set_clip_state(clip_id, ClipState.held)
+        return led
     held_reason = None
     for item in cs.items:
+        # AUDIT H5: a caption declared in a language other than the source's is held for a human
+        # (conservative — hold the WHOLE clip on first mismatch). Compare on the BASE language
+        # subtag (en-US == EN == en) so a region/casing variant is NOT a false mismatch (Phase-C
+        # adversarial finding). Only compare when BOTH languages are known. RESIDUAL (documented,
+        # mitigated at the prompt — see prompts.caption_prompt): a None item.language is treated as
+        # "not a declared mismatch" and passes — blanket-holding undeclared captions would
+        # false-positive every legitimately-undeclared caption and halt an autonomous run; instead
+        # our committed prompt REQUIRES the model to self-declare `language`, so our own path always
+        # carries a tag (a wrong-language caption then carries a wrong tag and IS held here).
+        src_base = _lang_base(src.language) if src else None
+        item_base = _lang_base(item.language)
+        if src_base and item_base and item_base != src_base:
+            clip.held = True
+            clip.held_reason = (f"caption language {item.language!r} != source language "
+                                f"{src.language!r} for {item.surface}")
+            led.set_clip_state(clip_id, ClipState.held)
+            return led
         reason = brand_risk_flag(item.caption)
         if reason and held_reason is None:
             held_reason = reason
         clip.meta_captions[item.surface] = {"caption": item.caption, "hashtags": item.hashtags}
+    answered = {item.surface for item in cs.items}
     missing = requested - answered
     if missing and held_reason is None:
         held_reason = f"missing caption for surfaces: {sorted(missing)}"

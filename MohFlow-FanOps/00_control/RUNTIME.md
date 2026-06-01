@@ -236,10 +236,14 @@ half-write). A persistently-failing gate is retried up to the `run` loop's bound
   cannot win), since both are required by `MomentDecision`.
 - **`kind == "captions"`** → must validate as **`CaptionSet`**. Request `payload` fields:
   `clip_id`, `surfaces` (list of `{surface, platform}`), `transcript_excerpt`, `language`,
-  `guidance`. The schema asks for `{"items": [{surface, caption, hashtags}, ...]}`
-  answering **every** requested surface with the surface key verbatim (the source `language` is
-  a single HARD RULE in the prompt — `CaptionItem` carries no per-item `language` field). The responder stamps
-  `request_id` automatically (`CaptionSet` needs only `request_id` + `items`).
+  `guidance`. The schema asks for `{"items": [{surface, caption, hashtags, language?}, ...]}`
+  answering **every** requested surface with the surface key verbatim. `CaptionItem` now carries
+  an **optional per-item `language`** field that the model self-declares (committed
+  `caption_prompt` requires it); `ingest_captions` validates each declared language against the
+  source `language` — normalizing to the base IETF subtag (`en-US`/`EN` == `en`) — and **holds**
+  the clip on a true mismatch (AUDIT H5). It is therefore no longer only a HARD RULE in the prompt
+  but an enforced ingest check. The responder stamps `request_id` automatically (`CaptionSet`
+  needs only `request_id` + `items`).
 
 The `guidance` in both payloads is the verbatim text of `context.md` — the committed prompt
 templates pass it through so the model follows the creative brief. Semi-trusted transcript text

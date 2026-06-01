@@ -3,9 +3,10 @@
 Separate state enums per unit (no shared linear enum). failed (Post) is distinct from
 analyzed. Every unit has an `error` state for per-unit quarantine."""
 from __future__ import annotations
+import math
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SourceState(str, Enum):
@@ -124,6 +125,13 @@ class MomentPick(BaseModel):
     transcript_excerpt: str = ""
     signal_score: float = 0.0
 
+    @field_validator("start", "end")
+    @classmethod
+    def _finite(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("timestamp must be a finite number (no NaN/Infinity)")
+        return v
+
 class MomentDecision(BaseModel):
     source_id: str
     request_id: str
@@ -141,6 +149,7 @@ class CaptionItem(BaseModel):
     surface: str
     caption: str
     hashtags: list[str] = Field(default_factory=list)
+    language: Optional[str] = None      # AUDIT H5: the LLM declares the caption's language
 
 class CaptionSet(BaseModel):
     request_id: str

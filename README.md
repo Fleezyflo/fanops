@@ -246,7 +246,10 @@ in code:
   artist `@mention`** are intentional (opsec + platform fit), not bugs.
 - **PII exclusion is filename-only** — necessary but *not sufficient*. A misnamed private file
   can slip through, so a **human reviews held / odd clips** before anything posts. Captions are
-  also held on EN+AR brand-risk patterns (begging, label linkage, "link in bio").
+  also held on EN+AR brand-risk patterns (begging, label linkage, "link in bio"), on a declared
+  caption **language** that doesn't match the source language (base IETF subtag, so `en-US`==`en`),
+  and on any caption targeting a **surface key not in the requested set** (held with a reason
+  naming the bad surface). Moment picks with non-finite (NaN/Inf) timestamps are rejected outright.
 
 The recorded operator **risk-acceptance** for coordinated multi-account amplification lives in
 `MohFlow-FanOps/00_control/RISK.md`. Day-to-day operations, the two model seams, and the

@@ -25,6 +25,12 @@ def test_caption_prompt_lists_every_surface_and_language():
     assert "ar" in p                          # must caption in the source language
     assert "BRAND: no slurs." in p
     assert "surface" in p                     # tells the model to echo the surface key verbatim
+    # C2 hardening (Phase C adversarial finding 1): the prompt MUST require the model to DECLARE
+    # the per-item `language` field (set it to the source language). Otherwise our own autonomous
+    # path returns language=None and a wrong-language caption silently evades the H5 hold (the
+    # guard exempts a None language). Closing it at the source means our captions self-declare,
+    # so a genuine wrong-language caption carries a wrong tag and IS held.
+    assert "`language`" in p                  # the model is told to populate the `language` field
 
 def test_caption_prompt_isolates_transcript_excerpt_against_injection():
     # transcript_excerpt is semi-trusted (WHISPER output). A crafted excerpt with newlines must NOT
