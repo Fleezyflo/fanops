@@ -5,7 +5,7 @@ respond+advance until stable for unattended operation."""
 from __future__ import annotations
 import argparse, sys
 from fanops.config import Config
-from fanops.errors import ControlFileError
+from fanops.errors import ControlFileError, LockBusyError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState, SourceState
@@ -89,6 +89,12 @@ def main(argv: list[str] | None = None) -> int:
         # so the operator gets a clear pointer instead of a stack trace.
         print(str(e), file=sys.stderr)
         return 2
+    except LockBusyError as e:
+        # Another LIVE fanops process holds the ledger lock (overlapping cron). Degrade cleanly:
+        # one line + exit 1 (transient, retry next tick), NOT a traceback. A *stale* lock can't
+        # reach here — the flock self-heals it (H6); this only ever means real contention.
+        print(str(e), file=sys.stderr)
+        return 1
 
 
 def _check_accounts(cfg: Config) -> int:

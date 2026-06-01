@@ -9,6 +9,13 @@ class ControlFileError(Exception):
     e.g. 'ledger.json invalid: Expecting property name enclosed in double quotes'."""
 
 
+class LockBusyError(Exception):
+    """The ledger lock is held by another LIVE fanops process (overlapping cron) and did not
+    free within the timeout. Operator-facing, one-line. Distinct from a *stale* lock, which the
+    flock-based lock self-heals automatically (the kernel releases an flock on process death),
+    so this only ever means genuine contention — never an orphan needing manual `rm`."""
+
+
 def reason(exc: Exception) -> str:
     """Condense a parse/validation error into one operator-readable line.
     json.JSONDecodeError already stringifies tidily; pydantic's ValidationError is

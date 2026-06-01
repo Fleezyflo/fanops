@@ -3,32 +3,51 @@
 Writes are ATOMIC (temp file + os.replace) under a file lock so the 're-run advance()'
 model cannot corrupt or lose updates. Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
-import json, os, time
+import fcntl, json, os, time
 from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
-from fanops.errors import ControlFileError, reason as _reason
+from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post,
                            SourceState, MomentState, ClipState, PostState)
 
 
+_DEFAULT_LOCK_TIMEOUT = 30.0
+
+
 @contextmanager
-def _file_lock(lock_path: Path, timeout: float = 30.0):
+def _file_lock(lock_path: Path, timeout: float | None = None):
+    """Mutual exclusion for ledger writes via fcntl.flock — chosen over an O_EXCL sentinel
+    because the kernel RELEASES an flock when the holding process dies (H6). So a writer killed
+    -9 mid-write leaves no held lock: the leftover file is inert and the next process acquires
+    immediately. This SELF-HEALS the orphaned-lock outage (the old sentinel wedged every command
+    for the timeout, then crashed, until a human rm'd the file). The only remaining wait is
+    GENUINE contention — a second LIVE process (overlapping cron) — which we bound by `timeout`
+    and surface as a typed LockBusyError the CLI catches, never an uncaught traceback.
+
+    timeout=None reads the module-level _DEFAULT_LOCK_TIMEOUT at CALL time (not bound as a
+    default arg), so callers and tests can tune it without re-importing."""
+    if timeout is None:
+        timeout = _DEFAULT_LOCK_TIMEOUT
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
     start = time.monotonic()
-    while True:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.close(fd); break
-        except FileExistsError:
-            if time.monotonic() - start > timeout:
-                raise TimeoutError(f"ledger lock held > {timeout}s: {lock_path}")
-            time.sleep(0.1)
     try:
-        yield
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:                          # held by another LIVE process
+                if time.monotonic() - start > timeout:
+                    raise LockBusyError(
+                        f"ledger lock busy > {timeout}s (another fanops process is writing): {lock_path}")
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
-        try: os.unlink(str(lock_path))
-        except FileNotFoundError: pass
+        os.close(fd)
 
 
 class Ledger:
