@@ -36,10 +36,15 @@ Source ──▶ Moment ──▶ Clip ──▶ Post
   aspect, with that surface's caption, a deterministic per-surface schedule time, and the
   resolved **numeric** Blotato `account_id`.
 
-The ledger is the single source of truth. Writes are **atomic** (temp file + `os.replace`)
-under a **file lock**, so re-running the pipeline can never corrupt or lose state. Every unit
-has an `error` state for per-unit quarantine — one bad source/moment/clip is skipped, never
-wedging the whole pass.
+The ledger is the single source of truth. Each `advance()` pass runs inside **one
+`Ledger.transaction`** that holds an `fcntl.flock` across the **whole load → mutate → save**
+cycle, and writes are **atomic** (temp file + `os.replace`). The lock is acquired *before* the
+load (not just around the final write), so two overlapping cron runs can never lose each
+other's updates (the old save()-only lock left a lost-update window — a published post could
+vanish, or a `submitting` post revert into a double-post). A second live run is excluded for
+the pass and gets a typed `LockBusyError` (one-line message, no traceback), never a silent
+overwrite. Every unit has an `error` state for per-unit quarantine — one bad source/moment/clip
+is skipped, never wedging the whole pass.
 
 ---
 

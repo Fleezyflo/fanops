@@ -97,13 +97,21 @@ The `cd /path/to/repo` is **mandatory, not cosmetic**: `fanops` resolves its dat
 (ledger, lock, accounts) from the current working directory — there is no `FANOPS_ROOT`
 override — so invoking it from the wrong cwd silently reads/writes the wrong ledger.
 
-**Overlapping runs are safe.** The ledger lock is an `fcntl.flock` (not a delete-able
-sentinel): if a run is killed mid-write, the kernel releases the lock on process death, so
-the next invocation acquires it immediately — **no orphaned lock can wedge the loop** (the
-former failure mode, audit H6). If a *previous* `run` genuinely overruns the interval and is
-still writing when the next fires, the new process waits briefly, then exits 1 with a one-line
-`ledger lock busy …` message (no traceback) and the following tick retries — so a slow run
-never corrupts state or crash-dumps; it just skips a beat.
+**Overlapping runs are safe.** Each `advance()` pass runs inside **one `Ledger.transaction`**
+that holds the ledger `fcntl.flock` across the **entire load → mutate → save** of the pass —
+not just the final write. Acquiring the lock *before* the load closes the lost-update window
+the old save()-only lock left open (two overlapping passes both loaded a stale snapshot, last
+save() won, the other's updates — a published post, a `submitting` flip — vanished silently,
+audit B4). The lock is an `fcntl.flock` (not a delete-able sentinel): if a run is killed
+mid-pass, the kernel releases it on process death, so the next invocation acquires it
+immediately — **no orphaned lock can wedge the loop** (audit H6). If a *previous* `run`
+genuinely overruns the interval and is still inside its pass when the next fires, the new
+process waits briefly, then exits 1 with a one-line `ledger lock busy …` message (a typed
+`LockBusyError`, no traceback) and the following tick retries — so a slow run never corrupts
+state, never loses an update, and never crash-dumps; it just skips a beat. (The slow
+`claude -p` responder call runs *outside* this lock — the agent-gate files are correlated by
+`request_id`, with a capture-and-recheck guard against a mid-call re-seed, audit A3 — so the
+autonomous brain is never serialized behind the ledger lock.)
 
 On macOS a launchd `StartInterval` agent is the equivalent. Note that creating those
 scheduled jobs (CronCreate / system scheduled-tasks) is an environment concern, **not**

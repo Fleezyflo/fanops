@@ -123,3 +123,41 @@ def test_responder_forces_gate_source_id_over_model_value(tmp_path, monkeypatch)
     assert n == 1
     written = J.loads(response_path(cfg, "moments", "real_src").read_text())
     assert written["source_id"] == "real_src"   # the GATE wins, not the model's hallucination
+
+
+def test_responder_drops_stale_answer_when_gate_reseeded_mid_model_call(tmp_path, monkeypatch):
+    # AUDIT A3 (answer-stale TOCTOU): answer_pending reads payload P1 (under rid R1), runs the SLOW
+    # model call, then reads the rid. If an overlapping `fanops run` re-seeds the gate (new rid R2 +
+    # new payload P2) DURING the model call, the OLD code read R2 AFTER the call and stamped the
+    # P1-derived answer with R2 -> read_response's freshness check (R2==R2) PASSED -> the wrong-payload
+    # answer was applied as fresh. The fix captures the rid BEFORE the model call and re-verifies it is
+    # still latest AFTER; on mismatch it drops the stale answer (gate stays pending for the new request).
+    # We model the overlapping re-seed by having the injected model itself re-write the request mid-call.
+    import json as J
+    from fanops.config import Config
+    from fanops.responder import LlmResponder
+    from fanops.agentstep import write_request, read_response, response_path, latest_request_id
+    from fanops.models import MomentDecision
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="s1",
+                  payload={"source_id": "s1", "duration": 10.0, "transcript": [], "signal_peaks": [],
+                           "language": "en", "guidance": ""})
+    r1 = latest_request_id(cfg, "moments", "s1")
+
+    def reseeding_model(kind, payload):
+        # Simulate an overlapping `fanops run` re-seeding the gate DURING the slow model call:
+        # a NEW request_id + NEW payload land on disk before this (P1-derived) answer is written.
+        write_request(cfg, kind="moments", key="s1",
+                      payload={"source_id": "s1", "duration": 99.0, "transcript": [], "signal_peaks": [],
+                               "language": "en", "guidance": "RESEEDED"})
+        return {"picks": [{"start": 1.0, "end": 4.0, "reason": "from-P1"}]}
+
+    n = LlmResponder(cfg, model=reseeding_model).answer_pending(cfg)
+    r2 = latest_request_id(cfg, "moments", "s1")
+    assert r2 != r1                                   # the gate WAS re-seeded mid-call
+    # The stale (P1-derived) answer must NOT be applied as fresh for the new request R2.
+    fresh = read_response(cfg, "moments", "s1", MomentDecision)
+    assert fresh is None, "stale P1-derived answer was wrongly accepted as fresh for the re-seeded gate (TOCTOU)"
+    # And answer_pending must report it did NOT successfully answer the (now-stale) request.
+    assert n == 0

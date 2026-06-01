@@ -27,22 +27,43 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
     uploader raise BlotatoAuthError on a real auth failure; everything else is a per-post failure."""
     return isinstance(exc, BlotatoAuthError)
 
-def publish_due(led: Ledger, cfg: Config, *, now: str | None = None) -> Ledger:
+def publish_due(led: Ledger, cfg: Config, *, now: str | None = None,
+                in_transaction: bool = False) -> Ledger:
     poster = get_poster(cfg)
     cutoff = _now(now)
+    # AUDIT B4: when called inside Ledger.transaction() (the lock is already held), the crash-safe
+    # mid-loop persists must use the UNLOCKED save — a plain led.save() would try to re-acquire the
+    # held flock and self-deadlock (block to LockBusyError under the timeout loop). Standalone
+    # callers keep the locking save().
+    _save = led._save_unlocked if in_transaction else led.save
     # Only 'queued' is iterated: a post stranded in 'submitting' by a crash is deliberately
     # NOT re-driven here — recovering it is a separate reconcile/poll concern, because
     # auto-resubmitting could double-post a live post (FIX F11).
     for post in led.posts_in_state(PostState.queued):
-        if post.scheduled_time and _parse(post.scheduled_time) > cutoff:
-            continue                                       # not due yet (FIX F12)
         try:
+            # Schedule gate is INSIDE the per-post try (AUDIT M2 / review): a malformed or
+            # timezone-naive scheduled_time on disk (hand-edit, corruption, older schema) makes
+            # _parse raise TypeError/ValueError. Outside the try that escaped publish_due entirely
+            # — a NON-auth raise that, inside advance()'s transaction, skipped the exit-save and
+            # rolled back the whole pass's progress. Now it is a per-post FAILURE (mark this post
+            # failed, keep going — FIX F54), never an uncaught escape. The "not due yet" skip
+            # (FIX F12) stays normal flow: continue WITHOUT marking failed or saving (unchanged post).
+            if post.scheduled_time:
+                try:
+                    not_due = _parse(post.scheduled_time) > cutoff
+                except (ValueError, TypeError) as exc:
+                    post.state = PostState.failed
+                    post.error_reason = f"bad schedule time {post.scheduled_time!r}: {str(exc)[:120]}"
+                    _save()
+                    continue
+                if not_due:
+                    continue                               # not due yet (FIX F12) — leave queued
             # ensure media once per clip (FIX F44 — cached on the Clip)
             if not post.media_urls:
                 post.media_urls = [ensure_clip_media(led, cfg, post.parent_id)]
             # crash-safe: record intent + persist BEFORE the irreversible network call (FIX F11)
             post.state = PostState.submitting
-            led.save()
+            _save()                                        # crash-safe persist, txn-aware (AUDIT B4)
             led = poster.publish(led, post.id)
             if post.state is PostState.submitted:
                 post.state = PostState.published
@@ -52,5 +73,5 @@ def publish_due(led: Ledger, cfg: Config, *, now: str | None = None) -> Ledger:
             # per-post failure (e.g. media upload 5xx): mark THIS post failed, keep going (FIX F54)
             post.state = PostState.failed
             post.error_reason = f"publish failed: {str(exc)[:200]}"
-        led.save()                                         # persist the post's terminal/failed state
+        _save()                                            # persist the post's terminal/failed state
     return led

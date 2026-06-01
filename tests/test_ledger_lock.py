@@ -86,3 +86,50 @@ def test_cli_exits_cleanly_when_lock_busy(tmp_path, monkeypatch, capsys):
     assert rc != 0
     err = capsys.readouterr().err
     assert "Traceback" not in err  # clean message, not a stack dump
+
+
+# ----------------------------------------------------------------------------
+# B1 (AUDIT B4): the lock must span the WHOLE load-mutate-save, not just save().
+# ----------------------------------------------------------------------------
+import multiprocessing
+
+from fanops.models import Source
+
+
+def _hold_transaction_then_write(root, started, release):
+    # Runs in a SEPARATE process: enter a transaction, signal we're inside, wait for the
+    # parent to finish its exclusion check, then mutate + (implicitly) save on context exit.
+    cfg = Config(root=str(root))
+    with Ledger.transaction(cfg) as led:
+        started.set()
+        release.wait(5)
+        led.add_source(Source(id="held", source_path="/h.mp4"))
+        # save happens on context exit (under the still-held lock)
+
+
+def test_transaction_holds_lock_across_the_whole_block(tmp_path):
+    # While one process is INSIDE a transaction (before its save), a second process cannot
+    # acquire the transaction lock until the first exits. This is the lost-update window the
+    # save()-only lock left open: two passes both loaded a stale snapshot, last save() won.
+    cfg = Config(root=tmp_path)
+    Ledger.load(cfg).save()  # materialize an initial ledger file
+    started = multiprocessing.Event()
+    release = multiprocessing.Event()
+    p = multiprocessing.Process(target=_hold_transaction_then_write, args=(tmp_path, started, release))
+    p.start()
+    try:
+        assert started.wait(5), "child never entered the transaction"
+        # second acquirer with a short timeout must FAIL while the first holds it
+        raised = False
+        try:
+            with Ledger.transaction(cfg, timeout=0.5):
+                pass
+        except LockBusyError:
+            raised = True
+        assert raised, "transaction lock did NOT span the block — a 2nd acquirer got in mid-transaction"
+    finally:
+        release.set()
+        p.join(5)
+        assert p.exitcode == 0
+    # after release, the first process's write is durable (committed on context exit)
+    assert "held" in Ledger.load(cfg).sources

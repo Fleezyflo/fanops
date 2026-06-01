@@ -84,3 +84,33 @@ def test_set_state_typed(tmp_path):
     led.add_source(Source(id="src_1", source_path="/x.mp4"))
     led.set_source_state("src_1", SourceState.transcribed)
     assert led.sources["src_1"].state is SourceState.transcribed
+
+
+def test_reconcile_does_not_unretire_a_retired_moment(tmp_path):
+    # AUDIT M1: reconcile_moments' upsert overwrote self.moments[mid] unconditionally. If `keep`
+    # carried a moment whose existing copy is `retired` (set by adjust.retire), a fresh `decided`
+    # copy resurrected it -> re-rendered, re-posted, undoing the retirement. Guard: skip the upsert
+    # when the prior moment is MomentState.retired.
+    from fanops.models import MomentState
+    led = Ledger.load(Config(root=tmp_path))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="1-2", start=1, end=2,
+                          reason="r", state=MomentState.retired))   # already retired by adjust
+    # a fresh decision tries to upsert the same id as `decided`
+    keep = {"m1": Moment(id="m1", parent_id="s1", content_token="1-2", start=1, end=2,
+                         reason="r", state=MomentState.decided)}
+    led.reconcile_moments("s1", keep)
+    assert led.moments["m1"].state is MomentState.retired   # stays retired, not resurrected
+
+
+def test_reconcile_still_updates_a_non_retired_moment(tmp_path):
+    # The retire guard must NOT block legitimate re-decision of a NON-retired moment: a `decided`
+    # (or any non-retired) prior moment must still be upserted/updated by reconcile.
+    from fanops.models import MomentState
+    led = Ledger.load(Config(root=tmp_path))
+    led.add_moment(Moment(id="m2", parent_id="s2", content_token="1-2", start=1, end=2,
+                          reason="old", state=MomentState.decided))
+    keep = {"m2": Moment(id="m2", parent_id="s2", content_token="3-4", start=3, end=4,
+                         reason="new", state=MomentState.decided)}
+    led.reconcile_moments("s2", keep)
+    assert led.moments["m2"].reason == "new"          # updated in place (not blocked by the guard)
+    assert led.moments["m2"].start == 3

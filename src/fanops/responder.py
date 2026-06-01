@@ -43,9 +43,25 @@ class LlmResponder:
             for key in pending(cfg, kind=kind):
                 try:                                # decision (b): quarantine per request
                     payload = json.loads(request_path(cfg, kind, key).read_text())
+                    # AUDIT A3 (answer-stale TOCTOU): capture the rid the payload was read under
+                    # BEFORE the slow model call. The agent-gate files live OUTSIDE the ledger flock,
+                    # so an overlapping `fanops run` can re-seed THIS gate (new request_id + new
+                    # payload, via write_request) WHILE the model call is running. If we read the rid
+                    # AFTER the call (the old behavior), we would stamp this OLD-payload answer with
+                    # the NEW rid -> read_response's freshness check would PASS and apply a
+                    # wrong-payload answer as fresh. So we re-verify AFTER the call that the rid is
+                    # still latest and drop the answer on mismatch (gate stays pending for the new
+                    # request). We do NOT hold a lock across the model call: that would serialize the
+                    # up-to-180s claude -p behind every other gate. (Mirrors the FIX-F21 request_id
+                    # correlation that already guards the read side.)
+                    rid_before = latest_request_id(cfg, kind, key)
                     out = self._model(kind, payload)
-                    rid = latest_request_id(cfg, kind, key)
-                    out = {**out, "request_id": rid}
+                    rid_after = latest_request_id(cfg, kind, key)
+                    if rid_after is None or rid_after != rid_before:
+                        log("responder", f"{kind}:{key}", "stale",
+                            err=f"gate re-seeded mid-call ({rid_before}->{rid_after}); dropping stale answer")
+                        continue                    # do not write a stale-payload answer
+                    out = {**out, "request_id": rid_before}   # == rid_after (the still-latest rid)
                     if kind == "moments":           # MomentDecision requires source_id; the GATE is
                         out["source_id"] = payload.get("source_id")   # authoritative (review Issue A) — gate wins, not the model
                     obj = model_cls(**out)          # decision (a): validate; ValidationError -> pending + log
