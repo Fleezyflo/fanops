@@ -20,6 +20,7 @@ would prevent it — sending a fake one would be a false-safety contract (worse 
 
 REST body shape confirmed vs help.blotato.com 2026-05-31."""
 from __future__ import annotations
+import random
 import time
 import requests
 from fanops.config import Config
@@ -116,7 +117,9 @@ class BlotatoRestPoster:
                 self._reconcile(post, f"blotato {resp.status_code}: {resp.text[:160]}", resp=resp)
                 return led
             if resp.status_code == 429:
-                time.sleep(delay); delay *= 2; continue        # safe to retry (rejected pre-processing)
+                # Jitter the backoff so many surfaces rate-limited at once don't retry in lockstep
+                # (thundering herd). Safe to retry (a 429 is rejected pre-processing — not posted).
+                time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
             break                                              # other 4xx -> fail
         # Loop exhausted: only the 429 path reaches here (5xx/network return early). All attempts
         # were rate-limited -> the post was never created -> failed (re-queueable), not reconcile.

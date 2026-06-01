@@ -169,6 +169,25 @@ def test_5xx_body_id_overwrites_preexisting_client_token(tmp_path, monkeypatch, 
     assert led.posts["p5c"].submission_id == "sub_real"    # real id BEATS the client token
     assert pm.call_count == 1
 
+def test_429_backoff_is_jittered(tmp_path, monkeypatch, mocker):
+    # Jitter the 429 backoff so many surfaces rate-limited at once don't retry in lockstep
+    # (thundering herd). Each sleep is delay + random.uniform(0, delay), so with uniform pinned to
+    # 0.3 the first sleep is 1.0 + 0.3 = 1.3 (NOT the bare 1.0), and every sleep stays > 0.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pj", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued))
+    mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(429, {"e": "rate"}))
+    sleeps = []
+    mocker.patch("fanops.post.blotato_rest.time.sleep", side_effect=lambda s: sleeps.append(s))
+    mocker.patch("fanops.post.blotato_rest.random.uniform", return_value=0.3)
+    led = BlotatoRestPoster(cfg).publish(led, "pj")
+    assert led.posts["pj"].state is PostState.failed       # exhausted 429s -> failed (re-queueable)
+    assert sleeps, "expected at least one backoff sleep"
+    assert all(s > 0 for s in sleeps)                      # never a zero/negative wait
+    assert sleeps[0] != 1.0                                # jittered off the bare base (1.0 -> 1.3)
+    assert sleeps[0] == 1.3                                # delay(1.0) + uniform(0,delay)=0.3
+
 def test_retry_exhaustion_marks_failed(tmp_path, monkeypatch, mocker):
     # All attempts 429 -> failed (not raise, not hang). Proves _MAX_RETRIES bounds the loop.
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
