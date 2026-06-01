@@ -97,12 +97,18 @@ The `cd /path/to/repo` is **mandatory, not cosmetic**: `fanops` resolves its dat
 (ledger, lock, accounts) from the current working directory — there is no `FANOPS_ROOT`
 override — so invoking it from the wrong cwd silently reads/writes the wrong ledger.
 
-**Overlapping runs are safe.** Each `advance()` pass runs inside **one `Ledger.transaction`**
-that holds the ledger `fcntl.flock` across the **entire load → mutate → save** of the pass —
-not just the final write. Acquiring the lock *before* the load closes the lost-update window
-the old save()-only lock left open (two overlapping passes both loaded a stale snapshot, last
-save() won, the other's updates — a published post, a `submitting` flip — vanished silently,
-audit B4). The lock is an `fcntl.flock` (not a delete-able sentinel): if a run is killed
+**Overlapping runs are safe.** Each `advance()` pass — and **every standalone write command**
+(`track`, `reconcile`, `adjust`, `ingest`, `pull`) — runs inside **one `Ledger.transaction`** that
+holds the ledger `fcntl.flock` across the **entire load → mutate → save**, not just the final write.
+Acquiring the lock *before* the load closes the lost-update window the old save()-only lock left
+open (two overlapping writers both loaded a stale snapshot, last save() won, the other's updates —
+a published post, a `submitting` flip — vanished silently, audit B4). **Slow I/O stays OUTSIDE the
+lock:** the up-to-30s Blotato calls in `track` (metrics fetch) and `reconcile` (per-post status
+polls), and the `yt-dlp` download in `pull`, all run *before* the transaction; only the in-memory
+apply runs under the flock — so a slow network call never serializes behind the ledger lock
+(mirrors how `publish_due` uses the unlocked save mid-loop). So you can safely run `fanops adjust`
+or `fanops track` while cron's `run` is mid-pass: the second writer waits briefly, then either
+proceeds or skips with a clean `LockBusyError` — never a clobber. The lock is an `fcntl.flock` (not a delete-able sentinel): if a run is killed
 mid-pass, the kernel releases it on process death, so the next invocation acquires it
 immediately — **no orphaned lock can wedge the loop** (audit H6). If a *previous* `run`
 genuinely overruns the interval and is still inside its pass when the next fires, the new
