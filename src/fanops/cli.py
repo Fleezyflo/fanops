@@ -5,7 +5,7 @@ respond+advance until stable for unattended operation."""
 from __future__ import annotations
 import argparse, sys
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError, ControlFileError, LockBusyError
+from fanops.errors import BlotatoAuthError, ControlFileError, LockBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState, SourceState
@@ -114,6 +114,13 @@ def main(argv: list[str] | None = None) -> int:
         # Bad/missing BLOTATO_API_KEY (or a 401) escaping a publish — operator-actionable. One
         # clean line + exit 2 (config-level, like ControlFileError), not a stack dump (AUDIT H8).
         # In `run` this is already caught by the loop guard; this covers advance/other commands.
+        print(str(e), file=sys.stderr)
+        return 2
+    except ToolchainMissingError as e:
+        # ffprobe/ffmpeg absent at INGEST (outside the pipeline quarantine, before any Source
+        # exists to mark `error`) — an operator config error. One clean line ("install ffmpeg") +
+        # exit 2, like ControlFileError, never a raw traceback. Downstream toolchain-absent cases
+        # (render/transcribe) don't reach here — they record a retriable per-unit error state.
         print(str(e), file=sys.stderr)
         return 2
 

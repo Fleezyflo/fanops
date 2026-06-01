@@ -5,6 +5,23 @@ def test_main_status(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert main(["status"]) == 0
 
+def test_advance_exits_cleanly_when_ffprobe_absent(tmp_path, monkeypatch, capsys):
+    # ffprobe missing at ingest (ingest_drops runs OUTSIDE the pipeline quarantine) must NOT crash
+    # `fanops advance` with a raw traceback. It surfaces as a typed ToolchainMissingError ->
+    # cli.main prints one operator-actionable line ("install ffmpeg") + exit 2, like a config error.
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    cfg = Config(root=tmp_path)
+    inbox = cfg.inbox; inbox.mkdir(parents=True, exist_ok=True)
+    (inbox / "a.mp4").write_bytes(b"V")                      # a drop so ingest attempts ffprobe
+    def absent(cmd, **kw):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+    monkeypatch.setattr("fanops.ingest.subprocess.run", absent)
+    rc = main(["advance"])
+    assert rc == 2                                           # clean nonzero, not a crash, not 0
+    err = capsys.readouterr().err
+    assert "ffprobe" in err and "Traceback" not in err
+
 def test_corrupt_ledger_exits_cleanly_no_traceback(tmp_path, monkeypatch, capsys):
     # A hand-edit typo in ledger.json must NOT brick every command with a raw traceback.
     monkeypatch.chdir(tmp_path)

@@ -71,6 +71,29 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
     assert s["needs_reconcile"] == 0
     assert len(list(cfg.scheduled.glob("*.json"))) == 2
 
+def test_signals_toolchain_absent_is_quarantined_not_a_crash(tmp_path, monkeypatch, mocker):
+    # ffmpeg absent during the signals pass raises a typed ToolchainMissingError, but detect_signals
+    # runs INSIDE advance()'s per-source quarantine, so the source goes to SourceState.error and the
+    # pass returns normally — it must NOT crash advance() (unlike ingest, which is pre-quarantine).
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    # a source already transcribed, so advance() proceeds straight to the signals step
+    led = Ledger.load(cfg)
+    led.add_source(__import__("fanops.models", fromlist=["Source"]).Source(
+        id="src_1", source_path=str(cfg.sources / "src_1.mp4"), state=SourceState.transcribed,
+        transcript=[{"start": 0, "end": 1, "text": "x"}], meta={"transcribed": True}))
+    led.save()
+    def absent(cmd, **kw):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+    mocker.patch("fanops.signals.subprocess.run", side_effect=absent)
+    s = advance(cfg, base_time="2026-06-02T18:00:00Z")        # must NOT raise
+    assert Ledger.load(cfg).sources["src_1"].state is SourceState.error
+    assert "ffmpeg" in (Ledger.load(cfg).sources["src_1"].error_reason or "")
+    assert s["errors"] >= 1                                    # surfaced in the summary count
+
 def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
     # FIX F03: a source whose whisper crashes goes to error; others still advance.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)

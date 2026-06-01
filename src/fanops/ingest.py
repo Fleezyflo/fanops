@@ -10,6 +10,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
 from fanops.ids import make_id
+from fanops.errors import ToolchainMissingError
 
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi",
              ".jpg", ".jpeg", ".png", ".heic", ".mp3", ".wav", ".m4a"}
@@ -26,13 +27,26 @@ def sha256_of(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+def _run_ffprobe(args: list[str]) -> subprocess.CompletedProcess:
+    """Run ffprobe, translating a PRE-LAUNCH FileNotFoundError/OSError (ffprobe absent from PATH)
+    into a typed, cli-catchable ToolchainMissingError. `check=False`-style: a nonzero ffprobe
+    RETURNCODE is NOT an error here (callers interpret stdout, defaulting to 0/False) — only the
+    binary being ABSENT is. This runs at ingest, OUTSIDE the pipeline's per-unit quarantine, so an
+    uncaught raise would crash `fanops advance` with a traceback; the typed error -> clean exit 2."""
+    try:
+        return subprocess.run(["ffprobe", *args], capture_output=True, text=True)
+    except (FileNotFoundError, OSError) as e:
+        raise ToolchainMissingError(
+            "ffprobe not found on PATH — install ffmpeg (it provides ffprobe) to ingest media "
+            f"({type(e).__name__})") from e
+
 def probe_dimensions(path: Path) -> tuple[int, int, float]:
-    """(width, height, duration_seconds) via ffprobe; zeros on failure."""
-    r = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+    """(width, height, duration_seconds) via ffprobe; zeros on failure (ffprobe ABSENT raises
+    ToolchainMissingError — see _run_ffprobe — rather than masquerading as a 0×0 source)."""
+    r = _run_ffprobe(
+        ["-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        capture_output=True, text=True)
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)])
     vals = [x for x in r.stdout.split() if x]
     try:
         w = int(float(vals[0])); h = int(float(vals[1])); dur = float(vals[2])
@@ -47,11 +61,12 @@ def has_video_stream(path: Path) -> bool:
     ignored on an audio-only input, so without this guard the renderer emits a *videoless*
     'clip' (audio masquerading as a 9:16 post) — a real data-integrity bug confirmed on
     ffmpeg 8.0.1. Audio extensions stay in MEDIA_EXT for a future audiogram path; they just
-    aren't catalogued as clip sources today."""
-    r = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True)
+    aren't catalogued as clip sources today. ffprobe ABSENT raises ToolchainMissingError (via
+    _run_ffprobe) — we must NOT return False on a missing binary, which would silently DROP a
+    real video as if it were audio-only."""
+    r = _run_ffprobe(
+        ["-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)])
     return r.stdout.strip() == "video"
 
 def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop") -> Ledger:
@@ -79,9 +94,17 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop") -> Ledger:
 
 def download_source(led: Ledger, cfg: Config, url: str) -> Ledger:
     cfg.inbox.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["yt-dlp", "-o", str(cfg.inbox / "%(title).80s.%(ext)s"),
-                    "--no-playlist", "--merge-output-format", "mp4", url],
-                   check=False, capture_output=True, text=True)
+    try:
+        subprocess.run(["yt-dlp", "-o", str(cfg.inbox / "%(title).80s.%(ext)s"),
+                        "--no-playlist", "--merge-output-format", "mp4", url],
+                       check=False, capture_output=True, text=True)
+    except (FileNotFoundError, OSError) as e:
+        # yt-dlp ABSENT from PATH: subprocess.run raises before the process starts (check=False
+        # covers only a nonzero RETURNCODE). This backs the one-shot `pull` command (pre-Source,
+        # outside any quarantine), so a bare raise crashes it — surface the typed, cli-catchable
+        # error (-> clean exit 2 + "install yt-dlp") instead.
+        raise ToolchainMissingError(
+            f"yt-dlp not found on PATH — install yt-dlp to pull from a URL ({type(e).__name__})") from e
     return ingest_drops(led, cfg, origin="url")
 
 def scan_local(roots: list[Path]) -> list[str]:

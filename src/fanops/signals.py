@@ -9,6 +9,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import SourceState
 from fanops.ingest import probe_dimensions
+from fanops.errors import ToolchainMissingError
 
 _SIL_END = re.compile(r"silence_end:\s*([0-9.]+)")
 _SCD = re.compile(r"lavfi\.scd\.score:\s*([0-9.]+),\s*lavfi\.scd\.time:\s*([0-9.]+)")
@@ -30,10 +31,23 @@ def _scene_cmd(src: str) -> list[str]:
     return ["ffmpeg", "-hide_banner", "-loglevel", "info", "-i", src, "-vf",
             "scdet=threshold=10", "-f", "null", "-"]
 
+def _run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Run an ffmpeg signal-detection command, translating a PRE-LAUNCH FileNotFoundError/OSError
+    (ffmpeg absent from PATH) into a typed ToolchainMissingError. detect_signals runs INSIDE the
+    pipeline's per-source quarantine, so this typed error is caught there and the source goes to
+    SourceState.error with a clear 'toolchain missing' reason (instead of a bare 'FileNotFoundError:
+    ffmpeg'); the pass never crashes. check=False semantics otherwise: a nonzero RETURNCODE is fine
+    (we parse stderr regardless)."""
+    try:
+        return subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except (FileNotFoundError, OSError) as e:
+        raise ToolchainMissingError(
+            f"ffmpeg not found on PATH — install ffmpeg to detect signals ({type(e).__name__})") from e
+
 def detect_signals(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     src = led.sources[source_id]
-    sil = subprocess.run(_silence_cmd(src.source_path), check=False, capture_output=True, text=True)
-    sc = subprocess.run(_scene_cmd(src.source_path), check=False, capture_output=True, text=True)
+    sil = _run_ffmpeg(_silence_cmd(src.source_path))
+    sc = _run_ffmpeg(_scene_cmd(src.source_path))
     peaks = parse_silences(sil.stderr) + parse_scene_changes(sc.stderr)
     peaks.sort(key=lambda p: p["t"])
     src.signal_peaks = peaks

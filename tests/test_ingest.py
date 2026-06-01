@@ -1,9 +1,11 @@
 # tests/test_ingest.py
+import pytest
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import SourceState
-from fanops.ingest import ingest_drops, sha256_of, is_excluded, scan_local, probe_dimensions
+from fanops.errors import ToolchainMissingError
+from fanops.ingest import ingest_drops, sha256_of, is_excluded, scan_local, probe_dimensions, has_video_stream, download_source
 
 def _put(p, b):
     p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
@@ -11,6 +13,41 @@ def _put(p, b):
 def test_sha256_stable(tmp_path):
     f = tmp_path / "a.bin"; f.write_bytes(b"hi")
     assert sha256_of(f) == sha256_of(f)
+
+def test_ingest_raises_clean_toolchain_error_when_ffprobe_absent(tmp_path, mocker):
+    # ffprobe off PATH -> subprocess.run raises FileNotFoundError before the process starts.
+    # ingest_drops runs OUTSIDE the pipeline's per-unit quarantine, so without a guard this
+    # crashes `fanops advance` with a raw traceback + exit 1. ffprobe-at-ingest is an operator
+    # config error (install ffmpeg), NOT a per-unit failure to record and NOT something to
+    # silently skip (skipping would DROP a real video) — so it must raise the typed,
+    # cli-catchable ToolchainMissingError naming the missing binary, never a bare FileNotFoundError.
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
+    def absent(cmd, **kw):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+    mocker.patch("fanops.ingest.subprocess.run", side_effect=absent)
+    with pytest.raises(ToolchainMissingError, match="ffprobe"):
+        ingest_drops(Ledger.load(cfg), cfg)
+
+def test_has_video_stream_raises_clean_toolchain_error_when_ffprobe_absent(tmp_path, mocker):
+    # The guard lives at the subprocess call site, so the lower-level helper raises too (not just
+    # the ingest_drops loop) — proves there's no unguarded ffprobe path.
+    def absent(cmd, **kw):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+    mocker.patch("fanops.ingest.subprocess.run", side_effect=absent)
+    with pytest.raises(ToolchainMissingError, match="ffprobe"):
+        has_video_stream(tmp_path / "a.mp4")
+
+def test_download_source_raises_clean_toolchain_error_when_ytdlp_absent(tmp_path, mocker):
+    # yt-dlp off PATH -> FileNotFoundError before the process starts. download_source backs the
+    # one-shot `fanops pull <url>` command (pre-Source, outside any quarantine), so without a guard
+    # it crashes `pull` with a traceback. yt-dlp absent is an operator config error -> typed
+    # ToolchainMissingError naming yt-dlp -> cli.main exit 2, never a bare FileNotFoundError.
+    cfg = Config(root=tmp_path)
+    def absent(cmd, **kw):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+    mocker.patch("fanops.ingest.subprocess.run", side_effect=absent)
+    with pytest.raises(ToolchainMissingError, match="yt-dlp"):
+        download_source(Ledger.load(cfg), cfg, "https://example.com/v")
 
 def test_catalogues_and_probes(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")

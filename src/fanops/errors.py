@@ -26,6 +26,17 @@ class BlotatoAuthError(Exception):
     raise THIS on an auth failure so the halt logic recognizes it."""
 
 
+class ToolchainMissingError(Exception):
+    """A required media binary (ffprobe/ffmpeg/whisper) is absent from PATH at a point where the
+    work CANNOT be deferred to a per-unit error state — specifically ingest (`ingest_drops` runs
+    OUTSIDE the pipeline's per-unit quarantine, before any Source exists to mark `error`). Treated
+    as an operator-facing config error (install ffmpeg), one-line, like ControlFileError: `cli.main`
+    catches it -> clean exit 2, never a raw traceback. Distinct from the ffmpeg/whisper-absent case
+    DOWNSTREAM of ingest (render_moment/transcribe_source), which CAN record ClipState.error /
+    SourceState.error and leave the unit retriable — those do NOT raise this. Skipping the drop
+    instead of raising would be WORSE (it silently drops a real video and never retries)."""
+
+
 def reason(exc: Exception) -> str:
     """Condense a parse/validation error into one operator-readable line.
     json.JSONDecodeError already stringifies tidily; pydantic's ValidationError is
