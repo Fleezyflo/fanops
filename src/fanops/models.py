@@ -5,7 +5,7 @@ analyzed. Every unit has an `error` state for per-unit quarantine."""
 from __future__ import annotations
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SourceState(str, Enum):
@@ -123,6 +123,14 @@ class MomentPick(BaseModel):
     reason: str
     transcript_excerpt: str = ""
     signal_score: float = 0.0
+
+    @field_validator("start", "end")
+    @classmethod
+    def _finite(cls, v: float) -> float:
+        import math
+        if not math.isfinite(v):
+            raise ValueError("timestamp must be a finite number (no NaN/Infinity)")
+        return v
 
 class MomentDecision(BaseModel):
     source_id: str

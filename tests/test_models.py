@@ -57,3 +57,10 @@ def test_caption_set_roundtrip():
     cs = CaptionSet(request_id="rc1", items=[CaptionItem(surface="@a/instagram",
                     caption="no warning. just impact.", hashtags=["#mohflow"])])
     assert cs.items[0].surface == "@a/instagram" and cs.request_id == "rc1"
+
+def test_moment_pick_rejects_non_finite_timestamps():
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValidationError):
+            MomentPick(start=bad, end=5.0, reason="r")
+        with pytest.raises(ValidationError):
+            MomentPick(start=0.0, end=bad, reason="r")

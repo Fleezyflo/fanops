@@ -18,6 +18,9 @@ def _token(pick: MomentPick) -> str:
 
 def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
     """Return a reason string if the pick is invalid, else None."""
+    import math
+    if not (math.isfinite(pick.start) and math.isfinite(pick.end)):
+        return f"non-finite timestamp ({pick.start}->{pick.end})"   # AUDIT H4
     if pick.end <= pick.start:
         return f"end<=start ({pick.start}->{pick.end})"
     if pick.start < 0:
