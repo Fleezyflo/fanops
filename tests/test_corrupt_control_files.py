@@ -56,6 +56,15 @@ def test_accounts_load_schema_violation_raises_control_file_error(tmp_path):
     assert "accounts.json invalid:" in str(ei.value)
 
 
+def test_accounts_load_wrong_toplevel_shape_raises_control_file_error(tmp_path):
+    cfg = Config(root=tmp_path)
+    # Valid JSON, but a bare list instead of {"accounts": [...]} — raw.get() would AttributeError.
+    _write(cfg.accounts_path, json.dumps([{"handle": "@a"}]))
+    with pytest.raises(ControlFileError) as ei:
+        Accounts.load(cfg)
+    assert "accounts.json invalid:" in str(ei.value)
+
+
 # ---- the happy path is unchanged ----
 
 def test_ledger_load_valid_still_works(tmp_path):

@@ -154,7 +154,9 @@ Everything is automated except the parts only a human can do:
     "platforms": ["instagram", "tiktok"], "status": "active"}
    ```
    (An empty `account_id` on an active account is caught before a run — it must never reach
-   Blotato.)
+   Blotato. A hand-edit typo that makes `accounts.json` or `ledger.json` unparseable is also
+   caught up front: any command exits non-zero with a one-line `accounts.json invalid: <reason>`
+   / `ledger.json invalid: <reason>` instead of a stack trace.)
 3. **Set the poster + key** in `.env` (see `.env.example`): `FANOPS_POSTER=rest` (or `mcp`)
    and `BLOTATO_API_KEY=...`. Until then the default `dryrun` poster writes the exact payload
    it *would* send to `05_scheduled/` and posts nothing, so the whole pipeline runs offline.

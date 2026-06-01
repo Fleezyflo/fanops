@@ -34,6 +34,9 @@ __pycache__/
 .fanops-*.md
 .fanops-*.js
 
+# claude harness — keep workflows, ignore transient locks
+.claude/scheduled_tasks.lock
+
 # macOS
 .DS_Store
 

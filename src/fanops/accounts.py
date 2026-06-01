@@ -37,8 +37,9 @@ class Accounts:
         a = cls(cfg)
         p = cfg.accounts_path
         if p.exists():
+            text = p.read_text()                       # an I/O error here is a real problem, not "invalid"
             try:
-                raw = json.loads(p.read_text())
+                raw = json.loads(text)
                 a.accounts = [Account(**x) for x in raw.get("accounts", [])]
             except Exception as e:
                 # Hand-edit typo (the documented "paste account_id, set status:active" step).
