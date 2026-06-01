@@ -57,7 +57,10 @@ class Ledger:
         self.moments: dict[str, Moment] = {}
         self.clips: dict[str, Clip] = {}
         self.posts: dict[str, Post] = {}
-        self.tag_log: dict[str, str] = {}     # account -> ISO time of last artist tag
+        self.tag_log: dict[str, str] = {}     # "account|clip_id" -> ISO time of an artist tag (H3:
+                                              # keyed per-tag, not per-account, so a re-tag can't
+                                              # overwrite a time the cross-account de-cluster window
+                                              # still needs)
 
     @classmethod
     def load(cls, cfg: Config) -> "Ledger":

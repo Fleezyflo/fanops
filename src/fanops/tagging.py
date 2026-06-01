@@ -1,8 +1,10 @@
 """Subtle, NON-SYNCHRONIZED artist tagging. A minority of posts carry a buried @mohflow
 (decided deterministically), and never two accounts within min_gap_minutes (tracked on
-ledger.tag_log; writes are made durable by the ledger's atomic save). decide_tag() returns
-whether THIS post may tag; crosspost (Task 16) appends the tag on its own line, never in the
-hook. Wired into crosspost in Task 16 (v1 left this dead)."""
+ledger.tag_log, keyed per (account,clip) so a re-tag can't overwrite a time the window still
+needs — AUDIT H3; writes are made durable by the ledger's atomic save). decide_tag() returns
+whether THIS post may tag; crosspost (Task 16)
+appends the tag on its own line, never in the hook. Wired into crosspost in Task 16 (v1 left
+this dead)."""
 from __future__ import annotations
 import hashlib
 from datetime import datetime
@@ -25,8 +27,18 @@ def decide_tag(led: Ledger, *, account: str, clip_id: str = "", when: datetime,
     # below is the cross-account non-sync guard (an even tag cadence is itself a fingerprint).
     if not force and not should_tag(clip_id, account, rate=rate):
         return False
-    for _, ts in led.tag_log.items():
+    # De-cluster against EVERY recorded tag time. AUDIT H3: tag_log was keyed per account, so an
+    # account re-tagging OVERWROTE its earlier time — erasing a timestamp another account should
+    # still be de-clustered against (a hole in the cross-account window). Key per (account,clip)
+    # instead: each accepted tag keeps its own entry, nothing is overwritten.
+    #
+    # NOTE: we deliberately do NOT prune entries here by `when`. crosspost evaluates surfaces in
+    # account/platform order, NOT chronologically, so a later call can carry an EARLIER `when` that
+    # still needs to be de-clustered against a tag time a `when`-relative prune would have dropped
+    # (that exact race produced a false "allow" in testing). Growth is bounded elsewhere (gc /
+    # ledger lifecycle), never by discarding a time a future out-of-order decision may need.
+    for ts in led.tag_log.values():
         if abs((when - _parse(ts)).total_seconds()) / 60.0 < min_gap_minutes:
             return False
-    led.tag_log[account] = when.isoformat().replace("+00:00", "Z")
+    led.tag_log[f"{account}|{clip_id}"] = when.isoformat().replace("+00:00", "Z")
     return True
