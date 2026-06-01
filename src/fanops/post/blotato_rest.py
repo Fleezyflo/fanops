@@ -6,11 +6,17 @@ and its own docs warn that a publish timeout produces a DUPLICATE live post. So 
 an ambiguous failure can post twice to the artist's real account, and there is no header that
 would prevent it — sending a fake one would be a false-safety contract (worse than honest absence).
 
-  - 200/201               -> submitted (+submission_id) | failed if no postSubmissionId (untrackable)
+  - 200/201               -> submitted (+submission_id) if a recognizable id is present.
+                             AUDIT B2: a 2xx with NO recognizable id -> needs_reconcile (it MAY be
+                             live), NEVER failed (failed => re-queueable => double-post). The id is
+                             extracted via _extract_submission_id (postSubmissionId | submissionId |
+                             id, incl. nested data); the D1 client token is preserved as the handle.
   - 401                   -> raise loudly (bad key — never silently burn posts, FIX F52)
-  - 429 (rate-limited)    -> RETRY with bounded backoff. A 429 is rejected BEFORE Blotato processes
-                             it (user-level 30 req/min limit), so the post was definitively NOT
-                             created — retrying cannot double-post. Exhausted 429s -> failed.
+  - 429 (rate-limited)    -> RETRY with JITTERED bounded backoff (delay + random.uniform(0, delay),
+                             then delay*=2 — AUDIT D4, avoids a thundering herd across surfaces). A
+                             429 is rejected BEFORE Blotato processes it (user-level 30 req/min
+                             limit), so the post was definitively NOT created — retrying cannot
+                             double-post. Exhausted 429s -> failed.
   - 5xx / network timeout -> needs_reconcile, NO re-POST. The request body was already transmitted,
                              so the post MAY be live. A human/poll step resolves it via
                              GET /v2/posts/:id before any resubmit (don't blind-retry — Blotato's
@@ -18,7 +24,9 @@ would prevent it — sending a fake one would be a false-safety contract (worse 
                              definitely-not-posted, safe to re-queue) — the distinction is the fix.
   - other 4xx             -> failed with a reason (FIX F22 — never 'analyzed')
 
-REST body shape confirmed vs help.blotato.com 2026-05-31."""
+REST body shape confirmed vs help.blotato.com 2026-05-31. The submission-id field (postSubmissionId),
+status enum (in-progress|published|scheduled|failed), and publicUrl(get_post_status)/postUrl(list_posts)
+URL-key split were verified against the live Blotato MCP tool schemas 2026-06-02 (AUDIT D5)."""
 from __future__ import annotations
 import random
 import time

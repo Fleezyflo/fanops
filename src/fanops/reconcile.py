@@ -1,16 +1,18 @@
 """Reconcile stage (AUDIT H4). Resolves posts stranded in `submitting` (crash mid-publish, FIX
 F11) or `needs_reconcile` (ambiguous 5xx / network timeout after the body was sent, AUDIT C1) by
-polling Blotato `GET /v2/posts/{postSubmissionId}` — the ONLY lookup the API offers (verified
-against help.blotato.com: returns status in-progress|failed|published|scheduled + publicUrl/
-errorMessage). It REQUIRES the submission id.
+polling Blotato `GET /v2/posts/{postSubmissionId}` — the ONLY lookup the API offers (status enum
+in-progress|failed|published|scheduled + publicUrl/errorMessage, VERIFIED against the live Blotato
+`get_post_status` MCP tool schema 2026-06-02, AUDIT D5). It REQUIRES the submission id.
 
-Consequence (the honest boundary): a stranded post WITHOUT a submission_id cannot be looked up —
-the API has no content/account search — so it is SKIPPED here and left for human reconcile (the
-digest surfaces it). The REST poster now captures a postSubmissionId from an ambiguous-5xx body
-when one is present (blotato_rest.py) precisely so those posts BECOME auto-reconcilable; a pure
-network timeout still yields no id and remains human-only. We never guess a post's fate — a wrong
-guess either drops a live post (untrackable) or re-queues a live one (double-publish), the exact
-C1/cascade hazards.
+Consequence (the honest boundary): AUDIT H1 (Phase D) stamps EVERY crossposted post with a client
+idempotency token (submission_id="fanops_..."), so a post parked after a pure network timeout is no
+longer id-less — it carries a fanops_ token and IS polled. But a fanops_ token is not a real Blotato
+postSubmissionId, so that poll 404s; the per-post try/except below CONTAINS that error (leaves the
+post parked, never failed — a poll error is not evidence it failed) so the pass continues. A post with
+genuinely NO submission_id at all (older data) is still SKIPPED for human reconcile (the digest
+surfaces it). A real postSubmissionId from an ambiguous-5xx body (blotato_rest.py) overwrites the
+token, making that post cleanly auto-reconcilable. We never guess a post's fate — a wrong guess either
+drops a live post (untrackable) or re-queues a live one (double-publish), the exact C1/cascade hazards.
 
 Resolution:
   status 'published'        -> PostState.published (+ public_url) so track can later measure it
