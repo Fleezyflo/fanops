@@ -6,7 +6,7 @@ This file is the cross-session source of truth. It is **rewritten each session**
 
 - **Branch:** `main`. Check: `git branch --show-current`.
 - **Working tree:** clean. Check: `git status -sb`.
-- **HEAD:** `b3a49c4`. Check: `git log --oneline -1`.
+- **HEAD:** `19c7b50`. Check: `git log --oneline -1`.
 - **Unit tests:** 163 passed, 3 deselected. Check: `source .venv/bin/activate && python -m pytest -q -m "not integration"`.
 - **Integration tests:** 2 passed, 1 skipped (live Blotato smoke skips without creds). Check: `source .venv/bin/activate && python -m pytest -q -m integration`. (The E2E now pins its own whisper model in-test — no `FANOPS_WHISPER_MODEL` needed; it skips cleanly if no checkpoint is cached.)
 - **Module/test parity:** 30 src modules, 30 test files. Check: `ls src/fanops/*.py src/fanops/post/*.py | wc -l && ls tests/*.py tests/integration/*.py | wc -l`.
@@ -40,9 +40,9 @@ Run the §State Check commands. The integration E2E (`tests/integration/test_e2e
 
 ## 5. Now (rewritten each session)
 
-**As of 2026-06-01.**
+**As of 2026-06-01 (rev 2).**
 
-**Most recent shipped:** The **entire FAN OPS v2 build is complete and on `main`** (HEAD `b3a49c4`, working tree clean — `git status -sb` → `## main`). All 26 plan tasks (10–26; Tasks 1–9 predated this session) built subagent-driven with two-stage review (spec + code-quality) per task. ~35 commits since the pre-Task-10 baseline. Final whole-implementation review found and fixed **1 Critical + 2 Important** issues. Tests: `163 passed, 3 deselected` (unit) + `2 passed, 1 skipped` (integration). Task 26's real-tooling E2E genuinely runs real whisper + real ffmpeg — the green suite is proven NOT to be just mocks.
+**Most recent shipped:** E2E golden-path hardening — `19c7b50` (`fix(e2e): pin whisper model in-test so the golden path can't silently rot off-host`). `tests/integration/test_e2e_real.py` previously passed here only because `tiny.pt` is cached AND the runner remembered `FANOPS_WHISPER_MODEL=tiny`; on a fresh checkout / CI / proxied host the default `turbo` checkpoint can't download, the source goes to `error` state, and the test failed with a cryptic `assert 0 == 1` (reproduced via empty `XDG_CACHE_HOME`). Fix pins `tiny` in-test via `monkeypatch` (self-contained, no env var) and skips cleanly with a clear reason when no checkpoint is cached. Full suite green both ways: `163 passed, 3 deselected` (unit) + `2 passed, 1 skipped` (integration), with and without the env var. Prior shipped: the **entire FAN OPS v2 build** (all 26 plan tasks, `f44284d` and earlier) — real-tooling E2E runs real whisper + real ffmpeg, so the green suite is proven NOT to be just mocks.
 
 **What works right now:**
 - End-to-end pipeline runs: `fanops advance` drives ingest → transcribe → signals → moment gate → clip render → caption gate → crosspost → publish (dryrun), pausing at each agent gate.
