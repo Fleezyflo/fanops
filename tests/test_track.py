@@ -8,6 +8,27 @@ def test_lift_weights_saves_shares_over_likes():
     lo = lift_score({"likes": 500, "saves": 1, "shares": 0, "retention": 0.1, "reach": 1000})
     assert hi > lo
 
+
+def test_lift_score_pins_exact_weighted_formula():
+    # AUDIT H9: hi>lo alone lets a sign-flip or a dropped weight slip through. Pin the EXACT
+    # score for a known input so any change to a weight (magnitude, sign, or a removed key)
+    # fails loudly. Expected = 4*saves + 4*shares + 3*retention + 0.001*reach + 0.05*likes.
+    m = {"saves": 10, "shares": 5, "retention": 2, "reach": 1000, "likes": 20}
+    # 40 + 20 + 6 + 1 + 1 = 68.0
+    assert lift_score(m) == 68.0
+
+
+def test_lift_score_each_weight_contributes_with_expected_sign_and_magnitude():
+    # Isolate each term: one unit of each metric yields exactly its weight, and all weights are
+    # POSITIVE (a sign flip would make a "good" metric reduce lift — caught here).
+    assert lift_score({"saves": 1}) == 4.0
+    assert lift_score({"shares": 1}) == 4.0
+    assert lift_score({"retention": 1}) == 3.0
+    assert lift_score({"reach": 1000}) == 1.0      # 0.001 * 1000
+    assert lift_score({"likes": 100}) == 5.0       # 0.05 * 100
+    # saves/shares dominate likes per-unit (the whole point of the weighting)
+    assert lift_score({"saves": 1}) > lift_score({"likes": 1})
+
 def test_lift_ignores_unknown_and_nonnumeric_keys(tmp_path):
     # FIX F23/F42: unexpected Blotato fields must not crash.
     s = lift_score({"saves": 10, "views": 99999, "comments": 5, "title": "x", "nested": {"a": 1}})
