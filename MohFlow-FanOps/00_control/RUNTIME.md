@@ -216,8 +216,12 @@ tool with the flat args the poster builds and return the tool's result dict. The
 `tool_caller` wired the poster raises rather than silently no-op.
 
 (The `rest` backend, `FANOPS_POSTER=rest`, needs no wiring beyond `BLOTATO_API_KEY`; it
-POSTs to `https://backend.blotato.com/v2/posts` with bounded retry/backoff on 429/5xx and
-raises loudly on 401.)
+POSTs to `https://backend.blotato.com/v2/posts` and raises loudly on 401. Retry is
+**asymmetric on purpose** (Blotato has no idempotency key, and a publish timeout can
+duplicate a post): a `429` is retried with bounded backoff (rejected pre-processing, so the
+post was definitely not created), but a `5xx` or a network timeout *after the body was sent*
+is **ambiguous** — the post may be live — so it is parked in `needs_reconcile` and **not**
+re-POSTed. The digest surfaces such posts to verify via `GET /v2/posts/:id` before resubmit.)
 
 ---
 
@@ -282,21 +286,24 @@ deferred from the original plan, and surfaced during the build.
 
 **Surfaced during the build**
 
-- **(a) Submitting-recovery / reconcile step.** A post stranded in `submitting` by a
-  mid-publish crash is **never re-driven** — by design, to avoid double-posting a live
-  post. A reconcile step should **poll whether the submit actually landed** and either
-  promote it `→ published` or reset it `→ queued`/`failed`. (`publish_due` iterates only
-  `queued`; the `submitting` orphan is left for this future step.)
+- **(a) Reconcile step (`submitting` + `needs_reconcile`).** Two states now await this
+  step, both "the post may be live; do not blindly re-POST": a post stranded in `submitting`
+  by a mid-publish crash, and a post parked in `needs_reconcile` by an ambiguous REST failure
+  (5xx / network timeout after the body was sent — see C1). A reconcile step should **poll
+  whether the submit actually landed** via `GET /v2/posts/:id` and either promote it
+  `→ published` or reset it `→ queued`/`failed`. (`publish_due` iterates only `queued`, so
+  neither is re-driven automatically; both are surfaced in the digest for now.)
 - **(b) Externalize the tunable lists to config / `context.md`.** The brand-risk
   anti-pattern lists (`caption._OFFBRAND_EN` / `_OFFBRAND_AR`) and the lift weights
   (`track._W`) are hardcoded. Moving them to config/`context.md` lets the operator tune
   the HOLD gate and the optimization target without a code change.
-- **(c) REST backoff jitter + retry on network errors.** REST backoff is plain
-  exponential and **un-jittered** (`1→2→4→8`, thundering-herd risk), and a `requests`
-  `Timeout`/`ConnectionError` is **not** caught in `BlotatoRestPoster.publish` and is
-  **not** folded into the bounded-retry ladder — it propagates to `publish_due`, whose
-  `except Exception` lands the post in **`failed`** (retryable on the next run) rather than
-  `error`. Add jitter and retry transient network errors inside the ladder.
+- **(c) REST backoff jitter.** The `429` backoff is plain exponential and **un-jittered**
+  (`1→2→4→8`, thundering-herd risk if many surfaces rate-limit at once) — add jitter
+  (`delay*2 + random.uniform(0, delay)`). *(Network-error handling is now resolved: C1 catches
+  `requests.exceptions.RequestException` in `BlotatoRestPoster.publish` and parks the post in
+  `needs_reconcile` rather than letting it escape to `publish_due`. Network errors are **not**
+  retried in-ladder on purpose — a timeout after the body was sent is ambiguous, so retrying
+  could double-post.)*
 - **(d) Per-source ranking in `adjust`.** Ranking is global; the `lift_floor` mostly
   neutralizes cross-source unfairness but does not fully solve it.
 - **(e) Media size cap / size-aware upload timeout.** The media PUT uses a fixed 120s

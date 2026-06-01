@@ -124,7 +124,7 @@ halts the loop instead of burning the queue.
 
 | Command | What it does |
 |---|---|
-| `fanops status` | counts (sources/moments/clips/posts/published/failed) + pending gates + backend |
+| `fanops status` | counts (sources/moments/clips/posts/published/failed/needs_reconcile) + pending gates + backend |
 | `fanops ingest` | catalogue new drops in `01_inbox` (SHA-256 identity, PII filename exclusion) |
 | `fanops pull <url>` | yt-dlp a URL into the inbox, then ingest |
 | `fanops advance [--base-time T]` | run the DAG to the next gate / completion |
@@ -159,7 +159,9 @@ Everything is automated except the parts only a human can do:
    / `ledger.json invalid: <reason>` instead of a stack trace.)
 3. **Set the poster + key** in `.env` (see `.env.example`): `FANOPS_POSTER=rest` (or `mcp`)
    and `BLOTATO_API_KEY=...`. Until then the default `dryrun` poster writes the exact payload
-   it *would* send to `05_scheduled/` and posts nothing, so the whole pipeline runs offline.
+   it *would* send to `05_scheduled/` and posts nothing, so the whole pipeline runs offline. It
+   stamps a synthetic `dryrun_<post_id>` submission id (mirroring the real `postSubmissionId`),
+   so `track` → `adjust` can be exercised end-to-end offline by feeding metrics rows keyed on it.
 
 ---
 
@@ -173,6 +175,15 @@ confirmed against the live API before the first real post:
 - the **metrics** endpoint shape — `post/metrics.py`, `track.py`
 - the **MCP** tool name + arg shape (the REST body is nested; the MCP args are flat) —
   `post/blotato_mcp.py`, `post/payload.py`
+
+**Confirmed (no longer a checkpoint):** the Blotato v2 `POST /v2/posts` contract has **no
+idempotency key** (the body accepts only `post` / `scheduledTime` / `useNextFreeSlot`), and
+Blotato's own docs note a publish timeout can produce a duplicate post. So the REST poster does
+**not** blindly retry an ambiguous failure: a `5xx` or a network timeout *after the request body
+was sent* parks the post in **`needs_reconcile`** (it may already be live) instead of re-POSTing,
+and the digest (plus the `fanops status` / `fanops run` count) surfaces it for a human to verify
+via `GET /v2/posts/:id` before any resubmit.
+Only a `429` (rejected pre-processing, so definitely not created) is retried. See `post/blotato_rest.py`.
 
 Confirm them by running the live smoke test **manually** (it schedules a post far in the
 future so it can be deleted before it ever publishes):
