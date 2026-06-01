@@ -92,19 +92,27 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop") -> Ledger:
                               meta={"original_name": f.name, "bytes": f.stat().st_size}))
     return led
 
-def download_source(led: Ledger, cfg: Config, url: str) -> Ledger:
+def download_url(cfg: Config, url: str) -> None:
+    """Network-only half of a URL pull: shell yt-dlp to drop the media into the inbox. Holds NO
+    ledger lock — the slow download must run OUTSIDE the ledger transaction (cmd_pull then ingests
+    what landed inside a tight transaction), so a download never serializes behind the ledger flock
+    (the Phase-B-followup lost-update + no-network-under-lock rule). yt-dlp ABSENT from PATH:
+    subprocess.run raises before the process starts (check=False covers only a nonzero RETURNCODE) —
+    surface the typed, cli-catchable ToolchainMissingError (-> clean exit 2 + 'install yt-dlp')."""
     cfg.inbox.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.run(["yt-dlp", "-o", str(cfg.inbox / "%(title).80s.%(ext)s"),
                         "--no-playlist", "--merge-output-format", "mp4", url],
                        check=False, capture_output=True, text=True)
     except (FileNotFoundError, OSError) as e:
-        # yt-dlp ABSENT from PATH: subprocess.run raises before the process starts (check=False
-        # covers only a nonzero RETURNCODE). This backs the one-shot `pull` command (pre-Source,
-        # outside any quarantine), so a bare raise crashes it — surface the typed, cli-catchable
-        # error (-> clean exit 2 + "install yt-dlp") instead.
         raise ToolchainMissingError(
             f"yt-dlp not found on PATH — install yt-dlp to pull from a URL ({type(e).__name__})") from e
+
+
+def download_source(led: Ledger, cfg: Config, url: str) -> Ledger:
+    """Download + ingest in one call (kept for any direct caller/test). The CLI's `pull` command
+    splits these (download outside the lock, ingest inside a transaction) — see cli.cmd_pull."""
+    download_url(cfg, url)
     return ingest_drops(led, cfg, origin="url")
 
 def scan_local(roots: list[Path]) -> list[str]:

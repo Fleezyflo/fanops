@@ -1,0 +1,135 @@
+"""Follow-up to Phase B (post-merge review, Important finding): the standalone CLI write commands
+(track / reconcile / adjust / ingest / pull) did a LOCK-FREE Ledger.load -> mutate -> led.save(),
+re-opening the exact lost-update window B4 closed for advance() — a concurrent advance under its
+transaction could be clobbered last-writer-wins. These migrate them to Ledger.transaction, with the
+HARD constraint that network / subprocess I/O stays OUTSIDE the lock (mirroring publish_due's
+in_transaction split) so the up-to-30s Blotato calls never serialize behind the ledger flock."""
+import json
+import os
+import fcntl
+
+import pytest
+
+from fanops.config import Config
+from fanops.ledger import Ledger, _file_lock
+from fanops.models import Post, Platform, PostState
+import fanops.cli as cli
+
+
+def _lock_is_free(cfg) -> bool:
+    """True iff the ledger flock can be acquired right now (i.e. NOT held). Used inside an injected
+    network closure to assert the lock is NOT held during the network call."""
+    fd = os.open(str(cfg.lock_path), os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return True
+    except BlockingIOError:
+        return False
+    finally:
+        os.close(fd)
+
+
+# ---------------------------------------------------------------------------
+# 1. Each write command takes the transaction (no more lock-free load->save).
+# ---------------------------------------------------------------------------
+
+def test_cmd_adjust_uses_a_transaction(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    Ledger.load(Config(root=tmp_path)).save()
+    spy = mocker.spy(Ledger, "transaction")
+    assert main_ok(["adjust"])
+    assert spy.call_count >= 1, "cmd_adjust must mutate under Ledger.transaction, not a lock-free load+save"
+
+
+def test_cmd_ingest_uses_a_transaction(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    Ledger.load(Config(root=tmp_path)).save()
+    # no drops in the inbox -> ingest_drops is a no-op, but it must still go through a transaction
+    spy = mocker.spy(Ledger, "transaction")
+    assert main_ok(["ingest"])
+    assert spy.call_count >= 1, "cmd_ingest must persist under Ledger.transaction"
+
+
+def test_cmd_track_uses_a_transaction(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    Ledger.load(Config(root=tmp_path)).save()
+    # inject a fetch so no real network; returns no rows (nothing to apply)
+    mocker.patch("fanops.cli._default_list_posts", return_value=lambda window: [])
+    spy = mocker.spy(Ledger, "transaction")
+    assert main_ok(["track"])
+    assert spy.call_count >= 1, "cmd_track must apply metrics under Ledger.transaction"
+
+
+def test_cmd_reconcile_uses_a_transaction(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
+    led.save()
+    # inject a status poll so no real network; report still in-progress (no state change needed)
+    mocker.patch("fanops.cli._default_get_status", return_value=lambda sid: {"status": "in-progress"})
+    spy = mocker.spy(Ledger, "transaction")
+    assert main_ok(["reconcile"])
+    assert spy.call_count >= 1, "cmd_reconcile must apply poll results under Ledger.transaction"
+
+
+# ---------------------------------------------------------------------------
+# 2. The network / poll call must run OUTSIDE the ledger lock (no serialization
+#    of the slow Blotato call behind the flock).
+# ---------------------------------------------------------------------------
+
+def test_cmd_track_network_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    seen = {}
+
+    def fetching(window):
+        seen["lock_free_during_fetch"] = _lock_is_free(cfg)   # must be True: lock not held
+        return []
+
+    mocker.patch("fanops.cli._default_list_posts", return_value=fetching)
+    assert main_ok(["track"])
+    assert seen.get("lock_free_during_fetch") is True, \
+        "the metrics fetch held the ledger lock — network must be OUTSIDE the transaction"
+
+
+def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
+    led.save()
+    seen = {}
+
+    def polling(sid):
+        seen["lock_free_during_poll"] = _lock_is_free(cfg)
+        return {"status": "in-progress"}
+
+    mocker.patch("fanops.cli._default_get_status", return_value=polling)
+    assert main_ok(["reconcile"])
+    assert seen.get("lock_free_during_poll") is True, \
+        "the status poll held the ledger lock — per-post network must be OUTSIDE the transaction"
+
+
+# ---------------------------------------------------------------------------
+# 3. Behavior preserved: track/reconcile still apply their results to the ledger.
+# ---------------------------------------------------------------------------
+
+def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
+    led.save()
+    mocker.patch("fanops.cli._default_get_status",
+                 return_value=lambda sid: {"status": "published", "publicUrl": "https://x/p"})
+    assert main_ok(["reconcile"])
+    again = Ledger.load(cfg)
+    assert again.posts["p"].state is PostState.published
+    assert again.posts["p"].public_url == "https://x/p"
+
+
+def main_ok(argv) -> bool:
+    rc = cli.main(argv)
+    return rc == 0
