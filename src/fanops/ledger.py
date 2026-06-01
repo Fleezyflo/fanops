@@ -161,11 +161,15 @@ class Ledger:
         for mid in existing - set(keep):
             self._delete_moment_cascade(mid)
         for mid, m in keep.items():
-            if mid in self.moments:
-                # in-place update (FIX: setdefault blocked updates in v1)
-                self.moments[mid] = m
-            else:
-                self.moments[mid] = m
+            prior = self.moments.get(mid)
+            if prior is not None and prior.state is MomentState.retired:
+                # AUDIT M1: never resurrect a retired moment. adjust.retire set it to `retired`
+                # (deliberately suppressed from future work); a fresh `decided` copy from a later
+                # decision would otherwise overwrite that, re-rendering + re-posting a retired
+                # lineage. Skip the upsert — the retirement stands. (A NON-retired prior is still
+                # upserted in place, so legitimate re-decision keeps working.)
+                continue
+            self.moments[mid] = m
 
     # Clip/Post states that mean "live on the platform / carries the performance record" —
     # these are NEVER cascade-deleted (deleting them would orphan a live post: untrackable by
