@@ -75,9 +75,12 @@ human spot-check for moments) without changing the pipeline.
 
 Requires **Python 3.12** (`>=3.12,<3.14`), **ffmpeg ≥ 6**, the **Whisper** CLI, and
 **yt-dlp** (URL ingest, pulled in as a dependency). For the **autonomous LLM responder**
-(`FANOPS_RESPONDER=llm`) you also need the **`claude`** CLI (Claude Code) on `PATH` and
-authenticated — it is invoked headlessly (`claude -p`) and reuses your existing Claude Code
-auth (no separate API key). Not needed for the default `manual` responder.
+(`FANOPS_RESPONDER=llm`) you also need the **`claude`** CLI (Claude Code) on `PATH`, invoked
+headlessly (`claude -p --bare`). **Auth caveat (important):** because it uses `--bare` for
+cron-safety, Anthropic auth is **strictly `ANTHROPIC_API_KEY`** — `--bare` does **not** read an
+OAuth/`claude login`/keychain session. Export `ANTHROPIC_API_KEY` in the environment that runs
+`fanops` (a `claude login` alone will NOT work and every gate will fail "Not logged in"). Not
+needed for the default `manual` responder.
 
 ```bash
 python3.12 -m venv .venv

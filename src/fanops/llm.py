@@ -1,10 +1,18 @@
 # src/fanops/llm.py
 """Wire an LLM via the Claude Code CLI in headless print mode (`claude -p`), NOT the Anthropic
-SDK — reuses the operator's existing Claude Code auth, adds no app-level API key, and fits the
-codebase's shell-a-binary idiom (like ffmpeg/whisper). We hand `claude` the EXACT pydantic JSON
-schema via --json-schema so the model returns schema-conformant output in `structured_output`,
-which collapses most "LLM returned malformed JSON" risk. --bare = cron-safe (no MCP/hooks/keychain);
---allowedTools "" = pure generator (no tool use, no file access — the responder must not wander)."""
+SDK — keeps one toolchain (no second SDK dependency) and fits the codebase's shell-a-binary idiom
+(like ffmpeg/whisper); `claude` becomes one more absence-guarded binary. We hand `claude` the EXACT
+pydantic JSON schema via --json-schema so the model returns schema-conformant output in
+`structured_output`, which collapses most "LLM returned malformed JSON" risk. --allowedTools "" =
+pure generator (no tool use, no file access — the responder must not wander).
+
+AUTH (load-bearing — read before deploying autonomous mode): we pass `--bare`, which is cron-safe
+(skips hooks/MCP/plugin-sync/auto-memory/keychain) BUT under `--bare` Anthropic auth is STRICTLY
+`ANTHROPIC_API_KEY` (or apiKeyHelper via --settings) — **OAuth and keychain are NEVER read**. So a
+`claude login` (OAuth) session is NOT sufficient: the environment that runs `fanops` MUST export
+`ANTHROPIC_API_KEY`, or every gate gets `claude -p` rc=1 "Not logged in" → RuntimeError → the gate
+is quarantined and stays pending (no autonomous content). This is the deliberate trade for cron-safety;
+it is documented in RUNTIME.md "the autonomous LLM responder" and README install."""
 from __future__ import annotations
 import json, subprocess
 from fanops.errors import ToolchainMissingError

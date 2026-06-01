@@ -191,18 +191,23 @@ default model is the Claude Code CLI (`claude -p`); there is no stub to fill.
 (`_default_claude_model`) shells the Claude Code CLI in headless print mode via
 `src/fanops/llm.py::claude_json`:
 `claude --bare -p "<prompt>" --output-format json --json-schema '<schema>' --allowedTools ""`.
-Chosen over the SDK because it **reuses the operator's existing Claude Code auth (no app-level
-API key)** and fits the codebase's shell-a-binary idiom (like ffmpeg/whisper) — `claude` is
-just one more absence-guarded binary. `--bare` is cron-safe (no MCP/hooks/keychain);
+Chosen over the SDK to keep one toolchain (no second SDK dependency) and fit the codebase's
+shell-a-binary idiom (like ffmpeg/whisper) — `claude` is just one more absence-guarded binary.
 `--allowedTools ""` makes it a pure generator (no tool use / file access). The prompt is built
 from a **committed template** (`src/fanops/prompts.py::moment_prompt` / `caption_prompt`) and
 paired with the gate's exact pydantic JSON schema, so most "LLM returned malformed JSON" risk
 collapses into `structured_output`.
 
-**Requirement:** the `claude` binary must be **on `PATH` and authenticated**. If `claude` is
-absent, `claude_json` raises `ToolchainMissingError`; if it is present but unauthenticated
-(`claude -p` → "Not logged in"), the call returns a non-zero exit → `RuntimeError`. Either way
-the failure is **quarantined per request** (see below), not a crash.
+**Requirement — `claude` on `PATH` AND `ANTHROPIC_API_KEY` exported (load-bearing).** We pass
+`--bare` for cron-safety (it skips hooks/MCP/plugin-sync/auto-memory/keychain). **The catch:
+under `--bare`, Anthropic auth is STRICTLY `ANTHROPIC_API_KEY` (or apiKeyHelper via `--settings`)
+— OAuth and keychain are NEVER read.** So a `claude login` (OAuth) session is **NOT** sufficient
+for the autonomous responder; the environment that runs `fanops` must **export `ANTHROPIC_API_KEY`**.
+Failure modes, both **quarantined per request** (not a crash): if `claude` is absent, `claude_json`
+raises `ToolchainMissingError`; if `claude` is present but `ANTHROPIC_API_KEY` is unset/invalid,
+`claude -p` exits non-zero with `"Not logged in · Please run /login"` → `RuntimeError` → the gate
+logs `error` and stays pending (so a misconfigured key yields **zero autonomous content**, silently
+but loggedly — check `run.log` for repeated `responder … error … Not logged in`).
 
 **Per-request quarantine (audit H2 / N1).** `answer_pending` isolates each gate: one bad
 request logs and leaves *that* gate pending, and never halts the others (mirrors `advance()`'s
@@ -223,8 +228,9 @@ half-write). A persistently-failing gate is retried up to the `run` loop's bound
   cannot win), since both are required by `MomentDecision`.
 - **`kind == "captions"`** → must validate as **`CaptionSet`**. Request `payload` fields:
   `clip_id`, `surfaces` (list of `{surface, platform}`), `transcript_excerpt`, `language`,
-  `guidance`. The schema asks for `{"items": [{surface, caption, hashtags, language}, ...]}`
-  answering **every** requested surface with the surface key verbatim. The responder stamps
+  `guidance`. The schema asks for `{"items": [{surface, caption, hashtags}, ...]}`
+  answering **every** requested surface with the surface key verbatim (the source `language` is
+  a single HARD RULE in the prompt — `CaptionItem` carries no per-item `language` field). The responder stamps
   `request_id` automatically (`CaptionSet` needs only `request_id` + `items`).
 
 The `guidance` in both payloads is the verbatim text of `context.md` — the committed prompt
