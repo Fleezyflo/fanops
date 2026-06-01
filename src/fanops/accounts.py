@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Optional, NamedTuple
 from pydantic import BaseModel, Field
 from fanops.config import Config
+from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform
 
 class AccountStatus(str, Enum):
@@ -34,9 +35,15 @@ class Accounts:
     @classmethod
     def load(cls, cfg: Config) -> "Accounts":
         a = cls(cfg)
-        if cfg.accounts_path.exists():
-            raw = json.loads(cfg.accounts_path.read_text())
-            a.accounts = [Account(**x) for x in raw.get("accounts", [])]
+        p = cfg.accounts_path
+        if p.exists():
+            try:
+                raw = json.loads(p.read_text())
+                a.accounts = [Account(**x) for x in raw.get("accounts", [])]
+            except Exception as e:
+                # Hand-edit typo (the documented "paste account_id, set status:active" step).
+                # Clear one-liner instead of a raw traceback.
+                raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
         return a
 
     def active(self) -> list[Account]:

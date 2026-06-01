@@ -5,7 +5,9 @@ respond+advance until stable for unattended operation."""
 from __future__ import annotations
 import argparse, sys
 from fanops.config import Config
+from fanops.errors import ControlFileError
 from fanops.ledger import Ledger
+from fanops.accounts import Accounts
 from fanops.models import PostState, SourceState
 from fanops.pipeline import advance
 from fanops.ingest import ingest_drops, download_source
@@ -75,6 +77,30 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
 
+    try:
+        return _dispatch(cfg, args)
+    except ControlFileError as e:
+        # A control file (ledger.json/accounts.json) is malformed — almost always a hand-edit
+        # typo. Print the one-line reason and exit 2 (distinct from the run-halt/usage exit 1)
+        # so the operator gets a clear pointer instead of a stack trace.
+        print(str(e), file=sys.stderr)
+        return 2
+
+
+def _check_accounts(cfg: Config) -> int:
+    """Fail a run early if the active-account config is unusable (README promise: an empty
+    account_id on an active account is caught before a run, never reaching Blotato).
+    Returns 0 when clean, else prints the problems and returns 2."""
+    problems = Accounts.load(cfg).validate()
+    if problems:
+        print("accounts.json has problems:", file=sys.stderr)
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "status":   return cmd_status(cfg)
     if args.cmd == "ingest":
         led = ingest_drops(Ledger.load(cfg), cfg); led.save(); write_digest(led, cfg)
@@ -86,11 +112,14 @@ def main(argv: list[str] | None = None) -> int:
         n = get_responder(cfg).answer_pending(cfg); print(f"responder answered {n} request(s)"); return 0
     if args.cmd == "digest":
         write_digest(Ledger.load(cfg), cfg); print(f"wrote {cfg.digest_path}"); return 0
-    if args.cmd == "advance":  print(advance(cfg, base_time=args.base_time)); return 0
+    if args.cmd == "advance":
+        if (rc := _check_accounts(cfg)):  return rc
+        print(advance(cfg, base_time=args.base_time)); return 0
     if args.cmd == "track":    return cmd_track(cfg, args.window)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
     if args.cmd == "run":
+        if (rc := _check_accounts(cfg)):  return rc
         # unattended: respond to gates, advance, repeat until no progress.
         # advance()'s deterministic stages are per-unit quarantined, but crosspost/publish
         # run outside those guards and publish_due RE-RAISES on fatal auth (bad key/401) by

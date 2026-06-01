@@ -7,6 +7,7 @@ import json, os, time
 from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
+from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post,
                            SourceState, MomentState, ClipState, PostState)
 
@@ -44,12 +45,18 @@ class Ledger:
         led = cls(cfg)
         p = cfg.ledger_path
         if p.exists():
-            raw = json.loads(p.read_text())
-            led.sources = {k: Source(**v) for k, v in raw.get("sources", {}).items()}
-            led.moments = {k: Moment(**v) for k, v in raw.get("moments", {}).items()}
-            led.clips = {k: Clip(**v) for k, v in raw.get("clips", {}).items()}
-            led.posts = {k: Post(**v) for k, v in raw.get("posts", {}).items()}
-            led.tag_log = raw.get("tag_log", {})
+            text = p.read_text()                       # an I/O error here is a real problem, not "invalid"
+            try:
+                raw = json.loads(text)
+                led.sources = {k: Source(**v) for k, v in raw.get("sources", {}).items()}
+                led.moments = {k: Moment(**v) for k, v in raw.get("moments", {}).items()}
+                led.clips = {k: Clip(**v) for k, v in raw.get("clips", {}).items()}
+                led.posts = {k: Post(**v) for k, v in raw.get("posts", {}).items()}
+                led.tag_log = raw.get("tag_log", {})
+            except Exception as e:
+                # Malformed JSON or schema-violating field (hand-edit typo). Surface a clear
+                # one-line reason instead of a raw JSONDecodeError/ValidationError traceback.
+                raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
         return led
 
     def save(self) -> None:
