@@ -92,6 +92,18 @@ retryable, and the run continues.)
 */30 * * * * cd /path/to/repo && ./.venv/bin/fanops run >> run.out 2>&1
 ```
 
+The `cd /path/to/repo` is **mandatory, not cosmetic**: `fanops` resolves its data dirs
+(ledger, lock, accounts) from the current working directory — there is no `FANOPS_ROOT`
+override — so invoking it from the wrong cwd silently reads/writes the wrong ledger.
+
+**Overlapping runs are safe.** The ledger lock is an `fcntl.flock` (not a delete-able
+sentinel): if a run is killed mid-write, the kernel releases the lock on process death, so
+the next invocation acquires it immediately — **no orphaned lock can wedge the loop** (the
+former failure mode, audit H6). If a *previous* `run` genuinely overruns the interval and is
+still writing when the next fires, the new process waits briefly, then exits 1 with a one-line
+`ledger lock busy …` message (no traceback) and the following tick retries — so a slow run
+never corrupts state or crash-dumps; it just skips a beat.
+
 On macOS a launchd `StartInterval` agent is the equivalent. Note that creating those
 scheduled jobs (CronCreate / system scheduled-tasks) is an environment concern, **not**
 something this repo manages.
