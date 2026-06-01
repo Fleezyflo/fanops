@@ -2,7 +2,7 @@ import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
-from fanops.post.blotato_rest import BlotatoRestPoster
+from fanops.post.blotato_rest import BlotatoRestPoster, _extract_submission_id
 
 class _R:
     def __init__(s, c, b): s.status_code = c; s._b = b; s.text = str(b)
@@ -54,17 +54,52 @@ def test_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):
     led = BlotatoRestPoster(cfg).publish(led, "p4")
     assert led.posts["p4"].submission_id == "s9" and led.posts["p4"].state is PostState.submitted
 
-def test_2xx_without_submission_id_marks_failed(tmp_path, monkeypatch, mocker):
-    # A 2xx whose body lacks postSubmissionId is untrackable -> failed, not submitted.
+def test_extract_submission_id_accepts_known_aliases():
+    # AUDIT B2: Blotato's 2xx body shape varies (postSubmissionId | submissionId | id, sometimes
+    # nested under "data"). _extract_submission_id accepts the known aliases and recurses into a
+    # nested dict, ignoring non-str/empty values and non-dict bodies (-> None).
+    assert _extract_submission_id({"postSubmissionId": "a1"}) == "a1"
+    assert _extract_submission_id({"submissionId": "b2"}) == "b2"
+    assert _extract_submission_id({"id": "c3"}) == "c3"
+    assert _extract_submission_id({"data": {"submissionId": "d4"}}) == "d4"   # nested recursion
+    assert _extract_submission_id({"data": {"id": "e5"}}) == "e5"
+    # precedence: postSubmissionId wins over a bare id at the same level
+    assert _extract_submission_id({"postSubmissionId": "win", "id": "lose"}) == "win"
+    # rejects non-str / empty / non-dict -> None (never a truthy non-id)
+    assert _extract_submission_id({"id": 123}) is None
+    assert _extract_submission_id({"id": ""}) is None
+    assert _extract_submission_id({"noid": True}) is None
+    assert _extract_submission_id({}) is None
+    assert _extract_submission_id(None) is None
+    assert _extract_submission_id("not a dict") is None
+
+def test_2xx_without_recognizable_id_is_needs_reconcile_not_failed(tmp_path, monkeypatch, mocker):
+    # AUDIT B2 (rewrite of the old test_2xx_without_submission_id_marks_failed): a 2xx with no
+    # recognizable submission id is MAY-BE-LIVE (the platform returned success) — it must be PARKED
+    # as needs_reconcile, NEVER failed (failed => re-queueable => double-post to a real fan account).
+    # The client token stamped at birth (D1) is PRESERVED so reconcile can still poll the post.
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pn", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued))
-    mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(200, {"noid": True}))
+                      caption="x", state=PostState.queued, submission_id="fanops_tok"))
+    mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(200, {}))
     led = BlotatoRestPoster(cfg).publish(led, "pn")
-    assert led.posts["pn"].state is PostState.failed
-    assert led.posts["pn"].submission_id is None
-    assert "no postSubmissionId" in (led.posts["pn"].error_reason or "")
+    assert led.posts["pn"].state is PostState.needs_reconcile   # parked, NEVER failed
+    assert led.posts["pn"].submission_id == "fanops_tok"        # client token preserved -> pollable
+    assert "no recognizable submission id" in (led.posts["pn"].error_reason or "")
+
+def test_2xx_with_alias_id_marks_submitted(tmp_path, monkeypatch, mocker):
+    # AUDIT B2: the 2xx success path uses _extract_submission_id, so an alias (submissionId / nested
+    # data.id) is recognized as a real id -> submitted, overwriting the client token.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pa", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued, submission_id="fanops_tok"))
+    mocker.patch("fanops.post.blotato_rest.requests.post",
+                 return_value=_R(201, {"data": {"submissionId": "real_alias"}}))
+    led = BlotatoRestPoster(cfg).publish(led, "pa")
+    assert led.posts["pa"].state is PostState.submitted
+    assert led.posts["pa"].submission_id == "real_alias"   # real id beats the client token
 
 def test_5xx_is_ambiguous_marks_needs_reconcile_no_repost(tmp_path, monkeypatch, mocker):
     # AUDIT C1: a 5xx arrives AFTER the request body was transmitted, so Blotato may have

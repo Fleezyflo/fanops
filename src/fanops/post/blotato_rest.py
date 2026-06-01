@@ -31,6 +31,22 @@ from fanops.post.payload import build_blotato_payload, default_target_fields
 BASE_URL = "https://backend.blotato.com/v2"
 _MAX_RETRIES = 4
 
+
+def _extract_submission_id(body) -> str | None:
+    # AUDIT B2: Blotato's 2xx body shape varies (postSubmissionId | submissionId | id, sometimes
+    # nested under "data"). Accept the known aliases, recurse into a nested dict, and ignore
+    # non-str/empty values + non-dict bodies. Returns None when no recognizable id is present.
+    if not isinstance(body, dict):
+        return None
+    for k in ("postSubmissionId", "submissionId", "id"):
+        v = body.get(k)
+        if isinstance(v, str) and v:
+            return v
+    data = body.get("data")
+    if isinstance(data, dict):
+        return _extract_submission_id(data)
+    return None
+
 class BlotatoRestPoster:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -77,14 +93,16 @@ class BlotatoRestPoster:
             last = resp
             if resp.status_code in (200, 201):
                 try:
-                    sid = resp.json().get("postSubmissionId")
+                    sid = _extract_submission_id(resp.json())
                 except Exception:
                     sid = None
                 if not sid:
-                    # INTEGRATION CHECKPOINT: a 2xx with no submission id can't be tracked
-                    # by track.py — fail it (don't park it in 'submitted'), so it surfaces.
-                    post.state = PostState.failed
-                    post.error_reason = f"2xx but no postSubmissionId: {resp.text[:200]}"
+                    # AUDIT B2: a 2xx with no RECOGNIZABLE submission id is MAY-BE-LIVE (the platform
+                    # returned success) — PARK it as needs_reconcile, NEVER failed (failed =>
+                    # re-queueable => double-post to a real fan account). The client token from D1 is
+                    # PRESERVED (do NOT clear submission_id) so reconcile can still poll the post.
+                    post.state = PostState.needs_reconcile
+                    post.error_reason = f"2xx but no recognizable submission id: {resp.text[:200]}"
                     return led
                 post.state = PostState.submitted
                 post.submission_id = sid
