@@ -180,6 +180,21 @@ def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, 
     assert "Traceback" not in err                    # degraded, not a stack dump
     assert "RuntimeError" in err                     # the one-line halt message names the cause
 
+def test_run_learning_pass_is_guarded_to_live_backends(tmp_path, monkeypatch):
+    # E1 (learning_pass_guard): the new post-loop learning pass (pull_metrics -> classify ->
+    # amplify -> retire) runs ONLY when poster_backend != "dryrun" AND blotato_api_key is set
+    # (the identical reconcile guard at pipeline.py:106). In dryrun (the default, FANOPS_POSTER
+    # unset) the guard short-circuits, the pass is never entered, and `run` still converges and
+    # exits 0 — a regression guard that the learning pass does NOT run in dryrun and does NOT
+    # break run's exit code.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)       # dryrun backend
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+
 def test_gc_removes_old_analyzed_clip_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import os, time

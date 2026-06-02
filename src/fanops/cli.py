@@ -17,6 +17,7 @@ from fanops.responder import get_responder
 from fanops.track import pull_metrics
 from fanops.reconcile import reconcile_posts
 from fanops.adjust import classify_outcomes, amplify, retire
+from fanops.log import get_logger
 
 def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
@@ -176,6 +177,20 @@ def _dispatch(cfg: Config, args) -> int:
                 return 1
             if s["awaiting"]["moments"] == 0 and s["awaiting"]["captions"] == 0:
                 break
+        # E1: post-loop learning pass — close the feedback loop ONCE per `run` after respond+advance
+        # converges. Gated by the identical reconcile guard (pipeline.py:106): live backend + key
+        # only. In dryrun (default) the guard short-circuits and the pass is NEVER entered. Runs in
+        # its own lock-safe transaction (won't race the next advance); a pull/classify/amplify/retire
+        # hiccup is logged and swallowed so it can NEVER crash the unattended run (exit stays 0).
+        if cfg.poster_backend != "dryrun" and cfg.blotato_api_key:
+            try:
+                with Ledger.transaction(cfg) as led:
+                    led = pull_metrics(led, cfg)
+                    r = classify_outcomes(led)
+                    led = amplify(led, cfg, r["winners"])
+                    led = retire(led, r["losers"])
+            except Exception as e:
+                get_logger(cfg)("learn", "-", "error", err=str(e)[:120])
         print(s); return 0
     return 1
 

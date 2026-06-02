@@ -93,6 +93,27 @@ def test_retire_suppresses_lineage_including_moment(tmp_path):
     led, clips = render_aspects_for(led, cfg, "mL", aspects={Fmt.r16x9})
     assert clips == []                                # guard fires -> no resurrected clip
 
+def test_amplify_respects_per_source_budget(tmp_path):
+    # E1 (amplify_cap): a source that has already been amplified up to max_amplify_per_source
+    # must NOT be re-requested. src.meta['amplify_count'] tracks the per-source count; at the cap
+    # amplify() skips the source entirely — no write_request, no state flip — so the source stays
+    # in moments_decided (it was a winner, already decided), NOT moments_requested. This bounds an
+    # autonomous LLM from growing one source's clips without limit.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.moments_decided, duration=30.0,
+                          transcript=[{"start":14,"end":18,"text":"they slept on me"}], signal_peaks=[],
+                          meta={"amplify_count": 3}))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="14.00-18.00", start=14, end=18,
+                          reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
+    led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
+    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": 400.0}))
+    led = amplify(led, cfg, ["p1"], max_amplify_per_source=3)
+    # at the cap, the source is neither re-requested nor state-flipped
+    assert led.sources["s1"].state is SourceState.moments_decided
+    # the cap is not silently bumped past the ceiling
+    assert led.sources["s1"].meta.get("amplify_count") == 3
+
 def test_amplify_preserves_winners_published_lineage(tmp_path):
     # CRITICAL: amplifying a winner must NOT delete the winner's own published/analyzed post.
     # The post is live on the platform; deleting its ledger record orphans it (untrackable).
