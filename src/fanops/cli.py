@@ -121,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=30)
     p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
     p_res.add_argument("status", choices=["published", "failed"]); p_res.add_argument("--url", default=None)
+    p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
@@ -230,6 +231,18 @@ def _dispatch(cfg: Config, args) -> int:
             p.state = PostState.published if args.status == "published" else PostState.failed
             if args.url: p.public_url = args.url
         print(f"resolved {args.post_id} -> {args.status}"); return 0
+    if args.cmd == "unhold":
+        # RUNTIME backlog (f): clear a brand-risk hold WITHOUT a hand-edit of ledger.json. When a
+        # clip was parked in `held` (held=True, held_reason set) by the brand-risk gate, the
+        # operator who has reviewed it forces it back into the caption gate from here. Tight
+        # transaction, local-only mutation (no network), like resolve.
+        from fanops.models import ClipState
+        with Ledger.transaction(cfg) as led:
+            if args.clip_id not in led.clips:
+                print(f"no such clip: {args.clip_id}", file=sys.stderr); return 2
+            c = led.clips[args.clip_id]; c.held = False; c.held_reason = None
+            c.state = ClipState.captions_requested      # re-enter the caption gate
+        print(f"unheld {args.clip_id}"); return 0
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc
         # unattended: respond to gates, advance, repeat until no progress.

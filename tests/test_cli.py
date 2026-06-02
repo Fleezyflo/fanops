@@ -318,3 +318,17 @@ def test_resolve_promotes_a_needs_reconcile_post(tmp_path, monkeypatch):
     assert main(["resolve", "p1", "published", "--url", "https://x/p"]) == 0
     led = Ledger.load(cfg)
     assert led.posts["p1"].state is PostState.published and led.posts["p1"].public_url == "https://x/p"
+
+def test_unhold_resets_a_held_clip(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Clip, ClipState
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.held, held=True,
+                          held_reason="brand risk"))
+    from fanops.cli import main
+    assert main(["unhold", "c1"]) == 0
+    c = Ledger.load(cfg).clips["c1"]
+    assert c.state is ClipState.captions_requested and c.held is False
