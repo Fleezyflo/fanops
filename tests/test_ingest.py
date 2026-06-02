@@ -1,4 +1,5 @@
 # tests/test_ingest.py
+import json
 import pytest
 from pathlib import Path
 from fanops.config import Config
@@ -79,7 +80,7 @@ def test_skips_audio_only_drop(tmp_path, mocker):
                  side_effect=lambda p: p.suffix.lower() != ".wav")
     led = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 1
-    assert next(iter(led.sources.values())).meta["original_name"] == "perf.mp4"
+    assert "original_name" not in next(iter(led.sources.values())).meta
 
 def test_is_excluded():
     assert is_excluded("Moh Flow passport & ID.zip")
@@ -93,9 +94,18 @@ def test_skips_pii(tmp_path, mocker):
     _put(cfg.inbox / "passport scan.jpg", b"S"); _put(cfg.inbox / "perf.mp4", b"V")
     led = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 1
-    assert next(iter(led.sources.values())).meta["original_name"] == "perf.mp4"
+    assert "original_name" not in next(iter(led.sources.values())).meta
 
 def test_scan_excludes_pii(tmp_path):
     d = tmp_path / "D"; d.mkdir()
     (d / "passport.jpg").write_bytes(b"x"); (d / "clip.mp4").write_bytes(b"y")
     assert {Path(c).name for c in scan_local([d])} == {"clip.mp4"}
+
+def test_ingest_does_not_persist_original_filename(tmp_path, mocker):
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "MY-PRIVATE-NAME.mp4", b"V")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
+    led = ingest_drops(Ledger.load(cfg), cfg)
+    s = next(iter(led.sources.values()))
+    assert "original_name" not in s.meta
+    assert "MY-PRIVATE-NAME" not in json.dumps(s.model_dump())   # the filename is nowhere in the unit

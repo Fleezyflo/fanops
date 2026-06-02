@@ -18,9 +18,14 @@ fanops ingest
 fanops pull <url>
 fanops advance [--base-time T]
 fanops respond
+fanops reconcile
 fanops track  [--window 30d]
 fanops adjust [--winner-pct 0.3] [--retire-pct 0.2] [--lift-floor 20.0]
 fanops gc     [--keep-days 30]
+fanops resolve <post_id> <published|failed> [--url U]
+fanops unhold <clip_id>
+fanops retry-source <source_id>
+fanops retry-metrics <post_id>
 fanops digest
 fanops run    [--base-time T]
 ```
@@ -176,6 +181,30 @@ autonomous brain is never serialized behind the ledger lock.)
 On macOS a launchd `StartInterval` agent is the equivalent. Note that creating those
 scheduled jobs (CronCreate / system scheduled-tasks) is an environment concern, **not**
 something this repo manages.
+
+---
+
+## Recovery verbs — manual intervention for non-self-resolving states
+
+Four verbs are the operator's hands-on surface for the states the automatic pipeline
+**cannot** resolve on its own. Each is a tight, **local-only** `Ledger.transaction` (no
+network call, so no auth needed), and each exits **2** with a one-line message if the
+target id doesn't exist or is in the wrong state — never a traceback. Source:
+`src/fanops/cli.py`.
+
+| Verb | When | What it does |
+|---|---|---|
+| `fanops resolve <post_id> <published\|failed> [--url U]` | a post is stuck in `needs_reconcile`/`submitting` and `fanops reconcile` can't auto-resolve it (Blotato never returns a terminal status, or the post has no real submission id) — the operator checks the platform by hand | forces the post's state to ground truth. `published` (optionally records the live URL via `--url`) or `failed` (safe to re-queue). The documented human-reconcile escape hatch (audit H1). |
+| `fanops unhold <clip_id>` | a clip is parked `held` by the brand-risk gate and a human has reviewed/corrected the caption | clears `held`/`held_reason` and resets the clip to `captions_requested` so the next `advance` re-ingests the corrected captions. Replaces the old hand-edit of `ledger.json` (backlog (f), now done). |
+| `fanops retry-source <source_id>` | a source is quarantined in `error` (a transient transcribe/probe failure) | resets it to `catalogued`, clears `error_reason`, and sets `meta["transcribed"]=False` so the next `advance` does a real re-transcribe from the top. |
+| `fanops retry-metrics <post_id>` | a `published` post's metrics never landed in a `track` pass | a no-op state confirmation — the post stays `published` so the next `track` re-pulls its metrics. Exits **2** if the post isn't `published` (nothing to re-pull). |
+
+These are the manual counterpart to the automatic reconcile/quarantine machinery: the
+pipeline quarantines a bad unit (per-unit `error` state) and parks an ambiguous post
+(`needs_reconcile`) on its own, but a **human** decides when the underlying problem is
+fixed and the unit should re-enter the flow. Because they only mutate the local ledger
+under the flock, they are safe to run while cron's `run` is idle (and will wait briefly,
+then `LockBusyError`-skip, if a `run` is mid-pass — see *Overlapping runs are safe*).
 
 ---
 
@@ -368,7 +397,87 @@ These cannot be automated and gate a live run:
    (begging / "official" / "link in bio", EN or AR) are held with a reason and never
    post until a human clears them.
 
-   **Clearing a brand-risk hold:** a clip in `held` state is paused for human review (it appears in the digest's "Brand-risk holds" section with the matched reason). To clear it: (1) edit the offending caption(s) in the clip's `*.response.json` under `04_agent_io/requests/` so they pass the EN+AR brand-risk screen, then (2) reset the clip's `state` from `held` back to `captions_requested` in `00_control/ledger.json` and re-run `fanops advance` — it will re-ingest the corrected captions. (A future `fanops unhold <clip_id>` command is on the backlog to automate step 2.)
+   **Clearing a brand-risk hold:** a clip in `held` state is paused for human review (it appears in the digest's "Brand-risk holds" section with the matched reason). To clear it: (1) edit the offending caption(s) in the clip's `*.response.json` under `04_agent_io/requests/` so they pass the EN+AR brand-risk screen, then (2) run **`fanops unhold <clip_id>`** — it clears the hold and resets the clip to `captions_requested`; the next `fanops advance` re-ingests the corrected captions. (See *Recovery verbs* above. The old manual `ledger.json` edit for step 2 is no longer needed.)
+
+---
+
+## Operator runbook — fresh checkout → first real post
+
+The bridge from "code-complete" to "live." Everything below the dashed line in step 5 is
+already built and tested; steps 1–3 and the credential exports are the **only** work that
+cannot be automated (real accounts, a human's Blotato connection, and secrets). Run the steps
+**in order** from the repo root.
+
+**1. Create the real fan accounts** *(human-only)* — make the actual Instagram / TikTok
+   accounts you intend to post from. This is off-platform; FanOps never creates accounts.
+
+**2. Connect each account in Blotato** *(human-only)* — in the Blotato dashboard, link each
+   fan account so Blotato can post on its behalf. Each connected account gets a **numeric
+   `account_id`** in Blotato.
+
+**3. Paste each numeric `account_id` into `accounts.json` and set `status: active`.** The file
+   ships seeded with `@TBD-1` / `@TBD-2` placeholders in `status: planned` — **fill these in,
+   do not recreate the file.** An `active` account with an empty/zero `account_id` is caught by
+   `fanops`' pre-run `_check_accounts` (exit 2 with the problem) before anything reaches Blotato.
+
+```jsonc
+// MohFlow-FanOps/00_control/accounts.json — example
+{ "accounts": [
+  { "handle": "@your.real.ig", "platform": "instagram", "account_id": "123456", "status": "active" },
+  { "handle": "@your.real.tt", "platform": "tiktok",    "account_id": "789012", "status": "active" }
+] }
+```
+
+**4. Set `BLOTATO_API_KEY` in `.env` (sandbox first).** Copy `.env.example` → `.env` and put
+   the **sandbox** key in first to dry-run the live contract before touching real posting:
+
+```bash
+cp .env.example .env
+echo 'BLOTATO_API_KEY=sk-sandbox-...'  >> .env   # sandbox key first; swap to the live key only after step 6 passes
+echo 'FANOPS_POSTER=mcp'               >> .env   # the live backend (default is dryrun — see below)
+```
+
+**5. Ensure `claude` is authed on the host** *(required for the autonomous LLM responder)* —
+   the responder shells `claude --bare`, which **ignores OAuth/keychain**. Auth is **strictly
+   the `ANTHROPIC_API_KEY` env var**:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...     # MUST be exported in the cron/launchd environment, not just your shell
+echo 'FANOPS_RESPONDER=llm' >> .env      # opt into the autonomous responder (default `manual` is a no-op — a human/cron writes the response files)
+claude --bare -p 'say ok' --output-format json   # smoke: confirms the key works headless
+```
+   ──────────────────────────────────────────────────────────────────────────────
+   *Everything below is already built — these are verification + scheduling steps.*
+
+**6. Run the `[GATED]` Blotato smoke test** (the live contract check, Phase D's Task D5) — it
+   confirms the `postSubmissionId` key, the `/media/uploads` shape, and the analytics
+   endpoint against your sandbox key. It is **creds-gated**, so it skips cleanly without a key:
+
+```bash
+BLOTATO_API_KEY=sk-sandbox-... BLOTATO_SMOKE_ACCOUNT_ID=<a sandbox account_id> \
+  ./.venv/bin/python -m pytest tests/integration/test_blotato_smoke.py -v
+```
+   Resolve any field-name surprises here (re-weight `track._W` if the metrics fields differ —
+   see *Integration checkpoints* below) **before** swapping the live key into `.env`.
+
+**7. Schedule `fanops run` + a dead-man's-switch monitor.** Add a cron (or launchd
+   `StartInterval`) entry that `cd`s into the repo (mandatory — `fanops` resolves its data dirs
+   from cwd, there is no `FANOPS_ROOT`) and runs `fanops run` on your interval. `run` responds
+   to gates, advances the pipeline, and — on a live backend with a key — closes the learning
+   loop (`track`+`adjust`) once per pass:
+
+```cron
+*/30 * * * * cd /path/to/repo && ANTHROPIC_API_KEY=sk-ant-... ./.venv/bin/fanops run >> run.out 2>&1
+```
+   Then point an **external monitor** at the heartbeat (see *Heartbeat / dead-man's-switch*
+   above): page if the `heartbeat` ts stops advancing (cron is dead), or if
+   **`published_in_run == 0` for N consecutive runs** (the pipeline is alive but stuck — most
+   often a silently-unauthed responder; grep `run.log` for repeated `Not logged in`). This
+   monitor is the difference between "a 3am failure looks like it's working" and "you get paged."
+
+After step 7 the system runs unattended. The recovery verbs (*Recovery verbs* above) are your
+manual surface when the monitor fires: `unhold` a reviewed clip, `resolve` an ambiguous post,
+`retry-source` a quarantined source, `retry-metrics` an unmeasured post.
 
 ---
 
@@ -457,13 +566,23 @@ deferred from the original plan, and surfaced during the build.
 - **(e) Media size cap / size-aware upload timeout.** The media PUT uses a fixed 120s
   timeout and no size cap; large files need a size-aware timeout (and a cap to reject
   oversize uploads).
-- **(f) `fanops unhold <clip_id>` command.** Reset a held clip to `captions_requested`
-  (currently a manual ledger edit — see "Clearing a brand-risk hold" above).
+- **(f) Operator-recovery verbs (`unhold` / `resolve` / `retry-source` / `retry-metrics`) — DONE (Phase F).**
+  The four states that previously required hand-editing `ledger.json` — a brand-risk `held` clip, an
+  ambiguous `needs_reconcile`/`submitting` post, a quarantined `error` source, a `published`-but-unmeasured
+  post — each now have a one-verb operator path (see *Recovery verbs* above). This closes the audit's
+  recurring "operability gap" (every recovery needed a manual ledger edit) and H1's missing human-reconcile
+  path. Each is a tight local-only `Ledger.transaction`; unknown id → exit 2, never a traceback.
 - **(g) Per-platform duration clamp.** Enforce a per-surface max clip length at crosspost
   time (hold-vs-skip per surface) — needs knowing clip duration at crosspost time. The
   earlier unenforced `PLATFORM_MAX_SECONDS` dict was removed as a false safety contract.
-- **(f) Externalize the hardcoded YouTube title fallback.** The yt-dlp path has a
+- **(h) Externalize the hardcoded YouTube title fallback.** The yt-dlp path has a
   hardcoded title fallback (`"Moh Flow"`); move it to config.
-- **(g) Lint + dedup.** Add `ruff` to dev deps for lint enforcement, and consolidate the
+- **(i) Lint + dedup.** Add `ruff` to dev deps for lint enforcement, and consolidate the
   duplicated `_parse` / `BASE_URL` helpers (repeated across `run.py`, `crosspost.py`,
   `tagging.py`, `media.py`, `blotato_rest.py`, `metrics.py`) into shared modules.
+- **(j) Per-account creative variation (A/B content learning).** Generate genuinely different
+  creative — hook / caption / on-screen-text / edit variants — per account or cohort, and let the
+  existing `track → analyzed → adjust` lift loop attribute which variant wins. This is the *valuable*
+  reframing of the rejected C2 finding (NOT byte-perturbation for forensic evasion, which the operator
+  explicitly does not want): real content experimentation to discover what performs per audience. Its
+  own spec → plan → build cycle when prioritized.

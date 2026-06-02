@@ -304,3 +304,120 @@ def test_gc_removes_old_analyzed_clip_file(tmp_path, monkeypatch):
     from fanops.cli import main
     rc = main(["gc", "--keep-days", "30"])
     assert rc == 0 and not f.exists()                # the 60d-old analyzed clip file removed
+
+def test_resolve_promotes_a_needs_reconcile_post(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, PostState, Platform
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t"))
+    from fanops.cli import main
+    assert main(["resolve", "p1", "published", "--url", "https://x/p"]) == 0
+    led = Ledger.load(cfg)
+    assert led.posts["p1"].state is PostState.published and led.posts["p1"].public_url == "https://x/p"
+
+def test_unhold_resets_a_held_clip(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Clip, ClipState
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.held, held=True,
+                          held_reason="brand risk"))
+    from fanops.cli import main
+    assert main(["unhold", "c1"]) == 0
+    c = Ledger.load(cfg).clips["c1"]
+    assert c.state is ClipState.captions_requested and c.held is False
+
+def test_retry_source_resets_error_source(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.error,
+                              error_reason="toolchain missing: ffmpeg"))
+    from fanops.cli import main
+    assert main(["retry-source", "s1"]) == 0
+    s = Ledger.load(cfg).sources["s1"]
+    assert s.state is SourceState.catalogued and s.error_reason is None
+
+
+# ── Phase F hardening (the adversarial skeptics found these paths correct in the live
+# binary but UNCOVERED — deleting a guard / mis-mapping a branch passed the suite undetected,
+# the exact H9 blind spot. These pin the unknown-id exits, the resolve `failed` branch, the
+# retry-source re-transcribe flag, and the retry-metrics published/not-published split.) ──
+
+def test_resolve_can_fail_a_post_and_unknown_id_exits_2(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, PostState, Platform
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t"))
+    from fanops.cli import main
+    # the `failed` branch (the committed test only exercised `published` -> a mis-map slipped through)
+    assert main(["resolve", "p1", "failed"]) == 0
+    assert Ledger.load(cfg).posts["p1"].state is PostState.failed
+    # unknown post -> clean exit 2 + stderr, NOT a KeyError traceback
+    assert main(["resolve", "nope", "published"]) == 2
+    assert "no such post: nope" in capsys.readouterr().err
+
+
+def test_unhold_unknown_clip_exits_2(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.cli import main
+    Config(root=tmp_path)
+    assert main(["unhold", "nope"]) == 2          # guard fires -> exit 2, not an uncaught KeyError
+    assert "no such clip: nope" in capsys.readouterr().err
+
+
+def test_retry_source_forces_real_retranscribe_and_unknown_id_exits_2(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        # a source that ALREADY transcribed once (meta flag set) — a state-only reset would
+        # re-enter the pipeline but transcribe.py:82 SKIPS it (meta.transcribed is True), leaving
+        # a stale transcript. retry-source must clear the flag to force a real re-transcribe.
+        led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.error,
+                              error_reason="boom", meta={"transcribed": True}))
+    from fanops.cli import main
+    assert main(["retry-source", "s1"]) == 0
+    assert Ledger.load(cfg).sources["s1"].meta["transcribed"] is False
+    # unknown source -> clean exit 2
+    assert main(["retry-source", "nope"]) == 2
+    assert "no such source: nope" in capsys.readouterr().err
+
+
+def test_retry_metrics_published_vs_not_vs_unknown(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, PostState, Platform
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="pub", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.published, submission_id="s"))
+        led.add_post(Post(id="que", parent_id="c2", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="y", state=PostState.queued))
+    from fanops.cli import main
+    # published -> exit 0, and the post STAYS published so the next `track` re-pulls (no state flip)
+    assert main(["retry-metrics", "pub"]) == 0
+    assert Ledger.load(cfg).posts["pub"].state is PostState.published
+    # not published -> exit 2 with the state in the message
+    assert main(["retry-metrics", "que"]) == 2
+    assert "not published" in capsys.readouterr().err
+    # unknown post -> exit 2
+    assert main(["retry-metrics", "nope"]) == 2
+    assert "no such post: nope" in capsys.readouterr().err
