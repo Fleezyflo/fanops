@@ -3,7 +3,9 @@ advance() lives in pipeline.py; track/adjust close the feedback loop (FIX F04); 
 the agent gates via the responder (FIX F02/F13); gc reclaims disk (FIX F83); run loops
 respond+advance until stable for unattended operation."""
 from __future__ import annotations
-import argparse, sys
+import argparse, json, sys
+from datetime import datetime, timezone
+import fanops
 from fanops.config import Config
 from fanops.errors import BlotatoAuthError, ControlFileError, LockBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
@@ -17,6 +19,7 @@ from fanops.responder import get_responder
 from fanops.track import pull_metrics
 from fanops.reconcile import reconcile_posts
 from fanops.adjust import classify_outcomes, amplify, retire
+from fanops.log import get_logger
 
 def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
@@ -138,6 +141,22 @@ def _check_accounts(cfg: Config) -> int:
     return 0
 
 
+def _heartbeat(cfg: Config, s: dict) -> None:
+    """B5/E2: emit a heartbeat line every run/advance so an external monitor diffing consecutive
+    lines can tell 'alive-but-idle' (ts advances, published_in_run may be 0) from 'cron is dead'
+    (ts frozen / no new line). The ts comes from a LIVE clock so it changes every invocation —
+    that mutation is the load-bearing signal, not cosmetic. Printed to stdout AND appended to
+    cfg.log_path via get_logger (which mkdirs reports/) so cron+mail/PagerDuty can alert."""
+    hb = {
+        "heartbeat": datetime.now(timezone.utc).isoformat(),
+        "fanops_version": fanops.__version__,
+        "published_in_run": s.get("published_in_run", 0),
+        "last_published_age_hours": s.get("last_published_age_hours"),
+    }
+    print(json.dumps(hb))
+    get_logger(cfg)("heartbeat", "-", "ok", **hb)
+
+
 def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "status":   return cmd_status(cfg)
     if args.cmd == "ingest":
@@ -152,7 +171,8 @@ def _dispatch(cfg: Config, args) -> int:
         write_digest(Ledger.load(cfg), cfg); print(f"wrote {cfg.digest_path}"); return 0
     if args.cmd == "advance":
         if (rc := _check_accounts(cfg)):  return rc
-        print(advance(cfg, base_time=args.base_time)); return 0
+        s = advance(cfg, base_time=args.base_time)
+        _heartbeat(cfg, s); print(s); return 0
     if args.cmd == "track":    return cmd_track(cfg, args.window)
     if args.cmd == "reconcile": return cmd_reconcile(cfg)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
@@ -176,7 +196,23 @@ def _dispatch(cfg: Config, args) -> int:
                 return 1
             if s["awaiting"]["moments"] == 0 and s["awaiting"]["captions"] == 0:
                 break
-        print(s); return 0
+        # E1: post-loop learning pass — close the feedback loop ONCE per `run` after respond+advance
+        # converges. Gated by the identical reconcile guard (pipeline.py:106): live backend + key
+        # only. In dryrun (default) the guard short-circuits and the pass is NEVER entered. Runs in
+        # its own lock-safe transaction (won't race the next advance); a pull/classify/amplify/retire
+        # hiccup is logged and swallowed so it can NEVER crash the unattended run (exit stays 0).
+        if cfg.poster_backend != "dryrun" and cfg.blotato_api_key:
+            try:
+                with Ledger.transaction(cfg) as led:
+                    led = pull_metrics(led, cfg)
+                    r = classify_outcomes(led)
+                    led = amplify(led, cfg, r["winners"])
+                    led = retire(led, r["losers"])
+            except Exception as e:
+                get_logger(cfg)("learn", "-", "error", err=str(e)[:120])
+        # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
+        # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
+        _heartbeat(cfg, s); print(s); return 0
     return 1
 
 if __name__ == "__main__":
