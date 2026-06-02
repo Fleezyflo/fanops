@@ -112,7 +112,10 @@ def test_reconcile_command_skips_without_key(tmp_path, monkeypatch, capsys):
 
 def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, mocker):
     # End-to-end through the CLI with a stubbed status client: a needs_reconcile post with an id
-    # is promoted to published.
+    # is promoted to published. (Phase-B-followup: cmd_reconcile now binds the status poller via
+    # _default_get_status and polls OUTSIDE a transaction, then applies inside it — so we stub the
+    # poller seam, which exercises the REAL reconcile_posts through the new transactional path,
+    # a stronger check than the old stub-out-reconcile_posts version.)
     monkeypatch.chdir(tmp_path)
     from fanops.config import Config
     from fanops.ledger import Ledger
@@ -122,8 +125,8 @@ def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, moc
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
     led.save()
     import fanops.cli as cli
-    mocker.patch.object(cli, "reconcile_posts",
-                        side_effect=lambda led_, cfg_: _promote(led_))
+    mocker.patch.object(cli, "_default_get_status",
+                        return_value=lambda sid: {"status": "published", "publicUrl": "https://x/p"})
     rc = main(["reconcile"])
     assert rc == 0
     again = Ledger.load(cfg)

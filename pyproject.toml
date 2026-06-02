@@ -6,7 +6,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = ["pydantic>=2.7", "requests>=2.31", "python-dotenv>=1.0", "yt-dlp>=2024.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-mock>=3.12"]
+dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3"]
 # Local transcription. Installed into the venv in Task 2. (whisper CLI lands on PATH.)
 transcribe = ["openai-whisper>=20231117"]
 
@@ -24,3 +24,8 @@ where = ["src"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 markers = ["integration: hits real ffmpeg/whisper/Blotato sandbox (deselect with -m 'not integration')"]
+# Global per-test timeout (pytest-timeout): a concurrency regression that self-deadlocks under the
+# ledger flock (e.g. a locking save() inside a transaction) FAILS FAST here instead of hanging CI
+# for the 30s lock timeout × N. The lock/deadlock tests rely on this (Phase B guardrail). 60s is
+# well above any real test (the slowest, the real-tooling E2E, runs in ~10-20s).
+timeout = 60

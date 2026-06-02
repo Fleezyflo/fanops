@@ -12,12 +12,12 @@ from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState, SourceState
 from fanops.pipeline import advance
-from fanops.ingest import ingest_drops, download_source
+from fanops.ingest import ingest_drops, download_url
 from fanops.digest import write_digest
 from fanops.agentstep import pending
 from fanops.responder import get_responder
-from fanops.track import pull_metrics
-from fanops.reconcile import reconcile_posts
+from fanops.track import pull_metrics, _default_list_posts
+from fanops.reconcile import reconcile_posts, _default_get_status, _RECONCILABLE
 from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.log import get_logger
 
@@ -35,34 +35,58 @@ def cmd_status(cfg: Config) -> int:
     return 0
 
 def cmd_track(cfg: Config, window: str) -> int:
-    led = Ledger.load(cfg)
+    # Phase-B-followup: close the lost-update window for `track` too (B4 was scoped to advance).
+    # The Blotato metrics FETCH (up to ~30s network) runs OUTSIDE the ledger lock; only the apply
+    # (record_metrics on the freshly-loaded ledger) runs inside a tight transaction — so a slow
+    # fetch never serializes behind the flock, and a concurrent advance can't clobber the result.
     try:
-        led = pull_metrics(led, cfg, window=window)   # binds to BlotatoMetricsClient
+        rows = list(_default_list_posts(cfg)(window))   # network, NO lock held
     except RuntimeError as e:
         print(f"track skipped: {e}"); return 0
-    led.save(); write_digest(led, cfg)
-    print(f"tracked; analyzed={len(led.posts_in_state(PostState.analyzed))}")
+    with Ledger.transaction(cfg) as led:
+        # apply the pre-fetched rows: pull_metrics matches them to still-published posts in THIS
+        # (re-loaded) ledger, so a post that changed between fetch and apply is simply not matched.
+        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
+        analyzed = len(led.posts_in_state(PostState.analyzed))
+    write_digest(Ledger.load(cfg), cfg)              # digest read OUTSIDE the lock
+    print(f"tracked; analyzed={analyzed}")
     return 0
 
 def cmd_reconcile(cfg: Config) -> int:
     # AUDIT H4: resolve posts stranded in submitting/needs_reconcile by polling GET /v2/posts/:id.
     # Needs a key (dryrun has no live status source) — skip cleanly if absent, like track.
-    led = Ledger.load(cfg)
+    # Phase-B-followup: the per-post POLLS (network) run OUTSIDE the lock against a lock-free
+    # snapshot; only the apply runs inside a tight transaction. So N status polls never hold the
+    # ledger flock, and a concurrent advance can't be clobbered.
     try:
-        led = reconcile_posts(led, cfg)               # binds to BlotatoStatusClient
+        poll = _default_get_status(cfg)              # raises if no key -> skip cleanly (like track)
     except RuntimeError as e:
         print(f"reconcile skipped: {e}"); return 0
-    led.save(); write_digest(led, cfg)
-    print(f"reconciled; needs_reconcile={len(led.posts_in_state(PostState.needs_reconcile))} "
-          f"published={len(led.posts_in_state(PostState.published))}")
+    snapshot = Ledger.load(cfg)                      # lock-free read to learn WHICH posts to poll
+    results: dict[str, dict] = {}
+    for p in snapshot.posts.values():
+        if p.state in _RECONCILABLE and p.submission_id:
+            results[p.submission_id] = poll(p.submission_id) or {}   # network, NO lock held
+    with Ledger.transaction(cfg) as led:
+        # apply the pre-polled results; reconcile_posts re-checks each post's CURRENT state in the
+        # re-loaded ledger, so a post that changed between poll and apply is handled correctly
+        # (an id with no pre-polled result yields {} -> left parked, retried next pass).
+        led = reconcile_posts(led, cfg, get_status=lambda sid: results.get(sid, {}))
+        nr = len(led.posts_in_state(PostState.needs_reconcile))
+        pub = len(led.posts_in_state(PostState.published))
+    write_digest(Ledger.load(cfg), cfg)
+    print(f"reconciled; needs_reconcile={nr} published={pub}")
     return 0
 
 def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: float) -> int:
-    led = Ledger.load(cfg)
-    r = classify_outcomes(led, winner_pct=winner_pct, retire_pct=retire_pct, lift_floor=lift_floor)
-    led = amplify(led, cfg, r["winners"])
-    led = retire(led, r["losers"])
-    led.save(); write_digest(led, cfg)
+    # Phase-B-followup: wrap the whole classify->amplify->retire under one transaction (B4). No
+    # network here — classify_outcomes/amplify/retire only read+mutate the ledger and write agent
+    # request files (fast, local) — so holding the lock across them is correct and cheap.
+    with Ledger.transaction(cfg) as led:
+        r = classify_outcomes(led, winner_pct=winner_pct, retire_pct=retire_pct, lift_floor=lift_floor)
+        led = amplify(led, cfg, r["winners"])
+        led = retire(led, r["losers"])
+    write_digest(Ledger.load(cfg), cfg)
     print(f"adjusted; winners={len(r['winners'])} losers={len(r['losers'])}")
     return 0
 
@@ -160,11 +184,24 @@ def _heartbeat(cfg: Config, s: dict) -> None:
 def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "status":   return cmd_status(cfg)
     if args.cmd == "ingest":
-        led = ingest_drops(Ledger.load(cfg), cfg); led.save(); write_digest(led, cfg)
-        print(f"ingested -> {len(led.sources)} sources"); return 0
+        # Phase-B-followup: catalogue under a transaction (B4). ffprobe runs inside the lock here,
+        # but it is LOCAL + fast (tens of ms/file) — unlike the network commands, there is no slow
+        # call to keep out, and the dedup (already_seen) needs the loaded ledger, so one transaction
+        # is the right unit.
+        with Ledger.transaction(cfg) as led:
+            led = ingest_drops(led, cfg)
+            n = len(led.sources)
+        write_digest(Ledger.load(cfg), cfg)
+        print(f"ingested -> {n} sources"); return 0
     if args.cmd == "pull":
-        led = download_source(Ledger.load(cfg), cfg, args.url); led.save(); write_digest(led, cfg)
-        print(f"pulled -> {len(led.sources)} sources"); return 0
+        # Phase-B-followup: the yt-dlp DOWNLOAD (network, slow) runs OUTSIDE the lock; only the
+        # ingest of what landed runs inside the transaction.
+        download_url(cfg, args.url)                  # network, NO lock held
+        with Ledger.transaction(cfg) as led:
+            led = ingest_drops(led, cfg, origin="url")
+            n = len(led.sources)
+        write_digest(Ledger.load(cfg), cfg)
+        print(f"pulled -> {n} sources"); return 0
     if args.cmd == "respond":
         n = get_responder(cfg).answer_pending(cfg); print(f"responder answered {n} request(s)"); return 0
     if args.cmd == "digest":

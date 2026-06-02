@@ -107,6 +107,10 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # defense-in-depth net for any unforeseen non-auth raise, not the primary isolation.)
         try:
             led = crosspost_clips(led, cfg, accts, base_time=base_time)
+        except BlotatoAuthError:
+            raise                                        # F52: a fatal auth error halts (symmetry
+            # with publish_due below). crosspost has no Blotato call today, but if one is ever added
+            # (e.g. pre-flight account validation) a bad key must halt, not be logged-and-continued.
         except Exception as e:
             log("crosspost", "-", "error", err=str(e)[:120])
         # Reconcile last pass's stranded posts BEFORE publishing this pass (AUDIT H4): resolve any

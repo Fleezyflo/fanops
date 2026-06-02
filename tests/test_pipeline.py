@@ -264,3 +264,19 @@ def test_advance_still_halts_on_fatal_auth_error_from_publish(tmp_path, monkeypa
     mocker.patch("fanops.pipeline.publish_due", side_effect=BlotatoAuthError("401 invalid key"))
     with pytest.raises(BlotatoAuthError):
         advance(cfg, base_time="2026-06-02T18:00:00Z")
+
+
+def test_advance_halts_on_fatal_auth_error_from_crosspost(tmp_path, monkeypatch, mocker):
+    # Phase-B-followup (review Minor): the crosspost stage wrapper must re-raise a fatal
+    # BlotatoAuthError (symmetry with publish_due), not log-and-continue. crosspost has no Blotato
+    # call today, but if one is added a bad key must halt the run, not be silently swallowed.
+    import pytest
+    from fanops.errors import BlotatoAuthError
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    mocker.patch("fanops.pipeline.crosspost_clips", side_effect=BlotatoAuthError("401 bad key"))
+    with pytest.raises(BlotatoAuthError):
+        advance(cfg, base_time="2026-06-02T18:00:00Z")
