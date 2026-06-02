@@ -195,6 +195,22 @@ def test_run_learning_pass_is_guarded_to_live_backends(tmp_path, monkeypatch):
         {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
 
+def test_run_prints_heartbeat_with_version(tmp_path, monkeypatch, capsys):
+    # B5/E2: every `fanops run` must emit a heartbeat line on stdout carrying the fanops version,
+    # so a monitor diffing consecutive lines can distinguish 'alive-but-idle' from 'cron is dead'.
+    # Today fanops.__version__ is undefined (AttributeError) and no heartbeat line is printed.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)       # dryrun backend
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    out = capsys.readouterr().out
+    import fanops
+    assert fanops.__version__ in out
+    assert "heartbeat" in out
+
 def test_gc_removes_old_analyzed_clip_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import os, time

@@ -195,6 +195,21 @@ def test_advance_persists_progress_when_publish_raises_nonauth(tmp_path, monkeyp
     assert "src_prog" in saved.sources                # in-pass progress PERSISTED, not rolled back
 
 
+def test_advance_reports_run_delta_and_last_post_age(tmp_path, monkeypatch, mocker):
+    # B5/E2: the advance() summary must carry a THIS-RUN published delta and the age of the newest
+    # published post, so a heartbeat monitor can tell 'alive-but-idle' from 'cron is dead'. With no
+    # drops and no prior published posts the delta is 0 and the age is None, but BOTH keys MUST be
+    # present in the summary dict (they are absent today).
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    s = advance(cfg, base_time="2026-06-02T18:00:00Z")
+    assert "published_in_run" in s
+    assert "last_published_age_hours" in s
+
+
 def test_advance_still_halts_on_fatal_auth_error_from_publish(tmp_path, monkeypatch, mocker):
     # The stage-level guard must NOT swallow a FATAL BlotatoAuthError — a bad key means every post
     # fails, so halting (and rolling back the pass) is the intended F52 behavior. The CLI run guard

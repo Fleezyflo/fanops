@@ -3,6 +3,7 @@ chain as far as it can and PAUSES at each agent gate (moments, captions). EVERY 
 call is wrapped so one bad source/moment/clip goes to `error` and is skipped — it never wedges
 the whole pass (FIX F03). Returns counts + awaiting{moments,captions}."""
 from __future__ import annotations
+from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
@@ -24,6 +25,14 @@ from fanops.agentstep import pending
 def _aspects_for(accts: Accounts) -> set[Fmt]:
     return {PLATFORM_ASPECT.get(s.platform, Fmt.r9x16) for s in accts.surfaces()} or {Fmt.r9x16}
 
+def _parse(ts):
+    # Parse an ISO-8601 scheduled_time (may carry a 'Z') into an aware datetime, or None if
+    # absent/unparseable — never raises, so the heartbeat age computation can't crash a pass.
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
+    except Exception:
+        return None
+
 def advance(cfg: Config, *, base_time: str) -> dict:
     accts = Accounts.load(cfg)
     log = get_logger(cfg)
@@ -36,6 +45,10 @@ def advance(cfg: Config, *, base_time: str) -> dict:
     # vanished silently). A second live pass is excluded (typed LockBusyError, bounded by timeout),
     # not silently overwritten.
     with Ledger.transaction(cfg) as led:
+        # B5/E2: snapshot the already-published post ids at transaction ENTRY (before ingest) so the
+        # summary's published_in_run is a THIS-RUN delta — a post already published when the pass
+        # opened is in `before` and is NOT counted (set difference against the exit state).
+        before = {p.id for p in led.posts_in_state(PostState.published)}
         led = ingest_drops(led, cfg)
 
         # transcribe -> signals -> request moments (per source), each quarantined
@@ -120,11 +133,22 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         except Exception as e:
             log("publish", "-", "error", err=str(e)[:120])
 
+        # B5/E2 heartbeat inputs: published_in_run is the set-difference of published ids at EXIT
+        # vs `before` (THIS-RUN delta); last_published_age_hours is the age (hours, 2dp) of the
+        # newest published post's scheduled_time vs now, or None when none has a parseable time.
+        after = led.posts_in_state(PostState.published)
+        published_in_run = len([p for p in after if p.id not in before])
+        newest = max((_parse(p.scheduled_time) for p in after if p.scheduled_time), default=None)
+        last_published_age_hours = (None if newest is None
+                                    else round((datetime.now(timezone.utc) - newest).total_seconds() / 3600, 2))
         summary = {
             "sources": len(led.sources), "moments": len(led.moments),
             "clips": len(led.clips), "posts": len(led.posts),
             "published": len(led.posts_in_state(PostState.published)),
             "failed": len(led.posts_in_state(PostState.failed)),
+            # B5/E2: this-run published delta + newest published age, for the heartbeat monitor.
+            "published_in_run": published_in_run,
+            "last_published_age_hours": last_published_age_hours,
             # needs_reconcile (AUDIT C1): ambiguous publish failures parked for human reconcile —
             # may be live on the platform, must NOT be blindly re-queued. Surfaced here so the
             # unattended operator sees it in `fanops run`/`advance` output, not only the digest.
