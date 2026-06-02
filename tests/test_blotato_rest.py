@@ -2,7 +2,7 @@ import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
-from fanops.post.blotato_rest import BlotatoRestPoster
+from fanops.post.blotato_rest import BlotatoRestPoster, _extract_submission_id
 
 class _R:
     def __init__(s, c, b): s.status_code = c; s._b = b; s.text = str(b)
@@ -54,17 +54,52 @@ def test_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):
     led = BlotatoRestPoster(cfg).publish(led, "p4")
     assert led.posts["p4"].submission_id == "s9" and led.posts["p4"].state is PostState.submitted
 
-def test_2xx_without_submission_id_marks_failed(tmp_path, monkeypatch, mocker):
-    # A 2xx whose body lacks postSubmissionId is untrackable -> failed, not submitted.
+def test_extract_submission_id_accepts_known_aliases():
+    # AUDIT B2: Blotato's 2xx body shape varies (postSubmissionId | submissionId | id, sometimes
+    # nested under "data"). _extract_submission_id accepts the known aliases and recurses into a
+    # nested dict, ignoring non-str/empty values and non-dict bodies (-> None).
+    assert _extract_submission_id({"postSubmissionId": "a1"}) == "a1"
+    assert _extract_submission_id({"submissionId": "b2"}) == "b2"
+    assert _extract_submission_id({"id": "c3"}) == "c3"
+    assert _extract_submission_id({"data": {"submissionId": "d4"}}) == "d4"   # nested recursion
+    assert _extract_submission_id({"data": {"id": "e5"}}) == "e5"
+    # precedence: postSubmissionId wins over a bare id at the same level
+    assert _extract_submission_id({"postSubmissionId": "win", "id": "lose"}) == "win"
+    # rejects non-str / empty / non-dict -> None (never a truthy non-id)
+    assert _extract_submission_id({"id": 123}) is None
+    assert _extract_submission_id({"id": ""}) is None
+    assert _extract_submission_id({"noid": True}) is None
+    assert _extract_submission_id({}) is None
+    assert _extract_submission_id(None) is None
+    assert _extract_submission_id("not a dict") is None
+
+def test_2xx_without_recognizable_id_is_needs_reconcile_not_failed(tmp_path, monkeypatch, mocker):
+    # AUDIT B2 (rewrite of the old test_2xx_without_submission_id_marks_failed): a 2xx with no
+    # recognizable submission id is MAY-BE-LIVE (the platform returned success) — it must be PARKED
+    # as needs_reconcile, NEVER failed (failed => re-queueable => double-post to a real fan account).
+    # The client token stamped at birth (D1) is PRESERVED so reconcile can still poll the post.
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pn", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued))
-    mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(200, {"noid": True}))
+                      caption="x", state=PostState.queued, submission_id="fanops_tok"))
+    mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(200, {}))
     led = BlotatoRestPoster(cfg).publish(led, "pn")
-    assert led.posts["pn"].state is PostState.failed
-    assert led.posts["pn"].submission_id is None
-    assert "no postSubmissionId" in (led.posts["pn"].error_reason or "")
+    assert led.posts["pn"].state is PostState.needs_reconcile   # parked, NEVER failed
+    assert led.posts["pn"].submission_id == "fanops_tok"        # client token preserved -> pollable
+    assert "no recognizable submission id" in (led.posts["pn"].error_reason or "")
+
+def test_2xx_with_alias_id_marks_submitted(tmp_path, monkeypatch, mocker):
+    # AUDIT B2: the 2xx success path uses _extract_submission_id, so an alias (submissionId / nested
+    # data.id) is recognized as a real id -> submitted, overwriting the client token.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pa", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued, submission_id="fanops_tok"))
+    mocker.patch("fanops.post.blotato_rest.requests.post",
+                 return_value=_R(201, {"data": {"submissionId": "real_alias"}}))
+    led = BlotatoRestPoster(cfg).publish(led, "pa")
+    assert led.posts["pa"].state is PostState.submitted
+    assert led.posts["pa"].submission_id == "real_alias"   # real id beats the client token
 
 def test_5xx_is_ambiguous_marks_needs_reconcile_no_repost(tmp_path, monkeypatch, mocker):
     # AUDIT C1: a 5xx arrives AFTER the request body was transmitted, so Blotato may have
@@ -117,6 +152,58 @@ def test_5xx_with_submission_id_in_body_captures_it_for_reconcile(tmp_path, monk
     assert led.posts["p5b"].state is PostState.needs_reconcile
     assert led.posts["p5b"].submission_id == "sub_amb"     # captured -> reconcile can poll it
     assert pm.call_count == 1
+
+def test_5xx_body_id_captured_via_alias_or_nested(tmp_path, monkeypatch, mocker):
+    # CODE-REVIEW (Minor #1): the 5xx-body id capture must use the SAME alias-aware extraction as
+    # the 2xx path (_extract_submission_id), not just the literal "postSubmissionId". If Blotato's
+    # ERROR body carries the real id under submissionId / id / nested data.*, capturing it makes the
+    # post auto-reconcilable; missing it leaves the post on the un-pollable fanops_ client token
+    # (human-only) until a later pass. Still prime-directive-safe either way (needs_reconcile, never
+    # failed) — this just removes the last divergence between the two id-capture sites.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p5d", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued, submission_id="fanops_tok"))
+    mocker.patch("fanops.post.blotato_rest.requests.post",
+                 return_value=_R(503, {"data": {"submissionId": "sub_nested"}, "error": "upstream"}))
+    led = BlotatoRestPoster(cfg).publish(led, "p5d")
+    assert led.posts["p5d"].state is PostState.needs_reconcile
+    assert led.posts["p5d"].submission_id == "sub_nested"  # alias+nested id captured, overwrites token
+
+def test_5xx_body_id_overwrites_preexisting_client_token(tmp_path, monkeypatch, mocker):
+    # AUDIT H4 + H1: posts now carry a CLIENT token (fanops_...) at birth (D1). When an ambiguous
+    # 5xx body still carries a REAL Blotato postSubmissionId, it MUST overwrite the client token —
+    # the real id is the authoritative key for GET /v2/posts/:id. The old guard (`not
+    # post.submission_id`) blocked this capture once a token preexisted; D1 drops that clause.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p5c", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued, submission_id="fanops_clienttoken"))
+    pm = mocker.patch("fanops.post.blotato_rest.requests.post",
+                      return_value=_R(503, {"postSubmissionId": "sub_real", "error": "upstream"}))
+    led = BlotatoRestPoster(cfg).publish(led, "p5c")
+    assert led.posts["p5c"].state is PostState.needs_reconcile
+    assert led.posts["p5c"].submission_id == "sub_real"    # real id BEATS the client token
+    assert pm.call_count == 1
+
+def test_429_backoff_is_jittered(tmp_path, monkeypatch, mocker):
+    # Jitter the 429 backoff so many surfaces rate-limited at once don't retry in lockstep
+    # (thundering herd). Each sleep is delay + random.uniform(0, delay), so with uniform pinned to
+    # 0.3 the first sleep is 1.0 + 0.3 = 1.3 (NOT the bare 1.0), and every sleep stays > 0.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pj", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued))
+    mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(429, {"e": "rate"}))
+    sleeps = []
+    mocker.patch("fanops.post.blotato_rest.time.sleep", side_effect=lambda s: sleeps.append(s))
+    mocker.patch("fanops.post.blotato_rest.random.uniform", return_value=0.3)
+    led = BlotatoRestPoster(cfg).publish(led, "pj")
+    assert led.posts["pj"].state is PostState.failed       # exhausted 429s -> failed (re-queueable)
+    assert sleeps, "expected at least one backoff sleep"
+    assert all(s > 0 for s in sleeps)                      # never a zero/negative wait
+    assert sleeps[0] != 1.0                                # jittered off the bare base (1.0 -> 1.3)
+    assert sleeps[0] == 1.3                                # delay(1.0) + uniform(0,delay)=0.3
 
 def test_retry_exhaustion_marks_failed(tmp_path, monkeypatch, mocker):
     # All attempts 429 -> failed (not raise, not hang). Proves _MAX_RETRIES bounds the loop.

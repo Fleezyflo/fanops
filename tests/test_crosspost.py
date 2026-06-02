@@ -5,6 +5,7 @@ from fanops.ledger import Ledger
 from fanops.models import Clip, Moment, Source, ClipState, MomentState, Platform, Fmt
 from fanops.accounts import Accounts
 from fanops.crosspost import surface_time, crosspost_clips
+from fanops.ids import _hash
 
 def _seed_accounts(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -219,6 +220,20 @@ def test_crosspost_does_not_reuse_error_clip_and_no_post_for_failed_render(tmp_p
     assert len(err_clips) == 1 and err_clips[0].state is ClipState.error
     # ...and NO post was created (a post pointing at a fileless error clip would be the bug)
     assert all(led.clips[p.parent_id].state is not ClipState.error for p in led.posts.values())
+
+def test_crossposted_post_gets_a_client_token_submission_id(tmp_path, mocker):
+    # AUDIT H1: every post is stamped at BIRTH with a stable, content-addressed client idempotency
+    # token as its submission_id (f"fanops_{_hash('idemp', pid)}"). This guarantees an ambiguous
+    # publish is ALWAYS pollable/reconcilable (no post can ever be stranded id-less). Stable because
+    # the post id is content-addressed, so a re-run computes the identical token.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "98432",
+                          "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _captioned(led, cfg, mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    ig = next(p for p in led.posts.values() if p.platform is Platform.instagram)
+    assert ig.submission_id == f"fanops_{_hash('idemp', ig.id)}"
+    assert ig.submission_id.startswith("fanops_")
 
 def test_crosspost_appends_artist_tag_when_decided(tmp_path, mocker):
     # The \n@mohflow append branch must actually fire and be correct (own line, right handle).

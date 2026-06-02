@@ -1,7 +1,12 @@
 """Real metrics-read client (FIX F05 — v1 had none). list_posts(window) returns rows keyed by
-postSubmissionId with a metrics dict. The exact endpoint/fields are an INTEGRATION CHECKPOINT:
-confirm GET /v2/posts (or the analytics endpoint) and which metrics Blotato exposes. If
-saves/shares/retention are unavailable, redesign lift_score (Task 21) on the available fields."""
+postSubmissionId with a metrics dict. The postSubmissionId key and the status enum
+(in-progress|published|scheduled|failed, used by BlotatoStatusClient below) were VERIFIED against
+the live Blotato MCP tool schemas 2026-06-02 (AUDIT D5). NOTE the live URL-key split: the published
+URL is `publicUrl` on get_post_status (the single-post lookup) but `postUrl` on list_posts — this
+client reads metrics rows by postSubmissionId and does NOT read a URL, so the split does not bite
+here (a future reader of a list row's URL must use postUrl). Which METRICS fields Blotato exposes
+remains an INTEGRATION CHECKPOINT: if saves/shares/retention are unavailable, redesign lift_score
+(Task 21) on the available fields."""
 from __future__ import annotations
 import requests
 from fanops.config import Config

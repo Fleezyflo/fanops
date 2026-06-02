@@ -28,7 +28,8 @@ def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float
     losers = [p.id for p in bottom if p.metrics.get("lift_score", 0.0) < lift_floor]
     return {"winners": winners, "losers": losers}
 
-def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str]) -> Ledger:
+def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
+            max_amplify_per_source: int = 3) -> Ledger:
     for pid in winner_post_ids:
         post = led.posts.get(pid)
         if post is None:
@@ -38,6 +39,12 @@ def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str]) -> Ledger:
         src = led.sources.get(moment.parent_id) if moment else None
         if not src:
             continue
+        # E1: per-source amplification budget. A MISSING key defaults to 0 (sources without the
+        # count keep amplifying until they hit the cap). At/over the cap, skip the source entirely
+        # — no write_request, no state flip — so an autonomous LLM can't grow one source endlessly.
+        used = int(src.meta.get("amplify_count", 0))
+        if used >= max_amplify_per_source:
+            continue
         guidance = (f"AMPLIFY: a moment like '{moment.transcript_excerpt}' ({moment.reason}) "
                     f"hit hard (lift={post.metrics.get('lift_score')}). Find MORE moments in that "
                     f"vein in this source — do not repeat the same timestamps.")
@@ -46,6 +53,7 @@ def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str]) -> Ledger:
                                 language=src.language, guidance=guidance).model_dump()
         payload.pop("request_id", None)
         write_request(cfg, kind="moments", key=src.id, payload=payload)   # invalidates stale resp
+        src.meta["amplify_count"] = used + 1              # E1: count only successful amplifies
         led.set_source_state(src.id, SourceState.moments_requested)
     return led
 
