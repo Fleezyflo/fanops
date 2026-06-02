@@ -61,7 +61,14 @@ This is the default, human-in-the-loop cadence (`FANOPS_RESPONDER=manual`).
    are tiny and left in place.
 
 `fanops digest` rewrites `00_control/ledger_digest.md` (counts, holds, failures,
-pending) on demand; most commands also refresh it.
+pending) on demand; most commands also refresh it. Among its sections is an explicit
+**`## Pending agent gates (responder has not cleared)`** block (E3) that lists every
+unanswered gate by **kind + key** (`- moments: <key>` / `- captions: <key>`) — the word
+"pending" is the searchable signal an operator/monitor greps for. A gate the responder has
+**cleared** (its `*.response.json` echoes the latest `request_id`) drops out of the section,
+so a gate that **persists** there across runs is a real stuck/unanswered gate (see *Heartbeat
+/ dead-man's-switch* — a persistently-pending gate + `published_in_run==0` is the signature of a
+silently-unauthed responder).
 
 ---
 
@@ -77,6 +84,53 @@ only makes progress if the responder actually answers gates — so for unattende
 operation set `FANOPS_RESPONDER=llm` with `claude` on `PATH` and authenticated (the
 autonomous LLM responder — see below); with the default `manual` responder there is
 nothing to drain and it will stop after one pass.
+
+**The learning loop closes inside `run` (E1).** After the respond→advance loop converges,
+`run` runs one `track`+`adjust` pass — `pull_metrics → classify_outcomes → amplify → retire`
+(`src/fanops/cli.py`) — so an unattended deployment makes more of what works without a
+separate `track`/`adjust` cron. It is **gated by the identical reconcile guard**
+(`cfg.poster_backend != "dryrun" and cfg.blotato_api_key`, byte-identical to the live portion
+of the reconcile guard at `pipeline.py`): in the default **dryrun** backend (or with no key) the
+pass is **never entered** — no metrics fetch, no amplify, no state change — so the offline
+pipeline behaves exactly as before. The pass runs in its **own** `Ledger.transaction` (lock-safe;
+it cannot race the next advance) and runs **once**, textually after the bounded respond/advance
+loop, so it can never fire before convergence or twice. Any failure (`pull/classify/amplify/retire`
+hiccup) is logged as `learn error` to `run.log` and **swallowed** — it can never crash the
+unattended run; the exit code stays 0. Amplification is bounded per source (see *The feedback
+loop* → `max_amplify_per_source`) so the autonomous responder can't grow one source endlessly.
+
+### Heartbeat / dead-man's-switch (B5 / E2)
+
+Every `run` and `advance` emits **one** heartbeat line: printed to **stdout** as JSON **and**
+appended (mode `a`) to `07_reports/run.log` via `get_logger`. It is emitted once per command —
+never inside the `range(10)` loop. An **external** monitor (a `cron`+`mail` job, or PagerDuty)
+diffing consecutive run.log lines uses it to distinguish *alive-but-idle* from *cron is dead*:
+
+```json
+{"heartbeat": "2026-06-02T10:03:24.582671+00:00", "fanops_version": "0.3.0", "published_in_run": 0, "last_published_age_hours": null}
+```
+
+| Field | Meaning | How a monitor alerts on it |
+|---|---|---|
+| `heartbeat` | a **live** ISO-8601 UTC clock (`datetime.now(timezone.utc)`) — changes every invocation | the timestamp is **frozen / no new line** ⇒ **the cron itself is dead** (the process never ran). The changing ts is the load-bearing signal; a present-but-stale file would otherwise hide a dead scheduler. |
+| `fanops_version` | the running build | a stale binary is visible in the alert stream |
+| `published_in_run` | posts published **this run** (a set-difference THIS-RUN delta, **not** the cumulative total) | **`0` across N consecutive runs** ⇒ the pipeline is stuck — alert on "0 published in N runs" |
+| `last_published_age_hours` | hours since the most-recent published post's scheduled time (2 dp; `null` when nothing published / the time is unparseable) | alert on "last post age > threshold" |
+
+Example external monitor (out of repo scope, like the cron itself): a job that tails the last
+two `\theartbeat\t` lines in `run.log` and pages if (a) the latest `heartbeat` ts equals the
+prior one or is older than the cron interval (cron dead), (b) `published_in_run == 0` for the
+last N lines (stuck pipeline), or (c) `last_published_age_hours` exceeds a threshold.
+
+**Catching a silently-unauthed responder.** Because the responder shells `claude --bare`, which
+**ignores OAuth/keychain** — auth is **strictly `ANTHROPIC_API_KEY`** (see *the autonomous LLM
+responder* below) — a responder that is **running but unauthed** (the key was never exported)
+fails every gate with "Not logged in", clears nothing, and publishes nothing, **without crashing**
+(each gate is quarantined and logged). The dead-man's-switch is how you catch this exact failure:
+`published_in_run` stays **0 forever** *and* the digest's **"Pending agent gates"** section keeps
+naming the same unanswered gates. The heartbeat proves the cron is alive; the zero delta + the
+pending-gates list prove it is making no progress — so the operator knows to fix the **key**
+(grep `run.log` for repeated `responder … error … Not logged in`), not the scheduler.
 
 **Graceful degradation on a fatal auth error.** If a fatal Blotato auth error escapes
 the publish step (bad or missing `BLOTATO_API_KEY`, or a `401`), `run` does **not** crash
@@ -177,6 +231,14 @@ analyzed posts and acts on the tails (`src/fanops/adjust.py`):
   moment's signature as guidance ("a moment like X hit hard — find MORE in that vein,
   don't repeat the timestamps"). This is *make more of what works*: the next `advance`
   answers the fresh request and reconciles new clips into the set.
+  - **Per-source amplify budget (E1).** `amplify(led, cfg, winners, *, max_amplify_per_source=3)`
+    caps how many times a single source can be re-mined, tracked on
+    `src.meta["amplify_count"]` (a **missing** key counts as 0, so existing sources keep
+    amplifying until they hit the cap). At/over the cap the source is **skipped entirely** —
+    no fresh moment request is written, no `moments_requested` state flip — so the autonomous
+    learning loop inside `fanops run` cannot grow one viral source without bound. Only a
+    **successful** amplify increments the count (a winner whose lineage no longer resolves to a
+    source is skipped without consuming budget).
 - **Losers — retire the bottom `--retire-pct` (default 0.2) ONLY if its `lift_score` is
   below `--lift-floor` (default 20.0).** This retirement is **conservative and decoupled
   from winners**: a clip that clears the floor is **never** retired just for ranking low

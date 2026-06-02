@@ -135,6 +135,43 @@ fanops run --base-time <T>           # responder.answer → advance, repeated un
 quarantined inside `advance`, and a fatal auth error (bad/missing `BLOTATO_API_KEY`, 401)
 halts the loop instead of burning the queue.
 
+**The learning loop now closes inside `run`.** After the respond→advance loop converges,
+`run` runs one `track → adjust` pass (`pull_metrics → classify_outcomes → amplify → retire`)
+in its own lock-safe `Ledger.transaction`, so an unattended deployment makes more of what
+works without a separate `track`/`adjust` cron. It is **guarded to live backends + a key** by
+the exact reconcile guard (`cfg.poster_backend != "dryrun" and cfg.blotato_api_key`): in the
+default **dryrun** backend the pass is **never entered** (no metrics fetch, no amplify), so the
+offline pipeline is unchanged. Any hiccup in the pass is logged (`learn error`) and swallowed —
+it can never crash the unattended run (exit stays 0). Amplification is bounded per source (see
+*The feedback loop* → the `max_amplify_per_source` budget) so the autonomous responder can't grow
+one source endlessly.
+
+**Heartbeat / dead-man's-switch.** Every `run` and `advance` emits one heartbeat line — to
+stdout as JSON and appended to `07_reports/run.log` — so an **external** monitor (a `cron`+`mail`
+job, or PagerDuty) can tell *alive-but-idle* from *cron is dead*:
+
+```json
+{"heartbeat": "2026-06-02T10:03:24.582671+00:00", "fanops_version": "0.3.0", "published_in_run": 0, "last_published_age_hours": null}
+```
+
+- **`heartbeat`** — a **live** ISO-8601 UTC timestamp; it changes every invocation. A monitor
+  that diffs consecutive run.log lines and sees the **same** `heartbeat` (or no new line) knows
+  the **cron itself is dead** — the process never ran — which a frozen-but-present file would hide.
+- **`fanops_version`** — the running build, so a stale binary is visible in the alert stream.
+- **`published_in_run`** — posts published **this run** (a set-difference delta, not the cumulative
+  total). `0` across N consecutive runs is the signal for *the pipeline is stuck*: alert on
+  "0 published in N runs".
+- **`last_published_age_hours`** — hours since the most-recent published post's scheduled time
+  (2 dp; `null` when nothing has published or the time is unparseable). Alert on
+  "last post age > threshold".
+
+Because the responder runs `claude --bare` (which ignores OAuth — auth is **strictly**
+`ANTHROPIC_API_KEY`, see *Install*), a responder that is **running but silently unauthed** (the key
+was never exported) clears no gates and publishes nothing. The dead-man's-switch is how you catch
+it: `published_in_run` stays `0` forever **and** the digest's "Pending agent gates" section names
+the unanswered gates — the heartbeat says the cron is alive, the delta + the digest say it is making
+no progress, so the human knows to check the key, not the cron.
+
 ### Full command list
 
 | Command | What it does |
@@ -148,13 +185,19 @@ halts the loop instead of burning the queue.
 | `fanops track [--window 30d]` | pull metrics; mark posts analyzed with a whitelisted lift score |
 | `fanops adjust [--winner-pct 0.3] [--retire-pct 0.2] [--lift-floor 20.0]` | amplify winners / retire losers |
 | `fanops gc [--keep-days 30]` | delete local clip files of retired/analyzed clips older than N days |
-| `fanops digest` | rewrite the human-readable ledger digest |
-| `fanops run [--base-time T]` | unattended: respond + advance until stable |
+| `fanops digest` | rewrite the human-readable ledger digest (incl. a `## Pending agent gates` section naming each unanswered gate by kind+key) |
+| `fanops run [--base-time T]` | unattended: respond + advance until stable, then a live-only `track`+`adjust` learning pass; emits a heartbeat line every run |
 
 **Adjust knobs.** `--winner-pct` = top fraction of analyzed posts (by lift) to amplify;
 `--retire-pct` = bottom fraction *eligible* to retire; `--lift-floor` = a post is only retired
 if it's both bottom-ranked **and** below this absolute lift. The floor decouples retirement
 from winners so a single hit doesn't drain the catalogue.
+
+**Per-source amplify budget.** `amplify` caps how many times a single source can be re-mined at
+`max_amplify_per_source` (default **3**), tracked on `src.meta["amplify_count"]` (a missing key
+counts as 0). At/over the cap the source is skipped entirely — no fresh moment request, no state
+flip — so the autonomous learning loop inside `fanops run` can't grow one viral source without
+bound. Only a *successful* amplify increments the count.
 
 ---
 
