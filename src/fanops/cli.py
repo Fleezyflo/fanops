@@ -119,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     p_adj = sub.add_parser("adjust"); p_adj.add_argument("--winner-pct", type=float, default=0.3)
     p_adj.add_argument("--retire-pct", type=float, default=0.2); p_adj.add_argument("--lift-floor", type=float, default=20.0)
     p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=30)
+    p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
+    p_res.add_argument("status", choices=["published", "failed"]); p_res.add_argument("--url", default=None)
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
@@ -214,6 +216,20 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "reconcile": return cmd_reconcile(cfg)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
+    if args.cmd == "resolve":
+        # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve
+        # a post stuck in needs_reconcile (Blotato status ambiguous / never returns a terminal
+        # state), the operator checks the platform by hand and forces the ledger to ground truth:
+        # `fanops resolve <post_id> published --url <live-url>` or `... failed`. Tight transaction,
+        # local-only mutation (no network).
+        from fanops.models import PostState
+        with Ledger.transaction(cfg) as led:
+            if args.post_id not in led.posts:
+                print(f"no such post: {args.post_id}", file=sys.stderr); return 2
+            p = led.posts[args.post_id]
+            p.state = PostState.published if args.status == "published" else PostState.failed
+            if args.url: p.public_url = args.url
+        print(f"resolved {args.post_id} -> {args.status}"); return 0
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc
         # unattended: respond to gates, advance, repeat until no progress.

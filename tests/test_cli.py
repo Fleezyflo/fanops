@@ -304,3 +304,17 @@ def test_gc_removes_old_analyzed_clip_file(tmp_path, monkeypatch):
     from fanops.cli import main
     rc = main(["gc", "--keep-days", "30"])
     assert rc == 0 and not f.exists()                # the 60d-old analyzed clip file removed
+
+def test_resolve_promotes_a_needs_reconcile_post(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, PostState, Platform
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t"))
+    from fanops.cli import main
+    assert main(["resolve", "p1", "published", "--url", "https://x/p"]) == 0
+    led = Ledger.load(cfg)
+    assert led.posts["p1"].state is PostState.published and led.posts["p1"].public_url == "https://x/p"
