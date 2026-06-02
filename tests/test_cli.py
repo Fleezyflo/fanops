@@ -195,6 +195,49 @@ def test_run_learning_pass_is_guarded_to_live_backends(tmp_path, monkeypatch):
         {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
 
+def test_run_learning_pass_not_entered_in_dryrun(tmp_path, monkeypatch, mocker):
+    # E1 HARDEN (mutation-proven): the exit==0 assertion above is BLIND to whether the learning
+    # pass actually ran — with the guard removed (`if True:`), pull_metrics in dryrun-no-key raises
+    # RuntimeError from BlotatoMetricsClient.__init__, which the swallow-all `except Exception`
+    # (cli.py:211) eats, so the exit code STAYS 0 and the hollow test still passes. This test binds
+    # the real guarantee by SPYING on the learning-pass entry point: spy fanops.cli.pull_metrics
+    # (so even an ungated body cannot reach the real client) and assert it is NEVER called in
+    # dryrun. Removing/weakening the cli.py:204 guard makes this FAIL (spy.call_count==1).
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)       # dryrun backend (default)
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # no key
+    import fanops.cli as cli
+    spy = mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
+    assert rc == 0                                            # run still converges + exits 0
+    assert spy.call_count == 0                                # the learning pass is NEVER entered in dryrun
+
+def test_run_learning_pass_entered_with_live_backend_and_key(tmp_path, monkeypatch, mocker):
+    # E1 HARDEN (positive branch): with a LIVE backend (FANOPS_POSTER=rest) AND a key set, the
+    # guard's true-branch fires and the learning pass runs EXACTLY ONCE per run. pull_metrics /
+    # classify_outcomes / amplify / retire are all spied to harmless no-ops so nothing touches the
+    # network. This pins that the guard is a real branch (not dead code): flip either condition off
+    # and the spy stops being called (covered by the dryrun test above).
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "rest")              # live backend
+    monkeypatch.setenv("BLOTATO_API_KEY", "k-test")          # key present
+    import fanops.cli as cli
+    spy = mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
+    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
+    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
+    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
+    assert rc == 0
+    assert spy.call_count == 1                                # learning pass runs once when live+keyed
+
 def test_run_prints_heartbeat_with_version(tmp_path, monkeypatch, capsys):
     # B5/E2: every `fanops run` must emit a heartbeat line on stdout carrying the fanops version,
     # so a monitor diffing consecutive lines can distinguish 'alive-but-idle' from 'cron is dead'.
