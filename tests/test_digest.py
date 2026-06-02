@@ -60,6 +60,19 @@ def test_published_unmeasured_surfaced(tmp_path):
     assert "`pm`" in md.split("Published but unmeasured")[1]
     assert "`pok`" not in md.split("Published but unmeasured")[1]   # measured one not listed
 
+def test_digest_surfaces_pending_gates(tmp_path):
+    # E3: a pending agent gate (request written, no response) MUST surface in the WRITTEN digest
+    # under a section whose text contains the literal word "pending" — the existing "Awaiting
+    # agent" header does NOT contain "pending", so this is a genuine strengthening.
+    from fanops.digest import write_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    write_request(cfg, kind="moments", key="s1",
+                  payload={"source_id": "s1", "transcript_path": "/t", "title": "x"})
+    write_digest(led, cfg)
+    text = cfg.digest_path.read_text()
+    assert "pending" in text.lower() and "moments" in text.lower()
+    assert "moments: s1" in text   # the kind+key, not just the bare word
+
 def test_needs_reconcile_surfaced(tmp_path):
     # AUDIT C1: a post parked in needs_reconcile (ambiguous publish failure — may be live on the
     # platform) MUST surface so a human verifies via GET /v2/posts/:id before any resubmit. It is

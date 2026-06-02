@@ -60,6 +60,15 @@ def render_digest(led: Ledger, cfg: Config) -> str:
     if awaiting:
         out.append("\n## Awaiting agent (request written, no response yet)\n"
                    + "\n".join(awaiting) + "\n")
+
+    # E3: an explicit "Pending agent gates" section (the word 'pending' is the searchable signal a
+    # monitor/operator greps for) — same per-kind list as Awaiting, gated on the same pending keys
+    # so an empty ledger renders neither. These are the gates a responder has NOT yet cleared.
+    pend = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +
+            [f"- captions: {k}" for k in pending(cfg, kind="captions")])
+    if pend:
+        out.append("\n## Pending agent gates (responder has not cleared)\n"
+                   + "\n".join(pend) + "\n")
     return "".join(out)
 
 def write_digest(led: Ledger, cfg: Config) -> None:
