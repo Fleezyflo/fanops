@@ -24,6 +24,7 @@ from typing import Callable, Optional
 from fanops.config import Config
 from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
+from fanops.log import get_logger
 from fanops.models import PostState
 
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.
@@ -38,8 +39,10 @@ def _default_get_status(cfg: Config) -> GetStatus:
 
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None) -> Ledger:
     poll = get_status or _default_get_status(cfg)
+    log = get_logger(cfg)
     for post in [p for p in led.posts.values() if p.state in _RECONCILABLE]:
         if not post.submission_id:
+            log("reconcile", post.id, "skipped: no submission_id")
             continue                       # no id -> cannot poll (API needs it) -> human reconcile
         # Per-post resilience (mirrors publish_due, run.py:70-76): one post's poll error must NOT
         # abort the whole pass. AUDIT H1 made this load-bearing — D1 stamps EVERY post with a CLIENT
@@ -59,13 +62,18 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             # Leave it parked (state untouched, NOT failed) and surface the reason for the digest;
             # a later pass retries. Then move on so the next post still gets reconciled.
             post.error_reason = f"reconcile poll error: {str(exc)[:200]}"
+            log("reconcile", post.id, "poll-error")
             continue
         status = (info.get("status") or "").lower()
         if status == "published":
             post.state = PostState.published
             post.public_url = info.get("publicUrl") or post.public_url
+            log("reconcile", post.id, "published")
         elif status == "failed":
             post.state = PostState.failed
             post.error_reason = f"reconciled: blotato reports failed ({info.get('errorMessage', 'no detail')})"
-        # in-progress / scheduled / unknown -> leave parked; a later reconcile pass will retry.
+            log("reconcile", post.id, "failed")
+        else:
+            # in-progress / scheduled / unknown -> leave parked; a later reconcile pass will retry.
+            log("reconcile", post.id, f"left: {status or 'unknown'}")
     return led

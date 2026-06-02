@@ -147,6 +147,20 @@ def test_reconcile_records_poll_error_reason_without_changing_state(tmp_path):
     assert "404" in (led.posts["tok"].error_reason or "")       # error surfaced for the digest
 
 
+def test_reconcile_logs_each_post(tmp_path):
+    # Phase E4: a reconcile pass must leave an audit trail in run.log so a cron+mail/PagerDuty
+    # monitor can see which parked posts were touched and how they resolved. Today reconcile_posts
+    # emits NO log lines (no get_logger call), so cfg.log_path is never written. Seed one post that
+    # resolves to 'published' and assert the run log records both the stage ('reconcile') and the
+    # post id ('p1').
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "p1", PostState.needs_reconcile, sub="fanops_t")
+    reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "u"})
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "reconcile" in log
+    assert "p1" in log
+
+
 def test_reconcile_halts_on_fatal_auth_error(tmp_path):
     # Mirror publish_due (run.py:71-72): a Blotato auth failure means EVERY poll will 401, so
     # grinding through the whole ledger is pointless — a BlotatoAuthError from get_status propagates
