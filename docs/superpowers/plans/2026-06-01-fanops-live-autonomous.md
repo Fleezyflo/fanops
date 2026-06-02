@@ -1261,7 +1261,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Modify: `src/fanops/post/blotato_mcp.py`
 - Test: `tests/test_blotato_mcp.py` (add)
 
-The MCP poster (the documented PRIMARY backend) has no try/except and never raises `BlotatoAuthError`, so `run.py`'s type-based auth-halt can't fire — one misconfig burns the queue or crashes it. Wrap `self._call`; map auth-class failures to `BlotatoAuthError`, others to a per-post `failed`.
+The MCP poster (the documented PRIMARY backend) has no try/except and never raises `BlotatoAuthError`, so `run.py`'s type-based auth-halt can't fire — one misconfig burns the queue or crashes it. Wrap `self._call`; map auth-class failures to `BlotatoAuthError`, others to a per-post **`needs_reconcile`** (NOT `failed` — a non-auth error after the body was sent is ambiguous and the post MAY be live; marking it `failed` would re-queue it and risk a double-post. This matches the code block below and the prime directive. The header previously read "per-post `failed`" — corrected post-implementation to match the shipped behaviour.).
 
 - [ ] **Step 1: Write the failing test**
 

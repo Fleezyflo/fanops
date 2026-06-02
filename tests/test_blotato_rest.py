@@ -153,6 +153,23 @@ def test_5xx_with_submission_id_in_body_captures_it_for_reconcile(tmp_path, monk
     assert led.posts["p5b"].submission_id == "sub_amb"     # captured -> reconcile can poll it
     assert pm.call_count == 1
 
+def test_5xx_body_id_captured_via_alias_or_nested(tmp_path, monkeypatch, mocker):
+    # CODE-REVIEW (Minor #1): the 5xx-body id capture must use the SAME alias-aware extraction as
+    # the 2xx path (_extract_submission_id), not just the literal "postSubmissionId". If Blotato's
+    # ERROR body carries the real id under submissionId / id / nested data.*, capturing it makes the
+    # post auto-reconcilable; missing it leaves the post on the un-pollable fanops_ client token
+    # (human-only) until a later pass. Still prime-directive-safe either way (needs_reconcile, never
+    # failed) — this just removes the last divergence between the two id-capture sites.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p5d", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued, submission_id="fanops_tok"))
+    mocker.patch("fanops.post.blotato_rest.requests.post",
+                 return_value=_R(503, {"data": {"submissionId": "sub_nested"}, "error": "upstream"}))
+    led = BlotatoRestPoster(cfg).publish(led, "p5d")
+    assert led.posts["p5d"].state is PostState.needs_reconcile
+    assert led.posts["p5d"].submission_id == "sub_nested"  # alias+nested id captured, overwrites token
+
 def test_5xx_body_id_overwrites_preexisting_client_token(tmp_path, monkeypatch, mocker):
     # AUDIT H4 + H1: posts now carry a CLIENT token (fanops_...) at birth (D1). When an ambiguous
     # 5xx body still carries a REAL Blotato postSubmissionId, it MUST overwrite the client token —

@@ -66,15 +66,17 @@ class BlotatoRestPoster:
 
     def _reconcile(self, post, detail: str, resp=None) -> None:
         # Ambiguous failure after the body was sent — park for human/poll reconcile, never re-POST.
-        # AUDIT H4: if the (5xx) body still carries a postSubmissionId, CAPTURE it so the reconcile
+        # AUDIT H4: if the (5xx) body still carries a real submission id, CAPTURE it so the reconcile
         # step can later poll GET /v2/posts/:id and resolve this post automatically. Since D1 stamps
         # a CLIENT token at birth, post.submission_id is now ALWAYS set — so the guard fires on
         # `resp is not None` ALONE and a REAL Blotato id from the body OVERWRITES the client token
-        # (the real id is the authoritative poll key). Field stays postSubmissionId here (the 5xx
-        # body shape); D2 generalizes only the 2xx path.
+        # (the real id is the authoritative poll key). CODE-REVIEW (Minor #1): use the SAME
+        # alias-aware _extract_submission_id as the 2xx path (postSubmissionId | submissionId | id +
+        # nested data) — an error body may carry the id under an alias, and missing it would strand
+        # the post on the un-pollable client token. No divergence between the two id-capture sites.
         if resp is not None:
             try:
-                sid = (resp.json() or {}).get("postSubmissionId")
+                sid = _extract_submission_id(resp.json())
             except Exception:
                 sid = None
             if sid:
