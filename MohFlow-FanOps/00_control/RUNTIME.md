@@ -443,7 +443,7 @@ echo 'FANOPS_POSTER=mcp'               >> .env   # the live backend (default is 
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...     # MUST be exported in the cron/launchd environment, not just your shell
-echo 'FANOPS_RESPONDER=llm' >> .env      # opt into the autonomous responder (default is the deterministic stub)
+echo 'FANOPS_RESPONDER=llm' >> .env      # opt into the autonomous responder (default `manual` is a no-op — a human/cron writes the response files)
 claude --bare -p 'say ok' --output-format json   # smoke: confirms the key works headless
 ```
    ──────────────────────────────────────────────────────────────────────────────
