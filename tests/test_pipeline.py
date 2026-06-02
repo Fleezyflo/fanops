@@ -196,18 +196,58 @@ def test_advance_persists_progress_when_publish_raises_nonauth(tmp_path, monkeyp
 
 
 def test_advance_reports_run_delta_and_last_post_age(tmp_path, monkeypatch, mocker):
-    # B5/E2: the advance() summary must carry a THIS-RUN published delta and the age of the newest
-    # published post, so a heartbeat monitor can tell 'alive-but-idle' from 'cron is dead'. With no
-    # drops and no prior published posts the delta is 0 and the age is None, but BOTH keys MUST be
-    # present in the summary dict (they are absent today).
+    # B5/E2 (mutation-proven load-bearing): the advance() summary must carry a THIS-RUN published
+    # delta (NOT the cumulative published count) and the age of the newest published post, so a
+    # heartbeat monitor can tell 'alive-but-idle' from 'cron is dead'. We SEED an already-published
+    # post (with a scheduled_time 5h in the PAST) and SAVE it BEFORE calling advance, so it is in
+    # the `before` snapshot at transaction entry. advance() this pass makes NO new drops, so the
+    # THIS-RUN delta must be 0 EVEN THOUGH cumulative published == 1 — this binds the set-difference
+    # guarantee (a hollow test with no prior post can't tell delta from cumulative, both being 0).
+    # And last_published_age_hours must be a real positive float (~5.0) from that past scheduled_time.
+    from datetime import datetime, timezone, timedelta
+    from fanops.models import Post, PostState, Platform
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    # pre-existing published post, scheduled 5h ago, committed to disk BEFORE the pass opens
+    sched = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="post_pre", parent_id="clip_x", state=PostState.published,
+                      account="@a", account_id="1", platform=Platform.instagram,
+                      caption="seeded", scheduled_time=sched))
+    led.save()
+
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
-    assert "published_in_run" in s
-    assert "last_published_age_hours" in s
+    # cumulative published reflects the pre-existing post ...
+    assert s["published"] >= 1
+    # ... but the THIS-RUN delta excludes it (the post was in `before` at txn entry).
+    assert s["published_in_run"] == 0
+    # the newest published post has a parseable past scheduled_time -> a real positive age (~5h).
+    assert isinstance(s["last_published_age_hours"], float)
+    assert s["last_published_age_hours"] > 0
+    assert 4.5 < s["last_published_age_hours"] < 5.6      # ~5h ago, allowing for clock drift in the run
+
+def test_advance_last_post_age_is_none_when_scheduled_time_absent(tmp_path, monkeypatch, mocker):
+    # B5/E2 companion: a published post with NO parseable scheduled_time yields last_published_age_hours
+    # == None (the _parse-returns-None branch), while the THIS-RUN delta still excludes the pre-existing
+    # post. Pins both the None-age path and that delta is a set-difference, not the cumulative count.
+    from fanops.models import Post, PostState, Platform
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="post_pre", parent_id="clip_x", state=PostState.published,
+                      account="@a", account_id="1", platform=Platform.instagram,
+                      caption="seeded", scheduled_time=None))   # no scheduled_time -> age None
+    led.save()
+    s = advance(cfg, base_time="2026-06-02T18:00:00Z")
+    assert s["published"] >= 1
+    assert s["published_in_run"] == 0
+    assert s["last_published_age_hours"] is None
 
 
 def test_advance_still_halts_on_fatal_auth_error_from_publish(tmp_path, monkeypatch, mocker):

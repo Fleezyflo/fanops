@@ -254,6 +254,38 @@ def test_run_prints_heartbeat_with_version(tmp_path, monkeypatch, capsys):
     assert fanops.__version__ in out
     assert "heartbeat" in out
 
+def _heartbeat_value(out: str) -> str:
+    # Extract the "heartbeat" ts from the single JSON heartbeat line on stdout.
+    line = next(l for l in out.splitlines() if '"heartbeat"' in l)
+    return json.loads(line)["heartbeat"]
+
+def test_run_heartbeat_timestamp_changes_between_runs(tmp_path, monkeypatch, capsys):
+    # B5/E2 (mutation-proven dead-man's-switch): the heartbeat ts is the load-bearing signal — an
+    # external monitor diffing consecutive lines reads 'cron is dead' iff the ts STOPS advancing.
+    # The hollow committed test only checks the constant JSON key "heartbeat" is present, which a
+    # FROZEN ts (the exact B5 'dead-cron-looks-alive' regression) still satisfies. This test runs
+    # `run` TWICE and asserts the two heartbeat ts VALUES DIFFER — freezing the ts in cli._heartbeat
+    # makes it FAIL. (datetime.now(timezone.utc).isoformat() is microsecond-resolution, so two real
+    # invocations always differ; we also assert each is a parseable ISO timestamp, not a constant.)
+    from datetime import datetime
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)       # dryrun backend
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    hb1 = _heartbeat_value(capsys.readouterr().out)
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    hb2 = _heartbeat_value(capsys.readouterr().out)
+
+    # both are real ISO timestamps (a frozen constant string would not be monotonic) ...
+    t1, t2 = datetime.fromisoformat(hb1), datetime.fromisoformat(hb2)
+    # ... and the ts ADVANCED run-to-run: a frozen ts (B5 regression) gives hb1 == hb2 -> FAIL here.
+    assert hb1 != hb2
+    assert t2 >= t1
+
 def test_gc_removes_old_analyzed_clip_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import os, time
