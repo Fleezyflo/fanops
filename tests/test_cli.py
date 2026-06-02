@@ -332,3 +332,17 @@ def test_unhold_resets_a_held_clip(tmp_path, monkeypatch):
     assert main(["unhold", "c1"]) == 0
     c = Ledger.load(cfg).clips["c1"]
     assert c.state is ClipState.captions_requested and c.held is False
+
+def test_retry_source_resets_error_source(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.error,
+                              error_reason="toolchain missing: ffmpeg"))
+    from fanops.cli import main
+    assert main(["retry-source", "s1"]) == 0
+    s = Ledger.load(cfg).sources["s1"]
+    assert s.state is SourceState.catalogued and s.error_reason is None

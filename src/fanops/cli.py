@@ -122,6 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
     p_res.add_argument("status", choices=["published", "failed"]); p_res.add_argument("--url", default=None)
     p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
+    p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
+    p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
@@ -243,6 +245,25 @@ def _dispatch(cfg: Config, args) -> int:
             c = led.clips[args.clip_id]; c.held = False; c.held_reason = None
             c.state = ClipState.captions_requested      # re-enter the caption gate
         print(f"unheld {args.clip_id}"); return 0
+    if args.cmd == "retry-source":
+        from fanops.models import SourceState
+        with Ledger.transaction(cfg) as led:
+            if args.source_id not in led.sources:
+                print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+            s = led.sources[args.source_id]
+            s.state = SourceState.catalogued      # re-enter from the top (transcribe retries)
+            s.error_reason = None
+            s.meta["transcribed"] = False         # force a real re-transcribe
+        print(f"retry-source {args.source_id}"); return 0
+    if args.cmd == "retry-metrics":
+        from fanops.models import PostState
+        with Ledger.transaction(cfg) as led:
+            if args.post_id not in led.posts:
+                print(f"no such post: {args.post_id}", file=sys.stderr); return 2
+            p = led.posts[args.post_id]
+            if p.state is PostState.published:    # leave it published so the next track pass re-pulls
+                print(f"retry-metrics {args.post_id}: will re-pull on next track"); return 0
+            print(f"retry-metrics {args.post_id}: not published (state={p.state.value})", file=sys.stderr); return 2
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc
         # unattended: respond to gates, advance, repeat until no progress.
