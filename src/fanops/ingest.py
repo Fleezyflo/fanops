@@ -89,7 +89,7 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop") -> Ledger:
         led.add_source(Source(id=sid, state=SourceState.catalogued, source_path=str(dest),
                               source_origin=origin, sha256=digest, width=w, height=h,
                               duration=dur or None,
-                              meta={"original_name": f.name, "bytes": f.stat().st_size}))
+                              meta={"bytes": f.stat().st_size}))   # AUDIT: no original_name (PII)
     return led
 
 def download_url(cfg: Config, url: str) -> None:
