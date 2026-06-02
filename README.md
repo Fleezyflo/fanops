@@ -185,8 +185,19 @@ no progress, so the human knows to check the key, not the cron.
 | `fanops track [--window 30d]` | pull metrics; mark posts analyzed with a whitelisted lift score |
 | `fanops adjust [--winner-pct 0.3] [--retire-pct 0.2] [--lift-floor 20.0]` | amplify winners / retire losers |
 | `fanops gc [--keep-days 30]` | delete local clip files of retired/analyzed clips older than N days |
+| `fanops resolve <post_id> <published\|failed> [--url U]` | operator escape hatch: force a post stranded in `needs_reconcile`/`submitting` to ground truth after a hand-check (sets state; `--url` records the live post URL on `published`) |
+| `fanops unhold <clip_id>` | clear a brand-risk HOLD after human review — resets `held` and re-enters the clip into the caption gate (`captions_requested`); no ledger hand-edit |
+| `fanops retry-source <source_id>` | requeue a quarantined (`error`) source from the top — back to `catalogued` and forces a real re-transcribe |
+| `fanops retry-metrics <post_id>` | re-pull metrics for a `published` post on the next `track` pass (no-op flip; exits 2 if the post isn't published) |
 | `fanops digest` | rewrite the human-readable ledger digest (incl. a `## Pending agent gates` section naming each unanswered gate by kind+key) |
 | `fanops run [--base-time T]` | unattended: respond + advance until stable, then a live-only `track`+`adjust` learning pass; emits a heartbeat line every run |
+
+The four **recovery verbs** (`resolve`, `unhold`, `retry-source`, `retry-metrics`) are the
+operator's manual-intervention surface for the states the automatic pipeline cannot resolve on
+its own (an ambiguous post fate, a human-cleared brand-risk hold, a quarantined source, a post
+whose metrics never landed). Each is a tight, local-only `Ledger.transaction` — no network — and
+exits 2 with a one-line message if the target id doesn't exist or is in the wrong state. See
+`RUNTIME.md` → *Recovery verbs*.
 
 **Adjust knobs.** `--winner-pct` = top fraction of analyzed posts (by lift) to amplify;
 `--retire-pct` = bottom fraction *eligible* to retire; `--lift-floor` = a post is only retired
