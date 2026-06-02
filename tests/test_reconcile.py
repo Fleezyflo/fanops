@@ -161,6 +161,64 @@ def test_reconcile_logs_each_post(tmp_path):
     assert "p1" in log
 
 
+def _reconcile_log_line_for(cfg, pid):
+    # Return the single run.log line whose TAB-delimited unit_id field == pid, or "" if absent.
+    # Matching the id positionally (not substring) prevents one post's keyword leaking into another's
+    # assertion when several posts are reconciled in the same pass / same log file.
+    if not cfg.log_path.exists():
+        return ""
+    for raw in cfg.log_path.read_text().splitlines():
+        cols = raw.split("\t")            # get_logger writes "{ts}\t{stage}\t{unit_id}\t{outcome}"
+        if len(cols) >= 4 and cols[1] == "reconcile" and cols[2] == pid:
+            return raw
+    return ""
+
+
+def test_reconcile_logs_every_branch(tmp_path):
+    # E4 HARDEN: test_reconcile_logs_each_post above drives ONLY the 'published' branch, so the
+    # audit-log emit on the OTHER four branches (skipped-no-id / poll-error / failed / in-progress
+    # 'left') is unpinned — deleting any of those log() calls keeps the suite green and a monitor
+    # goes blind to the very residue a human must look at. Drive ALL of them in one pass and pin,
+    # per post id, that a 'reconcile' line exists AND carries that branch's outcome keyword. Each
+    # post gets a distinct id so the positional matcher binds each assertion to exactly one branch.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "noid", PostState.needs_reconcile, sub=None)          # (a) skipped: no submission_id
+    _post(led, "boom", PostState.needs_reconcile, sub="fanops_x")    # (b) poll raises -> poll-error
+    _post(led, "fail", PostState.needs_reconcile, sub="sub_fail")    # (c) status failed
+    _post(led, "prog", PostState.submitting,      sub="sub_prog")    # (d) in-progress -> left
+
+    def get_status(sid):
+        if sid == "fanops_x":
+            raise RuntimeError("blotato status 404: postSubmissionId not found")
+        if sid == "sub_fail":
+            return {"postSubmissionId": sid, "status": "failed", "errorMessage": "platform rejected"}
+        if sid == "sub_prog":
+            return {"postSubmissionId": sid, "status": "in-progress"}
+        raise AssertionError(f"unexpected poll for {sid}")          # noid must NEVER be polled
+
+    reconcile_posts(led, cfg, get_status=get_status)
+
+    # (a) skipped-no-id: the id-less post is logged as skipped (THE branch the old test never bound).
+    noid_line = _reconcile_log_line_for(cfg, "noid")
+    assert noid_line, "no reconcile log line for the skipped-no-id post 'noid'"
+    assert "skipped" in noid_line
+
+    # (b) poll-error: a raising poll is contained AND audit-logged as poll-error (not silently parked).
+    boom_line = _reconcile_log_line_for(cfg, "boom")
+    assert boom_line, "no reconcile log line for the poll-error post 'boom'"
+    assert "poll-error" in boom_line
+
+    # (c) failed: a 'failed' resolution is audit-logged.
+    fail_line = _reconcile_log_line_for(cfg, "fail")
+    assert fail_line, "no reconcile log line for the failed post 'fail'"
+    assert "failed" in fail_line
+
+    # (d) left: an in-progress post left parked is still audit-logged (monitor sees it was visited).
+    prog_line = _reconcile_log_line_for(cfg, "prog")
+    assert prog_line, "no reconcile log line for the in-progress post 'prog'"
+    assert "left" in prog_line
+
+
 def test_reconcile_halts_on_fatal_auth_error(tmp_path):
     # Mirror publish_due (run.py:71-72): a Blotato auth failure means EVERY poll will 401, so
     # grinding through the whole ledger is pointless — a BlotatoAuthError from get_status propagates
