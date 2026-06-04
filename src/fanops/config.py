@@ -164,3 +164,45 @@ class Config:
             return float(os.getenv("FANOPS_VARIANT_MIN_GAP", "10"))
         except ValueError:
             return 10.0
+
+    @property
+    def variant_amplify(self) -> bool:
+        # Creative variation v3 (variant-gated amplification): with this ON, a per-account hook
+        # variant that has earned a SUSTAINED, well-evidenced win auto-amplifies its source (the
+        # existing adjust.amplify path), carrying the winning hook into the moment-request guidance.
+        # This is the FIRST feature to touch the amplify/cascade machinery (audit C1), so it is the
+        # KILL SWITCH: DEFAULT OFF (opt-in). Only the explicit on-words enable it; unset/empty/other
+        # stays OFF (today's behavior — no variant-driven amplify). Amplify-only: never feeds retire.
+        v = (os.getenv("FANOPS_VARIANT_AMPLIFY") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def variant_amplify_min_posts(self) -> int:
+        # v3 trust-gate part 1 (stronger than v2's variant_min_posts=3): the winning hook must have
+        # at least this many analyzed posts on the surface before its win is trusted enough to AMPLIFY
+        # (a far more consequential act than v2's caption-bias). DEFAULT 8. Non-int env -> default.
+        try:
+            return int(os.getenv("FANOPS_VARIANT_AMPLIFY_MIN_POSTS", "8"))
+        except ValueError:
+            return 8
+
+    @property
+    def variant_amplify_min_gap(self) -> float:
+        # v3 trust-gate part 2 (stronger than v2's variant_min_gap=10): the winner's mean lift must
+        # beat the runner-up's by at least this margin. DEFAULT 25.0 (same lift_score scale).
+        # Non-float env -> default.
+        try:
+            return float(os.getenv("FANOPS_VARIANT_AMPLIFY_MIN_GAP", "25"))
+        except ValueError:
+            return 25.0
+
+    @property
+    def variant_amplify_min_streak(self) -> int:
+        # v3 trust-gate part 3 (the core NEW safety property — has no v2 analogue): the SAME hook must
+        # have led the gate across at least this many DISTINCT evidence windows (new analyzed-post
+        # batches) before amplifying. >= 2 means "never act on a single window". DEFAULT 3.
+        # Non-int env -> default.
+        try:
+            return int(os.getenv("FANOPS_VARIANT_AMPLIFY_MIN_STREAK", "3"))
+        except ValueError:
+            return 3

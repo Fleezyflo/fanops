@@ -78,3 +78,39 @@ def test_config_has_review_dir(tmp_path):
     assert cfg.review == cfg.base / "00_review"        # the discovery review folder
     # approved subfolder convention (used by intake) is review/approved
     assert (cfg.review / "approved").name == "approved"
+
+
+def test_variant_amplify_defaults_off(monkeypatch, tmp_path):
+    from fanops.config import Config
+    for k in ("FANOPS_VARIANT_AMPLIFY", "FANOPS_VARIANT_AMPLIFY_MIN_POSTS",
+              "FANOPS_VARIANT_AMPLIFY_MIN_GAP", "FANOPS_VARIANT_AMPLIFY_MIN_STREAK"):
+        monkeypatch.delenv(k, raising=False)
+    c = Config(root=tmp_path)
+    assert c.variant_amplify is False
+    assert c.variant_amplify_min_posts == 8
+    assert c.variant_amplify_min_gap == 25.0
+    assert c.variant_amplify_min_streak == 3
+
+
+def test_variant_amplify_env_overrides(monkeypatch, tmp_path):
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY_MIN_POSTS", "12")
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY_MIN_GAP", "40")
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY_MIN_STREAK", "5")
+    c = Config(root=tmp_path)
+    assert c.variant_amplify is True
+    assert c.variant_amplify_min_posts == 12
+    assert c.variant_amplify_min_gap == 40.0
+    assert c.variant_amplify_min_streak == 5
+
+
+def test_variant_amplify_bad_env_falls_back(monkeypatch, tmp_path):
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY_MIN_POSTS", "nope")
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY_MIN_GAP", "nan-ish?")
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY_MIN_STREAK", "x")
+    c = Config(root=tmp_path)
+    assert c.variant_amplify_min_posts == 8
+    assert c.variant_amplify_min_gap == 25.0
+    assert c.variant_amplify_min_streak == 3
