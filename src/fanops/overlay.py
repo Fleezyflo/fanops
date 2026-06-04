@@ -15,6 +15,7 @@ result so repeated clip renders don't re-spawn ffmpeg; it never raises if ffmpeg
 """
 from __future__ import annotations
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -189,3 +190,30 @@ def ffmpeg_has_textfilter() -> bool:
     except (FileNotFoundError, OSError):
         _TEXTFILTER_CACHE = False
     return _TEXTFILTER_CACHE
+
+
+def burn_hook_only(base_clip_path: str, out_path: str, hook: str, *,
+                   width: int = 1080, height: int = 1920, font: str = "Arial Unicode MS") -> bool:
+    """Burn ONLY a hook (top-third) onto an already-rendered base clip -> out_path. Returns True if
+    the hook was burned, False if it FAILED OPEN (no text filter or empty hook) — in which case
+    out_path is a byte copy of the base clip (the caller still gets a usable per-account file).
+    Cheap second pass for per-account creative variation: the base reframe+subtitle render is done
+    once; this adds one account's hook."""
+    if not hook or not hook.strip() or not ffmpeg_has_textfilter():
+        shutil.copyfile(base_clip_path, out_path)        # fail-open: usable file, no hook
+        return False
+    # hook-only ass: no subtitle segments, hook over the first 2.5s of the (already-cut) base clip.
+    ass_text = build_ass([], hook=hook, clip_start=0.0, clip_end=2.5, width=width, height=height, font=font)
+    ass_path = str(Path(out_path).with_suffix(".ass"))
+    write_ass(ass_text, ass_path)
+    cmd = ["ffmpeg", "-y", "-i", base_clip_path, "-vf", subtitles_vf(ass_path),
+           "-c:v", "libx264", "-c:a", "copy", "-movflags", "+faststart", out_path]
+    try:
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except (FileNotFoundError, OSError):
+        shutil.copyfile(base_clip_path, out_path)        # ffmpeg vanished mid-run: fail-open
+        return False
+    if r.returncode != 0 or not Path(out_path).exists():
+        shutil.copyfile(base_clip_path, out_path)
+        return False
+    return True
