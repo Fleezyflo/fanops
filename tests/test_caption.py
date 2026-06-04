@@ -168,3 +168,32 @@ def test_caption_genuine_mismatch_still_held_after_normalization(tmp_path):
     led = ingest_captions(led, cfg, "c1")
     assert led.clips["c1"].state is ClipState.held
     assert "language" in (led.clips["c1"].held_reason or "").lower()
+
+# --- T2 (audit b): the off-brand HOLD lists are operator-tunable via 00_control/tuning.json ---
+# Contract: when an override KEY is present it REPLACES the in-code default for that list (the
+# clearest, most predictable contract — the operator sees exactly the set they wrote). Absent
+# file or absent key -> the in-code DEFAULT list is used, so existing behavior is unchanged.
+
+def _write_tuning(cfg, obj):
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.tuning_path.write_text(json.dumps(obj))
+
+def test_offbrand_lists_overridable_from_tuning_json(tmp_path):
+    cfg = Config(root=tmp_path)
+    # Custom EN list contains a benign word ("bananas") and does NOT contain the default "sorry".
+    _write_tuning(cfg, {"offbrand_en": [r"\bbananas\b"]})
+    # the override fires on its own pattern...
+    assert brand_risk_flag("bananas for breakfast", cfg) is not None
+    # ...and the DEFAULT-only pattern no longer fires (proves REPLACE, not merge).
+    assert brand_risk_flag("sorry pls stream", cfg) is None
+
+def test_defaults_unchanged_without_tuning_json(tmp_path):
+    # No tuning.json on disk -> brand_risk_flag(cfg) behaves exactly like the no-cfg default path.
+    cfg = Config(root=tmp_path)
+    assert not cfg.tuning_path.exists()
+    assert brand_risk_flag("sorry pls stream 🥺", cfg) is not None     # default EN still catches
+    assert brand_risk_flag("لينك في البايو", cfg) is not None          # default AR still catches
+    assert brand_risk_flag("no warning. just impact. 🔥", cfg) is None  # clean stays clean
+    # and the legacy no-cfg call is untouched (existing callers/tests keep working).
+    assert brand_risk_flag("sorry pls stream 🥺") is not None
+    assert brand_risk_flag("no warning. just impact. 🔥") is None
