@@ -3,6 +3,12 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt
 from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for
+from fanops import overlay
+
+
+def _vf_of(cmd: list[str]) -> str:
+    """Return the value passed to the (last) -vf flag in an ffmpeg cmd list."""
+    return cmd[cmd.index("-vf") + 1]
 
 def test_clip_cmd_seek_is_output_relative_and_reframes():
     cmd = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 1.5, 8.0, "9:16", src_w=1920, src_h=1080)
@@ -99,6 +105,101 @@ def test_render_moment_records_error_when_ffmpeg_absent(tmp_path, mocker):
     assert clip.id in led.clips
     # moment stays retriable (NOT MomentState.error, NOT clipped) — re-run renders again
     assert led.moments["mom_1"].state is MomentState.decided
+
+def test_ffmpeg_clip_cmd_appends_extra_vf():
+    # extra_vf is chained AFTER the reframe with a comma; default None keeps old behavior.
+    cmd = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 1.5, 8.0, "9:16",
+                          src_w=1920, src_h=1080, extra_vf="subtitles=x.ass")
+    vf = _vf_of(cmd)
+    assert vf.endswith(",subtitles=x.ass")                 # reframe first, then the chained filter
+    assert reframe_filter("9:16", 1920, 1080) in vf        # reframe still present, un-mangled
+    # default None == old behavior: exactly the reframe, no trailing comma/filter
+    plain = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 1.5, 8.0, "9:16", src_w=1920, src_h=1080)
+    assert _vf_of(plain) == reframe_filter("9:16", 1920, 1080)
+
+
+def test_render_burns_subtitles_when_enabled(tmp_path, mocker, monkeypatch):
+    # source WITH a transcript + a moment; burn_subs ON; ffmpeg HAS the text filter ->
+    # the -vf must chain "subtitles=" after the reframe AND an .ass file is written to disk.
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080,
+                          transcript=[{"start": 0.0, "end": 3.0, "text": "hello world"},
+                                      {"start": 3.0, "end": 6.0, "text": "second line"}]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided,
+                          hook="big hook"))
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    vf = _vf_of(captured["cmd"])
+    assert "subtitles=" in vf                               # the burn filter was chained
+    assert reframe_filter("9:16", 1920, 1080) in vf         # ... after the reframe
+    # an .ass file was written adjacent to the clip
+    ass_files = list(cfg.clips.glob("*.ass"))
+    assert ass_files, "expected a written .ass subtitle file"
+    assert ass_files[0].read_text(encoding="utf-8").startswith("[Script Info]")
+
+
+def test_render_failopen_when_no_textfilter(tmp_path, mocker, monkeypatch):
+    # burn_subs ON but ffmpeg LACKS the text filter -> NO "subtitles=" in -vf, the clip still
+    # renders, and exactly ONE warning is logged. NEVER raises.
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080,
+                          transcript=[{"start": 0.0, "end": 3.0, "text": "hello world"}]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook="hook"))
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)   # must NOT raise
+    assert clip.state is ClipState.rendered                          # clip still renders
+    vf = _vf_of(captured["cmd"])
+    assert "subtitles=" not in vf                                    # plain reframe only
+    assert vf == reframe_filter("9:16", 1920, 1080)
+    assert not list(cfg.clips.glob("*.ass"))                         # no .ass written
+    # one warning logged about the missing text filter
+    log = cfg.log_path.read_text()
+    assert "subtitles" in log.lower() and "without" in log.lower()
+
+
+def test_render_failopen_when_no_transcript(tmp_path, mocker, monkeypatch):
+    # burn_subs ON, ffmpeg HAS the filter, but the source transcript is None -> no "subtitles="
+    # in -vf, the clip still renders. (Empty transcript == nothing to burn; not an error.)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, transcript=None))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook="hook"))
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    assert "subtitles=" not in _vf_of(captured["cmd"])
+    assert not list(cfg.clips.glob("*.ass"))
+
 
 def test_reframe_branches_exact():
     # 16:9 from a tall source -> crop height then scale to even 1920x1080

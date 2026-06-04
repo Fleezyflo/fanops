@@ -23,3 +23,19 @@ def test_budget_and_responder_defaults(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     c = Config(root=tmp_path)
     assert c.escalation_budget_usd == 0.0 and c.responder_mode == "manual"
+
+def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    assert Config(root=tmp_path).burn_subs is True            # default ON
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
+    assert Config(root=tmp_path).burn_subs is False
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "false")
+    assert Config(root=tmp_path).burn_subs is False
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    assert Config(root=tmp_path).burn_subs is True
+
+def test_subtitle_font_default_and_override(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_SUBTITLE_FONT", raising=False)
+    assert Config(root=tmp_path).subtitle_font == "Arial Unicode MS"
+    monkeypatch.setenv("FANOPS_SUBTITLE_FONT", "X")
+    assert Config(root=tmp_path).subtitle_font == "X"

@@ -10,6 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState
 from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response
+from fanops.overlay import derive_hook
 
 def _guidance(cfg: Config) -> str:
     return cfg.context_path.read_text() if cfg.context_path.exists() else ""
@@ -61,6 +62,7 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.decided,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=pick.reason, transcript_excerpt=pick.transcript_excerpt,
+                           hook=derive_hook(pick.transcript_excerpt),
                            signal_score=pick.signal_score)
     if not keep and dec.picks:
         # Intentional: a wholly-invalid NEW decision quarantines the source but does NOT

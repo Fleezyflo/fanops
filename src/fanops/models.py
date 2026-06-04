@@ -94,6 +94,9 @@ class Moment(BaseModel):
     end: float
     reason: str                                 # WHY worth posting (required)
     transcript_excerpt: str = ""
+    hook: Optional[str] = None                  # punchy top-third line for the clip; deterministic
+                                                # first-clause default (overlay.derive_hook), an LLM
+                                                # may overwrite. Optional/None -> old ledgers load fine.
     signal_score: float = 0.0
     error_reason: Optional[str] = None
 

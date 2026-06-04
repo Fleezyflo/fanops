@@ -102,3 +102,20 @@ class Config:
         # CI hosts where the larger checkpoints cannot be downloaded.
         v = os.getenv("FANOPS_WHISPER_MODEL")
         return v.strip() if v and v.strip() else "turbo"
+
+    @property
+    def burn_subs(self) -> bool:
+        # On/off toggle for the burned-in subtitle feature. DEFAULT ON: an unset env (the common
+        # case) burns subs, so the feature is live without operator action. Only the explicit
+        # off-words "0"/"false"/"no"/"off" (case-insensitive, surrounding ws trimmed) disable it;
+        # everything else — including a typo — stays ON, the safe default for a content pipeline.
+        v = os.getenv("FANOPS_BURN_SUBS")
+        return (v or "").strip().lower() not in {"0", "false", "no", "off"}
+
+    @property
+    def subtitle_font(self) -> str:
+        # Operator override for the .ass subtitle font. Default "Arial Unicode MS" — an
+        # Arabic-capable face so RTL captions render; change it (FANOPS_SUBTITLE_FONT) if the
+        # host lacks that font or the operator prefers another Unicode/Arabic typeface.
+        v = os.getenv("FANOPS_SUBTITLE_FONT")
+        return v.strip() if v and v.strip() else "Arial Unicode MS"

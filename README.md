@@ -31,7 +31,10 @@ Source ──▶ Moment ──▶ Clip ──▶ Post
   timestamps, so re-deciding a source upserts the set and cascade-deletes dropped lineage.
 - **Clip** — a rendered, platform-ready file (e.g. `1080×1920` 9:16) cut from a moment with a
   frame-accurate ffmpeg seek + a safe reframe chosen from the *probed* source dimensions. One
-  clip per distinct aspect the active platforms need.
+  clip per distinct aspect the active platforms need. Clips also carry **burned-in subtitles**
+  (from the transcript) and a **top-third hook**, burned via ffmpeg's `subtitles` filter after
+  the reframe — toggle `FANOPS_BURN_SUBS` (default on; needs a text-capable ffmpeg/libass, else
+  it falls open and renders plain).
 - **Post** — one clip fanned out to one `(account, platform)` surface, in *that* platform's
   aspect, with that surface's caption, a deterministic per-surface schedule time, and the
   resolved **numeric** Blotato `account_id`.

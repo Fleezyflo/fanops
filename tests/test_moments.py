@@ -74,6 +74,27 @@ def test_amplify_style_reingest_reconciles_not_noop(tmp_path):
     assert tokens["14.00-18.00"].reason == "B-better"       # B updated in place (not blocked)
     assert "c_a" not in led.clips and "p_a" not in led.posts # A's lineage cascade-deleted
 
+def test_moment_gets_derived_hook(tmp_path):
+    # A reconciled Moment carries a deterministic hook derived from its transcript_excerpt
+    # (the spoken text's first clause) — a punchy top-third line even with NO LLM. A future
+    # LLM can overwrite Moment.hook directly.
+    from fanops.overlay import derive_hook
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moments", "src_1")
+    excerpt = "This changed everything for me."
+    response_path(cfg, "moments", "src_1").write_text(MomentDecision(
+        source_id="src_1", request_id=rid,
+        picks=[MomentPick(start=14.0, end=18.5, reason="punchline",
+                          transcript_excerpt=excerpt, signal_score=0.6)]
+    ).model_dump_json())
+    led = ingest_moments(led, cfg, "src_1")
+    moms = led.moments_of("src_1")
+    assert len(moms) == 1
+    assert moms[0].hook                                      # non-empty
+    assert moms[0].hook == derive_hook(excerpt)             # the derived first clause
+    assert moms[0].hook == "This changed everything for me"
+
 def test_ingest_all_invalid_marks_source_error(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
