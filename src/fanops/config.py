@@ -33,6 +33,15 @@ class Config:
         return v.strip() if v and v.strip() else None
 
     @property
+    def anthropic_api_key(self) -> str | None:
+        # Mirrors blotato_api_key. The autonomous responder shells out to `claude --bare`, which
+        # reads ONLY ANTHROPIC_API_KEY (it ignores the OAuth login / keychain) — so its presence is
+        # the difference between real content and a silent zero-output run. Surfaced as a property
+        # for symmetry/testability and consumed by cli._check_preflight.
+        v = os.getenv("ANTHROPIC_API_KEY")
+        return v.strip() if v and v.strip() else None
+
+    @property
     def poster_backend(self) -> str:
         return os.getenv("FANOPS_POSTER") or "dryrun"
 
