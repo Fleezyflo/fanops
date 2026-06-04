@@ -14,8 +14,12 @@ reframe with a comma). ffmpeg_has_textfilter() probes `ffmpeg -filters` ONCE and
 result so repeated clip renders don't re-spawn ffmpeg; it never raises if ffmpeg is absent.
 """
 from __future__ import annotations
+import re
 import subprocess
 from pathlib import Path
+
+# Sentence/clause boundary for the deterministic hook: split on . ! ? or a newline.
+_CLAUSE_SPLIT = re.compile(r"[.!?\n]")
 
 # ASS colours are &HAABBGGRR (alpha+BGR, hex). White text, black outline/shadow for legibility on
 # any footage; the hook gets a punchy amber (&H0000C8FF == RGB FFC800) to pop against the subtitle.
@@ -54,6 +58,29 @@ def _escape_text(text: str) -> str:
     text = text.replace("\n", "\\N")
     text = text.replace("{", "").replace("}", "")
     return text
+
+
+def derive_hook(transcript_excerpt: str | None, *, max_words: int = 7) -> str | None:
+    """Deterministic top-third hook from a moment's spoken text — NO LLM required.
+
+    Take the FIRST sentence/clause (split on . ! ? or a newline), strip it, and trim to at most
+    `max_words` words. Returns None for empty/whitespace-only input (nothing to show). The text is
+    returned as-is (no re-casing) so the speaker's words are preserved; a future LLM may overwrite
+    Moment.hook with something punchier."""
+    if not transcript_excerpt or not transcript_excerpt.strip():
+        return None
+    # first non-empty clause (a leading delimiter would yield an empty piece first; skip those)
+    first = ""
+    for piece in _CLAUSE_SPLIT.split(transcript_excerpt):
+        if piece.strip():
+            first = piece.strip()
+            break
+    if not first:
+        return None
+    words = first.split()
+    if len(words) > max_words:
+        words = words[:max_words]
+    return " ".join(words)
 
 
 def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end: float,

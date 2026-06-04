@@ -7,7 +7,7 @@ and the cached capability probe are likewise standalone so a clip render probes 
 """
 from __future__ import annotations
 import fanops.overlay as overlay
-from fanops.overlay import build_ass, write_ass, subtitles_vf, ffmpeg_has_textfilter
+from fanops.overlay import build_ass, write_ass, subtitles_vf, ffmpeg_has_textfilter, derive_hook
 
 
 def _dialogues(ass_text: str) -> list[str]:
@@ -117,3 +117,20 @@ def test_write_ass_writes_file(tmp_path):
     out = write_ass("[Script Info]\nPlayResX: 1080\n", p)
     assert out == p
     assert p.read_text().startswith("[Script Info]")
+
+
+def test_derive_hook_takes_punchy_first_clause():
+    # the FIRST clause (split on . ! ? or newline), stripped — a deterministic top-third line
+    # with NO LLM. Here "They slept on me" (4 words) before the first period.
+    assert derive_hook("They slept on me. Not anymore, watch this whole thing.") == "They slept on me"
+
+    # empty / whitespace-only input -> None (no hook to show)
+    assert derive_hook("") is None
+    assert derive_hook("   \n  ") is None
+
+    # a first clause longer than max_words is trimmed to max_words words (default 7)
+    long = "one two three four five six seven eight nine. trailing clause"
+    assert derive_hook(long) == "one two three four five six seven"
+    assert len(derive_hook(long).split()) == 7
+    # explicit max_words is honoured
+    assert derive_hook(long, max_words=3) == "one two three"
