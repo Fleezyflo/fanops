@@ -9,7 +9,8 @@ from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import Post, PostState, ClipState, MomentState, Platform, Fmt, PLATFORM_ASPECT
+from fanops.models import (Post, PostState, ClipState, MomentState, Platform, Fmt,
+                           PLATFORM_ASPECT, PLATFORM_MAX_SECONDS)
 from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment
 from fanops.tagging import decide_tag, ARTIST_HANDLE
@@ -68,7 +69,21 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                   and not led.is_retired_moment(c.parent_id)]
     for clip in seed_clips:
         moment_id = clip.parent_id
+        # AUDIT (g): the clip's PLAYABLE duration is its MOMENT window (end - start). Clip has no
+        # .duration field; the seed clip is rendered from [start,end] of the source, so the window
+        # — not the full source length — is the right value. Guard a missing moment defensively
+        # (treat as UNKNOWN -> fail-open, never skip). dur is None/<=0 => unknown.
+        m = led.moments.get(moment_id)
+        clip_dur = (m.end - m.start) if m is not None else None
         for i, surf in enumerate(surfaces):
+            # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
+            # platform's hard cap, SKIP this surface only (conservative — the clip can still post
+            # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown
+            # duration or a platform with no cap -> DO NOT skip (fail-open; the old code posted
+            # regardless and we must never silently drop a post over an unprobed length).
+            max_secs = PLATFORM_MAX_SECONDS.get(surf.platform)
+            if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
+                continue   # over-cap for this surface -> no post here (still posts to others)
             aspect = PLATFORM_ASPECT.get(surf.platform, Fmt.r9x16)
             target_clip = _clip_for_aspect(led, cfg, moment_id, aspect)
             if target_clip.state not in _REUSABLE_CLIP_STATES:
