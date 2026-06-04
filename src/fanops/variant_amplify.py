@@ -14,6 +14,7 @@ fingerprint is content-addressed via ids._hash, so a re-run on the same ledger i
 Enforced by the retire-isolation AST test + the mutation-proof + wrong-signal no-op tests in
 tests/test_variant_amplify.py."""
 from __future__ import annotations
+from statistics import mean
 from fanops.ids import _hash
 from fanops.models import Platform, PostState
 from fanops.variant_learning import best_hooks
@@ -59,3 +60,67 @@ def update_streaks(led, cfg):
                                         "streak": int(prior.get("streak", 0)) + 1}
         # else: same winner, SAME evidence -> no change (idempotent re-run).
     return led
+
+
+def _source_for_surface(led, account: str, platform: Platform, hook: str):
+    """Map a (surface, winning hook) to ONE source + a representative post (spec's deterministic
+    source-mapping rule). The winning hook's analyzed posts may trace to several sources; pick the
+    source with the MOST such posts (best-evidenced), ties broken by lowest source_id; the
+    representative post_id is the lowest post_id among that source's winning-hook posts. Returns
+    (source_id, post_id) or (None, None) if the lineage can't be resolved."""
+    by_source: dict[str, list[str]] = {}
+    for p in led.posts.values():
+        if not (p.account == account and p.platform is platform and p.variant_hook == hook
+                and p.state is PostState.analyzed and "lift_score" in p.metrics):
+            continue
+        clip = led.clips.get(p.parent_id)
+        moment = led.moments.get(clip.parent_id) if clip else None
+        src = led.sources.get(moment.parent_id) if moment else None
+        if src is None:
+            continue
+        by_source.setdefault(src.id, []).append(p.id)
+    if not by_source:
+        return None, None
+    # most posts, then lowest source_id (lexicographic) — fully deterministic.
+    source_id = min(by_source, key=lambda sid: (-len(by_source[sid]), sid))
+    post_id = min(by_source[source_id])
+    return source_id, post_id
+
+
+def amplify_candidates(led, cfg) -> list[dict]:
+    """Pure, read-only. Return the list of {source_id, winning_hook, post_id, evidence} to amplify —
+    one per surface that clears the FULL gate (best_hooks floor + min_posts + min_gap + min_streak +
+    E1 budget). [] on any doubt. No I/O, no mutation."""
+    out: list[dict] = []
+    for account, platform in sorted(_surfaces(led), key=lambda s: (s[0], s[1].value)):
+        winners = best_hooks(led, cfg, account, platform)        # FLOOR (v2 gate)
+        if not winners:
+            continue
+        hook = winners[0]
+        # Re-derive the winner's posts/lifts on this surface for the v3 stronger thresholds.
+        lifts = [float(p.metrics["lift_score"]) for p in led.posts.values()
+                 if p.account == account and p.platform is platform and p.variant_hook == hook
+                 and p.state is PostState.analyzed and "lift_score" in p.metrics]
+        if len(lifts) < cfg.variant_amplify_min_posts:
+            continue
+        # runner-up mean among OTHER hooks on this surface (best_hooks already guaranteed >= 2 hooks).
+        others: dict[str, list[float]] = {}
+        for p in led.posts.values():
+            if (p.account == account and p.platform is platform and p.variant_hook
+                    and p.variant_hook != hook and p.state is PostState.analyzed
+                    and "lift_score" in p.metrics):
+                others.setdefault(p.variant_hook, []).append(float(p.metrics["lift_score"]))
+        runner_mean = max((mean(v) for v in others.values()), default=0.0)
+        if mean(lifts) - runner_mean < cfg.variant_amplify_min_gap:
+            continue
+        entry = led.variant_streaks.get(f"{account}|{platform.value}", {})
+        if entry.get("hook") != hook or int(entry.get("streak", 0)) < cfg.variant_amplify_min_streak:
+            continue                                             # single-window guard
+        source_id, post_id = _source_for_surface(led, account, platform, hook)
+        if source_id is None:
+            continue
+        if int(led.sources[source_id].meta.get("amplify_count", 0)) >= 3:   # E1 budget (max=3)
+            continue
+        out.append({"source_id": source_id, "winning_hook": hook, "post_id": post_id,
+                    "evidence": {"posts": len(lifts), "streak": int(entry.get("streak", 0))}})
+    return out

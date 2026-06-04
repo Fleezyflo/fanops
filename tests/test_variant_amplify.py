@@ -2,7 +2,7 @@
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Source, Moment, Clip, SourceState
-from fanops.variant_amplify import update_streaks
+from fanops.variant_amplify import update_streaks, amplify_candidates
 
 
 def _post(pid, acct, hook, lift, state=PostState.analyzed):
@@ -97,3 +97,75 @@ def test_update_streaks_deterministic(tmp_path):
     update_streaks(led2, cfg)
     b = dict(led2.variant_streaks["@a|instagram"])
     assert a == b                          # same ledger state -> identical streak entry
+
+
+# ---- Task 5: amplify_candidates — the pure, fully-gated decision --------------------------------
+
+def test_below_floor_no_candidate(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0)])  # < floor min_posts
+    _seed_lineage(led)
+    assert amplify_candidates(led, cfg) == []
+
+
+def test_floor_met_but_below_min_posts(tmp_path):
+    cfg = Config(root=tmp_path)            # AMPLIFY_MIN_POSTS=8; best_hooks floor min_posts=3
+    led = _led(cfg, _winset(5, "WIN", 90.0))   # 5 >= floor(3) but < amplify(8)
+    _seed_lineage(led)
+    # streak alone can't rescue it — posts < 8 must veto regardless of streak
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 9}
+    assert amplify_candidates(led, cfg) == []
+
+
+def test_gap_too_small_no_candidate(tmp_path):
+    cfg = Config(root=tmp_path)            # AMPLIFY_MIN_GAP=25
+    posts = [_post(str(i), "@a", "WIN", 60.0) for i in range(8)]
+    posts += [_post(str(20 + i), "@a", "LOSE", 50.0) for i in range(8)]   # gap 10 < 25
+    led = _led(cfg, posts)
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 9}
+    assert amplify_candidates(led, cfg) == []
+
+
+def test_streak_too_small_no_candidate(tmp_path):
+    # ALL of best_hooks-floor + min_posts + min_gap met, but streak < min_streak -> [].
+    # THIS is the single-window guard — the core new safety property.
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))   # 8 posts, gap 89 -> floor+posts+gap all met
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 2}  # < 3
+    assert amplify_candidates(led, cfg) == []
+
+
+def test_all_gates_met_returns_candidate(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    cands = amplify_candidates(led, cfg)
+    assert len(cands) == 1
+    c = cands[0]
+    assert c["source_id"] == "s1" and c["winning_hook"] == "WIN"
+    assert c["post_id"] in {p.id for p in led.posts.values() if p.variant_hook == "WIN"}
+
+
+def test_source_at_amplify_budget_skipped(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.sources["s1"].meta["amplify_count"] = 3        # E1 cap reached (max_amplify_per_source=3)
+    assert amplify_candidates(led, cfg) == []
+
+
+def test_empty_ledger_no_candidate(tmp_path):
+    cfg = Config(root=tmp_path)
+    assert amplify_candidates(Ledger.load(cfg), cfg) == []
+
+
+def test_amplify_candidates_deterministic(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    assert amplify_candidates(led, cfg) == amplify_candidates(led, cfg)
