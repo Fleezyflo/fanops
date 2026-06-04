@@ -133,12 +133,22 @@ def test_amplify_path_never_acts_on_variant_signal():
 
 def test_best_hooks_called_only_on_safe_read_or_request_side():
     """Positive lock on WHERE the learner is invoked. best_hooks may be called only from the SAFE
-    surfaces: caption.py (the request side, where the loop legitimately closes) and digest.py (a
-    read-only reporting of gate state — it neither mutates the ledger nor touches amplify/delete).
-    It must NEVER be called from the C1 danger files (adjust.py / track.py / pipeline.py / ledger.py).
-    If a future edit calls it from the amplify/delete path, this names the offending file."""
+    surfaces: caption.py (the request side, where the loop legitimately closes), digest.py (read-only
+    gate-state reporting), and variant_amplify.py (creative-variation v3 — the FIRST caller that
+    bridges best_hooks -> amplify to give a SUSTAINED proven winner more reach). It must NEVER be
+    called from the C1 danger files
+    (adjust.py / track.py / pipeline.py / ledger.py). If a future edit calls it from the amplify/
+    delete path, this names the offending file.
+
+    Why variant_amplify is a SAFE caller despite reaching amplify (reviewed, not rubber-stamped):
+    the C1 invariant is that the DELETE/RETIRE machinery stays blind to the variant signal — that is
+    guarded SEPARATELY and still holds (test_amplify_path_never_acts_on_variant_signal: adjust's
+    amplify/classify_outcomes/retire + ledger._delete_moment_cascade reference no variant_* / best_hooks).
+    variant_amplify itself is AMPLIFY-ONLY — it never calls retire/_delete_moment_cascade/set_*_state
+    (proven by tests/test_variant_amplify.py::test_variant_amplify_never_touches_retire_or_cascade),
+    so a noisy 'winner' can at worst trigger an extra (hard-gated) amplify, never a delete/retire."""
     root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
-    allowed = {"caption.py", "digest.py"}
+    allowed = {"caption.py", "digest.py", "variant_amplify.py"}
     danger = {"adjust.py", "track.py", "pipeline.py", "ledger.py"}
     callers = set()
     for py in root.rglob("*.py"):
