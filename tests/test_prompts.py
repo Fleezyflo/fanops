@@ -95,3 +95,38 @@ def test_caption_prompt_byte_identical_without_learned_hooks():
     expected = caption_prompt(base)
     assert caption_prompt({**base, "learned_hooks": []}) == expected      # empty list == absent
     assert caption_prompt({**base, "learned_hooks": None}) == expected    # None == absent
+
+
+def test_caption_prompt_renders_transferred_block_below_own():
+    from fanops.prompts import caption_prompt
+    payload = {"surfaces": [{"surface": "@c/instagram", "platform": "instagram"}],
+               "language": "en", "guidance": "", "transcript_excerpt": "x",
+               "learned_hooks": ["OWN"], "learned_hooks_transferred": ["BORROWED"]}
+    prompt = caption_prompt(payload)
+    assert "OWN" in prompt and "BORROWED" in prompt
+    # the OWN (own-surface) block must appear ABOVE the borrowed (cross-surface) block.
+    assert prompt.index("OWN") < prompt.index("BORROWED")
+    # the borrowed block is labelled as a lighter, cross-surface nudge and still says don't copy.
+    assert "elsewhere" in prompt.lower()
+    assert prompt.lower().count("verbatim") >= 1
+
+
+def test_caption_prompt_transferred_only_still_says_not_verbatim():
+    from fanops.prompts import caption_prompt
+    payload = {"surfaces": [{"surface": "@c/instagram", "platform": "instagram"}],
+               "language": "en", "guidance": "", "transcript_excerpt": "x",
+               "learned_hooks_transferred": ["BORROWED"]}     # cold recipient: only borrowed
+    prompt = caption_prompt(payload)
+    assert "BORROWED" in prompt
+    assert "verbatim" in prompt.lower()
+
+
+def test_caption_prompt_no_transferred_key_is_byte_identical():
+    from fanops.prompts import caption_prompt
+    base = {"surfaces": [{"surface": "@c/instagram", "platform": "instagram"}],
+            "language": "en", "guidance": "g", "transcript_excerpt": "x"}
+    # absent transferred key -> identical to a payload that never had it (no stray block).
+    assert caption_prompt(dict(base)) == caption_prompt(dict(base))
+    assert "elsewhere" not in caption_prompt(base).lower()
+    assert caption_prompt({**base, "learned_hooks_transferred": []}) == caption_prompt(base)
+    assert caption_prompt({**base, "learned_hooks_transferred": None}) == caption_prompt(base)
