@@ -11,8 +11,7 @@ import requests
 from fanops.config import Config
 from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
-
-BASE_URL = "https://backend.blotato.com/v2"
+from fanops.post.blotato_base import BASE_URL
 
 # Reject a runaway upload BEFORE we touch the network (AUDIT (e)). Clips are short vertical
 # by design, so 500 MB is generous headroom yet catches a mis-pointed path at a full library /

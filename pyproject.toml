@@ -6,7 +6,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = ["pydantic>=2.7", "requests>=2.31", "python-dotenv>=1.0", "yt-dlp>=2024.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3"]
+dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3", "ruff>=0.5"]
 # Local transcription. Installed into the venv in Task 2. (whisper CLI lands on PATH.)
 transcribe = ["openai-whisper>=20231117"]
 
@@ -19,6 +19,21 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+# Lint is wired for ENFORCEMENT GOING FORWARD (catch unused/undefined names, syntax errors),
+# not to mass-reformat the existing tree (audit (i)). Conservative select: pyflakes (F — the
+# real-bug class: unused imports, undefined names) + pycodestyle errors (E — incl. E9 syntax).
+line-length = 120
+[tool.ruff.lint]
+select = ["E", "F"]
+# These four E-rules flag a DELIBERATE house style, not defects, so silencing them keeps the
+# check green without a sweeping diff (the rest of E + all of F stay enforced):
+#   E701/E702 — compact one-liners (`if x: y`, `a; b`) used throughout for terse guards/imports.
+#   E401      — grouped imports (`import re, subprocess`) — same compact convention.
+#   E501      — a few dense AUDIT-provenance comment lines run long on purpose; wrapping them
+#               would fragment load-bearing rationale. line-length=120 still documents intent.
+ignore = ["E701", "E702", "E401", "E501"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

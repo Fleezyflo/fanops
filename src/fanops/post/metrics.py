@@ -10,8 +10,7 @@ remains an INTEGRATION CHECKPOINT: if saves/shares/retention are unavailable, re
 from __future__ import annotations
 import requests
 from fanops.config import Config
-
-BASE_URL = "https://backend.blotato.com/v2"
+from fanops.post.blotato_base import BASE_URL
 
 class BlotatoMetricsClient:
     def __init__(self, cfg: Config):

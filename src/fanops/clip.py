@@ -6,7 +6,7 @@ from __future__ import annotations
 import subprocess
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Clip, Moment, MomentState, ClipState, Fmt
+from fanops.models import Clip, MomentState, ClipState, Fmt
 from fanops.ids import child_id
 
 def reframe_filter(aspect: str, src_w: int, src_h: int) -> str:

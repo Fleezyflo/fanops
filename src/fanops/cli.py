@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.errors import BlotatoAuthError, ControlFileError, LockBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import PostState, SourceState
+from fanops.models import PostState
 from fanops.pipeline import advance
 from fanops.ingest import ingest_drops, download_url
 from fanops.digest import write_digest

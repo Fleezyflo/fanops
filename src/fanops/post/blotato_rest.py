@@ -36,8 +36,8 @@ from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.post.payload import build_blotato_payload, default_target_fields
+from fanops.post.blotato_base import BASE_URL
 
-BASE_URL = "https://backend.blotato.com/v2"
 _MAX_RETRIES = 4
 
 
