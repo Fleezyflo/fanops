@@ -56,3 +56,10 @@ def test_caption_prompt_isolates_transcript_excerpt_against_injection():
     # the excerpt content is preserved (isolated, not dropped) and json-escaped (proves containment)
     assert "nice bar" in p_evil
     assert "\\n" in p_evil   # backslash-n literal => excerpt was json-escaped, not interpolated raw
+
+def test_caption_prompt_asks_for_per_surface_hook():
+    from fanops.prompts import caption_prompt
+    p = caption_prompt({"clip_id": "c1", "transcript_excerpt": "they slept on me",
+                        "language": "en", "guidance": "",
+                        "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
+    assert "hook" in p.lower()        # the prompt instructs the model to return a per-surface hook

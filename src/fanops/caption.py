@@ -126,7 +126,8 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         reason = brand_risk_flag(item.caption, cfg)          # audit b: honor tuning.json override
         if reason and held_reason is None:
             held_reason = reason
-        clip.meta_captions[item.surface] = {"caption": item.caption, "hashtags": item.hashtags}
+        clip.meta_captions[item.surface] = {"caption": item.caption, "hashtags": item.hashtags,
+                                            "hook": item.hook}
     answered = {item.surface for item in cs.items}
     missing = requested - answered
     if missing and held_reason is None:

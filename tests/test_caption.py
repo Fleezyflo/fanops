@@ -197,3 +197,24 @@ def test_defaults_unchanged_without_tuning_json(tmp_path):
     # and the legacy no-cfg call is untouched (existing callers/tests keep working).
     assert brand_risk_flag("sorry pls stream 🥺") is not None
     assert brand_risk_flag("no warning. just impact. 🔥") is None
+
+def test_ingest_captions_stores_per_surface_hook(tmp_path):
+    # variation (3): the caption agent returns a per-surface `hook`; ingest_captions stores it
+    # into meta_captions[surface]["hook"] (additive — readers of caption/hashtags unaffected).
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Source, Moment, Clip, MomentState, ClipState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5,
+                          reason="r", state=MomentState.decided))
+    led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.captions_requested))
+    from fanops import caption as capmod
+    led = capmod.request_captions(led, cfg, "c1", [("@a", Platform.instagram)])
+    # write a response carrying a hook (raw dict — CaptionItem.hook is optional)
+    rid = json.loads(request_path(cfg, "captions", "c1").read_text())["request_id"]
+    resp = {"request_id": rid, "items": [{"surface": "@a/instagram", "caption": "they slept on me, watch",
+            "hashtags": ["#x"], "language": "en", "hook": "THEY SLEPT ON ME"}]}
+    response_path(cfg, "captions", "c1").write_text(json.dumps(resp))
+    led = capmod.ingest_captions(led, cfg, "c1")
+    assert led.clips["c1"].meta_captions["@a/instagram"]["hook"] == "THEY SLEPT ON ME"
