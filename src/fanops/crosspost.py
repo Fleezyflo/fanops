@@ -12,6 +12,7 @@ from fanops.accounts import Accounts
 from fanops.models import (Post, PostState, ClipState, Fmt,
                            PLATFORM_ASPECT, PLATFORM_MAX_SECONDS)
 from fanops.ids import child_id, surface_key, _hash
+from fanops import overlay
 from fanops.clip import render_moment
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 from fanops.timeutil import parse_iso as _parse, iso_z
@@ -99,14 +100,37 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
             sched = surface_time(base, surf.account, surf.platform.value, date_str, i, clip_id=clip.id)
             if decide_tag(led, account=surf.account, clip_id=clip.id, when=_parse(sched)):
                 caption = f"{caption}\n{ARTIST_HANDLE}"
+            # Creative variation (gated, fail-open): when enabled AND this surface carries a hook,
+            # burn a per-account hook onto the SHARED base clip -> a per-account file, and stamp a
+            # DETERMINISTIC variant_key (= surface_key, content-addressed; NOT random/hash()) plus
+            # the hook text (observe-only). With variation OFF or no hook, media_urls stays [] so
+            # publish_due's lazy ensure_clip_media(parent_id) path runs (today's shared-clip
+            # behavior). With it ON, the pre-populated file:// URL makes publish_due upload the
+            # variant file through the SAME poster seam (run.py: `if not post.media_urls`).
+            variant_key = None
+            variant_hook = None
+            media_path = target_clip.path
+            hook_v = (cap.get("hook") if isinstance(cap, dict) else None)
+            if cfg.creative_variation and hook_v:
+                variant_key = surface_key(surf.account, surf.platform.value)
+                tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080),
+                          Fmt.r16x9: (1920, 1080)}.get(aspect, (1080, 1920))
+                cfg.clips.mkdir(parents=True, exist_ok=True)   # variant lives beside clips (clip.py does the same)
+                vpath = str(cfg.clips / f"{target_clip.id}_{_hash('variant', variant_key)}.mp4")
+                overlay.burn_hook_only(target_clip.path, vpath, hook_v, width=tw, height=th,
+                                       font=cfg.subtitle_font)   # fail-open: vpath always exists
+                media_path = vpath
+                variant_hook = hook_v
             led.add_post(Post(
                 id=pid, parent_id=target_clip.id, state=PostState.queued,
                 account=surf.account, account_id=surf.account_id, platform=surf.platform,
                 caption=caption, hashtags=cap.get("hashtags", []), aspect=aspect,
                 scheduled_time=sched,
+                media_urls=[f"file://{media_path}"] if cfg.creative_variation and hook_v else [],
                 # AUDIT H1: stamp a stable, content-addressed CLIENT idempotency token at birth so
                 # an ambiguous publish is ALWAYS pollable (a real Blotato id overwrites it in
                 # blotato_rest). pid is content-addressed -> a re-run computes the identical token.
-                submission_id=f"fanops_{_hash('idemp', pid)}"))
+                submission_id=f"fanops_{_hash('idemp', pid)}",
+                variant_key=variant_key, variant_hook=variant_hook))
         led.set_clip_state(clip.id, ClipState.queued)
     return led

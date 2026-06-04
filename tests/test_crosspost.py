@@ -308,3 +308,69 @@ def test_crosspost_appends_artist_tag_when_decided(tmp_path, mocker):
     ig = next(p for p in led.posts.values() if p.platform is Platform.instagram)
     assert ig.caption.endswith(f"\n{ARTIST_HANDLE}")        # tag on its OWN line, never in the hook
     assert ig.caption.startswith("ig cap")
+
+
+def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    monkeypatch.chdir(tmp_path)
+    from pathlib import Path
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.accounts import Accounts, Account, AccountStatus
+    from fanops.models import Source, Moment, Clip, MomentState, ClipState, Fmt, Platform
+    import fanops.overlay as overlay
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    # two active accounts, same platform -> same aspect, so they'd share a clip today
+    accts = Accounts(cfg); accts.accounts = [
+        Account(handle="@a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active),
+        Account(handle="@b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active)]
+    led.add_source(Source(id="s1", source_path=str(tmp_path/"s.mp4"), width=1080, height=1920))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
+                          state=MomentState.clipped, hook="default hook"))
+    # a captioned base clip with per-surface captions+hooks for both accounts
+    clip = Clip(id="c1", parent_id="m1", path=str(tmp_path/"c1.mp4"), aspect=Fmt.r9x16,
+                state=ClipState.captioned)
+    Path(clip.path).write_bytes(b"BASECLIP")
+    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": [], "hook": "HOOK A"},
+                          "@b/instagram": {"caption": "B cap", "hashtags": [], "hook": "HOOK B"}}
+    led.add_clip(clip)
+    # make burn_hook_only deterministic + observable (write a distinct file per call)
+    calls = []
+    def fake_burn(base, out, hook, **kw):
+        calls.append((out, hook)); Path(out).write_bytes(("V:"+hook).encode()); return True
+    mocker.patch("fanops.crosspost.overlay.burn_hook_only", side_effect=fake_burn)
+    from fanops.crosspost import crosspost_clips
+    led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
+    posts = [p for p in led.posts.values()]
+    assert len(posts) == 2
+    by_acct = {p.account: p for p in posts}
+    # each account got a DIFFERENT variant_hook + variant_key, and burn_hook_only was called per account
+    assert by_acct["@a"].variant_hook == "HOOK A" and by_acct["@b"].variant_hook == "HOOK B"
+    assert by_acct["@a"].variant_key and by_acct["@a"].variant_key != by_acct["@b"].variant_key
+    assert len(calls) == 2 and {h for _, h in calls} == {"HOOK A", "HOOK B"}
+
+
+def test_crosspost_no_variant_when_disabled(tmp_path, monkeypatch, mocker):
+    monkeypatch.delenv("FANOPS_CREATIVE_VARIATION", raising=False)   # OFF
+    monkeypatch.chdir(tmp_path)
+    from pathlib import Path
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.accounts import Accounts, Account, AccountStatus
+    from fanops.models import Source, Moment, Clip, MomentState, ClipState, Fmt, Platform
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    accts = Accounts(cfg); accts.accounts = [
+        Account(handle="@a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active)]
+    led.add_source(Source(id="s1", source_path=str(tmp_path/"s.mp4"), width=1080, height=1920))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
+                          state=MomentState.clipped))
+    clip = Clip(id="c1", parent_id="m1", path=str(tmp_path/"c1.mp4"), aspect=Fmt.r9x16, state=ClipState.captioned)
+    Path(clip.path).write_bytes(b"BASECLIP")
+    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": [], "hook": "HOOK A"}}
+    led.add_clip(clip)
+    burn = mocker.patch("fanops.crosspost.overlay.burn_hook_only")
+    from fanops.crosspost import crosspost_clips
+    led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
+    p = next(iter(led.posts.values()))
+    assert p.variant_key is None and p.variant_hook is None     # off -> today's behavior
+    burn.assert_not_called()
