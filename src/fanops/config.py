@@ -131,3 +131,36 @@ class Config:
         # empty, or anything else stays OFF (today's shared-clip behavior).
         v = (os.getenv("FANOPS_CREATIVE_VARIATION") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def variant_learning(self) -> bool:
+        # Creative variation v2 (closing the learning loop): with this ON, request_captions biases
+        # the next caption toward the per-account hook variant that has earned a TRUSTWORTHY win
+        # (>= variant_min_posts analyzed posts AND beating the runner-up by >= variant_min_gap).
+        # DEFAULT OFF (opt-in), INDEPENDENT of FANOPS_CREATIVE_VARIATION — same off-by-default,
+        # fail-open posture as that toggle. Only the explicit on-words enable it; unset, empty, or
+        # anything else stays OFF (today's behavior, no hint injected, loop stays open).
+        v = (os.getenv("FANOPS_VARIANT_LEARNING") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def variant_min_posts(self) -> int:
+        # Trust-gate part 1 for variant_learning: minimum analyzed posts a hook variant must have
+        # before its measured lift is trusted enough to bias the next caption. DEFAULT 3 (the
+        # early-noise guard — with 2 accounts, acting on 1-2 data points is the noise-amplification
+        # trap). A non-int env falls back to the default rather than crashing an autonomous run.
+        try:
+            return int(os.getenv("FANOPS_VARIANT_MIN_POSTS", "3"))
+        except ValueError:
+            return 3
+
+    @property
+    def variant_min_gap(self) -> float:
+        # Trust-gate part 2 for variant_learning: the leader's mean lift_score must beat the
+        # runner-up's by at least this margin to emit a hint. DEFAULT 10.0 (same lift_score scale
+        # as the HOLD-gate lift floor — a real margin, not noise). A non-float env falls back to
+        # the default rather than crashing.
+        try:
+            return float(os.getenv("FANOPS_VARIANT_MIN_GAP", "10"))
+        except ValueError:
+            return 10.0

@@ -5,11 +5,19 @@ surface (FIX F74 — no silent default), stores clean captions keyed by the docu
 'account/platform' contract (FIX F43), and advances only if nothing is held."""
 from __future__ import annotations
 import json
+import logging
 import re
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ClipState, Platform, CaptionSet
 from fanops.agentstep import write_request, read_response, request_path
+# Creative-variation v2: the SAFE half of the A/B loop. Imported here (caption side) ONLY — the
+# amplify/delete-cascade path (track.py/pipeline.py) MUST stay blind to the learner (C1 invariant,
+# enforced by an isolation grep test). Bound at module scope so request_captions' fail-open path is
+# unit-patchable (tests monkeypatch fanops.caption.best_hooks to prove a raising scorer is swallowed).
+from fanops.variant_learning import best_hooks
+
+logger = logging.getLogger(__name__)
 
 # DEFAULT English off-brand / begging / main-brand-linkage anti-patterns. Operator-overridable
 # via 00_control/tuning.json -> "offbrand_en" (audit b); when that key is present it REPLACES this
@@ -68,11 +76,33 @@ def _lang_base(tag: str | None) -> str | None:
     base = tag.strip().lower().replace("_", "-").split("-", 1)[0]
     return base or None
 
+def _learned_hooks(led: Ledger, cfg: Config,
+                   surfaces: list[tuple[str, Platform]]) -> list[str]:
+    """Creative-variation v2 — the loop-closing read. When FANOPS_VARIANT_LEARNING is on, ask the
+    gated scorer for each surface's trustworthy winning hook and return the de-duplicated union
+    (insertion order preserved -> deterministic). Gated OFF by default -> []. FAIL-OPEN: any error
+    is logged once and yields [] so a learning failure can never block a caption or hold the clip."""
+    if not cfg.variant_learning:
+        return []
+    try:
+        learned: list[str] = []
+        seen: set[str] = set()
+        for acct, plat in surfaces:
+            for h in best_hooks(led, cfg, acct, plat):
+                if h not in seen:
+                    seen.add(h)
+                    learned.append(h)
+        return learned
+    except Exception:
+        logger.warning("variant_learning hint skipped (fail-open)", exc_info=True)
+        return []
+
 def request_captions(led: Ledger, cfg: Config, clip_id: str,
                      surfaces: list[tuple[str, Platform]]) -> Ledger:
     clip = led.clips[clip_id]
     moment = led.moments[clip.parent_id]
     src = led.sources.get(moment.parent_id)
+    learned = _learned_hooks(led, cfg, surfaces)
     payload = {
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
@@ -80,6 +110,9 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         "guidance": _guidance(cfg),
         "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value}
                      for acct, plat in surfaces],
+        # variation v2: only present when a surface crossed the trust gate -> OFF/below-gate keeps
+        # the payload byte-identical to pre-v2 (caption_prompt renders this block when present).
+        **({"learned_hooks": learned} if learned else {}),
     }
     write_request(cfg, kind="captions", key=clip_id, payload=payload)
     led.set_clip_state(clip_id, ClipState.captions_requested)

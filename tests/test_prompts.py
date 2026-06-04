@@ -63,3 +63,35 @@ def test_caption_prompt_asks_for_per_surface_hook():
                         "language": "en", "guidance": "",
                         "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
     assert "hook" in p.lower()        # the prompt instructs the model to return a per-surface hook
+
+def test_caption_prompt_renders_learned_hint():
+    # Creative-variation v2: when the gated scorer has fed a winning hook into the payload as
+    # `learned_hooks`, the prompt MUST surface it AND tell the model to lean toward the STYLE
+    # (not copy it verbatim) — otherwise the loop either does nothing or rigidly clones one hook.
+    from fanops.prompts import caption_prompt
+    p = caption_prompt({"clip_id": "c1",
+                        "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}],
+                        "transcript_excerpt": "they slept on me", "language": "en", "guidance": "",
+                        "learned_hooks": ["WIN HOOK"]})
+    assert "WIN HOOK" in p
+    assert "verbatim" in p.lower() or "copy" in p.lower()   # the "lean toward, don't copy" instruction
+
+def test_caption_prompt_no_hint_when_absent():
+    # Absent learned_hooks → the winning-hook block must not appear at all.
+    from fanops.prompts import caption_prompt
+    base = {"clip_id": "c1",
+            "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}],
+            "transcript_excerpt": "they slept on me", "language": "en", "guidance": ""}
+    assert "WIN HOOK" not in caption_prompt(base)            # absent → unchanged
+
+def test_caption_prompt_byte_identical_without_learned_hooks():
+    # The strongest backward-compat guard: an empty list and a missing key BOTH yield the exact
+    # same prompt as a payload that never knew about learning — proves the feature is purely
+    # additive (no stray whitespace/label leaks into today's behavior).
+    from fanops.prompts import caption_prompt
+    base = {"clip_id": "c1",
+            "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}],
+            "transcript_excerpt": "they slept on me", "language": "en", "guidance": "BRAND: x."}
+    expected = caption_prompt(base)
+    assert caption_prompt({**base, "learned_hooks": []}) == expected      # empty list == absent
+    assert caption_prompt({**base, "learned_hooks": None}) == expected    # None == absent

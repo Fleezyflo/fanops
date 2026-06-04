@@ -44,6 +44,9 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | Burn the transcript-derived subtitles + top-third hook into each rendered clip. **DEFAULT ON** — an unset env burns subs, so the feature is live with no operator action; only the explicit off-words `0`/`false`/`no`/`off` (case-insensitive) disable it. **Fail-open**: if this ffmpeg lacks the text filter or the source has no transcript, the clip still renders (plain), logging one `subs_skipped` line. Requires a **text-capable ffmpeg (libass)** — see the note below. |
 | `FANOPS_SUBTITLE_FONT` | string (optional) | Font face for the `.ass` subtitles. Default `"Arial Unicode MS"` — an Arabic-capable face so RTL captions render. Override if the host lacks that font or you prefer another Unicode/Arabic typeface. |
 | `FANOPS_CREATIVE_VARIATION` | `1`/`true`/`yes`/`on` (default **OFF**) \| unset/`0`/`false`/… | Per-account A/B creative variation (backlog j, v1 observe-only). When ON, each active account gets a genuinely different caption + burned-in on-screen hook per clip: the caption agent returns a per-surface `hook`, and crosspost burns it onto the shared base clip via a cheap per-account overlay pass (`overlay.burn_hook_only`), stamping `Post.variant_key`/`variant_hook`. The digest's "Lift by variant" section attributes which creative wins (no auto-propagation). **DEFAULT OFF** — opt-in (opposite of `FANOPS_BURN_SUBS`). **Fail-open**: no hook / no libass text filter / toggle off ⇒ today's shared-clip behavior. Requires a **text-capable ffmpeg (libass)** for the burn. |
+| `FANOPS_VARIANT_LEARNING` | `1`/`true`/`yes`/`on` (default **OFF**) \| unset/`0`/`false`/… | Creative variation **v2** — closes the A/B loop on the caption-bias side (backlog j follow-up). When ON, `request_captions` asks the gated scorer (`variant_learning.best_hooks`) for each surface's trustworthy winning hook and appends a `learned_hooks` style cue to the caption request (`caption_prompt` renders it as "lean toward this STYLE, do NOT copy verbatim"), so the next caption is biased toward what already won. INDEPENDENT of `FANOPS_CREATIVE_VARIATION`. **DEFAULT OFF** — opt-in. **Fail-open**: gate not met / any error / old ledger ⇒ no hint, today's behavior (a learning failure can never block a caption or hold a clip). **Reversible**: flip OFF and the very next request reverts (nothing persisted but this opt-in hint). Touches **none** of the amplify/`_delete_moment_cascade` path (C1) — auto-propagation into amplify is still out of scope. The digest's "Lift by variant" section shows each surface's loop state ("learning ACTIVE" vs "gathering data") via the same scorer. |
+| `FANOPS_VARIANT_MIN_POSTS` | int (default **3**) | Trust-gate part 1 for `FANOPS_VARIANT_LEARNING`: the minimum analyzed posts a hook variant must carry before its measured lift is trusted enough to bias the next caption. The early-noise guard (with 2 accounts, acting on 1–2 data points is the noise-amplification trap). A non-int value falls back to the default. |
+| `FANOPS_VARIANT_MIN_GAP` | float (default **10.0**) | Trust-gate part 2 for `FANOPS_VARIANT_LEARNING`: the leader's mean `lift_score` must beat the runner-up's by at least this margin to emit a hint (same lift_score scale as the HOLD-gate lift floor — a real margin, not noise). Below it ⇒ no hint, the loop stays open for that surface until data accrues. A non-float value falls back to the default. |
 | `FANOPS_ESCALATION_BUDGET_USD` | float (optional) | Spend cap knob. |
 
 **Optional override file — `00_control/tuning.json`** (audit b). An operator can re-tune the
@@ -697,10 +700,20 @@ deferred from the original plan, and surfaced during the build.
   a single `timeutil.parse_iso`, and the repeated Blotato `BASE_URL` was given one home — both
   formerly copy-pasted across `run.py`, `crosspost.py`, `tagging.py`, `media.py`,
   `blotato_rest.py`, `metrics.py`.
-- **(j) Per-account creative variation — v1 DONE (observe-only).** With `FANOPS_CREATIVE_VARIATION=1`,
-  each active account gets a genuinely different caption + burned-in on-screen hook per clip (the
-  caption agent returns a per-surface hook; crosspost burns it onto the shared base clip via a cheap
-  per-account overlay pass). The `track → analyzed → adjust` lift loop already attributes per-post;
-  the digest's "Lift by variant" section shows which creative wins. Default OFF (opt-in). Fail-open:
-  no hook / no libass / toggle off -> today's shared-clip behavior. Auto-propagating winners into
-  amplify is a documented follow-up (touches the C1-risk machinery; needs real lift-by-variant data).
+- **(j) Per-account creative variation — v1 DONE (observe-only) + v2 DONE (caption-bias loop closed).**
+  **v1** (`FANOPS_CREATIVE_VARIATION=1`): each active account gets a genuinely different caption +
+  burned-in on-screen hook per clip (the caption agent returns a per-surface hook; crosspost burns it
+  onto the shared base clip via a cheap per-account overlay pass). The `track → analyzed → adjust` lift
+  loop attributes per-post; the digest's "Lift by variant" section shows which creative wins. Default
+  OFF (opt-in). Fail-open: no hook / no libass / toggle off -> today's shared-clip behavior.
+  **v2** (`FANOPS_VARIANT_LEARNING=1`, independent flag, default OFF): **closes the A/B loop on the
+  cheap/reversible CAPTION-BIAS side.** Once a surface's hook variant earns a trustworthy win
+  (>= `FANOPS_VARIANT_MIN_POSTS` analyzed posts AND beating the runner-up by >= `FANOPS_VARIANT_MIN_GAP`),
+  `request_captions` feeds that winning hook back into the next caption request as a STYLE cue
+  (`variant_learning.best_hooks` is the gate; `caption_prompt` renders "lean toward, don't copy
+  verbatim"), so creative compounds instead of firing near-arbitrary hooks forever. Pure/read-only,
+  fail-open, fully reversible (flip the flag off → next request reverts). The digest annotates each
+  surface's loop state ("learning ACTIVE" vs "gathering data"). **Still out of scope:** auto-propagating
+  winners into `amplify`/`_delete_moment_cascade` (the C1-risk cascade-delete path) — v2 deliberately
+  stays on the caption-request side of that line; the amplify path remains blind to the learner
+  (enforced by an isolation grep test).

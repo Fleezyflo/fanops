@@ -53,6 +53,25 @@ def test_creative_variation_defaults_off_and_respects_env(tmp_path, monkeypatch)
     assert Config(root=tmp_path).creative_variation is False
 
 
+def test_variant_learning_defaults_off(monkeypatch, tmp_path):
+    from fanops.config import Config
+    for k in ("FANOPS_VARIANT_LEARNING", "FANOPS_VARIANT_MIN_POSTS", "FANOPS_VARIANT_MIN_GAP"):
+        monkeypatch.delenv(k, raising=False)
+    c = Config(root=tmp_path)
+    assert c.variant_learning is False
+    assert c.variant_min_posts == 3
+    assert c.variant_min_gap == 10.0
+
+
+def test_variant_learning_env_overrides(monkeypatch, tmp_path):
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    monkeypatch.setenv("FANOPS_VARIANT_MIN_POSTS", "5")
+    monkeypatch.setenv("FANOPS_VARIANT_MIN_GAP", "25")
+    c = Config(root=tmp_path)
+    assert c.variant_learning is True and c.variant_min_posts == 5 and c.variant_min_gap == 25.0
+
+
 def test_config_has_review_dir(tmp_path):
     from fanops.config import Config
     cfg = Config(root=tmp_path)
