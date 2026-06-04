@@ -41,6 +41,7 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `FANOPS_ARTIST_NAME` | string (optional) | Artist **display name** used as the YouTube title fallback when a post has no explicit title (audit h). Default `"Moh Flow"` (unchanged). Distinct from the `@mohflow` caption mention (`tagging.ARTIST_HANDLE`). |
 | `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | Burn the transcript-derived subtitles + top-third hook into each rendered clip. **DEFAULT ON** — an unset env burns subs, so the feature is live with no operator action; only the explicit off-words `0`/`false`/`no`/`off` (case-insensitive) disable it. **Fail-open**: if this ffmpeg lacks the text filter or the source has no transcript, the clip still renders (plain), logging one `subs_skipped` line. Requires a **text-capable ffmpeg (libass)** — see the note below. |
 | `FANOPS_SUBTITLE_FONT` | string (optional) | Font face for the `.ass` subtitles. Default `"Arial Unicode MS"` — an Arabic-capable face so RTL captions render. Override if the host lacks that font or you prefer another Unicode/Arabic typeface. |
+| `FANOPS_CREATIVE_VARIATION` | `1`/`true`/`yes`/`on` (default **OFF**) \| unset/`0`/`false`/… | Per-account A/B creative variation (backlog j, v1 observe-only). When ON, each active account gets a genuinely different caption + burned-in on-screen hook per clip: the caption agent returns a per-surface `hook`, and crosspost burns it onto the shared base clip via a cheap per-account overlay pass (`overlay.burn_hook_only`), stamping `Post.variant_key`/`variant_hook`. The digest's "Lift by variant" section attributes which creative wins (no auto-propagation). **DEFAULT OFF** — opt-in (opposite of `FANOPS_BURN_SUBS`). **Fail-open**: no hook / no libass text filter / toggle off ⇒ today's shared-clip behavior. Requires a **text-capable ffmpeg (libass)** for the burn. |
 | `FANOPS_ESCALATION_BUDGET_USD` | float (optional) | Spend cap knob. |
 
 **Optional override file — `00_control/tuning.json`** (audit b). An operator can re-tune the
@@ -642,9 +643,10 @@ deferred from the original plan, and surfaced during the build.
   a single `timeutil.parse_iso`, and the repeated Blotato `BASE_URL` was given one home — both
   formerly copy-pasted across `run.py`, `crosspost.py`, `tagging.py`, `media.py`,
   `blotato_rest.py`, `metrics.py`.
-- **(j) Per-account creative variation (A/B content learning).** Generate genuinely different
-  creative — hook / caption / on-screen-text / edit variants — per account or cohort, and let the
-  existing `track → analyzed → adjust` lift loop attribute which variant wins. This is the *valuable*
-  reframing of the rejected C2 finding (NOT byte-perturbation for forensic evasion, which the operator
-  explicitly does not want): real content experimentation to discover what performs per audience. Its
-  own spec → plan → build cycle when prioritized.
+- **(j) Per-account creative variation — v1 DONE (observe-only).** With `FANOPS_CREATIVE_VARIATION=1`,
+  each active account gets a genuinely different caption + burned-in on-screen hook per clip (the
+  caption agent returns a per-surface hook; crosspost burns it onto the shared base clip via a cheap
+  per-account overlay pass). The `track → analyzed → adjust` lift loop already attributes per-post;
+  the digest's "Lift by variant" section shows which creative wins. Default OFF (opt-in). Fail-open:
+  no hook / no libass / toggle off -> today's shared-clip behavior. Auto-propagating winners into
+  amplify is a documented follow-up (touches the C1-risk machinery; needs real lift-by-variant data).
