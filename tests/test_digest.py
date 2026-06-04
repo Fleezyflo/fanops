@@ -123,6 +123,11 @@ def test_digest_shows_lift_by_variant(tmp_path):
     assert "Lift by variant" in out
     assert "HOOK A" in out and "80" in out          # the winning variant + its lift surface
     assert "HOOK B" in out
+    # ORDERING is load-bearing: the winner (HOOK A, lift 80) MUST rank ABOVE the loser (HOOK B,
+    # lift 30) — the whole point is "which creative is winning". Pin the descending sort so a
+    # regression that drops/reverses it is caught (the presence-only checks above would not).
+    section = out.split("Lift by variant", 1)[1]
+    assert section.index("HOOK A") < section.index("HOOK B")
 
 def test_digest_no_variant_section_when_none(tmp_path):
     from fanops.config import Config
