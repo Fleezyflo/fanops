@@ -233,6 +233,20 @@ Everything is automated except the parts only a human can do:
    stamps a synthetic `dryrun_<post_id>` submission id (mirroring the real `postSubmissionId`),
    so `track` → `adjust` can be exercised end-to-end offline by feeding metrics rows keyed on it.
 
+> **Cutover-safety preflight.** `fanops advance` / `fanops run` **refuse to start (exit 2)** if
+> the env would make the pipeline do credentialless nothing: `FANOPS_RESPONDER=llm` with no
+> `ANTHROPIC_API_KEY`, or `FANOPS_POSTER` in `{rest, mcp}` with no `BLOTATO_API_KEY`. This is a
+> *safety* feature — a misconfigured live cutover fails loudly up front instead of running
+> green-but-empty until the dead-man's-switch notices. The default `dryrun`+`manual` config
+> passes cleanly. See `RUNTIME.md` → *Cutover-safety preflight*.
+
+**Optional config & env knobs.** `FANOPS_ARTIST_NAME` overrides the artist **display name** used
+as the YouTube title fallback (default `"Moh Flow"`; distinct from the `@mohflow` caption mention).
+An optional `00_control/tuning.json` lets an operator re-tune the brand-risk HOLD lists
+(`offbrand_en`/`offbrand_ar`) and the lift weights (`lift_weights`) **without a code change** — an
+absent file or missing key keeps the in-code defaults, and a corrupt file logs a warning and falls
+back to defaults rather than crashing. See `RUNTIME.md` → *Environment variables*.
+
 ---
 
 ## Integration checkpoints to confirm before going live
