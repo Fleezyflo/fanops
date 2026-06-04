@@ -88,11 +88,13 @@ human spot-check for moments) without changing the pipeline.
 Requires **Python 3.12** (`>=3.12,<3.14`), **ffmpeg ≥ 6**, the **Whisper** CLI, and
 **yt-dlp** (URL ingest, pulled in as a dependency). For the **autonomous LLM responder**
 (`FANOPS_RESPONDER=llm`) you also need the **`claude`** CLI (Claude Code) on `PATH`, invoked
-headlessly (`claude -p --bare`). **Auth caveat (important):** because it uses `--bare` for
-cron-safety, Anthropic auth is **strictly `ANTHROPIC_API_KEY`** — `--bare` does **not** read an
-OAuth/`claude login`/keychain session. Export `ANTHROPIC_API_KEY` in the environment that runs
-`fanops` (a `claude login` alone will NOT work and every gate will fail "Not logged in"). Not
-needed for the default `manual` responder.
+headlessly as plain `claude -p` (with `--strict-mcp-config --allowedTools ""` to keep it a clean
+generator). **Auth:** it uses your **existing Claude subscription** — run `claude login` once on
+the host and the responder rides that session. **No `ANTHROPIC_API_KEY` needed.** (We deliberately
+do **not** use `--bare`, because `--bare` ignores the OAuth/keychain login and would force an API
+key.) cron runs as your user and inherits the same login. Not needed for the default `manual`
+responder. *(A 3P/Bedrock key via `ANTHROPIC_API_KEY` also works, but the subscription login is the
+supported default.)*
 
 ```bash
 python3.12 -m venv .venv
@@ -172,10 +174,10 @@ job, or PagerDuty) can tell *alive-but-idle* from *cron is dead*:
   (2 dp; `null` when nothing has published or the time is unparseable). Alert on
   "last post age > threshold".
 
-Because the responder runs `claude --bare` (which ignores OAuth — auth is **strictly**
-`ANTHROPIC_API_KEY`, see *Install*), a responder that is **running but silently unauthed** (the key
-was never exported) clears no gates and publishes nothing. The dead-man's-switch is how you catch
-it: `published_in_run` stays `0` forever **and** the digest's "Pending agent gates" section names
+Because the responder runs plain `claude -p` on the host's `claude login` session (see *Install*),
+a responder that is **running but logged out** (`claude login` was never run on the host) clears no
+gates and publishes nothing. The dead-man's-switch is how you catch it: `published_in_run` stays
+`0` forever **and** the digest's "Pending agent gates" section names
 the unanswered gates — the heartbeat says the cron is alive, the delta + the digest say it is making
 no progress, so the human knows to check the key, not the cron.
 
@@ -241,8 +243,9 @@ Everything is automated except the parts only a human can do:
    so `track` → `adjust` can be exercised end-to-end offline by feeding metrics rows keyed on it.
 
 > **Cutover-safety preflight.** `fanops advance` / `fanops run` **refuse to start (exit 2)** if
-> the env would make the pipeline do credentialless nothing: `FANOPS_RESPONDER=llm` with no
-> `ANTHROPIC_API_KEY`, or `FANOPS_POSTER` in `{rest, mcp}` with no `BLOTATO_API_KEY`. This is a
+> the env would make the pipeline do credentialless nothing: `FANOPS_RESPONDER=llm` with `claude`
+> not on `PATH` (run `claude login` — no API key needed), or `FANOPS_POSTER` in `{rest, mcp}` with
+> no `BLOTATO_API_KEY`. This is a
 > *safety* feature — a misconfigured live cutover fails loudly up front instead of running
 > green-but-empty until the dead-man's-switch notices. The default `dryrun`+`manual` config
 > passes cleanly. See `RUNTIME.md` → *Cutover-safety preflight*.

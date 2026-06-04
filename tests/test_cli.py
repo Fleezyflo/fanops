@@ -168,32 +168,33 @@ def test_advance_exits_cleanly_on_auth_error(tmp_path, monkeypatch, mocker, caps
 
 
 # --- T1: startup preflight auth-check (the silent-zero-output guard) ------------------------
-# Catches the #1 cutover trap BEFORE a run does silent nothing: FANOPS_RESPONDER=llm with no
-# ANTHROPIC_API_KEY (claude --bare reads no OAuth/keychain -> zero content, no loud log) and
-# a live poster (rest/mcp) with no BLOTATO_API_KEY (publish will 401). Mirrors _check_accounts:
-# 0 clean / prints an actionable line + returns 2. Tests call _check_preflight directly to
-# isolate from _check_accounts, plus one main(["advance"]) to prove the dispatch wiring.
+# Catches the #1 cutover trap BEFORE a run does silent nothing. AUTH (2026-06-04): the responder
+# uses the operator's EXISTING `claude` subscription (plain `claude -p`, NOT `--bare`/API key), so
+# the llm trap is "FANOPS_RESPONDER=llm but `claude` is NOT on PATH" (no binary -> every gate raises
+# -> zero content), NOT a missing ANTHROPIC_API_KEY. The poster trap is unchanged: rest/mcp with no
+# BLOTATO_API_KEY (publish 401). Mirrors _check_accounts: 0 clean / actionable line + returns 2.
+# Tests patch shutil.which to control `claude` presence deterministically.
 
-def test_preflight_blocks_llm_without_anthropic_key(tmp_path, monkeypatch, capsys):
+def test_preflight_blocks_llm_when_claude_absent(tmp_path, monkeypatch, mocker, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # the trap: llm responder, no key
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # isolate the assertion to the llm case
+    mocker.patch("shutil.which", return_value=None)          # the trap: llm responder, no `claude`
     from fanops.config import Config
     from fanops.cli import _check_preflight
     rc = _check_preflight(Config(root=tmp_path))
     assert rc == 2
     err = capsys.readouterr().err
-    assert "ANTHROPIC_API_KEY" in err and "Traceback" not in err
+    assert "claude" in err and "claude login" in err and "Traceback" not in err
 
 
-def test_preflight_blocks_llm_without_anthropic_key_via_advance(tmp_path, monkeypatch, capsys):
+def test_preflight_blocks_llm_when_claude_absent_via_advance(tmp_path, monkeypatch, mocker, capsys):
     # Wiring proof: the gate is actually called in the advance dispatch branch (after _check_accounts).
     # A valid active account makes _check_accounts pass so we reach _check_preflight.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    mocker.patch("shutil.which", return_value=None)
     from fanops.config import Config
     cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps(
@@ -201,15 +202,14 @@ def test_preflight_blocks_llm_without_anthropic_key_via_advance(tmp_path, monkey
     rc = main(["advance"])
     assert rc == 2
     err = capsys.readouterr().err
-    assert "ANTHROPIC_API_KEY" in err and "Traceback" not in err
+    assert "claude" in err and "Traceback" not in err
 
 
 def test_preflight_blocks_rest_without_blotato_key(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "rest")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # the trap: live poster, no key -> 401
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # isolate the assertion to the poster case
-    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)    # default manual responder
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)    # default manual responder (no claude check)
     from fanops.config import Config
     from fanops.cli import _check_preflight
     rc = _check_preflight(Config(root=tmp_path))
@@ -223,7 +223,6 @@ def test_preflight_blocks_mcp_without_blotato_key(tmp_path, monkeypatch, capsys)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "mcp")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     from fanops.config import Config
     from fanops.cli import _check_preflight
@@ -233,25 +232,27 @@ def test_preflight_blocks_mcp_without_blotato_key(tmp_path, monkeypatch, capsys)
 
 
 def test_preflight_passes_default_dryrun_manual(tmp_path, monkeypatch):
-    # The default cutover config (manual responder + dryrun poster, no keys) must pass cleanly.
+    # The default cutover config (manual responder + dryrun poster, no creds) must pass cleanly.
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     from fanops.config import Config
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 0
 
 
-def test_preflight_passes_llm_with_anthropic_key(tmp_path, monkeypatch):
-    # The correctly-configured live cutover (llm + key, rest + key) must pass — the gate blocks the
-    # MISSING-key case only, never a valid one.
+def test_preflight_passes_llm_when_claude_present_no_api_key(tmp_path, monkeypatch, mocker):
+    # The correctly-configured live cutover with the EXISTING subscription: FANOPS_RESPONDER=llm,
+    # `claude` ON PATH, NO ANTHROPIC_API_KEY (we ride OAuth, not a key), rest + BLOTATO_API_KEY.
+    # Must pass — the gate blocks only the absent-`claude` case, and crucially does NOT require an
+    # API key (that was the old --bare contract this change removes).
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # NO api key — riding the subscription
     monkeypatch.setenv("FANOPS_POSTER", "rest")
     monkeypatch.setenv("BLOTATO_API_KEY", "blot-test")
+    mocker.patch("shutil.which", return_value="/usr/local/bin/claude")  # claude IS logged-in-capable
     from fanops.config import Config
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 0
