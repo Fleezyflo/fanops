@@ -32,6 +32,17 @@ def moment_prompt(payload: dict) -> str:
 def caption_prompt(payload: dict) -> str:
     surfaces = payload.get("surfaces", [])
     keys = [s.get("surface") for s in surfaces]
+    # Creative-variation v2: when the gated scorer has earned a trustworthy winner it feeds the
+    # winning hook(s) in via `learned_hooks`. Surface them as a STYLE cue the model leans toward
+    # (tone/length/angle) — explicitly NOT to copy verbatim, so the win generalizes across clips.
+    # Absent/empty/None → no block at all, so the prompt stays byte-identical to today.
+    learned = payload.get("learned_hooks")
+    learned_block = (
+        "  - What worked recently for these accounts — lean toward this STYLE (tone, length, "
+        "angle), do NOT copy verbatim: "
+        f"{json.dumps(learned, ensure_ascii=False)}\n"
+        if learned else ""
+    )
     return (
         "You are the caption writer for an autonomous fan-account engine for a bilingual (EN/AR) "
         "rapper. Write ONE caption per posting surface listed below. Return JSON matching the "
@@ -48,7 +59,9 @@ def caption_prompt(payload: dict) -> str:
         "  - ALSO return a short on-screen `hook` per item: a punchy <=7-word line (same language "
         "as the caption) that grabs attention in the first 2 seconds. Make each surface's hook "
         "GENUINELY DIFFERENT (different angle/words) — these are A/B creative variants per account. "
-        "If you cannot, omit `hook` and a default will be used.\n\n"
+        "If you cannot, omit `hook` and a default will be used.\n"
+        f"{learned_block}"
+        "\n"
         f"BRAND GUIDANCE:\n{payload.get('guidance', '')}\n\n"
         f"CLIP TRANSCRIPT EXCERPT: {json.dumps(payload.get('transcript_excerpt', ''), ensure_ascii=False)}\n"
         f"SURFACES (JSON):\n{json.dumps(surfaces, ensure_ascii=False)}\n"
