@@ -161,10 +161,13 @@ reversible: flip `FANOPS_VARIANT_TRANSFER` off and the next request reverts.
   `learned_hooks` block, labelled as a weaker, cross-surface "what's working elsewhere on this
   platform — a lighter nudge than your own proven style above; do NOT copy verbatim" hint. Absent
   → no block (prompt byte-identical to v2).
-- **`digest.py`** — (cheap, optional) the "Lift by variant" section may note when a surface is
-  *receiving* a transferred prior ("cold — borrowing platform signal") vs has its own
-  ("learning ACTIVE") vs neither ("gathering data"). Reuses both scorers so gate logic stays in
-  one place. Fail-open to the safe label.
+- **`digest.py`** — (cheap, optional) the "Lift by variant" section notes when a surface is
+  *receiving* a transferred prior ("borrowing platform signal") vs has its own ("learning ACTIVE")
+  vs neither ("gathering data"). Reuses both scorers so gate logic stays in one place. Fail-open to
+  the safe label. To avoid threading `accounts` through `write_digest`'s 7 call sites (several CLI
+  verbs have no registry in scope), `write_digest` *self-loads* `Accounts.load(cfg)` (only when
+  transfer is on; fail-open to `None` → no label) and passes it to `render_digest`; the explicit
+  `render_digest(..., accounts=...)` param stays for unit tests and registry-bearing callers.
 
 ## Testing strategy (strict TDD — each task ends full-suite green)
 
