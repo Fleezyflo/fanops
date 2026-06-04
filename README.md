@@ -37,7 +37,10 @@ Source ──▶ Moment ──▶ Clip ──▶ Post
   it falls open and renders plain).
 - **Post** — one clip fanned out to one `(account, platform)` surface, in *that* platform's
   aspect, with that surface's caption, a deterministic per-surface schedule time, and the
-  resolved **numeric** Blotato `account_id`.
+  resolved **numeric** Blotato `account_id`. Set `FANOPS_CREATIVE_VARIATION=1` to give each
+  account a genuinely different caption **and** a burned-in on-screen hook per clip (per-account
+  A/B creative on the shared base clip); the digest's **"Lift by variant"** section then reports
+  which creative is winning. Default off; fail-open (no hook / no libass → shared-clip behavior).
 
 The ledger is the single source of truth. Each `advance()` pass runs inside **one
 `Ledger.transaction`** that holds an `fcntl.flock` across the **whole load → mutate → save**
