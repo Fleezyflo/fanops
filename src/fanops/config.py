@@ -113,6 +113,14 @@ class Config:
         return (v or "").strip().lower() not in {"0", "false", "no", "off"}
 
     @property
+    def creative_variation(self) -> bool:
+        # Per-account creative variation (caption + burned-in hook A/B). DEFAULT OFF (opposite of
+        # burn_subs): only an explicit on-word opts in, so a host that never sets the env keeps
+        # today's shared-clip behavior. Mirrors the off-word matching of burn_subs, inverted.
+        v = (os.getenv("FANOPS_CREATIVE_VARIATION") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def subtitle_font(self) -> str:
         # Operator override for the .ass subtitle font. Default "Arial Unicode MS" — an
         # Arabic-capable face so RTL captions render; change it (FANOPS_SUBTITLE_FONT) if the
