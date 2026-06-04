@@ -39,3 +39,15 @@ def test_subtitle_font_default_and_override(monkeypatch, tmp_path):
     assert Config(root=tmp_path).subtitle_font == "Arial Unicode MS"
     monkeypatch.setenv("FANOPS_SUBTITLE_FONT", "X")
     assert Config(root=tmp_path).subtitle_font == "X"
+
+
+def test_creative_variation_defaults_off_and_respects_env(tmp_path, monkeypatch):
+    from fanops.config import Config
+    monkeypatch.delenv("FANOPS_CREATIVE_VARIATION", raising=False)
+    assert Config(root=tmp_path).creative_variation is False           # default OFF (opt-in)
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    assert Config(root=tmp_path).creative_variation is True
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "true")
+    assert Config(root=tmp_path).creative_variation is True
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
+    assert Config(root=tmp_path).creative_variation is False
