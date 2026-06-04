@@ -248,47 +248,49 @@ def test_apply_failsafe_on_internal_error(tmp_path, monkeypatch):
 
 # --- The retire-isolation invariant (v3's C1 safety, mechanized — mirrors test_variant_learning's
 #     AST approach but asserts the REVERSE direction: variant_amplify must be BLIND to the
-#     retire/delete surface). -------------------------------------------------------------------
+#     retire/delete surface). HARDENED after adversarial review (2026-06-04): the original walked a
+#     FIXED list of function names and only matched literal Attribute.attr / Name.id, so it was blind
+#     to (a) a forbidden call placed in a NEW helper not in the list, (b) getattr(led, "retire"+...)
+#     string dispatch, and (c) an aliased import (`from ledger import retire_clip as rc`). The
+#     hardened version scans EVERY function in the module (module-level + nested), every string
+#     LITERAL (catching getattr dispatch), and every import alias (asname). All three evasions are
+#     mutation-proven to trip it (see the test docstrings). -------------------------------------
 _FORBIDDEN_IN_VARIANT_AMPLIFY = ("retire", "_delete_moment_cascade", "retire_clip",
                                  "set_moment_state", "set_clip_state")
 
 
-def _names_in_module(src_path, func_names):
+def _all_referenced_names(src_path):
+    """Every identifier, attribute, import alias, AND string literal referenced ANYWHERE in the
+    module — across all functions (module-level + nested), not a fixed list. String literals are
+    included so getattr(obj, "retire_clip") string dispatch can't smuggle a forbidden call past the
+    name-based check. Import aliases (asname) are included so `import retire_clip as rc` is caught."""
     tree = ast.parse(src_path.read_text())
     found = set()
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name in func_names:
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Attribute):
-                    found.add(sub.attr)
-                elif isinstance(sub, ast.Name):
-                    found.add(sub.id)
+    for sub in ast.walk(tree):
+        if isinstance(sub, ast.Attribute):
+            found.add(sub.attr)
+        elif isinstance(sub, ast.Name):
+            found.add(sub.id)
+        elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            found.add(sub.value)                       # catches getattr(led, "retire_clip")
+        elif isinstance(sub, (ast.Import, ast.ImportFrom)):
+            for n in sub.names:
+                found.add(n.name)                      # the real imported symbol
+                if n.asname:
+                    found.add(n.asname)                # ... and any alias it was bound to
     return found
 
 
 def test_variant_amplify_never_touches_retire_or_cascade():
-    """G1 (STRUCTURAL): variant_amplify is amplify-only. Its functions must reference NONE of
-    retire / _delete_moment_cascade / retire_clip / set_moment_state / set_clip_state — so a wrong
-    'this won' signal can never reach a delete/retire. A future edit wiring any of those in goes RED
-    and names the offender."""
+    """G1 (STRUCTURAL): variant_amplify is amplify-only. NOWHERE in the module may it reference
+    retire / _delete_moment_cascade / retire_clip / set_moment_state / set_clip_state — as a call, a
+    string for getattr dispatch, or an import alias — so a wrong 'this won' signal can never reach a
+    delete/retire. A future edit wiring any of those in (even via a helper, getattr, or alias) goes
+    RED and names the offender. MUTATION-PROVEN against all three evasion shapes."""
     root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
-    names = _names_in_module(root / "variant_amplify.py",
-                             {"update_streaks", "amplify_candidates", "apply_variant_amplify",
-                              "_source_for_surface", "_surfaces", "_evidence_fingerprint"})
+    names = _all_referenced_names(root / "variant_amplify.py")
     leaked = sorted(names & set(_FORBIDDEN_IN_VARIANT_AMPLIFY))
-    assert not leaked, f"variant_amplify must never call retire/cascade; found: {leaked}"
-
-
-def test_variant_amplify_module_does_not_import_retire():
-    """Belt-and-braces: the module must not import retire from adjust (it imports amplify only)."""
-    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
-    tree = ast.parse((root / "variant_amplify.py").read_text())
-    imported = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            for n in node.names:
-                imported.add(n.name)
-    assert "retire" not in imported
+    assert not leaked, f"variant_amplify must never reference retire/cascade; found: {leaked}"
 
 
 # --- The MUTATION PROOF: the streak gate must be load-bearing. With the streak requirement
@@ -306,3 +308,16 @@ def test_single_window_signal_does_not_amplify(tmp_path, monkeypatch):
     apply_variant_amplify(led, cfg)
     assert amplify_candidates(led, cfg) == []       # gate holds despite huge single-window evidence
     assert _frozen(led) == before                   # and nothing was amplified/retired/deleted
+
+
+def test_amplify_budget_constant_is_shared_with_adjust():
+    """B1/E1 (review): variant_amplify's E1 budget pre-check and adjust.amplify's default must use ONE
+    constant so they can never drift. Assert amplify_candidates rejects at exactly the amplify()
+    default boundary (MAX_AMPLIFY_PER_SOURCE), and that the constant is the single shared source."""
+    import inspect
+    from fanops.adjust import MAX_AMPLIFY_PER_SOURCE, amplify
+    import fanops.variant_amplify as va
+    # the module imports the SAME constant object (not a re-declared literal)
+    assert va.MAX_AMPLIFY_PER_SOURCE is MAX_AMPLIFY_PER_SOURCE
+    # and amplify()'s default equals it (so the pre-check boundary matches what amplify enforces)
+    assert inspect.signature(amplify).parameters["max_amplify_per_source"].default == MAX_AMPLIFY_PER_SOURCE

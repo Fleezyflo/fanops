@@ -9,6 +9,10 @@ from fanops.ledger import Ledger
 from fanops.models import MomentRequest, PostState, SourceState, MomentState
 from fanops.agentstep import write_request
 
+# E1 per-source amplification budget — the single source of truth for the cap, shared by amplify()'s
+# default AND variant_amplify.amplify_candidates' pre-check (so the two can never drift apart).
+MAX_AMPLIFY_PER_SOURCE = 3
+
 def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float = 0.2,
                       lift_floor: float = 20.0) -> dict:
     # Rank ANALYZED posts that carry a real lift_score (failed posts have none — FIX F22).
@@ -29,7 +33,7 @@ def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float
     return {"winners": winners, "losers": losers}
 
 def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
-            max_amplify_per_source: int = 3, extra_guidance: str = "") -> Ledger:
+            max_amplify_per_source: int = MAX_AMPLIFY_PER_SOURCE, extra_guidance: str = "") -> Ledger:
     for pid in winner_post_ids:
         post = led.posts.get(pid)
         if post is None:

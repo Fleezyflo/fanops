@@ -8,14 +8,28 @@ evidence windows. Default OFF (FANOPS_VARIANT_AMPLIFY).
 
 SAFETY (the whole point): this module is AMPLIFY-ONLY. It must NEVER import or call retire /
 _delete_moment_cascade / retire_clip / set_moment_state / set_clip_state. A candidate failing the
-gate is simply not amplified (it is NOT retired). On ANY doubt the actuator does nothing and leaves
-the ledger byte-identical (fail-SAFE). Deterministic: no random/hash()/wall-clock; the streak
-fingerprint is content-addressed via ids._hash, so a re-run on the same ledger is idempotent.
-Enforced by the retire-isolation AST test + the mutation-proof + wrong-signal no-op tests in
+gate is simply not amplified (it is not retired as a consequence). On ANY doubt the actuator does
+nothing and leaves the ledger CONTENT byte-identical (fail-SAFE; the streak counters do advance —
+that is the feature). Deterministic: no random/hash()/wall-clock; the streak fingerprint is
+content-addressed via ids._hash, so a re-run on the same ledger is idempotent.
+
+PRECISE guarantee (do NOT overclaim — the false-safety-contract lesson, audit I1): the GUARANTEE
+that holds STRUCTURALLY is "no wrong signal can ever delete or unpublish a LIVE (published/analyzed/
+submitted/submitting/needs_reconcile) post or clip" — enforced by ledger._delete_moment_cascade's
+_LIVE_*_STATES preservation (the C1 fix), which v3 does not change, PLUS this module never itself
+retiring/deleting (AST-proven). What v3 does NOT promise: the amplify it TRIGGERS reuses the existing
+adjust.amplify -> reconcile cascade, so once the agent re-decides the source's moments, the already-
+posted winning MOMENT is set to `retired` (its live post/clip are preserved) and any NON-LIVE sibling
+lineage (e.g. a merely-`rendered` clip / `queued` post) on that source is reconciled away — EXACTLY
+as the v1/v2 classify->amplify learn-loop already does on weaker (single-snapshot) evidence. v3 adds
+a HARDER-gated trigger to that pre-existing path, not a new deletion path. Enforced by the
+retire-isolation AST test (mutation-proven against helper/getattr/alias evasions) + the mutation-
+proven streak gate + wrong-signal no-op tests + the live-preservation assertion, all in
 tests/test_variant_amplify.py."""
 from __future__ import annotations
 from statistics import mean
-from fanops.adjust import amplify          # AMPLIFY-ONLY: import amplify, NEVER retire (C1 / G1)
+from fanops.adjust import amplify, MAX_AMPLIFY_PER_SOURCE   # AMPLIFY-ONLY: import amplify (+ the shared
+#                                          E1 budget constant), NEVER retire (C1 / G1)
 from fanops.ids import _hash
 from fanops.log import get_logger
 from fanops.models import Platform, PostState
@@ -67,9 +81,11 @@ def update_streaks(led, cfg):
 def _source_for_surface(led, account: str, platform: Platform, hook: str):
     """Map a (surface, winning hook) to ONE source + a representative post (spec's deterministic
     source-mapping rule). The winning hook's analyzed posts may trace to several sources; pick the
-    source with the MOST such posts (best-evidenced), ties broken by lowest source_id; the
-    representative post_id is the lowest post_id among that source's winning-hook posts. Returns
-    (source_id, post_id) or (None, None) if the lineage can't be resolved."""
+    source with the MOST such posts (best-evidenced), ties broken by the lexicographically-lowest
+    source_id (source ids are content-addressed `source_<hash>` strings, so lexicographic order is
+    stable + deterministic — there is no numeric ordering to honor); the representative post_id is the
+    lexicographically-lowest post_id among that source's winning-hook posts. Returns (source_id,
+    post_id) or (None, None) if the lineage can't be resolved."""
     by_source: dict[str, list[str]] = {}
     for p in led.posts.values():
         if not (p.account == account and p.platform is platform and p.variant_hook == hook
@@ -121,8 +137,8 @@ def amplify_candidates(led, cfg) -> list[dict]:
         source_id, post_id = _source_for_surface(led, account, platform, hook)
         if source_id is None:
             continue
-        if int(led.sources[source_id].meta.get("amplify_count", 0)) >= 3:   # E1 budget (max=3)
-            continue
+        if int(led.sources[source_id].meta.get("amplify_count", 0)) >= MAX_AMPLIFY_PER_SOURCE:
+            continue                                              # E1 budget (shared constant; no drift)
         out.append({"source_id": source_id, "winning_hook": hook, "post_id": post_id,
                     "evidence": {"posts": len(lifts), "streak": int(entry.get("streak", 0))}})
     return out
