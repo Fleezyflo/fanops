@@ -92,6 +92,41 @@ def test_digest_surfaces_pending_gates(tmp_path):
     # sanity: the cleared key is genuinely absent everywhere downstream of this header too.
     assert "c1" not in section
 
+def test_digest_shows_lift_by_variant(tmp_path):
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    # Insert the LOSER (HOOK B, lift 30) FIRST and the winner (HOOK A, lift 80) SECOND. Python's
+    # sorted() is stable, so a no-op/constant sort key would preserve insertion order — if the winner
+    # were inserted first, a silently-broken sort could still render A-above-B and pass. With the
+    # loser inserted first, ONLY a genuine descending-by-lift sort yields HOOK A above HOOK B, so the
+    # order assertion below kills BOTH a reverse-removal AND a constant-key (no-op) sort mutation.
+    led.add_post(Post(id="p2", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram,
+                      caption="y", state=PostState.analyzed, variant_key="vk_b", variant_hook="HOOK B",
+                      metrics={"lift_score": 30.0}))
+    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.analyzed, variant_key="vk_a", variant_hook="HOOK A",
+                      metrics={"lift_score": 80.0}))
+    out = render_digest(led, cfg)
+    assert "Lift by variant" in out
+    assert "HOOK A" in out and "80" in out          # the winning variant + its lift surface
+    assert "HOOK B" in out
+    # RANK (not just presence): the winner (HOOK A, lift 80) must render ABOVE the loser
+    # (HOOK B, lift 30). A substring-only check let a reversed sort (loser-first) slip through; and
+    # because sorted() is stable, the fixture inserts the loser first so a no-op/constant-key sort
+    # ALSO fails this — only a real descending-by-lift sort satisfies it.
+    assert out.index("HOOK A") < out.index("HOOK B")
+
+def test_digest_no_variant_section_when_none(tmp_path):
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path)
+    out = render_digest(Ledger.load(cfg), cfg)
+    assert "Lift by variant" not in out             # absent when no variant posts
+
 def test_needs_reconcile_surfaced(tmp_path):
     # AUDIT C1: a post parked in needs_reconcile (ambiguous publish failure — may be live on the
     # platform) MUST surface so a human verifies via GET /v2/posts/:id before any resubmit. It is

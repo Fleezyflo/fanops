@@ -119,3 +119,13 @@ class Config:
         # host lacks that font or the operator prefers another Unicode/Arabic typeface.
         v = os.getenv("FANOPS_SUBTITLE_FONT")
         return v.strip() if v and v.strip() else "Arial Unicode MS"
+
+    @property
+    def creative_variation(self) -> bool:
+        # Per-account creative variation (v1, observe-only): with this ON, each active account
+        # gets a genuinely different caption + burned-in on-screen hook per clip. DEFAULT OFF
+        # (opt-in) — the OPPOSITE of burn_subs — because it adds a per-account ffmpeg pass and is
+        # an A/B experiment, not a baseline behavior. Only the explicit on-words enable it; unset,
+        # empty, or anything else stays OFF (today's shared-clip behavior).
+        v = (os.getenv("FANOPS_CREATIVE_VARIATION") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
