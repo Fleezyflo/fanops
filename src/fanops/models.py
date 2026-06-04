@@ -129,6 +129,8 @@ class Post(BaseModel):
     public_url: Optional[str] = None
     error_reason: Optional[str] = None
     metrics: dict = Field(default_factory=dict)
+    variant_key: Optional[str] = None   # creative-variation attribution: deterministic per-(account,platform,clip) key
+    variant_hook: Optional[str] = None  # the burned-in hook text this account's variant used (observe-only)
 
 
 # ---- agent-step contracts (all carry request_id for correlation — FIX F21) ----
@@ -173,6 +175,7 @@ class CaptionItem(BaseModel):
     caption: str
     hashtags: list[str] = Field(default_factory=list)
     language: Optional[str] = None      # AUDIT H5: the LLM declares the caption's language
+    hook: Optional[str] = None          # per-surface on-screen hook (creative variation); None -> use moment default
 
 class CaptionSet(BaseModel):
     request_id: str
