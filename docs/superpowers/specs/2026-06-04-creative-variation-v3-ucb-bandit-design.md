@@ -134,6 +134,17 @@ principled replacement for exactly that job.
 The seam, the payload, and the downstream renderer are **all unchanged from v2.** v3 adds one
 pure scorer and selects it behind a flag inside the single existing `_learned_hooks` helper.
 
+> **Note (codebase state at design time):** the *cross-account transfer* follow-up has since
+> merged (commits `8abc8fe`…`82f9c29`). `caption.py` now assembles **two** learned-hook keys:
+> `learned_hooks` (own-surface, from `best_hooks` via `_learned_hooks`) and
+> `learned_hooks_transferred` (borrowed cross-surface style, from `transferred_hooks` via
+> `_transferred_hooks`). **v3 replaces ONLY the own-surface allocator** — `best_hooks` →
+> `ucb_rank`, inside `_learned_hooks`/`learned_hooks`. The transfer path
+> (`variant_transfer.transferred_hooks`, `_transferred_hooks`, `learned_hooks_transferred`) is
+> **orthogonal and untouched** by v3. They must not be entangled: transfer is a cold-start prior
+> for surfaces with no own-data; UCB is the allocator over a surface's *own* analyzed data. A
+> surface can legitimately carry both keys (UCB pick of its own + a borrowed prior).
+
 **Data flow (the only new/changed arrows in CAPS — everything else is v1/v2, untouched):**
 ```
 ... v1/v2 ... → publish → track → analyzed   (lift_score per Post, per variant — UNCHANGED)
@@ -246,9 +257,11 @@ RED→GREEN→VERIFY, full suite green per task.
   the C1-risk path, still deferred. v3 stays strictly on the caption-bias side of the line (this is
   the *separate* "auto-amplify v3" backlog item, NOT this one — naming collision noted: this spec
   is the **bandit** follow-up, file-named `v3-ucb-bandit`; the amplify follow-up is independent).
-- **Cross-account / cross-surface transfer** (one surface's bandit informing another) — v3 runs an
-  independent bandit per (account, platform) surface, same isolation as v2. Transfer is its own
-  follow-up.
+- **Cross-account / cross-surface transfer** (one surface's signal informing another) — already
+  shipped as a *separate* follow-up (`variant_transfer`, commits `8abc8fe`…`82f9c29`) and is
+  **out of scope here / untouched**. v3 runs an independent bandit per (account, platform) surface
+  over that surface's OWN data; the transfer prior remains a distinct, orthogonal payload key
+  (`learned_hooks_transferred`). v3 does not read, modify, or replace transfer.
 - **Seeded Thompson sampling** — rejected for v3 (UCB1 gives structural determinism with no RNG to
   seed/audit). Documented here as a considered-and-declined alternative; could revisit only if UCB
   exploration proves materially too weak in practice.
