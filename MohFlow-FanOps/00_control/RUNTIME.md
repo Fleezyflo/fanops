@@ -23,6 +23,7 @@ fanops respond
 fanops reconcile
 fanops track  [--window 30d]
 fanops adjust [--winner-pct 0.3] [--retire-pct 0.2] [--lift-floor 20.0]
+fanops amplify-variants                 # v3 variant-gated amplification (inert unless FANOPS_VARIANT_AMPLIFY=1)
 fanops gc     [--keep-days 30]
 fanops resolve <post_id> <published|failed> [--url U]
 fanops unhold <clip_id>
@@ -47,6 +48,10 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `FANOPS_VARIANT_LEARNING` | `1`/`true`/`yes`/`on` (default **OFF**) \| unset/`0`/`false`/… | Creative variation **v2** — closes the A/B loop on the caption-bias side (backlog j follow-up). When ON, `request_captions` asks the gated scorer (`variant_learning.best_hooks`) for each surface's trustworthy winning hook and appends a `learned_hooks` style cue to the caption request (`caption_prompt` renders it as "lean toward this STYLE, do NOT copy verbatim"), so the next caption is biased toward what already won. INDEPENDENT of `FANOPS_CREATIVE_VARIATION`. **DEFAULT OFF** — opt-in. **Fail-open**: gate not met / any error / old ledger ⇒ no hint, today's behavior (a learning failure can never block a caption or hold a clip). **Reversible**: flip OFF and the very next request reverts (nothing persisted but this opt-in hint). Touches **none** of the amplify/`_delete_moment_cascade` path (C1) — auto-propagation into amplify is still out of scope. The digest's "Lift by variant" section shows each surface's loop state ("learning ACTIVE" vs "gathering data") via the same scorer. |
 | `FANOPS_VARIANT_MIN_POSTS` | int (default **3**) | Trust-gate part 1 for `FANOPS_VARIANT_LEARNING`: the minimum analyzed posts a hook variant must carry before its measured lift is trusted enough to bias the next caption. The early-noise guard (with 2 accounts, acting on 1–2 data points is the noise-amplification trap). A non-int value falls back to the default. |
 | `FANOPS_VARIANT_MIN_GAP` | float (default **10.0**) | Trust-gate part 2 for `FANOPS_VARIANT_LEARNING`: the leader's mean `lift_score` must beat the runner-up's by at least this margin to emit a hint (same lift_score scale as the HOLD-gate lift floor — a real margin, not noise). Below it ⇒ no hint, the loop stays open for that surface until data accrues. A non-float value falls back to the default. |
+| `FANOPS_VARIANT_AMPLIFY` | `1`/`true`/`yes`/`on` (default **OFF**) \| unset/`0`/`false`/… | Creative variation **v3 — variant-gated AMPLIFICATION** (the auto-propagate follow-up, backlog j). The **first** feature to touch the amplify/`_delete_moment_cascade` path (audit C1), so it is the **KILL SWITCH** and **DEFAULT OFF**. When ON, a per-account hook variant that has earned a **SUSTAINED** win auto-amplifies its source via the existing `adjust.amplify` (reopen source → mine more moments), injecting the winning hook as `extra_guidance` so new moments inherit the winning creative. Runs as a SEPARATE, independently-guarded pass in `fanops run` (its own flag + the live-backend+key guard + its own try/except), and is also runnable via **`fanops amplify-variants`**. **AMPLIFY-ONLY** — it never calls `retire`/`_delete_moment_cascade`/`set_*_state(retired)` (AST-proven), so a wrong "this won" signal can never delete/unpublish LIVE content; the C1 cascade's live-lineage preservation is inherited unchanged (the amplify it triggers retires the already-posted winning *moment* with its live post preserved, exactly as the v1/v2 learn-loop already does). **Fail-SAFE**: flag off / gate unmet / any error ⇒ ledger CONTENT byte-identical (the streak counters are inert when off). **Reversible**: flip OFF and v3 stops acting immediately. The digest's "Variant amplification" section shows each surface's streak state ("amplified" / "building streak (n/MIN)" / "gathering data"). |
+| `FANOPS_VARIANT_AMPLIFY_MIN_POSTS` | int (default **8**) | v3 trust-gate part 1 (stronger than v2's `FANOPS_VARIANT_MIN_POSTS`=3): the winning hook must carry at least this many analyzed posts before its win is trusted enough to AMPLIFY (a far more consequential act than v2's caption-bias). A non-int value falls back to the default. |
+| `FANOPS_VARIANT_AMPLIFY_MIN_GAP` | float (default **25.0**) | v3 trust-gate part 2 (stronger than v2's `FANOPS_VARIANT_MIN_GAP`=10): the winner's mean `lift_score` must beat the runner-up's by at least this margin. A non-float value falls back to the default. |
+| `FANOPS_VARIANT_AMPLIFY_MIN_STREAK` | int (default **3**) | v3 trust-gate part 3 — the core NEW safety property (no v2 analogue): the SAME hook must have led the gate across at least this many DISTINCT evidence windows (new analyzed-post batches) before amplifying. `≥ 2` means "never act on a single window". A non-int value falls back to the default. |
 | `FANOPS_ESCALATION_BUDGET_USD` | float (optional) | Spend cap knob. |
 
 **Optional override file — `00_control/tuning.json`** (audit b). An operator can re-tune the
@@ -717,3 +722,18 @@ deferred from the original plan, and surfaced during the build.
   winners into `amplify`/`_delete_moment_cascade` (the C1-risk cascade-delete path) — v2 deliberately
   stays on the caption-request side of that line; the amplify path remains blind to the learner
   (enforced by an isolation grep test).
+  **v3 — variant-gated AMPLIFICATION** (`FANOPS_VARIANT_AMPLIFY=1`, independent flag, default OFF):
+  the auto-propagate feature — the **first** to touch the amplify/`_delete_moment_cascade` path (C1).
+  When a per-account hook variant earns a **SUSTAINED** win — v2's `best_hooks` gate as a FLOOR, plus
+  `≥ FANOPS_VARIANT_AMPLIFY_MIN_POSTS` (8) posts, `≥ FANOPS_VARIANT_AMPLIFY_MIN_GAP` (25) lead, AND
+  the same hook leading across `≥ FANOPS_VARIANT_AMPLIFY_MIN_STREAK` (3) DISTINCT evidence windows
+  (never a single window) — its source is auto-amplified via the existing `adjust.amplify`, with the
+  winning hook injected as `extra_guidance`. Runs as a separately-guarded pass in `fanops run` and via
+  `fanops amplify-variants`. **AMPLIFY-ONLY**: `variant_amplify` never calls `retire`/
+  `_delete_moment_cascade`/`set_*_state(retired)` (two AST isolation tests + a mutation-proven streak
+  gate), so a wrong winner can never delete/retire real content; the C1 live-lineage preservation is
+  inherited. Deterministic streak state (`Ledger.variant_streaks`, mirrors `tag_log`), fail-SAFE,
+  reversible (flip OFF → stops acting). The digest's "Variant amplification" section shows each
+  surface's streak state. **Still out of scope:** cross-PLATFORM transfer, bandit/decay scheduling
+  (the bandit follow-up remains spec-only), and any change to the EXISTING single-snapshot
+  `classify_outcomes`/amplify+retire trigger (v3 only ADDS a harder-gated amplify path).

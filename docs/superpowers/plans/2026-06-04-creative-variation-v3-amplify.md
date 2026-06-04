@@ -476,6 +476,16 @@ git add src/fanops/variant_amplify.py tests/test_variant_amplify.py
 git commit -m "feat (variant-amplify 4): update_streaks — deterministic, idempotent sustained-win streak tracker"
 ```
 
+> **EXECUTION NOTE (discovered during build):** v2 ships a POSITIVE caller-allowlist test,
+> `tests/test_variant_learning.py::test_best_hooks_called_only_on_safe_read_or_request_side`, that
+> asserts `callers <= {caption.py, digest.py, variant_transfer.py}`. `variant_amplify.py` is a new
+> `best_hooks` caller, so this task ALSO edits that test to add `variant_amplify.py` to `allowed`
+> (with a docstring recording the safety review: the C1 delete/retire invariant is guarded
+> separately and unchanged; variant_amplify is amplify-only). This is NOT a weakening — the
+> `danger` set (the real C1 invariant) is untouched and still passes; the allowlist is a
+> reviewed-caller tripwire. Also: the `from statistics import mean` import belongs in Task 5 (first
+> use), not Task 4 — adding it in Task 4 trips ruff F401.
+
 ---
 
 ### Task 5: `variant_amplify.amplify_candidates` — the pure, fully-gated decision

@@ -200,13 +200,14 @@ no progress, so the human knows to check the key, not the cron.
 | `fanops reconcile` | resolve stranded `submitting`/`needs_reconcile` posts via `GET /v2/posts/:id` (needs a key; id-less posts stay parked for human reconcile) |
 | `fanops track [--window 30d]` | pull metrics; mark posts analyzed with a whitelisted lift score |
 | `fanops adjust [--winner-pct 0.3] [--retire-pct 0.2] [--lift-floor 20.0]` | amplify winners / retire losers |
+| `fanops amplify-variants` | creative-variation **v3**: amplify SUSTAINED proven hook winners (their source → more moments, winning hook injected). Inert unless `FANOPS_VARIANT_AMPLIFY=1`. Amplify-only — never retires/deletes |
 | `fanops gc [--keep-days 30]` | delete local clip files of retired/analyzed clips older than N days |
 | `fanops resolve <post_id> <published\|failed> [--url U]` | operator escape hatch: force a post stranded in `needs_reconcile`/`submitting` to ground truth after a hand-check (sets state; `--url` records the live post URL on `published`) |
 | `fanops unhold <clip_id>` | clear a brand-risk HOLD after human review — resets `held` and re-enters the clip into the caption gate (`captions_requested`); no ledger hand-edit |
 | `fanops retry-source <source_id>` | requeue a quarantined (`error`) source from the top — back to `catalogued` and forces a real re-transcribe |
 | `fanops retry-metrics <post_id>` | re-pull metrics for a `published` post on the next `track` pass (no-op flip; exits 2 if the post isn't published) |
 | `fanops digest` | rewrite the human-readable ledger digest (incl. a `## Pending agent gates` section naming each unanswered gate by kind+key) |
-| `fanops run [--base-time T]` | unattended: respond + advance until stable, then a live-only `track`+`adjust` learning pass; emits a heartbeat line every run |
+| `fanops run [--base-time T]` | unattended: respond + advance until stable, then a live-only `track`+`adjust` learning pass (and, if `FANOPS_VARIANT_AMPLIFY=1`, a separately-guarded variant-amplify pass); emits a heartbeat line every run |
 
 The four **recovery verbs** (`resolve`, `unhold`, `retry-source`, `retry-metrics`) are the
 operator's manual-intervention surface for the states the automatic pipeline cannot resolve on
