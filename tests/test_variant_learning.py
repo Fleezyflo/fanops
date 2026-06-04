@@ -99,7 +99,8 @@ def test_two_variants_clear_winner_still_returned(tmp_path):
 import ast
 import pathlib
 
-_FORBIDDEN_IN_AMPLIFY = ("variant_key", "variant_hook", "best_hooks", "variant_learning")
+_FORBIDDEN_IN_AMPLIFY = ("variant_key", "variant_hook", "best_hooks", "variant_learning",
+                         "transferred_hooks", "variant_transfer")
 
 
 def _names_in(src_path: pathlib.Path, func_names: set[str]) -> set[str]:
@@ -148,7 +149,9 @@ def test_best_hooks_called_only_on_safe_read_or_request_side():
     (proven by tests/test_variant_amplify.py::test_variant_amplify_never_touches_retire_or_cascade),
     so a noisy 'winner' can at worst trigger an extra (hard-gated) amplify, never a delete/retire."""
     root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
-    allowed = {"caption.py", "digest.py", "variant_amplify.py"}
+    # variant_amplify.py (v3 amplify, reviewed above) AND variant_transfer.py (a safe read-only
+    # cross-surface scorer) both legitimately call best_hooks — both are allowed safe callers.
+    allowed = {"caption.py", "digest.py", "variant_amplify.py", "variant_transfer.py"}
     danger = {"adjust.py", "track.py", "pipeline.py", "ledger.py"}
     callers = set()
     for py in root.rglob("*.py"):
@@ -161,3 +164,24 @@ def test_best_hooks_called_only_on_safe_read_or_request_side():
         f"C1 violation: best_hooks called from the amplify/delete path: {leaked_into_danger}"
     assert callers <= allowed, \
         f"best_hooks called from an unexpected file (review for safety): {sorted(callers - allowed)}"
+
+
+def test_transferred_hooks_called_only_on_safe_read_or_request_side():
+    """Positive lock on the transfer scorer, mirroring the best_hooks lock. transferred_hooks may be
+    called only from the SAFE surfaces (caption.py — the request side; digest.py — read-only gate
+    reporting). It must NEVER be called from the C1 danger files (adjust.py / track.py / pipeline.py
+    / ledger.py). If a future edit calls it from the amplify/delete path, this names the file."""
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
+    allowed = {"caption.py", "digest.py"}
+    danger = {"adjust.py", "track.py", "pipeline.py", "ledger.py"}
+    callers = set()
+    for py in root.rglob("*.py"):
+        if py.name == "variant_transfer.py":        # the definition site
+            continue
+        if "transferred_hooks(" in py.read_text():  # an actual call (not just the import line)
+            callers.add(py.name)
+    leaked_into_danger = sorted(callers & danger)
+    assert not leaked_into_danger, \
+        f"C1 violation: transferred_hooks called from the amplify/delete path: {leaked_into_danger}"
+    assert callers <= allowed, \
+        f"transferred_hooks called from an unexpected file (review for safety): {sorted(callers - allowed)}"
