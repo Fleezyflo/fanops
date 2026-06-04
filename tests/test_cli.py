@@ -167,6 +167,96 @@ def test_advance_exits_cleanly_on_auth_error(tmp_path, monkeypatch, mocker, caps
     assert "Traceback" not in err and "BLOTATO_API_KEY" in err
 
 
+# --- T1: startup preflight auth-check (the silent-zero-output guard) ------------------------
+# Catches the #1 cutover trap BEFORE a run does silent nothing: FANOPS_RESPONDER=llm with no
+# ANTHROPIC_API_KEY (claude --bare reads no OAuth/keychain -> zero content, no loud log) and
+# a live poster (rest/mcp) with no BLOTATO_API_KEY (publish will 401). Mirrors _check_accounts:
+# 0 clean / prints an actionable line + returns 2. Tests call _check_preflight directly to
+# isolate from _check_accounts, plus one main(["advance"]) to prove the dispatch wiring.
+
+def test_preflight_blocks_llm_without_anthropic_key(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # the trap: llm responder, no key
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # isolate the assertion to the llm case
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    rc = _check_preflight(Config(root=tmp_path))
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "ANTHROPIC_API_KEY" in err and "Traceback" not in err
+
+
+def test_preflight_blocks_llm_without_anthropic_key_via_advance(tmp_path, monkeypatch, capsys):
+    # Wiring proof: the gate is actually called in the advance dispatch branch (after _check_accounts).
+    # A valid active account makes _check_accounts pass so we reach _check_preflight.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    rc = main(["advance"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "ANTHROPIC_API_KEY" in err and "Traceback" not in err
+
+
+def test_preflight_blocks_rest_without_blotato_key(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "rest")
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # the trap: live poster, no key -> 401
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # isolate the assertion to the poster case
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)    # default manual responder
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    rc = _check_preflight(Config(root=tmp_path))
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "BLOTATO_API_KEY" in err and "Traceback" not in err
+
+
+def test_preflight_blocks_mcp_without_blotato_key(tmp_path, monkeypatch, capsys):
+    # The mcp backend is auth-gated identically to rest — both 401 without the key.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "mcp")
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    rc = _check_preflight(Config(root=tmp_path))
+    assert rc == 2
+    assert "BLOTATO_API_KEY" in capsys.readouterr().err
+
+
+def test_preflight_passes_default_dryrun_manual(tmp_path, monkeypatch):
+    # The default cutover config (manual responder + dryrun poster, no keys) must pass cleanly.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    assert _check_preflight(Config(root=tmp_path)) == 0
+
+
+def test_preflight_passes_llm_with_anthropic_key(tmp_path, monkeypatch):
+    # The correctly-configured live cutover (llm + key, rest + key) must pass — the gate blocks the
+    # MISSING-key case only, never a valid one.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("FANOPS_POSTER", "rest")
+    monkeypatch.setenv("BLOTATO_API_KEY", "blot-test")
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    assert _check_preflight(Config(root=tmp_path)) == 0
+
+
 def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
     # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises
     # (model call error, a malformed response failing validation), the run loop must DEGRADE

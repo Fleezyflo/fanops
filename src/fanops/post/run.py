@@ -11,9 +11,7 @@ from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.post import get_poster
 from fanops.post.media import ensure_clip_media
-
-def _parse(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+from fanops.timeutil import parse_iso as _parse
 
 def _now(now: str | None) -> datetime:
     return _parse(now) if now else datetime.now(timezone.utc)

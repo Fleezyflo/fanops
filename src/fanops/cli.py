@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.errors import BlotatoAuthError, ControlFileError, LockBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import PostState, SourceState
+from fanops.models import PostState
 from fanops.pipeline import advance
 from fanops.ingest import ingest_drops, download_url
 from fanops.digest import write_digest
@@ -170,6 +170,35 @@ def _check_accounts(cfg: Config) -> int:
     return 0
 
 
+def _check_preflight(cfg: Config) -> int:
+    """The silent-zero-output guard. Block a run up front when the operator's env would make it
+    do credentialless nothing — the #1 cutover trap. Sibling to _check_accounts (config-level):
+    returns 0 clean, else prints an actionable line to stderr and returns 2.
+
+      - FANOPS_RESPONDER=llm but no ANTHROPIC_API_KEY: the responder shells out to `claude --bare`,
+        which reads ONLY ANTHROPIC_API_KEY (NOT the OAuth login / keychain) — so it yields zero
+        content while logging nothing loud. Guaranteed silent failure -> hard exit 2.
+      - FANOPS_POSTER in {rest, mcp} but no BLOTATO_API_KEY: publishing will 401 -> hard exit 2.
+
+    The default dryrun+manual config (no keys) trips neither and passes cleanly (exit 0)."""
+    problems = []
+    if cfg.responder_mode == "llm" and cfg.anthropic_api_key is None:
+        problems.append(
+            "FANOPS_RESPONDER=llm but ANTHROPIC_API_KEY is not set — the --bare responder reads no "
+            "OAuth/keychain, so it will produce zero content. Export ANTHROPIC_API_KEY.")
+    if cfg.poster_backend in {"rest", "mcp"} and cfg.blotato_api_key is None:
+        problems.append(
+            f"FANOPS_POSTER={cfg.poster_backend} but BLOTATO_API_KEY is not set — publishing will "
+            "fail auth (401). Export BLOTATO_API_KEY.")
+    if problems:
+        print("preflight: refusing to run — this config would silently produce no output:",
+              file=sys.stderr)
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def _heartbeat(cfg: Config, s: dict) -> None:
     """B5/E2: emit a heartbeat line every run/advance so an external monitor diffing consecutive
     lines can tell 'alive-but-idle' (ts advances, published_in_run may be 0) from 'cron is dead'
@@ -213,6 +242,7 @@ def _dispatch(cfg: Config, args) -> int:
         write_digest(Ledger.load(cfg), cfg); print(f"wrote {cfg.digest_path}"); return 0
     if args.cmd == "advance":
         if (rc := _check_accounts(cfg)):  return rc
+        if (rc := _check_preflight(cfg)):  return rc
         s = advance(cfg, base_time=args.base_time)
         _heartbeat(cfg, s); print(s); return 0
     if args.cmd == "track":    return cmd_track(cfg, args.window)
@@ -266,6 +296,7 @@ def _dispatch(cfg: Config, args) -> int:
             print(f"retry-metrics {args.post_id}: not published (state={p.state.value})", file=sys.stderr); return 2
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc
+        if (rc := _check_preflight(cfg)):  return rc
         # unattended: respond to gates, advance, repeat until no progress.
         # BOTH the responder and advance() are inside the guard: advance()'s deterministic
         # stages are per-unit quarantined, but the responder (FIX H7 — the LLM model call or a

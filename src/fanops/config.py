@@ -3,9 +3,13 @@
 Trims ONLY surrounding whitespace from the key (FIX F80: the v1 'keep trailing =' advice
 was wrong)."""
 from __future__ import annotations
+import json
+import logging
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+
+_log = logging.getLogger("fanops.config")
 
 _STAGE = {
     "control": "00_control", "inbox": "01_inbox", "sources": "02_sources",
@@ -25,11 +29,46 @@ class Config:
         self.digest_path = self.control / "ledger_digest.md"
         self.accounts_path = self.control / "accounts.json"
         self.context_path = self.control / "context.md"
+        self.tuning_path = self.control / "tuning.json"
         self.log_path = self.reports / "run.log"
+
+    def tuning(self) -> dict:
+        """Operator overrides for the HOLD gate + optimization target, read from the OPTIONAL
+        00_control/tuning.json (audit b). Shape:
+            {"offbrand_en": [...regex...], "offbrand_ar": [...regex...],
+             "lift_weights": {"saves": 4.0, ...}}
+        Absent file or a missing key -> the in-code DEFAULT is used (caption._OFFBRAND_EN/_AR,
+        track._W), so existing behavior is unchanged and no new REQUIRED file is introduced.
+        Unlike a control file (accounts.json / ledger.json -> ControlFileError), this file is
+        OPTIONAL: a corrupt/unreadable tuning.json must NEVER crash an autonomous run — we log a
+        warning and fall back to {} (i.e. all defaults). Not cached: each call re-reads, so an
+        operator edit takes effect on the next stage without a process restart (the file is tiny
+        and read at most once per stage)."""
+        p = self.tuning_path
+        if not p.exists():
+            return {}
+        try:
+            raw = json.loads(p.read_text())
+        except Exception as e:                              # malformed JSON / unreadable
+            _log.warning("ignoring %s (using built-in defaults): %s", p.name, e)
+            return {}
+        if not isinstance(raw, dict):                       # e.g. a top-level list/number
+            _log.warning("ignoring %s (expected a JSON object, using built-in defaults)", p.name)
+            return {}
+        return raw
 
     @property
     def blotato_api_key(self) -> str | None:
         v = os.getenv("BLOTATO_API_KEY")
+        return v.strip() if v and v.strip() else None
+
+    @property
+    def anthropic_api_key(self) -> str | None:
+        # Mirrors blotato_api_key. The autonomous responder shells out to `claude --bare`, which
+        # reads ONLY ANTHROPIC_API_KEY (it ignores the OAuth login / keychain) — so its presence is
+        # the difference between real content and a silent zero-output run. Surfaced as a property
+        # for symmetry/testability and consumed by cli._check_preflight.
+        v = os.getenv("ANTHROPIC_API_KEY")
         return v.strip() if v and v.strip() else None
 
     @property
@@ -44,6 +83,17 @@ class Config:
     @property
     def responder_mode(self) -> str:
         return os.getenv("FANOPS_RESPONDER") or "manual"
+
+    @property
+    def artist_name(self) -> str:
+        # Operator override for the artist DISPLAY NAME used as the YouTube title fallback when a
+        # post has no explicit title (audit h). Default "Moh Flow" — unchanged from the old
+        # hardcoded value in payload.default_target_fields, so existing behavior is identical; an
+        # operator running FanOps for a different artist sets FANOPS_ARTIST_NAME. NOTE: this is the
+        # display name, DISTINCT from tagging.ARTIST_HANDLE (the @mohflow caption mention) — they
+        # have different sources and are intentionally not unified.
+        v = os.getenv("FANOPS_ARTIST_NAME")
+        return v.strip() if v and v.strip() else "Moh Flow"
 
     @property
     def whisper_model(self) -> str:

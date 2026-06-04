@@ -92,3 +92,43 @@ def test_ensure_clip_media_dryrun_branch_returns_file_url(tmp_path, monkeypatch)
     led.add_clip(Clip(id="clip_d", parent_id="m", path=str(f), state=ClipState.queued))
     u = ensure_clip_media(led, cfg, "clip_d")
     assert u.startswith("file://") and led.clips["clip_d"].media_url == u
+
+def test_upload_rejects_oversize_file(tmp_path, monkeypatch, mocker):
+    # AUDIT (e): a file above the size cap is rejected with a clear RuntimeError (NOT a typed
+    # auth error) BEFORE any network call — no presign POST, no binary PUT.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); f = tmp_path / "huge.mp4"; f.write_bytes(b"VVVV")
+    # Pin the cap below the file size so the guard fires deterministically.
+    mocker.patch("fanops.post.media._MAX_UPLOAD_BYTES", 1)
+    pm = mocker.patch("fanops.post.media.requests.post")
+    put = mocker.patch("fanops.post.media.requests.put")
+    import pytest
+    from fanops.errors import BlotatoAuthError
+    with pytest.raises(RuntimeError, match="size") as ei:
+        upload_media(cfg, f)
+    assert not isinstance(ei.value, BlotatoAuthError)   # plainly RuntimeError, not the auth subtype
+    pm.assert_not_called()                              # rejected BEFORE the presign POST
+    put.assert_not_called()                             # and BEFORE the binary PUT
+
+def test_put_timeout_scales_with_size(tmp_path, monkeypatch, mocker):
+    # AUDIT (e): the binary PUT timeout scales with file size — a larger (but allowed) file gets a
+    # longer timeout than a tiny one, and the tiny file still gets at least the 60s base.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    class _R:
+        def __init__(s, c, b=None): s.status_code = c; s._b = b or {}; s.text = str(s._b)
+        def json(s): return s._b
+    presign = _R(200, {"presignedUrl": "https://up/a", "publicUrl": "https://cdn/x.mp4"})
+
+    def _put_timeout_for_file(fbytes: bytes) -> float:
+        f = tmp_path / "x.mp4"; f.write_bytes(fbytes)
+        mocker.patch("fanops.post.media.requests.post", return_value=presign)
+        put = mocker.patch("fanops.post.media.requests.put", return_value=_R(200))
+        upload_media(cfg, f)
+        return put.call_args.kwargs["timeout"]
+
+    tiny_to = _put_timeout_for_file(b"V")
+    big_to = _put_timeout_for_file(b"V" * (50 * 1024 * 1024))   # 50 MB
+    assert tiny_to >= 60                                        # tiny file still gets the base
+    assert big_to > tiny_to                                     # bigger file -> longer timeout
+    assert big_to <= 600                                        # clamped at the max

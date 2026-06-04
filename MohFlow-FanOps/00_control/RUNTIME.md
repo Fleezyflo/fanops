@@ -35,9 +35,44 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | Var | Values | Effect |
 |---|---|---|
 | `FANOPS_POSTER` | `dryrun` (default) \| `rest` \| `mcp` | Which publish backend. `dryrun` writes `file://` media URLs and never hits the network. |
-| `FANOPS_RESPONDER` | `manual` (default) \| `llm` | `manual` = a human/cron writes the response files; `llm` = the LLM responder answers gates. |
-| `BLOTATO_API_KEY` | string | Required for `rest`, `mcp`, and `track`. Absent ⇒ those refuse/skip cleanly. |
+| `FANOPS_RESPONDER` | `manual` (default) \| `llm` | `manual` = a human/cron writes the response files; `llm` = the LLM responder answers gates. With `llm`, `advance`/`run` **hard-fail (exit 2) unless `ANTHROPIC_API_KEY` is set** — the cutover-safety preflight (see below). |
+| `BLOTATO_API_KEY` | string | Required for `rest`, `mcp`, and `track`. Absent ⇒ those refuse/skip cleanly. With `FANOPS_POSTER` in `{rest, mcp}`, `advance`/`run` also hard-fail (exit 2) when it is unset. |
+| `ANTHROPIC_API_KEY` | string | Required for `FANOPS_RESPONDER=llm`. The responder shells `claude --bare`, which reads **only** this var (never OAuth/keychain). Absent with `llm` ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). |
+| `FANOPS_ARTIST_NAME` | string (optional) | Artist **display name** used as the YouTube title fallback when a post has no explicit title (audit h). Default `"Moh Flow"` (unchanged). Distinct from the `@mohflow` caption mention (`tagging.ARTIST_HANDLE`). |
 | `FANOPS_ESCALATION_BUDGET_USD` | float (optional) | Spend cap knob. |
+
+**Optional override file — `00_control/tuning.json`** (audit b). An operator can re-tune the
+brand-risk HOLD gate and the optimization target **without a code change** by writing this
+OPTIONAL file (`cfg.tuning()`, `src/fanops/config.py`):
+
+```jsonc
+{ "offbrand_en": ["...regex...", "..."],   // REPLACES caption._OFFBRAND_EN when present
+  "offbrand_ar": ["...regex...", "..."],   // REPLACES caption._OFFBRAND_AR when present
+  "lift_weights": { "saves": 4.0, "shares": 4.0, "retention": 3.0, "reach": 0.001, "likes": 0.05 } }
+```
+
+An **absent file or a missing key falls back to the in-code default** (so existing behavior is
+unchanged and no new REQUIRED file is introduced). It is read at most once per stage and **not
+cached**, so an edit takes effect on the next stage with no process restart. Unlike a control
+file (`accounts.json`/`ledger.json`), a corrupt/unreadable `tuning.json` **never crashes** an
+autonomous run — it logs a warning and falls back to all defaults.
+
+### Cutover-safety preflight — the silent-zero-output guard (SAFETY feature)
+
+`fanops advance` and `fanops run` call `_check_preflight(cfg)` (`src/fanops/cli.py`) **before**
+doing any work, right after `_check_accounts`. It **refuses to run (exit 2, one-line message to
+stderr, no traceback)** for the two env mismatches that would otherwise make the pipeline do
+credentialless *nothing* — the #1 cutover trap:
+
+- **`FANOPS_RESPONDER=llm` but `ANTHROPIC_API_KEY` unset** — the `--bare` responder reads no
+  OAuth/keychain, so it would fail every gate "Not logged in", clear nothing, and publish
+  nothing **without crashing**. This is the guaranteed-silent failure the heartbeat/dead-man's
+  switch is designed to *detect after the fact*; the preflight catches it **up front** instead.
+- **`FANOPS_POSTER` in `{rest, mcp}` but `BLOTATO_API_KEY` unset** — publishing would 401.
+
+The **default `dryrun` + `manual` config (no keys) trips neither and passes cleanly (exit 0)**,
+so the offline pipeline is unaffected. This is a *safety* feature: a misconfigured live cutover
+now fails loudly and immediately rather than running green-but-empty until a monitor notices.
 
 ---
 
@@ -248,9 +283,11 @@ same pass, because every staggered time is pushed after `T`.
 - Matches metric rows to posts by `submission_id`; **failed posts are skipped** (they
   have no real lift and must never enter the winners pool).
 - Computes a **`lift_score`** that weights **saves / shares / retention over likes**
-  (likes are near-noise). The weights live in `track._W`
-  (`saves 4.0, shares 4.0, retention 3.0, reach 0.001, likes 0.05`). Re-weight there if
-  Blotato exposes different fields or you want engagement-rate over raw reach.
+  (likes are near-noise). The default weights live in `track._W`
+  (`saves 4.0, shares 4.0, retention 3.0, reach 0.001, likes 0.05`). Re-weight either in code,
+  or — without a code change — via `00_control/tuning.json` → `lift_weights` (audit b; see
+  *Optional override file* above), if Blotato exposes different fields or you want
+  engagement-rate over raw reach.
 
 **`fanops adjust [--winner-pct 0.3] [--retire-pct 0.2] [--lift-floor 20.0]`** ranks the
 analyzed posts and acts on the tails (`src/fanops/adjust.py`):
@@ -549,10 +586,14 @@ deferred from the original plan, and surfaced during the build.
   loop continues so later posts still reconcile. The irreducible residue (a post with genuinely no
   `submission_id` at all) is skipped for **human** reconcile (the digest's "Needs reconcile" section).
   We never guess a post's fate — a wrong guess would drop a live post or double-publish one.
-- **(b) Externalize the tunable lists to config / `context.md`.** The brand-risk
-  anti-pattern lists (`caption._OFFBRAND_EN` / `_OFFBRAND_AR`) and the lift weights
-  (`track._W`) are hardcoded. Moving them to config/`context.md` lets the operator tune
-  the HOLD gate and the optimization target without a code change.
+- **(b) Externalize the tunable lists to config — DONE (tail).** The brand-risk anti-pattern
+  lists (`caption._OFFBRAND_EN` / `_OFFBRAND_AR`) and the lift weights (`track._W`) are now
+  operator-overridable via the **optional `00_control/tuning.json`** (`cfg.tuning()`) →
+  `offbrand_en` / `offbrand_ar` / `lift_weights`. When a key is present its list **REPLACES**
+  the in-code default; an absent file or missing key keeps the default, so existing behavior is
+  unchanged and no new REQUIRED file is introduced. The file is OPTIONAL: a corrupt/unreadable
+  `tuning.json` logs a warning and falls back to defaults rather than crashing the run. See the
+  *Optional override file* block under *Environment variables* above.
 - **(c) REST backoff jitter — DONE (Phase D, D4).** The `429` backoff is now jittered:
   `time.sleep(delay + random.uniform(0, delay)); delay *= 2` (`blotato_rest.py`), so retries no
   longer fire in lockstep across surfaces. Still bounded by `_MAX_RETRIES` (exhaustion → `failed`,
@@ -563,23 +604,36 @@ deferred from the original plan, and surfaced during the build.
   could double-post.)*
 - **(d) Per-source ranking in `adjust`.** Ranking is global; the `lift_floor` mostly
   neutralizes cross-source unfairness but does not fully solve it.
-- **(e) Media size cap / size-aware upload timeout.** The media PUT uses a fixed 120s
-  timeout and no size cap; large files need a size-aware timeout (and a cap to reject
-  oversize uploads).
+- **(e) Media size cap / size-aware upload timeout — DONE (tail).** `upload_media`
+  (`src/fanops/post/media.py`) now **rejects an oversize file pre-network** (`_MAX_UPLOAD_BYTES`
+  = 500 MB; raises before any HTTP call) and **scales the PUT timeout to the file size**
+  (`_put_timeout_for`: ~2 s/MB over a 120 s base, clamped at a 600 s ceiling) so a flat 120 s no
+  longer kills a large-but-valid upload mid-stream nor makes a tiny upload wait forever.
 - **(f) Operator-recovery verbs (`unhold` / `resolve` / `retry-source` / `retry-metrics`) — DONE (Phase F).**
   The four states that previously required hand-editing `ledger.json` — a brand-risk `held` clip, an
   ambiguous `needs_reconcile`/`submitting` post, a quarantined `error` source, a `published`-but-unmeasured
   post — each now have a one-verb operator path (see *Recovery verbs* above). This closes the audit's
   recurring "operability gap" (every recovery needed a manual ledger edit) and H1's missing human-reconcile
   path. Each is a tight local-only `Ledger.transaction`; unknown id → exit 2, never a traceback.
-- **(g) Per-platform duration clamp.** Enforce a per-surface max clip length at crosspost
-  time (hold-vs-skip per surface) — needs knowing clip duration at crosspost time. The
-  earlier unenforced `PLATFORM_MAX_SECONDS` dict was removed as a false safety contract.
-- **(h) Externalize the hardcoded YouTube title fallback.** The yt-dlp path has a
-  hardcoded title fallback (`"Moh Flow"`); move it to config.
-- **(i) Lint + dedup.** Add `ruff` to dev deps for lint enforcement, and consolidate the
-  duplicated `_parse` / `BASE_URL` helpers (repeated across `run.py`, `crosspost.py`,
-  `tagging.py`, `media.py`, `blotato_rest.py`, `metrics.py`) into shared modules.
+- **(g) Per-platform duration clamp — DONE (tail), real enforcement.** Crosspost
+  (`src/fanops/crosspost.py`) now enforces `PLATFORM_MAX_SECONDS` per surface: the clip's
+  playable duration is its moment window (`end - start`), and if that duration is **known
+  (> 0) and exceeds the platform's cap**, that **one surface is skipped** (the clip still posts
+  to platforms whose cap it satisfies — conservative, never wedges the whole clip). **Unknown
+  duration (None/≤0) or a platform with no cap → fail-open (do not skip)**, so the change can
+  never silently drop a post on missing data. This replaces the removed false-contract dict
+  with real enforcement.
+- **(h) Externalize the hardcoded YouTube title fallback — DONE (tail).** The YouTube title
+  fallback is now `cfg.artist_name` (`src/fanops/config.py`), set by the optional
+  **`FANOPS_ARTIST_NAME`** env var; default `"Moh Flow"` is byte-identical to the old hardcoded
+  value, so existing behavior is unchanged. (This is the artist **display name** — distinct from
+  the `@mohflow` caption mention in `tagging.ARTIST_HANDLE`; the two are intentionally not
+  unified.)
+- **(i) Lint + dedup — DONE (tail).** `ruff` is now a dev dependency and lint is enforced
+  (`ruff check src/` is green). The duplicated `_parse` ISO-8601 helpers were consolidated into
+  a single `timeutil.parse_iso`, and the repeated Blotato `BASE_URL` was given one home — both
+  formerly copy-pasted across `run.py`, `crosspost.py`, `tagging.py`, `media.py`,
+  `blotato_rest.py`, `metrics.py`.
 - **(j) Per-account creative variation (A/B content learning).** Generate genuinely different
   creative — hook / caption / on-screen-text / edit variants — per account or cohort, and let the
   existing `track → analyzed → adjust` lift loop attribute which variant wins. This is the *valuable*

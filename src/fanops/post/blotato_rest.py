@@ -36,8 +36,8 @@ from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.post.payload import build_blotato_payload, default_target_fields
+from fanops.post.blotato_base import BASE_URL
 
-BASE_URL = "https://backend.blotato.com/v2"
 _MAX_RETRIES = 4
 
 
@@ -89,7 +89,7 @@ class BlotatoRestPoster:
         payload = build_blotato_payload(
             account_id=post.account_id, platform=post.platform.value, text=post.caption,
             media_urls=post.media_urls, scheduled_time=post.scheduled_time,
-            extra_target=default_target_fields(post.platform.value))
+            extra_target=default_target_fields(post.platform.value, artist_name=self.cfg.artist_name))
         delay = 1.0
         last = None
         for attempt in range(_MAX_RETRIES):

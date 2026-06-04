@@ -1,3 +1,4 @@
+import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
@@ -97,3 +98,27 @@ def test_pull_default_binding_requires_key(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(RuntimeError, match="BLOTATO_API_KEY"):
         pull_metrics(led, cfg)                                 # no list_posts injected -> default binding
+
+# --- T2 (audit b): the lift weights (the optimization target) are operator-tunable via tuning.json ---
+
+def _write_tuning(cfg, obj):
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.tuning_path.write_text(json.dumps(obj))
+
+def test_lift_weights_overridable_from_tuning_json(tmp_path):
+    cfg = Config(root=tmp_path)
+    _write_tuning(cfg, {"lift_weights": {"likes": 10.0}})
+    weights = cfg.tuning().get("lift_weights")
+    # one like is now worth 10.0 (vs the default 0.05) under the operator override.
+    assert lift_score({"likes": 1}, weights) == 10.0
+    # and a metric NOT in the override map contributes nothing (REPLACE: the map is the whole set).
+    assert lift_score({"saves": 1}, weights) == 0.0
+
+def test_defaults_unchanged_without_tuning_json(tmp_path):
+    # No tuning.json -> lift_score uses the default _W exactly (weights=None path unchanged).
+    cfg = Config(root=tmp_path)
+    assert not cfg.tuning_path.exists()
+    assert cfg.tuning() == {}
+    assert lift_score({"likes": 1}) == 0.05                    # default weight intact
+    assert lift_score({"saves": 1}) == 4.0
+    assert lift_score({"saves": 10, "shares": 5, "retention": 2, "reach": 1000, "likes": 20}) == 68.0

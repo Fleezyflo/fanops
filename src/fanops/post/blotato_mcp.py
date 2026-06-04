@@ -24,7 +24,7 @@ class BlotatoMcpPoster:
         args = build_blotato_mcp_args(
             account_id=post.account_id, platform=post.platform.value, text=post.caption,
             media_urls=post.media_urls, scheduled_time=post.scheduled_time,
-            extra=default_target_fields(post.platform.value) or None)
+            extra=default_target_fields(post.platform.value, artist_name=self.cfg.artist_name) or None)
         try:
             result = self._call("blotato_create_post", args) or {}
         except BlotatoAuthError:

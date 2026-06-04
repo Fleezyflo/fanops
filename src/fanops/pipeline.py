@@ -21,6 +21,7 @@ from fanops.reconcile import reconcile_posts
 from fanops.digest import write_digest
 from fanops.log import get_logger
 from fanops.agentstep import pending
+from fanops.timeutil import parse_iso
 
 def _aspects_for(accts: Accounts) -> set[Fmt]:
     return {PLATFORM_ASPECT.get(s.platform, Fmt.r9x16) for s in accts.surfaces()} or {Fmt.r9x16}
@@ -28,8 +29,9 @@ def _aspects_for(accts: Accounts) -> set[Fmt]:
 def _parse(ts):
     # Parse an ISO-8601 scheduled_time (may carry a 'Z') into an aware datetime, or None if
     # absent/unparseable — never raises, so the heartbeat age computation can't crash a pass.
+    # Defensive None/except wrapper around the shared strict parse_iso (audit (i)).
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
+        return parse_iso(ts) if ts else None
     except Exception:
         return None
 

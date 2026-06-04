@@ -235,6 +235,66 @@ def test_crossposted_post_gets_a_client_token_submission_id(tmp_path, mocker):
     assert ig.submission_id == f"fanops_{_hash('idemp', ig.id)}"
     assert ig.submission_id.startswith("fanops_")
 
+def test_crosspost_skips_surface_when_clip_exceeds_platform_max(tmp_path, mocker):
+    # AUDIT (g): per-surface duration clamp. A clip's PLAYABLE duration is its MOMENT window
+    # (end - start), NOT a Clip field (Clip has no .duration). A 120s window is OVER the
+    # youtube cap (60s) but UNDER tiktok's (600s). The over-cap surface must get NO queued post
+    # while the under-cap surface still posts — per-surface SKIP, not all-or-nothing-wedged.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1",
+                          "platforms": ["tiktok", "youtube"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, duration=300.0))
+    # 120s window: > youtube cap (60), < tiktok cap (600)
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-120", start=0.0, end=120.0,
+                          reason="r", state=MomentState.clipped))
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
+                state=ClipState.captioned)
+    # captions present for BOTH surfaces so a post would otherwise be created for each
+    clip.meta_captions = {"@a/tiktok": {"caption": "tt cap", "hashtags": []},
+                          "@a/youtube": {"caption": "yt cap", "hashtags": []}}
+    led.add_clip(clip)
+    def fake_run(cmd, **kw):   # satisfy the on-demand 16:9 render for youtube
+        from pathlib import Path
+        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    plats = {p.platform for p in led.posts.values()}
+    assert Platform.youtube not in plats, "over-cap surface (youtube 60s) must be skipped for a 120s clip"
+    assert Platform.tiktok in plats, "under-cap surface (tiktok 600s) must still post — per-surface, not all-or-nothing"
+
+
+def test_crosspost_posts_when_duration_unknown(tmp_path, mocker):
+    # AUDIT (g) fail-open: a 0-length moment window (end - start == 0) yields an UNKNOWN/
+    # None-equivalent duration. Never silently drop a post over an unprobed duration — post to
+    # ALL surfaces (the old behavior posted regardless; the clamp only acts on a KNOWN dur > 0).
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1",
+                          "platforms": ["tiktok", "youtube"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    # 0-length window -> dur == 0.0 -> unknown -> fail-open (even though youtube's cap is 60s).
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="5-5", start=5.0, end=5.0,
+                          reason="r", state=MomentState.clipped))
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
+                state=ClipState.captioned)
+    clip.meta_captions = {"@a/tiktok": {"caption": "tt cap", "hashtags": []},
+                          "@a/youtube": {"caption": "yt cap", "hashtags": []}}
+    led.add_clip(clip)
+    def fake_run(cmd, **kw):
+        from pathlib import Path
+        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    plats = {p.platform for p in led.posts.values()}
+    assert Platform.youtube in plats and Platform.tiktok in plats, \
+        "unknown duration (0-length window) must fail-open: post to ALL surfaces, never silently drop"
+
+
 def test_crosspost_appends_artist_tag_when_decided(tmp_path, mocker):
     # The \n@mohflow append branch must actually fire and be correct (own line, right handle).
     from fanops.tagging import ARTIST_HANDLE

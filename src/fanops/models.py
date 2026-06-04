@@ -46,6 +46,26 @@ PLATFORM_ASPECT = {
     Platform.facebook: Fmt.r1x1, Platform.twitter: Fmt.r16x9,
 }
 
+# AUDIT (g): hard per-surface MAX clip length (seconds). A v1 version of this dict was REMOVED
+# as a FALSE safety contract — it was declared but never enforced, so a 180s pick fanned out to
+# YouTube/Twitter at full length, silently over their caps. This is the REAL enforcement: at
+# crosspost time a clip whose PLAYABLE duration (its moment window, end - start — Clip has no
+# duration field) exceeds the cap for a platform is SKIPPED for THAT surface only (it can still
+# post to platforms whose cap it satisfies). Values are the real short-form ceilings:
+#   instagram (Reels) 90s · tiktok 600s (10 min) · youtube (Shorts) 60s · twitter 140s ·
+#   facebook (Reels) 90s.
+# A platform with no meaningful short-form cap may be OMITTED here -> no clamp for it.
+# Enforcement is FAIL-OPEN on unknown duration: if the window is 0/None/unmeasurable (or the
+# moment is missing), the clip is NOT skipped — never silently drop a post over an unprobed
+# length (the removed dict's sin was the opposite: pretending to guard while letting all through).
+PLATFORM_MAX_SECONDS = {
+    Platform.instagram: 90,
+    Platform.tiktok: 600,
+    Platform.youtube: 60,
+    Platform.twitter: 140,
+    Platform.facebook: 90,
+}
+
 
 # ---- units ----
 class Source(BaseModel):

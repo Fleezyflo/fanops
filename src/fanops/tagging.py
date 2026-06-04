@@ -9,15 +9,13 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 from fanops.ledger import Ledger
+from fanops.timeutil import parse_iso as _parse
 
 ARTIST_HANDLE = "@mohflow"
 
 def should_tag(clip_id: str, account: str, *, rate: float = 0.25) -> bool:
     h = int(hashlib.sha1(f"{clip_id}|{account}".encode()).hexdigest()[:8], 16)
     return (h % 1000) / 1000.0 < rate
-
-def _parse(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 def decide_tag(led: Ledger, *, account: str, clip_id: str = "", when: datetime,
                rate: float = 0.25, min_gap_minutes: int = 120, force: bool = False) -> bool:

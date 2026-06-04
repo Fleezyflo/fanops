@@ -5,17 +5,16 @@ in ITS platform's aspect, rendering on demand (FIX F20). The resolved NUMERIC ac
 stored (FIX F06). decide_tag is invoked (FIX F31). Held/retired clips are skipped (FIX F55)."""
 from __future__ import annotations
 import hashlib, random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import Post, PostState, ClipState, MomentState, Platform, Fmt, PLATFORM_ASPECT
+from fanops.models import (Post, PostState, ClipState, Fmt,
+                           PLATFORM_ASPECT, PLATFORM_MAX_SECONDS)
 from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment
 from fanops.tagging import decide_tag, ARTIST_HANDLE
-
-def _parse(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+from fanops.timeutil import parse_iso as _parse, iso_z
 
 # Staggering constants. _STEP_MIN is the fixed per-index spacing; _JITTER_MAX is the bounded
 # random nudge. AUDIT H1/H2: _JITTER_MAX MUST stay strictly less than _STEP_MIN so that
@@ -43,7 +42,7 @@ def surface_time(base: datetime, account: str, platform: str, date_str: str, ind
     # but the dominant term is the FIXED step -> strictly increasing in index.
     jitter = [rng.randint(0, _JITTER_MAX - 1) for _ in range(index + 1)][index]
     t = anchor + timedelta(minutes=index * _STEP_MIN + jitter)
-    return t.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return iso_z(t)
 
 # Clip states whose file is a usable render target. A denylist (everything-but-retired)
 # wrongly reused error-state clips (dangling file); an allowlist also future-proofs against
@@ -68,7 +67,21 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                   and not led.is_retired_moment(c.parent_id)]
     for clip in seed_clips:
         moment_id = clip.parent_id
+        # AUDIT (g): the clip's PLAYABLE duration is its MOMENT window (end - start). Clip has no
+        # .duration field; the seed clip is rendered from [start,end] of the source, so the window
+        # — not the full source length — is the right value. Guard a missing moment defensively
+        # (treat as UNKNOWN -> fail-open, never skip). dur is None/<=0 => unknown.
+        m = led.moments.get(moment_id)
+        clip_dur = (m.end - m.start) if m is not None else None
         for i, surf in enumerate(surfaces):
+            # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
+            # platform's hard cap, SKIP this surface only (conservative — the clip can still post
+            # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown
+            # duration or a platform with no cap -> DO NOT skip (fail-open; the old code posted
+            # regardless and we must never silently drop a post over an unprobed length).
+            max_secs = PLATFORM_MAX_SECONDS.get(surf.platform)
+            if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
+                continue   # over-cap for this surface -> no post here (still posts to others)
             aspect = PLATFORM_ASPECT.get(surf.platform, Fmt.r9x16)
             target_clip = _clip_for_aspect(led, cfg, moment_id, aspect)
             if target_clip.state not in _REUSABLE_CLIP_STATES:
