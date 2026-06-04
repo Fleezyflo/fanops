@@ -42,3 +42,33 @@ def make_thumbnail(path: Path, out_jpg: Path, *, at_seconds: float = 1.0) -> boo
             return False
         return r0.returncode == 0 and out_jpg.exists()
     return True
+
+def _entry_id(path: Path) -> str:
+    # stable, filesystem-safe review-entry id: short content hash keeps re-scans idempotent
+    return sha256_of(path)[:16]
+
+def discover(cfg: Config, roots: list[Path]) -> dict:
+    """Scan roots for media candidates, write a thumbnail + manifest entry per NEW candidate into
+    cfg.review. Skips content whose sha256 is already a ledger Source (no churn on re-scan) and
+    entries already in the manifest. Returns {found, new, skipped}. CHEAP: stat + 1 ffprobe + 1
+    thumbnail per candidate — no transcription/LLM."""
+    cfg.review.mkdir(parents=True, exist_ok=True)
+    (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
+    led = Ledger.load(cfg)
+    mpath = cfg.review / "manifest.json"
+    manifest = json.loads(mpath.read_text()) if mpath.exists() else {}
+    found = new = skipped = 0
+    for s in scan_local(roots):                  # media-ext + is_excluded already applied
+        p = Path(s); found += 1
+        digest = sha256_of(p)
+        eid = digest[:16]
+        if led.already_seen(sha256=digest) or eid in manifest:
+            skipped += 1
+            continue
+        meta = candidate_meta(p)
+        thumb = cfg.review / f"{eid}.jpg"
+        make_thumbnail(p, thumb)                 # fail-open: entry still listed if no thumb
+        manifest[eid] = {"source_path": str(p), "sha256": digest, **meta}
+        new += 1
+    mpath.write_text(json.dumps(manifest, indent=2))
+    return {"found": found, "new": new, "skipped": skipped}

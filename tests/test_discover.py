@@ -38,3 +38,38 @@ def test_make_thumbnail_fail_open_when_ffmpeg_fails(tmp_path, mocker):
     mocker.patch("fanops.discover.subprocess.run", side_effect=boom)
     assert discover.make_thumbnail(src, out) is False     # fail-open: no raise, no thumbnail
     assert not out.exists()
+
+def test_discover_writes_thumbnails_and_manifest(tmp_path, mocker):
+    from fanops.config import Config
+    src_dir = tmp_path / "bank"; src_dir.mkdir()
+    _put(src_dir / "good1.mp4", b"GOOD1"); _put(src_dir / "good2.mp4", b"GOOD2")  # distinct content -> distinct entries
+    _put(src_dir / "passport scan.jpg")          # PII-named -> excluded by is_excluded
+    _put(src_dir / "notes.txt")                  # non-media -> ignored
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.discover.probe_dimensions", return_value=(1080, 1920, 8.0))
+    mocker.patch("fanops.discover.make_thumbnail", side_effect=lambda p, o, **k: (o.write_bytes(b"JPG") or True))
+    summary = discover.discover(cfg, [src_dir])
+    assert summary["found"] == 2 and summary["new"] == 2          # only the 2 media, PII excluded
+    manifest = json.loads((cfg.review / "manifest.json").read_text())
+    assert len(manifest) == 2
+    # each entry resolves back to a real source_path + carries cheap meta
+    paths = {e["source_path"] for e in manifest.values()}
+    assert paths == {str(src_dir / "good1.mp4"), str(src_dir / "good2.mp4")}
+    assert all("bytes" in e and "duration" in e for e in manifest.values())
+    assert len(list(cfg.review.glob("*.jpg"))) == 2               # a thumbnail per candidate
+
+def test_discover_dedupes_already_seen_content(tmp_path, mocker):
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    src_dir = tmp_path / "bank"; src_dir.mkdir()
+    f = src_dir / "dup.mp4"; _put(f, b"SAME")
+    cfg = Config(root=tmp_path)
+    # pre-seed the ledger with a Source of this exact content sha
+    from fanops.ingest import sha256_of
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s_dup", source_path="/x.mp4", state=SourceState.catalogued, sha256=sha256_of(f)))
+    mocker.patch("fanops.discover.probe_dimensions", return_value=(0, 0, 0.0))
+    mocker.patch("fanops.discover.make_thumbnail", return_value=True)
+    summary = discover.discover(cfg, [src_dir])
+    assert summary["found"] == 1 and summary["new"] == 0 and summary["skipped"] == 1   # already in ledger
