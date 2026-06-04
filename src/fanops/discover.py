@@ -72,3 +72,35 @@ def discover(cfg: Config, roots: list[Path]) -> dict:
         new += 1
     mpath.write_text(json.dumps(manifest, indent=2))
     return {"found": found, "new": new, "skipped": skipped}
+
+def intake(cfg: Config) -> dict:
+    """Sweep cfg.review/approved/ : for each approved entry (a thumbnail moved there by the
+    operator), resolve its original via the manifest and COPY that original into cfg.inbox so the
+    existing pipeline catalogues it on the next advance. Idempotent (an entry already intaken is
+    recorded in review/intaken.json and skipped). A manifest-less or vanished original is reported
+    `missing`, never a crash. Returns {approved, intaken, missing}."""
+    approved_dir = cfg.review / "approved"
+    if not approved_dir.exists():
+        return {"approved": 0, "intaken": 0, "missing": 0}
+    mpath = cfg.review / "manifest.json"
+    manifest = json.loads(mpath.read_text()) if mpath.exists() else {}
+    donep = cfg.review / "intaken.json"
+    done = set(json.loads(donep.read_text())) if donep.exists() else set()
+    cfg.inbox.mkdir(parents=True, exist_ok=True)
+    approved = intaken = missing = 0
+    for entry in sorted(approved_dir.glob("*.jpg")):
+        eid = entry.stem
+        approved += 1
+        if eid in done:
+            continue                              # idempotent: already intaken
+        info = manifest.get(eid)
+        src = Path(info["source_path"]) if info else None
+        if src is None or not src.exists():
+            missing += 1
+            continue                              # stale/unknown entry — report, don't crash
+        dest = cfg.inbox / src.name
+        if not dest.exists():
+            shutil.copy2(src, dest)
+        done.add(eid); intaken += 1
+    donep.write_text(json.dumps(sorted(done), indent=2))
+    return {"approved": approved, "intaken": intaken, "missing": missing}

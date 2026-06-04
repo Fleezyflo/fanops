@@ -73,3 +73,45 @@ def test_discover_dedupes_already_seen_content(tmp_path, mocker):
     mocker.patch("fanops.discover.make_thumbnail", return_value=True)
     summary = discover.discover(cfg, [src_dir])
     assert summary["found"] == 1 and summary["new"] == 0 and summary["skipped"] == 1   # already in ledger
+
+def test_intake_copies_only_approved_originals_to_inbox(tmp_path, mocker):
+    from fanops.config import Config
+    src_dir = tmp_path / "bank"; src_dir.mkdir()
+    keep = src_dir / "keep.mp4"; _put(keep, b"KEEP")
+    drop = src_dir / "drop.mp4"; _put(drop, b"DROP")
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.discover.probe_dimensions", return_value=(0, 0, 0.0))
+    mocker.patch("fanops.discover.make_thumbnail", side_effect=lambda p, o, **k: (o.write_bytes(b"J") or True))
+    discover.discover(cfg, [src_dir])
+    # operator approves ONLY keep.mp4 by MOVING its thumbnail entry into approved/
+    from fanops.ingest import sha256_of
+    keep_eid = sha256_of(keep)[:16]
+    (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
+    (cfg.review / f"{keep_eid}.jpg").rename(cfg.review / "approved" / f"{keep_eid}.jpg")
+    summary = discover.intake(cfg)
+    assert summary["intaken"] == 1
+    inbox_files = {p.name for p in cfg.inbox.glob("*") if p.is_file()}
+    assert "keep.mp4" in inbox_files and "drop.mp4" not in inbox_files   # only the approved original
+
+def test_intake_is_idempotent_and_reports_missing(tmp_path, mocker):
+    from fanops.config import Config
+    src_dir = tmp_path / "bank"; src_dir.mkdir()
+    f = src_dir / "x.mp4"; _put(f, b"X")
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.discover.probe_dimensions", return_value=(0, 0, 0.0))
+    mocker.patch("fanops.discover.make_thumbnail", side_effect=lambda p, o, **k: (o.write_bytes(b"J") or True))
+    discover.discover(cfg, [src_dir])
+    from fanops.ingest import sha256_of
+    eid = sha256_of(f)[:16]
+    (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
+    (cfg.review / f"{eid}.jpg").rename(cfg.review / "approved" / f"{eid}.jpg")
+    assert discover.intake(cfg)["intaken"] == 1
+    # second run: nothing new to intake (idempotent — not re-copied)
+    assert discover.intake(cfg)["intaken"] == 0
+    # a missing original is reported, not a crash
+    f.unlink()
+    # re-approve a fresh entry pointing at the now-missing file
+    discover.discover(cfg, [src_dir])   # f is gone so nothing new; simulate a stale approved entry:
+    (cfg.review / "approved" / "deadbeefdeadbeef.jpg").write_bytes(b"J")
+    out = discover.intake(cfg)
+    assert out["missing"] >= 1
