@@ -19,6 +19,7 @@ from fanops.responder import get_responder
 from fanops.track import pull_metrics, _default_list_posts
 from fanops.reconcile import reconcile_posts, _default_get_status, _RECONCILABLE
 from fanops.adjust import classify_outcomes, amplify, retire
+from fanops.variant_amplify import apply_variant_amplify
 from fanops.log import get_logger
 
 def cmd_status(cfg: Config) -> int:
@@ -90,6 +91,19 @@ def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: fl
     print(f"adjusted; winners={len(r['winners'])} losers={len(r['losers'])}")
     return 0
 
+def cmd_amplify_variants(cfg: Config) -> int:
+    # Variant-gated amplification (v3): one transaction wrapping apply_variant_amplify (no network —
+    # like cmd_adjust). Inert unless FANOPS_VARIANT_AMPLIFY is on (the function self-guards), so this
+    # verb is always safe to run/inspect. Amplify-only: apply_variant_amplify never retires/deletes.
+    from fanops.models import SourceState
+    with Ledger.transaction(cfg) as led:
+        before = len(led.sources_in_state(SourceState.moments_requested))
+        led = apply_variant_amplify(led, cfg)
+        after = len(led.sources_in_state(SourceState.moments_requested))
+    write_digest(Ledger.load(cfg), cfg)
+    print(f"variant-amplify: {max(0, after - before)} source(s) amplified")
+    return 0
+
 def cmd_gc(cfg: Config, keep_days: int) -> int:
     # FIX F83: reclaim disk — drop the .mp4 files of retired/analyzed clips older than keep_days
     # (the ledger record + the post's cached media_url persist; the local file is dead weight
@@ -119,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     p_adj = sub.add_parser("adjust"); p_adj.add_argument("--winner-pct", type=float, default=0.3)
     p_adj.add_argument("--retire-pct", type=float, default=0.2); p_adj.add_argument("--lift-floor", type=float, default=20.0)
     p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=30)
+    sub.add_parser("amplify-variants")     # variant-gated amplification (v3); inert unless flag on
     p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
     p_res.add_argument("status", choices=["published", "failed"]); p_res.add_argument("--url", default=None)
     p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
@@ -258,6 +273,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "track":    return cmd_track(cfg, args.window)
     if args.cmd == "reconcile": return cmd_reconcile(cfg)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
+    if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
     if args.cmd == "resolve":
         # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve
@@ -354,6 +370,17 @@ def _dispatch(cfg: Config, args) -> int:
                     led = retire(led, r["losers"])
             except Exception as e:
                 get_logger(cfg)("learn", "-", "error", err=str(e)[:120])
+        # variant-amplify (v3): a SEPARATE, independently-gated learning pass — proven SUSTAINED
+        # variant winners auto-amplify their source. Gated by its OWN kill switch (cfg.variant_amplify,
+        # default OFF) AND the same live-backend+key guard as the learn block. Its OWN try/except so it
+        # can never affect the block above and a hiccup is swallowed (exit stays 0). apply_variant_amplify
+        # is amplify-only (never retires/deletes) and self-guards on the flag, so this is fail-SAFE.
+        if cfg.variant_amplify and cfg.poster_backend != "dryrun" and cfg.blotato_api_key:
+            try:
+                with Ledger.transaction(cfg) as led:
+                    led = apply_variant_amplify(led, cfg)
+            except Exception as e:
+                get_logger(cfg)("variant_amplify", "-", "error", err=str(e)[:120])
         # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
         # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
         _heartbeat(cfg, s); print(s); return 0

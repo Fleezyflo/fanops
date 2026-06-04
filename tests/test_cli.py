@@ -538,3 +538,24 @@ def test_discover_unknown_folder_exits_2(tmp_path, monkeypatch, capsys):
     from fanops.cli import main
     assert main(["discover", str(tmp_path / "nope")]) == 2
     assert "no such" in capsys.readouterr().err.lower() and "Traceback" not in capsys.readouterr().err
+
+
+def test_amplify_variants_verb_runs_and_is_noop_below_gate(tmp_path, monkeypatch, capsys):
+    # The verb is registered, runs clean, and (empty ledger) amplifies nothing.
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    Ledger.load(Config(root=tmp_path)).save()            # empty ledger on disk
+    rc = main(["amplify-variants"])
+    assert rc == 0
+    assert "variant-amplify" in capsys.readouterr().out  # printed a summary line
+
+
+def test_amplify_variants_inert_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_VARIANT_AMPLIFY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    Ledger.load(Config(root=tmp_path)).save()
+    assert main(["amplify-variants"]) == 0               # flag OFF -> apply_variant_amplify inert
