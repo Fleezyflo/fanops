@@ -512,3 +512,29 @@ def test_retry_metrics_published_vs_not_vs_unknown(tmp_path, monkeypatch, capsys
     # unknown post -> exit 2
     assert main(["retry-metrics", "nope"]) == 2
     assert "no such post: nope" in capsys.readouterr().err
+
+
+def test_discover_and_intake_via_cli(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    bank = tmp_path / "bank"; bank.mkdir()
+    (bank / "v.mp4").write_bytes(b"VID")
+    mocker.patch("fanops.discover.probe_dimensions", return_value=(0, 0, 0.0))
+    mocker.patch("fanops.discover.make_thumbnail", side_effect=lambda p, o, **k: (o.write_bytes(b"J") or True))
+    from fanops.cli import main
+    assert main(["discover", str(bank)]) == 0
+    cfg = Config(root=tmp_path)
+    assert (cfg.review / "manifest.json").exists()
+    # approve the one entry, then intake
+    from fanops.ingest import sha256_of
+    eid = sha256_of(bank / "v.mp4")[:16]
+    (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
+    (cfg.review / f"{eid}.jpg").rename(cfg.review / "approved" / f"{eid}.jpg")
+    assert main(["intake"]) == 0
+    assert (cfg.inbox / "v.mp4").exists()
+
+def test_discover_unknown_folder_exits_2(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    from fanops.cli import main
+    assert main(["discover", str(tmp_path / "nope")]) == 2
+    assert "no such" in capsys.readouterr().err.lower() and "Traceback" not in capsys.readouterr().err
