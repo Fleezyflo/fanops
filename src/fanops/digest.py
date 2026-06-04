@@ -101,6 +101,35 @@ def render_digest(led: Ledger, cfg: Config) -> str:
                  for p in rows]
         out.append("\n## Lift by variant (which creative is winning)\n" + "\n".join(lines) + "\n")
 
+    # variant-amplify (v3) observability: per surface, the sustained-win streak toward the amplify
+    # gate. "amplified" = currently a full-gate candidate; "building streak (n/MIN)" = a winner whose
+    # lead has not yet sustained across enough windows; "gathering data" = no current streak. Fail-open
+    # and gated on the flag (section absent when v3 is off). Read-only: reuses the streak state +
+    # amplify_candidates (one gate home in variant_amplify), never mutates / never touches retire.
+    if cfg.variant_amplify:
+        try:
+            from fanops.variant_amplify import amplify_candidates, _surfaces
+            cands = amplify_candidates(led, cfg)
+            cand_sources = {c["source_id"] for c in cands}
+            alines = []
+            for account, platform in sorted(_surfaces(led), key=lambda s: (s[0], s[1].value)):
+                entry = led.variant_streaks.get(f"{account}|{platform.value}", {})
+                hook = entry.get("hook")
+                streak = int(entry.get("streak", 0))
+                # is THIS surface's winning hook a current candidate? (match by hook AND source so a
+                # cross-surface candidate can't mislabel this row)
+                is_amplified = bool(hook) and any(
+                    c["winning_hook"] == hook and c["source_id"] in cand_sources for c in cands)
+                state = ("amplified" if is_amplified
+                         else f"building streak ({streak}/{cfg.variant_amplify_min_streak})" if streak
+                         else "gathering data")
+                alines.append(f"- `{hook or '-'}` ({account}/{platform.value}): {state}")
+            if alines:
+                out.append("\n## Variant amplification (v3 — proven winners → more reach)\n"
+                           + "\n".join(alines) + "\n")
+        except Exception:
+            logger.warning("variant-amplify digest section degraded (fail-open)", exc_info=True)
+
     awaiting = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +
                 [f"- captions: {k}" for k in pending(cfg, kind="captions")])
     if awaiting:

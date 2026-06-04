@@ -191,3 +191,28 @@ def test_needs_reconcile_surfaced(tmp_path):
     assert "`prec`" in section and "may be live" in section
     # and it must NOT be lumped into the plain Failures bucket
     assert "Failures" not in md or "`prec`" not in md.split("Failures")[1].split("##")[0]
+
+
+def test_digest_shows_variant_amplify_streak(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    for i in range(8):
+        led.add_post(Post(id=str(i), parent_id="c1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                          variant_key=f"v{i}", variant_hook="WIN", metrics={"lift_score": 90.0}))
+    for i in range(3):
+        led.add_post(Post(id=f"l{i}", parent_id="c1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                          variant_key=f"vl{i}", variant_hook="LOSE", metrics={"lift_score": 1.0}))
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 2}
+    out = render_digest(led, cfg)
+    assert "Variant amplification" in out
+    assert "2/3" in out or "streak" in out.lower()      # building-streak state shown
+
+
+def test_digest_no_amplify_section_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_VARIANT_AMPLIFY", raising=False)
+    cfg = Config(root=tmp_path)
+    out = render_digest(Ledger.load(cfg), cfg)
+    assert "Variant amplification" not in out            # flag off -> section absent
