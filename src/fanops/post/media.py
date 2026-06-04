@@ -14,6 +14,22 @@ from fanops.ledger import Ledger
 
 BASE_URL = "https://backend.blotato.com/v2"
 
+# Reject a runaway upload BEFORE we touch the network (AUDIT (e)). Clips are short vertical
+# by design, so 500 MB is generous headroom yet catches a mis-pointed path at a full library /
+# a corrupt multi-GB file before it wastes a presign + a long stalled PUT.
+_MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+
+# Size-aware PUT timeout: a flat 120s kills a large-but-valid upload mid-stream and makes a tiny
+# one wait pointlessly long on a hang. Scale base + per-MB allowance, clamped (AUDIT (e)).
+_PUT_TIMEOUT_BASE_S = 60.0          # floor — even a 1-byte file gets this
+_PUT_TIMEOUT_PER_MB_S = 2.0         # ~2s/MB ≈ a slow ~4 Mbps uplink with margin
+_PUT_TIMEOUT_MAX_S = 600.0          # ceiling — never wait more than 10 min on one PUT
+
+def _put_timeout_for(size_bytes: int) -> float:
+    """Per-MB-scaled PUT timeout, floored at the base and clamped at the max."""
+    size_mb = max(0, size_bytes) / (1024 * 1024)
+    return min(_PUT_TIMEOUT_MAX_S, _PUT_TIMEOUT_BASE_S + size_mb * _PUT_TIMEOUT_PER_MB_S)
+
 def dryrun_media_url(path: Path) -> str:
     return f"file://{Path(path).resolve()}"
 
@@ -21,6 +37,13 @@ def upload_media(cfg: Config, path: Path) -> str:
     key = cfg.blotato_api_key
     if not key:
         raise BlotatoAuthError("BLOTATO_API_KEY missing — cannot upload media.")
+    size = Path(path).stat().st_size
+    if size > _MAX_UPLOAD_BYTES:
+        # Plain RuntimeError (NOT BlotatoAuthError): this is a bad input, not an auth halt —
+        # fail THIS upload loudly before any network, don't halt the whole queue by type.
+        raise RuntimeError(
+            f"Media file too large to upload: {size} bytes "
+            f"(> cap {_MAX_UPLOAD_BYTES} bytes) — {path}")
     headers = {"blotato-api-key": key, "Content-Type": "application/json"}
     resp = requests.post(f"{BASE_URL}/media/uploads", headers=headers,
                          json={"filename": Path(path).name}, timeout=30)
@@ -36,7 +59,7 @@ def upload_media(cfg: Config, path: Path) -> str:
     ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     with open(path, "rb") as fh:
         put = requests.put(presign["presignedUrl"], data=fh,
-                           headers={"Content-Type": ctype}, timeout=120)
+                           headers={"Content-Type": ctype}, timeout=_put_timeout_for(size))
     if put.status_code >= 300:
         raise RuntimeError(f"Blotato media PUT failed ({put.status_code}): {(put.text or '')[:300]}")
     return presign["publicUrl"]
