@@ -124,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
     p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
+    p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
+    sub.add_parser("intake")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
@@ -302,6 +304,22 @@ def _dispatch(cfg: Config, args) -> int:
             if p.state is PostState.published:    # leave it published so the next track pass re-pulls
                 print(f"retry-metrics {args.post_id}: will re-pull on next track"); return 0
             print(f"retry-metrics {args.post_id}: not published (state={p.state.value})", file=sys.stderr); return 2
+    if args.cmd == "discover":
+        from pathlib import Path as _P
+        from fanops.discover import discover as _discover
+        root = _P(args.folder)
+        if not root.exists() or not root.is_dir():
+            print(f"no such folder: {args.folder}", file=sys.stderr); return 2
+        s = _discover(cfg, [root])
+        print(f"discovered {s['found']} candidate(s): {s['new']} new in 00_review/, {s['skipped']} already seen. "
+              f"Review them in Finder, move keepers into 00_review/approved/, then `fanops intake`.")
+        return 0
+    if args.cmd == "intake":
+        from fanops.discover import intake as _intake
+        s = _intake(cfg)
+        print(f"intake: {s['intaken']} approved original(s) copied into 01_inbox/ "
+              f"({s['approved']} approved, {s['missing']} missing). Run `fanops advance`/`run` to pipeline them.")
+        return 0
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc
         if (rc := _check_preflight(cfg)):  return rc
