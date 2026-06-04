@@ -6,6 +6,8 @@ styled ASS file (subtitle style bottom-third, optional hook top-third). The path
 and the cached capability probe are likewise standalone so a clip render probes ffmpeg once.
 """
 from __future__ import annotations
+from pathlib import Path
+
 import fanops.overlay as overlay
 from fanops.overlay import build_ass, write_ass, subtitles_vf, ffmpeg_has_textfilter, derive_hook
 
@@ -134,3 +136,49 @@ def test_derive_hook_takes_punchy_first_clause():
     assert len(derive_hook(long).split()) == 7
     # explicit max_words is honoured
     assert derive_hook(long, max_words=3) == "one two three"
+
+
+def test_burn_hook_only_builds_hook_ass_and_cmd(tmp_path, mocker):
+    import fanops.overlay as overlay
+    overlay._TEXTFILTER_CACHE = None
+    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
+    base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
+    out = tmp_path / "variant.mp4"
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        Path(cmd[-1]).write_bytes(b"VARIANT")
+        class R: returncode = 0; stderr = ""
+        return R()
+    mocker.patch("fanops.overlay.subprocess.run", side_effect=fake_run)
+    ok = overlay.burn_hook_only(str(base), str(out), "WATCH THIS", width=1080, height=1920, font="Arial Unicode MS")
+    assert ok is True and out.exists()
+    vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
+    assert "subtitles=" in vf                      # the hook is burned via an ass
+    assert captured["cmd"][-1] == str(out)         # output is last (matches fake_run + clip.py convention)
+    # a .ass containing the hook text was written next to the output
+    ass = list(tmp_path.glob("*.ass"))
+    assert ass and "WATCH THIS" in ass[0].read_text()
+
+def test_burn_hook_only_failopen_when_no_textfilter(tmp_path, mocker):
+    import fanops.overlay as overlay
+    overlay._TEXTFILTER_CACHE = None
+    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=False)
+    base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
+    out = tmp_path / "variant.mp4"
+    ran = mocker.patch("fanops.overlay.subprocess.run")
+    ok = overlay.burn_hook_only(str(base), str(out), "WATCH THIS", width=1080, height=1920)
+    assert ok is False                              # fail-open: signalled no burn
+    assert out.exists() and out.read_bytes() == b"BASE"   # output is a copy of the base, unchanged
+    ran.assert_not_called()                         # no ffmpeg invoked
+
+def test_burn_hook_only_failopen_when_hook_empty(tmp_path, mocker):
+    import fanops.overlay as overlay
+    overlay._TEXTFILTER_CACHE = None
+    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
+    base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
+    out = tmp_path / "variant.mp4"
+    ran = mocker.patch("fanops.overlay.subprocess.run")
+    ok = overlay.burn_hook_only(str(base), str(out), "", width=1080, height=1920)
+    assert ok is False and out.exists() and out.read_bytes() == b"BASE"
+    ran.assert_not_called()
