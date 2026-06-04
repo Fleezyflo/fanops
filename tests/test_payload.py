@@ -34,3 +34,22 @@ def test_mcp_args_flat():
     assert a["accountId"] == "1" and a["mediaUrls"] == ["https://h/v.mp4"]
     assert a["mediaType"] == "reel"
     assert "post" not in a and "content" not in a
+
+def test_youtube_title_fallback_from_config():
+    # AUDIT (h): when no explicit title is given, the YouTube display-name fallback must come
+    # from config (operator-overridable FANOPS_ARTIST_NAME), NOT a hardcoded artist name. An
+    # operator who runs FanOps for a different artist passes artist_name down and the YouTube
+    # title fallback follows.
+    yt = default_target_fields("youtube", artist_name="Custom Artist")
+    assert yt["title"] == "Custom Artist"
+
+def test_youtube_title_default_unchanged():
+    # The default is unchanged: with no override, the YouTube title fallback is still "Moh Flow"
+    # (so existing callers/behavior are unaffected).
+    yt = default_target_fields("youtube")
+    assert yt["title"] == "Moh Flow"
+
+def test_youtube_explicit_title_beats_artist_name():
+    # An explicit title (a real caption-derived title) always wins over the artist-name fallback.
+    yt = default_target_fields("youtube", title="Real Title", artist_name="Custom Artist")
+    assert yt["title"] == "Real Title"

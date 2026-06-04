@@ -6,13 +6,18 @@ MCP arg shape is an INTEGRATION CHECKPOINT (confirm against the connected MCP)."
 from __future__ import annotations
 
 def default_target_fields(platform: str, *, title: str | None = None,
-                          page_id: str | None = None, media_type: str | None = None) -> dict:
+                          page_id: str | None = None, media_type: str | None = None,
+                          artist_name: str = "Moh Flow") -> dict:
+    # artist_name is the YouTube title fallback when `title` is absent (audit h). It defaults to
+    # "Moh Flow" so existing callers/tests are unchanged; the real publish path passes
+    # cfg.artist_name (operator-overridable via FANOPS_ARTIST_NAME). An explicit `title` always
+    # wins. This is the DISPLAY NAME, distinct from tagging.ARTIST_HANDLE (the @handle).
     if platform == "tiktok":
         return {"privacyLevel": "PUBLIC_TO_EVERYONE", "disabledComments": False,
                 "disabledDuet": False, "disabledStitch": False, "isBrandedContent": False,
                 "isYourBrand": False, "isAiGenerated": False}
     if platform == "youtube":
-        return {"title": title or "Moh Flow", "privacyStatus": "public",
+        return {"title": title or artist_name, "privacyStatus": "public",
                 "shouldNotifySubscribers": False}
     if platform == "facebook":
         out: dict = {}

@@ -89,7 +89,7 @@ class BlotatoRestPoster:
         payload = build_blotato_payload(
             account_id=post.account_id, platform=post.platform.value, text=post.caption,
             media_urls=post.media_urls, scheduled_time=post.scheduled_time,
-            extra_target=default_target_fields(post.platform.value))
+            extra_target=default_target_fields(post.platform.value, artist_name=self.cfg.artist_name))
         delay = 1.0
         last = None
         for attempt in range(_MAX_RETRIES):

@@ -85,6 +85,17 @@ class Config:
         return os.getenv("FANOPS_RESPONDER") or "manual"
 
     @property
+    def artist_name(self) -> str:
+        # Operator override for the artist DISPLAY NAME used as the YouTube title fallback when a
+        # post has no explicit title (audit h). Default "Moh Flow" — unchanged from the old
+        # hardcoded value in payload.default_target_fields, so existing behavior is identical; an
+        # operator running FanOps for a different artist sets FANOPS_ARTIST_NAME. NOTE: this is the
+        # display name, DISTINCT from tagging.ARTIST_HANDLE (the @mohflow caption mention) — they
+        # have different sources and are intentionally not unified.
+        v = os.getenv("FANOPS_ARTIST_NAME")
+        return v.strip() if v and v.strip() else "Moh Flow"
+
+    @property
     def whisper_model(self) -> str:
         # Operator override for the local Whisper model. Default "turbo" (fast, good
         # timestamps). Pin a smaller model (e.g. "tiny"/"base") for offline / air-gapped /

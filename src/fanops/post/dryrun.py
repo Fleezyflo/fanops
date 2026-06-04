@@ -16,7 +16,7 @@ class DryRunPoster:
         payload = build_blotato_payload(
             account_id=post.account_id, platform=post.platform.value, text=post.caption,
             media_urls=post.media_urls, scheduled_time=post.scheduled_time,
-            extra_target=default_target_fields(post.platform.value))
+            extra_target=default_target_fields(post.platform.value, artist_name=self.cfg.artist_name))
         self.cfg.scheduled.mkdir(parents=True, exist_ok=True)
         (self.cfg.scheduled / f"{post_id}.json").write_text(json.dumps(payload, indent=2))
         # Stamp a synthetic submission_id so dryrun emulates the real posters (rest/mcp set this
