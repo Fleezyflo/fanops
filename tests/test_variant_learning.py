@@ -58,3 +58,18 @@ def test_deterministic(tmp_path):
     led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0), _post("3", "@a", "WIN", 90.0),
                      _post("4", "@a", "LOSE", 10.0), _post("5", "@a", "LOSE", 10.0), _post("6", "@a", "LOSE", 10.0)])
     assert best_hooks(led, cfg, "@a", Platform.instagram) == best_hooks(led, cfg, "@a", Platform.instagram)
+
+
+# --- variation v2 (Task 5): amplify-isolation invariant (C1), mechanized -------------------------
+# The whole safety case for v2 is that it closes the loop on the CHEAP/REVERSIBLE caption-request
+# side and NEVER touches the amplify/classify_outcomes/_delete_moment_cascade machinery (the C1
+# cascade-delete-bug path). This mirrors v1's invariant: the amplify path must stay BLIND to the
+# learner, so a noisy "variant A is winning" signal can never reach the code that could delete real
+# rendered content. A grep over the source is the cheapest enforceable proof — if a future edit
+# wires `variant_learning` into track.py/pipeline.py, this test goes red and names the offender.
+def test_learning_never_imported_by_amplify_path():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
+    for f in ("track.py", "pipeline.py"):
+        assert "variant_learning" not in (root / f).read_text(), \
+            f"{f} must stay blind to variant_learning (C1: the amplify/delete-cascade path)"

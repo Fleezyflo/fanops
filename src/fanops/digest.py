@@ -1,15 +1,45 @@
 """Human-readable digest: unit counts by state, brand-risk holds, FAILURES (posts in failed +
 units in error — FIX F51), and the agent steps awaiting a response."""
 from __future__ import annotations
+import logging
 from collections import Counter
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import PostState
+from fanops.models import Platform, PostState
 from fanops.agentstep import pending
+# Creative-variation v2: reuse the gated scorer so the digest's per-surface "learning ACTIVE / gathering
+# data" annotation and request_captions' caption-bias share ONE gate-logic home (they can never drift).
+# The digest is a READ-ONLY observability surface — importing the (pure, read-only) learner here is safe
+# and does NOT touch the C1 amplify/delete-cascade path (track.py/pipeline.py stay blind to it; the
+# isolation grep test enforces that). Bound at module scope so the fail-open path is unit-patchable.
+from fanops.variant_learning import best_hooks
+
+logger = logging.getLogger(__name__)
 
 def _counts(units) -> str:
     c = Counter(u.state.value for u in units)
     return "".join(f"  - {s}: {n}\n" for s, n in sorted(c.items())) or "  (none)\n"
+
+def _gate_state(led: Ledger, cfg: Config, account: str, platform: Platform,
+                _cache: dict[tuple[str, str], str] | None = None) -> str:
+    """The learning-loop state for one (account, platform) surface, for the "Lift by variant"
+    digest section. "learning ACTIVE" iff the gated scorer (variant_learning.best_hooks — the SAME
+    one request_captions biases on, so the digest and the caption-bias can never disagree) returns a
+    trustworthy winner for this surface; otherwise "gathering data" (the loop is still open here).
+    FAIL-OPEN: any error in the scorer degrades to "gathering data" (the safe/closed default) so a
+    learning failure can never blank or crash the operator's observability digest. Memoised per render
+    via the optional _cache (best_hooks is deterministic, so one call per surface is enough)."""
+    key = (account, platform.value)
+    if _cache is not None and key in _cache:
+        return _cache[key]
+    try:
+        state = "learning ACTIVE" if best_hooks(led, cfg, account, platform) else "gathering data"
+    except Exception:
+        logger.warning("variant gate-state degraded to 'gathering data' (fail-open)", exc_info=True)
+        state = "gathering data"
+    if _cache is not None:
+        _cache[key] = state
+    return state
 
 def render_digest(led: Ledger, cfg: Config) -> str:
     out = ["# FAN OPS Ledger Digest\n"]
@@ -56,14 +86,19 @@ def render_digest(led: Ledger, cfg: Config) -> str:
                    + "\n".join(unmeasured) + "\n")
 
     # Creative-variation observability (v1): rank analyzed posts that carry a variant by lift_score,
-    # so the operator sees which per-account creative treatment performs. Observe-only — no automated
-    # propagation (that touches the amplify machinery, deferred).
+    # so the operator sees which per-account creative treatment performs. v2 annotates each surface's
+    # LEARNING-LOOP state ("learning ACTIVE" once it crossed the trust gate, else "gathering data")
+    # via the SAME gated scorer request_captions uses (one gate-logic home). Still observe-only on the
+    # amplify side — no automated propagation (that touches the amplify machinery, deferred / C1).
     variant_posts = [p for p in led.posts.values()
                      if p.variant_key and p.state is PostState.analyzed and "lift_score" in p.metrics]
     if variant_posts:
         rows = sorted(variant_posts, key=lambda p: p.metrics.get("lift_score", 0.0), reverse=True)
+        gate_cache: dict[tuple[str, str], str] = {}     # one best_hooks call per surface per render
         lines = [f"- `{p.variant_hook or p.variant_key}` ({p.account}/{p.platform.value}): "
-                 f"lift {p.metrics.get('lift_score', 0.0)}" for p in rows]
+                 f"lift {p.metrics.get('lift_score', 0.0)} "
+                 f"— {_gate_state(led, cfg, p.account, p.platform, gate_cache)}"
+                 for p in rows]
         out.append("\n## Lift by variant (which creative is winning)\n" + "\n".join(lines) + "\n")
 
     awaiting = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +

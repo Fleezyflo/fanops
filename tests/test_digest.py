@@ -127,6 +127,56 @@ def test_digest_no_variant_section_when_none(tmp_path):
     out = render_digest(Ledger.load(cfg), cfg)
     assert "Lift by variant" not in out             # absent when no variant posts
 
+def test_digest_variant_shows_gate_state(tmp_path):
+    # variation v2 (Task 5): the "Lift by variant" section annotates each surface's LOOP STATE so the
+    # operator sees where the learning gate stands — "learning ACTIVE" once a surface crossed the
+    # trust gate (>= MIN_POSTS analyzed posts AND beating the runner-up by >= MIN_GAP), else
+    # "gathering data". The gate verdict comes from variant_learning.best_hooks (ONE home for the
+    # gate logic — same scorer request_captions uses), proving the digest and the caption-bias agree.
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    # @a/instagram: PAST GATE — 3 WIN @ lift 90 + 3 LOSE @ lift 10 (gap 80 >= 10, leader has 3 >= 3).
+    for i, (hook, lift) in enumerate(
+        [("WIN", 90.0), ("WIN", 90.0), ("WIN", 90.0), ("LOSE", 10.0), ("LOSE", 10.0), ("LOSE", 10.0)]
+    ):
+        led.add_post(Post(id=f"a{i}", parent_id="c1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                          variant_key=f"vk_a{i}", variant_hook=hook, metrics={"lift_score": lift}))
+    # @b/instagram: BELOW GATE — a single analyzed post (too few to trust).
+    led.add_post(Post(id="b0", parent_id="c1", account="@b", account_id="2",
+                      platform=Platform.instagram, caption="y", state=PostState.analyzed,
+                      variant_key="vk_b0", variant_hook="LONE", metrics={"lift_score": 50.0}))
+    out = render_digest(led, cfg)
+    section = out.split("Lift by variant")[1]
+    assert "learning ACTIVE" in section and "gathering data" in section   # both states render
+    # bind each state to the RIGHT surface line (not just "both words appear somewhere"): the @a line
+    # is ACTIVE, the @b line is gathering. A constant/no-op gate would put the same label on both.
+    a_line = [ln for ln in section.splitlines() if "@a/instagram" in ln][0]
+    b_line = [ln for ln in section.splitlines() if "@b/instagram" in ln][0]
+    assert "learning ACTIVE" in a_line and "gathering data" not in a_line
+    assert "gathering data" in b_line and "learning ACTIVE" not in b_line
+
+def test_digest_variant_gate_state_failopen(tmp_path, monkeypatch):
+    # FAIL-OPEN: a raising best_hooks must NOT lose the whole "Lift by variant" section (a learning
+    # failure can never degrade the operator's observability). The lift rows still render; the
+    # gate-state annotation simply degrades to "gathering data" (the safe/closed default).
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="a0", parent_id="c1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      variant_key="vk_a0", variant_hook="HOOK A", metrics={"lift_score": 80.0}))
+    monkeypatch.setattr("fanops.digest.best_hooks",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = render_digest(led, cfg)                       # must NOT raise
+    assert "Lift by variant" in out and "HOOK A" in out and "80" in out   # rows survive the error
+    assert "gathering data" in out.split("Lift by variant")[1]            # safe default annotation
+
 def test_needs_reconcile_surfaced(tmp_path):
     # AUDIT C1: a post parked in needs_reconcile (ambiguous publish failure — may be live on the
     # platform) MUST surface so a human verifies via GET /v2/posts/:id before any resubmit. It is
