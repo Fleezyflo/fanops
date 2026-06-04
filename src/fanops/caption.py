@@ -16,6 +16,10 @@ from fanops.agentstep import write_request, read_response, request_path
 # enforced by an isolation grep test). Bound at module scope so request_captions' fail-open path is
 # unit-patchable (tests monkeypatch fanops.caption.best_hooks to prove a raising scorer is swallowed).
 from fanops.variant_learning import best_hooks
+# Cross-surface transfer (the v2 follow-up): SAME safe side as best_hooks — imported here ONLY
+# (the amplify/delete path stays blind to it; the isolation tests enforce it). Bound at module scope
+# so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
+from fanops.variant_transfer import transferred_hooks
 
 logger = logging.getLogger(__name__)
 
@@ -97,12 +101,34 @@ def _learned_hooks(led: Ledger, cfg: Config,
         logger.warning("variant_learning hint skipped (fail-open)", exc_info=True)
         return []
 
+def _transferred_hooks(led: Ledger, cfg: Config, accounts,
+                       surfaces: list[tuple[str, Platform]]) -> list[str]:
+    """Cross-surface transfer — the cold-start prior. When FANOPS_VARIANT_TRANSFER is on, ask the
+    gated transfer scorer for each surface's borrowed STYLE(s) and return the de-duplicated union
+    (insertion order preserved -> deterministic). Gated OFF by default, or no accounts registry -> [].
+    FAIL-OPEN: any error is logged once and yields [] so a transfer failure can never block a caption."""
+    if not cfg.variant_transfer or accounts is None:
+        return []
+    try:
+        out: list[str] = []
+        seen: set[str] = set()
+        for acct, plat in surfaces:
+            for h in transferred_hooks(led, cfg, accounts, acct, plat):
+                if h not in seen:
+                    seen.add(h)
+                    out.append(h)
+        return out
+    except Exception:
+        logger.warning("variant transfer prior skipped (fail-open)", exc_info=True)
+        return []
+
 def request_captions(led: Ledger, cfg: Config, clip_id: str,
-                     surfaces: list[tuple[str, Platform]]) -> Ledger:
+                     surfaces: list[tuple[str, Platform]], accounts=None) -> Ledger:
     clip = led.clips[clip_id]
     moment = led.moments[clip.parent_id]
     src = led.sources.get(moment.parent_id)
     learned = _learned_hooks(led, cfg, surfaces)
+    transferred = _transferred_hooks(led, cfg, accounts, surfaces)
     payload = {
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
@@ -113,6 +139,9 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         # variation v2: only present when a surface crossed the trust gate -> OFF/below-gate keeps
         # the payload byte-identical to pre-v2 (caption_prompt renders this block when present).
         **({"learned_hooks": learned} if learned else {}),
+        # transfer (v2 follow-up): a borrowed cross-surface STYLE for a COLD recipient — separate
+        # key so own-signal reads as primary; absent unless the flag is on AND a donor qualifies.
+        **({"learned_hooks_transferred": transferred} if transferred else {}),
     }
     write_request(cfg, kind="captions", key=clip_id, payload=payload)
     led.set_clip_state(clip_id, ClipState.captions_requested)
