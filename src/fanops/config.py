@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 _log = logging.getLogger("fanops.config")
 
 _STAGE = {
-    "control": "00_control", "inbox": "01_inbox", "sources": "02_sources",
+    "control": "00_control", "review": "00_review", "inbox": "01_inbox", "sources": "02_sources",
     "clips": "03_clips", "agent_io": "04_agent_io", "scheduled": "05_scheduled",
     "published": "06_published", "reports": "07_reports",
 }

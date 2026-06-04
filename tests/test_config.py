@@ -51,3 +51,11 @@ def test_creative_variation_defaults_off_and_respects_env(tmp_path, monkeypatch)
     assert Config(root=tmp_path).creative_variation is True
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
     assert Config(root=tmp_path).creative_variation is False
+
+
+def test_config_has_review_dir(tmp_path):
+    from fanops.config import Config
+    cfg = Config(root=tmp_path)
+    assert cfg.review == cfg.base / "00_review"        # the discovery review folder
+    # approved subfolder convention (used by intake) is review/approved
+    assert (cfg.review / "approved").name == "approved"
