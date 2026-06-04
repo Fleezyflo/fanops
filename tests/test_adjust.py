@@ -138,3 +138,25 @@ def test_amplify_preserves_winners_published_lineage(tmp_path):
     assert led.moments["m1"].state is MomentState.retired
     # the NEW amplify moment was still created
     assert any(m.content_token == "20.00-26.00" for m in led.moments_of("s1"))
+
+
+def test_amplify_default_guidance_unchanged_without_extra(tmp_path):
+    # extra_guidance defaults to "" -> the written moment-request guidance must NOT contain any
+    # injected hook block; behavior byte-identical to today (the existing callers pass nothing).
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _analyzed_post(led, 90.0, "p1", "c1", "m1", "s1")
+    amplify(led, cfg, ["p1"])
+    payload = json.loads(request_path(cfg, "moments", "s1").read_text())
+    assert "lean toward" not in payload["guidance"].lower()
+    assert payload["guidance"].startswith("AMPLIFY:")
+
+
+def test_amplify_injects_extra_guidance(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _analyzed_post(led, 90.0, "p1", "c1", "m1", "s1")
+    amplify(led, cfg, ["p1"], extra_guidance="WINNING_HOOK_TEXT")
+    payload = json.loads(request_path(cfg, "moments", "s1").read_text())
+    assert "WINNING_HOOK_TEXT" in payload["guidance"]
+    assert payload["guidance"].startswith("AMPLIFY:")     # base guidance still leads

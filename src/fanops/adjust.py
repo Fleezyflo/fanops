@@ -29,7 +29,7 @@ def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float
     return {"winners": winners, "losers": losers}
 
 def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
-            max_amplify_per_source: int = 3) -> Ledger:
+            max_amplify_per_source: int = 3, extra_guidance: str = "") -> Ledger:
     for pid in winner_post_ids:
         post = led.posts.get(pid)
         if post is None:
@@ -48,6 +48,8 @@ def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
         guidance = (f"AMPLIFY: a moment like '{moment.transcript_excerpt}' ({moment.reason}) "
                     f"hit hard (lift={post.metrics.get('lift_score')}). Find MORE moments in that "
                     f"vein in this source — do not repeat the same timestamps.")
+        if extra_guidance:
+            guidance += f" {extra_guidance}"
         payload = MomentRequest(source_id=src.id, request_id="", duration=src.duration or 0.0,
                                 transcript=src.transcript or [], signal_peaks=src.signal_peaks or [],
                                 language=src.language, guidance=guidance).model_dump()
