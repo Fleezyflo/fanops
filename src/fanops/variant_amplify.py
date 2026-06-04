@@ -15,7 +15,9 @@ Enforced by the retire-isolation AST test + the mutation-proof + wrong-signal no
 tests/test_variant_amplify.py."""
 from __future__ import annotations
 from statistics import mean
+from fanops.adjust import amplify          # AMPLIFY-ONLY: import amplify, NEVER retire (C1 / G1)
 from fanops.ids import _hash
+from fanops.log import get_logger
 from fanops.models import Platform, PostState
 from fanops.variant_learning import best_hooks
 
@@ -124,3 +126,23 @@ def amplify_candidates(led, cfg) -> list[dict]:
         out.append({"source_id": source_id, "winning_hook": hook, "post_id": post_id,
                     "evidence": {"posts": len(lifts), "streak": int(entry.get("streak", 0))}})
     return out
+
+
+def apply_variant_amplify(led, cfg):
+    """Actuator. Update streaks, then amplify each fully-gated candidate's source — injecting the
+    winning hook as extra guidance. AMPLIFY-ONLY: never calls retire/_delete_moment_cascade. FAIL-SAFE:
+    any exception -> log once, NO partial mutation beyond what already committed, return led. The
+    caller (cli.run / cmd_amplify_variants) holds the transaction; an uncaught raise there would roll
+    back, but we swallow here so an autonomous run never even sees it. Inert when the kill switch
+    (FANOPS_VARIANT_AMPLIFY) is off — the default."""
+    if not cfg.variant_amplify:
+        return led                                  # kill switch / default OFF -> inert
+    try:
+        update_streaks(led, cfg)
+        for cand in amplify_candidates(led, cfg):
+            hint = (f"Recent on-screen hooks that performed best here: '{cand['winning_hook']}'. "
+                    f"Lean toward this STYLE (tone, length, angle) — do not copy verbatim.")
+            amplify(led, cfg, [cand["post_id"]], extra_guidance=hint)   # the existing C1-fixed path
+    except Exception:
+        get_logger(cfg)("variant_amplify", "-", "error")
+    return led

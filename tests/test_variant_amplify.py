@@ -1,8 +1,12 @@
 # tests/test_variant_amplify.py
+import ast
+import json
+import pathlib
+from fanops.agentstep import request_path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Source, Moment, Clip, SourceState
-from fanops.variant_amplify import update_streaks, amplify_candidates
+from fanops.variant_amplify import update_streaks, amplify_candidates, apply_variant_amplify
 
 
 def _post(pid, acct, hook, lift, state=PostState.analyzed):
@@ -169,3 +173,136 @@ def test_amplify_candidates_deterministic(tmp_path):
     _seed_lineage(led)
     led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     assert amplify_candidates(led, cfg) == amplify_candidates(led, cfg)
+
+
+# ---- Task 6: apply_variant_amplify (fail-SAFE actuator) + retire-isolation AST + mutation proof --
+
+def _frozen(led):
+    """A comparable snapshot of the ledger's CONTENT state — sources/moments/clips/posts — for
+    'nothing was amplified/retired/deleted' assertions. Deliberately EXCLUDES variant_streaks: the
+    streak map is SUPPOSED to advance/reset every pass (that's the feature), so including it would
+    make a legitimate streak update look like a content mutation. The real safety invariant v3 must
+    never violate is that no source is amplified (state flip / request file / amplify_count) and no
+    post or clip is retired/deleted — i.e. the CONTENT state is untouched. That is what this freezes."""
+    return json.dumps({
+        "sources": {k: v.model_dump() for k, v in led.sources.items()},
+        "moments": {k: v.model_dump() for k, v in led.moments.items()},
+        "clips": {k: v.model_dump() for k, v in led.clips.items()},
+        "posts": {k: v.model_dump() for k, v in led.posts.items()},
+    }, sort_keys=True, default=str)
+
+
+def test_apply_amplifies_when_fully_gated(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    apply_variant_amplify(led, cfg)
+    # the source was amplified: state flipped + the moment-request carries the winning hook.
+    assert led.sources["s1"].state is SourceState.moments_requested
+    payload = json.loads(request_path(cfg, "moments", "s1").read_text())
+    assert "WIN" in payload["guidance"]
+    # G2: the winning analyzed post survives, state unchanged.
+    win_posts = [p for p in led.posts.values() if p.variant_hook == "WIN"]
+    assert win_posts and all(p.state is PostState.analyzed for p in win_posts)
+
+
+def test_apply_noop_when_gate_unmet(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 1}  # < 3
+    before = _frozen(led)
+    apply_variant_amplify(led, cfg)
+    assert _frozen(led) == before          # nothing changed — no amplify, no state flip
+    assert not request_path(cfg, "moments", "s1").exists()
+
+
+def test_apply_inert_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_VARIANT_AMPLIFY", raising=False)
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 9}
+    before = _frozen(led)
+    apply_variant_amplify(led, cfg)        # flag OFF -> kill switch, fully inert
+    assert _frozen(led) == before
+    assert not request_path(cfg, "moments", "s1").exists()
+
+
+def test_apply_failsafe_on_internal_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    # Make the candidate computation raise -> the whole pass must swallow it, no partial mutation.
+    monkeypatch.setattr("fanops.variant_amplify.amplify_candidates",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    before = _frozen(led)
+    apply_variant_amplify(led, cfg)        # must NOT raise
+    assert _frozen(led) == before
+
+
+# --- The retire-isolation invariant (v3's C1 safety, mechanized — mirrors test_variant_learning's
+#     AST approach but asserts the REVERSE direction: variant_amplify must be BLIND to the
+#     retire/delete surface). -------------------------------------------------------------------
+_FORBIDDEN_IN_VARIANT_AMPLIFY = ("retire", "_delete_moment_cascade", "retire_clip",
+                                 "set_moment_state", "set_clip_state")
+
+
+def _names_in_module(src_path, func_names):
+    tree = ast.parse(src_path.read_text())
+    found = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in func_names:
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Attribute):
+                    found.add(sub.attr)
+                elif isinstance(sub, ast.Name):
+                    found.add(sub.id)
+    return found
+
+
+def test_variant_amplify_never_touches_retire_or_cascade():
+    """G1 (STRUCTURAL): variant_amplify is amplify-only. Its functions must reference NONE of
+    retire / _delete_moment_cascade / retire_clip / set_moment_state / set_clip_state — so a wrong
+    'this won' signal can never reach a delete/retire. A future edit wiring any of those in goes RED
+    and names the offender."""
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
+    names = _names_in_module(root / "variant_amplify.py",
+                             {"update_streaks", "amplify_candidates", "apply_variant_amplify",
+                              "_source_for_surface", "_surfaces", "_evidence_fingerprint"})
+    leaked = sorted(names & set(_FORBIDDEN_IN_VARIANT_AMPLIFY))
+    assert not leaked, f"variant_amplify must never call retire/cascade; found: {leaked}"
+
+
+def test_variant_amplify_module_does_not_import_retire():
+    """Belt-and-braces: the module must not import retire from adjust (it imports amplify only)."""
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
+    tree = ast.parse((root / "variant_amplify.py").read_text())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for n in node.names:
+                imported.add(n.name)
+    assert "retire" not in imported
+
+
+# --- The MUTATION PROOF: the streak gate must be load-bearing. With the streak requirement
+#     removed, a SINGLE-window signal would amplify — this test asserts that today it does NOT,
+#     so when an implementer weakens the gate the suite goes red here. --------------------------
+def test_single_window_signal_does_not_amplify(tmp_path, monkeypatch):
+    """ADVERSARIAL: a strong but SINGLE-window signal (streak 1) must NEVER amplify. This is the
+    mutation sentinel — if amplify_candidates ever stops requiring min_streak, this goes RED."""
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(20, "WIN", 99.0))      # overwhelming evidence in ONE window
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 1}
+    before = _frozen(led)
+    apply_variant_amplify(led, cfg)
+    assert amplify_candidates(led, cfg) == []       # gate holds despite huge single-window evidence
+    assert _frozen(led) == before                   # and nothing was amplified/retired/deleted
