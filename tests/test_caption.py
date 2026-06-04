@@ -198,6 +198,84 @@ def test_defaults_unchanged_without_tuning_json(tmp_path):
     assert brand_risk_flag("sorry pls stream 🥺") is not None
     assert brand_risk_flag("no warning. just impact. 🔥") is None
 
+# --- variation v2 (Task 4): request_captions injects the GATED learned-hook hint per surface ---
+# This is where the A/B loop CLOSES: a hook that earned a trustworthy win (>= MIN_POSTS analyzed
+# posts AND beating the runner-up by >= MIN_GAP) is fed back into the next caption request payload
+# (as `learned_hooks`, which caption_prompt renders — variation v2 Task 3). Gated OFF by default,
+# fail-open: any error building the hint -> no hint, and the clip STILL advances (request written).
+from fanops.models import Post, PostState
+
+def _seed_variant_posts_for_at_a(led):
+    # 3 "WIN" posts at lift 90 + 3 "LOSE" posts at lift 10 on @a/instagram -> best_hooks -> ["WIN"]
+    # (90 mean - 10 mean = 80 gap, well over the default MIN_GAP 10; 3 >= default MIN_POSTS 3).
+    for i, (hook, lift) in enumerate(
+        [("WIN", 90.0), ("WIN", 90.0), ("WIN", 90.0), ("LOSE", 10.0), ("LOSE", 10.0), ("LOSE", 10.0)]
+    ):
+        led.add_post(Post(id=f"p{i}", parent_id="clip_1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                          variant_key=f"vk_p{i}", variant_hook=hook, metrics={"lift_score": lift}))
+
+def test_request_captions_injects_learned_hint_when_gate_met(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    _seed_variant_posts_for_at_a(led)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    # the learned hint reached the agent request ON DISK -> the loop is closed.
+    assert "WIN" in payload["learned_hooks"]
+    assert led.clips["clip_1"].state is ClipState.captions_requested
+
+def test_request_captions_no_hint_when_learning_off(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_VARIANT_LEARNING", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    _seed_variant_posts_for_at_a(led)                       # same past-gate ledger
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    # OFF -> today's behavior: no learned_hooks key at all (byte-identical to pre-v2).
+    assert "learned_hooks" not in payload
+
+def test_request_captions_below_gate_emits_no_hint(monkeypatch, tmp_path):
+    # Learning ON but the surface has too few analyzed posts -> gate not met -> no hint (loop stays
+    # open for this surface until data accrues). The noise guard, exercised through request_captions.
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led.add_post(Post(id="p0", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      variant_key="vk_p0", variant_hook="WIN", metrics={"lift_score": 90.0}))  # only 1
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "learned_hooks" not in payload
+
+def test_request_captions_dedups_hint_across_surfaces(monkeypatch, tmp_path):
+    # Two surfaces whose winning hook is the same must yield a single, de-duplicated learned hint.
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    _seed_variant_posts_for_at_a(led)                      # @a/instagram -> WIN
+    # same WIN winner on @a/tiktok
+    for i, (hook, lift) in enumerate(
+        [("WIN", 90.0), ("WIN", 90.0), ("WIN", 90.0), ("LOSE", 10.0), ("LOSE", 10.0), ("LOSE", 10.0)]
+    ):
+        led.add_post(Post(id=f"t{i}", parent_id="clip_1", account="@a", account_id="1",
+                          platform=Platform.tiktok, caption="x", state=PostState.analyzed,
+                          variant_key=f"vk_t{i}", variant_hook=hook, metrics={"lift_score": lift}))
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram), ("@a", Platform.tiktok)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert payload["learned_hooks"] == ["WIN"]             # one entry, not ["WIN", "WIN"]
+
+def test_request_captions_failopen_on_learning_error(monkeypatch, tmp_path):
+    # A raising best_hooks must NOT propagate: the request is still written, no hint, clip advances.
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    _seed_variant_posts_for_at_a(led)
+    monkeypatch.setattr("fanops.caption.best_hooks",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])   # must NOT raise
+    p = request_path(cfg, "captions", "clip_1")
+    assert p.exists()                                      # request still written -> clip advances
+    payload = json.loads(p.read_text())
+    assert "learned_hooks" not in payload                  # error -> no hint
+    assert led.clips["clip_1"].state is ClipState.captions_requested
+
 def test_ingest_captions_stores_per_surface_hook(tmp_path):
     # variation (3): the caption agent returns a per-surface `hook`; ingest_captions stores it
     # into meta_captions[surface]["hook"] (additive — readers of caption/hashtags unaffected).
