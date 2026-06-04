@@ -348,6 +348,13 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
     assert by_acct["@a"].variant_hook == "HOOK A" and by_acct["@b"].variant_hook == "HOOK B"
     assert by_acct["@a"].variant_key and by_acct["@a"].variant_key != by_acct["@b"].variant_key
     assert len(calls) == 2 and {h for _, h in calls} == {"HOOK A", "HOOK B"}
+    # DETERMINISM (pinned in-test, not only by construction): variant_key MUST be the
+    # content-addressed surface_key — a future swap to random/uuid (distinct but non-reproducible,
+    # the #1 v1 duplicate-post bug) would still pass the distinctness check above, so assert the
+    # exact content-addressed value here.
+    from fanops.ids import surface_key
+    assert by_acct["@a"].variant_key == surface_key("@a", "instagram")
+    assert by_acct["@b"].variant_key == surface_key("@b", "instagram")
 
 def test_crosspost_no_variant_when_disabled(tmp_path, monkeypatch, mocker):
     monkeypatch.delenv("FANOPS_CREATIVE_VARIATION", raising=False)   # OFF

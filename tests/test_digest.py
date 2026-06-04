@@ -108,6 +108,10 @@ def test_digest_shows_lift_by_variant(tmp_path):
     assert "Lift by variant" in out
     assert "HOOK A" in out and "80" in out          # the winning variant + its lift surface
     assert "HOOK B" in out
+    # RANK (not just presence): the winner (HOOK A, lift 80) must render ABOVE the loser
+    # (HOOK B, lift 30). A substring-only check let a reversed sort (loser-first) slip through —
+    # this pins the ordering so a ranking-inversion regression is caught.
+    assert out.index("HOOK A") < out.index("HOOK B")
 
 def test_digest_no_variant_section_when_none(tmp_path):
     from fanops.config import Config
