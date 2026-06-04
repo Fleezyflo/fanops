@@ -106,3 +106,28 @@ def test_needs_reconcile_surfaced(tmp_path):
     assert "`prec`" in section and "may be live" in section
     # and it must NOT be lumped into the plain Failures bucket
     assert "Failures" not in md or "`prec`" not in md.split("Failures")[1].split("##")[0]
+
+def test_digest_shows_lift_by_variant(tmp_path):
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.analyzed, variant_key="vk_a", variant_hook="HOOK A",
+                      metrics={"lift_score": 80.0}))
+    led.add_post(Post(id="p2", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram,
+                      caption="y", state=PostState.analyzed, variant_key="vk_b", variant_hook="HOOK B",
+                      metrics={"lift_score": 30.0}))
+    out = render_digest(led, cfg)
+    assert "Lift by variant" in out
+    assert "HOOK A" in out and "80" in out          # the winning variant + its lift surface
+    assert "HOOK B" in out
+
+def test_digest_no_variant_section_when_none(tmp_path):
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path)
+    out = render_digest(Ledger.load(cfg), cfg)
+    assert "Lift by variant" not in out             # absent when no variant posts

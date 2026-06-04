@@ -55,6 +55,17 @@ def render_digest(led: Ledger, cfg: Config) -> str:
         out.append("\n## Published but unmeasured (shipped, never measured)\n"
                    + "\n".join(unmeasured) + "\n")
 
+    # Creative-variation observability (v1): rank analyzed posts that carry a variant by lift_score,
+    # so the operator sees which per-account creative treatment performs. Observe-only — no automated
+    # propagation (that touches the amplify machinery, deferred).
+    variant_posts = [p for p in led.posts.values()
+                     if p.variant_key and p.state is PostState.analyzed and "lift_score" in p.metrics]
+    if variant_posts:
+        rows = sorted(variant_posts, key=lambda p: p.metrics.get("lift_score", 0.0), reverse=True)
+        lines = [f"- `{p.variant_hook or p.variant_key}` ({p.account}/{p.platform.value}): "
+                 f"lift {p.metrics.get('lift_score', 0.0)}" for p in rows]
+        out.append("\n## Lift by variant (which creative is winning)\n" + "\n".join(lines) + "\n")
+
     awaiting = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +
                 [f"- captions: {k}" for k in pending(cfg, kind="captions")])
     if awaiting:
