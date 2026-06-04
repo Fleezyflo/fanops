@@ -64,3 +64,20 @@ def test_moment_pick_rejects_non_finite_timestamps():
             MomentPick(start=bad, end=5.0, reason="r")
         with pytest.raises(ValidationError):
             MomentPick(start=0.0, end=bad, reason="r")
+
+def test_caption_item_has_optional_hook():
+    from fanops.models import CaptionItem
+    item = CaptionItem(surface="@a/instagram", caption="x", hashtags=[], language="en", hook="WATCH THIS")
+    assert item.hook == "WATCH THIS"
+    # optional: old payloads without hook still validate
+    assert CaptionItem(surface="@a/instagram", caption="x").hook is None
+
+def test_post_has_optional_variant_fields():
+    from fanops.models import Post, Platform, PostState
+    p = Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+             caption="x", state=PostState.queued, variant_key="vk1", variant_hook="WATCH THIS")
+    assert p.variant_key == "vk1" and p.variant_hook == "WATCH THIS"
+    # old ledgers (no variant fields) still load
+    p2 = Post(id="p2", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+              caption="x", state=PostState.queued)
+    assert p2.variant_key is None and p2.variant_hook is None
