@@ -14,6 +14,8 @@ CLI surface (all commands):
 
 ```
 fanops status
+fanops discover <folder>
+fanops intake
 fanops ingest
 fanops pull <url>
 fanops advance [--base-time T]
@@ -78,6 +80,42 @@ credentialless *nothing* — the #1 cutover trap:
 The **default `dryrun` + `manual` config (no keys) trips neither and passes cleanly (exit 0)**,
 so the offline pipeline is unaffected. This is a *safety* feature: a misconfigured live cutover
 now fails loudly and immediately rather than running green-but-empty until a monitor notices.
+
+---
+
+## Content discovery + review intake (pre-ingest, optional)
+
+Before the pipeline ever runs, you can scan a folder of your own footage for candidates and
+**approve only the keepers** — so rejects never cost a clip/transcribe/LLM cycle. This stage is
+**cheap by design**: a filesystem scan + one `ffprobe` + one thumbnail frame per candidate, and
+**no transcription, no LLM, no signal detection** (that expensive work happens only after intake,
+on approved items). It does not touch the existing pipeline — it only decides what reaches
+`01_inbox/`.
+
+1. **`fanops discover <folder>`** — scans `<folder>` for media files (the same media-extension
+   + **PII-filename exclusion** as `ingest`, so a `passport scan.jpg` or `tax return.mp4` is never
+   listed). For each **new** candidate it writes a `<id>.jpg` thumbnail + a cheap-metadata entry
+   (bytes, mtime, dimensions, duration) into `00_review/manifest.json`. The originals are **not**
+   copied (least cost). Re-scanning is idempotent and **dedups against the ledger** — content whose
+   SHA-256 is already a known Source is skipped, so you never re-review what's already ingested. An
+   unknown/empty `<folder>` exits 2 with a one-line message (no traceback).
+2. **Review `00_review/` in Finder** and **move the keeper thumbnails into `00_review/approved/`**.
+   The thumbnail filename is the entry id, so moving it is the approval — drop the rejects, keep the
+   winners. (ffmpeg absent ⇒ the candidate is still listed from metadata, just without a thumb.)
+3. **`fanops intake`** — for each approved thumbnail, resolves its original via the manifest and
+   **copies that original into `01_inbox/`**. Only approved content enters the pipeline; rejects
+   never do. Intake is **idempotent** (an already-intaken entry is recorded in
+   `00_review/intaken.json` and not re-copied) and **missing-safe** (a stale/vanished original is
+   reported as `missing`, never a crash).
+4. **`fanops advance` / `fanops run`** then clips + captions + schedules the approved originals
+   through the normal loop below.
+
+```bash
+fanops discover ~/Footage/raw   # scan a folder -> thumbnails + metadata into 00_review/ (CHEAP: no LLM)
+# … browse 00_review/ in Finder, move keepers into 00_review/approved/ …
+fanops intake                   # copy ONLY the approved originals into 01_inbox/
+fanops advance                  # now the normal pipeline clips/captions/schedules them
+```
 
 ---
 

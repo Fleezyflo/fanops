@@ -117,6 +117,11 @@ synthesizes a spoken sample.
 ## The daily loop
 
 ```bash
+# (optional, pre-ingest) review a folder of your own footage and approve only keepers — CHEAP (no LLM):
+fanops discover ~/Footage/raw        # scan -> a thumbnail + metadata per candidate into 00_review/
+# → browse 00_review/ in Finder, MOVE the keeper thumbnails into 00_review/approved/
+fanops intake                        # copy ONLY the approved originals into 01_inbox/ (rejects never enter)
+
 fanops advance                       # run the DAG; pauses at the moment + caption gates
 # → answer the gates: either the LLM responder, or write the response JSON yourself
 fanops respond                       # (LLM responder) drain all pending gates
@@ -188,6 +193,8 @@ no progress, so the human knows to check the key, not the cron.
 | `fanops status` | counts (sources/moments/clips/posts/published/failed/needs_reconcile) + pending gates + backend |
 | `fanops ingest` | catalogue new drops in `01_inbox` (SHA-256 identity, PII filename exclusion) |
 | `fanops pull <url>` | yt-dlp a URL into the inbox, then ingest |
+| `fanops discover <folder>` | pre-ingest: scan a folder for media (PII-name excluded) → a thumbnail + cheap metadata per candidate into `00_review/`; **no transcription/LLM**, dedups vs the ledger (unknown folder ⇒ exit 2) |
+| `fanops intake` | copy only the keepers you moved into `00_review/approved/` (in Finder) on into `01_inbox/`; idempotent + missing-safe |
 | `fanops advance [--base-time T]` | run the DAG to the next gate / completion |
 | `fanops respond` | responder drains pending agent gates (manual = no-op) |
 | `fanops reconcile` | resolve stranded `submitting`/`needs_reconcile` posts via `GET /v2/posts/:id` (needs a key; id-less posts stay parked for human reconcile) |
