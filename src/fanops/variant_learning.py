@@ -29,7 +29,13 @@ def best_hooks(led, cfg, account: str, platform: Platform) -> list[str]:
     leader_hook, leader_lifts = ranked[0]
     if len(leader_lifts) < min_posts:
         return []
-    runner_mean = mean(ranked[1][1]) if len(ranked) > 1 else 0.0
+    # A winner must be COMPARATIVE: with no runner-up there is nothing to beat by min_gap, so a lone
+    # high-performing variant is "still exploring", not a proven A/B winner. Returning it would bias
+    # creative against an implicit zero AND collapse the per-account exploration that variation
+    # exists to create. No runner-up -> [] (stricter than an implicit-zero baseline, on purpose).
+    if len(ranked) < 2:
+        return []
+    runner_mean = mean(ranked[1][1])
     if mean(leader_lifts) - runner_mean < min_gap:
         return []
     return [leader_hook]
