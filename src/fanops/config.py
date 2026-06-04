@@ -64,10 +64,12 @@ class Config:
 
     @property
     def anthropic_api_key(self) -> str | None:
-        # Mirrors blotato_api_key. The autonomous responder shells out to `claude --bare`, which
-        # reads ONLY ANTHROPIC_API_KEY (it ignores the OAuth login / keychain) — so its presence is
-        # the difference between real content and a silent zero-output run. Surfaced as a property
-        # for symmetry/testability and consumed by cli._check_preflight.
+        # VESTIGIAL (2026-06-04): the autonomous responder now uses the operator's EXISTING `claude`
+        # subscription via plain `claude -p` (NOT `--bare`), so it rides the OAuth/keychain login and
+        # does NOT need ANTHROPIC_API_KEY. The preflight (cli._check_preflight) therefore keys off
+        # `claude` being on PATH, NOT this var. Kept (harmless) for any third-party/Bedrock setup that
+        # exports the key, and for backward compat — but it is NOT required for the default subscription
+        # path. If `ANTHROPIC_API_KEY` happens to be set, `claude` will use it; if not, it uses the login.
         v = os.getenv("ANTHROPIC_API_KEY")
         return v.strip() if v and v.strip() else None
 

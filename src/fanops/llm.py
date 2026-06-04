@@ -6,13 +6,19 @@ pydantic JSON schema via --json-schema so the model returns schema-conformant ou
 `structured_output`, which collapses most "LLM returned malformed JSON" risk. --allowedTools "" =
 pure generator (no tool use, no file access — the responder must not wander).
 
-AUTH (load-bearing — read before deploying autonomous mode): we pass `--bare`, which is cron-safe
-(skips hooks/MCP/plugin-sync/auto-memory/keychain) BUT under `--bare` Anthropic auth is STRICTLY
-`ANTHROPIC_API_KEY` (or apiKeyHelper via --settings) — **OAuth and keychain are NEVER read**. So a
-`claude login` (OAuth) session is NOT sufficient: the environment that runs `fanops` MUST export
-`ANTHROPIC_API_KEY`, or every gate gets `claude -p` rc=1 "Not logged in" → RuntimeError → the gate
-is quarantined and stays pending (no autonomous content). This is the deliberate trade for cron-safety;
-it is documented in RUNTIME.md "the autonomous LLM responder" and README install."""
+AUTH (load-bearing — operator decision 2026-06-04: use the EXISTING `claude` subscription, NOT an
+API key): we DO NOT pass `--bare`. Under `--bare`, Anthropic auth is STRICTLY `ANTHROPIC_API_KEY`
+and **OAuth/keychain are NEVER read** — so a `claude login` session would still fail "Not logged
+in" (verified on this host: `claude --bare -p` → rc with "Not logged in", plain `claude -p` → ok).
+Plain `claude -p` uses the operator's existing logged-in `claude` session (the subscription), which
+is what we want: NO API key to provision in the cron environment. We keep the call a CLEAN PURE
+GENERATOR despite dropping `--bare` by passing `--strict-mcp-config` (no MCP servers from any config
+bleed into the moment/caption decision) plus `--allowedTools ""` (no tool use, no file access — the
+responder must not wander). Tradeoff vs `--bare`: a non-bare `claude -p` also loads hooks/auto-memory/
+CLAUDE.md-discovery, so it is slightly heavier per call and reads the host's `~/.claude` config; that
+is the accepted cost of riding the existing login instead of an API key. The cron environment
+therefore needs a logged-in `claude` (a valid `claude login` on the host), NOT `ANTHROPIC_API_KEY`.
+Documented in RUNTIME.md "the autonomous LLM responder" and README install."""
 from __future__ import annotations
 import json, subprocess
 from fanops.errors import ToolchainMissingError
@@ -22,11 +28,14 @@ def claude_json(prompt: str, schema: dict, *, timeout: float = 180.0) -> dict:
     Prefers the envelope's `structured_output`; falls back to json.loads(`result`).
     Raises ToolchainMissingError if `claude` is absent, RuntimeError on nonzero exit or
     unparseable output. The CALLER (the responder) validates against the pydantic model and
-    quarantines per-request, so this stays a thin, honest shell wrapper."""
-    cmd = ["claude", "--bare", "-p", prompt,
+    quarantines per-request, so this stays a thin, honest shell wrapper.
+    NO `--bare`: the operator uses the existing `claude` subscription/OAuth (not ANTHROPIC_API_KEY);
+    `--strict-mcp-config` + `--allowedTools ""` keep it a clean, no-tool, no-MCP generator."""
+    cmd = ["claude", "-p", prompt,
            "--output-format", "json",
            "--json-schema", json.dumps(schema),
-           "--allowedTools", ""]
+           "--allowedTools", "",
+           "--strict-mcp-config"]
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
     except (FileNotFoundError, OSError) as e:

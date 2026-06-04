@@ -15,7 +15,14 @@ def test_claude_json_extracts_structured_output(mocker):
     assert out == {"x": 7}
     # built the headless, no-tools, schema-enforced invocation
     cmd = run.call_args[0][0]
-    assert cmd[0] == "claude" and "--bare" in cmd and "-p" in cmd
+    assert cmd[0] == "claude" and "-p" in cmd
+    # AUTH (operator decision 2026-06-04): use the EXISTING `claude` subscription/login (OAuth),
+    # NOT an API key. `--bare` is therefore REMOVED — under --bare, claude reads auth strictly from
+    # ANTHROPIC_API_KEY and IGNORES the OAuth/keychain login, so a logged-in `claude` would still
+    # fail "Not logged in". Plain `claude -p` uses the existing session. We keep it a clean
+    # generator with --strict-mcp-config (no MCP servers bleed into the decision) + --allowedTools "".
+    assert "--bare" not in cmd
+    assert "--strict-mcp-config" in cmd
     assert "--output-format" in cmd and "json" in cmd
     assert "--json-schema" in cmd
     i = cmd.index("--allowedTools"); assert cmd[i + 1] == ""   # pure generator

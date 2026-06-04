@@ -175,17 +175,25 @@ def _check_preflight(cfg: Config) -> int:
     do credentialless nothing — the #1 cutover trap. Sibling to _check_accounts (config-level):
     returns 0 clean, else prints an actionable line to stderr and returns 2.
 
-      - FANOPS_RESPONDER=llm but no ANTHROPIC_API_KEY: the responder shells out to `claude --bare`,
-        which reads ONLY ANTHROPIC_API_KEY (NOT the OAuth login / keychain) — so it yields zero
-        content while logging nothing loud. Guaranteed silent failure -> hard exit 2.
+      - FANOPS_RESPONDER=llm but `claude` is not on PATH: the responder shells `claude -p`; without
+        the binary every gate raises ToolchainMissingError and stays pending -> zero content. Hard
+        exit 2 with an install + `claude login` pointer. (AUTH NOTE 2026-06-04: the responder uses
+        the operator's EXISTING `claude` subscription/login — plain `claude -p`, NOT `--bare`, so it
+        rides the OAuth/keychain session, NOT an API key. We therefore require `claude` PRESENT +
+        logged in, NOT `ANTHROPIC_API_KEY`. A true login check needs a network call, so we hard-block
+        only on the binary's ABSENCE and otherwise point the operator at `claude login` — a
+        logged-out `claude` then surfaces loudly via the run's `run halted`/heartbeat path, not a
+        traceback.)
       - FANOPS_POSTER in {rest, mcp} but no BLOTATO_API_KEY: publishing will 401 -> hard exit 2.
 
-    The default dryrun+manual config (no keys) trips neither and passes cleanly (exit 0)."""
+    The default dryrun+manual config (no creds) trips neither and passes cleanly (exit 0)."""
+    import shutil
     problems = []
-    if cfg.responder_mode == "llm" and cfg.anthropic_api_key is None:
+    if cfg.responder_mode == "llm" and shutil.which("claude") is None:
         problems.append(
-            "FANOPS_RESPONDER=llm but ANTHROPIC_API_KEY is not set — the --bare responder reads no "
-            "OAuth/keychain, so it will produce zero content. Export ANTHROPIC_API_KEY.")
+            "FANOPS_RESPONDER=llm but `claude` is not on PATH — the autonomous responder shells "
+            "`claude -p` using your existing Claude subscription. Install Claude Code and run "
+            "`claude login` on this host (no API key needed).")
     if cfg.poster_backend in {"rest", "mcp"} and cfg.blotato_api_key is None:
         problems.append(
             f"FANOPS_POSTER={cfg.poster_backend} but BLOTATO_API_KEY is not set — publishing will "

@@ -35,9 +35,9 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | Var | Values | Effect |
 |---|---|---|
 | `FANOPS_POSTER` | `dryrun` (default) \| `rest` \| `mcp` | Which publish backend. `dryrun` writes `file://` media URLs and never hits the network. |
-| `FANOPS_RESPONDER` | `manual` (default) \| `llm` | `manual` = a human/cron writes the response files; `llm` = the LLM responder answers gates. With `llm`, `advance`/`run` **hard-fail (exit 2) unless `ANTHROPIC_API_KEY` is set** — the cutover-safety preflight (see below). |
+| `FANOPS_RESPONDER` | `manual` (default) \| `llm` | `manual` = a human/cron writes the response files; `llm` = the LLM responder answers gates via plain `claude -p` (the operator's existing Claude subscription/login — NO API key). With `llm`, `advance`/`run` **hard-fail (exit 2) unless `claude` is on PATH** — the cutover-safety preflight (see below); the operator must `claude login` once on the host. |
 | `BLOTATO_API_KEY` | string | Required for `rest`, `mcp`, and `track`. Absent ⇒ those refuse/skip cleanly. With `FANOPS_POSTER` in `{rest, mcp}`, `advance`/`run` also hard-fail (exit 2) when it is unset. |
-| `ANTHROPIC_API_KEY` | string | Required for `FANOPS_RESPONDER=llm`. The responder shells `claude --bare`, which reads **only** this var (never OAuth/keychain). Absent with `llm` ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). |
+| `claude` (CLI, logged in) | — | Required for `FANOPS_RESPONDER=llm`. The responder shells plain `claude -p` (NOT `--bare`), so it uses the host's `claude login` session — **no `ANTHROPIC_API_KEY` needed**. `claude` absent with `llm` ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). `--strict-mcp-config --allowedTools ""` keep it a clean no-tool/no-MCP generator. (`ANTHROPIC_API_KEY` is NOT required; if set, `claude` will use it, but the subscription login is the supported path.) |
 | `FANOPS_ARTIST_NAME` | string (optional) | Artist **display name** used as the YouTube title fallback when a post has no explicit title (audit h). Default `"Moh Flow"` (unchanged). Distinct from the `@mohflow` caption mention (`tagging.ARTIST_HANDLE`). |
 | `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | Burn the transcript-derived subtitles + top-third hook into each rendered clip. **DEFAULT ON** — an unset env burns subs, so the feature is live with no operator action; only the explicit off-words `0`/`false`/`no`/`off` (case-insensitive) disable it. **Fail-open**: if this ffmpeg lacks the text filter or the source has no transcript, the clip still renders (plain), logging one `subs_skipped` line. Requires a **text-capable ffmpeg (libass)** — see the note below. |
 | `FANOPS_SUBTITLE_FONT` | string (optional) | Font face for the `.ass` subtitles. Default `"Arial Unicode MS"` — an Arabic-capable face so RTL captions render. Override if the host lacks that font or you prefer another Unicode/Arabic typeface. |
@@ -67,9 +67,11 @@ doing any work, right after `_check_accounts`. It **refuses to run (exit 2, one-
 stderr, no traceback)** for the two env mismatches that would otherwise make the pipeline do
 credentialless *nothing* — the #1 cutover trap:
 
-- **`FANOPS_RESPONDER=llm` but `ANTHROPIC_API_KEY` unset** — the `--bare` responder reads no
-  OAuth/keychain, so it would fail every gate "Not logged in", clear nothing, and publish
-  nothing **without crashing**. This is the guaranteed-silent failure the heartbeat/dead-man's
+- **`FANOPS_RESPONDER=llm` but `claude` is not on PATH (or not logged in)** — the responder
+  shells plain `claude -p` (your existing subscription/login; no API key). With no `claude`
+  binary it would fail every gate, clear nothing, and publish nothing **without crashing**
+  (the preflight hard-blocks the binary-absent case; a logged-out `claude` surfaces via the
+  `run halted`/heartbeat path). This is the guaranteed-silent failure the heartbeat/dead-man's
   switch is designed to *detect after the fact*; the preflight catches it **up front** instead.
 - **`FANOPS_POSTER` in `{rest, mcp}` but `BLOTATO_API_KEY` unset** — publishing would 401.
 
@@ -165,11 +167,11 @@ two `\theartbeat\t` lines in `run.log` and pages if (a) the latest `heartbeat` t
 prior one or is older than the cron interval (cron dead), (b) `published_in_run == 0` for the
 last N lines (stuck pipeline), or (c) `last_published_age_hours` exceeds a threshold.
 
-**Catching a silently-unauthed responder.** Because the responder shells `claude --bare`, which
-**ignores OAuth/keychain** — auth is **strictly `ANTHROPIC_API_KEY`** (see *the autonomous LLM
-responder* below) — a responder that is **running but unauthed** (the key was never exported)
-fails every gate with "Not logged in", clears nothing, and publishes nothing, **without crashing**
-(each gate is quarantined and logged). The dead-man's-switch is how you catch this exact failure:
+**Catching a silently-unauthed responder.** Because the responder shells plain `claude -p` using
+the host's `claude login` session (see *the autonomous LLM
+responder* below) — a responder that is **running but logged out** (`claude login` was never run
+on the host) fails every gate with "Not logged in", clears nothing, and publishes nothing, **without
+crashing** (each gate is quarantined and logged). The dead-man's-switch is how you catch this failure:
 `published_in_run` stays **0 forever** *and* the digest's **"Pending agent gates"** section keeps
 naming the same unanswered gates. The heartbeat proves the cron is alive; the zero delta + the
 pending-gates list prove it is making no progress — so the operator knows to fix the **key**
@@ -335,7 +337,8 @@ default model is the Claude Code CLI (`claude -p`); there is no stub to fill.
 **Transport — `claude -p`, not the Anthropic SDK.** The default model
 (`_default_claude_model`) shells the Claude Code CLI in headless print mode via
 `src/fanops/llm.py::claude_json`:
-`claude --bare -p "<prompt>" --output-format json --json-schema '<schema>' --allowedTools ""`.
+`claude -p "<prompt>" --output-format json --json-schema '<schema>' --allowedTools "" --strict-mcp-config`
+(plain `claude -p`, NOT `--bare`, so it uses the host's `claude login` subscription — no API key).
 Chosen over the SDK to keep one toolchain (no second SDK dependency) and fit the codebase's
 shell-a-binary idiom (like ffmpeg/whisper) — `claude` is just one more absence-guarded binary.
 `--allowedTools ""` makes it a pure generator (no tool use / file access). The prompt is built
@@ -343,16 +346,21 @@ from a **committed template** (`src/fanops/prompts.py::moment_prompt` / `caption
 paired with the gate's exact pydantic JSON schema, so most "LLM returned malformed JSON" risk
 collapses into `structured_output`.
 
-**Requirement — `claude` on `PATH` AND `ANTHROPIC_API_KEY` exported (load-bearing).** We pass
-`--bare` for cron-safety (it skips hooks/MCP/plugin-sync/auto-memory/keychain). **The catch:
-under `--bare`, Anthropic auth is STRICTLY `ANTHROPIC_API_KEY` (or apiKeyHelper via `--settings`)
-— OAuth and keychain are NEVER read.** So a `claude login` (OAuth) session is **NOT** sufficient
-for the autonomous responder; the environment that runs `fanops` must **export `ANTHROPIC_API_KEY`**.
-Failure modes, both **quarantined per request** (not a crash): if `claude` is absent, `claude_json`
-raises `ToolchainMissingError`; if `claude` is present but `ANTHROPIC_API_KEY` is unset/invalid,
-`claude -p` exits non-zero with `"Not logged in · Please run /login"` → `RuntimeError` → the gate
-logs `error` and stays pending (so a misconfigured key yields **zero autonomous content**, silently
-but loggedly — check `run.log` for repeated `responder … error … Not logged in`).
+**Requirement — `claude` on `PATH` AND logged in (the EXISTING subscription; load-bearing).**
+We shell **plain `claude -p` (NOT `--bare`)** — operator decision 2026-06-04: use the existing
+Claude subscription, not an API key. **Why not `--bare`:** under `--bare`, Anthropic auth is
+STRICTLY `ANTHROPIC_API_KEY` and OAuth/keychain are NEVER read — so a `claude login` session would
+fail "Not logged in" (verified on the host). Plain `claude -p` uses that login. To stay a clean
+generator without `--bare` we pass **`--strict-mcp-config --allowedTools ""`** (no MCP servers, no
+tool use). So the host needs a **`claude login`** session (cron inherits the user's `~/.claude`),
+**NOT `ANTHROPIC_API_KEY`**. Failure modes, both **quarantined per request** (not a crash): if
+`claude` is absent, `claude_json` raises `ToolchainMissingError` (and the preflight hard-blocks the
+run); if `claude` is present but logged OUT, `claude -p` exits non-zero with `"Not logged in ·
+Please run /login"` → `RuntimeError` → the gate logs `error` and stays pending (so a logged-out
+host yields **zero autonomous content**, silently but loggedly — check `run.log` for repeated
+`responder … error … Not logged in`, and run `claude login`). *(If `ANTHROPIC_API_KEY` happens to
+be exported, `claude` will use it — fine for a 3P/Bedrock setup — but the subscription login is the
+supported default path.)*
 
 **Per-request quarantine (audit H2 / N1).** `answer_pending` isolates each gate: one bad
 request logs and leaves *that* gate pending, and never halts the others (mirrors `advance()`'s
@@ -477,15 +485,20 @@ echo 'BLOTATO_API_KEY=sk-sandbox-...'  >> .env   # sandbox key first; swap to th
 echo 'FANOPS_POSTER=mcp'               >> .env   # the live backend (default is dryrun — see below)
 ```
 
-**5. Ensure `claude` is authed on the host** *(required for the autonomous LLM responder)* —
-   the responder shells `claude --bare`, which **ignores OAuth/keychain**. Auth is **strictly
-   the `ANTHROPIC_API_KEY` env var**:
+**5. Ensure `claude` is logged in on the host** *(required for the autonomous LLM responder)* —
+   the responder shells plain `claude -p` (NOT `--bare`), so it uses your **existing Claude
+   subscription / `claude login` session** — **no API key needed**. (We dropped `--bare`
+   precisely because `--bare` ignores OAuth/keychain and would force an `ANTHROPIC_API_KEY`; the
+   call stays a clean generator via `--strict-mcp-config --allowedTools ""`.) Just log in once:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...     # MUST be exported in the cron/launchd environment, not just your shell
-echo 'FANOPS_RESPONDER=llm' >> .env      # opt into the autonomous responder (default `manual` is a no-op — a human/cron writes the response files)
-claude --bare -p 'say ok' --output-format json   # smoke: confirms the key works headless
+claude login                              # one-time: authenticate the subscription on this host
+echo 'FANOPS_RESPONDER=llm' >> .env       # opt into the autonomous responder (default `manual` is a no-op — a human/cron writes the response files)
+claude -p 'say ok' --output-format json   # smoke: confirms the logged-in session works headless (no API key)
 ```
+   NOTE: cron/launchd runs as your user and inherits the same `~/.claude` login, so a `claude
+   login` done once in your shell is available to the scheduled `fanops run`. No `ANTHROPIC_API_KEY`
+   export is required (if one happens to be set, `claude` will use it — but it is not needed).
    ──────────────────────────────────────────────────────────────────────────────
    *Everything below is already built — these are verification + scheduling steps.*
 
@@ -507,8 +520,11 @@ BLOTATO_API_KEY=sk-sandbox-... BLOTATO_SMOKE_ACCOUNT_ID=<a sandbox account_id> \
    loop (`track`+`adjust`) once per pass:
 
 ```cron
-*/30 * * * * cd /path/to/repo && ANTHROPIC_API_KEY=sk-ant-... ./.venv/bin/fanops run >> run.out 2>&1
+*/30 * * * * cd /path/to/repo && ./.venv/bin/fanops run >> run.out 2>&1
 ```
+   (No `ANTHROPIC_API_KEY` in the cron line — the responder uses the host's `claude login` session.
+   The cron job runs as your user and inherits `~/.claude`, so the one-time `claude login` from
+   step 5 covers it.)
    Then point an **external monitor** at the heartbeat (see *Heartbeat / dead-man's-switch*
    above): page if the `heartbeat` ts stops advancing (cron is dead), or if
    **`published_in_run == 0` for N consecutive runs** (the pipeline is alive but stuck — most
