@@ -197,3 +197,16 @@ def test_defaults_unchanged_without_tuning_json(tmp_path):
     # and the legacy no-cfg call is untouched (existing callers/tests keep working).
     assert brand_risk_flag("sorry pls stream 🥺") is not None
     assert brand_risk_flag("no warning. just impact. 🔥") is None
+
+def test_ingest_captions_stores_per_surface_hook(tmp_path):
+    # variation 3: ingest_captions stores the per-surface hook into meta_captions[surface]["hook"].
+    # Uses the REAL agentstep response helper (latest_request_id + response_path) and a real
+    # CaptionSet/CaptionItem serialized via .model_dump_json() — the idiom the other caption tests use.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="they slept on me, watch",
+                    hashtags=["#x"], language="en", hook="THEY SLEPT ON ME")]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    assert led.clips["clip_1"].meta_captions["@a/instagram"]["hook"] == "THEY SLEPT ON ME"
