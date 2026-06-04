@@ -72,6 +72,38 @@ def test_variant_learning_env_overrides(monkeypatch, tmp_path):
     assert c.variant_learning is True and c.variant_min_posts == 5 and c.variant_min_gap == 25.0
 
 
+def test_variant_transfer_defaults_off(monkeypatch, tmp_path):
+    from fanops.config import Config
+    for k in ("FANOPS_VARIANT_TRANSFER", "FANOPS_VARIANT_TRANSFER_MIN_DONORS",
+              "FANOPS_VARIANT_TRANSFER_MAX_HOOKS"):
+        monkeypatch.delenv(k, raising=False)
+    c = Config(root=tmp_path)
+    assert c.variant_transfer is False
+    assert c.variant_transfer_min_donors == 2
+    assert c.variant_transfer_max_hooks == 2
+
+
+def test_variant_transfer_env_overrides(monkeypatch, tmp_path):
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "yes")
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER_MIN_DONORS", "3")
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER_MAX_HOOKS", "1")
+    c = Config(root=tmp_path)
+    assert c.variant_transfer is True
+    assert c.variant_transfer_min_donors == 3
+    assert c.variant_transfer_max_hooks == 1
+
+
+def test_variant_transfer_bad_ints_fall_back(monkeypatch, tmp_path):
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER_MIN_DONORS", "notanint")
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER_MAX_HOOKS", "")
+    c = Config(root=tmp_path)
+    assert c.variant_transfer_min_donors == 2          # bad int -> default, no crash
+    assert c.variant_transfer_max_hooks == 2
+
+
 def test_config_has_review_dir(tmp_path):
     from fanops.config import Config
     cfg = Config(root=tmp_path)
