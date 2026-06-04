@@ -8,11 +8,16 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
 from fanops.ids import child_id
+from fanops import overlay
+from fanops.log import get_logger
+
+# Target render size per aspect. The subtitle .ass PlayResX/Y must match the rendered frame so
+# libass scales the caption to the clip — so render_moment reads this same table the reframe uses.
+_TARGETS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 
 def reframe_filter(aspect: str, src_w: int, src_h: int) -> str:
     """Pick a safe ffmpeg -vf for the target aspect given the source dimensions."""
-    targets = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
-    tw, th = targets[aspect]
+    tw, th = _TARGETS[aspect]
     if not src_w or not src_h:
         # unknown source: scale to fit + pad to exact target (never an impossible crop)
         return (f"scale={tw}:{th}:force_original_aspect_ratio=decrease,"
@@ -28,13 +33,47 @@ def reframe_filter(aspect: str, src_w: int, src_h: int) -> str:
     return f"crop=iw:iw*{th}/{tw},scale={tw}:{th},setsar=1"
 
 def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
-                    *, src_w: int = 0, src_h: int = 0) -> list[str]:
+                    *, src_w: int = 0, src_h: int = 0, extra_vf: str | None = None) -> list[str]:
     # -ss before -i (fast seek) makes output-position -to a DURATION measured from the seek
     # point, so it must be (end - start), not the absolute end. Verified on ffmpeg 8.0.1:
     # `-ss 1.5 -to 6.5` yields a 6.5s clip; passing 8.0 here would yield 8.0s (the F39 bug).
+    # extra_vf (e.g. the burned-subtitles `subtitles=...` token) is chained AFTER the reframe
+    # with a comma so it operates on the already-reframed frame; default None == old behavior.
+    vf = reframe_filter(aspect, src_w, src_h)
+    if extra_vf:
+        vf = f"{vf},{extra_vf}"
     return ["ffmpeg", "-y", "-ss", str(start), "-i", src, "-to", str(end - start),
-            "-vf", reframe_filter(aspect, src_w, src_h),
+            "-vf", vf,
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
+
+def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt):
+    """Build the burned-subtitles `-vf` fragment for this clip, or return None (render with the
+    reframe only). FAIL-OPEN by contract: a clip is NEVER blocked on subtitles. Returns None when
+    burn_subs is off, the source has no transcript, or build_ass yields nothing. When subtitles are
+    REQUESTED (burn_subs on, transcript present) but this ffmpeg lacks the text filter, log ONE
+    warning and return None. Writes the .ass adjacent to the clip (cfg.clips/<cid>.ass) on success."""
+    if not cfg.burn_subs:
+        return None
+    m = led.moments[moment_id]
+    src = led.sources[m.parent_id]
+    transcript = src.transcript
+    if not transcript:                                   # None or [] -> nothing to burn
+        return None
+    if not overlay.ffmpeg_has_textfilter():
+        # Subtitles were asked for but the toolchain can't burn them. Don't block the clip — log
+        # once and render plain. (One line per clip; the cache in ffmpeg_has_textfilter means the
+        # probe itself runs at most once per process.)
+        get_logger(cfg)("clip", cid, "subs_skipped",
+                        reason="ffmpeg lacks the text filter — rendering without subtitles")
+        return None
+    tw, th = _TARGETS[aspect.value]
+    ass_text = overlay.build_ass(transcript, hook=m.hook, clip_start=m.start, clip_end=m.end,
+                                 width=tw, height=th, font=cfg.subtitle_font)
+    if not ass_text or not ass_text.strip():
+        return None
+    ass_path = cfg.clips / f"{cid}.ass"
+    overlay.write_ass(ass_text, ass_path)
+    return overlay.subtitles_vf(ass_path)
 
 def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                   aspect: Fmt = Fmt.r9x16) -> tuple[Ledger, Clip]:
@@ -43,8 +82,9 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     cid = child_id("clip", moment_id, aspect.value)      # content-addressed by aspect
     cfg.clips.mkdir(parents=True, exist_ok=True)
     dst = cfg.clips / f"{cid}.mp4"
+    extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect)
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), m.start, m.end, aspect.value,
-                          src_w=src.width or 0, src_h=src.height or 0)
+                          src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf)
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True)
     except (FileNotFoundError, OSError) as e:
