@@ -61,6 +61,10 @@ class Ledger:
                                               # keyed per-tag, not per-account, so a re-tag can't
                                               # overwrite a time the cross-account de-cluster window
                                               # still needs)
+        self.variant_streaks: dict[str, dict] = {}   # "account|platform" -> {hook, fingerprint, streak}
+                                              # (variant-amplify v3: sustained-win streak per surface;
+                                              # deterministic, idempotent on unchanged evidence; inert
+                                              # when FANOPS_VARIANT_AMPLIFY off)
 
     @classmethod
     def load(cls, cfg: Config) -> "Ledger":
@@ -75,6 +79,7 @@ class Ledger:
                 led.clips = {k: Clip(**v) for k, v in raw.get("clips", {}).items()}
                 led.posts = {k: Post(**v) for k, v in raw.get("posts", {}).items()}
                 led.tag_log = raw.get("tag_log", {})
+                led.variant_streaks = raw.get("variant_streaks", {})
             except Exception as e:
                 # Malformed JSON or schema-violating field (hand-edit typo). Surface a clear
                 # one-line reason instead of a raw JSONDecodeError/ValidationError traceback.
@@ -113,6 +118,7 @@ class Ledger:
             "clips": {k: v.model_dump() for k, v in self.clips.items()},
             "posts": {k: v.model_dump() for k, v in self.posts.items()},
             "tag_log": self.tag_log,
+            "variant_streaks": self.variant_streaks,
         }
         self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.cfg.ledger_path.with_suffix(".json.tmp")

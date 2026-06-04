@@ -114,3 +114,22 @@ def test_reconcile_still_updates_a_non_retired_moment(tmp_path):
     led.reconcile_moments("s2", keep)
     assert led.moments["m2"].reason == "new"          # updated in place (not blocked by the guard)
     assert led.moments["m2"].start == 3
+
+
+def test_variant_streaks_roundtrips_and_defaults_empty(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    assert led.variant_streaks == {}                      # default empty on a fresh ledger
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "abc", "streak": 2}
+    led.save()
+    led2 = Ledger.load(cfg)
+    assert led2.variant_streaks == {"@a|instagram": {"hook": "WIN", "fingerprint": "abc", "streak": 2}}
+
+
+def test_old_ledger_without_variant_streaks_loads(tmp_path):
+    # An older ledger.json that predates v3 has no "variant_streaks" key -> must load as {} (no crash).
+    cfg = Config(root=tmp_path)
+    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ledger_path.write_text(json.dumps({"sources": {}, "moments": {}, "clips": {}, "posts": {}}))
+    led = Ledger.load(cfg)
+    assert led.variant_streaks == {}
