@@ -43,6 +43,17 @@ def caption_prompt(payload: dict) -> str:
         f"{json.dumps(learned, ensure_ascii=False)}\n"
         if learned else ""
     )
+    # Cross-surface transfer (the v2 follow-up): a hook STYLE proven on OTHER same-platform surfaces,
+    # offered to a COLD recipient as a LIGHTER nudge than its own proven style above. Separate key
+    # (learned_hooks_transferred) so own-signal always reads as primary. Absent -> no block (prompt
+    # stays byte-identical to v2).
+    transferred = payload.get("learned_hooks_transferred")
+    transferred_block = (
+        "  - Also working elsewhere on this platform (a LIGHTER nudge than your own style above, "
+        "if any) — lean toward this STYLE, do NOT copy verbatim: "
+        f"{json.dumps(transferred, ensure_ascii=False)}\n"
+        if transferred else ""
+    )
     return (
         "You are the caption writer for an autonomous fan-account engine for a bilingual (EN/AR) "
         "rapper. Write ONE caption per posting surface listed below. Return JSON matching the "
@@ -61,6 +72,7 @@ def caption_prompt(payload: dict) -> str:
         "GENUINELY DIFFERENT (different angle/words) — these are A/B creative variants per account. "
         "If you cannot, omit `hook` and a default will be used.\n"
         f"{learned_block}"
+        f"{transferred_block}"
         "\n"
         f"BRAND GUIDANCE:\n{payload.get('guidance', '')}\n\n"
         f"CLIP TRANSCRIPT EXCERPT: {json.dumps(payload.get('transcript_excerpt', ''), ensure_ascii=False)}\n"

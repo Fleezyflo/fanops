@@ -52,6 +52,9 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `FANOPS_VARIANT_AMPLIFY_MIN_POSTS` | int (default **8**) | v3 trust-gate part 1 (stronger than v2's `FANOPS_VARIANT_MIN_POSTS`=3): the winning hook must carry at least this many analyzed posts before its win is trusted enough to AMPLIFY (a far more consequential act than v2's caption-bias). A non-int value falls back to the default. |
 | `FANOPS_VARIANT_AMPLIFY_MIN_GAP` | float (default **25.0**) | v3 trust-gate part 2 (stronger than v2's `FANOPS_VARIANT_MIN_GAP`=10): the winner's mean `lift_score` must beat the runner-up's by at least this margin. A non-float value falls back to the default. |
 | `FANOPS_VARIANT_AMPLIFY_MIN_STREAK` | int (default **3**) | v3 trust-gate part 3 — the core NEW safety property (no v2 analogue): the SAME hook must have led the gate across at least this many DISTINCT evidence windows (new analyzed-post batches) before amplifying. `≥ 2` means "never act on a single window". A non-int value falls back to the default. |
+| `FANOPS_VARIANT_TRANSFER` | `1`/`true`/`yes`/`on` (default **OFF**) \| unset/`0`/`false`/… | Cross-account / cross-surface learning **transfer** (v2 follow-up, backlog j). When ON, `request_captions` may bias a **COLD** recipient surface (no trustworthy winner of its own yet) toward a hook STYLE proven on **other same-platform** surfaces — fed in as `learned_hooks_transferred` (a SEPARATE, weaker payload key than v2's `learned_hooks`; `caption_prompt` renders it BELOW the own-surface block as a lighter "working elsewhere on this platform — don't copy verbatim" nudge). Gate is STRICTER than v2's: a style must be the v2-gated winner on `≥ FANOPS_VARIANT_TRANSFER_MIN_DONORS` (default **2**) distinct donor surfaces, capped at `FANOPS_VARIANT_TRANSFER_MAX_HOOKS` (default **2**). INDEPENDENT of `FANOPS_CREATIVE_VARIATION`/`FANOPS_VARIANT_LEARNING`. **DEFAULT OFF** — opt-in. **Fail-open**: flag off / no qualifying donor / no accounts registry / any error / old ledger ⇒ no prior, today's behavior. **Anti-homogenization**: a surface with its OWN winner borrows nothing (own-wins); transfer is STYLE not verbatim; persona-ranked (deterministic). Touches **none** of the amplify/`_delete_moment_cascade` path (C1) — enforced by the isolation tests. The digest's "Lift by variant" section shows a cold surface as "borrowing platform signal". |
+| `FANOPS_VARIANT_TRANSFER_MIN_DONORS` | int (default **2**) | Transfer gate (stricter than v2's): a hook style transfers to a cold recipient only if it is the v2-gated winner on at least this many DISTINCT other same-platform donor surfaces. One surface's local win is not yet a platform-level signal. A non-int value falls back to the default. |
+| `FANOPS_VARIANT_TRANSFER_MAX_HOOKS` | int (default **2**) | Cap on how many borrowed styles a single caption request may carry (anti-homogenization — even a popular style-cluster cannot flood one caption). A non-int value falls back to the default. |
 | `FANOPS_ESCALATION_BUDGET_USD` | float (optional) | Spend cap knob. |
 
 **Optional override file — `00_control/tuning.json`** (audit b). An operator can re-tune the
@@ -737,3 +740,14 @@ deferred from the original plan, and surfaced during the build.
   surface's streak state. **Still out of scope:** cross-PLATFORM transfer, bandit/decay scheduling
   (the bandit follow-up remains spec-only), and any change to the EXISTING single-snapshot
   `classify_outcomes`/amplify+retire trigger (v3 only ADDS a harder-gated amplify path).
+  **v3 — cross-account/cross-surface transfer** (`FANOPS_VARIANT_TRANSFER=1`, independent flag,
+  default OFF): a hook STYLE proven (v2-gated) on `≥ FANOPS_VARIANT_TRANSFER_MIN_DONORS` distinct
+  same-platform surfaces is offered to a COLD recipient surface (no own winner) as a demoted,
+  persona-ranked weak prior (`learned_hooks_transferred`, rendered below the own-surface block).
+  Same-platform is a HARD gate; cross-platform is out of scope. Anti-homogenization: own-winner-wins,
+  style-not-verbatim, `MAX_HOOKS` cap. Stays on the caption-request side; the amplify/C1 path remains
+  blind (isolation tests extended to `variant_transfer` — both the data-flow check and a
+  `transferred_hooks` positive-lock). The digest shows a cold surface as "borrowing platform signal".
+  This is ORTHOGONAL to the amplify v3 above: amplify acts on a surface's OWN sustained winner via the
+  C1 path; transfer is a cold-start caption-bias prior from OTHER surfaces. **Still out of scope:**
+  cross-PLATFORM transfer, bandit/decay scheduling.

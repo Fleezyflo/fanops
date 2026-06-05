@@ -216,3 +216,33 @@ def test_digest_no_amplify_section_when_flag_off(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     out = render_digest(Ledger.load(cfg), cfg)
     assert "Variant amplification" not in out            # flag off -> section absent
+
+
+def test_digest_marks_cold_surface_borrowing(monkeypatch, tmp_path):
+    # A cold recipient receiving a transferred prior is annotated "borrowing platform signal" — the
+    # operator sees transfer is active for that surface (distinct from its own "learning ACTIVE").
+    from fanops.models import Moment, MomentState
+    from fanops.accounts import Account, Accounts, AccountStatus
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c.mp4", state=ClipState.rendered))
+    # @a,@b win STYLE (2 donors); @c is a cold recipient with a single analyzed post (so it APPEARS
+    # in the "Lift by variant" section) but no own winner.
+    def win(acct, hook):
+        rows = [(hook, 90.0)] * 3 + [("LOSE", 10.0)] * 3
+        for i, (h, lift) in enumerate(rows):
+            led.add_post(Post(id=f"{acct}{i}", parent_id="clip_1", account=acct, account_id="x",
+                              platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                              variant_key=f"vk_{acct}{i}", variant_hook=h, metrics={"lift_score": lift}))
+    win("@a", "STYLE"); win("@b", "STYLE")
+    led.add_post(Post(id="c0", parent_id="clip_1", account="@c", account_id="x",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      variant_key="vk_c0", variant_hook="COLD", metrics={"lift_score": 50.0}))
+    accts = Accounts(cfg)
+    accts.accounts = [Account(handle=h, account_id="x", platforms=[Platform.instagram],
+                              status=AccountStatus.active, persona="hype") for h in ("@a", "@b", "@c")]
+    out = render_digest(led, cfg, accounts=accts)
+    assert "borrowing platform signal" in out

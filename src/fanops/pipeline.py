@@ -82,7 +82,8 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                     led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
                     for clip in clips:
                         led = request_captions(led, cfg, clip.id,
-                                               [(s.account, s.platform) for s in accts.surfaces()])
+                                               [(s.account, s.platform) for s in accts.surfaces()],
+                                               accounts=accts)
                 except Exception as e:
                     led.moments[m.id].state = MomentState.error
                     led.moments[m.id].error_reason = f"{type(e).__name__}: {e}"
