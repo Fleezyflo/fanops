@@ -163,7 +163,6 @@ def test_best_hooks_called_only_on_safe_read_or_request_side():
         f"best_hooks called from an unexpected file (review for safety): {sorted(callers - allowed)}"
 
 
-import math
 from fanops.variant_learning import ucb_rank
 
 
