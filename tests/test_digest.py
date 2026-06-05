@@ -216,3 +216,63 @@ def test_digest_no_amplify_section_when_flag_off(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     out = render_digest(Ledger.load(cfg), cfg)
     assert "Variant amplification" not in out            # flag off -> section absent
+
+
+def test_digest_variant_ucb_shows_pick(tmp_path, monkeypatch):
+    # variation v3: with UCB on, the per-surface line reports the bandit's PICK ('UCB -> "<hook>"'),
+    # not the greedy "learning ACTIVE"/"gathering data" wording. Thin lead (8x LEAD@60 + 1x NEW@59)
+    # -> UCB explores the under-sampled NEW (greedy would emit nothing). Operator sees the real pick.
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for i in range(1, 9):
+        led.add_post(Post(id=f"L{i}", parent_id="c1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}))
+    led.add_post(Post(id="N1", parent_id="c1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}))
+    section = render_digest(led, cfg).split("Lift by variant")[1]
+    assert "UCB" in section and "NEW" in section            # the bandit verdict is surfaced
+    a_line = [ln for ln in section.splitlines() if "@a/instagram" in ln][0]
+    assert "UCB" in a_line and "NEW" in a_line              # on the right surface line
+
+def test_digest_variant_ucb_failopen(tmp_path, monkeypatch):
+    # FAIL-OPEN: a raising ucb_rank must not lose the "Lift by variant" section -> degrade to
+    # "gathering data" (safe default); the lift rows still render.
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
+    monkeypatch.setattr("fanops.digest.ucb_rank",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="a0", parent_id="c1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      variant_key="vk_a0", variant_hook="HOOK A", metrics={"lift_score": 80.0}))
+    out = render_digest(led, cfg)                          # must NOT raise
+    assert "Lift by variant" in out and "HOOK A" in out and "80" in out   # rows survive
+    assert "gathering data" in out.split("Lift by variant")[1]            # safe default on error
+
+def test_digest_variant_ucb_off_keeps_v2_wording(tmp_path, monkeypatch):
+    # UCB OFF -> the v2 "learning ACTIVE"/"gathering data" wording is UNCHANGED (no "UCB ->" string).
+    monkeypatch.delenv("FANOPS_VARIANT_UCB", raising=False)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for i, (hook, lift) in enumerate(
+        [("WIN", 90.0), ("WIN", 90.0), ("WIN", 90.0), ("LOSE", 10.0), ("LOSE", 10.0), ("LOSE", 10.0)]
+    ):
+        led.add_post(Post(id=f"a{i}", parent_id="c1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                          variant_key=f"vk_a{i}", variant_hook=hook, metrics={"lift_score": lift}))
+    section = render_digest(led, cfg).split("Lift by variant")[1]
+    assert "learning ACTIVE" in section and "UCB ->" not in section

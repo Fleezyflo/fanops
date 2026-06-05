@@ -13,6 +13,10 @@ from fanops.agentstep import pending
 # and does NOT touch the C1 amplify/delete-cascade path (track.py/pipeline.py stay blind to it; the
 # isolation grep test enforces that). Bound at module scope so the fail-open path is unit-patchable.
 from fanops.variant_learning import best_hooks
+# Creative-variation v3: when FANOPS_VARIANT_UCB is on, the digest reports the bandit's pick for
+# the surface instead of the greedy gate wording. SAME read-only safe side; fail-open. Bound at
+# module scope so the fail-open path is unit-patchable.
+from fanops.variant_learning import ucb_rank
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,11 @@ def _gate_state(led: Ledger, cfg: Config, account: str, platform: Platform,
     if _cache is not None and key in _cache:
         return _cache[key]
     try:
-        state = "learning ACTIVE" if best_hooks(led, cfg, account, platform) else "gathering data"
+        if cfg.variant_ucb:                                # v3: report the bandit's actual pick
+            picked = ucb_rank(led, cfg, account, platform)
+            state = f'UCB -> "{picked[0]}"' if picked else "gathering data"
+        else:
+            state = "learning ACTIVE" if best_hooks(led, cfg, account, platform) else "gathering data"
     except Exception:
         logger.warning("variant gate-state degraded to 'gathering data' (fail-open)", exc_info=True)
         state = "gathering data"
