@@ -4,13 +4,13 @@
 
 **Goal:** Replace v2's gated-greedy own-surface caption-bias with a deterministic UCB1 multi-armed bandit (`ucb_rank`) that balances exploiting proven hooks against exploring under-sampled ones, behind a default-OFF flag, touching only the caption-request payload (never amplify/C1).
 
-**Architecture:** Add one pure read-only scorer `variant_learning.ucb_rank(led, cfg, account, platform)` computing `score(hook) = mean_lift + c·sqrt(ln N / n_hook)` over a surface's OWN analyzed variant posts (no RNG → structurally deterministic). A new flag `FANOPS_VARIANT_UCB` selects it over `best_hooks` inside the existing `caption._learned_hooks` helper; everything downstream (payload key `learned_hooks`, `caption_prompt`, digest) is reused. v2's `best_hooks` stays as the off-path fallback (one env flip to roll back). The orthogonal `variant_transfer` path is untouched.
+**Architecture:** Add one pure read-only scorer `variant_learning.ucb_rank(led, cfg, account, platform)` computing `score(hook) = mean_lift + c·sqrt(ln N / n_hook)` over a surface's OWN analyzed variant posts (no RNG → structurally deterministic). A new flag `FANOPS_VARIANT_UCB` selects it over `best_hooks` inside the existing `caption._learned_hooks` helper; everything downstream (payload key `learned_hooks`, `caption_prompt`, digest) is reused. v2's `best_hooks` stays as the off-path fallback (one env flip to roll back). **`variant_amplify` (merged on this base) keeps using `best_hooks` as its safety floor — v3 must not change that.** Cross-account transfer is NOT on this base (PR #15, unmerged).
 
 **Tech Stack:** Python 3, pytest, ruff. Pure stdlib (`math.log`, `math.sqrt`, `statistics.mean`). No new dependencies.
 
 **Spec:** `docs/superpowers/specs/2026-06-04-creative-variation-v3-ucb-bandit-design.md`
 
-**Prereqs (verified):** v2 merged (`5f275fd`); cross-account transfer merged (`8abc8fe`…`82f9c29`); spec committed (`6777216`). Baseline suite **green** (v2 era 387/1; re-confirm the live count in Step 0 below — transfer added tests).
+**Prereqs (verified 2026-06-05):** v2 merged (`5f275fd`) AND variant-amplify merged (`143deea`); spec committed (`6777216`). **Cross-account transfer NOT merged (PR #15), ABSENT on this base** — exactly one own-surface key (`learned_hooks`), no `transferred_hooks`/`variant_transfer`. **`variant_amplify` uses `best_hooks` as its FLOOR; v3 keeps it there** (`ucb_rank` swaps in only inside `caption._learned_hooks`). Build base `main` @ `143deea`, **baseline 421 passed / 1 skipped, ruff clean → NNN = 421** below.
 
 **Discipline:** strict TDD (RED → GREEN → VERIFY), default-OFF flag, fail-open, amplify-isolation proven by the existing AST data-flow test (extended to `ucb_rank`). Each task ends green on the FULL suite. Run from repo root with the venv active: `source .venv/bin/activate`.
 
@@ -510,7 +510,7 @@ In `src/fanops/digest.py`, add the import after the existing `from fanops.varian
 from fanops.variant_learning import ucb_rank
 ```
 
-Then modify `_gate_state` (digest.py:26-50) to branch on `cfg.variant_ucb` FIRST (the active allocator wins the annotation), keeping the existing greedy/transfer branches for the UCB-off path, and keeping the outer try/except fail-open. Replace the body's `try:` block:
+Then modify `_gate_state` to branch on `cfg.variant_ucb` FIRST (the active allocator wins the annotation), keeping the existing greedy branch for the UCB-off path, and the outer try/except fail-open. **NOTE (this base):** transfer is absent, so `_gate_state` here has ONLY the v2 `best_hooks`→"learning ACTIVE"/"gathering data" shape (no "borrowing platform signal" branch — grep the actual body first and preserve whatever branches exist). Replace the body's `try:` block — on this base that is:
 
 ```python
     try:
@@ -519,15 +519,14 @@ Then modify `_gate_state` (digest.py:26-50) to branch on `cfg.variant_ucb` FIRST
             state = f'UCB -> "{picked[0]}"' if picked else "gathering data"
         elif best_hooks(led, cfg, account, platform):
             state = "learning ACTIVE"
-        elif cfg.variant_transfer and accounts is not None and \
-                transferred_hooks(led, cfg, accounts, account, platform):
-            state = "borrowing platform signal"
         else:
             state = "gathering data"
     except Exception:
         logger.warning("variant gate-state degraded to 'gathering data' (fail-open)", exc_info=True)
         state = "gathering data"
 ```
+
+(If a later transfer merge re-adds a "borrowing platform signal" `elif`, keep it AFTER the `cfg.variant_ucb` branch and BEFORE `else`.)
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -553,12 +552,14 @@ git commit -m "feat (variation v3 4): digest reports the UCB pick per surface wh
 
 - [ ] **Step 1: Extend the C1 isolation invariant to `ucb_rank` (the safety claim, mechanized)**
 
-In `tests/test_variant_learning.py`, add `"ucb_rank"` and `"variant_ucb"` to the `_FORBIDDEN_IN_AMPLIFY` tuple (line ~102) so the existing `test_amplify_path_never_acts_on_variant_signal` also forbids the amplify path from referencing the bandit:
+In `tests/test_variant_learning.py`, add `"ucb_rank"` and `"variant_ucb"` to the `_FORBIDDEN_IN_AMPLIFY` tuple so the existing `test_amplify_path_never_acts_on_variant_signal` also forbids the amplify path from referencing the bandit. **On this base the tuple is the 4-element v2 one** (`("variant_key", "variant_hook", "best_hooks", "variant_learning")` — no transfer entries, transfer absent); grep it first and append the two new entries:
 
 ```python
 _FORBIDDEN_IN_AMPLIFY = ("variant_key", "variant_hook", "best_hooks", "variant_learning",
-                         "transferred_hooks", "variant_transfer", "ucb_rank", "variant_ucb")
+                         "ucb_rank", "variant_ucb")
 ```
+
+**IMPORTANT — `best_hooks` caller-lock already allows `variant_amplify.py` on this base** (amplify calls `best_hooks` as its floor; `test_best_hooks_called_only_on_safe_read_or_request_side` has `allowed = {"caption.py", "digest.py", "variant_amplify.py"}`). Do NOT touch that test. The NEW `ucb_rank` lock below allows ONLY `{caption.py, digest.py}` — `variant_amplify` must never call `ucb_rank` (it uses `best_hooks`).
 
 Then add a positive caller-lock for `ucb_rank`, mirroring `test_best_hooks_called_only_on_safe_read_or_request_side` exactly (allowed = caption.py + digest.py; danger = adjust/track/pipeline/ledger):
 
@@ -593,6 +594,36 @@ Expected: PASS (the amplify path references none of the variant signal; `ucb_ran
 - [ ] **Step 3: MUTATION-PROOF the isolation (prove the test bites)**
 
 Temporarily add a line referencing `ucb_rank` inside `amplify` in `src/fanops/adjust.py` (e.g. `_ = ucb_rank` at the top of the function body), run `python -m pytest tests/test_variant_learning.py -k amplify -q` → it must go **RED** naming the leak. Then **revert** the mutation (`git checkout src/fanops/adjust.py`) and re-run → GREEN. Document in the commit that the mutation was verified.
+
+- [ ] **Step 3b: Amplify-floor-unchanged test (NEW — the load-bearing v3 safety test the amplify merge necessitates)**
+
+`variant_amplify.amplify_candidates` uses `best_hooks` as its FLOOR to authorize the C1-touching amplify path. v3 must NOT let the exploratory bandit become an amplify authorization. Prove that turning UCB on leaves `amplify_candidates` byte-identical. Add to `tests/test_variant_amplify.py` (grep that file first for its `_post`/ledger seeding helpers — reuse them; it already constructs amplify-gated ledgers):
+
+```python
+def test_ucb_flag_does_not_change_amplify_candidates(tmp_path, monkeypatch):
+    """Turning FANOPS_VARIANT_UCB on must NOT change which candidates amplify authorizes — amplify's
+    floor is best_hooks (conservative/comparative), never ucb_rank (exploratory). A bandit pick can
+    nudge a caption; it can NEVER become an amplify (C1) authorization. Seed a surface where the UCB
+    pick differs from the greedy winner, then assert amplify_candidates is identical UCB-off vs UCB-on."""
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    from fanops.variant_amplify import amplify_candidates
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    # seed a ledger that CLEARS the amplify floor for a clear greedy winner (so amplify has candidates),
+    # while a thin-lead under-sampled hook would be UCB's pick (different from greedy). Reuse the file's
+    # helper to build enough analyzed posts to satisfy amplify_min_posts/min_gap/min_streak for "WIN".
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    # ... seed via the file's helper: "WIN" clears the amplify gate; add a sparse challenger hook ...
+    monkeypatch.delenv("FANOPS_VARIANT_UCB", raising=False)
+    off = amplify_candidates(led, cfg)
+    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
+    on = amplify_candidates(led, cfg)
+    assert off == on, "FANOPS_VARIANT_UCB must not affect amplify authorization (floor stays best_hooks)"
+```
+
+Run: `python -m pytest tests/test_variant_amplify.py -k "ucb_flag" -q` → PASS. (If `amplify_candidates`'s seeding is involved, the simplest robust assertion is `off == on`; even if both are `[]`, the invariant "UCB doesn't change amplify" holds — but prefer a seed where `off` is non-empty so the test proves equality of real candidates, not just two empties. Grep the file's existing amplify-gate test for a ready-made seeding helper.)
 
 - [ ] **Step 4: Real on-disk integration — the loop closes with the UCB pick, deterministically**
 

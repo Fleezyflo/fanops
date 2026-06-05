@@ -2,7 +2,9 @@
 
 **Date:** 2026-06-04 · **Backlog item:** v2 follow-up (3 of 3 — the LOWEST-priority one) · **Status:** design settled, ready for implementation plan
 **Builds on:** `2026-06-04-creative-variation-v2-feedback-design.md` (v2, gated-greedy caption-bias, shipped PR #14, `5f275fd`)
-**Prereq (verified):** v2 merged to `main` (`5f275fd`); `variant_learning.best_hooks` present; suite at 387/1.
+**Prereq (verified 2026-06-05):** v2 merged to `main` (`5f275fd`) AND variant-amplify merged
+(`143deea`); `variant_learning.best_hooks` present; cross-account transfer NOT merged (PR #15,
+absent on this base). Build base `main` @ `143deea`, suite **421/1** green, ruff clean.
 
 ## Problem
 
@@ -134,16 +136,23 @@ principled replacement for exactly that job.
 The seam, the payload, and the downstream renderer are **all unchanged from v2.** v3 adds one
 pure scorer and selects it behind a flag inside the single existing `_learned_hooks` helper.
 
-> **Note (codebase state at design time):** the *cross-account transfer* follow-up has since
-> merged (commits `8abc8fe`…`82f9c29`). `caption.py` now assembles **two** learned-hook keys:
-> `learned_hooks` (own-surface, from `best_hooks` via `_learned_hooks`) and
-> `learned_hooks_transferred` (borrowed cross-surface style, from `transferred_hooks` via
-> `_transferred_hooks`). **v3 replaces ONLY the own-surface allocator** — `best_hooks` →
-> `ucb_rank`, inside `_learned_hooks`/`learned_hooks`. The transfer path
-> (`variant_transfer.transferred_hooks`, `_transferred_hooks`, `learned_hooks_transferred`) is
-> **orthogonal and untouched** by v3. They must not be entangled: transfer is a cold-start prior
-> for surfaces with no own-data; UCB is the allocator over a surface's *own* analyzed data. A
-> surface can legitimately carry both keys (UCB pick of its own + a borrowed prior).
+> **Note (ACTUAL codebase state at build time, 2026-06-05 — corrects an earlier draft):** of the
+> three v2 follow-ups, the build base is `main` after the **variant-amplify** follow-up merged
+> (`143deea`); **cross-account transfer is NOT merged** (PR #15 open) and is **absent on this
+> branch**. So:
+> - `caption.py` assembles exactly **one** learned-hook key here: `learned_hooks` (own-surface,
+>   from `best_hooks` via `_learned_hooks`). There is no `learned_hooks_transferred` /
+>   `transferred_hooks` / `variant_transfer` on this base. **v3-UCB replaces the own-surface
+>   allocator** — `best_hooks` → `ucb_rank`, inside `_learned_hooks`. If transfer later merges, its
+>   separate key stays orthogonal and untouched (v3 never reads/writes it).
+> - **`variant_amplify.py` (merged `143deea`) calls `best_hooks` as its SAFETY FLOOR** — the
+>   conservative, comparative, noise-guarded greedy gate is what authorizes the C1-touching amplify
+>   path (`amplify_candidates` requires a `best_hooks` winner first). **v3-UCB must NOT change that
+>   floor:** `ucb_rank` (exploratory — can surface a thin-lead challenger) is swapped in ONLY inside
+>   `caption._learned_hooks`; `variant_amplify` keeps calling `best_hooks`, never `ucb_rank`. This is
+>   a load-bearing safety invariant (a bandit pick must never become an amplify authorization) and is
+>   tested explicitly in Task 5: turning `FANOPS_VARIANT_UCB` on must leave `amplify_candidates`
+>   byte-identical.
 
 **Data flow (the only new/changed arrows in CAPS — everything else is v1/v2, untouched):**
 ```
@@ -237,11 +246,18 @@ RED→GREEN→VERIFY, full suite green per task.
   env overrides both; bad `FANOPS_VARIANT_UCB_C` (`"abc"`, `"-1"`) → default (parse + negative
   guard).
 - **Amplify-isolation (C1)** — the v2 invariant **extended to `ucb_rank`**: the existing AST
-  data-flow test proving the amplify path (`track.py`/`pipeline.py` → `amplify`) never reaches the
-  learner must still pass; add an assertion that `ucb_rank` (like `best_hooks`) is called only from
-  `caption.py`/`digest.py`. Mutation-proof it: inject a `ucb_rank(...)` call into `amplify()` →
-  the isolation test goes RED.
-- **Backward-compat:** with `FANOPS_VARIANT_UCB` unset, the **entire existing 387-test suite stays
+  data-flow test proving the amplify path never reads variant signal must still pass with `ucb_rank`
+  and `variant_ucb` added to its forbidden set; add a caller-lock asserting `ucb_rank` is called only
+  from `caption.py`/`digest.py` (NOT `variant_amplify.py` — amplify uses `best_hooks`, never the
+  bandit). Mutation-proof it: inject a `ucb_rank(...)` reference into `amplify()` → the isolation test
+  goes RED.
+- **Amplify-floor-unchanged (the load-bearing v3 safety test)** — turning `FANOPS_VARIANT_UCB` ON
+  must leave `variant_amplify.amplify_candidates(led, cfg)` byte-identical: seed a ledger where the
+  UCB pick differs from the greedy winner, assert `amplify_candidates` returns the SAME result with
+  UCB off vs on (because amplify reads `best_hooks`, which v3 does not touch). This proves the
+  exploratory bandit can never become an amplify authorization (a wrong bias nudges a caption, never
+  the C1 path).
+- **Backward-compat:** with `FANOPS_VARIANT_UCB` unset, the **entire existing 421-test suite stays
   green unchanged** (v3 is fully behind the new flag; greedy is the default allocation).
 - **Real integration** (`tests/integration/test_variant_ucb_real.py`, NEW): build a REAL on-disk
   ledger for a surface with two hooks engineered so UCB's pick *differs* from greedy's (greedy
@@ -257,11 +273,16 @@ RED→GREEN→VERIFY, full suite green per task.
   the C1-risk path, still deferred. v3 stays strictly on the caption-bias side of the line (this is
   the *separate* "auto-amplify v3" backlog item, NOT this one — naming collision noted: this spec
   is the **bandit** follow-up, file-named `v3-ucb-bandit`; the amplify follow-up is independent).
-- **Cross-account / cross-surface transfer** (one surface's signal informing another) — already
-  shipped as a *separate* follow-up (`variant_transfer`, commits `8abc8fe`…`82f9c29`) and is
-  **out of scope here / untouched**. v3 runs an independent bandit per (account, platform) surface
-  over that surface's OWN data; the transfer prior remains a distinct, orthogonal payload key
-  (`learned_hooks_transferred`). v3 does not read, modify, or replace transfer.
+- **Cross-account / cross-surface transfer** (one surface's signal informing another) — a *separate*
+  follow-up (`variant_transfer`), currently **unmerged (PR #15) and absent on this build base** —
+  **out of scope / untouched**. v3 runs an independent bandit per (account, platform) surface over
+  that surface's OWN data. If transfer later merges, its distinct payload key remains orthogonal; v3
+  does not read, modify, or replace transfer.
+- **Variant-gated amplification** (`variant_amplify`, merged `143deea`) — the *separate* auto-propagate
+  follow-up that auto-amplifies a sustained winner. **Out of scope / untouched by v3, with one hard
+  invariant:** v3 must NOT alter amplify's `best_hooks` floor (see the build-state note above). v3
+  changes the caption *bias* allocator only; amplify's authorization gate stays on the conservative
+  greedy scorer.
 - **Seeded Thompson sampling** — rejected for v3 (UCB1 gives structural determinism with no RNG to
   seed/audit). Documented here as a considered-and-declined alternative; could revisit only if UCB
   exploration proves materially too weak in practice.
