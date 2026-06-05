@@ -100,6 +100,7 @@ import ast
 import pathlib
 
 _FORBIDDEN_IN_AMPLIFY = ("variant_key", "variant_hook", "best_hooks", "variant_learning",
+                         "ucb_rank", "variant_ucb",
                          "transferred_hooks", "variant_transfer")
 
 
@@ -164,6 +165,113 @@ def test_best_hooks_called_only_on_safe_read_or_request_side():
         f"C1 violation: best_hooks called from the amplify/delete path: {leaked_into_danger}"
     assert callers <= allowed, \
         f"best_hooks called from an unexpected file (review for safety): {sorted(callers - allowed)}"
+
+
+def test_ucb_rank_called_only_on_safe_read_or_request_side():
+    """Positive lock on the UCB scorer, mirroring the best_hooks lock. ucb_rank may be called only
+    from the SAFE surfaces: caption.py (the request side) and digest.py (read-only gate reporting).
+    NEVER from variant_amplify.py (it uses best_hooks as its floor, never the exploratory bandit) or
+    the C1 danger files. If a future edit calls it from the amplify/delete path, this names it."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
+    allowed = {"caption.py", "digest.py"}
+    danger = {"adjust.py", "track.py", "pipeline.py", "ledger.py", "variant_amplify.py"}
+    callers = set()
+    for py in root.rglob("*.py"):
+        if py.name == "variant_learning.py":        # the definition site
+            continue
+        if "ucb_rank(" in py.read_text():           # an actual call (not just the import line)
+            callers.add(py.name)
+    leaked_into_danger = sorted(callers & danger)
+    assert not leaked_into_danger, \
+        f"C1 violation: ucb_rank called from the amplify/delete path: {leaked_into_danger}"
+    assert callers <= allowed, \
+        f"ucb_rank called from an unexpected file (review for safety): {sorted(callers - allowed)}"
+
+
+from fanops.variant_learning import ucb_rank
+
+
+def test_ucb_exploits_clear_settled_winner(tmp_path):
+    cfg = Config(root=tmp_path)              # c = sqrt(2)
+    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0), _post("3", "@a", "WIN", 90.0),
+                     _post("4", "@a", "LOSE", 10.0), _post("5", "@a", "LOSE", 10.0), _post("6", "@a", "LOSE", 10.0)])
+    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["WIN"]
+
+
+def test_ucb_explores_undersampled_challenger_over_thin_lead(tmp_path):
+    # LEAD mean 60 over 8 posts; NEW mean 55 over 1. N=9. With c=sqrt2: s_LEAD≈60.741, s_NEW≈57.097
+    # -> LEAD wins (a BIG mean gap is NOT overridden — guards over-exploration).
+    cfg = Config(root=tmp_path)
+    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 55.0)]
+    led = _led(cfg, posts)
+    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["LEAD"]
+
+
+def test_ucb_challenger_wins_when_mean_gap_is_small(tmp_path):
+    # LEAD mean 60 over 8; NEW mean 59 over 1. s_LEAD≈60.741, s_NEW≈61.097 -> NEW wins (lock-in fix).
+    cfg = Config(root=tmp_path)
+    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 59.0)]
+    led = _led(cfg, posts)
+    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["NEW"]
+
+
+def test_ucb_c_zero_is_pure_greedy(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "0")
+    cfg = Config(root=tmp_path)
+    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 59.0)]
+    led = _led(cfg, posts)
+    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["LEAD"]   # no bonus -> mean decides
+
+
+def test_ucb_large_c_forces_exploration(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "50")
+    cfg = Config(root=tmp_path)
+    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 55.0)]
+    led = _led(cfg, posts)
+    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["NEW"]    # huge bonus on n=1 arm
+
+
+def test_ucb_single_post_surface_returns_that_hook(tmp_path):
+    cfg = Config(root=tmp_path)              # N==1 -> ln1=0 -> bonus 0 -> bare mean -> that hook
+    led = _led(cfg, [_post("1", "@a", "SOLO", 42.0)])
+    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["SOLO"]
+
+
+def test_ucb_single_hook_many_posts_returns_it(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, [_post("1", "@a", "SOLO", 70.0), _post("2", "@a", "SOLO", 70.0), _post("3", "@a", "SOLO", 70.0)])
+    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["SOLO"]
+
+
+def test_ucb_empty_and_other_surface_and_no_variant(tmp_path):
+    cfg = Config(root=tmp_path)
+    assert ucb_rank(Ledger.load(cfg), cfg, "@a", Platform.instagram) == []
+    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0)])
+    assert ucb_rank(led, cfg, "@b", Platform.instagram) == []
+
+
+def test_ucb_tie_broken_by_sorted_hook_string(tmp_path):
+    cfg = Config(root=tmp_path)              # identical (n,mean) -> identical score -> sorted-lower hook
+    led = _led(cfg, [_post("1", "@a", "ZZZ", 50.0), _post("2", "@a", "ZZZ", 50.0),
+                     _post("3", "@a", "AAA", 50.0), _post("4", "@a", "AAA", 50.0)])
+    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["AAA"]
+
+
+def test_ucb_deterministic_repeat(tmp_path):
+    cfg = Config(root=tmp_path)
+    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 59.0)]
+    led = _led(cfg, posts)
+    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ucb_rank(led, cfg, "@a", Platform.instagram)
+
+
+def test_variant_learning_module_has_no_nondeterminism():
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops" / "variant_learning.py").read_text()
+    for bad in ("import random", "from random", "import time", "from time", "import datetime",
+                "from datetime", "hashlib", "uuid"):
+        assert bad not in src, f"variant_learning.py must stay deterministic — found {bad!r}"
+    assert "hash(" not in src, "variant_learning.py must not use the builtin hash() (salted per-process)"
 
 
 def test_transferred_hooks_called_only_on_safe_read_or_request_side():
