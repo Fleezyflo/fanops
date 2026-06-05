@@ -52,6 +52,8 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `FANOPS_VARIANT_AMPLIFY_MIN_POSTS` | int (default **8**) | v3 trust-gate part 1 (stronger than v2's `FANOPS_VARIANT_MIN_POSTS`=3): the winning hook must carry at least this many analyzed posts before its win is trusted enough to AMPLIFY (a far more consequential act than v2's caption-bias). A non-int value falls back to the default. |
 | `FANOPS_VARIANT_AMPLIFY_MIN_GAP` | float (default **25.0**) | v3 trust-gate part 2 (stronger than v2's `FANOPS_VARIANT_MIN_GAP`=10): the winner's mean `lift_score` must beat the runner-up's by at least this margin. A non-float value falls back to the default. |
 | `FANOPS_VARIANT_AMPLIFY_MIN_STREAK` | int (default **3**) | v3 trust-gate part 3 — the core NEW safety property (no v2 analogue): the SAME hook must have led the gate across at least this many DISTINCT evidence windows (new analyzed-post batches) before amplifying. `≥ 2` means "never act on a single window". A non-int value falls back to the default. |
+| `FANOPS_VARIANT_UCB` | `1`/`true`/`yes`/`on` (default **OFF**) \| unset/`0`/`false`/… | Creative-variation **v3**: select the deterministic **UCB1 bandit** (`variant_learning.ucb_rank`) as the OWN-surface caption-bias allocator instead of v2 gated-greedy `best_hooks` (balances explore vs exploit; never silent once any variant data exists). INDEPENDENT of `FANOPS_VARIANT_LEARNING` (still the master gate — UCB is inert if learning is OFF). Does **NOT** affect amplify (keeps the `best_hooks` floor — the exploratory bandit can never become a C1 amplify authorization; tested + mutation-proven). **DEFAULT OFF** — opt-in; unset/empty/other ⇒ v2 greedy behavior. |
+| `FANOPS_VARIANT_UCB_C` | float (default **√2 ≈ 1.414**) | UCB exploration weight `c` in `score = mean_lift + c·sqrt(ln N / n)`. `0` = pure greedy (mean decides); larger = more exploration of under-sampled hooks. Negative/unparseable ⇒ default. |
 | `FANOPS_ESCALATION_BUDGET_USD` | float (optional) | Spend cap knob. |
 
 **Optional override file — `00_control/tuning.json`** (audit b). An operator can re-tune the
@@ -718,7 +720,14 @@ deferred from the original plan, and surfaced during the build.
   (`variant_learning.best_hooks` is the gate; `caption_prompt` renders "lean toward, don't copy
   verbatim"), so creative compounds instead of firing near-arbitrary hooks forever. Pure/read-only,
   fail-open, fully reversible (flip the flag off → next request reverts). The digest annotates each
-  surface's loop state ("learning ACTIVE" vs "gathering data"). **Still out of scope:** auto-propagating
+  surface's loop state ("learning ACTIVE" vs "gathering data"). **v3 bandit allocator**
+  (`FANOPS_VARIANT_UCB=1`, independent flag, default OFF): swaps the caption-bias allocator from
+  gated-greedy `best_hooks` to a deterministic **UCB1 bandit** (`variant_learning.ucb_rank`,
+  exploration weight `FANOPS_VARIANT_UCB_C`, default √2) — balances exploiting a proven hook against
+  exploring under-sampled ones (and is never silent once any variant data exists). It governs ONLY
+  this caption-bias side and **does NOT touch amplify** (which keeps the `best_hooks` floor — the
+  exploratory bandit can never become a C1 amplify authorization; tested + mutation-proven).
+  **Still out of scope:** auto-propagating
   winners into `amplify`/`_delete_moment_cascade` (the C1-risk cascade-delete path) — v2 deliberately
   stays on the caption-request side of that line; the amplify path remains blind to the learner
   (enforced by an isolation grep test).
