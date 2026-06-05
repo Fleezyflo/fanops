@@ -17,6 +17,9 @@ from fanops.variant_learning import best_hooks
 # the surface instead of the greedy gate wording. SAME read-only safe side; fail-open. Bound at
 # module scope so the fail-open path is unit-patchable.
 from fanops.variant_learning import ucb_rank
+# Transfer (v2 follow-up): the SAME read-only safe side. Used to annotate a COLD surface that is
+# receiving a borrowed cross-surface prior. Fail-open like best_hooks; does NOT touch the C1 path.
+from fanops.variant_transfer import transferred_hooks
 
 logger = logging.getLogger(__name__)
 
@@ -25,23 +28,27 @@ def _counts(units) -> str:
     return "".join(f"  - {s}: {n}\n" for s, n in sorted(c.items())) or "  (none)\n"
 
 def _gate_state(led: Ledger, cfg: Config, account: str, platform: Platform,
-                _cache: dict[tuple[str, str], str] | None = None) -> str:
-    """The learning-loop state for one (account, platform) surface, for the "Lift by variant"
-    digest section. "learning ACTIVE" iff the gated scorer (variant_learning.best_hooks — the SAME
-    one request_captions biases on, so the digest and the caption-bias can never disagree) returns a
-    trustworthy winner for this surface; otherwise "gathering data" (the loop is still open here).
-    FAIL-OPEN: any error in the scorer degrades to "gathering data" (the safe/closed default) so a
-    learning failure can never blank or crash the operator's observability digest. Memoised per render
-    via the optional _cache (best_hooks is deterministic, so one call per surface is enough)."""
+                _cache: dict[tuple[str, str], str] | None = None, accounts=None) -> str:
+    """The learning-loop state for one (account, platform) surface, for the "Lift by variant" digest
+    section. "learning ACTIVE" iff the surface has its OWN gated winner (variant_learning.best_hooks
+    — the SAME scorer request_captions biases on). Else, if transfer is on and the surface would
+    receive a borrowed cross-surface prior, "borrowing platform signal". Otherwise "gathering data"
+    (the loop is still open here). FAIL-OPEN: any error degrades to "gathering data" (the safe
+    default). Memoised per render via the optional _cache."""
     key = (account, platform.value)
     if _cache is not None and key in _cache:
         return _cache[key]
     try:
-        if cfg.variant_ucb:                                # v3: report the bandit's actual pick
+        if cfg.variant_ucb:                                # v3: the active allocator reports its pick
             picked = ucb_rank(led, cfg, account, platform)
             state = f'UCB -> "{picked[0]}"' if picked else "gathering data"
+        elif best_hooks(led, cfg, account, platform):
+            state = "learning ACTIVE"
+        elif cfg.variant_transfer and accounts is not None and \
+                transferred_hooks(led, cfg, accounts, account, platform):
+            state = "borrowing platform signal"
         else:
-            state = "learning ACTIVE" if best_hooks(led, cfg, account, platform) else "gathering data"
+            state = "gathering data"
     except Exception:
         logger.warning("variant gate-state degraded to 'gathering data' (fail-open)", exc_info=True)
         state = "gathering data"
@@ -49,7 +56,7 @@ def _gate_state(led: Ledger, cfg: Config, account: str, platform: Platform,
         _cache[key] = state
     return state
 
-def render_digest(led: Ledger, cfg: Config) -> str:
+def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     out = ["# FAN OPS Ledger Digest\n"]
     out.append(f"\n**Sources** ({len(led.sources)}):\n" + _counts(led.sources.values()))
     out.append(f"\n**Moments** ({len(led.moments)}):\n" + _counts(led.moments.values()))
@@ -105,7 +112,7 @@ def render_digest(led: Ledger, cfg: Config) -> str:
         gate_cache: dict[tuple[str, str], str] = {}     # one best_hooks call per surface per render
         lines = [f"- `{p.variant_hook or p.variant_key}` ({p.account}/{p.platform.value}): "
                  f"lift {p.metrics.get('lift_score', 0.0)} "
-                 f"— {_gate_state(led, cfg, p.account, p.platform, gate_cache)}"
+                 f"— {_gate_state(led, cfg, p.account, p.platform, gate_cache, accounts)}"
                  for p in rows]
         out.append("\n## Lift by variant (which creative is winning)\n" + "\n".join(lines) + "\n")
 
@@ -156,4 +163,16 @@ def render_digest(led: Ledger, cfg: Config) -> str:
 
 def write_digest(led: Ledger, cfg: Config) -> None:
     cfg.digest_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.digest_path.write_text(render_digest(led, cfg))
+    # Self-load the account registry so the "borrowing platform signal" annotation works for every
+    # write_digest caller (pipeline + all CLI verbs) WITHOUT threading accounts through 7 call sites.
+    # Only needed when transfer is on; FAIL-OPEN — a missing/corrupt registry must never blank or
+    # crash the digest, so degrade to None (no borrowing label, exactly v2 behavior).
+    accounts = None
+    if cfg.variant_transfer:
+        try:
+            from fanops.accounts import Accounts
+            accounts = Accounts.load(cfg)
+        except Exception:
+            logger.warning("digest accounts load skipped (fail-open)", exc_info=True)
+            accounts = None
+    cfg.digest_path.write_text(render_digest(led, cfg, accounts=accounts))

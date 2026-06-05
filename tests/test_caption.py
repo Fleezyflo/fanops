@@ -276,6 +276,86 @@ def test_request_captions_failopen_on_learning_error(monkeypatch, tmp_path):
     assert "learned_hooks" not in payload                  # error -> no hint
     assert led.clips["clip_1"].state is ClipState.captions_requested
 
+
+# --- transfer: request_captions injects the cross-surface prior for a COLD recipient ----------
+from fanops.accounts import Account, Accounts, AccountStatus
+
+def _transfer_accounts(cfg, handles_personas, platform=Platform.instagram):
+    a = Accounts(cfg)
+    a.accounts = [Account(handle=h, account_id=h.strip("@") or h, platforms=[platform],
+                          status=AccountStatus.active, persona=persona)
+                  for (h, persona) in handles_personas]
+    return a
+
+def _win_surface_for(led, account, platform, hook, *, n=3):
+    rows = [(hook, 90.0)] * n + [("LOSE", 10.0)] * n
+    for i, (h, lift) in enumerate(rows):
+        led.add_post(Post(id=f"{account}_{platform.value}_{i}", parent_id="clip_1", account=account,
+                          account_id="x", platform=platform, caption="x", state=PostState.analyzed,
+                          variant_key=f"vk_{account}_{i}", variant_hook=h,
+                          metrics={"lift_score": lift}))
+
+def test_request_captions_injects_transferred_prior_for_cold_surface(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    accts = _transfer_accounts(cfg, [("@a", "hype"), ("@b", "hype"), ("@c", "hype")])
+    _win_surface_for(led, "@a", Platform.instagram, "STYLE")
+    _win_surface_for(led, "@b", Platform.instagram, "STYLE")   # 2 donors -> STYLE qualifies
+    # request captions for the COLD recipient @c.
+    led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert payload["learned_hooks_transferred"] == ["STYLE"]
+    assert "learned_hooks" not in payload                      # @c has no OWN winner
+
+def test_request_captions_no_transfer_when_flag_off(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_VARIANT_TRANSFER", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    accts = _transfer_accounts(cfg, [("@a", "hype"), ("@b", "hype"), ("@c", "hype")])
+    _win_surface_for(led, "@a", Platform.instagram, "STYLE")
+    _win_surface_for(led, "@b", Platform.instagram, "STYLE")
+    led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "learned_hooks_transferred" not in payload          # OFF -> byte-identical to today
+
+def test_request_captions_no_accounts_means_no_transfer(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    _seed_variant_posts_for_at_a(led)
+    # no accounts arg -> backward-compatible default None -> transfer inert (no key).
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "learned_hooks_transferred" not in payload
+
+def test_request_captions_own_winner_takes_precedence_over_transfer(monkeypatch, tmp_path):
+    # The recipient has its OWN winner -> it gets learned_hooks (v2) and NO transferred prior
+    # (own-wins rule, the anti-homogenization guarantee proven through the request payload).
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    accts = _transfer_accounts(cfg, [("@a", "hype"), ("@b", "hype"), ("@c", "hype")])
+    _win_surface_for(led, "@a", Platform.instagram, "STYLE")
+    _win_surface_for(led, "@b", Platform.instagram, "STYLE")
+    _win_surface_for(led, "@c", Platform.instagram, "OWN")     # @c has its OWN winner
+    led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert payload["learned_hooks"] == ["OWN"]                 # own signal present
+    assert "learned_hooks_transferred" not in payload          # borrowed signal suppressed
+
+def test_request_captions_failopen_on_transfer_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    accts = _transfer_accounts(cfg, [("@a", "hype"), ("@b", "hype"), ("@c", "hype")])
+    _win_surface_for(led, "@a", Platform.instagram, "STYLE")
+    _win_surface_for(led, "@b", Platform.instagram, "STYLE")
+    monkeypatch.setattr("fanops.caption.transferred_hooks",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=accts)  # no raise
+    p = request_path(cfg, "captions", "clip_1")
+    assert p.exists()
+    payload = json.loads(p.read_text())
+    assert "learned_hooks_transferred" not in payload          # error -> no prior
+    assert led.clips["clip_1"].state is ClipState.captions_requested
+
 def test_ingest_captions_stores_per_surface_hook(tmp_path):
     # variation (3): the caption agent returns a per-surface `hook`; ingest_captions stores it
     # into meta_captions[surface]["hook"] (additive — readers of caption/hashtags unaffected).

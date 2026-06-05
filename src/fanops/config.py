@@ -232,3 +232,34 @@ class Config:
         except ValueError:
             return math.sqrt(2)
         return v if v >= 0 else math.sqrt(2)
+
+    @property
+    def variant_transfer(self) -> bool:
+        # Cross-account / cross-surface learning transfer (the v2 follow-up): with this ON,
+        # request_captions may bias a COLD recipient surface (one with no trustworthy winner of its
+        # own yet) toward a hook STYLE proven on OTHER same-platform surfaces. INDEPENDENT of both
+        # FANOPS_CREATIVE_VARIATION and FANOPS_VARIANT_LEARNING. DEFAULT OFF (opt-in), fail-open:
+        # unset/empty/other -> today's behavior, no transferred prior injected.
+        v = (os.getenv("FANOPS_VARIANT_TRANSFER") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def variant_transfer_min_donors(self) -> int:
+        # Transfer gate (stricter than v2's): a hook style transfers to a cold recipient only if it
+        # is the v2-gated winner on at least this many DISTINCT other same-platform donor surfaces.
+        # DEFAULT 2 — one surface's local win is not yet a platform-level signal. A non-int env
+        # falls back to the default rather than crashing an autonomous run.
+        try:
+            return int(os.getenv("FANOPS_VARIANT_TRANSFER_MIN_DONORS", "2"))
+        except ValueError:
+            return 2
+
+    @property
+    def variant_transfer_max_hooks(self) -> int:
+        # Cap on how many borrowed styles a single caption request may carry, so even a popular
+        # style-cluster cannot flood one caption (anti-homogenization). DEFAULT 2. A non-int env
+        # falls back to the default.
+        try:
+            return int(os.getenv("FANOPS_VARIANT_TRANSFER_MAX_HOOKS", "2"))
+        except ValueError:
+            return 2
