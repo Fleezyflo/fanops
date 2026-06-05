@@ -5,6 +5,7 @@ was wrong)."""
 from __future__ import annotations
 import json
 import logging
+import math
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -206,3 +207,28 @@ class Config:
             return int(os.getenv("FANOPS_VARIANT_AMPLIFY_MIN_STREAK", "3"))
         except ValueError:
             return 3
+
+    @property
+    def variant_ucb(self) -> bool:
+        # Creative variation v3 (the bandit): with this ON, the OWN-surface caption bias is chosen
+        # by a deterministic UCB1 multi-armed bandit (variant_learning.ucb_rank) instead of v2's
+        # gated-greedy best_hooks — balancing exploit (proven hooks) against explore (under-sampled
+        # ones), and never silent once any variant data exists. DEFAULT OFF (opt-in), INDEPENDENT of
+        # FANOPS_VARIANT_LEARNING (still the master gate — UCB is inert if learning is off). Does NOT
+        # affect variant_amplify, which keeps using best_hooks as its safety floor. Only the explicit
+        # on-words enable it; unset/empty/other stays OFF (v2 greedy behavior).
+        v = (os.getenv("FANOPS_VARIANT_UCB") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def variant_ucb_c(self) -> float:
+        # The UCB1 exploration weight `c` in score = mean_lift + c*sqrt(ln N / n). DEFAULT sqrt(2)
+        # (the UCB1 literature standard — balanced). Larger c => more exploration of under-sampled
+        # hooks; c == 0 => pure greedy (degenerates to v2-greedy's "highest mean wins"). A negative
+        # c would INVERT exploration into anti-exploration (always pick the most-sampled) — guard it:
+        # a non-float OR negative env falls back to the default rather than crashing an autonomous run.
+        try:
+            v = float(os.getenv("FANOPS_VARIANT_UCB_C", ""))
+        except ValueError:
+            return math.sqrt(2)
+        return v if v >= 0 else math.sqrt(2)

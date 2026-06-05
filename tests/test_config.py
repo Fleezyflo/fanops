@@ -114,3 +114,28 @@ def test_variant_amplify_bad_env_falls_back(monkeypatch, tmp_path):
     assert c.variant_amplify_min_posts == 8
     assert c.variant_amplify_min_gap == 25.0
     assert c.variant_amplify_min_streak == 3
+
+
+def test_variant_ucb_defaults_off_and_sqrt2(monkeypatch, tmp_path):
+    from fanops.config import Config
+    import math
+    for k in ("FANOPS_VARIANT_UCB", "FANOPS_VARIANT_UCB_C"):
+        monkeypatch.delenv(k, raising=False)
+    c = Config(root=tmp_path)
+    assert c.variant_ucb is False                      # default OFF -> v2 greedy stays the allocator
+    assert c.variant_ucb_c == math.sqrt(2)             # UCB1 standard exploration weight
+
+def test_variant_ucb_env_overrides(monkeypatch, tmp_path):
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
+    monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "0.5")
+    c = Config(root=tmp_path)
+    assert c.variant_ucb is True and c.variant_ucb_c == 0.5
+
+def test_variant_ucb_c_bad_or_negative_falls_back(monkeypatch, tmp_path):
+    from fanops.config import Config
+    import math
+    monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "abc")          # unparseable -> default
+    assert Config(root=tmp_path).variant_ucb_c == math.sqrt(2)
+    monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "-1")           # negative -> default (no anti-exploration)
+    assert Config(root=tmp_path).variant_ucb_c == math.sqrt(2)
