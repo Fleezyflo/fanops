@@ -16,6 +16,12 @@ from fanops.agentstep import write_request, read_response, request_path
 # enforced by an isolation grep test). Bound at module scope so request_captions' fail-open path is
 # unit-patchable (tests monkeypatch fanops.caption.best_hooks to prove a raising scorer is swallowed).
 from fanops.variant_learning import best_hooks
+# Creative-variation v3 (the bandit): the alternative OWN-surface allocator, selected by
+# FANOPS_VARIANT_UCB inside _learned_hooks. SAME safe caption-request side as best_hooks (the
+# amplify/delete path stays blind to it; isolation tests enforce it). Bound at module scope so the
+# fail-open path is unit-patchable (tests monkeypatch fanops.caption.ucb_rank to prove a raising
+# scorer is swallowed). variant_amplify keeps using best_hooks as its floor — v3 does not change that.
+from fanops.variant_learning import ucb_rank
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +93,9 @@ def _learned_hooks(led: Ledger, cfg: Config,
     try:
         learned: list[str] = []
         seen: set[str] = set()
+        scorer = ucb_rank if cfg.variant_ucb else best_hooks   # v3 bandit vs v2 gated-greedy
         for acct, plat in surfaces:
-            for h in best_hooks(led, cfg, acct, plat):
+            for h in scorer(led, cfg, acct, plat):
                 if h not in seen:
                     seen.add(h)
                     learned.append(h)

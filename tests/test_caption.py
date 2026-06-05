@@ -296,3 +296,56 @@ def test_ingest_captions_stores_per_surface_hook(tmp_path):
     response_path(cfg, "captions", "c1").write_text(json.dumps(resp))
     led = capmod.ingest_captions(led, cfg, "c1")
     assert led.clips["c1"].meta_captions["@a/instagram"]["hook"] == "THEY SLEPT ON ME"
+
+# ---- variation v3 (UCB bandit): the flag selects ucb_rank over best_hooks for the OWN-surface bias.
+# A surface engineered so UCB's pick DIFFERS from greedy's: 8x LEAD@60 + 1x NEW@59. Greedy's gap
+# (1.0) < MIN_GAP 10 -> best_hooks returns [] (no hint). UCB explores the under-sampled NEW (its
+# optimism bonus beats LEAD's thin mean lead) -> picks NEW. So UCB-on yields "NEW", UCB-off yields none.
+def _seed_thinlead_for_at_a(led):
+    for i in range(1, 9):
+        led.add_post(Post(id=f"L{i}", parent_id="clip_1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}))
+    led.add_post(Post(id="N1", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}))
+
+def test_request_captions_ucb_picks_challenger_when_flag_on(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    _seed_thinlead_for_at_a(led)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "NEW" in payload.get("learned_hooks", [])      # UCB exploration pick reached the request
+    assert "LEAD" not in payload.get("learned_hooks", []) # greedy's would-be leader did NOT
+
+def test_request_captions_greedy_when_ucb_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    monkeypatch.delenv("FANOPS_VARIANT_UCB", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    _seed_thinlead_for_at_a(led)                          # same ledger
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    # greedy: gap 1.0 < MIN_GAP 10 -> best_hooks [] -> no hint at all (UCB-off = v2 behavior)
+    assert "learned_hooks" not in payload
+
+def test_request_captions_no_hint_when_learning_off_even_with_ucb(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_VARIANT_LEARNING", raising=False)   # master gate OFF
+    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    _seed_thinlead_for_at_a(led)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "learned_hooks" not in payload                 # learning off -> neither scorer runs
+
+def test_request_captions_failopen_on_ucb_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
+    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
+    monkeypatch.setattr("fanops.caption.ucb_rank",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    _seed_thinlead_for_at_a(led)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])  # must NOT raise
+    assert request_path(cfg, "captions", "clip_1").exists()                   # written anyway
+    assert led.clips["clip_1"].state is ClipState.captions_requested          # clip advanced
