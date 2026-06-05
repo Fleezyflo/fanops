@@ -321,3 +321,25 @@ def test_amplify_budget_constant_is_shared_with_adjust():
     assert va.MAX_AMPLIFY_PER_SOURCE is MAX_AMPLIFY_PER_SOURCE
     # and amplify()'s default equals it (so the pre-check boundary matches what amplify enforces)
     assert inspect.signature(amplify).parameters["max_amplify_per_source"].default == MAX_AMPLIFY_PER_SOURCE
+
+
+# ---- variation v3 (Task 5): the load-bearing UCB-vs-amplify safety invariant --------------------
+def test_ucb_flag_does_not_change_amplify_candidates(tmp_path, monkeypatch):
+    """Turning FANOPS_VARIANT_UCB on must NOT change which candidates amplify authorizes. Amplify's
+    floor is best_hooks (conservative/comparative/noise-guarded), NEVER ucb_rank (exploratory). A
+    bandit pick can nudge a caption; it can NEVER become an amplify (C1) authorization. Seed a real
+    amplify candidate (WIN clears the full gate) PLUS a sparse challenger hook that ucb_rank would
+    prefer — then assert amplify_candidates is identical with UCB off vs on."""
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    posts = _winset(8, "WIN", 90.0)                       # 8 WIN@90 + 3 LOSE@1 -> clears amplify gate
+    posts.append(_post("90", "@a", "SPARSE", 5.0))        # 1 under-sampled challenger ucb would explore
+    led = _led(cfg, posts)
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    monkeypatch.delenv("FANOPS_VARIANT_UCB", raising=False)
+    off = amplify_candidates(led, cfg)
+    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
+    on = amplify_candidates(led, cfg)
+    assert off == on, "FANOPS_VARIANT_UCB must not affect amplify authorization (floor stays best_hooks)"
+    assert len(off) == 1 and off[0]["winning_hook"] == "WIN"   # a REAL candidate (not two empties), still WIN
