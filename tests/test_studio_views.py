@@ -115,3 +115,32 @@ def test_review_buckets_variant_media_url_is_post_scoped(tmp_path):
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
     sp = [s for c in cards for s in c.surfaces if s.post_id == "p_v"][0]
     assert sp.media_url == "/media/p_v"
+
+from fanops.studio.views import schedule_rows
+
+def test_schedule_rows_sorted_with_recent_and_imminent_flags(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
+                          "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="p_far", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="far", state=PostState.queued,
+                      scheduled_time=_z(NOW + timedelta(hours=5))))
+    led.add_post(Post(id="p_soon", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="soon", state=PostState.queued,
+                      scheduled_time=_z(NOW + timedelta(hours=1))))
+    led.add_post(Post(id="p_imm", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="imm", state=PostState.queued,
+                      scheduled_time=_z(NOW + timedelta(minutes=2))))
+    led.add_post(Post(id="p_done", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="done", state=PostState.published,
+                      scheduled_time=_z(NOW - timedelta(hours=1))))
+    rows = schedule_rows(led, cfg, now=NOW)
+    ids = [r.post_id for r in rows]
+    # chronological by scheduled_time (recent published first since it is earliest)
+    assert ids == ["p_done", "p_imm", "p_soon", "p_far"]
+    by_id = {r.post_id: r for r in rows}
+    assert by_id["p_far"].editable is True and by_id["p_far"].imminent is False
+    assert by_id["p_imm"].editable is False and by_id["p_imm"].imminent is True
+    assert by_id["p_done"].editable is False   # published -> read-only
+    assert by_id["p_far"].clip_id == "clip_1" and by_id["p_far"].platform == "instagram"
