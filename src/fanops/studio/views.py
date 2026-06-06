@@ -92,3 +92,73 @@ def _imminent(scheduled_time: Optional[str], now: datetime,
     if dt.tzinfo is None:
         return True
     return dt <= now + timedelta(minutes=threshold_min)
+
+
+def _personas(accounts: Accounts) -> dict:
+    return {a.handle: a.persona for a in accounts.accounts}
+
+def _lineage_for_clip(led: Ledger, clip):
+    """Return (source_name, moment_window, reason, language, transcript_excerpt) for a clip,
+    walking clip -> moment -> source. Missing links degrade to safe '—'/None."""
+    mom = led.moments.get(clip.parent_id)
+    src = led.sources.get(mom.parent_id) if mom is not None else None
+    source_name = Path(src.source_path).name if (src and src.source_path) else "—"
+    moment_window = f"{int(mom.start)}–{int(mom.end)}" if mom is not None else "—"   # en dash
+    reason = mom.reason if (mom and mom.reason) else "—"
+    language = src.language if src else None
+    excerpt = mom.transcript_excerpt if mom else None
+    return source_name, moment_window, reason, language, excerpt
+
+def _surface(post, *, persona, now: datetime) -> SurfacePost:
+    imm = _imminent(post.scheduled_time, now)
+    state = post.state.value
+    return SurfacePost(
+        post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
+        caption=post.caption, hashtags=list(post.hashtags or []),
+        scheduled_time=post.scheduled_time, media_url=f"/media/{post.id}",
+        state=state, imminent=imm, editable=(state == PostState.queued.value and not imm))
+
+def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime) -> ReviewCard:
+    source_name, window, reason, language, excerpt = _lineage_for_clip(led, clip)
+    surfaces = [_surface(p, persona=personas.get(p.account), now=now)
+                for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
+    return ReviewCard(
+        clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name,
+        moment_window=window, reason=reason, language=language, subtitles_burned=cfg.burn_subs,
+        held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
+        surfaces=surfaces, bucket=bucket)
+
+def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime) -> list[ReviewCard]:
+    """Three buckets (spec §6): editable (queued posts grouped by clip), recent (published/analyzed
+    within RECENT_WINDOW_HOURS), held (clips with held=True, no posts). A clip may appear in both
+    editable and recent (different posts)."""
+    personas = _personas(accounts)
+    cards: list[ReviewCard] = []
+    queued_by_clip: dict[str, list] = {}
+    recent_by_clip: dict[str, list] = {}
+    recent_cutoff = now - timedelta(hours=RECENT_WINDOW_HOURS)
+    for p in led.posts.values():
+        if p.state is PostState.queued:
+            queued_by_clip.setdefault(p.parent_id, []).append(p)
+        elif p.state in (PostState.published, PostState.analyzed):
+            keep = True
+            if p.scheduled_time:
+                try:
+                    dt = parse_iso(p.scheduled_time)
+                    keep = dt.tzinfo is not None and dt >= recent_cutoff
+                except (ValueError, TypeError):
+                    keep = True   # unparseable but shipped -> still show it
+            if keep:
+                recent_by_clip.setdefault(p.parent_id, []).append(p)
+    for clip_id, posts in queued_by_clip.items():
+        clip = led.clips.get(clip_id)
+        if clip is not None:
+            cards.append(_card(led, clip, posts, "editable", cfg, personas, now))
+    for clip_id, posts in recent_by_clip.items():
+        clip = led.clips.get(clip_id)
+        if clip is not None:
+            cards.append(_card(led, clip, posts, "recent", cfg, personas, now))
+    for clip in led.clips.values():
+        if clip.held:
+            cards.append(_card(led, clip, [], "held", cfg, personas, now))
+    return cards
