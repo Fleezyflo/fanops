@@ -9,6 +9,9 @@ dependencies = ["pydantic>=2.7", "requests>=2.31", "python-dotenv>=1.0", "yt-dlp
 dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3", "ruff>=0.5"]
 # Local transcription. Installed into the venv in Task 2. (whisper CLI lands on PATH.)
 transcribe = ["openai-whisper>=20231117"]
+# Local web cockpit (spec §10). Flask is OPTIONAL: `pip install -e .` (core CLI) stays Flask-free;
+# only `pip install -e '.[studio]'` pulls it. The CLI imports it LAZILY so a no-[studio] install runs.
+studio = ["flask>=3.0"]
 
 [project.scripts]
 fanops = "fanops.cli:main"
