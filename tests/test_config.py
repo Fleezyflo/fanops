@@ -171,3 +171,26 @@ def test_variant_ucb_c_bad_or_negative_falls_back(monkeypatch, tmp_path):
     assert Config(root=tmp_path).variant_ucb_c == math.sqrt(2)
     monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "-1")           # negative -> default (no anti-exploration)
     assert Config(root=tmp_path).variant_ucb_c == math.sqrt(2)
+
+
+def test_publish_lead_minutes_default_zero(monkeypatch):
+    from fanops.config import Config
+    monkeypatch.delenv("FANOPS_PUBLISH_LEAD_MINUTES", raising=False)
+    assert Config().publish_lead_minutes == 0
+
+def test_publish_lead_minutes_reads_env(monkeypatch):
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", "120")
+    assert Config().publish_lead_minutes == 120
+
+def test_publish_lead_minutes_non_int_falls_back_to_zero(monkeypatch):
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", "not-a-number")
+    assert Config().publish_lead_minutes == 0
+
+def test_publish_lead_minutes_negative_clamps_to_zero(monkeypatch):
+    # A negative lead would shift the anchor BEFORE base and could invert the editable window;
+    # unlike the other int knobs, this one MUST guard negatives (mirrors variant_ucb_c).
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", "-30")
+    assert Config().publish_lead_minutes == 0

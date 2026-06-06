@@ -263,3 +263,17 @@ class Config:
             return int(os.getenv("FANOPS_VARIANT_TRANSFER_MAX_HOOKS", "2"))
         except ValueError:
             return 2
+
+    @property
+    def publish_lead_minutes(self) -> int:
+        # The editorial window (spec §4): a CONSTANT offset added to every post's deterministic
+        # scheduled_time at CROSSPOST time, so a freshly-queued post sits in `queued` for ~lead
+        # minutes before publish_due ships it. DEFAULT 0 == today's exact behavior (every post due
+        # immediately under a past base-time). A non-int OR negative env -> 0: unlike the other int
+        # knobs, a negative lead would shift the anchor before `base` and corrupt the window, so it
+        # is explicitly clamped (the variant_ucb_c precedent), not merely caught.
+        try:
+            v = int(os.getenv("FANOPS_PUBLISH_LEAD_MINUTES", "0"))
+        except ValueError:
+            return 0
+        return v if v >= 0 else 0
