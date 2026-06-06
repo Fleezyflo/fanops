@@ -141,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
     p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
     sub.add_parser("intake")
+    p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
+    p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
+    p_studio.add_argument("--port", type=int, default=8787)
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
@@ -335,6 +338,15 @@ def _dispatch(cfg: Config, args) -> int:
         s = _intake(cfg)
         print(f"intake: {s['intaken']} approved original(s) copied into 01_inbox/ "
               f"({s['approved']} approved, {s['missing']} missing). Run `fanops advance`/`run` to pipeline them.")
+        return 0
+    if args.cmd == "studio":
+        # LAZY import (spec §10): Flask is an optional extra; importing create_app here — never at
+        # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
+        # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
+        from fanops.studio.app import create_app
+        app = create_app(cfg)
+        print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
+        app.run(host=args.host, port=args.port)
         return 0
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc

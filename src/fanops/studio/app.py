@@ -1,0 +1,97 @@
+"""Flask app factory for FanOps Studio (spec §10). Imports Flask at MODULE TOP — that is fine
+because this module is only imported LAZILY from the CLI dispatch branch (never at cli.py top), so a
+core no-[studio] install never touches it. Reads use lock-free Ledger.load (atomic os.replace
+guarantees a complete file); writes go through studio.actions (one Ledger.transaction each)."""
+from __future__ import annotations
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+from flask import Flask, abort, redirect, render_template, request, send_file, url_for
+
+from fanops.config import Config
+from fanops.accounts import Accounts
+from fanops.ledger import Ledger
+from fanops.studio import views, actions
+
+_HERE = Path(__file__).resolve().parent
+
+
+def _media_path_for_post(led: Ledger, post_id: str):
+    """Resolve the local file to serve for a post: the variant overlay (media_urls[0], stripped of
+    file://) when it is a local file, else the base clip path. Returns None if nothing resolvable.
+    The id is only a dict-key lookup and the path comes from the trusted ledger (never the URL), so
+    there is no path traversal."""
+    post = led.posts.get(post_id)
+    if post is None:
+        return None
+    candidate = None
+    if post.media_urls:
+        raw = post.media_urls[0]
+        if raw.startswith("file://"):
+            candidate = raw[len("file://"):]
+        elif not raw.startswith(("http://", "https://")):
+            candidate = raw            # a bare local path
+        # http(s) publicUrl -> not locally servable; fall through to base clip
+    if candidate is None:
+        clip = led.clips.get(post.parent_id)
+        candidate = clip.path if clip else None
+    return candidate
+
+
+def create_app(cfg: Config) -> Flask:
+    app = Flask(__name__, template_folder=str(_HERE / "templates"), static_folder=str(_HERE / "static"))
+
+    @app.get("/")
+    def index():
+        return redirect(url_for("review"))
+
+    @app.get("/review")
+    def review():
+        led = Ledger.load(cfg)
+        accounts = Accounts.load(cfg)
+        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
+        return render_template("review.html", cards=cards, tab="review")
+
+    @app.get("/schedule")
+    def schedule():
+        led = Ledger.load(cfg)
+        rows = views.schedule_rows(led, cfg, now=datetime.now(timezone.utc))
+        return render_template("schedule.html", rows=rows, tab="schedule")
+
+    @app.get("/lift")
+    def lift():
+        led = Ledger.load(cfg)
+        view = views.lift_rows(led, cfg, Accounts.load(cfg))
+        return render_template("lift.html", view=view, tab="lift")
+
+    @app.get("/media/<post_id>")
+    def media(post_id):
+        path = _media_path_for_post(Ledger.load(cfg), post_id)
+        if not path or not os.path.exists(path):
+            abort(404)
+        return send_file(path)
+
+    @app.get("/clips/<clip_id>")
+    def clip_media(clip_id):
+        clip = Ledger.load(cfg).clips.get(clip_id)
+        if clip is None or not clip.path or not os.path.exists(clip.path):
+            abort(404)
+        return send_file(clip.path)
+
+    @app.post("/reschedule/<post_id>")
+    def do_reschedule(post_id):
+        result = actions.reschedule_post(cfg, post_id, request.form.get("new_time", ""))
+        return render_template("_result.html", result=result)
+
+    @app.post("/caption/<post_id>")
+    def do_caption(post_id):
+        result = actions.edit_caption(cfg, post_id, request.form.get("caption", ""))
+        return render_template("_result.html", result=result)
+
+    @app.post("/snooze/<clip_id>")
+    def do_snooze(clip_id):
+        result = actions.snooze_clip(cfg, clip_id)
+        return render_template("_result.html", result=result)
+
+    return app
