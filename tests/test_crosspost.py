@@ -379,3 +379,49 @@ def test_crosspost_no_variant_when_disabled(tmp_path, monkeypatch, mocker):
     p = next(iter(led.posts.values()))
     assert p.variant_key is None and p.variant_hook is None     # off -> today's behavior
     burn.assert_not_called()
+
+
+from datetime import timedelta
+from fanops.timeutil import parse_iso
+
+def test_surface_time_lead_zero_is_byte_identical_to_no_lead():
+    # The default lead=0 must produce the EXACT same string as today (determinism regression guard).
+    base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
+    for i in range(6):
+        a = surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1")
+        b = surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1", lead_minutes=0)
+        assert a == b
+
+def test_surface_time_lead_shifts_every_time_by_exactly_the_constant():
+    base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
+    lead = 120
+    for i in range(6):
+        t0 = parse_iso(surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1"))
+        tl = parse_iso(surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1", lead_minutes=lead))
+        assert tl - t0 == timedelta(minutes=lead)   # constant shift, identical per index
+
+def test_surface_time_lead_preserves_monotonicity():
+    base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
+    times = [surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1", lead_minutes=200)
+             for i in range(12)]
+    assert times == sorted(times) and len(set(times)) == len(times)
+
+def test_crosspost_clips_applies_publish_lead_minutes(tmp_path, mocker, monkeypatch):
+    # End-to-end: crosspost_clips must read cfg.publish_lead_minutes and pass it through, so a
+    # post's scheduled_time is shifted by exactly the lead vs the no-lead run.
+    base_time = "2026-06-02T18:00:00Z"
+    def _run(lead_env):
+        cfg = Config(root=tmp_path / lead_env)   # isolated root per run
+        _seed_accounts(cfg, [{"handle": "@a", "account_id": "98432",
+                              "platforms": ["instagram"], "status": "active"}])
+        led = Ledger.load(cfg); _captioned(led, cfg, mocker)
+        if lead_env:
+            monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", lead_env)
+        else:
+            monkeypatch.delenv("FANOPS_PUBLISH_LEAD_MINUTES", raising=False)
+        led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time=base_time)
+        ig = [p for p in led.posts.values() if p.platform.value == "instagram"][0]
+        return parse_iso(ig.scheduled_time)
+    t_no = _run("")
+    t_lead = _run("90")
+    assert t_lead - t_no == timedelta(minutes=90)

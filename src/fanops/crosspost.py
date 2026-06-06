@@ -33,12 +33,15 @@ def _seed(account: str, platform: str, date_str: str, clip_id: str = "") -> int:
     return int(h[:8], 16)
 
 def surface_time(base: datetime, account: str, platform: str, date_str: str, index: int,
-                 *, clip_id: str = "") -> str:
+                 *, clip_id: str = "", lead_minutes: int = 0) -> str:
     seed = _seed(account, platform, date_str, clip_id)
     rng = random.Random(seed)                        # ONE stable stream per (surface,clip) — NOT
                                                      # reseeded per index (that made the step a
                                                      # fresh draw each call -> non-monotonic).
-    anchor = base + timedelta(minutes=seed % _ANCHOR_SPAN)
+    # lead_minutes is a CONSTANT editorial offset (spec §4): it shifts every surface/index equally,
+    # so the schedule stays content-addressed + byte-deterministic and the jitter<step monotonicity
+    # proof is untouched (a constant translation preserves ordering). Default 0 == today's behavior.
+    anchor = base + timedelta(minutes=lead_minutes + (seed % _ANCHOR_SPAN))
     # Draw the jitter sequence deterministically up to `index` so each index has its own nudge,
     # but the dominant term is the FIXED step -> strictly increasing in index.
     jitter = [rng.randint(0, _JITTER_MAX - 1) for _ in range(index + 1)][index]
@@ -97,7 +100,8 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
             # clip.id (the captioned seed clip) keys the schedule so two different clips don't
             # collide on the same surface/minute (AUDIT H1/H2). Use the seed clip, not target_clip,
             # so the same content schedules consistently across its per-platform aspect renders.
-            sched = surface_time(base, surf.account, surf.platform.value, date_str, i, clip_id=clip.id)
+            sched = surface_time(base, surf.account, surf.platform.value, date_str, i,
+                                 clip_id=clip.id, lead_minutes=cfg.publish_lead_minutes)
             if decide_tag(led, account=surf.account, clip_id=clip.id, when=_parse(sched)):
                 caption = f"{caption}\n{ARTIST_HANDLE}"
             # Per-account creative variation (gated by FANOPS_CREATIVE_VARIATION, default OFF; fail-
