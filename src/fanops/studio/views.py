@@ -203,3 +203,59 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRo
             return (1, r.scheduled_time)
     rows.sort(key=_key)
     return rows
+
+
+def _loop_state(led: Ledger, cfg: Config, accounts: Optional[Accounts], post) -> str:
+    """Per-surface learning-loop annotation, reusing the digest's fail-open gate computation."""
+    try:
+        from fanops.digest import _gate_state
+        return _gate_state(led, cfg, post.account, post.platform, accounts=accounts)
+    except Exception:
+        return "gathering data"
+
+def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> LiftView:
+    """Per-variant lift (spec §8): analyzed posts carrying a variant_key + lift_score, ranked desc.
+    Honest, reason-bearing empty states per sub-view; amplify section mirrors digest's
+    `if cfg.variant_amplify:` gate (absent, not blank, when off)."""
+    variant_posts = [p for p in led.posts.values()
+                     if p.variant_key and p.state is PostState.analyzed and "lift_score" in p.metrics]
+    variant_rows: list[LiftRow] = []
+    variant_empty_reason: Optional[str] = None
+    if not variant_posts:
+        any_analyzed = any(p.state is PostState.analyzed for p in led.posts.values())
+        if not any_analyzed:
+            variant_empty_reason = ("No analyzed posts yet — a live metrics backend "
+                                    "(FANOPS_POSTER ≠ dryrun and BLOTATO_API_KEY) or fed "
+                                    "metrics is required.")
+        else:
+            variant_empty_reason = ("Creative variation (FANOPS_CREATIVE_VARIATION) was off when "
+                                    "these posts were crossposted — no per-variant lift.")
+    else:
+        for p in sorted(variant_posts, key=lambda p: p.metrics.get("lift_score", 0.0), reverse=True):
+            variant_rows.append(LiftRow(
+                variant_hook=p.variant_hook or p.variant_key, account=p.account,
+                platform=p.platform.value, lift_score=float(p.metrics.get("lift_score", 0.0)),
+                loop_state=_loop_state(led, cfg, accounts, p)))
+
+    amplify_present = cfg.variant_amplify
+    amplify_rows: list[LiftRow] = []
+    amplify_empty_reason: Optional[str] = None
+    if amplify_present:
+        try:
+            from fanops.variant_amplify import amplify_candidates
+            cands = amplify_candidates(led, cfg)
+            for c in cands:
+                p = led.posts.get(c.get("post_id"))
+                if p is None:
+                    continue
+                amplify_rows.append(LiftRow(
+                    variant_hook=c.get("winning_hook"), account=p.account,
+                    platform=p.platform.value, lift_score=float(p.metrics.get("lift_score", 0.0)),
+                    loop_state="amplify candidate", amplify_state=str(c.get("evidence", ""))))
+            if not amplify_rows:
+                amplify_empty_reason = "No sustained amplification streaks yet."
+        except Exception:
+            amplify_empty_reason = "Amplify state unavailable (fail-open)."
+    return LiftView(variant_rows=variant_rows, variant_empty_reason=variant_empty_reason,
+                    amplify_present=amplify_present, amplify_rows=amplify_rows,
+                    amplify_empty_reason=amplify_empty_reason)
