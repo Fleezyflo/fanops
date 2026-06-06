@@ -2,6 +2,8 @@
 import json
 from datetime import datetime, timezone, timedelta
 import pytest
+pytest.importorskip("flask")  # the Studio web UI is an optional extra ([studio]); skip these
+                              # route tests cleanly when Flask is absent (a core .[dev]-only venv/CI)
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt

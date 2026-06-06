@@ -22,10 +22,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install (dev only)
+      - name: Install (dev + studio = flask, so the studio route tests run not skip)
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev]'
+          pip install -e '.[dev,studio]'
       - name: Unit tests
         run: python -m pytest -q -m "not integration"
 
@@ -41,10 +41,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg espeak
-      - name: Install (dev + transcribe = openai-whisper)
+      - name: Install (dev + transcribe = openai-whisper + studio = flask)
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,transcribe]'
+          pip install -e '.[dev,transcribe,studio]'
       - name: Cache whisper 'tiny' checkpoint
         uses: actions/cache@v4
         with:
