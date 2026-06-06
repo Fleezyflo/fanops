@@ -2,6 +2,7 @@
 import json, shutil, subprocess
 from datetime import datetime, timezone, timedelta
 import pytest
+pytest.importorskip("flask")  # studio app needs the optional [studio] extra (Flask)
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.clip import ffmpeg_clip_cmd
