@@ -229,6 +229,23 @@ bound. Only a *successful* amplify increments the count.
 
 ---
 
+## FanOps Studio (local web cockpit)
+
+`pip install -e '.[studio]'` then `fanops studio` serves a localhost UI at http://127.0.0.1:8787
+with three tabs:
+
+- **Review** — upcoming clips grouped by clip; tweak caption, reschedule, or snooze (queued + not
+  within 5 min of due). Held clips and recently-shipped posts show read-only.
+- **Schedule** — the upcoming queue on a chronological timeline + recent history.
+- **Lift** — per-variant `lift_score` ranking (when analyzed posts with variants exist).
+
+The Studio edits the ledger ONLY through the lock-safe `Ledger.transaction` path; it never blocks
+publishing. To get an editable window, run the pipeline with a now/future `--base-time` and set
+`FANOPS_PUBLISH_LEAD_MINUTES` (e.g. `120`) — a constant, determinism-safe offset (default `0` is
+byte-identical to today). Bind is `127.0.0.1` only; no auth (single-operator, local).
+
+---
+
 ## The three human-only steps
 
 Everything is automated except the parts only a human can do:
