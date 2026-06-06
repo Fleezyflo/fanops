@@ -1,0 +1,23 @@
+/* src/fanops/studio/static/studio.css */
+:root { --bg:#0f1115; --panel:#171a21; --ink:#e6e9ef; --muted:#8b93a7; --ok:#3fb950; --warn:#d29922; --line:#262b36; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui, sans-serif; }
+header.nav { display:flex; gap:1rem; align-items:center; padding:.75rem 1.25rem; background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; }
+header.nav a { color:var(--muted); text-decoration:none; padding:.25rem .6rem; border-radius:6px; }
+header.nav a.active, header.nav a:hover { color:var(--ink); background:var(--line); }
+main { padding:1.25rem; max-width:1100px; margin:0 auto; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:1rem; margin-bottom:1.25rem; }
+.card video { width:100%; max-height:420px; background:#000; border-radius:8px; }
+.meta { color:var(--muted); font-size:.85rem; margin:.4rem 0; }
+.surface { border-top:1px solid var(--line); padding:.6rem 0; }
+.badge { font-size:.7rem; padding:.1rem .45rem; border-radius:99px; border:1px solid var(--line); color:var(--warn); }
+.badge.shipped { color:var(--muted); }
+.ro { color:var(--muted); }
+textarea, input[type=text], input[type=datetime-local] { width:100%; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:.4rem; font:inherit; }
+button { background:var(--line); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:.35rem .7rem; cursor:pointer; }
+button:hover { border-color:var(--muted); }
+.ok { color:var(--ok); } .err { color:#f85149; }
+table { width:100%; border-collapse:collapse; } td, th { text-align:left; padding:.4rem .6rem; border-bottom:1px solid var(--line); }
+.bar { height:14px; background:linear-gradient(90deg,#2f81f7,#3fb950); border-radius:7px; }
+.empty { color:var(--muted); font-style:italic; padding:.8rem; border:1px dashed var(--line); border-radius:8px; }
+h2 { margin:.2rem 0 1rem; } h3 { color:var(--muted); font-weight:600; margin:1.2rem 0 .5rem; }

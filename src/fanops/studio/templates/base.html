@@ -1,0 +1,20 @@
+{# src/fanops/studio/templates/base.html #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FanOps Studio — {% block title %}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}">
+  <script src="{{ url_for('static', filename='htmx.min.js') }}" defer></script>
+</head>
+<body>
+  <header class="nav">
+    <strong>FanOps Studio</strong>
+    <a href="{{ url_for('review') }}" class="{{ 'active' if tab=='review' else '' }}">Review</a>
+    <a href="{{ url_for('schedule') }}" class="{{ 'active' if tab=='schedule' else '' }}">Schedule</a>
+    <a href="{{ url_for('lift') }}" class="{{ 'active' if tab=='lift' else '' }}">Lift</a>
+  </header>
+  <main>{% block body %}{% endblock %}</main>
+</body>
+</html>
