@@ -1,0 +1,6 @@
+{# src/fanops/studio/templates/_result.html #}
+{% if result.ok %}
+  <span class="ok">✓ {{ result.detail.get('scheduled_time') or result.detail.get('caption') or 'saved' }}</span>
+{% else %}
+  <span class="err">✗ {{ result.error }}</span>
+{% endif %}

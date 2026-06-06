@@ -1,0 +1,15 @@
+{# src/fanops/studio/templates/review.html #}
+{% extends "base.html" %}
+{% block title %}Review{% endblock %}
+{% block body %}
+  <h2>Review</h2>
+  {% set buckets = {'editable':'Editable (upcoming)','held':'Held for review','recent':'Recently shipped'} %}
+  {% for key, label in buckets.items() %}
+    {% set group = cards | selectattr('bucket','equalto',key) | list %}
+    {% if group %}
+      <h3>{{ label }}</h3>
+      {% for card in group %}{% include "_card.html" %}{% endfor %}
+    {% endif %}
+  {% endfor %}
+  {% if not cards %}<div class="empty">Nothing in the ledger yet. Run `fanops advance` to produce clips.</div>{% endif %}
+{% endblock %}
