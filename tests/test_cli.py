@@ -559,3 +559,29 @@ def test_amplify_variants_inert_when_flag_off(tmp_path, monkeypatch):
     from fanops.ledger import Ledger
     Ledger.load(Config(root=tmp_path)).save()
     assert main(["amplify-variants"]) == 0               # flag OFF -> apply_variant_amplify inert
+
+
+def test_studio_subcommand_parses_and_lazy_imports(tmp_path, monkeypatch, mocker):
+    # `fanops studio` must build the app via a LAZY import and call app.run with the bound host/port,
+    # without actually serving. We patch create_app so no socket is opened.
+    monkeypatch.chdir(tmp_path)
+    import fanops.cli as cli
+    fake_app = mocker.Mock()
+    create_app = mocker.Mock(return_value=fake_app)
+    # the module is imported lazily inside the dispatch branch, so patch the source symbol
+    mocker.patch("fanops.studio.app.create_app", create_app)
+    rc = cli.main(["studio", "--host", "127.0.0.1", "--port", "9999"])
+    assert rc == 0
+    create_app.assert_called_once()
+    fake_app.run.assert_called_once()
+    _, kwargs = fake_app.run.call_args
+    assert kwargs.get("host") == "127.0.0.1" and kwargs.get("port") == 9999
+
+def test_studio_defaults_host_port(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    import fanops.cli as cli
+    fake_app = mocker.Mock()
+    mocker.patch("fanops.studio.app.create_app", mocker.Mock(return_value=fake_app))
+    assert cli.main(["studio"]) == 0
+    _, kwargs = fake_app.run.call_args
+    assert kwargs.get("host") == "127.0.0.1" and kwargs.get("port") == 8787
