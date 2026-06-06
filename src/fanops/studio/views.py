@@ -162,3 +162,44 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
         if clip.held:
             cards.append(_card(led, clip, [], "held", cfg, personas, now))
     return cards
+
+
+def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRow]:
+    """Queued posts (the editable timeline) plus recent published/analyzed posts (read-only past),
+    sorted chronologically by scheduled_time. Rows with no/naive/unparseable time sort last."""
+    recent_cutoff = now - timedelta(hours=RECENT_WINDOW_HOURS)
+    rows: list[ScheduleRow] = []
+    for p in led.posts.values():
+        if p.state is PostState.queued:
+            include = True
+        elif p.state in (PostState.published, PostState.analyzed):
+            include = True
+            if p.scheduled_time:
+                try:
+                    dt = parse_iso(p.scheduled_time)
+                    include = dt.tzinfo is not None and dt >= recent_cutoff
+                except (ValueError, TypeError):
+                    include = True
+        else:
+            include = False
+        if not include:
+            continue
+        imm = _imminent(p.scheduled_time, now)
+        state = p.state.value
+        rows.append(ScheduleRow(
+            post_id=p.id, scheduled_time=p.scheduled_time, account=p.account,
+            platform=p.platform.value, clip_id=p.parent_id, state=state, imminent=imm,
+            editable=(state == PostState.queued.value and not imm)))
+
+    def _key(r: ScheduleRow):
+        if not r.scheduled_time:
+            return (1, "")
+        try:
+            dt = parse_iso(r.scheduled_time)
+            if dt.tzinfo is None:
+                return (1, r.scheduled_time)
+            return (0, dt.isoformat())
+        except (ValueError, TypeError):
+            return (1, r.scheduled_time)
+    rows.sort(key=_key)
+    return rows
