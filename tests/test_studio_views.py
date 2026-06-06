@@ -144,3 +144,57 @@ def test_schedule_rows_sorted_with_recent_and_imminent_flags(tmp_path):
     assert by_id["p_imm"].editable is False and by_id["p_imm"].imminent is True
     assert by_id["p_done"].editable is False   # published -> read-only
     assert by_id["p_far"].clip_id == "clip_1" and by_id["p_far"].platform == "instagram"
+
+
+from fanops.studio.views import lift_rows
+
+def test_lift_empty_no_analyzed_posts(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
+                          "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.queued))
+    view = lift_rows(led, cfg, Accounts.load(cfg))
+    assert view.variant_rows == []
+    assert "No analyzed posts yet" in view.variant_empty_reason
+    assert view.amplify_present is False   # cfg.variant_amplify default OFF -> section absent
+
+def test_lift_analyzed_but_no_variant_key(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
+                          "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      metrics={"lift_score": 50.0}))   # analyzed but no variant_key
+    view = lift_rows(led, cfg, Accounts.load(cfg))
+    assert view.variant_rows == []
+    assert "Creative variation" in view.variant_empty_reason
+
+def test_lift_ranks_variants_by_lift_score(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
+                          "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="p_lo", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="lo", state=PostState.analyzed,
+                      variant_key="vk_lo", variant_hook="CALM", metrics={"lift_score": 10.0}))
+    led.add_post(Post(id="p_hi", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="hi", state=PostState.analyzed,
+                      variant_key="vk_hi", variant_hook="HYPE", metrics={"lift_score": 90.0}))
+    view = lift_rows(led, cfg, Accounts.load(cfg))
+    assert view.variant_empty_reason is None
+    assert [r.variant_hook for r in view.variant_rows] == ["HYPE", "CALM"]   # desc by lift_score
+    assert view.variant_rows[0].lift_score == 90.0
+    assert isinstance(view.variant_rows[0].loop_state, str) and view.variant_rows[0].loop_state
+
+def test_lift_amplify_section_present_when_flag_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
+                          "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    view = lift_rows(led, cfg, Accounts.load(cfg))
+    assert view.amplify_present is True
+    assert view.amplify_rows == [] and view.amplify_empty_reason is not None
