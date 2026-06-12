@@ -12,6 +12,17 @@ from pathlib import Path
 import fanops.overlay as overlay
 from fanops.overlay import build_ass, write_ass, subtitles_vf, ffmpeg_has_textfilter, derive_hook
 
+import pytest
+
+@pytest.fixture(autouse=True)
+def _clean_textfilter_cache():
+    # The probe caches in a module global (overlay._TEXTFILTER_CACHE). Hand-resetting it inside
+    # each test was fragile: one forgotten reset leaks a True/False into whichever overlay test
+    # runs next (order-dependent flakiness) — stage-6 audit. Reset around EVERY test in this file.
+    overlay._TEXTFILTER_CACHE = None
+    yield
+    overlay._TEXTFILTER_CACHE = None
+
 
 def _dialogues(ass_text: str) -> list[str]:
     """The Dialogue lines from an [Events] section (one subtitle/hook event per line)."""
@@ -81,7 +92,6 @@ def test_subtitles_vf_escapes_colon_in_path():
 
 
 def test_ffmpeg_has_textfilter_is_cached(monkeypatch):
-    overlay._TEXTFILTER_CACHE = None            # reset the module-global cache for a clean probe
     calls = {"n": 0}
 
     class _R:                                   # mirrors subprocess.CompletedProcess(capture_output)
@@ -98,35 +108,30 @@ def test_ffmpeg_has_textfilter_is_cached(monkeypatch):
     second = ffmpeg_has_textfilter()
     assert first is True and second is True
     assert calls["n"] <= 1                      # cached: probe runs at most ONCE
-    overlay._TEXTFILTER_CACHE = None            # leave the cache clean for other tests
 
 
 def test_ffmpeg_has_textfilter_absent_does_not_raise(monkeypatch):
     # ffmpeg off PATH: subprocess.run raises FileNotFoundError BEFORE the process starts. The
     # probe must swallow it and return False (a clip render then simply skips burning subtitles)
     # rather than crash an autonomous run.
-    overlay._TEXTFILTER_CACHE = None
 
     def _absent(*a, **kw):
         raise FileNotFoundError(2, "No such file or directory", "ffmpeg")
 
     monkeypatch.setattr(overlay.subprocess, "run", _absent)
     assert ffmpeg_has_textfilter() is False
-    overlay._TEXTFILTER_CACHE = None
 
 
 def test_ffmpeg_has_textfilter_timeout_does_not_raise(monkeypatch):
     # `ffmpeg -filters` is instant on a healthy install; a HANG means a broken one. The probe is
     # time-bounded and must swallow TimeoutExpired exactly like ffmpeg-absent — return False
     # (renders skip burning subtitles) rather than crash an autonomous run.
-    overlay._TEXTFILTER_CACHE = None
 
     def _hung(cmd, **kw):
         raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
 
     monkeypatch.setattr(overlay.subprocess, "run", _hung)
     assert ffmpeg_has_textfilter() is False
-    overlay._TEXTFILTER_CACHE = None
 
 
 def test_write_ass_writes_file(tmp_path):
@@ -155,7 +160,6 @@ def test_derive_hook_takes_punchy_first_clause():
 
 def test_burn_hook_only_builds_hook_ass_and_cmd(tmp_path, mocker):
     import fanops.overlay as overlay
-    overlay._TEXTFILTER_CACHE = None
     mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
     base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
     out = tmp_path / "variant.mp4"
@@ -177,7 +181,6 @@ def test_burn_hook_only_builds_hook_ass_and_cmd(tmp_path, mocker):
 
 def test_burn_hook_only_failopen_when_no_textfilter(tmp_path, mocker):
     import fanops.overlay as overlay
-    overlay._TEXTFILTER_CACHE = None
     mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=False)
     base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
     out = tmp_path / "variant.mp4"
@@ -189,7 +192,6 @@ def test_burn_hook_only_failopen_when_no_textfilter(tmp_path, mocker):
 
 def test_burn_hook_only_failopen_when_hook_empty(tmp_path, mocker):
     import fanops.overlay as overlay
-    overlay._TEXTFILTER_CACHE = None
     mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
     base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
     out = tmp_path / "variant.mp4"
@@ -203,7 +205,6 @@ def test_burn_hook_only_failopen_on_timeout(tmp_path, mocker):
     # clip is byte-copied to out_path (the caller still gets a usable per-account file, just
     # hookless) and False is returned — never a raise out of the variation pass.
     import fanops.overlay as overlay
-    overlay._TEXTFILTER_CACHE = None
     mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
     base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
     out = tmp_path / "variant.mp4"
@@ -215,4 +216,3 @@ def test_burn_hook_only_failopen_on_timeout(tmp_path, mocker):
     ok = overlay.burn_hook_only(str(base), str(out), "WATCH THIS", width=1080, height=1920)
     assert ok is False and out.read_bytes() == b"BASE"    # fail-open: usable file, no hook
     assert seen.get("timeout") == 600.0                   # the bound is actually wired
-    overlay._TEXTFILTER_CACHE = None

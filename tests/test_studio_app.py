@@ -115,8 +115,9 @@ def test_snooze_route_roundtrips(tmp_path):
     from fanops.timeutil import parse_iso
     assert parse_iso(Ledger.load(cfg).posts["p_base"].scheduled_time) > NOW + timedelta(days=300)
 
-def test_core_cli_imports_with_flask_absent(monkeypatch):
+def test_core_cli_imports_with_flask_absent(monkeypatch, tmp_path):
     # spec §10/§15: a no-[studio] install must still import fanops.cli and run non-studio verbs.
+    monkeypatch.chdir(tmp_path)                    # fresh root: `status` must SUCCEED, not just run
     import sys, builtins, importlib
     real_import = builtins.__import__
     def blocked(name, *a, **k):
@@ -129,7 +130,9 @@ def test_core_cli_imports_with_flask_absent(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", blocked)
     importlib.reload(importlib.import_module("fanops.cli"))   # must NOT raise
     import fanops.cli as cli
-    assert cli.main(["status"]) in (0, 1, 2)   # a real verb dispatches without Flask
+    # == 0, not `in (0,1,2)` (stage-6 audit): the tolerant assert accepted a CRASHING status verb;
+    # on a fresh root, status must actually succeed without Flask.
+    assert cli.main(["status"]) == 0
     # ...and ONLY the studio verb needs Flask: this proves the import is lazy AND inside _dispatch
     # (a module-top import would have already failed the reload above; this catches a top-of-app
     # import that somehow still let the reload pass). The studio branch hits `from fanops.studio.app

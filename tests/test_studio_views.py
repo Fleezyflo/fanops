@@ -1,9 +1,6 @@
 # tests/test_studio_views.py — CREATE
 from datetime import datetime, timezone, timedelta
-from fanops.studio.views import (
-    _imminent, IMMINENT_THRESHOLD_MINUTES,
-    SurfacePost, ReviewCard, ScheduleRow, LiftRow, LiftView,
-)
+from fanops.studio.views import _imminent, IMMINENT_THRESHOLD_MINUTES
 
 NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 
@@ -28,22 +25,9 @@ def test_imminent_within_threshold_is_true():
 def test_not_imminent_when_far_future():
     assert _imminent(_z(NOW + timedelta(hours=2)), NOW) is False
 
-def test_dataclasses_construct():
-    sp = SurfacePost(post_id="p1", account="@a", platform="instagram", persona="hype",
-                     caption="x", hashtags=["#a"], scheduled_time=_z(NOW), media_url="/media/p1",
-                     state="queued", imminent=False, editable=True)
-    assert sp.editable is True and sp.media_url == "/media/p1"
-    card = ReviewCard(clip_id="c1", preview_url="/clips/c1", source_name="s.mp4",
-                      moment_window="0–7", reason="r", language="en", subtitles_burned=True,
-                      held=False, held_reason=None, transcript_excerpt="hi", surfaces=[sp],
-                      bucket="editable")
-    assert card.bucket == "editable" and card.surfaces[0] is sp
-    LiftView(variant_rows=[], variant_empty_reason="none", amplify_present=False,
-             amplify_rows=[], amplify_empty_reason=None)
-    ScheduleRow(post_id="p1", scheduled_time=_z(NOW), account="@a", platform="instagram",
-                clip_id="c1", state="queued", imminent=False, editable=True)
-    LiftRow(variant_hook="WATCH", account="@a", platform="instagram", lift_score=42.0,
-            loop_state="learning ACTIVE")
+# (the former test_dataclasses_construct lived here — deleted in the stage-7 clean: it asserted
+# only that dataclass construction echoes its inputs, which cannot fail meaningfully; the view
+# dataclasses are exercised through real code paths by the behavioral tests below)
 
 
 import json
