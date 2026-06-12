@@ -1,0 +1,35 @@
+Codemap generation report — 2026-06-13
+========================================
+
+Mode: FIRST GENERATION (no prior docs/CODEMAPS/ existed; no diff gate applicable).
+
+Files written:
+  docs/CODEMAPS/architecture.md  (~900 tokens) — pipeline flow, module map, CLI verbs,
+                                  Studio routes, learning-gate seams
+  docs/CODEMAPS/data.md          (~700 tokens) — data tree, ledger concurrency/atomicity,
+                                  unit lifecycles, control files, C1 cascade invariant
+  docs/CODEMAPS/dependencies.md  (~600 tokens) — external binaries + timeout bounds,
+                                  Blotato surface, py deps/extras, env flags, CI jobs
+
+Layout note: the skill's backend.md/frontend.md split does not fit a single-process CLI
+tool — Studio's 8 Flask routes are folded into architecture.md instead of a frontend map.
+
+Scan basis: 45 src files (src/fanops/** incl. post/, studio/) + 38 test files, at commit
+02c3e32 (post stage-7 refactor-clean). Structure facts verified against live source this
+session, not recalled: module line counts (wc), CLI verbs (argparse add_parser grep),
+env flags (os.getenv grep), state enums (models.py), data tree (_STAGE in config.py).
+
+Architecture changes captured vs pre-stage-7 state:
+  + Config.is_live_backend property (replaces 3 duplicated live-guards)
+  + digest.gate_state now PUBLIC (was _gate_state; Studio imports it)
+  + models.LIFT_SCORE constant (the Post.metrics contract key)
+  + Studio media routes bounded to cfg.base; app.run(debug=False)
+  + pull url validated http(s)-only at argparse
+  + discover/intake writes atomic; reads raise typed ControlFileError
+  - discover._entry_id, Config.escalation_budget_usd (deleted dead code)
+
+Known-gap annotations carried into the maps (deferred items, do not "fix" silently):
+  ledger has no schema_version; variant_streaks is an untyped dict; no ruff step in CI.
+
+Staleness: docs/handoff.md frozen at rev 28 by operator directive (ECC-only skills) —
+intentionally NOT counted as stale. No other doc older than 90 days.
