@@ -8,7 +8,12 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
 
-NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
+# NOW must track the REAL wall clock: these tests exercise the HTTP routes, which (unlike the
+# actions layer) cannot inject `now=` — so the imminence guard inside compares seeded
+# scheduled_times against datetime.now(). An absolute NOW time-bombed this file: every seed went
+# "already due" once the calendar passed it (caught 2026-06-12, six days after the bomb date).
+# microsecond=0 so _z() round-trips exactly through _normalize_z in the reschedule equality assert.
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
 def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def _seed(cfg, tmp_path):

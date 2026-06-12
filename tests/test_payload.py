@@ -53,3 +53,37 @@ def test_youtube_explicit_title_beats_artist_name():
     # An explicit title (a real caption-derived title) always wins over the artist-name fallback.
     yt = default_target_fields("youtube", title="Real Title", artist_name="Custom Artist")
     assert yt["title"] == "Real Title"
+
+def test_facebook_target_fields_include_only_what_is_given():
+    # Facebook requires pageId or Blotato 422s; mediaType is optional. Absent inputs must be
+    # absent KEYS (not None values), so the API never sees explicit nulls.
+    assert default_target_fields("facebook", page_id="pg_1", media_type="reels") == {
+        "pageId": "pg_1", "mediaType": "reels"}
+    assert default_target_fields("facebook", page_id="pg_1") == {"pageId": "pg_1"}
+    assert default_target_fields("facebook") == {}
+
+def test_instagram_target_fields_media_type_gated():
+    # instagram returns a target dict ONLY when media_type is given; bare instagram falls through
+    # to the empty default like any unconfigured platform.
+    assert default_target_fields("instagram", media_type="reel") == {"mediaType": "reel"}
+    assert default_target_fields("instagram") == {}
+
+def test_payload_media_type_injected_for_ig_fb_only():
+    ig = build_blotato_payload(account_id="1", platform="instagram", text="x",
+                               media_urls=[], scheduled_time=None, media_type="reel")
+    assert ig["post"]["target"]["mediaType"] == "reel"
+    # other platforms never get mediaType even when callers pass one (TikTok would 422)
+    tk = build_blotato_payload(account_id="1", platform="tiktok", text="x",
+                               media_urls=[], scheduled_time=None, media_type="reel")
+    assert "mediaType" not in tk["post"]["target"]
+
+def test_use_next_free_slot_only_without_scheduled_time():
+    # useNextFreeSlot is the fallback when no explicit time exists; an explicit scheduledTime
+    # must win outright (never both keys in one payload — Blotato treats them as exclusive).
+    free = build_blotato_payload(account_id="1", platform="instagram", text="x",
+                                 media_urls=[], scheduled_time=None, use_next_free_slot=True)
+    assert free["useNextFreeSlot"] is True and "scheduledTime" not in free
+    timed = build_blotato_payload(account_id="1", platform="instagram", text="x",
+                                  media_urls=[], scheduled_time="2026-06-01T18:00:00Z",
+                                  use_next_free_slot=True)
+    assert timed["scheduledTime"] == "2026-06-01T18:00:00Z" and "useNextFreeSlot" not in timed
