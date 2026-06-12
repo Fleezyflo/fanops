@@ -7,7 +7,7 @@ blind to the learner; enforced by an isolation grep test)."""
 from __future__ import annotations
 from math import log, sqrt
 from statistics import mean
-from fanops.models import Platform, PostState
+from fanops.models import LIFT_SCORE, Platform, PostState
 
 
 def _collect_lifts(led, account: str, platform: Platform) -> dict[str, list[float]]:
@@ -17,8 +17,8 @@ def _collect_lifts(led, account: str, platform: Platform) -> dict[str, list[floa
     by_hook: dict[str, list[float]] = {}
     for p in led.posts.values():
         if (p.variant_key and p.variant_hook and p.account == account and p.platform is platform
-                and p.state is PostState.analyzed and "lift_score" in p.metrics):
-            by_hook.setdefault(p.variant_hook, []).append(float(p.metrics["lift_score"]))
+                and p.state is PostState.analyzed and LIFT_SCORE in p.metrics):
+            by_hook.setdefault(p.variant_hook, []).append(float(p.metrics[LIFT_SCORE]))
     return by_hook
 
 

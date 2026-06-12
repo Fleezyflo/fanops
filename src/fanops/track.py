@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import PostState
+from fanops.models import LIFT_SCORE, PostState
 
 # DEFAULT lift weights: saves/shares are the real algorithmic signal; likes ~ noise (deweighted).
 # NOTE: reach at 0.001 can dominate lift for very high-reach posts (reach=100k -> +100);
@@ -40,7 +40,7 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     # Wholesale replace: Blotato returns the full current metrics snapshot each pull, so
     # latest-snapshot-wins is correct (a merge could retain a metric Blotato later dropped).
     # weights is the resolved override (or None -> default _W) threaded from pull_metrics.
-    post.metrics = {**metrics, "lift_score": lift_score(metrics, weights)}
+    post.metrics = {**metrics, LIFT_SCORE: lift_score(metrics, weights)}
     post.state = PostState.analyzed
     return led
 

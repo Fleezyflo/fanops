@@ -23,6 +23,18 @@ def test_responder_defaults_manual(monkeypatch, tmp_path):
     c = Config(root=tmp_path)
     assert c.responder_mode == "manual"
 
+def test_is_live_backend_requires_backend_and_key(monkeypatch, tmp_path):
+    # Stage-6 audit: the "live backend + key" guard gates the learning passes and reconcile at
+    # three sites — one property is its single home so the definition of "live" can't drift.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    assert Config(root=tmp_path).is_live_backend is False        # dryrun: never live, key or not
+    monkeypatch.setenv("FANOPS_POSTER", "rest")
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    assert Config(root=tmp_path).is_live_backend is False        # live backend but NO key
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    assert Config(root=tmp_path).is_live_backend is True
+
 def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
     assert Config(root=tmp_path).burn_subs is True            # default ON

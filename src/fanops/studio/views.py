@@ -9,7 +9,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import PostState
+from fanops.models import LIFT_SCORE, PostState
 from fanops.timeutil import parse_iso
 
 IMMINENT_THRESHOLD_MINUTES = 5     # spec §4: a post within this of now (or past) is edit-disabled
@@ -205,11 +205,14 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRo
     return rows
 
 
-def _loop_state(led: Ledger, cfg: Config, accounts: Optional[Accounts], post) -> str:
-    """Per-surface learning-loop annotation, reusing the digest's fail-open gate computation."""
+def _loop_state(led: Ledger, cfg: Config, accounts: Optional[Accounts], post,
+                cache: Optional[dict] = None) -> str:
+    """Per-surface learning-loop annotation, reusing the digest's fail-open gate computation.
+    `cache` memoises per (account, platform) across one request — without it every variant post
+    re-ran the full posts scan inside the scorer (stage-6 audit: digest had the cache, Lift lost it)."""
     try:
-        from fanops.digest import _gate_state
-        return _gate_state(led, cfg, post.account, post.platform, accounts=accounts)
+        from fanops.digest import gate_state
+        return gate_state(led, cfg, post.account, post.platform, cache, accounts=accounts)
     except Exception:
         return "gathering data"
 
@@ -218,7 +221,7 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
     Honest, reason-bearing empty states per sub-view; amplify section mirrors digest's
     `if cfg.variant_amplify:` gate (absent, not blank, when off)."""
     variant_posts = [p for p in led.posts.values()
-                     if p.variant_key and p.state is PostState.analyzed and "lift_score" in p.metrics]
+                     if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
     variant_rows: list[LiftRow] = []
     variant_empty_reason: Optional[str] = None
     if not variant_posts:
@@ -231,11 +234,12 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
             variant_empty_reason = ("Creative variation (FANOPS_CREATIVE_VARIATION) was off when "
                                     "these posts were crossposted — no per-variant lift.")
     else:
-        for p in sorted(variant_posts, key=lambda p: p.metrics.get("lift_score", 0.0), reverse=True):
+        gate_cache: dict = {}                       # one scorer pass per surface per request
+        for p in sorted(variant_posts, key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True):
             variant_rows.append(LiftRow(
                 variant_hook=p.variant_hook or p.variant_key, account=p.account,
-                platform=p.platform.value, lift_score=float(p.metrics.get("lift_score", 0.0)),
-                loop_state=_loop_state(led, cfg, accounts, p)))
+                platform=p.platform.value, lift_score=float(p.metrics.get(LIFT_SCORE, 0.0)),
+                loop_state=_loop_state(led, cfg, accounts, p, gate_cache)))
 
     amplify_present = cfg.variant_amplify
     amplify_rows: list[LiftRow] = []
@@ -250,7 +254,7 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
                     continue
                 amplify_rows.append(LiftRow(
                     variant_hook=c.get("winning_hook"), account=p.account,
-                    platform=p.platform.value, lift_score=float(p.metrics.get("lift_score", 0.0)),
+                    platform=p.platform.value, lift_score=float(p.metrics.get(LIFT_SCORE, 0.0)),
                     loop_state="amplify candidate", amplify_state=str(c.get("evidence", ""))))
             if not amplify_rows:
                 amplify_empty_reason = "No sustained amplification streaks yet."

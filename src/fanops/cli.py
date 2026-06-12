@@ -392,7 +392,7 @@ def _dispatch(cfg: Config, args) -> int:
         # only. In dryrun (default) the guard short-circuits and the pass is NEVER entered. Runs in
         # its own lock-safe transaction (won't race the next advance); a pull/classify/amplify/retire
         # hiccup is logged and swallowed so it can NEVER crash the unattended run (exit stays 0).
-        if cfg.poster_backend != "dryrun" and cfg.blotato_api_key:
+        if cfg.is_live_backend:
             try:
                 with Ledger.transaction(cfg) as led:
                     led = pull_metrics(led, cfg)
@@ -406,7 +406,7 @@ def _dispatch(cfg: Config, args) -> int:
         # default OFF) AND the same live-backend+key guard as the learn block. Its OWN try/except so it
         # can never affect the block above and a hiccup is swallowed (exit stays 0). apply_variant_amplify
         # is amplify-only (never retires/deletes) and self-guards on the flag, so this is fail-SAFE.
-        if cfg.variant_amplify and cfg.poster_backend != "dryrun" and cfg.blotato_api_key:
+        if cfg.variant_amplify and cfg.is_live_backend:
             try:
                 with Ledger.transaction(cfg) as led:
                     led = apply_variant_amplify(led, cfg)

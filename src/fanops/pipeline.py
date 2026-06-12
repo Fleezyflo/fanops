@@ -123,7 +123,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         reconcilable = (led.posts_in_state(PostState.submitting)
                         + led.posts_in_state(PostState.submitted)
                         + led.posts_in_state(PostState.needs_reconcile))
-        if reconcilable and cfg.poster_backend != "dryrun" and cfg.blotato_api_key:
+        if reconcilable and cfg.is_live_backend:
             try:
                 led = reconcile_posts(led, cfg)
             except Exception as e:                       # status API hiccup must not wedge the pass

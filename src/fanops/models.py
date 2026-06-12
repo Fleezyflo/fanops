@@ -37,6 +37,12 @@ class Platform(str, Enum):
     instagram = "instagram"; tiktok = "tiktok"; youtube = "youtube"
     facebook = "facebook"; twitter = "twitter"
 
+# THE Post.metrics key every scorer ranks by. Written in exactly one place (track.record_metrics);
+# read by adjust/digest/variant_*/studio. One literal here — a key typo at any read site used to
+# make that scorer silently treat every post as "no lift data" (learning loop goes quiet with no
+# error, indistinguishable from "not enough data yet") — stage-6 audit.
+LIFT_SCORE = "lift_score"
+
 class Fmt(str, Enum):
     r9x16 = "9:16"; r1x1 = "1:1"; r16x9 = "16:9"
 

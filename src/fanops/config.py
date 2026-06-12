@@ -79,6 +79,13 @@ class Config:
         return os.getenv("FANOPS_POSTER") or "dryrun"
 
     @property
+    def is_live_backend(self) -> bool:
+        # THE "live backend + key" guard, one home (stage-6 audit): it was duplicated verbatim at
+        # three call sites (reconcile + both learning passes); drift in any copy would silently
+        # enable/disable a pass. Live = a real poster AND a key to talk to it with.
+        return self.poster_backend != "dryrun" and bool(self.blotato_api_key)
+
+    @property
     def responder_mode(self) -> str:
         return os.getenv("FANOPS_RESPONDER") or "manual"
 

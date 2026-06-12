@@ -5,7 +5,7 @@ import logging
 from collections import Counter
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Platform, PostState
+from fanops.models import LIFT_SCORE, Platform, PostState
 from fanops.agentstep import pending
 # Creative-variation v2: reuse the gated scorer so the digest's per-surface "learning ACTIVE / gathering
 # data" annotation and request_captions' caption-bias share ONE gate-logic home (they can never drift).
@@ -27,14 +27,15 @@ def _counts(units) -> str:
     c = Counter(u.state.value for u in units)
     return "".join(f"  - {s}: {n}\n" for s, n in sorted(c.items())) or "  (none)\n"
 
-def _gate_state(led: Ledger, cfg: Config, account: str, platform: Platform,
-                _cache: dict[tuple[str, str], str] | None = None, accounts=None) -> str:
+def gate_state(led: Ledger, cfg: Config, account: str, platform: Platform,
+               _cache: dict[tuple[str, str], str] | None = None, accounts=None) -> str:
     """The learning-loop state for one (account, platform) surface, for the "Lift by variant" digest
     section. "learning ACTIVE" iff the surface has its OWN gated winner (variant_learning.best_hooks
     — the SAME scorer request_captions biases on). Else, if transfer is on and the surface would
     receive a borrowed cross-surface prior, "borrowing platform signal". Otherwise "gathering data"
     (the loop is still open here). FAIL-OPEN: any error degrades to "gathering data" (the safe
-    default). Memoised per render via the optional _cache."""
+    default). Memoised per render via the optional _cache. PUBLIC on purpose (stage-6 audit):
+    Studio's Lift view consumes it too — it was a private name load-bearing across modules."""
     key = (account, platform.value)
     if _cache is not None and key in _cache:
         return _cache[key]
@@ -106,13 +107,13 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     # via the SAME gated scorer request_captions uses (one gate-logic home). Still observe-only on the
     # amplify side — no automated propagation (that touches the amplify machinery, deferred / C1).
     variant_posts = [p for p in led.posts.values()
-                     if p.variant_key and p.state is PostState.analyzed and "lift_score" in p.metrics]
+                     if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
     if variant_posts:
-        rows = sorted(variant_posts, key=lambda p: p.metrics.get("lift_score", 0.0), reverse=True)
+        rows = sorted(variant_posts, key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True)
         gate_cache: dict[tuple[str, str], str] = {}     # one best_hooks call per surface per render
         lines = [f"- `{p.variant_hook or p.variant_key}` ({p.account}/{p.platform.value}): "
-                 f"lift {p.metrics.get('lift_score', 0.0)} "
-                 f"— {_gate_state(led, cfg, p.account, p.platform, gate_cache, accounts)}"
+                 f"lift {p.metrics.get(LIFT_SCORE, 0.0)} "
+                 f"— {gate_state(led, cfg, p.account, p.platform, gate_cache, accounts)}"
                  for p in rows]
         out.append("\n## Lift by variant (which creative is winning)\n" + "\n".join(lines) + "\n")
 

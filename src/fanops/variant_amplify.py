@@ -32,7 +32,7 @@ from fanops.adjust import amplify, MAX_AMPLIFY_PER_SOURCE   # AMPLIFY-ONLY: impo
 #                                          E1 budget constant), NEVER retire (C1 / G1)
 from fanops.ids import _hash
 from fanops.log import get_logger
-from fanops.models import Platform, PostState
+from fanops.models import LIFT_SCORE, Platform, PostState
 from fanops.variant_learning import best_hooks
 
 
@@ -41,7 +41,7 @@ def _surfaces(led) -> set[tuple[str, Platform]]:
     purely from the ledger (no Accounts dependency), matching how best_hooks scopes per surface."""
     return {(p.account, p.platform) for p in led.posts.values()
             if p.variant_key and p.variant_hook and p.state is PostState.analyzed
-            and "lift_score" in p.metrics}
+            and LIFT_SCORE in p.metrics}
 
 
 def _evidence_fingerprint(led, account: str, platform: Platform) -> str:
@@ -49,7 +49,7 @@ def _evidence_fingerprint(led, account: str, platform: Platform) -> str:
     post changes it -> a new 'window'. Deterministic (ids._hash, no wall-clock/random)."""
     pids = sorted(p.id for p in led.posts.values()
                   if p.account == account and p.platform is platform
-                  and p.state is PostState.analyzed and "lift_score" in p.metrics)
+                  and p.state is PostState.analyzed and LIFT_SCORE in p.metrics)
     return _hash("variant_streak", account, platform.value, *pids)
 
 
@@ -89,7 +89,7 @@ def _source_for_surface(led, account: str, platform: Platform, hook: str):
     by_source: dict[str, list[str]] = {}
     for p in led.posts.values():
         if not (p.account == account and p.platform is platform and p.variant_hook == hook
-                and p.state is PostState.analyzed and "lift_score" in p.metrics):
+                and p.state is PostState.analyzed and LIFT_SCORE in p.metrics):
             continue
         clip = led.clips.get(p.parent_id)
         moment = led.moments.get(clip.parent_id) if clip else None
@@ -116,9 +116,9 @@ def amplify_candidates(led, cfg) -> list[dict]:
             continue
         hook = winners[0]
         # Re-derive the winner's posts/lifts on this surface for the v3 stronger thresholds.
-        lifts = [float(p.metrics["lift_score"]) for p in led.posts.values()
+        lifts = [float(p.metrics[LIFT_SCORE]) for p in led.posts.values()
                  if p.account == account and p.platform is platform and p.variant_hook == hook
-                 and p.state is PostState.analyzed and "lift_score" in p.metrics]
+                 and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
         if len(lifts) < cfg.variant_amplify_min_posts:
             continue
         # runner-up mean among OTHER hooks on this surface (best_hooks already guaranteed >= 2 hooks).
@@ -126,8 +126,8 @@ def amplify_candidates(led, cfg) -> list[dict]:
         for p in led.posts.values():
             if (p.account == account and p.platform is platform and p.variant_hook
                     and p.variant_hook != hook and p.state is PostState.analyzed
-                    and "lift_score" in p.metrics):
-                others.setdefault(p.variant_hook, []).append(float(p.metrics["lift_score"]))
+                    and LIFT_SCORE in p.metrics):
+                others.setdefault(p.variant_hook, []).append(float(p.metrics[LIFT_SCORE]))
         runner_mean = max((mean(v) for v in others.values()), default=0.0)
         if mean(lifts) - runner_mean < cfg.variant_amplify_min_gap:
             continue

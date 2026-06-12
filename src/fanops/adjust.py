@@ -6,7 +6,7 @@ no-opped. RETIRE = ledger.retire_clip, which clip/crosspost honor (FIX F55)."""
 from __future__ import annotations
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import MomentRequest, PostState, SourceState, MomentState
+from fanops.models import LIFT_SCORE, MomentRequest, PostState, SourceState, MomentState
 from fanops.agentstep import write_request
 
 # E1 per-source amplification budget — the single source of truth for the cap, shared by amplify()'s
@@ -17,19 +17,23 @@ def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float
                       lift_floor: float = 20.0) -> dict:
     # Rank ANALYZED posts that carry a real lift_score (failed posts have none — FIX F22).
     analyzed = [p for p in led.posts.values()
-                if p.state is PostState.analyzed and "lift_score" in p.metrics]
+                if p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
     if not analyzed:
         return {"winners": [], "losers": []}
-    ranked = sorted(analyzed, key=lambda p: p.metrics.get("lift_score", 0.0), reverse=True)
+    ranked = sorted(analyzed, key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True)
     n = len(ranked)
     win_cut = max(1, round(n * winner_pct))
     winners = [p.id for p in ranked[:win_cut]]
     # Conservative retirement: only the bottom retire_pct AND below an absolute lift_floor.
     # (Decoupled from winners; a clip that clears the floor is never retired just for being
     # bottom-ranked relative to a hit — avoids draining an artist's catalogue every pass.)
+    # A winner is NEVER also a loser (stage-6 audit): with operator-raised pcts summing past 1 the
+    # slices overlapped — one post amplified AND retired in the same pass.
     lose_n = round(n * retire_pct)
     bottom = ranked[n - lose_n:] if lose_n > 0 else []
-    losers = [p.id for p in bottom if p.metrics.get("lift_score", 0.0) < lift_floor]
+    win_set = set(winners)
+    losers = [p.id for p in bottom
+              if p.id not in win_set and p.metrics.get(LIFT_SCORE, 0.0) < lift_floor]
     return {"winners": winners, "losers": losers}
 
 def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
@@ -50,7 +54,7 @@ def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
         if used >= max_amplify_per_source:
             continue
         guidance = (f"AMPLIFY: a moment like '{moment.transcript_excerpt}' ({moment.reason}) "
-                    f"hit hard (lift={post.metrics.get('lift_score')}). Find MORE moments in that "
+                    f"hit hard (lift={post.metrics.get(LIFT_SCORE)}). Find MORE moments in that "
                     f"vein in this source — do not repeat the same timestamps.")
         if extra_guidance:
             guidance += f" {extra_guidance}"

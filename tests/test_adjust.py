@@ -160,3 +160,19 @@ def test_amplify_injects_extra_guidance(tmp_path):
     payload = json.loads(request_path(cfg, "moments", "s1").read_text())
     assert "WINNING_HOOK_TEXT" in payload["guidance"]
     assert payload["guidance"].startswith("AMPLIFY:")     # base guidance still leads
+
+
+def test_classify_winner_never_also_a_loser(tmp_path):
+    # Stage-6 audit LOW: with operator-raised pcts (winner_pct + retire_pct > 1) the winner and
+    # loser slices overlapped — one post could be amplified AND retired in the same adjust pass
+    # (contradictory: budget spent on a source whose representative clip is simultaneously
+    # suppressed). A winner must be excluded from the loser pool regardless of pcts.
+    led = Ledger.load(Config(root=tmp_path))
+    for pid, lift in [("top", 300), ("mid", 5), ("low", 1)]:   # mid is below floor 20
+        led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          state=PostState.analyzed, metrics={"lift_score": lift}))
+    r = classify_outcomes(led, winner_pct=0.67, retire_pct=0.67, lift_floor=20.0)
+    assert "mid" in r["winners"]                       # rank 2 of 3 -> in the top 67%
+    assert "mid" not in r["losers"]                    # ...so it must NOT also be retired
+    assert "low" in r["losers"]                        # the true bottom still retires
