@@ -18,18 +18,21 @@ def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"
 def test_review_serves_real_h264_aac_mp4(tmp_path):
     # 1) make a real source with ffmpeg's test sources, then render a base clip via the SAME
     #    ffmpeg_clip_cmd the pipeline uses (asserting the H.264/AAC/+faststart codec invariant).
+    cfg = Config(root=tmp_path)
     src = tmp_path / "src.mp4"
     subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=3",
                     "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-shortest",
                     "-c:v", "libx264", "-c:a", "aac", str(src)], check=True, capture_output=True)
-    clip_path = tmp_path / "clip_1.mp4"
+    # the clip must live under cfg.clips like a real render: Studio's media routes only serve
+    # paths inside cfg.base (stage-5/6 audit bounding)
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    clip_path = cfg.clips / "clip_1.mp4"
     cmd = ffmpeg_clip_cmd(str(src), str(clip_path), 0.0, 2.0, Fmt.r9x16.value, src_w=320, src_h=240)
     assert "-c:v" in cmd and "libx264" in cmd and "+faststart" in cmd   # codec invariant pinned
     subprocess.run(cmd, check=True, capture_output=True)
     assert clip_path.exists() and clip_path.stat().st_size > 0
 
     # 2) queue a post over that real clip
-    cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
