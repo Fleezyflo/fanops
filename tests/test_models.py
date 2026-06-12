@@ -2,10 +2,9 @@
 import pytest
 from pydantic import ValidationError
 from fanops.models import (
-    Source, Moment, Clip, Post, Platform, Fmt,
-    SourceState, MomentState, ClipState, PostState,
+    Source, Moment, Clip, Post, Platform, SourceState, MomentState, ClipState, PostState,
     MomentRequest, MomentDecision, MomentPick,
-    CaptionRequest, CaptionSet, CaptionItem,
+    CaptionSet, CaptionItem,
 )
 
 def test_source_defaults_catalogued():

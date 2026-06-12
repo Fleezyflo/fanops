@@ -1,10 +1,9 @@
 # tests/test_studio_actions.py — CREATE
 from datetime import datetime, timezone, timedelta
-import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
-from fanops.studio.actions import reschedule_post, edit_caption, snooze_clip, ActionResult
+from fanops.studio.actions import reschedule_post, edit_caption, snooze_clip
 
 NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")

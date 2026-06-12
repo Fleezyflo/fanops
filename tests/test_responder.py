@@ -133,10 +133,9 @@ def test_responder_drops_stale_answer_when_gate_reseeded_mid_model_call(tmp_path
     # answer was applied as fresh. The fix captures the rid BEFORE the model call and re-verifies it is
     # still latest AFTER; on mismatch it drops the stale answer (gate stays pending for the new request).
     # We model the overlapping re-seed by having the injected model itself re-write the request mid-call.
-    import json as J
     from fanops.config import Config
     from fanops.responder import LlmResponder
-    from fanops.agentstep import write_request, read_response, response_path, latest_request_id
+    from fanops.agentstep import write_request, read_response, latest_request_id
     from fanops.models import MomentDecision
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)

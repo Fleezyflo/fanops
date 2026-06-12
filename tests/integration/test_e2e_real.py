@@ -4,8 +4,7 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.pipeline import advance
-from fanops.responder import LlmResponder
-from fanops.agentstep import pending, request_path, response_path, latest_request_id
+from fanops.agentstep import request_path, response_path, latest_request_id
 from fanops.models import MomentDecision, CaptionSet
 from fanops.transcribe import _cached_models, _resolve_model, real_transcript_signal
 

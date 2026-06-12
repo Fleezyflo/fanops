@@ -4,14 +4,12 @@ re-opening the exact lost-update window B4 closed for advance() — a concurrent
 transaction could be clobbered last-writer-wins. These migrate them to Ledger.transaction, with the
 HARD constraint that network / subprocess I/O stays OUTSIDE the lock (mirroring publish_due's
 in_transaction split) so the up-to-30s Blotato calls never serialize behind the ledger flock."""
-import json
 import os
 import fcntl
 
-import pytest
 
 from fanops.config import Config
-from fanops.ledger import Ledger, _file_lock
+from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState
 import fanops.cli as cli
 

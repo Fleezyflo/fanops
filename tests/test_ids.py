@@ -1,6 +1,6 @@
 # tests/test_ids.py
 import subprocess, sys
-from fanops.ids import make_id, child_id, surface_key, content_id
+from fanops.ids import make_id, child_id, surface_key
 
 def test_make_id_deterministic():
     assert make_id("src", "/in/a.mov") == make_id("src", "/in/a.mov")

@@ -1,6 +1,5 @@
 import os
 import pytest
-from fanops.config import Config
 from fanops.post.payload import build_blotato_payload, default_target_fields
 
 pytestmark = pytest.mark.integration

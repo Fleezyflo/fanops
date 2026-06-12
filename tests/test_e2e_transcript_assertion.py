@@ -12,7 +12,6 @@ The E2E's real contract (its own comment) is "the transcript is non-empty and ca
 (both engines' ACTUAL transcripts) without a 30s real-tooling run. RED/GREEN is proven against the
 real espeak transcript captured from the failing CI log.
 """
-import pytest
 from fanops.transcribe import real_transcript_signal
 
 # The two transcripts whisper-tiny ACTUALLY produced from the E2E's sample, verbatim:

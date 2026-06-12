@@ -1,7 +1,7 @@
 import json
 import pytest
 from fanops.config import Config
-from fanops.accounts import Accounts, Account
+from fanops.accounts import Accounts
 
 def _seed(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
