@@ -5,6 +5,19 @@
       "Bash(python -m pytest:*)",
       "Bash(ruff check:*)",
       "Bash(pip install -e:*)"
+    ],
+    "deny": [
+      "Bash(black:*)",
+      "Bash(ruff format:*)",
+      "Bash(sudo:*)",
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(chmod 777:*)",
+      "Bash(ssh:*)",
+      "Bash(* > /dev/*)",
+      "Read(./.env)",
+      "Read(./.env.*)"
     ]
   }
 }
