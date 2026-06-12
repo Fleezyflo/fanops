@@ -5,12 +5,13 @@ resume (FIX F11). Media is ensured ONCE PER CLIP (FIX F44). Failed submit -> Pos
 (retryable), never analyzed (FIX F22). Held/retired clips never reach here (crosspost skips)."""
 from __future__ import annotations
 from datetime import datetime, timezone
+from pathlib import Path
 from fanops.config import Config
 from fanops.errors import BlotatoAuthError
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.post import get_poster
-from fanops.post.media import ensure_clip_media
+from fanops.post.media import ensure_clip_media, upload_media
 from fanops.timeutil import parse_iso as _parse
 
 def _now(now: str | None) -> datetime:
@@ -59,6 +60,17 @@ def publish_due(led: Ledger, cfg: Config, *, now: str | None = None,
             # ensure media once per clip (FIX F44 — cached on the Clip)
             if not post.media_urls:
                 post.media_urls = [ensure_clip_media(led, cfg, post.parent_id)]
+            elif cfg.poster_backend != "dryrun":
+                # AUDIT (stage-6 HIGH): a variant post is BORN with media_urls=["file://<variant
+                # render>"] (crosspost.py stamps the per-account hook-burned file). Pre-stamped media
+                # used to skip the upload entirely and ship the LOCAL path to Blotato, which cannot
+                # fetch it — every live variant post died. Upload the variant FILE itself, NOT
+                # ensure_clip_media (the clip-level cache holds the parent's BASE render — using it
+                # would silently drop the burned hook). The https result replaces file:// on the post
+                # and is persisted by the submitting _save below, so a retried post never re-uploads.
+                # dryrun keeps file:// (the offline pipeline must run with no network by design).
+                post.media_urls = [upload_media(cfg, Path(u.removeprefix("file://")))
+                                   if u.startswith("file://") else u for u in post.media_urls]
             # crash-safe: record intent + persist BEFORE the irreversible network call (FIX F11)
             post.state = PostState.submitting
             _save()                                        # crash-safe persist, txn-aware (AUDIT B4)

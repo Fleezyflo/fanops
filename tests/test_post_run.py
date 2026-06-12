@@ -1,4 +1,3 @@
-import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Clip, PostState, ClipState, Platform
@@ -42,8 +41,11 @@ def test_publish_uploads_media_once_and_advances(tmp_path, monkeypatch, mocker):
     led = publish_due(led, cfg, now="2026-06-02T18:00:00Z")
     assert led.posts["p1"].state is PostState.published and led.posts["p2"].state is PostState.published
     assert led.posts["p1"].media_urls[0].startswith("file://")
-    # clip_1 media ensured but cached: both posts resolve to the same url
-    assert led.clips["clip_1"].media_url and led.posts["p1"].media_urls == led.posts["p2"].media_urls
+    # clip_1 media ensured but cached: both posts resolve to the same url, and the SECOND call
+    # returns the Clip-cached value (F44) — the spy proves ensure ran once per post but the
+    # underlying upload work is shared via clip.media_url
+    assert spy.call_count == 2 and led.clips["clip_1"].media_url
+    assert led.posts["p1"].media_urls == led.posts["p2"].media_urls
 
 def test_publish_idempotent_skips_already_submitted(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
@@ -266,3 +268,36 @@ def test_publish_due_garbage_scheduled_time_does_not_escape(tmp_path, monkeypatc
                       scheduled_time="not-a-timestamp"))
     publish_due(led, cfg, now="2026-06-02T00:00:00Z")   # must NOT raise
     assert led.posts["garbage"].state is PostState.failed
+
+
+def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatch, mocker):
+    # AUDIT (stage-6 HIGH): a creative-variation post is BORN with media_urls=["file://<variant>"]
+    # (crosspost stamps the per-account variant render). The `if not post.media_urls` guard then
+    # skipped the upload entirely and shipped the LOCAL path verbatim to Blotato — which cannot
+    # fetch a file:// on the operator's host, so every live variant post died. On a live backend a
+    # file:// entry must be uploaded as the variant FILE itself (NOT ensure_clip_media — the
+    # clip-level cache holds the parent's BASE render and would lose the burned hook).
+    monkeypatch.setenv("FANOPS_POSTER", "rest")
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    vfile = cfg.clips / "clip_1_vhash.mp4"; vfile.parent.mkdir(parents=True, exist_ok=True); vfile.write_bytes(b"V")
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(cfg.clips / "clip_1.mp4"), state=ClipState.queued))
+    led.add_post(Post(id="pv", parent_id="clip_1", account="@a", account_id="98432",
+                      platform=Platform.instagram, caption="x", scheduled_time="2020-01-01T00:00:00Z",
+                      state=PostState.queued, media_urls=[f"file://{vfile}"]))
+    uploaded = []
+    def fake_upload(cfg_, path):
+        uploaded.append(str(path)); return "https://cdn.blotato.test/v.mp4"
+    mocker.patch("fanops.post.run.upload_media", side_effect=fake_upload)
+    sent = {}
+    class FakePoster:
+        def publish(self, led_, post_id):
+            sent["media_urls"] = list(led_.posts[post_id].media_urls)
+            led_.posts[post_id].state = PostState.submitted
+            return led_
+    mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())
+    led = publish_due(led, cfg, now="2026-06-02T18:00:00Z")
+    assert uploaded == [str(vfile)]                                    # the VARIANT file, not the parent clip
+    assert sent["media_urls"] == ["https://cdn.blotato.test/v.mp4"]    # the poster sees https, never file://
+    assert led.posts["pv"].media_urls == ["https://cdn.blotato.test/v.mp4"]  # persisted -> a retry never re-uploads
+    assert led.posts["pv"].state is PostState.published
