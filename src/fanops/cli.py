@@ -355,7 +355,9 @@ def _dispatch(cfg: Config, args) -> int:
         from fanops.studio.app import create_app
         app = create_app(cfg)
         print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
-        app.run(host=args.host, port=args.port)
+        # debug EXPLICITLY off (stage-5 audit): a stray FLASK_DEBUG=1 in the operator's env would
+        # otherwise enable the Werkzeug interactive debugger — arbitrary code exec on the cockpit.
+        app.run(host=args.host, port=args.port, debug=False)
         return 0
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc

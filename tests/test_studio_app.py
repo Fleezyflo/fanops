@@ -20,8 +20,10 @@ def _seed(cfg, tmp_path):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": "hype"}]}))
-    base = tmp_path / "base.mp4"; base.write_bytes(b"\x00\x00\x00\x18ftypmp42BASECLIP")
-    variant = tmp_path / "variant.mp4"; variant.write_bytes(b"\x00\x00\x00\x18ftypmp42VARIANT!")
+    # seeds live under cfg.clips like real renders — the media routes only serve INSIDE cfg.base
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "base.mp4"; base.write_bytes(b"\x00\x00\x00\x18ftypmp42BASECLIP")
+    variant = cfg.clips / "variant.mp4"; variant.write_bytes(b"\x00\x00\x00\x18ftypmp42VARIANT!")
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
@@ -66,6 +68,21 @@ def test_media_falls_back_to_base_clip(tmp_path):
 def test_media_404_unknown_post(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     assert _client(cfg).get("/media/nope").status_code == 404
+
+def test_media_refuses_paths_outside_data_tree(tmp_path):
+    # Stage-5/6 audit MEDIUM: ledger paths are trusted in normal operation, but a hand-edited or
+    # corrupt ledger must not turn the localhost cockpit into an arbitrary-file server. Any path
+    # resolving OUTSIDE cfg.base (here: under root but outside the data tree) must 404 on both
+    # send_file routes, even though the file exists.
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    outside = tmp_path / "outside.txt"; outside.write_text("secret")
+    led = Ledger.load(cfg)
+    led.posts["p_var"].media_urls = [f"file://{outside}"]
+    led.clips["clip_1"].path = str(outside)
+    led.save()
+    c = _client(cfg)
+    assert c.get("/media/p_var").status_code == 404
+    assert c.get("/clips/clip_1").status_code == 404
 
 def test_media_404_missing_file(tmp_path):
     cfg = Config(root=tmp_path); base, variant = _seed(cfg, tmp_path)

@@ -119,7 +119,9 @@ class BlotatoRestPoster:
                 post.submission_id = sid
                 return led
             if resp.status_code == 401:
-                raise BlotatoAuthError(f"Blotato 401 unauthorized — check BLOTATO_API_KEY ({resp.text[:120]})")
+                # Body deliberately WITHHELD (stage-5 audit): this message reaches stderr and
+                # run.log — a 401 body that echoes the presented key would leak the credential.
+                raise BlotatoAuthError("Blotato 401 unauthorized — check BLOTATO_API_KEY (response body withheld)")
             if 500 <= resp.status_code < 600:
                 # Ambiguous: Blotato may have created the post before the 5xx. No idempotency key
                 # exists, so DO NOT re-POST (double-publish risk) — park for reconcile, capturing a

@@ -110,6 +110,51 @@ def test_upload_rejects_oversize_file(tmp_path, monkeypatch, mocker):
     pm.assert_not_called()                              # rejected BEFORE the presign POST
     put.assert_not_called()                             # and BEFORE the binary PUT
 
+def test_upload_rejects_non_https_presigned_url(tmp_path, monkeypatch, mocker):
+    # Stage-4 review MEDIUM: the presign response controls where the clip bytes are PUT. An http://
+    # (or other-scheme) presignedUrl would ship media in cleartext to wherever the response says —
+    # refuse BEFORE the binary PUT. Blotato's real presigns are always https.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); f = tmp_path / "c.mp4"; f.write_bytes(b"V")
+    mocker.patch("fanops.post.media.requests.post",
+                 return_value=_Resp(200, {"presignedUrl": "http://up/a", "publicUrl": "https://cdn/c.mp4"}))
+    put = mocker.patch("fanops.post.media.requests.put")
+    import pytest
+    with pytest.raises(RuntimeError, match="https"):
+        upload_media(cfg, f)
+    put.assert_not_called()                             # rejected BEFORE any bytes leave the host
+
+def test_upload_put_failure_raises_and_does_not_cache(tmp_path, monkeypatch, mocker):
+    # Stage-6 audit (missing test): the binary PUT was only ever stubbed 200. A failed PUT must
+    # raise with the status (per-post failure upstream) and must NOT cache a publicUrl for an
+    # object that was never stored — a cached dead URL would poison every later post off this clip.
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    f = cfg.clips / "clip_p.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    led.add_clip(Clip(id="clip_p", parent_id="m", path=str(f), state=ClipState.queued))
+    mocker.patch("fanops.post.media.requests.post",
+                 return_value=_Resp(200, {"presignedUrl": "https://up/a", "publicUrl": "https://cdn/c.mp4"}))
+    mocker.patch("fanops.post.media.requests.put", return_value=_Resp(500, {"error": "storage down"}))
+    import pytest
+    with pytest.raises(RuntimeError, match="500"):
+        ensure_clip_media(led, cfg, "clip_p")
+    assert led.clips["clip_p"].media_url is None        # nothing cached for the unstored object
+
+def test_upload_401_message_redacts_response_body(tmp_path, monkeypatch, mocker):
+    # Stage-5 security LOW: the auth-failure message lands in post.error_reason (ledger), stderr and
+    # run.log. If Blotato ever echoes the presented key in its 401 body, embedding resp.text would
+    # leak the credential into all three. The body must be withheld from auth errors.
+    from fanops.errors import BlotatoAuthError
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); f = tmp_path / "c.mp4"; f.write_bytes(b"V")
+    mocker.patch("fanops.post.media.requests.post",
+                 return_value=_Resp(401, {"error": "bad key SENTINEL-KEY-ECHO"}))
+    import pytest
+    with pytest.raises(BlotatoAuthError) as ei:
+        upload_media(cfg, f)
+    assert "SENTINEL-KEY-ECHO" not in str(ei.value)     # body redacted
+    assert "401" in str(ei.value)                       # status context retained
+
 def test_put_timeout_scales_with_size(tmp_path, monkeypatch, mocker):
     # AUDIT (e): the binary PUT timeout scales with file size — a larger (but allowed) file gets a
     # longer timeout than a tiny one, and the tiny file still gets at least the 60s base.

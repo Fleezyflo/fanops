@@ -49,12 +49,19 @@ def upload_media(cfg: Config, path: Path) -> str:
     if resp.status_code == 401:
         # A 401 on the media presign is the SAME fatal auth condition as a 401 on the post —
         # halt the whole queue by type (AUDIT H8), don't mark one post failed and grind on.
-        raise BlotatoAuthError(f"Blotato 401 on media presign — check BLOTATO_API_KEY: {(resp.text or '')[:200]}")
+        # Body deliberately WITHHELD (stage-5 audit): this message lands in post.error_reason
+        # (ledger), stderr and run.log — if the 401 body ever echoes the presented key, embedding
+        # resp.text would leak the credential into all three.
+        raise BlotatoAuthError("Blotato 401 on media presign — check BLOTATO_API_KEY (response body withheld)")
     if resp.status_code >= 300:
         raise RuntimeError(f"Blotato presign failed ({resp.status_code}): {(resp.text or '')[:300]}")
     presign = resp.json()
     if "presignedUrl" not in presign or "publicUrl" not in presign:
         raise RuntimeError(f"Blotato presign response missing presignedUrl/publicUrl; got keys {sorted(presign)}")
+    if not str(presign["presignedUrl"]).startswith("https://"):
+        # The presign response controls where the clip bytes are PUT — refuse any non-https target
+        # BEFORE the upload (cleartext media to an attacker-nominated host otherwise).
+        raise RuntimeError("Blotato presign returned a non-https presignedUrl — refusing to PUT media")
     ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     with open(path, "rb") as fh:
         put = requests.put(presign["presignedUrl"], data=fh,

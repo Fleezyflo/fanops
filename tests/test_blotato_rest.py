@@ -43,6 +43,21 @@ def test_401_raises_loudly(tmp_path, monkeypatch, mocker):
     with pytest.raises(BlotatoAuthError):
         BlotatoRestPoster(cfg).publish(led, "p3")          # bad key must halt, not silently fail
 
+def test_401_message_redacts_response_body(tmp_path, monkeypatch, mocker):
+    # Stage-5 security LOW: the auth-failure message propagates to stderr and run.log. If Blotato's
+    # 401 body ever echoes the presented key, embedding resp.text would leak it — withhold the body.
+    from fanops.errors import BlotatoAuthError
+    monkeypatch.setenv("BLOTATO_API_KEY", "badkey")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p3r", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+                      caption="x", state=PostState.queued))
+    mocker.patch("fanops.post.blotato_rest.requests.post",
+                 return_value=_R(401, {"e": "denied for key SENTINEL-KEY-ECHO"}))
+    with pytest.raises(BlotatoAuthError) as ei:
+        BlotatoRestPoster(cfg).publish(led, "p3r")
+    assert "SENTINEL-KEY-ECHO" not in str(ei.value)        # body redacted
+    assert "401" in str(ei.value)                          # status context retained
+
 def test_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

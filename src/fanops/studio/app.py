@@ -17,6 +17,16 @@ from fanops.studio import views, actions
 _HERE = Path(__file__).resolve().parent
 
 
+def _bounded(cfg: Config, candidate) -> Path | None:
+    """Require a servable path to resolve INSIDE cfg.base (the FanOps data tree). Ledger paths are
+    trusted in normal operation, but a hand-edited/corrupt ledger must not turn the localhost
+    cockpit into an arbitrary-file server (stage-5/6 audit) — anything else is a 404, not a serve."""
+    if not candidate:
+        return None
+    p = Path(candidate).resolve()
+    return p if p.is_relative_to(cfg.base.resolve()) else None
+
+
 def _media_path_for_post(led: Ledger, post_id: str):
     """Resolve the local file to serve for a post: the variant overlay (media_urls[0], stripped of
     file://) when it is a local file, else the base clip path. Returns None if nothing resolvable.
@@ -67,7 +77,7 @@ def create_app(cfg: Config) -> Flask:
 
     @app.get("/media/<post_id>")
     def media(post_id):
-        path = _media_path_for_post(Ledger.load(cfg), post_id)
+        path = _bounded(cfg, _media_path_for_post(Ledger.load(cfg), post_id))
         if not path or not os.path.exists(path):
             abort(404)
         return send_file(path)
@@ -75,9 +85,10 @@ def create_app(cfg: Config) -> Flask:
     @app.get("/clips/<clip_id>")
     def clip_media(clip_id):
         clip = Ledger.load(cfg).clips.get(clip_id)
-        if clip is None or not clip.path or not os.path.exists(clip.path):
+        path = _bounded(cfg, clip.path if clip else None)
+        if not path or not os.path.exists(path):
             abort(404)
-        return send_file(clip.path)
+        return send_file(path)
 
     @app.post("/reschedule/<post_id>")
     def do_reschedule(post_id):
