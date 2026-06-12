@@ -1,7 +1,7 @@
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Moment, Clip, Post, SourceState, MomentState, ClipState, Platform, MomentDecision, MomentPick
+from fanops.models import Source, Clip, Post, SourceState, Platform, MomentDecision, MomentPick
 from fanops.agentstep import response_path, request_path, latest_request_id
 from fanops.moments import request_moments, ingest_moments, validate_pick
 
@@ -105,6 +105,9 @@ def test_ingest_all_invalid_marks_source_error(tmp_path):
     led = ingest_moments(led, cfg, "src_1")
     assert led.moments_of("src_1") == []
     assert led.sources["src_1"].state is SourceState.error
+    # Stage-6 audit: the reason must say WHY the picks were invalid (here: past EOF), so the
+    # operator can tell a garbage-timestamp model from a bad duration probe — not just a count.
+    assert "end>" in (led.sources["src_1"].error_reason or "")
 
 def test_ingest_moments_noop_without_matching_response(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)

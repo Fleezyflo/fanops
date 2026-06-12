@@ -599,3 +599,18 @@ def test_studio_defaults_host_port(tmp_path, monkeypatch, mocker):
     assert cli.main(["studio"]) == 0
     _, kwargs = fake_app.run.call_args
     assert kwargs.get("host") == "127.0.0.1" and kwargs.get("port") == 8787
+    # stage-5 audit: debug must be EXPLICITLY off (a stray FLASK_DEBUG=1 would otherwise enable
+    # the Werkzeug interactive debugger — code exec on the cockpit)
+    assert kwargs.get("debug") is False
+
+
+def test_pull_rejects_non_http_url(tmp_path, monkeypatch, capsys):
+    # Stage-4 audit: the pull url is handed to yt-dlp verbatim. Validate the scheme at the argparse
+    # boundary: file:///-style schemes and flag-lookalike args ('-foo', argument injection into
+    # yt-dlp) must die with the standard argparse usage error (exit 2), never reach a subprocess.
+    import pytest
+    monkeypatch.chdir(tmp_path)
+    for bad in ("file:///etc/passwd", "ftp://x/y", "-U"):
+        with pytest.raises(SystemExit) as ei:
+            main(["pull", bad])
+        assert ei.value.code == 2

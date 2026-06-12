@@ -130,3 +130,29 @@ def test_intake_is_idempotent_and_reports_missing(tmp_path, mocker):
     (cfg.review / "approved" / "deadbeefdeadbeef.jpg").write_bytes(b"J")
     out = discover.intake(cfg)
     assert out["missing"] >= 1
+
+def test_discover_corrupt_manifest_raises_typed_control_error(tmp_path):
+    # Stage-6 audit: a truncated/hand-mangled manifest.json escaped as a raw JSONDecodeError
+    # traceback (discover/intake are CLI verbs with no pipeline quarantine, and JSONDecodeError is
+    # not in cli.main's catch ladder). Every other control-file reader (ledger/accounts) raises the
+    # typed ControlFileError -> one clean operator line + exit 2. discover must match.
+    import pytest
+    from fanops.config import Config
+    from fanops.errors import ControlFileError
+    cfg = Config(root=tmp_path)
+    cfg.review.mkdir(parents=True, exist_ok=True)
+    (cfg.review / "manifest.json").write_text("{truncated")
+    roots = tmp_path / "roots"; roots.mkdir()
+    with pytest.raises(ControlFileError, match="manifest.json"):
+        discover.discover(cfg, [roots])
+
+def test_intake_corrupt_intaken_raises_typed_control_error(tmp_path):
+    import pytest
+    from fanops.config import Config
+    from fanops.errors import ControlFileError
+    cfg = Config(root=tmp_path)
+    (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
+    (cfg.review / "manifest.json").write_text("{}")
+    (cfg.review / "intaken.json").write_text("[truncated")
+    with pytest.raises(ControlFileError, match="intaken.json"):
+        discover.intake(cfg)

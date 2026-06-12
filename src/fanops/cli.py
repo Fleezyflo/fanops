@@ -122,13 +122,21 @@ def cmd_gc(cfg: Config, keep_days: int) -> int:
     print(f"gc removed {removed} clip files older than {keep_days}d")
     return 0
 
+def _http_url(s: str) -> str:
+    """argparse type for `pull url` (stage-4 audit): the url is handed to yt-dlp verbatim, so
+    validate the scheme at the boundary — file:///generic schemes and flag-lookalike args
+    (argument injection into yt-dlp) die with the standard usage error, never reach a subprocess."""
+    if not s.startswith(("http://", "https://")):
+        raise argparse.ArgumentTypeError(f"url must be http(s)://, got {s[:60]!r}")
+    return s
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fanops")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status"); sub.add_parser("ingest"); sub.add_parser("digest"); sub.add_parser("respond")
     sub.add_parser("reconcile")
     p_adv = sub.add_parser("advance"); p_adv.add_argument("--base-time", default="2026-06-02T18:00:00Z")
-    p_pull = sub.add_parser("pull"); p_pull.add_argument("url")
+    p_pull = sub.add_parser("pull"); p_pull.add_argument("url", type=_http_url)
     p_trk = sub.add_parser("track"); p_trk.add_argument("--window", default="30d")
     p_adj = sub.add_parser("adjust"); p_adj.add_argument("--winner-pct", type=float, default=0.3)
     p_adj.add_argument("--retire-pct", type=float, default=0.2); p_adj.add_argument("--lift-floor", type=float, default=20.0)

@@ -18,6 +18,11 @@ def _guidance(cfg: Config) -> str:
 def _token(pick: MomentPick) -> str:
     return f"{pick.start:.2f}-{pick.end:.2f}"
 
+# ffprobe durations round; a pick may overrun probed EOF by this much before it's "past the end".
+_EOF_TOLERANCE_S = 0.5
+# shorter than this can't carry a hook + payoff — reject as noise
+_MIN_MOMENT_S = 0.5
+
 def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
     """Return a reason string if the pick is invalid, else None."""
     if not (math.isfinite(pick.start) and math.isfinite(pick.end)):
@@ -26,9 +31,9 @@ def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
         return f"end<=start ({pick.start}->{pick.end})"
     if pick.start < 0:
         return f"start<0 ({pick.start})"
-    if duration and pick.end > duration + 0.5:          # duration==0 means unprobed: skip EOF check (tolerate tiny rounding past EOF)
+    if duration and pick.end > duration + _EOF_TOLERANCE_S:   # duration==0 means unprobed: skip EOF check
         return f"end>{duration} ({pick.end})"
-    if (pick.end - pick.start) < 0.5:
+    if (pick.end - pick.start) < _MIN_MOMENT_S:
         return f"too short ({pick.end - pick.start:.2f}s)"
     return None
 
@@ -52,10 +57,11 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     src = led.sources[source_id]
     keep: dict[str, Moment] = {}
     rejected = 0
+    reasons: list[str] = []
     for pick in dec.picks:
         bad = validate_pick(pick, duration=src.duration or 0.0)
         if bad:
-            rejected += 1
+            rejected += 1; reasons.append(bad)
             continue
         token = _token(pick)
         mid = child_id("moment", source_id, token)
@@ -68,7 +74,9 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         # Intentional: a wholly-invalid NEW decision quarantines the source but does NOT
         # reconcile — prior valid moments/lineage are preserved, not cascade-deleted.
         src.state = SourceState.error
-        src.error_reason = f"all {rejected} moment picks invalid"
+        # name WHY (stage-6 audit): the distinct reasons tell a garbage-timestamp model apart from
+        # a bad duration probe — a bare count couldn't.
+        src.error_reason = f"all {rejected} moment picks invalid: {'; '.join(sorted(set(reasons)))[:200]}"
         return led
     led.reconcile_moments(source_id, keep)          # upsert + cascade-delete dropped lineages
     led.set_source_state(source_id, SourceState.moments_decided)

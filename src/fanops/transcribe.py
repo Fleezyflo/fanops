@@ -112,9 +112,17 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         src.state = SourceState.error
         src.error_reason = f"whisper produced no JSON (rc={r.returncode}): {(r.stderr or '')[:200]}"
         return led
-    data = json.loads(js.read_text())
-    src.transcript = [{"start": s["start"], "end": s["end"], "text": s["text"].strip()}
-                      for s in data.get("segments", [])]
+    try:
+        data = json.loads(js.read_text())
+        src.transcript = [{"start": s["start"], "end": s["end"], "text": s["text"].strip()}
+                          for s in data.get("segments", [])]
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+        # whisper killed mid-write (disk full, OOM) leaves TRUNCATED JSON; a schema drift loses
+        # start/end/text keys. Same per-source shape as the absent/timeout/no-JSON branches above —
+        # a bare JSONDecodeError named neither whisper nor the file (stage-6 audit).
+        src.state = SourceState.error
+        src.error_reason = f"whisper JSON malformed ({js.name}): {type(e).__name__}: {str(e)[:160]}"
+        return led
     src.language = data.get("language")
     src.meta["transcribed"] = True
     led.set_source_state(source_id, SourceState.transcribed)

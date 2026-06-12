@@ -8,8 +8,29 @@ from __future__ import annotations
 import json, os, shutil, subprocess
 from pathlib import Path
 from fanops.config import Config
+from fanops.errors import ControlFileError
 from fanops.ledger import Ledger
 from fanops.ingest import scan_local, probe_dimensions, sha256_of
+
+def _load_json(path: Path, default):
+    """Guarded control-file read: the 00_review JSONs are operator-adjacent files. A truncated or
+    hand-mangled one must die as the typed ControlFileError (one clean line + exit 2 via cli.main,
+    same contract as ledger/accounts), never a raw JSONDecodeError traceback (stage-6 audit)."""
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        raise ControlFileError(f"{path.name} invalid: {type(e).__name__}: {str(e)[:120]}") from e
+
+def _write_json_atomic(path: Path, obj) -> None:
+    """tmp + os.replace, mirroring Ledger._save_unlocked: a crash mid-write must never leave a
+    truncated manifest/intaken file — the next run would die on it, or a partial intaken set
+    would silently re-intake (duplicate sources). Plain write_text violated the module's own
+    'idempotent, never a crash' docstring claim (stage-6 audit)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2))
+    os.replace(tmp, path)
 
 def candidate_meta(path: Path) -> dict:
     """Cheap metadata for one candidate: bytes + mtime always (from os.stat); width/height/duration
@@ -58,7 +79,7 @@ def discover(cfg: Config, roots: list[Path]) -> dict:
     (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
     led = Ledger.load(cfg)
     mpath = cfg.review / "manifest.json"
-    manifest = json.loads(mpath.read_text()) if mpath.exists() else {}
+    manifest = _load_json(mpath, {})
     found = new = skipped = 0
     for s in scan_local(roots):                  # media-ext + is_excluded already applied
         p = Path(s); found += 1
@@ -72,7 +93,7 @@ def discover(cfg: Config, roots: list[Path]) -> dict:
         make_thumbnail(p, thumb)                 # fail-open: entry still listed if no thumb
         manifest[eid] = {"source_path": str(p), "sha256": digest, **meta}
         new += 1
-    mpath.write_text(json.dumps(manifest, indent=2))
+    _write_json_atomic(mpath, manifest)
     return {"found": found, "new": new, "skipped": skipped}
 
 def intake(cfg: Config) -> dict:
@@ -85,9 +106,9 @@ def intake(cfg: Config) -> dict:
     if not approved_dir.exists():
         return {"approved": 0, "intaken": 0, "missing": 0}
     mpath = cfg.review / "manifest.json"
-    manifest = json.loads(mpath.read_text()) if mpath.exists() else {}
+    manifest = _load_json(mpath, {})
     donep = cfg.review / "intaken.json"
-    done = set(json.loads(donep.read_text())) if donep.exists() else set()
+    done = set(_load_json(donep, []))
     cfg.inbox.mkdir(parents=True, exist_ok=True)
     approved = intaken = missing = 0
     for entry in sorted(approved_dir.glob("*.jpg")):
@@ -104,5 +125,5 @@ def intake(cfg: Config) -> dict:
         if not dest.exists():
             shutil.copy2(src, dest)
         done.add(eid); intaken += 1
-    donep.write_text(json.dumps(sorted(done), indent=2))
+    _write_json_atomic(donep, sorted(done))
     return {"approved": approved, "intaken": intaken, "missing": missing}

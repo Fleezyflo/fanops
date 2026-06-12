@@ -97,3 +97,23 @@ def test_whisper_hang_goes_to_error_not_crash(tmp_path, mocker):
     assert "timed out" in (led.sources["src_1"].error_reason or "")
     assert led.sources["src_1"].meta.get("transcribed") is not True   # a re-run actually retries
     assert seen.get("timeout") == 1800.0                              # the bound is actually wired
+
+def test_malformed_whisper_json_is_per_source_error_not_crash(tmp_path, mocker):
+    # Stage-6 audit: whisper killed mid-write (disk full, OOM kill) leaves TRUNCATED JSON on disk.
+    # That must park THIS source as a retriable error whose reason points at whisper — exactly like
+    # the sibling absent/timeout/no-JSON branches; the parse was the one unguarded step (a bare
+    # JSONDecodeError said nothing about whisper or which file).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.catalogued))
+    def fake_run(cmd, **kw):
+        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / f"{Path(cmd[-1]).stem}.json").write_text('{"language": "en", "segme')   # truncated
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    led = transcribe_source(led, cfg, "src_1")     # must NOT raise
+    s = led.sources["src_1"]
+    assert s.state is SourceState.error
+    assert "whisper JSON malformed" in (s.error_reason or "")
+    assert s.meta.get("transcribed") is not True   # a re-run actually retries
