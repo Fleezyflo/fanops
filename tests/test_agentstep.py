@@ -7,7 +7,6 @@ from fanops.agentstep import write_request, read_response, pending, response_pat
 def test_write_request_creates_file_with_id(tmp_path):
     cfg = Config(root=tmp_path)
     rid = write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
-    p = response_path(cfg, "moments", "src_1")  # sibling naming
     assert rid and latest_request_id(cfg, "moments", "src_1") == rid
 
 def test_pending_lists_until_matching_response(tmp_path):

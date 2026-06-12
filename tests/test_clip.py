@@ -34,8 +34,10 @@ def test_render_moment_creates_clip_with_aspect(tmp_path, mocker):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
                           start=0, end=7, reason="r", state=MomentState.decided))
     def fake_run(cmd, **kw):
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
-        class R: returncode = 0; stderr = ""
+        # FLAG last-arg (capability probe) is not an output path — see the b"X" stub above
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
@@ -50,8 +52,11 @@ def test_render_aspects_for_makes_one_clip_per_distinct_aspect(tmp_path, mocker)
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
                           start=0, end=7, reason="r", state=MomentState.decided))
     def fake_run(cmd, **kw):
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
-        class R: returncode = 0; stderr = ""
+        # a FLAG last-arg (e.g. the `ffmpeg -filters` capability probe) is NOT an output path —
+        # writing it would drop a junk `-filters` file into the repo root on every suite run
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led, clips = render_aspects_for(led, cfg, "mom_1", aspects={Fmt.r9x16, Fmt.r16x9})
@@ -135,8 +140,10 @@ def test_render_burns_subtitles_when_enabled(tmp_path, mocker, monkeypatch):
     captured = {}
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
-        class R: returncode = 0; stderr = ""
+        # FLAG last-arg (capability probe) is not an output path — see the b"X" stub above
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
@@ -164,8 +171,10 @@ def test_render_failopen_when_no_textfilter(tmp_path, mocker, monkeypatch):
     captured = {}
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
-        class R: returncode = 0; stderr = ""
+        # FLAG last-arg (capability probe) is not an output path — see the b"X" stub above
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)   # must NOT raise
@@ -192,8 +201,10 @@ def test_render_failopen_when_no_transcript(tmp_path, mocker, monkeypatch):
     captured = {}
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
-        class R: returncode = 0; stderr = ""
+        # FLAG last-arg (capability probe) is not an output path — see the b"X" stub above
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)

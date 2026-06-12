@@ -32,8 +32,11 @@ def _captioned(led, cfg, mocker):
         if not (isinstance(cmd, (list, tuple)) and cmd and cmd[0] == "ffmpeg"):
             return real_run(cmd, **kw)
         from pathlib import Path
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
-        class R: returncode = 0; stderr = ""
+        # a FLAG last-arg (e.g. the `ffmpeg -filters` capability probe) is NOT an output path —
+        # writing it would drop a junk `-filters` file into the repo root on every suite run
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
 
@@ -155,8 +158,11 @@ def test_crosspost_multi_account_fans_out_n_times_m(tmp_path, mocker):
     led.add_clip(clip)
     def fake_run(cmd, **kw):
         from pathlib import Path
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
-        class R: returncode = 0; stderr = ""
+        # a FLAG last-arg (e.g. the `ffmpeg -filters` capability probe) is NOT an output path —
+        # writing it would drop a junk `-filters` file into the repo root on every suite run
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
@@ -257,8 +263,11 @@ def test_crosspost_skips_surface_when_clip_exceeds_platform_max(tmp_path, mocker
     led.add_clip(clip)
     def fake_run(cmd, **kw):   # satisfy the on-demand 16:9 render for youtube
         from pathlib import Path
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
-        class R: returncode = 0; stderr = ""
+        # a FLAG last-arg (e.g. the `ffmpeg -filters` capability probe) is NOT an output path —
+        # writing it would drop a junk `-filters` file into the repo root on every suite run
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
@@ -286,8 +295,11 @@ def test_crosspost_posts_when_duration_unknown(tmp_path, mocker):
     led.add_clip(clip)
     def fake_run(cmd, **kw):
         from pathlib import Path
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
-        class R: returncode = 0; stderr = ""
+        # a FLAG last-arg (e.g. the `ffmpeg -filters` capability probe) is NOT an output path —
+        # writing it would drop a junk `-filters` file into the repo root on every suite run
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")

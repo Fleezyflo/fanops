@@ -27,7 +27,10 @@ def _ff(mocker):
                 returncode=0; stderr=""
                 stdout = "video" if "codec_type" in joined else "1920\n1080\n20.0\n"
             return R()
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        # a FLAG last-arg (e.g. the `ffmpeg -filters` capability probe) is NOT an output path —
+        # writing it would drop a junk `-filters` file into the repo root on every suite run
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
         class R: returncode=0; stderr=""; stdout=""
         return R()
     for mod in ("transcribe", "signals", "clip", "ingest"):
@@ -121,12 +124,15 @@ def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
         if cmd[0] == "ffmpeg":
             class R: returncode=0; stdout=""; stderr="silence_end: 1.0 | silence_duration: 0.5"
             return R()
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        # a FLAG last-arg (e.g. the `ffmpeg -filters` capability probe) is NOT an output path —
+        # writing it would drop a junk `-filters` file into the repo root on every suite run
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
         class R: returncode=0; stderr=""; stdout=""
         return R()
     for mod in ("transcribe", "signals", "clip", "ingest"):
         mocker.patch(f"fanops.{mod}.subprocess.run", side_effect=fake)
-    s = advance(cfg, base_time="2026-06-02T18:00:00Z")
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     states = sorted(x.state.value for x in led.sources.values())
     assert "error" in states                         # the bad one quarantined

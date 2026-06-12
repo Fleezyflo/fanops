@@ -24,10 +24,10 @@ def _analyzed_post(led, lift, pid, cid, mid, sid):
 
 def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
     led = Ledger.load(Config(root=tmp_path))
-    for pid, l in [("p1", 300), ("p2", 5), ("p3", 250), ("p4", 1)]:
+    for pid, lift in [("p1", 300), ("p2", 5), ("p3", 250), ("p4", 1)]:
         led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics={"lift_score": l}))
+                          state=PostState.analyzed, metrics={"lift_score": lift}))
     # a failed post with no lift_score must NOT be classified (FIX F22)
     led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
@@ -41,10 +41,10 @@ def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
 def test_classify_floor_protects_good_clips_from_retirement(tmp_path):
     # A bottom-ranked post that still clears the lift_floor is NOT retired (conservative policy).
     led = Ledger.load(Config(root=tmp_path))
-    for pid, l in [("hi", 500), ("mid", 100), ("ok", 60)]:   # all >= floor 20
+    for pid, lift in [("hi", 500), ("mid", 100), ("ok", 60)]:   # all >= floor 20
         led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics={"lift_score": l}))
+                          state=PostState.analyzed, metrics={"lift_score": lift}))
     r = classify_outcomes(led, winner_pct=0.34, retire_pct=0.34, lift_floor=20.0)
     assert "hi" in r["winners"]
     assert r["losers"] == []                        # 'ok' is bottom but lift 60 >= 20 -> spared

@@ -37,6 +37,10 @@ select = ["E", "F"]
 #   E501      — a few dense AUDIT-provenance comment lines run long on purpose; wrapping them
 #               would fragment load-bearing rationale. line-length=120 still documents intent.
 ignore = ["E701", "E702", "E401", "E501"]
+[tool.ruff.lint.per-file-ignores]
+# E402 in tests is the REQUIRED import-after-code pattern: pytest.importorskip("flask") /
+# env seeding must run BEFORE importing the module under test. Not a defect; src/ stays enforced.
+"tests/*" = ["E402"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

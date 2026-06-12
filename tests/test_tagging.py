@@ -38,7 +38,7 @@ def test_same_account_retag_does_not_erase_window_for_others(tmp_path):
     # which would overwrite 10:00; then @b at 11:30 is only 90min after @a's REAL 10:00 tag and
     # MUST be blocked. With per-account overwrite it was wrongly allowed.
     led = Ledger.load(Config(root=tmp_path))
-    t = lambda h, m: datetime(2026, 6, 2, h, m, tzinfo=timezone.utc)
+    def t(h, m): return datetime(2026, 6, 2, h, m, tzinfo=timezone.utc)
     assert decide_tag(led, account="@a", clip_id="c1", when=t(10, 0), force=True, min_gap_minutes=120) is True
     assert decide_tag(led, account="@a", clip_id="c2", when=t(14, 30), force=True, min_gap_minutes=120) is True
     # @b at 11:30 is within 120min of @a's 10:00 tag — must be blocked, not allowed by the overwrite.
@@ -51,7 +51,7 @@ def test_tag_log_does_not_prune_by_when_out_of_order_safe(tmp_path):
     # dropped a time that a subsequent earlier-`when` decision needed and produced a false allow.
     # Guard against re-introducing that prune: an out-of-window tag is retained, not discarded.
     led = Ledger.load(Config(root=tmp_path))
-    t = lambda h, m: datetime(2026, 6, 2, h, m, tzinfo=timezone.utc)
+    def t(h, m): return datetime(2026, 6, 2, h, m, tzinfo=timezone.utc)
     decide_tag(led, account="@a", clip_id="c1", when=t(10, 0), force=True, min_gap_minutes=120)
     decide_tag(led, account="@b", clip_id="c2", when=t(20, 0), force=True, min_gap_minutes=120)
     assert len(led.tag_log) == 2   # both retained — no when-relative pruning that could open a hole
@@ -71,7 +71,7 @@ def test_parse_handles_z_suffix_round_trip():
 def test_decide_tag_probabilistic_path_varies_by_clip(tmp_path):
     # force=False exercises the real gate. With clip_id threaded through, the SAME account
     # gets DIFFERENT tag decisions for different clips (per-clip variation, not per-account constant).
-    from datetime import timezone, timedelta
+    from datetime import timezone
     led = Ledger.load(Config(root=tmp_path))
     base = datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc)
     # Find a clip that tags and one that doesn't for the same account, proving variation exists.

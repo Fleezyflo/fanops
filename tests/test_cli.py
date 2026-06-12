@@ -364,7 +364,7 @@ def test_run_prints_heartbeat_with_version(tmp_path, monkeypatch, capsys):
 
 def _heartbeat_value(out: str) -> str:
     # Extract the "heartbeat" ts from the single JSON heartbeat line on stdout.
-    line = next(l for l in out.splitlines() if '"heartbeat"' in l)
+    line = next(ln for ln in out.splitlines() if '"heartbeat"' in ln)
     return json.loads(line)["heartbeat"]
 
 def test_run_heartbeat_timestamp_changes_between_runs(tmp_path, monkeypatch, capsys):
