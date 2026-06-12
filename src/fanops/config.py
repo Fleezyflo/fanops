@@ -79,11 +79,6 @@ class Config:
         return os.getenv("FANOPS_POSTER") or "dryrun"
 
     @property
-    def escalation_budget_usd(self) -> float:
-        try: return float(os.getenv("FANOPS_ESCALATION_BUDGET_USD") or 0.0)
-        except ValueError: return 0.0
-
-    @property
     def responder_mode(self) -> str:
         return os.getenv("FANOPS_RESPONDER") or "manual"
 

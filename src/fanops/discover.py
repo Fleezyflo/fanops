@@ -49,10 +49,6 @@ def make_thumbnail(path: Path, out_jpg: Path, *, at_seconds: float = 1.0) -> boo
         return r0.returncode == 0 and out_jpg.exists()
     return True
 
-def _entry_id(path: Path) -> str:
-    # stable, filesystem-safe review-entry id: short content hash keeps re-scans idempotent
-    return sha256_of(path)[:16]
-
 def discover(cfg: Config, roots: list[Path]) -> dict:
     """Scan roots for media candidates, write a thumbnail + manifest entry per NEW candidate into
     cfg.review. Skips content whose sha256 is already a ledger Source (no churn on re-scan) and

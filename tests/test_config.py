@@ -18,11 +18,10 @@ def test_poster_env_and_key_trimmed(monkeypatch, tmp_path):
     c = Config(root=tmp_path)
     assert c.poster_backend == "rest" and c.blotato_api_key == "abc123"
 
-def test_budget_and_responder_defaults(monkeypatch, tmp_path):
-    monkeypatch.delenv("FANOPS_ESCALATION_BUDGET_USD", raising=False)
+def test_responder_defaults_manual(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     c = Config(root=tmp_path)
-    assert c.escalation_budget_usd == 0.0 and c.responder_mode == "manual"
+    assert c.responder_mode == "manual"
 
 def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
