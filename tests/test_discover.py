@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 import fanops.discover as discover
 
@@ -38,6 +39,20 @@ def test_make_thumbnail_fail_open_when_ffmpeg_fails(tmp_path, mocker):
     mocker.patch("fanops.discover.subprocess.run", side_effect=boom)
     assert discover.make_thumbnail(src, out) is False     # fail-open: no raise, no thumbnail
     assert not out.exists()
+
+def test_make_thumbnail_fail_open_on_timeout(tmp_path, mocker):
+    # Discovery is CHEAP by design (module docstring) — one hung candidate must not stall a whole
+    # scan, so the one-frame thumbnail gets a TIGHT bound (60s, not the render-grade 600s) and a
+    # timeout fails open like the absent branch: False, no thumb, candidate still listed from meta.
+    src = tmp_path / "a.mp4"; _put(src); out = tmp_path / "a.jpg"
+    seen = {}
+    def hung(cmd, **kw):
+        seen.update(kw)
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+    mocker.patch("fanops.discover.subprocess.run", side_effect=hung)
+    assert discover.make_thumbnail(src, out) is False     # fail-open: no raise, no thumbnail
+    assert not out.exists()
+    assert seen.get("timeout") == 60.0                    # the bound is actually wired
 
 def test_discover_writes_thumbnails_and_manifest(tmp_path, mocker):
     from fanops.config import Config

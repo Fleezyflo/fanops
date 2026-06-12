@@ -6,6 +6,7 @@ styled ASS file (subtitle style bottom-third, optional hook top-third). The path
 and the cached capability probe are likewise standalone so a clip render probes ffmpeg once.
 """
 from __future__ import annotations
+import subprocess
 from pathlib import Path
 
 import fanops.overlay as overlay
@@ -114,6 +115,20 @@ def test_ffmpeg_has_textfilter_absent_does_not_raise(monkeypatch):
     overlay._TEXTFILTER_CACHE = None
 
 
+def test_ffmpeg_has_textfilter_timeout_does_not_raise(monkeypatch):
+    # `ffmpeg -filters` is instant on a healthy install; a HANG means a broken one. The probe is
+    # time-bounded and must swallow TimeoutExpired exactly like ffmpeg-absent — return False
+    # (renders skip burning subtitles) rather than crash an autonomous run.
+    overlay._TEXTFILTER_CACHE = None
+
+    def _hung(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+
+    monkeypatch.setattr(overlay.subprocess, "run", _hung)
+    assert ffmpeg_has_textfilter() is False
+    overlay._TEXTFILTER_CACHE = None
+
+
 def test_write_ass_writes_file(tmp_path):
     p = tmp_path / "sub.ass"
     out = write_ass("[Script Info]\nPlayResX: 1080\n", p)
@@ -182,3 +197,22 @@ def test_burn_hook_only_failopen_when_hook_empty(tmp_path, mocker):
     ok = overlay.burn_hook_only(str(base), str(out), "", width=1080, height=1920)
     assert ok is False and out.exists() and out.read_bytes() == b"BASE"
     ran.assert_not_called()
+
+def test_burn_hook_only_failopen_on_timeout(tmp_path, mocker):
+    # A HUNG hook burn fails OPEN exactly like ffmpeg-absent: the bounded run is killed, the base
+    # clip is byte-copied to out_path (the caller still gets a usable per-account file, just
+    # hookless) and False is returned — never a raise out of the variation pass.
+    import fanops.overlay as overlay
+    overlay._TEXTFILTER_CACHE = None
+    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
+    base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
+    out = tmp_path / "variant.mp4"
+    seen = {}
+    def hung(cmd, **kw):
+        seen.update(kw)
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+    mocker.patch("fanops.overlay.subprocess.run", side_effect=hung)
+    ok = overlay.burn_hook_only(str(base), str(out), "WATCH THIS", width=1080, height=1920)
+    assert ok is False and out.read_bytes() == b"BASE"    # fail-open: usable file, no hook
+    assert seen.get("timeout") == 600.0                   # the bound is actually wired
+    overlay._TEXTFILTER_CACHE = None

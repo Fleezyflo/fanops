@@ -10,6 +10,11 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import SourceState
 
+# Hard bound on the whisper run — THE flock-critical timeout: transcribe_source is called INSIDE
+# Ledger.transaction (pipeline.py), so an UNBOUNDED hang held the ledger lock against every cron
+# pass, Studio write and recovery verb. 30min covers a long source on CPU turbo/small.
+_WHISPER_TIMEOUT = 1800.0
+
 def _cached_models() -> list[str]:
     """Model names whose checkpoint is already on disk (no download needed). whisper stores
     them as <name>.pt under WHISPER download_root (defaults to ~/.cache/whisper)."""
@@ -86,7 +91,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     model = model or cfg.whisper_model               # env override (FANOPS_WHISPER_MODEL), default turbo
     cmd = whisper_cmd(src.source_path, str(out_dir), _resolve_model(model))
     try:
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_WHISPER_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
         # whisper ABSENT from PATH (or unspawnable): subprocess.run raises before the process
         # starts, which check=False does not cover (it only suppresses a nonzero RETURNCODE).
@@ -94,6 +99,13 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         # letting the raise escape to the pipeline as an opaque "FileNotFoundError: whisper".
         src.state = SourceState.error
         src.error_reason = f"toolchain missing: {cmd[0]} ({type(e).__name__})"
+        return led
+    except subprocess.TimeoutExpired:
+        # whisper HUNG (corrupt audio, model wedged) and was killed at the bound — the lock-held
+        # window stays finite. Same graceful shape as the branches above/below; `transcribed`
+        # stays unset so a recovered source re-runs.
+        src.state = SourceState.error
+        src.error_reason = f"whisper timed out after {_WHISPER_TIMEOUT:.0f}s"
         return led
     js = out_dir / f"{Path(src.source_path).stem}.json"
     if not js.exists():

@@ -173,21 +173,29 @@ def subtitles_vf(ass_path) -> str:
     return f"subtitles='{p}'"
 
 
+# Hard bounds (the llm.py timeout idiom): `-filters` is an instant capability probe — a hang
+# means a broken install; the hook burn re-encodes a clip, so it gets the same 10min bound as
+# clip.py's render. Both run inside lock-holding passes; unbounded, a hang wedged the flock.
+_PROBE_TIMEOUT = 30.0
+_FFMPEG_TIMEOUT = 600.0
+
+
 def ffmpeg_has_textfilter() -> bool:
     """True iff this ffmpeg can burn text (the 'subtitles'/'ass' or 'drawtext' filter is present).
     Probes `ffmpeg -hide_banner -filters` ONCE and caches the result in a module global so
     repeated clip renders don't re-spawn ffmpeg. Never raises: if ffmpeg is absent/unspawnable
-    (subprocess.run raises FileNotFoundError/OSError before the process starts) or the probe
-    fails, returns False (the caller then skips burning subtitles rather than crashing)."""
+    (subprocess.run raises FileNotFoundError/OSError before the process starts), HUNG past the
+    probe bound, or the probe fails, returns False (the caller then skips burning subtitles
+    rather than crashing)."""
     global _TEXTFILTER_CACHE
     if _TEXTFILTER_CACHE is not None:
         return _TEXTFILTER_CACHE
     try:
         r = subprocess.run(["ffmpeg", "-hide_banner", "-filters"],
-                           check=False, capture_output=True, text=True)
+                           check=False, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
         out = (r.stdout or "") + (r.stderr or "")
         _TEXTFILTER_CACHE = ("subtitles" in out) or ("drawtext" in out)
-    except (FileNotFoundError, OSError):
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         _TEXTFILTER_CACHE = False
     return _TEXTFILTER_CACHE
 
@@ -209,9 +217,9 @@ def burn_hook_only(base_clip_path: str, out_path: str, hook: str, *,
     cmd = ["ffmpeg", "-y", "-i", base_clip_path, "-vf", subtitles_vf(ass_path),
            "-c:v", "libx264", "-c:a", "copy", "-movflags", "+faststart", out_path]
     try:
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True)
-    except (FileNotFoundError, OSError):
-        shutil.copyfile(base_clip_path, out_path)        # ffmpeg vanished mid-run: fail-open
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        shutil.copyfile(base_clip_path, out_path)        # ffmpeg vanished or hung: fail-open
         return False
     if r.returncode != 0 or not Path(out_path).exists():
         shutil.copyfile(base_clip_path, out_path)

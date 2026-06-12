@@ -1,5 +1,5 @@
 # tests/test_transcribe.py
-import json
+import json, subprocess
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -77,3 +77,23 @@ def test_transcribe_idempotent_when_already_done(tmp_path, mocker):
     spy = mocker.patch("fanops.transcribe.subprocess.run")
     led = transcribe_source(led, cfg, "src_1")
     spy.assert_not_called()
+
+def test_whisper_hang_goes_to_error_not_crash(tmp_path, mocker):
+    # THE flock-critical bound: transcribe_source runs INSIDE Ledger.transaction (pipeline.py),
+    # so an unbounded hung whisper held the ledger lock forever — blocking every cron pass,
+    # Studio write and recovery verb until the OS intervened. The run must carry a hard timeout=,
+    # and TimeoutExpired must mirror the absent/no-JSON branches: SourceState.error with a clear
+    # reason, `transcribed` left unset (re-runnable), never a raise.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.catalogued))
+    seen = {}
+    def hung(cmd, **kw):
+        seen.update(kw)
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=hung)
+    led = transcribe_source(led, cfg, "src_1")     # must NOT raise
+    assert led.sources["src_1"].state is SourceState.error
+    assert "timed out" in (led.sources["src_1"].error_reason or "")
+    assert led.sources["src_1"].meta.get("transcribed") is not True   # a re-run actually retries
+    assert seen.get("timeout") == 1800.0                              # the bound is actually wired

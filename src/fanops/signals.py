@@ -31,15 +31,22 @@ def _scene_cmd(src: str) -> list[str]:
     return ["ffmpeg", "-hide_banner", "-loglevel", "info", "-i", src, "-vf",
             "scdet=threshold=10", "-f", "null", "-"]
 
+# Hard bound per signal pass: detect_signals runs inside advance()'s ledger transaction, so an
+# unbounded ffmpeg hang on a corrupt source held the flock forever. A timeout raises
+# TimeoutExpired, which propagates BY DESIGN to the per-source quarantine (same retriable
+# SourceState.error treatment as ToolchainMissingError below).
+_FFMPEG_TIMEOUT = 600.0
+
 def _run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess:
     """Run an ffmpeg signal-detection command, translating a PRE-LAUNCH FileNotFoundError/OSError
     (ffmpeg absent from PATH) into a typed ToolchainMissingError. detect_signals runs INSIDE the
     pipeline's per-source quarantine, so this typed error is caught there and the source goes to
     SourceState.error with a clear 'toolchain missing' reason (instead of a bare 'FileNotFoundError:
-    ffmpeg'); the pass never crashes. check=False semantics otherwise: a nonzero RETURNCODE is fine
-    (we parse stderr regardless)."""
+    ffmpeg'); the pass never crashes. A HUNG ffmpeg is killed at _FFMPEG_TIMEOUT and the raised
+    TimeoutExpired propagates to that same quarantine. check=False semantics otherwise: a nonzero
+    RETURNCODE is fine (we parse stderr regardless)."""
     try:
-        return subprocess.run(cmd, check=False, capture_output=True, text=True)
+        return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
         raise ToolchainMissingError(
             f"ffmpeg not found on PATH — install ffmpeg to detect signals ({type(e).__name__})") from e

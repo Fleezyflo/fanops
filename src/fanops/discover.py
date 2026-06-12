@@ -23,22 +23,28 @@ def candidate_meta(path: Path) -> dict:
         pass                                   # fail-soft: list it anyway, dims/duration unknown
     return {"bytes": st.st_size, "mtime": st.st_mtime, "width": w, "height": h, "duration": dur}
 
+# Tight bound for the one-frame thumbnail: discovery is CHEAP by design (module docstring), so
+# one corrupt candidate may cost at most a minute, not the render-grade 600s — a scan over a big
+# folder must never stall on a single hung file. Fail-open like the absent branch.
+_THUMB_TIMEOUT = 60.0
+
 def make_thumbnail(path: Path, out_jpg: Path, *, at_seconds: float = 1.0) -> bool:
     """One cheap thumbnail frame (320px wide). Fail-open: returns False (no raise, no file) if
-    ffmpeg is absent or errors — the candidate is still listed from metadata, just without a thumb."""
+    ffmpeg is absent, hung past _THUMB_TIMEOUT, or errors — the candidate is still listed from
+    metadata, just without a thumb."""
     out_jpg.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["ffmpeg", "-y", "-ss", str(at_seconds), "-i", str(path),
            "-frames:v", "1", "-vf", "scale=320:-1", str(out_jpg)]
     try:
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True)
-    except (FileNotFoundError, OSError):
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_THUMB_TIMEOUT)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return False
     if r.returncode != 0 or not out_jpg.exists():
         # a 1s seek can overshoot a <1s clip; one retry at t=0 before giving up
         cmd0 = ["ffmpeg", "-y", "-i", str(path), "-frames:v", "1", "-vf", "scale=320:-1", str(out_jpg)]
         try:
-            r0 = subprocess.run(cmd0, check=False, capture_output=True, text=True)
-        except (FileNotFoundError, OSError):
+            r0 = subprocess.run(cmd0, check=False, capture_output=True, text=True, timeout=_THUMB_TIMEOUT)
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
             return False
         return r0.returncode == 0 and out_jpg.exists()
     return True

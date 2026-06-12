@@ -1,4 +1,5 @@
 # tests/test_signals.py
+import subprocess
 import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -64,3 +65,21 @@ def test_detect_signals_raises_toolchain_error_when_ffmpeg_absent(tmp_path, mock
     mocker.patch("fanops.signals.subprocess.run", side_effect=absent)
     with pytest.raises(ToolchainMissingError, match="ffmpeg"):
         detect_signals(led, cfg, "src_1")
+
+def test_detect_signals_is_time_bounded_and_timeout_propagates(tmp_path, mocker):
+    # The ffmpeg signal passes run inside advance()'s ledger transaction — unbounded, a hang on a
+    # corrupt source held the flock forever. Each pass must carry a hard timeout=; a hang raises
+    # TimeoutExpired, which propagates BY DESIGN to advance()'s per-source quarantine (test_pipeline
+    # pins that path) -> SourceState.error "TimeoutExpired: ..." — the same retriable-error
+    # treatment as the typed ToolchainMissingError above, and the pass never crashes.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.transcribed, meta={"transcribed": True}))
+    seen = {}
+    def hung(cmd, **kw):
+        seen.update(kw)
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+    mocker.patch("fanops.signals.subprocess.run", side_effect=hung)
+    with pytest.raises(subprocess.TimeoutExpired):
+        detect_signals(led, cfg, "src_1")
+    assert seen.get("timeout") == 600.0                               # the bound is actually wired

@@ -22,6 +22,20 @@ def test_advance_exits_cleanly_when_ffprobe_absent(tmp_path, monkeypatch, capsys
     err = capsys.readouterr().err
     assert "ffprobe" in err and "Traceback" not in err
 
+def test_pull_exits_cleanly_when_ytdlp_hangs(tmp_path, monkeypatch, capsys):
+    # A hung yt-dlp (dead network, stalled CDN) is killed at download_url's hard bound; the
+    # TimeoutExpired reaches cli.main (pull runs pre-Source, outside any quarantine), which must
+    # print ONE operator-actionable line + exit 2 — never a raw traceback, never an infinite hang.
+    monkeypatch.chdir(tmp_path)
+    import subprocess
+    def hung(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 600))
+    monkeypatch.setattr("fanops.ingest.subprocess.run", hung)
+    rc = main(["pull", "https://example.com/v"])
+    assert rc == 2                                           # clean nonzero, not a crash
+    err = capsys.readouterr().err
+    assert "timed out" in err and "Traceback" not in err
+
 def test_corrupt_ledger_exits_cleanly_no_traceback(tmp_path, monkeypatch, capsys):
     # A hand-edit typo in ledger.json must NOT brick every command with a raw traceback.
     monkeypatch.chdir(tmp_path)

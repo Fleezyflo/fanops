@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -211,3 +212,26 @@ def test_reframe_branches_exact():
     assert "pad=" in unknown and "crop" not in unknown
     # near-exact aspect match -> scale only (no crop)
     assert reframe_filter("16:9", 1920, 1080) == "scale=1920:1080,setsar=1"
+
+
+def test_render_moment_records_error_when_ffmpeg_hangs(tmp_path, mocker):
+    # A HUNG ffmpeg (corrupt input, stuck filesystem) is worse than an absent one: render_moment
+    # runs INSIDE advance()'s ledger transaction, so an unbounded subprocess held the flock against
+    # every other pass and Studio write. The run must carry a hard timeout=, and TimeoutExpired must
+    # fail-safe exactly like the absent/nonzero-rc branches: ClipState.error + moment stays
+    # `decided` (retriable on re-run), never a raise.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided))
+    seen = {}
+    def hung(cmd, **kw):
+        seen.update(kw)
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=hung)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)   # must NOT raise
+    assert clip.state is ClipState.error
+    assert "timed out" in (clip.error_reason or "")
+    assert led.moments["mom_1"].state is MomentState.decided          # retriable, not terminal
+    assert seen.get("timeout") == 600.0                               # the bound is actually wired

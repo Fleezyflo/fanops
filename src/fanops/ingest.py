@@ -27,6 +27,13 @@ def sha256_of(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+# Hard bounds (the llm.py timeout idiom). ffprobe is a sub-second metadata read — a hang means a
+# corrupt file or stuck mount, and ingest runs INSIDE advance()'s transaction with no per-unit
+# quarantine, so it must fail soft per file, fast. yt-dlp is a full network download (NO lock
+# held — see download_url) but `fanops pull` still must not hang forever on a dead CDN.
+_FFPROBE_TIMEOUT = 30.0
+_YTDLP_TIMEOUT = 600.0
+
 def _run_ffprobe(args: list[str]) -> subprocess.CompletedProcess:
     """Run ffprobe, translating a PRE-LAUNCH FileNotFoundError/OSError (ffprobe absent from PATH)
     into a typed, cli-catchable ToolchainMissingError. `check=False`-style: a nonzero ffprobe
@@ -34,11 +41,20 @@ def _run_ffprobe(args: list[str]) -> subprocess.CompletedProcess:
     binary being ABSENT is. This runs at ingest, OUTSIDE the pipeline's per-unit quarantine, so an
     uncaught raise would crash `fanops advance` with a traceback; the typed error -> clean exit 2."""
     try:
-        return subprocess.run(["ffprobe", *args], capture_output=True, text=True)
+        return subprocess.run(["ffprobe", *args], capture_output=True, text=True,
+                              timeout=_FFPROBE_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
         raise ToolchainMissingError(
             "ffprobe not found on PATH — install ffmpeg (it provides ffprobe) to ingest media "
             f"({type(e).__name__})") from e
+    except subprocess.TimeoutExpired:
+        # PER-FILE hang (corrupt media, stuck mount) — NOT the binary-absent case: raising here
+        # would abort the whole ingest pass and roll back the transaction over one bad file.
+        # Fail SOFT with an empty result instead: probe_dimensions -> zeros (its documented
+        # failure shape), has_video_stream -> False — the file stays in the inbox and is retried
+        # next pass, bounded each time, never a crash or a dropped pass.
+        return subprocess.CompletedProcess(["ffprobe", *args], returncode=124,
+                                           stdout="", stderr="ffprobe timed out")
 
 def probe_dimensions(path: Path) -> tuple[int, int, float]:
     """(width, height, duration_seconds) via ffprobe; zeros on failure (ffprobe ABSENT raises
@@ -98,12 +114,15 @@ def download_url(cfg: Config, url: str) -> None:
     what landed inside a tight transaction), so a download never serializes behind the ledger flock
     (the Phase-B-followup lost-update + no-network-under-lock rule). yt-dlp ABSENT from PATH:
     subprocess.run raises before the process starts (check=False covers only a nonzero RETURNCODE) —
-    surface the typed, cli-catchable ToolchainMissingError (-> clean exit 2 + 'install yt-dlp')."""
+    surface the typed, cli-catchable ToolchainMissingError (-> clean exit 2 + 'install yt-dlp').
+    A HUNG download is killed at _YTDLP_TIMEOUT; the TimeoutExpired propagates BY DESIGN to
+    cli.main's guard (one clean stderr line + exit 2). yt-dlp's partial *.part file is ignored by
+    ingest (not in MEDIA_EXT), so a killed download never catalogues a truncated source."""
     cfg.inbox.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.run(["yt-dlp", "-o", str(cfg.inbox / "%(title).80s.%(ext)s"),
                         "--no-playlist", "--merge-output-format", "mp4", url],
-                       check=False, capture_output=True, text=True)
+                       check=False, capture_output=True, text=True, timeout=_YTDLP_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
         raise ToolchainMissingError(
             f"yt-dlp not found on PATH — install yt-dlp to pull from a URL ({type(e).__name__})") from e

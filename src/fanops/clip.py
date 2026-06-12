@@ -15,6 +15,11 @@ from fanops.log import get_logger
 # libass scales the caption to the clip — so render_moment reads this same table the reframe uses.
 _TARGETS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 
+# Hard bound on one ffmpeg render (the llm.py timeout idiom). render_moment runs INSIDE
+# advance()'s ledger transaction, so an UNBOUNDED hang on a corrupt input held the flock against
+# every other pass and Studio write. 10min covers a multi-minute 1080p re-encode with headroom.
+_FFMPEG_TIMEOUT = 600.0
+
 def reframe_filter(aspect: str, src_w: int, src_h: int) -> str:
     """Pick a safe ffmpeg -vf for the target aspect given the source dimensions."""
     tw, th = _TARGETS[aspect]
@@ -86,7 +91,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), m.start, m.end, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf)
     try:
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
         # ffmpeg ABSENT from PATH (or otherwise unspawnable): subprocess.run raises BEFORE the
         # process starts, so check=False (which only suppresses a nonzero RETURNCODE) does not
@@ -97,6 +102,14 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         # it permanently, contradicting this module's fail-safe philosophy.
         clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
                     aspect=aspect, error_reason=f"toolchain missing: {cmd[0]} ({type(e).__name__})")
+        led.clips[cid] = clip
+        return led, clip
+    except subprocess.TimeoutExpired:
+        # ffmpeg HUNG (corrupt input, stuck filesystem) and was killed at the bound. Same
+        # fail-safe shape as the branches above/below: ClipState.error, moment stays `decided`
+        # so a re-run retries — an unbounded hang here held the ledger flock forever.
+        clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
+                    aspect=aspect, error_reason=f"ffmpeg timed out after {_FFMPEG_TIMEOUT:.0f}s")
         led.clips[cid] = clip
         return led, clip
     if r.returncode != 0 or not dst.exists():

@@ -3,7 +3,7 @@ advance() lives in pipeline.py; track/adjust close the feedback loop (FIX F04); 
 the agent gates via the responder (FIX F02/F13); gc reclaims disk (FIX F83); run loops
 respond+advance until stable for unattended operation."""
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json, subprocess, sys
 from datetime import datetime, timezone
 import fanops
 from fanops.config import Config
@@ -174,6 +174,15 @@ def main(argv: list[str] | None = None) -> int:
         # exit 2, like ControlFileError, never a raw traceback. Downstream toolchain-absent cases
         # (render/transcribe) don't reach here — they record a retriable per-unit error state.
         print(str(e), file=sys.stderr)
+        return 2
+    except subprocess.TimeoutExpired as e:
+        # A bounded external tool hung past its hard timeout and was killed. Only `pull`'s yt-dlp
+        # download can reach here (pre-Source, outside any quarantine) — every in-pipeline tool
+        # (ffmpeg/ffprobe/whisper) handles its own timeout into a per-unit error state. One
+        # operator-actionable line + exit 2, never a raw traceback.
+        tool = e.cmd[0] if isinstance(e.cmd, (list, tuple)) and e.cmd else str(e.cmd)
+        print(f"{tool} timed out after {e.timeout:.0f}s — check the network/file and re-run",
+              file=sys.stderr)
         return 2
 
 
