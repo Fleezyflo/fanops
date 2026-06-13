@@ -3,7 +3,7 @@
 from __future__ import annotations
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -264,6 +264,30 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
     return LiftView(variant_rows=variant_rows, variant_empty_reason=variant_empty_reason,
                     amplify_present=amplify_present, amplify_rows=amplify_rows,
                     amplify_empty_reason=amplify_empty_reason)
+
+
+def publish_queue(cfg: Config, *, now: Optional[datetime] = None) -> list[dict]:
+    """Track B (manual / zero-dependency publishing): the worklist of `queued` posts the operator
+    posts BY HAND. Each row carries the surface, caption, and the post id (Studio serves the clip at
+    /media/<post_id>, marks it posted at /publish/posted/<post_id>). `due` = scheduled_time has
+    passed. Due-first, then by schedule. Lock-free read; mutation is actions.mark_published."""
+    now = now or datetime.now(timezone.utc)
+    led = Ledger.load(cfg)
+    rows = []
+    for p in led.posts.values():
+        if p.state is not PostState.queued:
+            continue
+        due = False
+        if p.scheduled_time:
+            try:
+                due = parse_iso(p.scheduled_time) <= now
+            except Exception:
+                due = False
+        rows.append({"post_id": p.id, "clip_id": p.parent_id, "account": p.account,
+                     "platform": p.platform.value, "caption": p.caption,
+                     "scheduled_time": p.scheduled_time, "due": due})
+    rows.sort(key=lambda r: (not r["due"], r["scheduled_time"] or ""))
+    return rows
 
 
 def pipeline_status(cfg: Config) -> dict:

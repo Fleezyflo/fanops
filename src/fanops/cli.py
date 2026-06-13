@@ -104,6 +104,19 @@ def cmd_amplify_variants(cfg: Config) -> int:
     print(f"variant-amplify: {max(0, after - before)} source(s) amplified")
     return 0
 
+def cmd_publish_queue(cfg: Config) -> int:
+    # Track B: the manual / no-service free path. Print the queued posts to post BY HAND (clip id +
+    # caption + surface), then the operator marks each done with `fanops resolve <id> published`.
+    from fanops.studio.views import publish_queue       # Flask-free read-model (studio.__init__ is too)
+    rows = publish_queue(cfg)
+    if not rows:
+        print("publish queue empty (no queued posts)"); return 0
+    for r in rows:
+        print(f"[{'DUE' if r['due'] else 'future'}] {r['post_id']}  {r['account']}/{r['platform']}  @ {r['scheduled_time']}")
+        print(f"    clip {r['clip_id']}  |  {r['caption']}")
+    print(f"-- {len(rows)} post(s). Post each clip by hand, then: fanops resolve <post_id> published --url <live-url>")
+    return 0
+
 def cmd_doctor(cfg: Config) -> int:
     # Read-only first-run health screen (Phase 3b). Prints PASS/FAIL per setup gate + notes; exits 1
     # if any check fails (setup incomplete), else 0. Performs nothing — pure diagnosis + pointers.
@@ -181,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
     sub.add_parser("intake")
     sub.add_parser("doctor", help="read-only first-run health screen (toolchain/accounts/key/go-live readiness)")
+    sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
     p_studio.add_argument("--port", type=int, default=8787)
@@ -357,6 +371,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
     if args.cmd == "doctor":   return cmd_doctor(cfg)
+    if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
     if args.cmd == "resolve":
         # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve

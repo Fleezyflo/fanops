@@ -139,6 +139,25 @@ def run_advance(cfg: Config, base_time: Optional[str] = None) -> ActionResult:
     return ActionResult(ok=True, detail=summary)
 
 
+_POSTABLE = {PostState.queued, PostState.needs_reconcile, PostState.submitting,
+             PostState.submitted, PostState.failed}
+
+def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> ActionResult:
+    """Track B: the operator posted this clip by hand — force the post to `published` (+ optional
+    live URL). The Studio twin of `fanops resolve <id> published`: tight local transaction, no
+    network. Rejects an already-published/analyzed post so a double-click can't churn terminal state."""
+    with Ledger.transaction(cfg) as led:
+        if post_id not in led.posts:
+            return ActionResult(ok=False, error=f"no such post: {post_id}")
+        p = led.posts[post_id]
+        if p.state not in _POSTABLE:
+            return ActionResult(ok=False, error=f"post {post_id} is {p.state.value} — only an unpublished post can be marked posted")
+        p.state = PostState.published
+        if url:
+            p.public_url = url
+    return ActionResult(ok=True, detail={"post_id": post_id, "url": url})
+
+
 def answer_gate(cfg: Config, kind: str, key: str, data: dict) -> ActionResult:
     """Answer a moment/caption agent gate from the browser through the SAME validated contract the
     responder uses (Phase 3a): echo the latest request_id, validate the FULL response against its

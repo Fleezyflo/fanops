@@ -127,6 +127,18 @@ def create_app(cfg: Config) -> Flask:
     def do_run_advance():
         return _run_panel(actions.run_advance(cfg, request.form.get("base_time") or None))
 
+    @app.get("/publish")
+    def publish_panel():
+        # Track B: the manual / no-service worklist — queued posts to post by hand, with the clip to
+        # download (/media/<post_id>) + the caption to copy + a "Mark posted" button.
+        return render_template("publish.html",
+                               rows=views.publish_queue(cfg, now=datetime.now(timezone.utc)), tab="publish")
+
+    @app.post("/publish/posted/<post_id>")
+    def do_mark_posted(post_id):
+        return render_template("_result.html",
+                               result=actions.mark_published(cfg, post_id, request.form.get("url") or None))
+
     @app.get("/gates")
     def gates():
         # Phase 3a: the moment/caption agent gates — the actual product decisions — answerable from

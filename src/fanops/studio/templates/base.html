@@ -16,6 +16,7 @@
     <a href="{{ url_for('schedule') }}" class="{{ 'active' if tab=='schedule' else '' }}">Schedule</a>
     <a href="{{ url_for('lift') }}" class="{{ 'active' if tab=='lift' else '' }}">Lift</a>
     <a href="{{ url_for('gates') }}" class="{{ 'active' if tab=='gates' else '' }}">Gates</a>
+    <a href="{{ url_for('publish_panel') }}" class="{{ 'active' if tab=='publish' else '' }}">Publish</a>
   </header>
   <main>{% block body %}{% endblock %}</main>
 </body>

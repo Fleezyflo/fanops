@@ -1,0 +1,28 @@
+{# src/fanops/studio/templates/publish.html — Track B: post queued clips by hand (free, no service) #}
+{% extends "base.html" %}
+{% block title %}Publish{% endblock %}
+{% block body %}
+  <h2>Publish by hand</h2>
+  <p class="muted">The no-service free path: download each clip, post it to the platform yourself,
+    copy the caption, then click <strong>Mark posted</strong>. (Or set a poster backend — Blotato, or
+    self-hosted Postiz — to automate this.)</p>
+  {% for r in rows %}
+    <div class="card" id="pub-{{ r.post_id }}">
+      <div class="meta">
+        <strong>{{ r.account }}/{{ r.platform }}</strong>
+        {% if r.due %}<span class="badge">DUE</span>{% else %}<span class="muted">scheduled {{ r.scheduled_time }}</span>{% endif %}
+        <span class="muted">· {{ r.post_id }}</span>
+      </div>
+      <video controls preload="none" src="{{ url_for('media', post_id=r.post_id) }}"></video>
+      <div><a href="{{ url_for('media', post_id=r.post_id) }}" download>download clip</a></div>
+      <textarea readonly rows="2">{{ r.caption }}</textarea>
+      <form hx-post="{{ url_for('do_mark_posted', post_id=r.post_id) }}"
+            hx-target="#res-{{ r.post_id }}" hx-swap="innerHTML">
+        <input name="url" placeholder="live post URL (optional)">
+        <button type="submit">Mark posted</button>
+      </form>
+      <div id="res-{{ r.post_id }}"></div>
+    </div>
+  {% endfor %}
+  {% if not rows %}<div class="empty">Nothing queued to post. Run a pipeline pass (Run tab) first.</div>{% endif %}
+{% endblock %}
