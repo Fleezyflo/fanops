@@ -77,6 +77,22 @@ def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datet
     return ActionResult(ok=True, detail={"post_id": post_id, "caption": caption})
 
 
+def approve_candidate(cfg: Config, eid: str) -> ActionResult:
+    """Track C: approve a discover candidate from the browser — move 00_review/<eid>.jpg into
+    00_review/approved/ (what the operator used to do by hand in Finder). eid must be a bare stem
+    (no path separators / ..) so a Studio POST can't move an arbitrary file. No ledger touch — this
+    is a review-folder move; `fanops intake` then copies the original into the inbox."""
+    if not eid or "/" in eid or "\\" in eid or ".." in eid:
+        return ActionResult(ok=False, error=f"bad candidate id: {eid!r}")
+    src = cfg.review / f"{eid}.jpg"
+    if not src.exists():
+        return ActionResult(ok=False, error=f"no such candidate: {eid}")
+    dst = cfg.review / "approved" / f"{eid}.jpg"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dst)
+    return ActionResult(ok=True, detail={"eid": eid})
+
+
 def run_ingest(cfg: Config) -> ActionResult:
     """Drive `fanops ingest` from the browser: catalogue 01_inbox under one transaction (the exact
     cmd_ingest path). A toolchain-absent / control-file error is surfaced as a clean ActionResult,
@@ -113,14 +129,19 @@ def run_pull(cfg: Config, url: str) -> ActionResult:
     return ActionResult(ok=True, detail={"sources": n})
 
 
-def run_advance(cfg: Config, base_time: Optional[str] = None) -> ActionResult:
+def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True) -> ActionResult:
     """Drive one `fanops advance` pass (transcribe -> moments gate -> render -> captions gate ->
     crosspost -> publish due). Blocks on an unusable accounts config first (mirrors cmd_advance's
     _check_accounts: an empty account_id must never reach Blotato). base_time defaults to now, so a
     Studio-triggered pass schedules across today; any advance error (incl. a live auth failure) is
-    surfaced cleanly, never a 500."""
+    surfaced cleanly, never a 500. On a LIVE backend a pass PUBLISHES to real accounts, so the Studio
+    button must pass confirmed=True (the route derives it from a confirm checkbox); dryrun publishes
+    nothing and needs no confirm."""
     from fanops.pipeline import advance
     from fanops.accounts import Accounts
+    if cfg.poster_backend != "dryrun" and not confirmed:
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): a pass PUBLISHES "
+                            "due posts to real accounts — tick the confirm box, then run again.")
     try:
         problems = Accounts.load(cfg).validate()       # malformed accounts.json -> clean error, not 500
     except Exception as exc:

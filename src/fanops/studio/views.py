@@ -266,6 +266,18 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
                     amplify_empty_reason=amplify_empty_reason)
 
 
+def review_candidates(cfg: Config) -> list[dict]:
+    """Track C: discover candidates awaiting approval — the top-level thumbnails `fanops discover`
+    wrote into 00_review/ (the approved/ subdir is excluded; glob('*.jpg') matches top-level only).
+    Lets the operator approve in the browser instead of dragging files in Finder; approving moves the
+    thumbnail to 00_review/approved/ (actions.approve_candidate), then `fanops intake` copies the
+    original into the inbox."""
+    d = cfg.review
+    if not d.exists():
+        return []
+    return [{"eid": p.stem} for p in sorted(d.glob("*.jpg"))]
+
+
 def publish_queue(cfg: Config, *, now: Optional[datetime] = None) -> list[dict]:
     """Track B (manual / zero-dependency publishing): the worklist of `queued` posts the operator
     posts BY HAND. Each row carries the surface, caption, and the post id (Studio serves the clip at

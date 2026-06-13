@@ -1,0 +1,21 @@
+{# src/fanops/studio/templates/candidates.html — Track C: approve discover footage in the browser #}
+{% extends "base.html" %}
+{% block title %}Footage{% endblock %}
+{% block body %}
+  <h2>Review footage</h2>
+  <p class="muted">Candidates from <code>fanops discover &lt;folder&gt;</code>. Approve the keepers
+    here, then <em>Ingest inbox</em> on the <strong>Run</strong> tab (or <code>fanops intake</code>)
+    pulls the approved originals into the pipeline. No Finder shuffle.</p>
+  {% for r in rows %}
+    <div class="card" id="cand-{{ r.eid }}">
+      <img src="{{ url_for('review_thumb', eid=r.eid) }}" alt="{{ r.eid }}" loading="lazy">
+      <div class="meta">{{ r.eid }}</div>
+      <form hx-post="{{ url_for('do_approve_candidate', eid=r.eid) }}"
+            hx-target="#cand-{{ r.eid }}" hx-swap="afterend">
+        <button type="submit">Approve</button>
+      </form>
+    </div>
+  {% endfor %}
+  {% if not rows %}<div class="empty">No candidates awaiting review. Run
+    <code>fanops discover &lt;folder&gt;</code> to scan a footage folder.</div>{% endif %}
+{% endblock %}

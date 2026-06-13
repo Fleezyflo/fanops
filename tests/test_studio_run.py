@@ -37,6 +37,18 @@ def test_run_advance_returns_summary(tmp_path):
     res = actions.run_advance(cfg)
     assert res.ok and "sources" in res.detail and "awaiting" in res.detail
 
+def test_run_advance_live_backend_requires_confirm(tmp_path, monkeypatch):
+    # Track C: a pass on a LIVE backend publishes to real accounts — the Run button must require an
+    # explicit confirm, never fire on a stray click.
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    res = actions.run_advance(Config(root=tmp_path), confirmed=False)
+    assert not res.ok and "confirm" in (res.error or "").lower()
+
+def test_run_advance_dryrun_needs_no_confirm(tmp_path, monkeypatch):
+    # dryrun publishes nothing, so no confirm gate — the offline flow stays one click.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    assert actions.run_advance(Config(root=tmp_path), confirmed=False).ok
+
 def test_run_advance_blocks_on_invalid_accounts(tmp_path):
     cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts":

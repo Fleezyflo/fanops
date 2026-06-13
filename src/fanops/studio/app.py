@@ -125,7 +125,27 @@ def create_app(cfg: Config) -> Flask:
 
     @app.post("/run/advance")
     def do_run_advance():
-        return _run_panel(actions.run_advance(cfg, request.form.get("base_time") or None))
+        # confirm derived from the checkbox the template shows ONLY on a live backend (Track C guard).
+        return _run_panel(actions.run_advance(cfg, request.form.get("base_time") or None,
+                                              confirmed=bool(request.form.get("confirm"))))
+
+    @app.get("/candidates")
+    def candidates():
+        # Track C: approve discover footage in the browser (replaces the Finder drag into approved/).
+        return render_template("candidates.html", rows=views.review_candidates(cfg), tab="footage")
+
+    @app.post("/candidates/approve/<eid>")
+    def do_approve_candidate(eid):
+        return render_template("_result.html", result=actions.approve_candidate(cfg, eid))
+
+    @app.get("/review-thumb/<eid>")
+    def review_thumb(eid):
+        if "/" in eid or "\\" in eid or ".." in eid:     # bare stem only — no traversal
+            abort(404)
+        path = _bounded(cfg, cfg.review / f"{eid}.jpg")  # must resolve inside cfg.base
+        if not path or not os.path.exists(path):
+            abort(404)
+        return send_file(path)
 
     @app.get("/publish")
     def publish_panel():

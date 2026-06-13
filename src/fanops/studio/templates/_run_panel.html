@@ -31,6 +31,10 @@
       <button type="submit">Ingest inbox</button>
     </form>
     <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML">
+      {% if status.backend != 'dryrun' %}
+        <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
+          publish to REAL accounts (backend: {{ status.backend }})</label>
+      {% endif %}
       <button type="submit">Run pipeline pass</button>
     </form>
   </div>
