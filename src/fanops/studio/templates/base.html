@@ -11,6 +11,7 @@
 <body>
   <header class="nav">
     <strong>FanOps Studio</strong>
+    <a href="{{ url_for('run_panel') }}" class="{{ 'active' if tab=='run' else '' }}">Run</a>
     <a href="{{ url_for('review') }}" class="{{ 'active' if tab=='review' else '' }}">Review</a>
     <a href="{{ url_for('schedule') }}" class="{{ 'active' if tab=='schedule' else '' }}">Schedule</a>
     <a href="{{ url_for('lift') }}" class="{{ 'active' if tab=='lift' else '' }}">Lift</a>

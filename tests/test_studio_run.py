@@ -39,10 +39,20 @@ def test_run_advance_returns_summary(tmp_path):
 
 def test_run_advance_blocks_on_invalid_accounts(tmp_path):
     cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps(
-        [{"handle": "@x", "account_id": "", "platforms": ["instagram"], "status": "active"}]))
+    cfg.accounts_path.write_text(json.dumps({"accounts":
+        [{"handle": "@x", "account_id": "", "platforms": ["instagram"], "status": "active"}]}))
     res = actions.run_advance(cfg)
     assert not res.ok and "account" in (res.error or "").lower()
+
+
+def test_run_advance_surfaces_fatal_auth(tmp_path, monkeypatch):
+    # ecc:python-review HIGH: a fatal BlotatoAuthError (bad key) must surface as FATAL, not be demoted
+    # to a soft "advance failed" by the broad except. advance's own txn already rolled back.
+    from fanops.errors import BlotatoAuthError
+    def boom(c, *, base_time): raise BlotatoAuthError("Blotato 401 unauthorized (body withheld)")
+    monkeypatch.setattr("fanops.pipeline.advance", boom)
+    res = actions.run_advance(Config(root=tmp_path))
+    assert not res.ok and "FATAL" in res.error and "BLOTATO_API_KEY" in res.error
 
 
 # ---- actions.run_pull ----

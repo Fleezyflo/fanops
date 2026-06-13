@@ -104,6 +104,29 @@ def create_app(cfg: Config) -> Flask:
         view = views.lift_rows(led, cfg, Accounts.load(cfg))
         return render_template("lift.html", view=view, tab="lift")
 
+    @app.get("/run")
+    def run_panel():
+        # The pipeline DRIVER: ingest/pull/advance from the browser so the operator never needs the
+        # terminal. Read-only status; the actions below go through the same lock-safe paths as the CLI.
+        return render_template("run.html", status=views.pipeline_status(cfg), tab="run")
+
+    def _run_panel(result):
+        # Re-render the panel partial with FRESH status after an action (htmx swaps #run-panel), so the
+        # counts update in place — drop files, click ingest, watch sources tick up, no page reload.
+        return render_template("_run_panel.html", status=views.pipeline_status(cfg), result=result, tab="run")
+
+    @app.post("/run/ingest")
+    def do_run_ingest():
+        return _run_panel(actions.run_ingest(cfg))
+
+    @app.post("/run/pull")
+    def do_run_pull():
+        return _run_panel(actions.run_pull(cfg, request.form.get("url", "")))
+
+    @app.post("/run/advance")
+    def do_run_advance():
+        return _run_panel(actions.run_advance(cfg, request.form.get("base_time") or None))
+
     @app.get("/gates")
     def gates():
         # Phase 3a: the moment/caption agent gates — the actual product decisions — answerable from

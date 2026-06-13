@@ -11,7 +11,7 @@ from typing import Optional
 from pydantic import ValidationError
 
 from fanops.config import Config
-from fanops.errors import reason
+from fanops.errors import BlotatoAuthError, reason
 from fanops.ledger import Ledger
 from fanops.models import CaptionSet, MomentDecision, PostState
 from fanops.timeutil import parse_iso, iso_z
@@ -75,6 +75,68 @@ def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datet
             return ActionResult(ok=False, error=err)
         p.caption = caption
     return ActionResult(ok=True, detail={"post_id": post_id, "caption": caption})
+
+
+def run_ingest(cfg: Config) -> ActionResult:
+    """Drive `fanops ingest` from the browser: catalogue 01_inbox under one transaction (the exact
+    cmd_ingest path). A toolchain-absent / control-file error is surfaced as a clean ActionResult,
+    never a 500."""
+    from fanops.ingest import ingest_drops
+    from fanops.digest import write_digest
+    n = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            led = ingest_drops(led, cfg)
+            n = len(led.sources)
+        write_digest(Ledger.load(cfg), cfg)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"sources": n})
+
+
+def run_pull(cfg: Config, url: str) -> ActionResult:
+    """Drive `fanops pull <url>`: yt-dlp the URL (network, NO lock) then ingest under a transaction.
+    Rejects a non-http(s) URL up front (mirrors the CLI's _http_url validator)."""
+    from fanops.ingest import download_url, ingest_drops
+    from fanops.digest import write_digest
+    if not (url or "").strip().startswith(("http://", "https://")):
+        return ActionResult(ok=False, error=f"url must be http(s):// — got {url!r}")
+    n = 0
+    try:
+        download_url(cfg, url.strip())
+        with Ledger.transaction(cfg) as led:
+            led = ingest_drops(led, cfg, origin="url")
+            n = len(led.sources)
+        write_digest(Ledger.load(cfg), cfg)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"pull failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"sources": n})
+
+
+def run_advance(cfg: Config, base_time: Optional[str] = None) -> ActionResult:
+    """Drive one `fanops advance` pass (transcribe -> moments gate -> render -> captions gate ->
+    crosspost -> publish due). Blocks on an unusable accounts config first (mirrors cmd_advance's
+    _check_accounts: an empty account_id must never reach Blotato). base_time defaults to now, so a
+    Studio-triggered pass schedules across today; any advance error (incl. a live auth failure) is
+    surfaced cleanly, never a 500."""
+    from fanops.pipeline import advance
+    from fanops.accounts import Accounts
+    try:
+        problems = Accounts.load(cfg).validate()       # malformed accounts.json -> clean error, not 500
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
+    if problems:
+        return ActionResult(ok=False, error="accounts.json: " + "; ".join(problems))
+    bt = base_time or iso_z(_now(None))
+    try:
+        summary = advance(cfg, base_time=bt)
+    except BlotatoAuthError as exc:
+        # F52 parity: a bad/missing key fails EVERY post — advance's own transaction already rolled
+        # back (it saves only on clean exit), but surface the FATAL severity, not a soft "failed".
+        return ActionResult(ok=False, error=f"FATAL auth failure — check BLOTATO_API_KEY: {str(exc)[:160]}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"advance failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail=summary)
 
 
 def answer_gate(cfg: Config, kind: str, key: str, data: dict) -> ActionResult:

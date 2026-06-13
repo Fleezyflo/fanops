@@ -233,13 +233,24 @@ bound. Only a *successful* amplify increments the count.
 
 ## FanOps Studio (local web cockpit)
 
-`pip install -e '.[studio]'` then `fanops studio` serves a localhost UI at http://127.0.0.1:8787
-with three tabs:
+`pip install -e '.[studio]'` then `fanops studio` serves a localhost UI at http://127.0.0.1:8787.
+With the **Run** and **Gates** tabs you can drive the whole pipeline from the browser — no terminal:
 
-- **Review** — upcoming clips grouped by clip; tweak caption, reschedule, or snooze (queued + not
-  within 5 min of due). Held clips and recently-shipped posts show read-only.
+- **Run** — live status (sources/clips/posts/published/pending gates/backend) + buttons that drive
+  the pipeline through the same lock-safe paths the CLI uses: **Pull URL**, **Ingest inbox**, **Run
+  pipeline pass** (transcribe → render → crosspost → publish due). The status updates in place after
+  each action. A bad config (e.g. an active account with no `account_id`) blocks cleanly, and a fatal
+  Blotato auth error surfaces as FATAL — never a 500.
+- **Gates** — answer the two agent gates (which moments, which captions) from the browser, written
+  through the same validated contract `fanops respond` uses (no hand-editing `04_agent_io` JSON).
+- **Review** — finished clips grouped by clip with embedded video players; tweak caption, reschedule,
+  or snooze (queued + not within 5 min of due). Held clips and recently-shipped posts show read-only.
 - **Schedule** — the upcoming queue on a chronological timeline + recent history.
 - **Lift** — per-variant `lift_score` ranking (when analyzed posts with variants exist).
+
+The end-to-end loop with zero terminal: **Run** (drop files in `01_inbox/` → Ingest → Run pass) →
+**Gates** (answer moments, then captions, re-running a pass between) → **Review** (watch the cuts) →
+**Run** once more to publish due.
 
 The Studio edits the ledger ONLY through the lock-safe `Ledger.transaction` path; it never blocks
 publishing. To get an editable window, run the pipeline with a now/future `--base-time` and set

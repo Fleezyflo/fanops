@@ -266,6 +266,22 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
                     amplify_empty_reason=amplify_empty_reason)
 
 
+def pipeline_status(cfg: Config) -> dict:
+    """Lock-free counts for the Run tab's status line: where the unit chain stands + how many gates
+    are waiting + the active poster backend. Lets the operator see, in one glance, whether the next
+    move is 'ingest', 'run a pass', or 'answer a gate'."""
+    from fanops.agentstep import pending
+    led = Ledger.load(cfg)
+    return {
+        "sources": len(led.sources), "clips": len(led.clips), "posts": len(led.posts),
+        "published": len(led.posts_in_state(PostState.published)),
+        "holds": sum(1 for c in led.clips.values() if c.held),
+        "pending_moments": len(pending(cfg, kind="moments")),
+        "pending_captions": len(pending(cfg, kind="captions")),
+        "backend": cfg.poster_backend,
+    }
+
+
 def gate_rows(cfg: Config) -> list[dict]:
     """Lock-free read-model for the Gates tab (Phase 3a): every PENDING moment/caption agent gate
     with the request context the operator needs to answer it (transcript/signals for moments, the
