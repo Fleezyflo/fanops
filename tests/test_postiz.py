@@ -115,3 +115,22 @@ def test_postiz_upload_media_401_typed(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.post.postiz.requests.post", return_value=_R(401, {}, text="x"))
     with pytest.raises(PostizAuthError):
         postiz_upload_media(cfg, f)
+
+
+# ---- preflight + doctor wiring (postiz needs URL + key) ----
+def test_preflight_blocks_postiz_without_creds(tmp_path, monkeypatch):
+    from fanops.cli import _check_preflight
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.delenv("POSTIZ_URL", raising=False); monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    assert _check_preflight(Config(root=tmp_path)) == 2
+
+def test_preflight_passes_postiz_with_creds(tmp_path, monkeypatch):
+    from fanops.cli import _check_preflight
+    assert _check_preflight(_cfg(tmp_path, monkeypatch)) == 0
+
+def test_doctor_flags_postiz_creds(tmp_path, monkeypatch):
+    from fanops import doctor
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.delenv("POSTIZ_URL", raising=False); monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    assert any("POSTIZ" in c["label"] and not c["ok"] for c in rep["checks"])

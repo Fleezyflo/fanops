@@ -80,6 +80,23 @@ class Config:
         return os.getenv("FANOPS_POSTER") or "dryrun"
 
     @property
+    def postiz_url(self) -> str | None:
+        # Base URL of a self-hosted (or hosted) Postiz instance, e.g. https://postiz.example.com or
+        # https://api.postiz.com. The free, non-Blotato poster backend (FANOPS_POSTER=postiz) posts
+        # to {postiz_url}/public/v1/... . Trailing slash trimmed by the poster.
+        v = os.getenv("POSTIZ_URL")
+        return v.strip() if v and v.strip() else None
+
+    @property
+    def postiz_api_key(self) -> str | None:
+        # Postiz public API key (Settings > Developers > Public API), sent as the Authorization
+        # header. Distinct from BLOTATO_API_KEY — a Postiz deployment needs neither a Blotato account
+        # nor key, so is_live_backend (which gates the Blotato-only reconcile/metrics passes) stays
+        # False for a postiz backend, by design: postiz PUBLISHES, the Blotato learning loop does not run.
+        v = os.getenv("POSTIZ_API_KEY")
+        return v.strip() if v and v.strip() else None
+
+    @property
     def is_live_backend(self) -> bool:
         # THE "live backend + key" guard, one home (stage-6 audit): it was duplicated verbatim at
         # three call sites (reconcile + both learning passes); drift in any copy would silently

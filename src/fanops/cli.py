@@ -7,7 +7,7 @@ import argparse, json, subprocess, sys
 from datetime import datetime, timezone
 import fanops
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, ToolchainMissingError
+from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState
@@ -212,9 +212,10 @@ def main(argv: list[str] | None = None) -> int:
         # reach here — the flock self-heals it (H6); this only ever means real contention.
         print(str(e), file=sys.stderr)
         return 1
-    except BlotatoAuthError as e:
-        # Bad/missing BLOTATO_API_KEY (or a 401) escaping a publish — operator-actionable. One
-        # clean line + exit 2 (config-level, like ControlFileError), not a stack dump (AUDIT H8).
+    except AuthError as e:
+        # Bad/missing poster key (Blotato or Postiz, or a 401) escaping a publish — operator-actionable.
+        # str(e) carries the backend-specific message. One clean line + exit 2 (config-level, like
+        # ControlFileError), not a stack dump (AUDIT H8).
         # In `run` this is already caught by the loop guard; this covers advance/other commands.
         print(str(e), file=sys.stderr)
         return 2
@@ -289,6 +290,12 @@ def _check_preflight(cfg: Config) -> int:
         problems.append(
             f"FANOPS_POSTER={cfg.poster_backend} but BLOTATO_API_KEY is not set — publishing will "
             "fail auth (401). Export BLOTATO_API_KEY.")
+    if cfg.poster_backend == "postiz" and (cfg.postiz_url is None or cfg.postiz_api_key is None):
+        miss = " and ".join(n for n, v in (("POSTIZ_URL", cfg.postiz_url),
+                                           ("POSTIZ_API_KEY", cfg.postiz_api_key)) if v is None)
+        problems.append(
+            f"FANOPS_POSTER=postiz but {miss} not set — the Postiz backend needs both (your instance "
+            "URL + its public API key). Publishing would fail.")
     if problems:
         print("preflight: refusing to run — this config would silently produce no output:",
               file=sys.stderr)

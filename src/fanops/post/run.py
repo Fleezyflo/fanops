@@ -7,11 +7,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError
+from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.models import PostState
-from fanops.post import get_poster
-from fanops.post.media import ensure_clip_media, upload_media
+from fanops.post import get_poster, get_media_uploader
+from fanops.post.media import ensure_clip_media
 from fanops.timeutil import parse_iso as _parse
 
 def _now(now: str | None) -> datetime:
@@ -24,7 +24,7 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
     (a reworded auth error slipped past and burned the whole queue — the F52 regression) and
     OVER-fired (a 5xx whose body contained "401" wrongly halted the queue). The posters/media
     uploader raise BlotatoAuthError on a real auth failure; everything else is a per-post failure."""
-    return isinstance(exc, BlotatoAuthError)
+    return isinstance(exc, AuthError)
 
 def publish_due(led: Ledger, cfg: Config, *, now: str | None = None,
                 in_transaction: bool = False) -> Ledger:
@@ -69,7 +69,8 @@ def publish_due(led: Ledger, cfg: Config, *, now: str | None = None,
                 # would silently drop the burned hook). The https result replaces file:// on the post
                 # and is persisted by the submitting _save below, so a retried post never re-uploads.
                 # dryrun keeps file:// (the offline pipeline must run with no network by design).
-                post.media_urls = [upload_media(cfg, Path(u.removeprefix("file://")))
+                _upload = get_media_uploader(cfg)
+                post.media_urls = [_upload(cfg, Path(u.removeprefix("file://")))
                                    if u.startswith("file://") else u for u in post.media_urls]
             # crash-safe: record intent + persist BEFORE the irreversible network call (FIX F11)
             post.state = PostState.submitting

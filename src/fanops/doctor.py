@@ -41,6 +41,11 @@ def doctor_report(cfg: Config) -> dict:
         checks.append(_check(f"BLOTATO_API_KEY set (FANOPS_POSTER={cfg.poster_backend})",
                              cfg.blotato_api_key is not None,
                              "export BLOTATO_API_KEY=... (publishing 401s without it)"))
+    if cfg.poster_backend == "postiz":
+        checks.append(_check("POSTIZ_URL + POSTIZ_API_KEY set (FANOPS_POSTER=postiz)",
+                             cfg.postiz_url is not None and cfg.postiz_api_key is not None,
+                             "set POSTIZ_URL (your self-hosted instance) + POSTIZ_API_KEY (Postiz "
+                             "Settings > Developers > Public API) — the free, non-Blotato publisher"))
 
     notes: list[str] = []
     notes.append(f"poster backend: {cfg.poster_backend}"

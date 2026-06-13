@@ -5,7 +5,7 @@ the whole pass (FIX F03). Returns counts + awaiting{moments,captions}."""
 from __future__ import annotations
 from datetime import datetime, timezone
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError
+from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.models import (SourceState, MomentState, ClipState, PostState, Fmt, PLATFORM_ASPECT)
 from fanops.accounts import Accounts
@@ -110,7 +110,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # defense-in-depth net for any unforeseen non-auth raise, not the primary isolation.)
         try:
             led = crosspost_clips(led, cfg, accts, base_time=base_time)
-        except BlotatoAuthError:
+        except AuthError:
             raise                                        # F52: a fatal auth error halts (symmetry
             # with publish_due below). crosspost has no Blotato call today, but if one is ever added
             # (e.g. pre-flight account validation) a bad key must halt, not be logged-and-continued.
@@ -135,7 +135,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # MUST still escape (F52 — a bad key fails every post; halt + roll back, the CLI exits clean).
         try:
             led = publish_due(led, cfg, now=None, in_transaction=True)
-        except BlotatoAuthError:
+        except AuthError:
             raise                                        # F52: halt the run on a bad key
         except Exception as e:
             log("publish", "-", "error", err=str(e)[:120])

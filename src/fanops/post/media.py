@@ -75,7 +75,9 @@ def ensure_clip_media(led: Ledger, cfg: Config, clip_id: str) -> str:
     clip = led.clips[clip_id]
     if clip.media_url:
         return clip.media_url
-    path = Path(clip.path)
-    url = dryrun_media_url(path) if cfg.poster_backend == "dryrun" else upload_media(cfg, path)
+    # Backend-dispatched (dryrun -> file://, postiz -> Postiz upload, rest/mcp -> Blotato presign).
+    # Lazy import avoids a post/__init__ <-> media import cycle.
+    from fanops.post import get_media_uploader
+    url = get_media_uploader(cfg)(cfg, Path(clip.path))
     clip.media_url = url
     return url

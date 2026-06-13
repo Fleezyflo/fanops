@@ -288,7 +288,9 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     uploaded = []
     def fake_upload(cfg_, path):
         uploaded.append(str(path)); return "https://cdn.blotato.test/v.mp4"
-    mocker.patch("fanops.post.run.upload_media", side_effect=fake_upload)
+    # run.py now routes the variant file:// upload through get_media_uploader(cfg) -> (for rest)
+    # media.upload_media (lazy import), so patch it at its definition site.
+    mocker.patch("fanops.post.media.upload_media", side_effect=fake_upload)
     sent = {}
     class FakePoster:
         def publish(self, led_, post_id):

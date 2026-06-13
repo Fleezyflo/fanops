@@ -275,7 +275,13 @@ Everything is automated except the parts only a human can do:
    caught up front: any command exits non-zero with a one-line `accounts.json invalid: <reason>`
    / `ledger.json invalid: <reason>` instead of a stack trace.)
 3. **Set the poster + key** in `.env` (see `.env.example`): `FANOPS_POSTER=rest` (or `mcp`)
-   and `BLOTATO_API_KEY=...`. Until then the default `dryrun` poster writes the exact payload
+   and `BLOTATO_API_KEY=...`. **Free alternative (no paid SaaS):** `FANOPS_POSTER=postiz` with
+   `POSTIZ_URL` + `POSTIZ_API_KEY` posts via a self-hosted [Postiz](https://github.com/gitroomhq/postiz-app)
+   instance instead of Blotato — connect each account inside Postiz and put its *integration id* in
+   `accounts.json`'s `account_id`. (Postiz is the free *distribution layer*; you still self-host it
+   and do each platform's OAuth there — that platform onboarding is unavoidable on any publisher.
+   The Blotato-only learning loop, `reconcile`, and `cutover` stay inert on the postiz backend.)
+   Until then the default `dryrun` poster writes the exact payload
    it *would* send to `05_scheduled/` and posts nothing, so the whole pipeline runs offline. It
    stamps a synthetic `dryrun_<post_id>` submission id (mirroring the real `postSubmissionId`),
    so `track` → `adjust` can be exercised end-to-end offline by feeding metrics rows keyed on it.
