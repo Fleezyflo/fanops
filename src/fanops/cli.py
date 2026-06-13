@@ -20,7 +20,7 @@ from fanops.track import pull_metrics, _default_list_posts
 from fanops.reconcile import reconcile_posts, _default_get_status, _RECONCILABLE
 from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
-from fanops import daemon
+from fanops import autopilot, daemon
 from fanops.log import get_logger
 
 def cmd_status(cfg: Config) -> int:
@@ -201,6 +201,34 @@ def cmd_daemon(cfg: Config, args) -> int:
         print(f"daemon: {e}", file=sys.stderr)
         return 2
 
+def cmd_autopilot(cfg: Config, args) -> int:
+    # One command -> autonomous: enable the llm responder (durably, in .env) + install the supervising
+    # daemon, then print a readiness report. BLOTATO-FREE: dryrun by default (publishes nothing); going
+    # live is a separate, deliberate step via Postiz or the manual publish-queue.
+    try:
+        interval = daemon.parse_interval(args.interval)
+        res = autopilot.autopilot(cfg, interval=interval, install_daemon=not args.no_daemon)
+    except (RuntimeError, ToolchainMissingError, ValueError, OSError) as e:
+        # non-darwin / launchctl absent / bad --interval / unwritable .env -> one clean line + exit 2
+        print(f"autopilot: {e}", file=sys.stderr); return 2
+    print("fanops autopilot — the per-clip work is now autonomous")
+    print(f"  responder -> {res['responder']} (answers its own moment/caption gates via your `claude` login; no hand-typing)")
+    print(f"  backend   -> {res['backend']}" + ("  (dryrun: schedules posts, publishes NOTHING)" if res["backend"] == "dryrun" else ""))
+    d = res["daemon"]
+    if d:
+        print(f"  daemon    -> loaded ({d['interval']}s cadence, survives logout, restarts on crash)   check: fanops daemon status")
+    else:
+        print(f"  daemon    -> not installed ({res['daemon_note']})")
+    failed = [c for c in res["checks"] if not c["ok"]]
+    if failed:
+        print("  still needs a human:")
+        for c in failed:
+            print(f"    [ ] {c['label']}  -> {c['hint']}")
+    else:
+        print("  readiness -> all checks pass")
+    print("  go-live (separate, when you want posts to ship): self-host Postiz (FANOPS_POSTER=postiz) OR `fanops publish-queue` by hand — Blotato not required")
+    return 0
+
 def _http_url(s: str) -> str:
     """argparse type for `pull url` (stage-4 audit): the url is handed to yt-dlp verbatim, so
     validate the scheme at the boundary — file:///generic schemes and flag-lookalike args
@@ -251,6 +279,8 @@ def main(argv: list[str] | None = None) -> int:
     dae_sub.add_parser("status", help="is the agent loaded + actually firing (heartbeat)?")
     p_dstop = dae_sub.add_parser("stop", help="unload the launchd agent"); p_dstop.add_argument("--remove", action="store_true")
     p_dlog = dae_sub.add_parser("logs", help="tail the run log"); p_dlog.add_argument("-n", type=int, default=40)
+    p_auto = sub.add_parser("autopilot", help="one command -> autonomous: enable llm responder (durably) + install the daemon")
+    p_auto.add_argument("--interval", default="10m"); p_auto.add_argument("--no-daemon", action="store_true")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
 
@@ -415,6 +445,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "doctor":   return cmd_doctor(cfg)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
+    if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
     if args.cmd == "resolve":
         # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve
