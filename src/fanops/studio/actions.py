@@ -88,8 +88,11 @@ def approve_candidate(cfg: Config, eid: str) -> ActionResult:
     if not src.exists():
         return ActionResult(ok=False, error=f"no such candidate: {eid}")
     dst = cfg.review / "approved" / f"{eid}.jpg"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    src.rename(dst)
+    try:                                               # read-only mount / disk full / rename race
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
+    except OSError as exc:
+        return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"eid": eid})
 
 

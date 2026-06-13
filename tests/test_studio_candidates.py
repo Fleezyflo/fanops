@@ -39,6 +39,14 @@ def test_approve_rejects_path_traversal(tmp_path):
     res = actions.approve_candidate(cfg, "../../etc/passwd")
     assert not res.ok
 
+def test_approve_wraps_os_error(tmp_path, mocker):
+    # ecc:python-review: a read-only mount / disk-full / rename race must be a clean ActionResult,
+    # not a 500. Force the move to raise OSError.
+    cfg = Config(root=tmp_path); _thumb(cfg, "abc")
+    mocker.patch("pathlib.Path.rename", side_effect=OSError("read-only fs"))
+    res = actions.approve_candidate(cfg, "abc")
+    assert not res.ok and "approve failed" in res.error
+
 
 # ---- Studio routes ----
 def test_candidates_route_renders(tmp_path):
