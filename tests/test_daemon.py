@@ -4,7 +4,7 @@ install/status/stop are tested with `subprocess.run` mocked — NO real launchct
 ~/Library/LaunchAgents write (HOME is repointed at tmp_path so every home-derived path is
 sandboxed). The heartbeat parse is pinned against the REAL run.log line shape (log.py)."""
 from __future__ import annotations
-import os, plistlib, subprocess
+import os, plistlib, shlex, subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -61,9 +61,9 @@ def test_render_wrapper_uses_venv_fanops_cd_root_now_base_time_and_responder(tmp
     w = daemon.render_wrapper(cfg, responder="llm", interval=600)
     assert w.startswith("#!/bin/bash")
     assert daemon._fanops_bin() in w                              # the SAME venv that installed it
-    assert f'cd "{cfg.root}"' in w                                # not base, not /
+    assert f"cd {shlex.quote(str(cfg.root))}" in w               # shell-quoted; not base, not /
     assert '--base-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)"' in w    # a FRESH now each fire, not a frozen past date
-    assert 'FANOPS_RESPONDER="llm"' in w
+    assert "FANOPS_RESPONDER=llm" in w                           # safe value, shlex leaves it bare
     assert "export PATH=" in w
 
 
@@ -250,3 +250,36 @@ def test_main_daemon_logs_returns_0(tmp_path, monkeypatch, capsys):
     from fanops.cli import main
     assert main(["daemon", "logs"]) == 0
     assert "no logs yet" in capsys.readouterr().out
+
+
+# ── review hardening (python-review HIGH/MEDIUM) ─────────────────────────────────────────────
+
+def test_render_wrapper_shell_quotes_paths_with_metacharacters(tmp_path):
+    # A workspace path with a space/quote/$ must be shell-safe in the generated wrapper: an unquoted
+    # `cd "<path>"` would break out or let bash expand `$x`, silently running from the WRONG cwd and
+    # defeating the daemon's #1 invariant (correct working directory). shlex.quote each interpolated path.
+    weird = tmp_path / 'a b"c$d'
+    weird.mkdir()
+    cfg = Config(root=weird)
+    w = daemon.render_wrapper(cfg, responder="llm", interval=600)
+    assert f"cd {shlex.quote(str(weird))}" in w        # the cd target is shell-quoted
+    assert f'cd "{weird}"' not in w                     # NOT the naive double-quoted form
+
+
+def test_installed_interval_missing_key_or_corrupt_returns_none(tmp_path, monkeypatch):
+    # A plist missing StartInterval must NOT crash (the old int(None) raised TypeError, masked by a
+    # blanket catch); a corrupt plist must degrade to None (best-effort, like Config.tuning()).
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = Config(root=tmp_path)
+    pp = daemon.plist_path(); pp.parent.mkdir(parents=True, exist_ok=True)
+    pp.write_bytes(plistlib.dumps({"Label": daemon.LABEL}))      # no StartInterval key
+    assert daemon.installed_interval(cfg) is None
+    pp.write_bytes(b"not a plist at all")                        # corrupt
+    assert daemon.installed_interval(cfg) is None
+
+
+@pytest.mark.parametrize("raw", ["m", "h", "", "abc", "10x"])
+def test_parse_interval_rejects_malformed(raw):
+    # Pure-suffix / non-numeric inputs raise ValueError (-> cmd_daemon catches -> exit 2, never a trace).
+    with pytest.raises(ValueError):
+        daemon.parse_interval(raw)

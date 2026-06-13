@@ -14,7 +14,7 @@ rather than silently no-op'ing; a systemd --user sibling is the natural follow-u
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import os, plistlib, re, shutil, subprocess, sys
+import os, plistlib, re, shlex, shutil, subprocess, sys
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
@@ -56,14 +56,18 @@ def _daemon_path() -> str:
 def render_wrapper(cfg: Config, *, responder: str, interval: int) -> str:
     """The `#!/bin/bash` script launchd execs. One-shot: `exec fanops run` with a FRESH now as
     --base-time each fire (the default base-time is a fixed past date — a daemon must advance it)."""
+    # shlex.quote every interpolated path/value: a workspace path with a space/quote/$ would otherwise
+    # break out of the double-quotes (or let bash expand `$x`), silently running `fanops run` from the
+    # WRONG cwd and defeating the daemon's #1 invariant. The `$(date ...)` substitution is left literal
+    # ON PURPOSE — it must execute at fire time, not be quoted.
     return (
         "#!/bin/bash\n"
         "set -euo pipefail\n"
         f"# launchd reruns this wrapper every {interval}s (StartInterval); each run is one-shot.\n"
-        f'export PATH="{_daemon_path()}"\n'
-        f'export FANOPS_RESPONDER="{responder}"\n'
-        f'cd "{cfg.root}"\n'
-        f'exec "{_fanops_bin()}" run --base-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)"\n'
+        f"export PATH={shlex.quote(_daemon_path())}\n"
+        f"export FANOPS_RESPONDER={shlex.quote(responder)}\n"
+        f"cd {shlex.quote(str(cfg.root))}\n"
+        f'exec {shlex.quote(_fanops_bin())} run --base-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)"\n'
     )
 
 def render_plist(cfg: Config, *, interval: int) -> str:
@@ -96,14 +100,18 @@ def parse_interval(raw: str) -> int:
 
 def installed_interval(cfg: Config) -> int | None:
     """Read StartInterval back from the on-disk plist so `status` judges staleness against the REAL
-    cadence, not a default. None if no plist / unreadable."""
+    cadence, not a default. None if no plist / key absent / non-int / unreadable. Best-effort, broad
+    catch BY DESIGN: a corrupt plist (XML/expat errors are varied) must NEVER crash `daemon status` —
+    same posture as Config.tuning() for a malformed tuning.json. The isinstance guard avoids the
+    int(None)/int(<str>) trap when the key is missing or hand-edited to a non-integer."""
     p = plist_path()
     if not p.exists():
         return None
     try:
-        return int(plistlib.loads(p.read_bytes()).get("StartInterval"))
+        val = plistlib.loads(p.read_bytes()).get("StartInterval")
     except Exception:
         return None
+    return val if isinstance(val, int) else None
 
 
 # ── launchctl wrapper (mirror of ingest._run_ffprobe) ────────────────────────────────────────
