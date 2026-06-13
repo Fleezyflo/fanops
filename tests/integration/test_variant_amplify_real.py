@@ -17,8 +17,16 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, SourceState
 from fanops.variant_amplify import apply_variant_amplify
 from fanops.agentstep import request_path
+from fanops import cutover
 
 pytestmark = pytest.mark.integration
+
+
+def _validate(cfg):
+    # Phase 2: the amplify actuator is OFF-until-proven — establish the live-validation precondition
+    # (a real metrics row reconciled by `fanops cutover metrics`) so the on-disk amplify path is
+    # reachable. Both tests then isolate the STREAK gate, not the validation gate.
+    cutover._save_state(cfg, {"metrics_confirmed": True})
 
 
 def _win(pid, hook, lift):
@@ -30,6 +38,7 @@ def _win(pid, hook, lift):
 def test_sustained_winner_amplifies_source_on_disk(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
+    _validate(cfg)                                       # Phase 2 precondition: isolate the streak gate
     # Seed a REAL ledger on disk: a full lineage (source -> moment -> clip) + a clear surface winner:
     # @a/instagram's "WIN" (8 posts, mean 90) over a "LOSE" runner-up (3 posts, mean 1) — clears the
     # v2 floor (>=3, gap>=10) AND the v3 min_posts (8) and min_gap (25).
@@ -74,6 +83,7 @@ def test_no_sustained_winner_never_amplifies_on_disk(tmp_path, monkeypatch):
     NEVER amplify. Proves the streak gate holds against real on-disk evidence, not just in memory."""
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
+    _validate(cfg)                                       # Phase 2 precondition: isolate the streak gate
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.transcribed,
                               duration=10.0, transcript=[], language="en"))
