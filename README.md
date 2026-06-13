@@ -261,6 +261,9 @@ byte-identical to today). Bind is `127.0.0.1` only; no auth (single-operator, lo
 
 ## The three human-only steps
 
+> **Going live?** [docs/GOLIVE.md](docs/GOLIVE.md) is the full runbook — the three publishing paths
+> (Blotato via `cutover`, free self-hosted Postiz, or manual/no-service) end to end.
+
 Everything is automated except the parts only a human can do:
 
 1. **Create the fan accounts** on each platform.
