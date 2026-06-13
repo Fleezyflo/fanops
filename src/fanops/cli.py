@@ -7,7 +7,7 @@ import argparse, json, subprocess, sys
 from datetime import datetime, timezone
 import fanops
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError, ControlFileError, DownloadError, LockBusyError, ToolchainMissingError
+from fanops.errors import BlotatoAuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState
@@ -104,6 +104,19 @@ def cmd_amplify_variants(cfg: Config) -> int:
     print(f"variant-amplify: {max(0, after - before)} source(s) amplified")
     return 0
 
+def cmd_cutover(cfg: Config, args) -> int:
+    # The live-cutover validation harness (Phase 1). Lazy-import so the rest of the CLI never pays for
+    # it and there's no import cycle. Each action prints its result as JSON and returns 0; a refusal/
+    # failure raises CutoverError -> main()'s ladder -> one clean line + exit 2. NEVER reached by
+    # run/advance — this is a manual, operator-only go-live probe.
+    from fanops import cutover
+    act = args.cutover_action
+    if act == "auth":    print(json.dumps(cutover.cutover_auth(cfg), indent=2)); return 0
+    if act == "post":    print(json.dumps(cutover.cutover_post(cfg, args.account_id, confirmed=args.confirmed), indent=2)); return 0
+    if act == "metrics": print(json.dumps(cutover.cutover_metrics(cfg, args.submission_id), indent=2)); return 0
+    if act == "lift":    print(json.dumps(cutover.cutover_lift(cfg, args.submission_id), indent=2)); return 0
+    return 2
+
 def cmd_gc(cfg: Config, keep_days: int) -> int:
     # FIX F83: reclaim disk — drop the .mp4 files of retired/analyzed clips older than keep_days
     # (the ledger record + the post's cached media_url persist; the local file is dead weight
@@ -152,6 +165,16 @@ def main(argv: list[str] | None = None) -> int:
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
     p_studio.add_argument("--port", type=int, default=8787)
+    p_cut = sub.add_parser("cutover", help="live-cutover validation harness — prove the pipeline against REAL Blotato")
+    cut_sub = p_cut.add_subparsers(dest="cutover_action", required=True)
+    cut_sub.add_parser("auth", help="step 1: prove BLOTATO_API_KEY authenticates (read-only)")
+    p_cpost = cut_sub.add_parser("post", help="step 2: publish ONE 2099-scheduled probe to a THROWAWAY account")
+    p_cpost.add_argument("account_id")
+    p_cpost.add_argument("--i-understand-this-posts-to-a-real-account", dest="confirmed", action="store_true")
+    p_cmet = cut_sub.add_parser("metrics", help="step 3: pull the real row + reconcile fields vs track._W")
+    p_cmet.add_argument("submission_id")
+    p_clift = cut_sub.add_parser("lift", help="step 4: compute one real lift_score from the captured row")
+    p_clift.add_argument("submission_id")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
@@ -187,6 +210,12 @@ def main(argv: list[str] | None = None) -> int:
         # yt-dlp ran but exited non-zero (dead/geoblocked URL) during `pull` — pre-Source, outside
         # any quarantine. Without this the discarded rc let `pull` print "pulled -> 0 sources" as
         # success; surface the one-line reason (stderr tail) + exit 2, like the toolchain/timeout arms.
+        print(str(e), file=sys.stderr)
+        return 2
+    except CutoverError as e:
+        # An operator refusal/failure in the live-cutover harness (dryrun backend, missing confirm
+        # flag, no key, non-2xx POST, metrics not landed yet). One actionable line + exit 2 — it is
+        # never a pipeline/ledger error, only the manual go-live probe needing a different input.
         print(str(e), file=sys.stderr)
         return 2
     except subprocess.TimeoutExpired as e:
@@ -300,6 +329,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "reconcile": return cmd_reconcile(cfg)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
+    if args.cmd == "cutover":  return cmd_cutover(cfg, args)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
     if args.cmd == "resolve":
         # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve

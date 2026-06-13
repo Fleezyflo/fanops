@@ -31,6 +31,7 @@ class Config:
         self.accounts_path = self.control / "accounts.json"
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
+        self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
         self.log_path = self.reports / "run.log"
 
     def tuning(self) -> dict:

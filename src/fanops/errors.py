@@ -46,6 +46,14 @@ class DownloadError(Exception):
     returncode was an audit silent-failure finding). Message carries the stderr tail, truncated."""
 
 
+class CutoverError(Exception):
+    """An operator-facing refusal or failure in the live-cutover validation harness (cutover.py):
+    a missing key, a dryrun backend where the live path is required, a missing confirm flag, a
+    non-2xx POST, or a not-yet-available metrics row. One-line, cli.main-caught -> exit 2, like
+    ControlFileError. It is NOT a pipeline error (cutover never touches the ledger or the unit
+    chain) — it only ever means the operator's manual go-live probe needs a different input."""
+
+
 def reason(exc: Exception) -> str:
     """Condense a parse/validation error into one operator-readable line.
     json.JSONDecodeError already stringifies tidily; pydantic's ValidationError is

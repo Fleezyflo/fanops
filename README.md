@@ -208,6 +208,7 @@ no progress, so the human knows to check the key, not the cron.
 | `fanops retry-metrics <post_id>` | re-pull metrics for a `published` post on the next `track` pass (no-op flip; exits 2 if the post isn't published) |
 | `fanops digest` | rewrite the human-readable ledger digest (incl. a `## Pending agent gates` section naming each unanswered gate by kind+key) |
 | `fanops run [--base-time T]` | unattended: respond + advance until stable, then a live-only `track`+`adjust` learning pass (and, if `FANOPS_VARIANT_AMPLIFY=1`, a separately-guarded variant-amplify pass); emits a heartbeat line every run |
+| `fanops cutover <auth\|post\|metrics\|lift>` | the **go-live validation harness** — the one safe, reversible path to prove the pipeline against REAL Blotato (see *Going live* below). Never reachable from `run`/`advance`; writes only `00_control/cutover.json`, never the ledger |
 
 The four **recovery verbs** (`resolve`, `unhold`, `retry-source`, `retry-metrics`) are the
 operator's manual-intervention surface for the states the automatic pipeline cannot resolve on
@@ -312,6 +313,33 @@ re-weight `track._W` on the fields that are).
   with a stable **client idempotency token** (`submission_id = f"fanops_{_hash('idemp', post.id)}"`),
   so an ambiguous publish is always reconcilable; a real `postSubmissionId` from the response
   overwrites it. See `post/blotato_rest.py`, `crosspost.py`.
+
+### Going live: the `cutover` harness
+
+`fanops cutover` is the **one safe, reversible path** to confirm the checkpoints above against the
+real API — the lever that turns "the loop computes on synthetic rows" into "the loop computes on a
+real metrics row." Four explicit, operator-driven steps; each prints its result and **stops** so you
+read it before continuing. It is **never reachable from `run`/`advance`**, writes only
+`00_control/cutover.json` (never the ledger — the probe post never enters the unit chain), and
+**cannot fire accidentally**: `post` refuses the `dryrun` backend, refuses to POST without the
+explicit `--i-understand-this-posts-to-a-real-account` flag, and **hardcodes a 2099 `scheduledTime`**
+so the post can be deleted from the Blotato dashboard long before it would ever publish.
+
+```bash
+export FANOPS_POSTER=rest BLOTATO_API_KEY=…
+fanops cutover auth                         # 1. prove the key authenticates (read-only; 401 halts)
+fanops cutover post <THROWAWAY_ACCOUNT_ID> --i-understand-this-posts-to-a-real-account
+#   2. publish ONE 2099-scheduled probe; prints the submission_id (saved to cutover.json)
+fanops cutover metrics <submission_id>      # 3. pull the real row, reconcile its fields vs track._W
+#      -> {scored, present_unweighted, weighted_absent}: which weights are real, which to re-tune
+fanops cutover lift <submission_id>         # 4. compute one REAL lift_score, end-to-end
+```
+
+The step-3 reconciliation is the payoff: it tells you exactly which of `saves/shares/retention/
+reach/likes` the live API actually returns, which live fields `_W` ignores (candidate new weights),
+and which weighted fields never came back (dead weights to drop) — so you re-tune `track._W` via
+`tuning.json` **before** trusting the learning loop, instead of guessing. **Rollback** is: delete
+`00_control/cutover.json` + delete the 2099 post in the Blotato UI. Neither touches production state.
 
 A successful **data-returning** live verification (and any live test post) is still pending valid
 Blotato auth + an operator-named throwaway test account — `blotato_create_post` publishes to a real
