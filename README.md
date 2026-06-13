@@ -280,7 +280,9 @@ Everything is automated except the parts only a human can do:
    instance instead of Blotato — connect each account inside Postiz and put its *integration id* in
    `accounts.json`'s `account_id`. (Postiz is the free *distribution layer*; you still self-host it
    and do each platform's OAuth there — that platform onboarding is unavoidable on any publisher.
-   The Blotato-only learning loop, `reconcile`, and `cutover` stay inert on the postiz backend.)
+   The Blotato-only learning loop, automated `reconcile`, and `cutover` stay inert on the postiz
+   backend; a postiz post left in `needs_reconcile` after a 5xx/network blip is surfaced in `fanops
+   status` + the digest and cleared by hand with `fanops resolve <post_id> published|failed`.)
    Until then the default `dryrun` poster writes the exact payload
    it *would* send to `05_scheduled/` and posts nothing, so the whole pipeline runs offline. It
    stamps a synthetic `dryrun_<post_id>` submission id (mirroring the real `postSubmissionId`),

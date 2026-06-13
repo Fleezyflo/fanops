@@ -19,11 +19,12 @@ def _now(now: str | None) -> datetime:
 
 def _is_fatal_auth_error(exc: Exception) -> bool:
     """Auth/config errors mean EVERY post will fail — halt the run instead of marking one post
-    failed and grinding through the rest. Matched by TYPE (BlotatoAuthError), NOT by a substring
-    in the message (AUDIT H8): the old `"401" in msg or "BLOTATO_API_KEY" in msg` both UNDER-fired
-    (a reworded auth error slipped past and burned the whole queue — the F52 regression) and
-    OVER-fired (a 5xx whose body contained "401" wrongly halted the queue). The posters/media
-    uploader raise BlotatoAuthError on a real auth failure; everything else is a per-post failure."""
+    failed and grinding through the rest. Matched by the TYPE AuthError (base of BlotatoAuthError +
+    PostizAuthError), NOT by a substring in the message (AUDIT H8): the old `"401" in msg or
+    "BLOTATO_API_KEY" in msg` both UNDER-fired (a reworded auth error slipped past and burned the
+    whole queue — the F52 regression) and OVER-fired (a 5xx whose body contained "401" wrongly
+    halted). Each backend's poster/media uploader raises an AuthError subclass on a real auth
+    failure; everything else is a per-post failure."""
     return isinstance(exc, AuthError)
 
 def publish_due(led: Ledger, cfg: Config, *, now: str | None = None,

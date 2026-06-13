@@ -86,6 +86,25 @@ def test_publish_other_4xx_fails(tmp_path, monkeypatch, mocker):
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.failed
 
+def test_publish_network_error_parks_needs_reconcile_no_repost(tmp_path, monkeypatch, mocker):
+    # The body may have landed on Postiz (the response, not the request, was lost) — ambiguous, so
+    # park needs_reconcile and NEVER re-POST (no idempotency key). The safety-critical path.
+    import requests as _rq
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    mocker.patch("fanops.post.postiz.requests.post",
+                 side_effect=_rq.exceptions.ConnectionError("dropped"))
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert led.posts["p1"].state is PostState.needs_reconcile
+
+def test_publish_429_exhausted_marks_failed(tmp_path, monkeypatch, mocker):
+    # A 429 is rejected pre-processing (not posted), so retrying is safe; exhausting retries -> failed
+    # (re-queueable), never needs_reconcile. Mock sleep so the jittered backoff doesn't stall the test.
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    mocker.patch("fanops.post.postiz.time.sleep")
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(429, {}, text="rate"))
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert led.posts["p1"].state is PostState.failed
+
 
 # ---- construction guards ----
 def test_missing_key_raises_typed_auth(tmp_path, monkeypatch):

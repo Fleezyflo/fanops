@@ -103,9 +103,9 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # exit-save — an uncaught raise inside the with-block skips transaction()'s save and rolls
         # back to the prior on-disk snapshot, silently losing this pass's completed transitions.
         # The wrap mirrors the per-unit quarantine of the loops above (log + continue). The ONE
-        # exception we deliberately let escape is a FATAL BlotatoAuthError from publish_due: a bad
-        # key fails every post, so halting + rolling back the pass is the intended F52 behavior,
-        # handled cleanly by the CLI's run guard. (publish_due also isolates per-post internally —
+        # exception we deliberately let escape is a FATAL AuthError from publish_due (Blotato or
+        # Postiz): a bad key fails every post, so halting + rolling back the pass is the intended F52
+        # behavior, handled cleanly by the CLI's run guard. (publish_due also isolates per-post —
         # incl. a malformed scheduled_time, review finding — so this stage-level wrap is a
         # defense-in-depth net for any unforeseen non-auth raise, not the primary isolation.)
         try:
@@ -117,9 +117,12 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         except Exception as e:
             log("crosspost", "-", "error", err=str(e)[:120])
         # Reconcile last pass's stranded posts BEFORE publishing this pass (AUDIT H4): resolve any
-        # submitting/needs_reconcile post that has a submission_id via GET /v2/posts/:id. Only when a
-        # live backend + key exist and there is actually something to reconcile (dryrun never produces
-        # these states, and constructing the status client without a key would raise).
+        # submitting/needs_reconcile post that has a submission_id via GET /v2/posts/:id. This is the
+        # BLOTATO reconciler (BlotatoStatusClient) — gated on is_live_backend, which is Blotato-keyed,
+        # so it runs ONLY for rest/mcp+key. The postiz backend has no automated status reconciler yet:
+        # its needs_reconcile posts are NOT silent (surfaced in `fanops status` + the digest) and are
+        # cleared by the backend-agnostic `fanops resolve <post_id> published|failed` recovery verb,
+        # exactly as id-less Blotato posts already are. (dryrun never produces these states.)
         reconcilable = (led.posts_in_state(PostState.submitting)
                         + led.posts_in_state(PostState.submitted)
                         + led.posts_in_state(PostState.needs_reconcile))
@@ -131,8 +134,8 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # publish cutoff = real now (base_time is the SCHEDULE anchor for crosspost; publishing uses
         # actual now). in_transaction=True so publish_due's crash-safe mid-loop saves use the
         # UNLOCKED save and don't self-deadlock against the transaction's held lock (AUDIT B4/B2).
-        # AUDIT M2 net: a non-auth raise here must not roll back the pass; a FATAL BlotatoAuthError
-        # MUST still escape (F52 — a bad key fails every post; halt + roll back, the CLI exits clean).
+        # AUDIT M2 net: a non-auth raise here must not roll back the pass; a FATAL AuthError (Blotato
+        # or Postiz) MUST still escape (F52 — a bad key fails every post; halt + roll back, CLI exits clean).
         try:
             led = publish_due(led, cfg, now=None, in_transaction=True)
         except AuthError:
