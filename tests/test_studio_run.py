@@ -1,0 +1,82 @@
+# tests/test_studio_run.py — Studio as pipeline DRIVER: ingest/advance/pull from the browser through
+# the same lock-safe paths the CLI uses, so the operator never needs the terminal.
+import json
+from fanops.config import Config
+from fanops.ledger import Ledger
+from fanops.models import Source, SourceState
+from fanops.studio import views, actions
+
+
+def _src_in_inbox(cfg, mocker, name="a.mp4"):
+    cfg.inbox.mkdir(parents=True, exist_ok=True)
+    (cfg.inbox / name).write_bytes(b"V")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+
+
+# ---- actions.run_ingest ----
+def test_run_ingest_catalogues_inbox(tmp_path, mocker):
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    res = actions.run_ingest(cfg)
+    assert res.ok and res.detail["sources"] == 1
+    assert len(Ledger.load(cfg).sources) == 1
+
+def test_run_ingest_wraps_toolchain_error(tmp_path, mocker):
+    # ffprobe absent -> ingest raises ToolchainMissingError; Studio must surface a clean error, not 500.
+    cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)
+    (cfg.inbox / "a.mp4").write_bytes(b"V")
+    def absent(cmd, **kw): raise FileNotFoundError(2, "no", cmd[0])
+    mocker.patch("fanops.ingest.subprocess.run", side_effect=absent)
+    res = actions.run_ingest(cfg)
+    assert not res.ok and "ffprobe" in (res.error or "")
+
+
+# ---- actions.run_advance ----
+def test_run_advance_returns_summary(tmp_path):
+    cfg = Config(root=tmp_path)
+    res = actions.run_advance(cfg)
+    assert res.ok and "sources" in res.detail and "awaiting" in res.detail
+
+def test_run_advance_blocks_on_invalid_accounts(tmp_path):
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        [{"handle": "@x", "account_id": "", "platforms": ["instagram"], "status": "active"}]))
+    res = actions.run_advance(cfg)
+    assert not res.ok and "account" in (res.error or "").lower()
+
+
+# ---- actions.run_pull ----
+def test_run_pull_rejects_non_http_url(tmp_path):
+    res = actions.run_pull(Config(root=tmp_path), "not-a-url")
+    assert not res.ok and "http" in (res.error or "").lower()
+
+
+# ---- views.pipeline_status ----
+def test_pipeline_status_counts(tmp_path):
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.catalogued))
+    st = views.pipeline_status(cfg)
+    assert st["sources"] == 1 and "pending_moments" in st and st["backend"] == "dryrun"
+
+
+# ---- Flask wiring ----
+def test_run_route_renders(tmp_path):
+    from fanops.studio.app import create_app
+    app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
+    r = app.test_client().get("/run")
+    assert r.status_code == 200 and b"Ingest" in r.data
+
+def test_run_ingest_route_drives_ingest(tmp_path, mocker):
+    from fanops.studio.app import create_app
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().post("/run/ingest")
+    assert r.status_code == 200
+    assert len(Ledger.load(cfg).sources) == 1
+
+def test_run_advance_route(tmp_path):
+    from fanops.studio.app import create_app
+    app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
+    r = app.test_client().post("/run/advance")
+    assert r.status_code == 200
