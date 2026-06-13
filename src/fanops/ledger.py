@@ -14,6 +14,40 @@ from fanops.models import (Source, Moment, Clip, Post,
 
 _DEFAULT_LOCK_TIMEOUT = 30.0
 
+# On-disk ledger shape version. BUMP when a model field changes shape (rename/retype/required) and
+# add a _MIGRATIONS[N] step transforming v(N-1) raw -> vN BEFORE unit construction. A pre-versioning
+# ledger (no schema_version key) reads as v0; v0->v1 is the no-op baseline stamp (the shape was
+# already stable). The point is forward safety: a future field change becomes a migration step, not
+# a silent field-drop (pydantic extra="ignore") or a load crash.
+SCHEMA_VERSION = 1
+# version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
+_MIGRATIONS = {1: lambda raw: raw}
+
+
+class _NewerSchema(ControlFileError):
+    """A ledger written by a NEWER fanops than this code understands. A ControlFileError subtype so
+    cli.main exits 2 cleanly, but raised as its own type inside load() so the generic 'invalid'
+    rewrap doesn't reword it — the operator must see 'upgrade fanops', not 'invalid: ...'."""
+    def __init__(self, on_disk: int):
+        super().__init__(f"ledger.json is schema v{on_disk} but this fanops understands only "
+                         f"v{SCHEMA_VERSION} — upgrade fanops (refusing to load a newer ledger and "
+                         f"silently drop its fields on save)")
+
+
+def _migrate(raw: dict, from_version: int) -> dict:
+    """Hop-chain an older on-disk ledger up to SCHEMA_VERSION, applying each registered step in
+    order. A gap in the chain (no step to the next version) is a fatal, typed error — better than
+    constructing units from a half-migrated dict."""
+    v = from_version
+    while v < SCHEMA_VERSION:
+        step = _MIGRATIONS.get(v + 1)
+        if step is None:
+            raise ControlFileError(
+                f"ledger.json schema v{from_version}: no migration path to v{v + 1} — upgrade fanops")
+        raw = step(raw)
+        v += 1
+    return raw
+
 
 @contextmanager
 def _file_lock(lock_path: Path, timeout: float | None = None):
@@ -74,12 +108,22 @@ class Ledger:
             text = p.read_text()                       # an I/O error here is a real problem, not "invalid"
             try:
                 raw = json.loads(text)
+                on_disk = raw.get("schema_version", 0)     # absent key => pre-versioning ledger (v0)
+                if on_disk > SCHEMA_VERSION:
+                    # A ledger written by a NEWER fanops. Loading then saving would silently DROP its
+                    # future fields (pydantic extra="ignore"), corrupting a forward-version state store
+                    # on downgrade. Refuse loudly — raised OUTSIDE the except below so it isn't reworded.
+                    raise _NewerSchema(on_disk)
+                if on_disk < SCHEMA_VERSION:
+                    raw = _migrate(raw, on_disk)
                 led.sources = {k: Source(**v) for k, v in raw.get("sources", {}).items()}
                 led.moments = {k: Moment(**v) for k, v in raw.get("moments", {}).items()}
                 led.clips = {k: Clip(**v) for k, v in raw.get("clips", {}).items()}
                 led.posts = {k: Post(**v) for k, v in raw.get("posts", {}).items()}
                 led.tag_log = raw.get("tag_log", {})
                 led.variant_streaks = raw.get("variant_streaks", {})
+            except ControlFileError:
+                raise                                  # _NewerSchema / _migrate gap: pass through, unreworded
             except Exception as e:
                 # Malformed JSON or schema-violating field (hand-edit typo). Surface a clear
                 # one-line reason instead of a raw JSONDecodeError/ValidationError traceback.
@@ -113,6 +157,7 @@ class Ledger:
         LockBusyError after the timeout — a self-inflicted failure). Atomic write preserved
         (tmp + os.replace)."""
         doc = {
+            "schema_version": SCHEMA_VERSION,          # stamp the on-disk shape (Phase 4a)
             "sources": {k: v.model_dump() for k, v in self.sources.items()},
             "moments": {k: v.model_dump() for k, v in self.moments.items()},
             "clips": {k: v.model_dump() for k, v in self.clips.items()},
