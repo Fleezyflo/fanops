@@ -286,7 +286,9 @@ def publish_queue(cfg: Config, *, now: Optional[datetime] = None) -> list[dict]:
         rows.append({"post_id": p.id, "clip_id": p.parent_id, "account": p.account,
                      "platform": p.platform.value, "caption": p.caption,
                      "scheduled_time": p.scheduled_time, "due": due})
-    rows.sort(key=lambda r: (not r["due"], r["scheduled_time"] or ""))
+    # due-first; within a bucket by schedule. "9999" sentinel (not "") so a None/unscheduled post
+    # sorts LAST, not as if it were the most urgent (ecc:python-review).
+    rows.sort(key=lambda r: (not r["due"], r["scheduled_time"] or "9999"))
     return rows
 
 

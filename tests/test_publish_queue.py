@@ -48,6 +48,24 @@ def test_mark_published_rejects_already_published(tmp_path):
     res = actions.mark_published(cfg, "p1")
     assert not res.ok and "publish" in (res.error or "").lower()
 
+def test_mark_published_accepts_error_state(tmp_path):
+    # ecc:python-review: an `error`-state post (recoverable, like `failed`) must be markable, not stranded.
+    cfg = Config(root=tmp_path); _seed(cfg, state=PostState.error)
+    assert actions.mark_published(cfg, "p1").ok
+    assert Ledger.load(cfg).posts["p1"].state is PostState.published
+
+def test_unscheduled_post_sorts_last(tmp_path):
+    # ecc:python-review: a None scheduled_time must sort AFTER a future-dated post, not as most urgent.
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="future", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="f", state=PostState.queued, scheduled_time="2099-01-01T00:00:00Z"))
+    led.add_post(Post(id="none", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="n", state=PostState.queued, scheduled_time=None))
+    led.save()
+    ids = [r["post_id"] for r in views.publish_queue(cfg, now=_NOW)]
+    assert ids.index("future") < ids.index("none")
+
 
 # ---- CLI ----
 def test_cli_publish_queue_prints(tmp_path, monkeypatch, capsys):

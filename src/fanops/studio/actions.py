@@ -139,13 +139,18 @@ def run_advance(cfg: Config, base_time: Optional[str] = None) -> ActionResult:
     return ActionResult(ok=True, detail=summary)
 
 
+# Non-terminal states an operator may mark "posted by hand". `error` is included (ecc:python-review):
+# it is semantically a recoverable failure like `failed` (digest.py treats them alike), so the UI
+# must not strand an error-state post. Excludes the terminal published/analyzed/retired.
 _POSTABLE = {PostState.queued, PostState.needs_reconcile, PostState.submitting,
-             PostState.submitted, PostState.failed}
+             PostState.submitted, PostState.failed, PostState.error}
 
 def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> ActionResult:
     """Track B: the operator posted this clip by hand — force the post to `published` (+ optional
-    live URL). The Studio twin of `fanops resolve <id> published`: tight local transaction, no
-    network. Rejects an already-published/analyzed post so a double-click can't churn terminal state."""
+    live URL). Like `fanops resolve <id> published` but STRICTER (ecc:python-review): resolve is the
+    unguarded force-anything escape hatch, whereas this rejects an already-terminal
+    (published/analyzed/retired) post so a double-click can't churn terminal state. Tight local
+    transaction, no network."""
     with Ledger.transaction(cfg) as led:
         if post_id not in led.posts:
             return ActionResult(ok=False, error=f"no such post: {post_id}")
