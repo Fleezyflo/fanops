@@ -83,7 +83,10 @@ def has_video_stream(path: Path) -> bool:
     r = _run_ffprobe(
         ["-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)])
-    return r.stdout.strip() == "video"
+    # `csv=p=0` emits "video," (trailing empty field) on some HEVC .mov muxings — exact `== "video"`
+    # would then read it as audio-only and silently DROP a real clip. Token-match instead: True iff a
+    # "video" codec_type appears among the comma/space-separated fields; empty stdout -> still False.
+    return "video" in r.stdout.replace(",", " ").split()
 
 def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop") -> Ledger:
     cfg.sources.mkdir(parents=True, exist_ok=True)
