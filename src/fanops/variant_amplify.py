@@ -33,6 +33,7 @@ from fanops.adjust import amplify, MAX_AMPLIFY_PER_SOURCE   # AMPLIFY-ONLY: impo
 from fanops.ids import _hash
 from fanops.log import get_logger
 from fanops.models import LIFT_SCORE, Platform, PostState
+from fanops.validation_gate import learning_validated
 from fanops.variant_learning import best_hooks
 
 
@@ -153,6 +154,14 @@ def apply_variant_amplify(led, cfg):
     (FANOPS_VARIANT_AMPLIFY) is off — the default."""
     if not cfg.variant_amplify:
         return led                                  # kill switch / default OFF -> inert
+    if not learning_validated(cfg):
+        # OFF-until-proven (Phase 2): the kill switch is ON but no real metrics row has confirmed
+        # lift_score's field shape (run `fanops cutover metrics`). Amplifying would re-mine sources
+        # off a possibly-meaningless lift — stay inert, but LOG the why (not silent) so the operator
+        # knows it's gated on validation, not on a weak signal.
+        get_logger(cfg)("variant_amplify", "-", "skipped_unvalidated",
+                        hint="run `fanops cutover metrics` to confirm lift fields")
+        return led
     try:
         update_streaks(led, cfg)
         for cand in amplify_candidates(led, cfg):

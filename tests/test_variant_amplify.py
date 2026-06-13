@@ -198,6 +198,7 @@ def test_apply_amplifies_when_fully_gated(tmp_path, monkeypatch):
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
     led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    _validate(cfg)                                   # Phase 2: live-validation precondition met
     apply_variant_amplify(led, cfg)
     # the source was amplified: state flipped + the moment-request carries the winning hook.
     assert led.sources["s1"].state is SourceState.moments_requested
@@ -214,6 +215,7 @@ def test_apply_noop_when_gate_unmet(tmp_path, monkeypatch):
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
     led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 1}  # < 3
+    _validate(cfg)                                   # Phase 2: isolate the STREAK gate, not validation
     before = _frozen(led)
     apply_variant_amplify(led, cfg)
     assert _frozen(led) == before          # nothing changed — no amplify, no state flip
@@ -238,6 +240,7 @@ def test_apply_failsafe_on_internal_error(tmp_path, monkeypatch):
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
     led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    _validate(cfg)                                   # Phase 2: reach the try-body, not the validation gate
     # Make the candidate computation raise -> the whole pass must swallow it, no partial mutation.
     monkeypatch.setattr("fanops.variant_amplify.amplify_candidates",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
@@ -293,6 +296,7 @@ def test_apply_failsafe_logs_the_error_detail(tmp_path, monkeypatch):
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
     led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    _validate(cfg)                                   # Phase 2: reach the try-body, not the validation gate
     monkeypatch.setattr("fanops.variant_amplify.amplify_candidates",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("AMPLIFY-BOOM-SENTINEL")))
     apply_variant_amplify(led, cfg)        # swallowed (must NOT raise) — but must record the reason
@@ -358,6 +362,7 @@ def test_single_window_signal_does_not_amplify(tmp_path, monkeypatch):
     led = _led(cfg, _winset(20, "WIN", 99.0))      # overwhelming evidence in ONE window
     _seed_lineage(led)
     led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 1}
+    _validate(cfg)                                   # Phase 2: isolate the STREAK gate, not validation
     before = _frozen(led)
     apply_variant_amplify(led, cfg)
     assert amplify_candidates(led, cfg) == []       # gate holds despite huge single-window evidence

@@ -177,6 +177,9 @@ class Config:
         # This is the FIRST feature to touch the amplify/cascade machinery (audit C1), so it is the
         # KILL SWITCH: DEFAULT OFF (opt-in). Only the explicit on-words enable it; unset/empty/other
         # stays OFF (today's behavior — no variant-driven amplify). Amplify-only: never feeds retire.
+        # VALIDATION-FROZEN (Phase 2): this flag = operator INTENT; even ON, apply_variant_amplify stays
+        # INERT until `fanops cutover metrics` confirms lift_score's field shape against a real row
+        # (validation_gate.learning_validated) — re-mining on unvalidated lift is the over-build trap.
         v = (os.getenv("FANOPS_VARIANT_AMPLIFY") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
@@ -220,6 +223,8 @@ class Config:
         # FANOPS_VARIANT_LEARNING (still the master gate — UCB is inert if learning is off). Does NOT
         # affect variant_amplify, which keeps using best_hooks as its safety floor. Only the explicit
         # on-words enable it; unset/empty/other stays OFF (v2 greedy behavior).
+        # VALIDATION-FROZEN (Phase 2): a bandit allocating over lift_scores whose live field shape is
+        # unconfirmed is theater — do NOT enable until `fanops cutover` reconciles a real metrics row.
         v = (os.getenv("FANOPS_VARIANT_UCB") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
@@ -243,6 +248,8 @@ class Config:
         # own yet) toward a hook STYLE proven on OTHER same-platform surfaces. INDEPENDENT of both
         # FANOPS_CREATIVE_VARIATION and FANOPS_VARIANT_LEARNING. DEFAULT OFF (opt-in), fail-open:
         # unset/empty/other -> today's behavior, no transferred prior injected.
+        # VALIDATION-FROZEN (Phase 2): transferring a "proven" style measured on an unconfirmed lift
+        # propagates noise across surfaces — do NOT enable until `fanops cutover` confirms the fields.
         v = (os.getenv("FANOPS_VARIANT_TRANSFER") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
