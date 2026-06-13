@@ -131,6 +131,19 @@ def test_intake_is_idempotent_and_reports_missing(tmp_path, mocker):
     out = discover.intake(cfg)
     assert out["missing"] >= 1
 
+def test_intake_keyless_manifest_entry_counts_missing_not_crash(tmp_path):
+    # A manifest entry that EXISTS but lacks source_path (hand-edit / schema drift) must be reported
+    # as missing — exactly like an absent entry — not crash intake() with a raw KeyError. intake is a
+    # CLI verb with NO pipeline quarantine, so a KeyError here is a traceback + exit 1 over one bad
+    # entry, stranding every other approved original behind it.
+    from fanops.config import Config
+    cfg = Config(root=tmp_path)
+    (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
+    (cfg.review / "manifest.json").write_text(json.dumps({"abc": {"width": 1080}}))   # no source_path
+    (cfg.review / "approved" / "abc.jpg").write_bytes(b"J")
+    out = discover.intake(cfg)
+    assert out["missing"] == 1 and out["intaken"] == 0
+
 def test_discover_corrupt_manifest_raises_typed_control_error(tmp_path):
     # Stage-6 audit: a truncated/hand-mangled manifest.json escaped as a raw JSONDecodeError
     # traceback (discover/intake are CLI verbs with no pipeline quarantine, and JSONDecodeError is

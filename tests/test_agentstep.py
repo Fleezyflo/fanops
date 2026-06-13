@@ -26,6 +26,18 @@ def test_stale_response_is_ignored(tmp_path):
     assert read_response(cfg, "moments", "src_1", MomentDecision) is None
     assert pending(cfg, kind="moments") == ["src_1"]       # still pending
 
+def test_corrupt_response_is_logged_not_silent(tmp_path):
+    # A torn/half-written response.json is swallowed (return None) and looks IDENTICAL to "no
+    # response yet" — the agent gate silently stalls with no breadcrumb. Fail-closed is correct
+    # (a corrupt answer must never be applied), but it must leave ONE log line so an operator can
+    # tell "stuck on corrupt JSON" apart from "still pending". The None return is unchanged.
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    response_path(cfg, "moments", "src_1").write_text("{ this is not json")
+    assert read_response(cfg, "moments", "src_1", MomentDecision) is None     # fail-closed (unchanged)
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "src_1" in log and "corrupt" in log.lower()
+
 def test_matching_response_validates(tmp_path):
     cfg = Config(root=tmp_path)
     rid = write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})

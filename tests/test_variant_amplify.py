@@ -246,6 +246,23 @@ def test_apply_failsafe_on_internal_error(tmp_path, monkeypatch):
     assert _frozen(led) == before
 
 
+def test_apply_failsafe_logs_the_error_detail(tmp_path, monkeypatch):
+    """FAIL-SAFE must not be FAIL-SILENT: when the swallowed pass hits an internal error, the log
+    line must carry WHY (err=...), not a bare 'error' outcome. Without the detail an autonomous run
+    that silently stops amplifying is indistinguishable from one with nothing to amplify — exactly
+    the silent-mass-failure the run logger (FIX F51) exists to surface."""
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    monkeypatch.setattr("fanops.variant_amplify.amplify_candidates",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("AMPLIFY-BOOM-SENTINEL")))
+    apply_variant_amplify(led, cfg)        # swallowed (must NOT raise) — but must record the reason
+    log = cfg.log_path.read_text()
+    assert "AMPLIFY-BOOM-SENTINEL" in log and "err=" in log
+
+
 # --- The retire-isolation invariant (v3's C1 safety, mechanized — mirrors test_variant_learning's
 #     AST approach but asserts the REVERSE direction: variant_amplify must be BLIND to the
 #     retire/delete surface). HARDENED after adversarial review (2026-06-04): the original walked a

@@ -82,6 +82,27 @@ def test_download_url_is_time_bounded(tmp_path, mocker):
         download_url(cfg, "https://example.com/v")
     assert seen.get("timeout") == 600.0                               # the bound is actually wired
 
+def test_download_url_surfaces_ytdlp_failure(tmp_path, mocker):
+    # A dead/geoblocked/format-gone URL: yt-dlp RUNS but exits non-zero with a stderr reason. Today
+    # the returncode and stderr are DISCARDED (check=False + result ignored) -> download_url returns
+    # None and cmd_pull goes on to ingest an empty inbox, printing "pulled -> 0 sources" as if it
+    # succeeded. The operator gets NO signal the pull failed (silent failure). A non-zero rc must
+    # surface a typed, cli.main-catchable error carrying the stderr tail -> clean exit 2. This is NOT
+    # ToolchainMissingError (yt-dlp is present, the URL is dead) and NOT TimeoutExpired (it returned).
+    from fanops.errors import DownloadError
+    cfg = Config(root=tmp_path)
+    class R: returncode = 1; stdout = ""; stderr = "ERROR: [youtube] xyz: Video unavailable"
+    mocker.patch("fanops.ingest.subprocess.run", return_value=R())
+    with pytest.raises(DownloadError, match="Video unavailable"):
+        download_url(cfg, "https://example.com/dead")
+
+def test_download_url_succeeds_on_zero_rc(tmp_path, mocker):
+    # The happy path stays silent: rc 0 -> no raise, download_url returns None as before.
+    cfg = Config(root=tmp_path)
+    class R: returncode = 0; stdout = ""; stderr = ""
+    mocker.patch("fanops.ingest.subprocess.run", return_value=R())
+    assert download_url(cfg, "https://example.com/ok") is None
+
 def test_catalogues_and_probes(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
