@@ -246,6 +246,43 @@ def test_apply_failsafe_on_internal_error(tmp_path, monkeypatch):
     assert _frozen(led) == before
 
 
+def _validate(cfg):
+    # Phase 2: mark the live-validation precondition (a real metrics row reconciled by cutover) so
+    # the amplify actuator is allowed to act. Tests that exercise the amplify LOGIC must establish it.
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True})
+
+
+def test_apply_amplify_inert_until_learning_validated(tmp_path, monkeypatch):
+    """OFF-until-proven (Phase 2): the kill switch is ON and every gate is met, but with NO confirmed
+    live metrics row, amplify must stay inert — re-mining a source on a lift_score whose field shape
+    has never been confirmed against live Blotato is the over-build trap — and it must LOG
+    skipped_unvalidated (not silently), so the operator knows to run `fanops cutover`."""
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    before = _frozen(led)
+    apply_variant_amplify(led, cfg)                      # no cutover.json -> inert despite full gate
+    assert _frozen(led) == before
+    assert not request_path(cfg, "moments", "s1").exists()
+    assert "skipped_unvalidated" in cfg.log_path.read_text()
+
+
+def test_apply_amplifies_once_learning_validated(tmp_path, monkeypatch):
+    """Symmetric proof the gate OPENS (not a permanent block): the SAME fully-gated candidate DOES
+    amplify once a real metrics row is confirmed."""
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    _validate(cfg)
+    apply_variant_amplify(led, cfg)
+    assert led.sources["s1"].state is SourceState.moments_requested   # amplified once validated
+
+
 def test_apply_failsafe_logs_the_error_detail(tmp_path, monkeypatch):
     """FAIL-SAFE must not be FAIL-SILENT: when the swallowed pass hits an internal error, the log
     line must carry WHY (err=...), not a bare 'error' outcome. Without the detail an autonomous run
