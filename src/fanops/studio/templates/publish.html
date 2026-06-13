@@ -10,6 +10,7 @@
     <div class="card" id="pub-{{ r.post_id }}">
       <div class="meta">
         <strong>{{ r.account }}/{{ r.platform }}</strong>
+        {% if r.state != 'queued' %}<span class="badge">{{ r.state }}</span>{% endif %}
         {% if r.due %}<span class="badge">DUE</span>{% else %}<span class="muted">scheduled {{ r.scheduled_time }}</span>{% endif %}
         <span class="muted">· {{ r.post_id }}</span>
       </div>

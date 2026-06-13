@@ -27,9 +27,25 @@ def test_flags_not_due(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, when="2099-01-01T00:00:00Z")
     assert views.publish_queue(cfg, now=_NOW)[0]["due"] is False
 
-def test_excludes_non_queued(tmp_path):
+def test_excludes_terminal_published(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, state=PostState.published)
     assert views.publish_queue(cfg, now=_NOW) == []
+
+def test_lists_manually_resolvable_states(tmp_path):
+    # ecc holistic audit GAP 1: the Publish tab must surface every state mark_published accepts
+    # (failed/error/needs_reconcile), not only queued — else those posts are a UI dead end.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for st in (PostState.queued, PostState.failed, PostState.error, PostState.needs_reconcile):
+        led.add_post(Post(id=f"p_{st.value}", parent_id="c1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=st,
+                          scheduled_time="2020-01-01T00:00:00Z"))
+    led.save()
+    assert {r["post_id"] for r in views.publish_queue(cfg, now=_NOW)} == {
+        "p_queued", "p_failed", "p_error", "p_needs_reconcile"}
+
+def test_queue_row_carries_state(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, state=PostState.failed)
+    assert views.publish_queue(cfg, now=_NOW)[0]["state"] == "failed"
 
 
 # ---- actions.mark_published ----

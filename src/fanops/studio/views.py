@@ -278,6 +278,11 @@ def review_candidates(cfg: Config) -> list[dict]:
     return [{"eid": p.stem} for p in sorted(d.glob("*.jpg"))]
 
 
+# States the manual Publish tab surfaces — the by-hand-postable subset of actions._POSTABLE
+# (queued is the norm; failed/error/needs_reconcile are recoverable posts the operator posts by hand).
+# submitting/submitted are in-flight on a live backend, not a manual worklist item.
+_MANUAL_QUEUE = {PostState.queued, PostState.needs_reconcile, PostState.failed, PostState.error}
+
 def publish_queue(cfg: Config, *, now: Optional[datetime] = None) -> list[dict]:
     """Track B (manual / zero-dependency publishing): the worklist of `queued` posts the operator
     posts BY HAND. Each row carries the surface, caption, and the post id (Studio serves the clip at
@@ -287,7 +292,7 @@ def publish_queue(cfg: Config, *, now: Optional[datetime] = None) -> list[dict]:
     led = Ledger.load(cfg)
     rows = []
     for p in led.posts.values():
-        if p.state is not PostState.queued:
+        if p.state not in _MANUAL_QUEUE:                 # every state mark_published accepts by hand
             continue
         due = False
         if p.scheduled_time:
@@ -296,7 +301,7 @@ def publish_queue(cfg: Config, *, now: Optional[datetime] = None) -> list[dict]:
             except Exception:
                 due = False
         rows.append({"post_id": p.id, "clip_id": p.parent_id, "account": p.account,
-                     "platform": p.platform.value, "caption": p.caption,
+                     "platform": p.platform.value, "caption": p.caption, "state": p.state.value,
                      "scheduled_time": p.scheduled_time, "due": due})
     # due-first; within a bucket by schedule. "9999" sentinel (not "") so a None/unscheduled post
     # sorts LAST, not as if it were the most urgent (ecc:python-review).

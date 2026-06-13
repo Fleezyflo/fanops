@@ -11,7 +11,7 @@ from typing import Optional
 from pydantic import ValidationError
 
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError, reason
+from fanops.errors import AuthError, reason
 from fanops.ledger import Ledger
 from fanops.models import CaptionSet, MomentDecision, PostState
 from fanops.timeutil import parse_iso, iso_z
@@ -154,10 +154,12 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     bt = base_time or iso_z(_now(None))
     try:
         summary = advance(cfg, base_time=bt)
-    except BlotatoAuthError as exc:
+    except AuthError as exc:
         # F52 parity: a bad/missing key fails EVERY post — advance's own transaction already rolled
         # back (it saves only on clean exit), but surface the FATAL severity, not a soft "failed".
-        return ActionResult(ok=False, error=f"FATAL auth failure — check BLOTATO_API_KEY: {str(exc)[:160]}")
+        # Name the right key per backend (ecc holistic audit GAP 2 — was Blotato-only).
+        key = "POSTIZ_API_KEY" if cfg.poster_backend == "postiz" else "BLOTATO_API_KEY"
+        return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
     except Exception as exc:
         return ActionResult(ok=False, error=f"advance failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail=summary)

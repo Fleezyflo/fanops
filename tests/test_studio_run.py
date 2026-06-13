@@ -57,6 +57,17 @@ def test_run_advance_blocks_on_invalid_accounts(tmp_path):
     assert not res.ok and "account" in (res.error or "").lower()
 
 
+def test_run_advance_postiz_auth_names_postiz_key(tmp_path, monkeypatch):
+    # ecc holistic audit GAP 2: a PostizAuthError on a postiz backend must surface FATAL + POSTIZ_API_KEY,
+    # not degrade to a generic "advance failed" via the BlotatoAuthError-only arm.
+    from fanops.errors import PostizAuthError
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    def boom(c, *, base_time): raise PostizAuthError("Postiz 401 (body withheld)")
+    monkeypatch.setattr("fanops.pipeline.advance", boom)
+    res = actions.run_advance(Config(root=tmp_path), confirmed=True)
+    assert not res.ok and "FATAL" in res.error and "POSTIZ_API_KEY" in res.error
+
 def test_run_advance_surfaces_fatal_auth(tmp_path, monkeypatch):
     # ecc:python-review HIGH: a fatal BlotatoAuthError (bad key) must surface as FATAL, not be demoted
     # to a soft "advance failed" by the broad except. advance's own txn already rolled back.
