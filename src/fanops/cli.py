@@ -104,6 +104,24 @@ def cmd_amplify_variants(cfg: Config) -> int:
     print(f"variant-amplify: {max(0, after - before)} source(s) amplified")
     return 0
 
+def cmd_doctor(cfg: Config) -> int:
+    # Read-only first-run health screen (Phase 3b). Prints PASS/FAIL per setup gate + notes; exits 1
+    # if any check fails (setup incomplete), else 0. Performs nothing — pure diagnosis + pointers.
+    from fanops.doctor import doctor_report
+    rep = doctor_report(cfg)
+    print("fanops doctor")
+    failed = 0
+    for c in rep["checks"]:
+        mark = "PASS" if c["ok"] else "FAIL"
+        line = f"  [{mark}] {c['label']}"
+        if not c["ok"]:
+            failed += 1
+            line += f"  -> {c['hint']}"
+        print(line)
+    for n in rep["notes"]:
+        print(f"  - {n}")
+    return 1 if failed else 0
+
 def cmd_cutover(cfg: Config, args) -> int:
     # The live-cutover validation harness (Phase 1). Lazy-import so the rest of the CLI never pays for
     # it and there's no import cycle. Each action prints its result as JSON and returns 0; a refusal/
@@ -162,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
     p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
     sub.add_parser("intake")
+    sub.add_parser("doctor", help="read-only first-run health screen (toolchain/accounts/key/go-live readiness)")
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
     p_studio.add_argument("--port", type=int, default=8787)
@@ -330,6 +349,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
+    if args.cmd == "doctor":   return cmd_doctor(cfg)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
     if args.cmd == "resolve":
         # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve

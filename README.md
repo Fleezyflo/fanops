@@ -208,6 +208,7 @@ no progress, so the human knows to check the key, not the cron.
 | `fanops retry-metrics <post_id>` | re-pull metrics for a `published` post on the next `track` pass (no-op flip; exits 2 if the post isn't published) |
 | `fanops digest` | rewrite the human-readable ledger digest (incl. a `## Pending agent gates` section naming each unanswered gate by kind+key) |
 | `fanops run [--base-time T]` | unattended: respond + advance until stable, then a live-only `track`+`adjust` learning pass (and, if `FANOPS_VARIANT_AMPLIFY=1`, a separately-guarded variant-amplify pass); emits a heartbeat line every run |
+| `fanops doctor` | read-only first-run health screen: PASS/FAIL per setup gate (toolchain, `accounts.json`, poster+key, `claude` when `FANOPS_RESPONDER=llm`) + notes (go-live/learning-validation state, review-queue depth). Diagnoses + points; performs nothing |
 | `fanops cutover <auth\|post\|metrics\|lift>` | the **go-live validation harness** — the one safe, reversible path to prove the pipeline against REAL Blotato (see *Going live* below). Never reachable from `run`/`advance`; writes only `00_control/cutover.json`, never the ledger |
 
 The four **recovery verbs** (`resolve`, `unhold`, `retry-source`, `retry-metrics`) are the
