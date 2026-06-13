@@ -49,6 +49,35 @@ def _media_path_for_post(led: Ledger, post_id: str):
     return candidate
 
 
+def _parse_gate_form(kind: str, form) -> dict:
+    """Map the Gates-tab form into answer_gate's data shape. Values stay strings — Pydantic coerces
+    and validates (a non-numeric timestamp surfaces as a clean ActionResult error, never a 500)."""
+    if kind == "captions":
+        items = []
+        for k in form:
+            if not k.startswith("caption__"):
+                continue
+            surface = k[len("caption__"):]
+            cap = (form.get(k) or "").strip()
+            if not cap:
+                continue                            # an empty surface caption is simply not submitted
+            item = {"surface": surface, "caption": cap}
+            for fld in ("language", "hook"):
+                v = (form.get(f"{fld}__{surface}") or "").strip()
+                if v:
+                    item[fld] = v
+            items.append(item)
+        return {"items": items}
+    if kind == "moments":
+        picks = []
+        for s, e, r in zip(form.getlist("pick_start"), form.getlist("pick_end"), form.getlist("pick_reason")):
+            if not (s or e or r):
+                continue                            # skip blank rows
+            picks.append({"start": s, "end": e, "reason": r})
+        return {"picks": picks}
+    return {}
+
+
 def create_app(cfg: Config) -> Flask:
     app = Flask(__name__, template_folder=str(_HERE / "templates"), static_folder=str(_HERE / "static"))
 
@@ -74,6 +103,17 @@ def create_app(cfg: Config) -> Flask:
         led = Ledger.load(cfg)
         view = views.lift_rows(led, cfg, Accounts.load(cfg))
         return render_template("lift.html", view=view, tab="lift")
+
+    @app.get("/gates")
+    def gates():
+        # Phase 3a: the moment/caption agent gates — the actual product decisions — answerable from
+        # the browser instead of hand-editing 04_agent_io JSON. Lock-free read like the other tabs.
+        return render_template("gates.html", rows=views.gate_rows(cfg), tab="gates")
+
+    @app.post("/gates/answer/<kind>/<key>")
+    def do_answer_gate(kind, key):
+        result = actions.answer_gate(cfg, kind, key, _parse_gate_form(kind, request.form))
+        return render_template("_result.html", result=result)
 
     @app.get("/media/<post_id>")
     def media(post_id):

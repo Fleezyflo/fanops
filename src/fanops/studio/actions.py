@@ -8,13 +8,17 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from pydantic import ValidationError
+
 from fanops.config import Config
+from fanops.errors import reason
 from fanops.ledger import Ledger
-from fanops.models import PostState
+from fanops.models import CaptionSet, MomentDecision, PostState
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
 
 SNOOZE_DAYS = 365
+_GATE_MODELS = {"moments": MomentDecision, "captions": CaptionSet}
 
 
 @dataclass
@@ -71,6 +75,30 @@ def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datet
             return ActionResult(ok=False, error=err)
         p.caption = caption
     return ActionResult(ok=True, detail={"post_id": post_id, "caption": caption})
+
+
+def answer_gate(cfg: Config, kind: str, key: str, data: dict) -> ActionResult:
+    """Answer a moment/caption agent gate from the browser through the SAME validated contract the
+    responder uses (Phase 3a): echo the latest request_id, validate the FULL response against its
+    Pydantic model, and write response.json ONLY if valid — a bad answer never lands, so the gate
+    stays pending (the operator can retry). No Ledger lock: gate files live under 04_agent_io, not
+    the ledger; read_response's request_id staleness check is the safety net, not a lock."""
+    from fanops.agentstep import latest_request_id, response_path
+    model = _GATE_MODELS.get(kind)
+    if model is None:
+        return ActionResult(ok=False, error=f"unknown gate kind: {kind!r}")
+    rid = latest_request_id(cfg, kind, key)
+    if rid is None:
+        return ActionResult(ok=False, error=f"no pending {kind} gate for {key!r}")
+    full = {"request_id": rid, **data}
+    if kind == "moments":
+        full["source_id"] = key                    # MomentDecision echoes the source it decides
+    try:
+        validated = model(**full)
+    except ValidationError as exc:
+        return ActionResult(ok=False, error=reason(exc))
+    response_path(cfg, kind, key).write_text(validated.model_dump_json(indent=2))
+    return ActionResult(ok=True, detail={"kind": kind, "key": key})
 
 
 def snooze_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:

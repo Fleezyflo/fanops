@@ -1,6 +1,5 @@
 # tests/test_studio_gates.py — Phase 3a: answer the moment/caption agent gates from Studio,
 # through the SAME validated Pydantic + agent-IO contract the responder uses (no new write path).
-import pytest
 from fanops.config import Config
 from fanops.agentstep import write_request, pending, read_response
 from fanops.models import MomentDecision, CaptionSet

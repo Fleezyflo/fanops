@@ -1,6 +1,7 @@
 """Pure read-model builders for the Studio (no HTTP, no Flask). Each request re-loads the ledger
 (lock-free) and assembles these dataclasses; templates render them. Mutations live in actions.py."""
 from __future__ import annotations
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -263,3 +264,20 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
     return LiftView(variant_rows=variant_rows, variant_empty_reason=variant_empty_reason,
                     amplify_present=amplify_present, amplify_rows=amplify_rows,
                     amplify_empty_reason=amplify_empty_reason)
+
+
+def gate_rows(cfg: Config) -> list[dict]:
+    """Lock-free read-model for the Gates tab (Phase 3a): every PENDING moment/caption agent gate
+    with the request context the operator needs to answer it (transcript/signals for moments, the
+    surface list for captions). Same enumeration `fanops respond` uses, surfaced for the browser.
+    A torn/unreadable request file is skipped (fail-open) rather than 500-ing the tab."""
+    from fanops.agentstep import pending, request_path
+    rows: list[dict] = []
+    for kind in ("moments", "captions"):
+        for key in pending(cfg, kind=kind):
+            try:
+                payload = json.loads(request_path(cfg, kind, key).read_text())
+            except Exception:
+                payload = {}
+            rows.append({"kind": kind, "key": key, **payload})
+    return rows

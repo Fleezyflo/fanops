@@ -1,0 +1,68 @@
+{# src/fanops/studio/templates/gates.html — Phase 3a: answer the moment/caption agent gates #}
+{% extends "base.html" %}
+{% block title %}Gates{% endblock %}
+{% block body %}
+  <h2>Agent gates</h2>
+  <p class="muted">The two decisions only judgment can make: which moments to clip, and what each
+    surface's caption is. Answering here writes the same validated response <code>fanops respond</code>
+    would — then run <code>fanops advance</code> to apply it.</p>
+
+  {% set moments = rows | selectattr('kind','equalto','moments') | list %}
+  {% set captions = rows | selectattr('kind','equalto','captions') | list %}
+
+  {% if captions %}
+    <h3>Captions ({{ captions | length }})</h3>
+    {% for g in captions %}
+      <div class="card">
+        <strong>clip {{ g.key }}</strong>
+        {% if g.transcript_excerpt %}<p class="muted">“{{ g.transcript_excerpt }}”
+          {% if g.language %}<em>({{ g.language }})</em>{% endif %}</p>{% endif %}
+        {% if g.guidance %}<p class="muted">guidance: {{ g.guidance }}</p>{% endif %}
+        <form hx-post="{{ url_for('do_answer_gate', kind='captions', key=g.key) }}"
+              hx-target="#result-{{ g.key }}" hx-swap="innerHTML">
+          {% for s in g.surfaces %}
+            <fieldset>
+              <legend>{{ s.surface }} <em>({{ s.platform }})</em></legend>
+              <textarea name="caption__{{ s.surface }}" rows="2" placeholder="caption" required></textarea>
+              <input name="hook__{{ s.surface }}" placeholder="on-screen hook (optional)">
+              <input name="language__{{ s.surface }}" placeholder="lang (e.g. en, ar)" value="{{ g.language or '' }}">
+            </fieldset>
+          {% endfor %}
+          <button type="submit">Answer captions</button>
+        </form>
+        <div id="result-{{ g.key }}"></div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% if moments %}
+    <h3>Moments ({{ moments | length }})</h3>
+    {% for g in moments %}
+      <div class="card">
+        <strong>source {{ g.key }}</strong>
+        <span class="muted">duration {{ '%.1f'|format(g.duration or 0.0) }}s{% if g.language %}, {{ g.language }}{% endif %}</span>
+        {% if g.transcript %}
+          <details><summary>transcript ({{ g.transcript | length }} segments)</summary>
+            <ol class="transcript">{% for seg in g.transcript %}<li>
+              <span class="muted">{{ '%.1f'|format(seg.start or 0.0) }}–{{ '%.1f'|format(seg.end or 0.0) }}</span>
+              {{ seg.text or '' }}</li>{% endfor %}</ol>
+          </details>
+        {% endif %}
+        <form hx-post="{{ url_for('do_answer_gate', kind='moments', key=g.key) }}"
+              hx-target="#result-{{ g.key }}" hx-swap="innerHTML">
+          {% for i in range(5) %}
+            <div class="pick-row">
+              <input name="pick_start" placeholder="start s" size="6">
+              <input name="pick_end" placeholder="end s" size="6">
+              <input name="pick_reason" placeholder="why this moment is worth posting">
+            </div>
+          {% endfor %}
+          <button type="submit">Answer moments</button>
+        </form>
+        <div id="result-{{ g.key }}"></div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% if not rows %}<div class="empty">No pending gates. Run <code>fanops advance</code> to produce some.</div>{% endif %}
+{% endblock %}
