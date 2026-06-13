@@ -1,0 +1,213 @@
+"""`fanops daemon` — durable unattended run via a macOS launchd LaunchAgent. Packages the existing
+one-shot `fanops run` so it survives terminal/SSH/session death and restarts after a crash, WITHOUT
+touching the pipeline or run loop (docs/GOLIVE.md calls `fanops run` "the cron/launchd entry point").
+
+Two non-negotiable launchd gotchas drive the design:
+  1. launchd's default cwd is `/`; combined with `Config(root=Path.cwd())` it would build a fresh
+     empty MohFlow-FanOps/ workspace at `/`. WorkingDirectory in the plist is therefore cfg.ROOT.
+  2. launchd jobs get a bare PATH (/usr/bin:/bin:...) and source NO shell profile — ffmpeg/whisper/
+     claude/the venv `fanops` are all off it. The wrapper + plist bake in a full PATH derived at
+     install time (`shutil.which` parents) so the background run finds its binaries.
+
+macOS-only by intent (operator is on darwin). install/stop raise a clean RuntimeError off-darwin
+rather than silently no-op'ing; a systemd --user sibling is the natural follow-up (the platform
+guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
+ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
+from __future__ import annotations
+import os, plistlib, re, shutil, subprocess, sys
+from datetime import datetime, timezone
+from pathlib import Path
+from fanops.config import Config
+from fanops.errors import ToolchainMissingError
+
+LABEL = "com.fanops.run"
+_LAUNCHCTL_TIMEOUT = 30.0
+_MIN_INTERVAL = 60                                    # launchd ThrottleInterval floor — sub-minute is meaningless
+
+
+# ── pure path + render helpers (no side effects) ─────────────────────────────────────────────
+
+def plist_path() -> Path:
+    return Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
+
+def wrapper_path(cfg: Config) -> Path:
+    return cfg.control / "fanops-run.sh"             # inside the workspace (00_control), beside the ledger
+
+def _fanops_bin() -> str:
+    # The `fanops` next to the running interpreter — so the daemon uses the SAME venv that installed it,
+    # never a different one earlier on PATH.
+    return str(Path(sys.executable).parent / "fanops")
+
+def _daemon_path() -> str:
+    """Full PATH to bake into the wrapper + plist (launchd gives a bare one). Order: venv bin, the node
+    bin holding `claude` (derived now), homebrew (ffmpeg/whisper), then the system defaults. De-duped,
+    absolute — nothing depends on a sourced shell profile at fire time."""
+    parts = [str(Path(sys.executable).parent)]
+    claude = shutil.which("claude")
+    if claude:
+        parts.append(str(Path(claude).parent))
+    parts += ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    seen: set[str] = set(); out: list[str] = []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p); out.append(p)
+    return ":".join(out)
+
+def render_wrapper(cfg: Config, *, responder: str, interval: int) -> str:
+    """The `#!/bin/bash` script launchd execs. One-shot: `exec fanops run` with a FRESH now as
+    --base-time each fire (the default base-time is a fixed past date — a daemon must advance it)."""
+    return (
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        f"# launchd reruns this wrapper every {interval}s (StartInterval); each run is one-shot.\n"
+        f'export PATH="{_daemon_path()}"\n'
+        f'export FANOPS_RESPONDER="{responder}"\n'
+        f'cd "{cfg.root}"\n'
+        f'exec "{_fanops_bin()}" run --base-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)"\n'
+    )
+
+def render_plist(cfg: Config, *, interval: int) -> str:
+    """The LaunchAgent plist. WorkingDirectory=cfg.root (gotcha 1); EnvironmentVariables carries the
+    full PATH+HOME (gotcha 2). RunAtLoad fires once on load; StartInterval reruns every `interval`s;
+    ThrottleInterval floors restart cadence at 60s. plistlib produces valid, properly-escaped XML."""
+    path = _daemon_path()
+    pl = {
+        "Label": LABEL,
+        "ProgramArguments": ["/bin/bash", str(wrapper_path(cfg))],
+        "StartInterval": interval,
+        "RunAtLoad": True,
+        "WorkingDirectory": str(cfg.root),
+        "StandardOutPath": str(cfg.reports / "daemon.out"),
+        "StandardErrorPath": str(cfg.reports / "daemon.err"),
+        "ThrottleInterval": _MIN_INTERVAL,
+        "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
+    }
+    return plistlib.dumps(pl).decode()
+
+def parse_interval(raw: str) -> int:
+    """'10m'->600, '90s'->90, '2h'->7200, bare '600'->600. Rejects < 60s with a clean ValueError
+    (the ThrottleInterval floor) rather than a silent clamp, so a typo'd cadence fails loudly."""
+    raw = raw.strip().lower()
+    units = {"s": 1, "m": 60, "h": 3600}
+    secs = int(raw[:-1]) * units[raw[-1]] if raw and raw[-1] in units else int(raw)
+    if secs < _MIN_INTERVAL:
+        raise ValueError(f"interval must be >= {_MIN_INTERVAL}s (launchd ThrottleInterval floor), got {raw!r}")
+    return secs
+
+def installed_interval(cfg: Config) -> int | None:
+    """Read StartInterval back from the on-disk plist so `status` judges staleness against the REAL
+    cadence, not a default. None if no plist / unreadable."""
+    p = plist_path()
+    if not p.exists():
+        return None
+    try:
+        return int(plistlib.loads(p.read_bytes()).get("StartInterval"))
+    except Exception:
+        return None
+
+
+# ── launchctl wrapper (mirror of ingest._run_ffprobe) ────────────────────────────────────────
+
+def _launchctl(*args: str) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=_LAUNCHCTL_TIMEOUT)
+    except (FileNotFoundError, OSError) as e:
+        raise ToolchainMissingError("launchctl not found on PATH — `fanops daemon` is macOS-only (launchd)") from e
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(["launchctl", *args], returncode=124, stdout="", stderr="launchctl timed out")
+
+def _grep_int(text: str, key: str) -> int | None:
+    # launchctl list <label> prints a plist-style dump: `"PID" = 4321;`. Pull the int, None if absent.
+    m = re.search(rf'"{key}"\s*=\s*(-?\d+)', text)
+    return int(m.group(1)) if m else None
+
+def _require_darwin() -> None:
+    if sys.platform != "darwin":
+        raise RuntimeError("fanops daemon is macOS-only (launchd); no systemd --user port yet")
+
+
+# ── side-effecting verbs ─────────────────────────────────────────────────────────────────────
+
+def install(cfg: Config, *, interval: int, responder: str) -> dict:
+    """Write the wrapper (chmod 0755) + plist, then load via launchctl. Idempotent: bootout any
+    prior copy first (ignore its rc), then bootstrap; fall back to `load -w` on older macOS."""
+    _require_darwin()
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    wp, pp = wrapper_path(cfg), plist_path()
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    wp.write_text(render_wrapper(cfg, responder=responder, interval=interval)); wp.chmod(0o755)
+    pp.write_text(render_plist(cfg, interval=interval))
+    uid = os.getuid()
+    _launchctl("bootout", f"gui/{uid}/{LABEL}")          # idempotent reinstall; not-loaded -> rc!=0, ignored
+    r = _launchctl("bootstrap", f"gui/{uid}", str(pp))   # modern (macOS 11+)
+    if r.returncode != 0:
+        r = _launchctl("load", "-w", str(pp))            # fallback for older / edge-case macOS
+    return {"plist": str(pp), "wrapper": str(wp), "interval": interval, "loaded": r.returncode == 0}
+
+def status(cfg: Config, *, interval: int = 600) -> dict:
+    """Read-only liveness: is the agent loaded (launchctl list) AND actually firing (heartbeat fresh)?
+    `interval` is the installed cadence — alive iff the last heartbeat is younger than 3 intervals."""
+    r = _launchctl("list", LABEL)
+    loaded = r.returncode == 0
+    pid = _grep_int(r.stdout, "PID") if loaded else None
+    last_exit = _grep_int(r.stdout, "LastExitStatus") if loaded else None
+    age = _heartbeat_age_s(cfg)
+    if not loaded:
+        verdict = "not installed"
+    elif age is None:
+        verdict = "loaded but no heartbeat yet"
+    elif age < 3 * interval:
+        verdict = "alive"
+    else:
+        verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
+    return {"loaded": loaded, "pid": pid, "last_exit": last_exit, "heartbeat_age_s": age, "verdict": verdict}
+
+def stop(cfg: Config, *, remove: bool = False) -> dict:
+    """Unload the agent. Idempotent: booting out an already-stopped label returns rc!=0 — that is
+    'already stopped', not an error. Leaves the plist/wrapper on disk unless remove=True."""
+    _require_darwin()
+    uid = os.getuid()
+    r = _launchctl("bootout", f"gui/{uid}/{LABEL}")
+    if r.returncode != 0:
+        _launchctl("unload", "-w", str(plist_path()))    # fallback; rc ignored (already-stopped is fine)
+    out = {"label": LABEL, "plist": str(plist_path()), "wrapper": str(wrapper_path(cfg)), "stopped": True}
+    if remove:
+        for f in (plist_path(), wrapper_path(cfg)):
+            try: f.unlink()
+            except OSError: pass
+        out["removed"] = True
+    return out
+
+def tail_logs(cfg: Config, n: int = 40) -> str:
+    p = cfg.log_path
+    if not p.exists():
+        return "no logs yet"
+    return "\n".join(p.read_text().splitlines()[-n:])
+
+
+# ── internals ────────────────────────────────────────────────────────────────────────────────
+
+def _heartbeat_age_s(cfg: Config) -> float | None:
+    """Age in seconds of the last heartbeat line in run.log, or None if no log / no heartbeat / a
+    short or unparseable file. Depends ONLY on the line's leading ISO timestamp column (log.py:14),
+    never on the kv tail — so logger internals can change without breaking liveness."""
+    p = cfg.log_path
+    if not p.exists():
+        return None
+    try:
+        last = None
+        for line in p.read_text().splitlines():
+            if "\theartbeat\t" in line:
+                last = line
+    except OSError:
+        return None
+    if last is None:
+        return None
+    try:
+        ts = datetime.fromisoformat(last.split("\t", 1)[0])
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds()

@@ -20,6 +20,7 @@ from fanops.track import pull_metrics, _default_list_posts
 from fanops.reconcile import reconcile_posts, _default_get_status, _RECONCILABLE
 from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
+from fanops import daemon
 from fanops.log import get_logger
 
 def cmd_status(cfg: Config) -> int:
@@ -166,6 +167,40 @@ def cmd_gc(cfg: Config, keep_days: int) -> int:
     print(f"gc removed {removed} clip files older than {keep_days}d")
     return 0
 
+def cmd_daemon(cfg: Config, args) -> int:
+    # Durable-unattended-run verb family (launchd packaging of `fanops run`). Thin: parse the interval,
+    # delegate to daemon.{install,status,stop,tail_logs}, print a report. macOS-only / launchctl-absent
+    # / bad-interval all degrade to one clean stderr line + exit 2 (the cli ladder posture), never a trace.
+    act = args.dae_cmd
+    try:
+        if act == "install":
+            interval = daemon.parse_interval(args.interval)
+            res = daemon.install(cfg, interval=interval, responder=args.responder)
+            print(f"daemon installed -> {res['plist']}")
+            print(f"  wrapper {res['wrapper']}  |  interval {interval}s  |  loaded {res['loaded']}  |  responder {args.responder}")
+            print("  next: fanops daemon status   |   stop: fanops daemon stop")
+            return 0
+        if act == "status":
+            rep = daemon.status(cfg, interval=daemon.installed_interval(cfg) or 600)
+            age = rep["heartbeat_age_s"]
+            print(f"fanops daemon ({daemon.LABEL})")
+            print(f"  loaded {rep['loaded']}  |  pid {rep['pid']}  |  last_exit {rep['last_exit']}"
+                  f"  |  heartbeat {'none' if age is None else f'{int(age)}s ago'}")
+            print(f"  -> {rep['verdict']}")
+            return 0
+        if act == "stop":
+            res = daemon.stop(cfg, remove=args.remove)
+            print(f"daemon stopped (label {res['label']})" + ("  + plist/wrapper removed" if res.get("removed") else ""))
+            return 0
+        if act == "logs":
+            print(daemon.tail_logs(cfg, args.n))
+            return 0
+        return 2
+    except (RuntimeError, ToolchainMissingError, ValueError) as e:
+        # non-darwin (RuntimeError), launchctl absent (ToolchainMissingError), bad --interval (ValueError)
+        print(f"daemon: {e}", file=sys.stderr)
+        return 2
+
 def _http_url(s: str) -> str:
     """argparse type for `pull url` (stage-4 audit): the url is handed to yt-dlp verbatim, so
     validate the scheme at the boundary — file:///generic schemes and flag-lookalike args
@@ -209,6 +244,13 @@ def main(argv: list[str] | None = None) -> int:
     p_clift = cut_sub.add_parser("lift", help="step 4: compute one real lift_score from the captured row")
     p_clift.add_argument("submission_id")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
+    p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
+    dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
+    p_dins = dae_sub.add_parser("install", help="install + load the launchd agent (macOS)")
+    p_dins.add_argument("--interval", default="10m"); p_dins.add_argument("--responder", default="llm", choices=["llm", "manual"])
+    dae_sub.add_parser("status", help="is the agent loaded + actually firing (heartbeat)?")
+    p_dstop = dae_sub.add_parser("stop", help="unload the launchd agent"); p_dstop.add_argument("--remove", action="store_true")
+    p_dlog = dae_sub.add_parser("logs", help="tail the run log"); p_dlog.add_argument("-n", type=int, default=40)
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
 
@@ -372,6 +414,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
     if args.cmd == "doctor":   return cmd_doctor(cfg)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
+    if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
     if args.cmd == "resolve":
         # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve
