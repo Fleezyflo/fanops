@@ -153,8 +153,8 @@ halts the loop instead of burning the queue.
 `run` runs one `track → adjust` pass (`pull_metrics → classify_outcomes → amplify → retire`)
 in its own lock-safe `Ledger.transaction`, so an unattended deployment makes more of what
 works without a separate `track`/`adjust` cron. It is **guarded to live backends + a key** by
-the exact reconcile guard (`cfg.poster_backend != "dryrun" and cfg.blotato_api_key`): in the
-default **dryrun** backend the pass is **never entered** (no metrics fetch, no amplify), so the
+the same reconcile guard (`cfg.is_live_backend` — a live `FANOPS_POSTER` *and* a `BLOTATO_API_KEY`):
+in the default **dryrun** backend the pass is **never entered** (no metrics fetch, no amplify), so the
 offline pipeline is unchanged. Any hiccup in the pass is logged (`learn error`) and swallowed —
 it can never crash the unattended run (exit stays 0). Amplification is bounded per source (see
 *The feedback loop* → the `max_amplify_per_source` budget) so the autonomous responder can't grow
@@ -192,7 +192,7 @@ no progress, so the human knows to check the key, not the cron.
 |---|---|
 | `fanops status` | counts (sources/moments/clips/posts/published/failed/needs_reconcile) + pending gates + backend |
 | `fanops ingest` | catalogue new drops in `01_inbox` (SHA-256 identity, PII filename exclusion) |
-| `fanops pull <url>` | yt-dlp a URL into the inbox, then ingest |
+| `fanops pull <url>` | yt-dlp a URL into the inbox, then ingest (URL must be `http(s)://` — validated up front, exits 2 otherwise) |
 | `fanops discover <folder>` | pre-ingest: scan a folder for media (PII-name excluded) → a thumbnail + cheap metadata per candidate into `00_review/`; **no transcription/LLM**, dedups vs the ledger (unknown folder ⇒ exit 2) |
 | `fanops intake` | copy only the keepers you moved into `00_review/approved/` (in Finder) on into `01_inbox/`; idempotent + missing-safe |
 | `fanops advance [--base-time T]` | run the DAG to the next gate / completion |

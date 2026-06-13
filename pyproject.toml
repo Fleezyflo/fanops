@@ -1,6 +1,6 @@
 [project]
 name = "fanops"
-version = "0.2.0"
+version = "0.3.0"
 description = "MOH FLOW FAN OPS — intelligent clip + cross-post engine"
 requires-python = ">=3.12,<3.14"
 dependencies = ["pydantic>=2.7", "requests>=2.31", "python-dotenv>=1.0", "yt-dlp>=2024.0"]
