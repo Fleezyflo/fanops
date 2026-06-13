@@ -117,7 +117,8 @@ def intake(cfg: Config) -> dict:
         if eid in done:
             continue                              # idempotent: already intaken
         info = manifest.get(eid)
-        src = Path(info["source_path"]) if info else None
+        sp = info.get("source_path") if info else None    # key-less entry (hand-edit/drift) -> missing, not KeyError
+        src = Path(sp) if sp else None
         if src is None or not src.exists():
             missing += 1
             continue                              # stale/unknown entry — report, don't crash

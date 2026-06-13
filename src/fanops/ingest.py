@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
 from fanops.ids import make_id
-from fanops.errors import ToolchainMissingError
+from fanops.errors import ToolchainMissingError, DownloadError
 
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi",
              ".jpg", ".jpeg", ".png", ".heic", ".mp3", ".wav", ".m4a"}
@@ -120,12 +120,20 @@ def download_url(cfg: Config, url: str) -> None:
     ingest (not in MEDIA_EXT), so a killed download never catalogues a truncated source."""
     cfg.inbox.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(["yt-dlp", "-o", str(cfg.inbox / "%(title).80s.%(ext)s"),
-                        "--no-playlist", "--merge-output-format", "mp4", url],
-                       check=False, capture_output=True, text=True, timeout=_YTDLP_TIMEOUT)
+        r = subprocess.run(["yt-dlp", "-o", str(cfg.inbox / "%(title).80s.%(ext)s"),
+                            "--no-playlist", "--merge-output-format", "mp4", url],
+                           check=False, capture_output=True, text=True, timeout=_YTDLP_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
         raise ToolchainMissingError(
             f"yt-dlp not found on PATH — install yt-dlp to pull from a URL ({type(e).__name__})") from e
+    if r.returncode != 0:
+        # yt-dlp RAN but failed (dead/geoblocked URL, format gone). check=False only covers the
+        # binary-absent case above; without this the rc+stderr were discarded and `pull` silently
+        # ingested nothing, printing "pulled -> 0 sources" as success (audit silent-failure). Surface
+        # the typed DownloadError with the stderr tail -> cli.main: one clean line + exit 2.
+        tail = (r.stderr or r.stdout or "").strip().splitlines()
+        why = tail[-1][:200] if tail else f"exit {r.returncode}"
+        raise DownloadError(f"yt-dlp failed (exit {r.returncode}): {why}")
 
 
 def download_source(led: Ledger, cfg: Config, url: str) -> Ledger:

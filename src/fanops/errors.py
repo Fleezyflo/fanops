@@ -37,6 +37,15 @@ class ToolchainMissingError(Exception):
     instead of raising would be WORSE (it silently drops a real video and never retries)."""
 
 
+class DownloadError(Exception):
+    """yt-dlp RAN but exited non-zero (dead/geoblocked/format-gone URL, network refusal). Distinct
+    from ToolchainMissingError (binary absent from PATH) and subprocess.TimeoutExpired (hung past the
+    bound) — here the tool started, failed, and printed a reason on stderr. Raised by ingest's
+    download_url so `fanops pull` surfaces ONE operator-actionable line + exit 2 instead of silently
+    ingesting an empty inbox and reporting 'pulled -> 0 sources' as if it succeeded (the discarded
+    returncode was an audit silent-failure finding). Message carries the stderr tail, truncated."""
+
+
 def reason(exc: Exception) -> str:
     """Condense a parse/validation error into one operator-readable line.
     json.JSONDecodeError already stringifies tidily; pydantic's ValidationError is

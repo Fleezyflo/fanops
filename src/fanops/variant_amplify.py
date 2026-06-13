@@ -159,6 +159,8 @@ def apply_variant_amplify(led, cfg):
             hint = (f"Recent on-screen hooks that performed best here: '{cand['winning_hook']}'. "
                     f"Lean toward this STYLE (tone, length, angle) — do not copy verbatim.")
             amplify(led, cfg, [cand["post_id"]], extra_guidance=hint)   # the existing C1-fixed path
-    except Exception:
-        get_logger(cfg)("variant_amplify", "-", "error")
+    except Exception as e:
+        # FAIL-SAFE, not fail-silent: record WHY so a run that quietly stops amplifying is
+        # distinguishable from one with nothing to amplify (FIX F51's whole point).
+        get_logger(cfg)("variant_amplify", "-", "error", err=str(e)[:120])
     return led

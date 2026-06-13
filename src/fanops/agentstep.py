@@ -10,6 +10,7 @@ from typing import Type, TypeVar
 from pydantic import BaseModel, ValidationError
 from fanops.config import Config
 from fanops.ids import _hash
+from fanops.log import get_logger
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -30,7 +31,10 @@ def latest_request_id(cfg: Config, kind: str, key: str) -> str | None:
         return None
     try:
         return json.loads(p.read_text()).get("request_id")
-    except Exception:
+    except Exception as e:
+        # Corrupt/torn request.json: fail-closed (None) but leave ONE breadcrumb, else a stuck gate
+        # is indistinguishable from "no request yet".
+        get_logger(cfg)("agent_io", key, "corrupt_request", kind=kind, err=str(e)[:120])
         return None
 
 def write_request(cfg: Config, *, kind: str, key: str, payload: dict) -> str:
@@ -57,7 +61,10 @@ def read_response(cfg: Config, kind: str, key: str, model: Type[T]) -> T | None:
     want = latest_request_id(cfg, kind, key)
     try:
         data = json.loads(rp.read_text())
-    except Exception:
+    except Exception as e:
+        # Corrupt/torn response.json: fail-closed (None — a corrupt answer must never be applied)
+        # but log it, else it looks IDENTICAL to "still pending" and the gate silently stalls.
+        get_logger(cfg)("agent_io", key, "corrupt_response", kind=kind, err=str(e)[:120])
         return None
     if want is not None and data.get("request_id") != want:
         return None                                   # stale — ignore

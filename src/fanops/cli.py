@@ -7,7 +7,7 @@ import argparse, json, subprocess, sys
 from datetime import datetime, timezone
 import fanops
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError, ControlFileError, LockBusyError, ToolchainMissingError
+from fanops.errors import BlotatoAuthError, ControlFileError, DownloadError, LockBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState
@@ -181,6 +181,12 @@ def main(argv: list[str] | None = None) -> int:
         # exists to mark `error`) — an operator config error. One clean line ("install ffmpeg") +
         # exit 2, like ControlFileError, never a raw traceback. Downstream toolchain-absent cases
         # (render/transcribe) don't reach here — they record a retriable per-unit error state.
+        print(str(e), file=sys.stderr)
+        return 2
+    except DownloadError as e:
+        # yt-dlp ran but exited non-zero (dead/geoblocked URL) during `pull` — pre-Source, outside
+        # any quarantine. Without this the discarded rc let `pull` print "pulled -> 0 sources" as
+        # success; surface the one-line reason (stderr tail) + exit 2, like the toolchain/timeout arms.
         print(str(e), file=sys.stderr)
         return 2
     except subprocess.TimeoutExpired as e:
