@@ -294,6 +294,39 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
     return ActionResult(ok=True, detail={"post_id": post_id, "url": url})
 
 
+def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionResult:
+    """Ship ONE reviewed post IMMEDIATELY from the Studio (milestone 5: publish in the UI) via the
+    SAME poster path the pipeline uses (post.run.publish_post) — a real post on a live backend, a
+    dryrun no-op->published locally — IGNORING the post's (future) schedule, so the occasional-batch
+    operator can review then ship without waiting for the schedule or touching the CLI. Same
+    live-publish confirm + fatal-auth surfacing as run_advance; queued-only; scoped to THIS post
+    (other scheduled posts are untouched). Distinct from mark_published (Track B: 'I posted by hand')
+    — this actually drives the poster."""
+    from fanops.post.run import publish_post
+    if cfg.poster_backend != "dryrun" and not confirmed:
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): this PUBLISHES the "
+                            "post to a real account — tick the confirm box, then click again.")
+    try:
+        with Ledger.transaction(cfg) as led:
+            if post_id not in led.posts:
+                return ActionResult(ok=False, error=f"no such post: {post_id}")
+            st = led.posts[post_id].state
+            if st is not PostState.queued:
+                return ActionResult(ok=False, error=f"post {post_id} is {st.value} — only a queued post can be published")
+            led = publish_post(led, cfg, post_id, in_transaction=True)
+            state = led.posts[post_id].state.value
+    except AuthError as exc:
+        # bad/missing key fails every post — publish_post re-raises (halt); name the right key per backend.
+        key = "POSTIZ_API_KEY" if cfg.poster_backend == "postiz" else "BLOTATO_API_KEY"
+        return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
+    # ONLY 'published' is success: _submit_one advances submitted -> published on a clean poster
+    # return, so any other terminal state (failed, or a poster that stalled at submitting/submitted)
+    # means the post did NOT fully ship — report it incomplete rather than a false success.
+    if state == "published":
+        return ActionResult(ok=True, detail={"post_id": post_id, "state": state})
+    return ActionResult(ok=False, error=f"publish did not complete (post is {state}) — see the run log")
+
+
 def answer_gate(cfg: Config, kind: str, key: str, data: dict) -> ActionResult:
     """Answer a moment/caption agent gate from the browser through the SAME validated contract the
     responder uses (Phase 3a): echo the latest request_id, validate the FULL response against its
