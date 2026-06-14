@@ -346,6 +346,28 @@ def test_run_learning_pass_entered_with_live_backend_and_key(tmp_path, monkeypat
     assert rc == 0
     assert spy.call_count == 1                                # learning pass runs once when live+keyed
 
+def test_run_learning_pass_entered_with_postiz_backend_and_key(tmp_path, monkeypatch, mocker):
+    # M2 gate site #2 (the headline unfreeze): a postiz+key deployment is now live, so cmd_run's learn
+    # block fires EXACTLY ONCE on Postiz — the change that turns the loop on for the operator's real
+    # backend. Spies keep it network-free; flip the backend to dryrun and it stops (covered above).
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")            # live postiz backend
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test")          # postiz key present
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # NO blotato key — postiz is live on its own key
+    import fanops.cli as cli
+    spy = mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
+    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
+    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
+    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
+    assert rc == 0
+    assert spy.call_count == 1                                # learning pass runs once when postiz+keyed
+
 def test_run_prints_heartbeat_with_version(tmp_path, monkeypatch, capsys):
     # B5/E2: every `fanops run` must emit a heartbeat line on stdout carrying the fanops version,
     # so a monitor diffing consecutive lines can distinguish 'alive-but-idle' from 'cron is dead'.

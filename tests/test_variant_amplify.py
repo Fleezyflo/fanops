@@ -402,3 +402,33 @@ def test_ucb_flag_does_not_change_amplify_candidates(tmp_path, monkeypatch):
     on = amplify_candidates(led, cfg)
     assert off == on, "FANOPS_VARIANT_UCB must not affect amplify authorization (floor stays best_hooks)"
     assert len(off) == 1 and off[0]["winning_hook"] == "WIN"   # a REAL candidate (not two empties), still WIN
+
+
+# ---- M2 Task 5c: is_live_backend gate site #3 — variant-amplify stays FROZEN on postiz until cutover ----
+def test_apply_amplify_postiz_inert_until_metrics_confirmed(tmp_path, monkeypatch):
+    # The is_live_backend redefinition (M2) makes postiz "live", but apply_variant_amplify self-guards
+    # on learning_validated (cutover.json metrics_confirmed) — so the speculative actuator must STILL be
+    # inert on a postiz+key backend with the kill switch ON until M3's cutover confirms the lift fields.
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0)); _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    before = _frozen(led)
+    apply_variant_amplify(led, cfg)                      # no cutover.json -> inert despite full gate + live postiz
+    assert _frozen(led) == before
+    assert not request_path(cfg, "moments", "s1").exists()
+    assert "skipped_unvalidated" in cfg.log_path.read_text()
+
+def test_apply_amplify_postiz_amplifies_once_metrics_confirmed(tmp_path, monkeypatch):
+    # Symmetric: the SAME postiz-backed candidate DOES amplify once cutover writes metrics_confirmed (M3).
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0)); _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    _validate(cfg)                                       # simulate M3: metrics_confirmed=True
+    apply_variant_amplify(led, cfg)
+    assert led.sources["s1"].state is SourceState.moments_requested   # amplified once validated, even on postiz

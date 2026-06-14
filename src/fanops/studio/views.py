@@ -263,8 +263,8 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
         any_analyzed = any(p.state is PostState.analyzed for p in led.posts.values())
         if not any_analyzed:
             variant_empty_reason = ("No analyzed posts yet — a live metrics backend "
-                                    "(FANOPS_POSTER ≠ dryrun and BLOTATO_API_KEY) or fed "
-                                    "metrics is required.")
+                                    "(FANOPS_POSTER=postiz + POSTIZ_API_KEY, or rest/mcp + "
+                                    "BLOTATO_API_KEY) or fed metrics is required.")
         else:
             variant_empty_reason = ("Creative variation (FANOPS_CREATIVE_VARIATION) was off when "
                                     "these posts were crossposted — no per-variant lift.")

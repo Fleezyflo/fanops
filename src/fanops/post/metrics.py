@@ -8,10 +8,13 @@ here (a future reader of a list row's URL must use postUrl). Which METRICS field
 remains an INTEGRATION CHECKPOINT: if saves/shares/retention are unavailable, redesign lift_score
 (Task 21) on the available fields."""
 from __future__ import annotations
+from typing import Optional
+from urllib.parse import quote
 import requests
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError
+from fanops.errors import BlotatoAuthError, PostizAuthError
 from fanops.post.blotato_base import BASE_URL
+from fanops.post.postiz import _base, _key
 
 # A 401 on a metrics/status read is the SAME fatal auth condition as a 401 on publish — raise the
 # TYPED error so reconcile's halt-on-auth guard fires (else a bad key grinds every parked post) and
@@ -60,3 +63,76 @@ class BlotatoStatusClient:
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"blotato status {resp.status_code}: {resp.text[:200]}")
         return resp.json()
+
+
+# ---- Postiz metrics (M2) — the FREE backend's read client. Postiz analytics is PER-POST
+# (GET analytics/post/{id}), not bulk like Blotato, so the client takes the published submission_ids
+# and fetches each. It emits the SAME {postSubmissionId, metrics} row contract pull_metrics consumes,
+# plus an inert _raw_labels list that M3's cutover reconcile reads (so it never re-fetches). ----
+
+# documented Postiz label -> lift_score key. The optimization-target weights live in tuning.json
+# lift_weights (applied downstream by lift_score); unknown labels are DROPPED (lift_score whitelists
+# keys anyway). NB: `comments` is mapped but the default _W has no `comments` weight, so it stays a
+# present-but-unweighted candidate until the operator weights it via tuning.json — intended.
+_POSTIZ_LABEL_MAP = {"likes": "likes", "shares": "shares", "comments": "comments", "impressions": "reach"}
+
+def _window_days(window: str) -> int:
+    # "30d"->30, "7d"->7; bad/empty -> default 7 (validate-or-default posture; never crash a run).
+    try: return int(str(window).strip().rstrip("dD") or 0) or 7
+    except (TypeError, ValueError): return 7
+
+def _latest_total(series) -> Optional[float]:
+    # collapse a label's time-series [{total:str,date:str},...] to its latest `total`, coerced to num.
+    # No datable point -> None (drop the label), NOT a positional series[-1] guess: the Postiz array's
+    # order is unverified, so guessing could silently pick the OLDEST total (a wrong lift). Reconciled
+    # against a real response at M3 cutover (the integration checkpoint).
+    if not isinstance(series, list): return None
+    pts = [p for p in series if isinstance(p, dict) and p.get("date")]
+    if not pts: return None
+    latest = max(pts, key=lambda p: str(p.get("date")))
+    try: return float(latest.get("total"))
+    except (TypeError, ValueError): return None
+
+def _map_analytics(arr) -> dict:
+    # arr = the documented [{label, data:[{total,date}], percentageChange}] array. Map known labels
+    # (case-insensitive) -> lift keys; drop unknown/uncollapsible. Defensive: skip non-dict entries.
+    out: dict = {}
+    if not isinstance(arr, list): return out
+    for item in arr:
+        if not isinstance(item, dict): continue
+        key = _POSTIZ_LABEL_MAP.get(str(item.get("label", "")).strip().lower())
+        if not key: continue
+        val = _latest_total(item.get("data"))
+        if val is not None: out[key] = val
+    return out
+
+class PostizMetricsClient:
+    """Reads Postiz post analytics into the lift/learning loop. submission_ids=None -> list_posts()
+    returns [] (no network), so cmd_track/cutover callers never crash. The POSTIZ_API_KEY is sent as
+    the Authorization header and NEVER logged/echoed/returned (a 401 body is withheld — SENTINEL test)."""
+    def __init__(self, cfg: Config, *, submission_ids: Optional[list[str]] = None):
+        self.cfg = cfg; self.base = _base(cfg); self.key = _key(cfg)  # _key raises PostizAuthError if the key is missing
+        self.submission_ids = submission_ids
+
+    def _fetch_one(self, submission_id: str, date: int) -> tuple[dict, list]:
+        # returns (mapped-metrics, raw-label-strings). The raw labels ride along so M3's cutover
+        # reconcile reads row["_raw_labels"] and never does a SECOND network fetch.
+        url = f"{self.base}/public/v1/analytics/post/{quote(str(submission_id), safe='')}"  # encode the id so no path metachar can alter the request target
+        resp = requests.get(url, headers={"Authorization": self.key}, params={"date": date}, timeout=30)
+        if resp.status_code == 401:
+            raise PostizAuthError("Postiz 401 on analytics — check POSTIZ_API_KEY (response body withheld)")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"postiz analytics {resp.status_code}: {(resp.text or '')[:200]}")
+        arr = resp.json()
+        labels = [str(it.get("label", "")) for it in arr if isinstance(it, dict)] if isinstance(arr, list) else []
+        return _map_analytics(arr), labels
+
+    def list_posts(self, window: str = "30d") -> list[dict]:
+        # window like "30d" -> the analytics `date` lookback days (default 7 if unparseable).
+        # submission_ids=None -> [] (nothing to fetch; never crashes cmd_track/cutover callers).
+        if not self.submission_ids: return []
+        date = _window_days(window); rows = []
+        for sid in self.submission_ids:
+            metrics, labels = self._fetch_one(sid, date)
+            rows.append({"postSubmissionId": sid, "metrics": metrics, "_raw_labels": labels})
+        return rows

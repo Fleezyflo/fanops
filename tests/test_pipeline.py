@@ -286,3 +286,28 @@ def test_advance_halts_on_fatal_auth_error_from_crosspost(tmp_path, monkeypatch,
     mocker.patch("fanops.pipeline.crosspost_clips", side_effect=BlotatoAuthError("401 bad key"))
     with pytest.raises(BlotatoAuthError):
         advance(cfg, base_time="2026-06-02T18:00:00Z")
+
+
+# ---- M2 Task 5a: is_live_backend gate site #1 — the Blotato status reconciler stays Blotato-only ----
+def _needs_reconcile_post():
+    from fanops.models import Post, PostState, Platform
+    return Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+               caption="x", state=PostState.needs_reconcile, submission_id="sub_x")
+
+def test_advance_postiz_does_not_call_blotato_reconciler(tmp_path, monkeypatch, mocker):
+    # After is_live_backend went backend-aware, a postiz+key deployment is "live" — but Postiz has NO
+    # status API, so advance must NOT route its needs_reconcile posts into the Blotato status client.
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); led.add_post(_needs_reconcile_post()); led.save()
+    spy = mocker.patch("fanops.pipeline.reconcile_posts")
+    advance(cfg, base_time="2026-06-02T18:00:00Z")             # must not crash; reconcile not invoked for postiz
+    spy.assert_not_called()
+
+def test_advance_rest_backend_still_calls_reconciler(tmp_path, monkeypatch, mocker):
+    # Back-compat: a rest/mcp + key backend STILL reconciles its stranded posts (unchanged from pre-M2).
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); led.add_post(_needs_reconcile_post()); led.save()
+    spy = mocker.patch("fanops.pipeline.reconcile_posts", side_effect=lambda _led, _cfg: _led)
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
+    spy.assert_called_once()
