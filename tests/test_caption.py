@@ -429,3 +429,31 @@ def test_request_captions_failopen_on_ucb_error(monkeypatch, tmp_path):
     led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])  # must NOT raise
     assert request_path(cfg, "captions", "clip_1").exists()                   # written anyway
     assert led.clips["clip_1"].state is ClipState.captions_requested          # clip advanced
+
+
+# --- persona injection: the UI-set per-account fan voice must reach the caption request ----------
+# Persona exists on Account and is shown in the Studio, but was never injected into the caption
+# prompt (display-only). request_captions now carries each surface's persona into the payload so the
+# model writes in that fan voice. Absent persona stays byte-identical to the pre-persona payload.
+
+def test_request_captions_injects_persona_per_surface(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    accts = _transfer_accounts(cfg, [("@a", "hype superfan")])
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    sfc = payload["surfaces"][0]
+    assert sfc["surface"] == "@a/instagram"
+    assert sfc["persona"] == "hype superfan"
+
+def test_request_captions_no_persona_key_when_absent(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    accts = _transfer_accounts(cfg, [("@a", None)])                 # account with no persona
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "persona" not in payload["surfaces"][0]                  # None persona -> no key
+
+def test_request_captions_no_persona_key_without_accounts(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])  # no accounts arg
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "persona" not in payload["surfaces"][0]                  # backward-compatible default
