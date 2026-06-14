@@ -17,11 +17,17 @@ class AccountStatus(str, Enum):
 
 class Account(BaseModel):
     handle: str
-    account_id: str = ""                   # Blotato NUMERIC id; required when active
+    account_id: str = ""                   # shared/legacy id (Blotato numeric, or a Postiz integration);
+                                           # the FALLBACK when a platform has no per-platform id below
     platforms: list[Platform] = Field(default_factory=list)
     status: AccountStatus = AccountStatus.planned
     access: str = "blotato"                # METHOD, never a credential
     persona: Optional[str] = None
+    # Per-platform poster ids keyed by Platform.value (e.g. {"instagram": "ig_1", "tiktok": "tk_9"}).
+    # A handle's Instagram and TikTok are DIFFERENT Postiz integrations, so each (handle, platform) must
+    # resolve to its OWN id. ADDITIVE: empty on a legacy account, which then resolves via account_id —
+    # no migration. A platform absent here falls back to account_id (so a partly-mapped account works).
+    integrations: dict[str, str] = Field(default_factory=dict)
 
 class Surface(NamedTuple):
     account: str
@@ -51,24 +57,32 @@ class Accounts:
     def active(self) -> list[Account]:
         return [a for a in self.accounts if a.status is AccountStatus.active]
 
-    def resolve_account_id(self, handle: str) -> str:
+    def resolve_account_id(self, handle: str, platform: Optional[Platform] = None) -> str:
+        """The poster id for a handle, per-platform when `platform` is given. Prefers the platform's own
+        integrations[platform] id, else the shared account_id fallback (back-compat). A known handle whose
+        chosen id is empty fails loud rather than returning "" — an empty id must never reach the poster
+        (FIX F06). `platform=None` keeps the legacy handle-only behavior (returns account_id)."""
         for a in self.accounts:
             if a.handle == handle:
-                if not a.account_id:
-                    # Known handle but no Blotato id yet (e.g. planned/warming): fail loud
-                    # rather than return "" — an empty accountId must never reach Blotato.
-                    raise KeyError(f"{handle} has no account_id (status={a.status.value})")
-                return a.account_id
+                chosen = (a.integrations.get(platform.value) if platform else None) or a.account_id
+                if not chosen:
+                    where = platform.value if platform else "any platform"
+                    raise KeyError(f"{handle} has no account_id for {where} (status={a.status.value})")
+                return chosen
         raise KeyError(handle)
 
     def validate(self) -> list[str]:
-        """Config problems to surface before a run (e.g. active account missing Blotato id)."""
+        """Config problems to surface before a run. Per-platform: each active account's every platform
+        must resolve to an id (its integrations[platform] OR the shared account_id) — so a multi-platform
+        handle with one channel unmapped is flagged by name, while a legacy single-account_id account
+        still passes via the fallback."""
         problems = []
         for a in self.active():
-            if not a.account_id:
-                problems.append(f"active account {a.handle} has no account_id")
             if not a.platforms:
                 problems.append(f"active account {a.handle} has no platforms")
+            for p in a.platforms:
+                if not (a.integrations.get(p.value) or a.account_id):
+                    problems.append(f"active account {a.handle} has no account_id for {p.value}")
         seen = set()
         for a in self.accounts:
             if a.handle in seen:
@@ -77,7 +91,10 @@ class Accounts:
         return problems
 
     def surfaces(self) -> list[Surface]:
-        return [Surface(a.handle, a.account_id, p) for a in self.active() for p in a.platforms]
+        # Each (handle, platform) carries its OWN poster id: the platform's integrations id, else the
+        # shared account_id fallback — so a multi-platform handle posts each platform to its own channel.
+        return [Surface(a.handle, a.integrations.get(p.value) or a.account_id, p)
+                for a in self.active() for p in a.platforms]
 
 
 def write_account_id(cfg: Config, handle: str, account_id: str | int) -> str:

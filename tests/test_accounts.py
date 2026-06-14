@@ -132,3 +132,79 @@ def test_write_account_id_coerces_to_str(tmp_path):
     write_account_id(cfg, "@a", 51)                     # a numeric id from a picker still lands as a string
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0]["account_id"] == "51"
+
+
+# ---- M1: per-platform integration model (the real go-live fix). A handle's Instagram and TikTok are
+# DIFFERENT Postiz integrations, so each (handle, platform) must resolve to its OWN id. `integrations`
+# is additive: a legacy single `account_id` stays the fallback so existing accounts.json just works.
+from fanops.models import Platform
+
+def test_surfaces_carry_per_platform_integration_id(tmp_path):
+    # A 2-platform handle with per-platform integrations -> each surface carries its OWN id, not one shared id.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "fallback", "platforms": ["instagram", "tiktok"],
+                 "status": "active", "integrations": {"instagram": "ig_1", "tiktok": "tk_9"}}])
+    pairs = {(s.account, s.account_id, s.platform.value) for s in Accounts.load(cfg).surfaces()}
+    assert pairs == {("@a", "ig_1", "instagram"), ("@a", "tk_9", "tiktok")}
+
+def test_surfaces_fall_back_to_account_id_when_platform_unmapped(tmp_path):
+    # instagram has a per-platform id; tiktok has none -> tiktok falls back to the shared account_id.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "shared", "platforms": ["instagram", "tiktok"],
+                 "status": "active", "integrations": {"instagram": "ig_1"}}])
+    pairs = {(s.account_id, s.platform.value) for s in Accounts.load(cfg).surfaces()}
+    assert pairs == {("ig_1", "instagram"), ("shared", "tiktok")}
+
+def test_resolve_account_id_per_platform_distinct(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "fallback", "platforms": ["instagram", "tiktok"],
+                 "status": "active", "integrations": {"instagram": "ig_1", "tiktok": "tk_9"}}])
+    accts = Accounts.load(cfg)
+    assert accts.resolve_account_id("@a", Platform.instagram) == "ig_1"
+    assert accts.resolve_account_id("@a", Platform.tiktok) == "tk_9"
+
+def test_resolve_account_id_platform_falls_back_to_account_id(tmp_path):
+    # An unmapped platform falls back to the shared account_id (back-compat path).
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "shared", "platforms": ["instagram", "youtube"],
+                 "status": "active", "integrations": {"instagram": "ig_1"}}])
+    accts = Accounts.load(cfg)
+    assert accts.resolve_account_id("@a", Platform.youtube) == "shared"
+
+def test_resolve_account_id_no_platform_uses_account_id(tmp_path):
+    # Legacy call with no platform arg keeps returning the shared account_id (existing callers unchanged).
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "98432", "platforms": ["instagram"], "status": "active",
+                 "integrations": {"instagram": "ig_1"}}])
+    assert Accounts.load(cfg).resolve_account_id("@a") == "98432"
+
+def test_resolve_account_id_platform_unmapped_no_fallback_raises(tmp_path):
+    # No per-platform id AND no shared account_id -> fail loud (an empty id must never reach the poster).
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"],
+                 "status": "active", "integrations": {"instagram": "ig_1"}}])
+    accts = Accounts.load(cfg)
+    assert accts.resolve_account_id("@a", Platform.instagram) == "ig_1"
+    with pytest.raises(KeyError):
+        accts.resolve_account_id("@a", Platform.tiktok)
+
+def test_validate_flags_per_platform_unmapped_channel(tmp_path):
+    # instagram is mapped, tiktok is not and there's no shared account_id -> validate flags tiktok by name.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"],
+                 "status": "active", "integrations": {"instagram": "ig_1"}}])
+    problems = Accounts.load(cfg).validate()
+    assert any("tiktok" in p for p in problems)
+    assert not any("instagram" in p for p in problems)   # the mapped channel is NOT flagged
+
+def test_validate_passes_fully_per_platform_mapped(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"],
+                 "status": "active", "integrations": {"instagram": "ig_1", "tiktok": "tk_9"}}])
+    assert Accounts.load(cfg).validate() == []
+
+def test_validate_legacy_single_account_id_still_passes(tmp_path):
+    # BACK-COMPAT: a legacy account (shared account_id, NO integrations) validates via the fallback.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "98432", "platforms": ["instagram", "tiktok"], "status": "active"}])
+    assert Accounts.load(cfg).validate() == []
