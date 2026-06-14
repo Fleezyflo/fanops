@@ -100,6 +100,44 @@ def test_review_buckets_variant_media_url_is_post_scoped(tmp_path):
     sp = [s for c in cards for s in c.surfaces if s.post_id == "p_v"][0]
     assert sp.media_url == "/media/p_v"
 
+def test_review_buckets_surfaces_postless_clips_as_prepared(tmp_path):
+    # THE 57-clips-0-posts bug: produced clips (queued / captions_requested) that have NO posts must
+    # surface in a 'prepared' bucket so the operator can SEE + advance them — they used to vanish, and
+    # Review lied with "nothing in the ledger yet". held stays held; clips WITH a post stay editable;
+    # terminal states (retired/error) are NOT prepare-able.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)                   # clip_1 = queued, NO posts
+    led.add_clip(Clip(id="clip_cap", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.captions_requested))
+    led.add_clip(Clip(id="clip_held", parent_id="mom_1", path="/h.mp4", aspect=Fmt.r9x16, state=ClipState.held, held=True, held_reason="brand risk"))
+    led.add_clip(Clip(id="clip_retired", parent_id="mom_1", path="/r.mp4", aspect=Fmt.r9x16, state=ClipState.retired))
+    led.add_clip(Clip(id="clip_posted", parent_id="mom_1", path="/p.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+    led.add_post(Post(id="p1", parent_id="clip_posted", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=3))))
+    cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
+    by_bucket = {}
+    for c in cards: by_bucket.setdefault(c.bucket, []).append(c)
+    prepared = {c.clip_id: c for c in by_bucket.get("prepared", [])}
+    assert set(prepared) == {"clip_1", "clip_cap"}          # post-less, non-held, non-terminal clips only
+    assert prepared["clip_1"].surfaces == [] and prepared["clip_1"].clip_state == "queued"
+    assert prepared["clip_cap"].surfaces == [] and prepared["clip_cap"].clip_state == "captions_requested"
+    assert prepared["clip_1"].source_name == "show.mp4"     # lineage still resolves for a post-less clip
+    assert "clip_held" not in prepared and any(c.held for c in by_bucket.get("held", []))
+    assert "clip_retired" not in prepared                   # terminal -> not surfaced as prepare-able
+    assert "clip_posted" not in prepared and any(c.clip_id == "clip_posted" for c in by_bucket.get("editable", []))
+
+def test_held_clip_with_queued_post_only_in_held_not_editable(tmp_path):
+    # a held clip that ALSO carries a queued post must appear ONLY in the held bucket (the release
+    # gate), never double-listed in editable — held is a brand-risk quarantine that outranks scheduling.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)                   # clip_1 = queued
+    led.clips["clip_1"].held = True; led.clips["clip_1"].held_reason = "pulled back"; led.clips["clip_1"].state = ClipState.held
+    led.add_post(Post(id="p_q", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=3))))
+    cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
+    assert [c.bucket for c in cards if c.clip_id == "clip_1"] == ["held"]
+
 from fanops.studio.views import schedule_rows
 
 def test_schedule_rows_sorted_with_recent_and_imminent_flags(tmp_path):
