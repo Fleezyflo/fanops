@@ -6,11 +6,12 @@ resume (FIX F11). Media is ensured ONCE PER CLIP (FIX F44). Failed submit -> Pos
 from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 from fanops.config import Config
 from fanops.errors import AuthError
 from fanops.ledger import Ledger
-from fanops.models import PostState
-from fanops.post import get_poster, get_media_uploader
+from fanops.models import Post, PostState
+from fanops.post import get_poster, get_media_uploader, Poster
 from fanops.post.media import ensure_clip_media
 from fanops.timeutil import parse_iso as _parse
 
@@ -27,7 +28,7 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
     failure; everything else is a per-post failure."""
     return isinstance(exc, AuthError)
 
-def _submit_one(led: Ledger, cfg: Config, poster, post, _save) -> Ledger:
+def _submit_one(led: Ledger, cfg: Config, poster: Poster, post: Post, _save: Callable[[], None]) -> Ledger:
     """Publish ONE queued post NOW (no schedule gate): ensure media, crash-safe 'submitting' persist
     BEFORE the irreversible network call (FIX F11), poster.publish -> published. A per-post failure
     (e.g. media upload 5xx) marks THIS post failed and is swallowed so the queue keeps moving

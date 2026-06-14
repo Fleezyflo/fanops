@@ -109,6 +109,32 @@ def test_run_prepare_loops_until_no_gate_remains(tmp_path, monkeypatch):
     res = actions.run_prepare(cfg)
     assert res.ok and res.detail["awaiting"]["moments"] == 0
 
+def test_run_prepare_cap_hit_in_llm_mode_surfaces_incomplete(tmp_path, monkeypatch):
+    # If the responder never drains the gates (malformed answers / gates regenerating), the 10-pass
+    # cap is hit with gates still pending. In llm mode that's a FAILURE to surface, not a green
+    # "prepared" the operator would wrongly trust (ecc audit: code+python MEDIUM).
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr("fanops.pipeline.advance",
+                        lambda c, *, base_time: {"sources": 1, "awaiting": {"moments": 1, "captions": 0}})
+    monkeypatch.setattr("fanops.responder.get_responder",
+                        lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
+    res = actions.run_prepare(cfg)
+    assert res.ok is False and "did not finish" in res.error
+    assert res.detail["awaiting"]["moments"] == 1               # the last summary is still attached
+
+def test_run_prepare_manual_mode_leaves_gates_ok(tmp_path, monkeypatch):
+    # In MANUAL mode the responder writes nothing, so gates remaining after the loop is EXPECTED
+    # (they wait in the Gates tab) — still ok=True, not a failure.
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)       # manual
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr("fanops.pipeline.advance",
+                        lambda c, *, base_time: {"sources": 1, "awaiting": {"moments": 1, "captions": 0}})
+    monkeypatch.setattr("fanops.responder.get_responder",
+                        lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
+    res = actions.run_prepare(cfg)
+    assert res.ok is True                                        # manual: gates pending is normal
+
 def test_run_prepare_live_backend_requires_confirm(tmp_path, monkeypatch):
     # A prepare pass crossposts/publishes due posts on a live backend -> same confirm guard as advance.
     monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")

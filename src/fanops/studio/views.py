@@ -377,6 +377,10 @@ def gate_rows(cfg: Config) -> list[dict]:
             try:
                 payload = json.loads(request_path(cfg, kind, key).read_text())
             except Exception:
-                payload = {}
+                continue                               # torn/unreadable request file: SKIP it (match the
+                                                       # docstring) rather than render an empty, unanswerable
+                                                       # gate form whose blank submit could write a bad answer
+                                                       # (ecc audit). The corruption is already logged by
+                                                       # latest_request_id during pending().
             rows.append({"kind": kind, "key": key, **payload})
     return rows
