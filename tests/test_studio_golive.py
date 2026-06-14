@@ -263,6 +263,14 @@ def test_golive_status_never_exposes_key(tmp_path, monkeypatch):
     st = views.golive_status(cfg)
     assert "TOPSECRET" not in repr(st) and st.key_set is True
 
+def test_golive_status_typo_backend_is_not_false_live(tmp_path, monkeypatch):
+    # W4 / PRD metric: a typo'd FANOPS_POSTER resolves to dryrun, so the banner can't falsely show LIVE.
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "positz")        # typo of "postiz"
+    from fanops.studio import views
+    st = views.golive_status(cfg)
+    assert st.is_live is False and st.mode == "dryrun"
+
 
 # ---- .env write failure must surface as a clean ActionResult, never a 500 (the tab's invariant) ----
 def test_set_postiz_config_disk_error_is_clean_not_raise(tmp_path, monkeypatch):

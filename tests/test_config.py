@@ -18,6 +18,24 @@ def test_poster_env_and_key_trimmed(monkeypatch, tmp_path):
     c = Config(root=tmp_path)
     assert c.poster_backend == "rest" and c.blotato_api_key == "abc123"
 
+def test_poster_backend_known_values_pass_through(monkeypatch, tmp_path):
+    for v in ("dryrun", "postiz", "rest", "mcp"):
+        monkeypatch.setenv("FANOPS_POSTER", v)
+        assert Config(root=tmp_path).poster_backend == v
+
+def test_poster_backend_unknown_falls_back_to_dryrun(monkeypatch, tmp_path):
+    # W4: a typo'd backend must resolve to dryrun — get_poster falls back to DryRunPoster for any
+    # unrecognized value, so a typo would otherwise show a LIVE banner while posting NOTHING.
+    monkeypatch.setenv("FANOPS_POSTER", "positz")        # typo of "postiz"
+    c = Config(root=tmp_path)
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    assert c.poster_backend == "dryrun"
+    assert c.is_live_backend is False                    # so the banner shows dryrun, never a false LIVE
+
+def test_poster_backend_trims_whitespace(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_POSTER", "  postiz\n")    # a .env value can carry surrounding ws
+    assert Config(root=tmp_path).poster_backend == "postiz"
+
 def test_responder_defaults_manual(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     c = Config(root=tmp_path)
