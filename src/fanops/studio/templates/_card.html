@@ -18,18 +18,7 @@
         {% if s.imminent %}<span class="badge {{ 'shipped' if s.state != 'queued' else '' }}">{{ 'shipped' if s.state != 'queued' else 'shipping now' }}</span>{% endif %}
       </div>
       <video controls preload="none" src="{{ s.media_url }}"></video>
-      {% if s.editable %}
-        <form hx-post="{{ url_for('do_caption', post_id=s.post_id) }}" hx-target="#res-{{ s.post_id }}" hx-swap="innerHTML">
-          <textarea name="caption" rows="2">{{ s.caption }}</textarea>
-          <button type="submit">Save caption</button>
-        </form>
-        <form hx-post="{{ url_for('do_reschedule', post_id=s.post_id) }}" hx-target="#res-{{ s.post_id }}" hx-swap="innerHTML">
-          <input type="text" name="new_time" value="{{ s.scheduled_time }}" placeholder="2026-06-08T14:00:00Z">
-          <button type="submit">Reschedule</button>
-        </form>
-      {% else %}
-        <div class="ro">{{ s.caption }}</div>
-      {% endif %}
+      {% if s.editable %}{% include "_surface_edit.html" %}{% else %}<div class="ro">{{ s.caption }}</div>{% endif %}
       {% if s.hashtags %}<div class="meta ro">{{ s.hashtags|join(' ') }} <em>(stored, not posted)</em></div>{% endif %}
       <div id="res-{{ s.post_id }}"></div>
     </div>

@@ -202,6 +202,21 @@ def create_app(cfg: Config) -> Flask:
         result = actions.edit_caption(cfg, post_id, request.form.get("caption", ""))
         return render_template("_result.html", result=result)
 
+    @app.post("/regenerate/<post_id>")
+    def do_regenerate(post_id):
+        # Review-first milestone 3: re-run the caption model for this one post, then swap the editable
+        # field so the operator SEES the new caption land in the box. On failure (not editable, bad
+        # model output, off-brand reject, claude absent) show the clean error instead of a 500.
+        result = actions.regenerate_caption(cfg, post_id, request.form.get("guidance") or "")
+        if not result.ok:
+            return render_template("_result.html", result=result)
+        s = views.surface_for_post(Ledger.load(cfg), Accounts.load(cfg), post_id,
+                                   now=datetime.now(timezone.utc))
+        if s is None:
+            return render_template("_result.html",
+                                   result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
+        return render_template("_surface_edit.html", s=s, regen_note=result.detail)
+
     @app.post("/snooze/<clip_id>")
     def do_snooze(clip_id):
         result = actions.snooze_clip(cfg, clip_id)
