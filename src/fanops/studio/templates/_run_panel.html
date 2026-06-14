@@ -17,12 +17,17 @@
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}OK{% if result.detail %} — {{ result.detail }}{% endif %}
+      {% if result.ok %}OK{% if result.detail %} — {% if result.detail.saved is defined %}{{ result.detail.saved|length }} saved, {{ result.detail.skipped|length }} skipped{% else %}{{ result.detail }}{% endif %}{% endif %}
       {% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
 
   <div class="run-actions">
+    <form hx-post="{{ url_for('do_run_upload') }}" hx-target="#run-panel" hx-swap="outerHTML"
+          hx-encoding="multipart/form-data" class="upload-form">
+      <input type="file" name="files" accept="video/*" multiple aria-label="Choose video files to upload" title="Choose video files to upload">
+      <button type="submit">Upload video</button>
+    </form>
     <form hx-post="{{ url_for('do_run_pull') }}" hx-target="#run-panel" hx-swap="outerHTML">
       <input name="url" placeholder="https://… (pull a video)" size="36">
       <button type="submit">Pull URL</button>
@@ -47,7 +52,7 @@
   </div>
 
   <ol class="muted run-steps">
-    <li>Drop files in <code>01_inbox/</code> or <em>Pull URL</em>, then <em>Ingest inbox</em>.</li>
+    <li><em>Upload video</em> here (or drop files in <code>01_inbox/</code>, or <em>Pull URL</em>), then <em>Ingest inbox</em> — no Finder needed.</li>
     <li><em>Prepare everything</em> → the system writes its own captions and finishes the clips for you;
       watch them appear in <strong>Review</strong>. No gates to answer by hand.</li>
     <li class="muted">Auto-answering uses your <code>claude</code> login — run <code>fanops autopilot</code>
