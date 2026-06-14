@@ -12,6 +12,12 @@ transcribe = ["openai-whisper>=20231117"]
 # Local web cockpit (spec §10). Flask is OPTIONAL: `pip install -e .` (core CLI) stays Flask-free;
 # only `pip install -e '.[studio]'` pulls it. The CLI imports it LAZILY so a no-[studio] install runs.
 studio = ["flask>=3.0"]
+# Produced-clip compositing (operator-chosen 2026-06-14): multi-layer template cards, dynamic text
+# titles, and crossfade transitions via MoviePy. OPTIONAL + lazy-imported like [studio]/[transcribe]
+# — `pip install -e .` stays MoviePy-free; only `.[compose]` pulls it (drags numpy/Pillow/imageio).
+# fanops.compose imports it lazily and FAILS OPEN (copies the base clip) when absent, so a
+# no-[compose] install never breaks the render path. MoviePy 2.x API only (no moviepy.editor).
+compose = ["moviepy>=2.0"]
 
 [project.scripts]
 fanops = "fanops.cli:main"

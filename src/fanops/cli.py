@@ -149,6 +149,42 @@ def cmd_cutover(cfg: Config, args) -> int:
     if act == "lift":    print(json.dumps(cutover.cutover_lift(cfg, args.submission_id), indent=2)); return 0
     return 2
 
+def cmd_compose(cfg: Config, args) -> int:
+    # Produced-clip compositing (operator verb; runs OUTSIDE any ledger lock — a long MoviePy render
+    # must never sit inside advance()'s flock). Composes ONE rendered clip into <clip>_composed.mp4:
+    # intro/outro brand cards + a dynamic title (the clip's hook) + crossfades. FAILS OPEN (uses the
+    # base clip, composed=false) on missing MoviePy / render error. Needs the [compose] extra.
+    import os
+    from pathlib import Path
+    from fanops import overlay
+    from fanops.compose import compose_clip, TemplateSpec
+    led = Ledger.load(cfg)
+    clip = led.clips.get(args.clip_id)
+    if clip is None or not clip.path:
+        print(f"no such clip (or unrendered): {args.clip_id}"); return 2
+    if not os.path.exists(clip.path):
+        print(f"clip file missing on disk: {clip.path}"); return 2
+    mom = led.moments.get(clip.parent_id)
+    title = args.title
+    if title is None and mom is not None:                    # default title = the clip's on-screen hook
+        title = mom.hook or overlay.derive_hook(mom.transcript_excerpt)
+    intro = cfg.artist_name if args.intro is None else args.intro   # default branded intro; '' disables
+    spec = TemplateSpec(title=title or None, intro_text=(intro or None), outro_text=(args.outro or None))
+    if spec.is_empty():
+        print("nothing to compose (no title/intro/outro) — pass --title/--intro/--outro"); return 0
+    out = str(Path(clip.path).with_name(Path(clip.path).stem + "_composed.mp4"))
+    log = get_logger(cfg); notes: list[str] = []
+    ok = compose_clip(clip.path, out, spec,
+                      log=lambda m: notes.append(m) or log("compose", args.clip_id, "info", err=m))
+    result = {"clip_id": args.clip_id, "composed": ok, "out": out,
+              "title": title, "intro": intro or None, "outro": args.outro or None}
+    if not ok and notes:                                # surface WHY it fell back (e.g. MoviePy absent)
+        result["reason"] = notes[-1]
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    # Exit nonzero when we fell back to the base clip (composed=false): a scripted `compose && upload`
+    # must be able to tell a real produced render from the fail-open copy. The file still exists at out.
+    return 0 if ok else 1
+
 def cmd_gc(cfg: Config, keep_days: int) -> int:
     # FIX F83: reclaim disk — drop the .mp4 files of retired/analyzed clips older than keep_days
     # (the ledger record + the post's cached media_url persist; the local file is dead weight
@@ -256,6 +292,11 @@ def main(argv: list[str] | None = None) -> int:
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
     p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
     sub.add_parser("intake")
+    p_comp = sub.add_parser("compose", help="produced clip: intro/outro brand cards + dynamic title + crossfades (MoviePy; needs .[compose])")
+    p_comp.add_argument("clip_id")
+    p_comp.add_argument("--title", default=None, help="on-screen title (default: the clip's hook)")
+    p_comp.add_argument("--intro", default=None, help="intro card text (default: artist name; pass '' to disable)")
+    p_comp.add_argument("--outro", default=None, help="outro card text, e.g. an @handle (default: none)")
     sub.add_parser("doctor", help="read-only first-run health screen (toolchain/accounts/key/go-live readiness)")
     sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
@@ -447,6 +488,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
+    if args.cmd == "compose":  return cmd_compose(cfg, args)
     if args.cmd == "resolve":
         # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve
         # a post stuck in needs_reconcile (Blotato status ambiguous / never returns a terminal
