@@ -118,24 +118,6 @@ def _write_accounts_atomic(p: Path, raw: dict) -> None:
     os.replace(tmp, p)                                   # atomic: never a half-written accounts.json
 
 
-def write_account_id(cfg: Config, handle: str, account_id: str | int) -> str:
-    """Set ONE account's shared `account_id` (the fallback poster id) in accounts.json atomically. The
-    per-platform `write_integration` below is the preferred Go-Live mapping path; this stays for the
-    handle-level fallback + back-compat. Mutates the RAW dict so unknown/future fields and siblings are
-    preserved exactly; the id is coerced to str. Unknown handle -> KeyError (the caller turns it into a
-    clean ActionResult). Absent file -> KeyError (no account to map yet)."""
-    p = cfg.accounts_path
-    raw, accounts = _load_raw_accounts(p)
-    for a in accounts:
-        if isinstance(a, dict) and a.get("handle") == handle:
-            a["account_id"] = str(account_id)
-            break
-    else:
-        raise KeyError(handle)
-    _write_accounts_atomic(p, raw)
-    return handle
-
-
 def write_integration(cfg: Config, handle: str, platform: str, integration_id: str | int) -> str:
     """Map ONE (handle, platform) channel to its own poster id: set integrations[platform] = id in
     accounts.json atomically — the per-platform Go-Live mapping that replaces hand-editing JSON, so a
