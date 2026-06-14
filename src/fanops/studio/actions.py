@@ -18,7 +18,7 @@ from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ingest import MEDIA_EXT
 from fanops.ledger import Ledger
-from fanops.models import CaptionSet, MomentDecision, Post, PostState
+from fanops.models import CaptionSet, ClipState, MomentDecision, Post, PostState
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
 
@@ -440,3 +440,16 @@ def snooze_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) ->
                 p.scheduled_time = z
                 count += 1
     return ActionResult(ok=True, detail={"clip_id": clip_id, "count": count, "scheduled_time": z})
+
+
+def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
+    """Clear a brand-risk hold from the browser — the UI twin of `fanops unhold`. Reuses the canonical
+    transition (cli.py unhold): held->captions_requested so the next advance re-runs the caption gate.
+    Tight local transaction, no network. Rejects a non-held clip so a stray click can't churn a live
+    clip's state (stricter than the operator-trusted CLI verb)."""
+    with Ledger.transaction(cfg) as led:
+        if clip_id not in led.clips: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
+        c = led.clips[clip_id]
+        if not c.held: return ActionResult(ok=False, error=f"clip {clip_id} is not held (state={c.state.value})")
+        c.held = False; c.held_reason = None; c.state = ClipState.captions_requested
+    return ActionResult(ok=True, detail={"clip_id": clip_id, "state": ClipState.captions_requested.value})

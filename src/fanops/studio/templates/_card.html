@@ -3,6 +3,8 @@
   {% if card.bucket == 'held' %}
     <div class="meta"><span class="badge">HELD</span> {{ card.held_reason or 'held for review' }}</div>
     <video controls preload="metadata" src="{{ card.preview_url }}"></video>
+    <form hx-post="{{ url_for('do_unhold', clip_id=card.clip_id) }}" hx-target="#card-{{ card.clip_id }}" hx-swap="outerHTML">
+      <button type="submit">Release (re-run captions)</button></form>
   {% else %}
     <video controls preload="metadata" src="{{ card.preview_url }}"></video>
   {% endif %}
