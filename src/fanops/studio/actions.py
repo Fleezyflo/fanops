@@ -4,14 +4,19 @@ its existence + state(queued) + not-imminent guard + mutation INSIDE the lock, o
 freshly-loaded ledger — mirroring the CLI recovery verbs (cli.py:285,298) so it cannot lose-update
 against a concurrent cron `fanops run`. Reads/normalization that can fail happen OUTSIDE the lock."""
 from __future__ import annotations
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Sequence
 
 from pydantic import ValidationError
+from werkzeug.datastructures import FileStorage
+from werkzeug.utils import secure_filename
 
 from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
+from fanops.ingest import MEDIA_EXT
 from fanops.ledger import Ledger
 from fanops.models import CaptionSet, MomentDecision, Post, PostState
 from fanops.timeutil import parse_iso, iso_z
@@ -19,6 +24,8 @@ from fanops.studio.views import _imminent
 
 SNOOZE_DAYS = 365
 _GATE_MODELS = {"moments": MomentDecision, "captions": CaptionSet}
+_VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}   # the has_video_stream subset of MEDIA_EXT
+if not (_VIDEO_EXT <= MEDIA_EXT): raise ValueError("_VIDEO_EXT drifted out of ingest.MEDIA_EXT")  # import-time drift guard (not assert — survives -O)
 
 
 @dataclass(frozen=True)
@@ -210,6 +217,53 @@ def run_pull(cfg: Config, url: str) -> ActionResult:
     except Exception as exc:
         return ActionResult(ok=False, error=f"pull failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"sources": n})
+
+
+def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = True) -> ActionResult:
+    """Stream operator-uploaded raw video into cfg.inbox so `run_ingest` catalogues it — the browser
+    replacement for a Finder drag. Each file is validated (video ext, traversal-safe name), streamed to
+    a `.uploadpart` temp in the inbox, then os.replace'd into place (so a half-upload never appears to
+    ingest). Untrusted input crossing a boundary: the raw-name traversal triad + secure_filename + an
+    inbox-bound resolve are the path-safety gates; Flask's MAX_CONTENT_LENGTH (set in create_app) refuses
+    an oversize body BEFORE this runs. Never 500s — every fallible step yields a skip reason. ok is True
+    iff at least one file landed (all-rejected is a failure, not a green no-op)."""
+    files = [f for f in (files or []) if getattr(f, "filename", "")]   # drop empty (no-file-chosen) parts
+    if not files:
+        return ActionResult(ok=False, error="no files selected — choose a video to upload")
+    saved, skipped = [], []
+    cfg.inbox.mkdir(parents=True, exist_ok=True)
+    inbox = cfg.inbox.resolve()
+    for f in files:
+        raw = f.filename or ""
+        name = secure_filename(raw)                                    # strips path, .., unsafe chars; "" if hostile
+        if not name or "/" in raw or "\\" in raw or ".." in raw:       # reject traversal on the RAW name (mirror approve_candidate)
+            skipped.append((raw, "unsafe name")); continue
+        if Path(name).suffix.lower() not in _VIDEO_EXT:
+            skipped.append((raw, "not a video")); continue
+        suffix = Path(name).suffix
+        name = Path(name).stem[:255 - len(suffix) - len(".uploadpart")] + suffix   # keep name + temp-suffix ≤ NAME_MAX so an overlong name never trips an OSError that embeds the fs path in a skip reason
+        dest = (inbox / name).resolve()
+        if not dest.is_relative_to(inbox):                             # belt-and-braces: final path MUST stay in the inbox
+            skipped.append((raw, "escapes inbox")); continue
+        tmp = inbox / f"{name}.uploadpart"                            # same-dir temp → os.replace is atomic; suffix ∉ MEDIA_EXT so a leaked temp is never ingested
+        try:
+            f.save(str(tmp))                                          # FileStorage.save streams in chunks (no full-buffer)
+            os.replace(tmp, dest)                                     # atomic swap-in; a crash mid-stream leaves only the .uploadpart temp
+        except OSError as exc:
+            try: tmp.unlink()                                         # best-effort cleanup of the partial temp
+            except OSError: pass
+            skipped.append((raw, exc.strerror or "write failed")); continue   # strerror omits the fs path (no path disclosure in the reason)
+        if probe:
+            from fanops.ingest import has_video_stream                # local import so a test's mocker.patch is seen
+            try:
+                if not has_video_stream(dest):
+                    dest.unlink(missing_ok=True); skipped.append((raw, "no video stream")); continue
+            except ToolchainMissingError:
+                pass                                                  # ffprobe absent → don't reject; ingest re-checks later
+        saved.append(name)
+    if not saved:                                                     # every file was rejected → a real failure, not a green "0 saved"
+        return ActionResult(ok=False, error=f"nothing saved — {len(skipped)} file(s) rejected (wrong type, unsafe name, or unreadable)", detail={"saved": saved, "skipped": skipped})
+    return ActionResult(ok=True, detail={"saved": saved, "skipped": skipped})
 
 
 def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True) -> ActionResult:

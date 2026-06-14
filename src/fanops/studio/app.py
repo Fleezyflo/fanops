@@ -16,6 +16,7 @@ from fanops.models import Platform
 from fanops.studio import views, actions, golive
 
 _ALL_PLATFORMS = [p.value for p in Platform]    # the add-account form's platform checkboxes (no enum drift)
+_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024      # 2 GiB upload cap — a long raw clip fits; an abusive body is refused (DoS)
 
 _HERE = Path(__file__).resolve().parent
 
@@ -83,6 +84,7 @@ def _parse_gate_form(kind: str, form) -> dict:
 
 def create_app(cfg: Config) -> Flask:
     app = Flask(__name__, template_folder=str(_HERE / "templates"), static_folder=str(_HERE / "static"))
+    app.config["MAX_CONTENT_LENGTH"] = _MAX_UPLOAD_BYTES    # Werkzeug refuses an oversize upload body BEFORE the view runs (413)
 
     @app.get("/")
     def index():
@@ -125,6 +127,13 @@ def create_app(cfg: Config) -> Flask:
     @app.post("/run/pull")
     def do_run_pull():
         return _run_panel(actions.run_pull(cfg, request.form.get("url", "")))
+
+    @app.post("/run/upload")
+    def do_run_upload():
+        # Stream operator-uploaded raw video into 01_inbox so the next "Ingest inbox" catalogues it — the
+        # browser replacement for a Finder drag. save_uploads owns validation + atomic os.replace; the
+        # panel re-renders with fresh counts (htmx outerHTML), mirroring do_run_ingest.
+        return _run_panel(actions.save_uploads(cfg, request.files.getlist("files")))
 
     @app.post("/run/advance")
     def do_run_advance():
@@ -293,5 +302,15 @@ def create_app(cfg: Config) -> Flask:
     @app.post("/golive/dryrun")
     def do_golive_dryrun():
         return _golive_panel(golive.go_dryrun(cfg))
+
+    from werkzeug.exceptions import RequestEntityTooLarge
+    @app.errorhandler(RequestEntityTooLarge)
+    def _too_large(_e):
+        # An over-MAX_CONTENT_LENGTH upload: Werkzeug raised 413 before do_run_upload ran. Re-render the
+        # Run panel with a clean "too large" message at HTTP 200 — htmx 2.0.3 only swaps 2xx bodies, so a
+        # 413 panel would be silently dropped and the operator would see nothing. The cap is enforced by
+        # Werkzeug regardless of this status; only the friendly response's status changes.
+        mb = (app.config["MAX_CONTENT_LENGTH"] or 0) // (1024 * 1024)
+        return _run_panel(actions.ActionResult(ok=False, error=f"file too large — the upload cap is {mb} MB"))
 
     return app
