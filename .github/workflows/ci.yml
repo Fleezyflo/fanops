@@ -28,8 +28,8 @@ jobs:
           pip install -e '.[dev,studio]'
       - name: Lint (ruff — pyflakes F + pycodestyle E, the house ruleset in pyproject)
         run: ruff check .          # was configured in pyproject but never enforced in CI (Phase 4b)
-      - name: Unit tests
-        run: python -m pytest -q -m "not integration"
+      - name: Unit tests (with coverage report)
+        run: python -m pytest -q -m "not integration" --cov=src/fanops --cov-report=term-missing   # report-only, NOT a gate (no --cov-fail-under)
 
   e2e:
     name: real-tooling E2E (must run, not skip)

@@ -139,3 +139,38 @@ def test_core_cli_imports_with_flask_absent(monkeypatch, tmp_path):
     # import create_app` -> blocked flask -> ImportError, which main() does not swallow.
     with pytest.raises(ImportError, match="flask blocked"):
         cli.main(["studio"])
+
+# ---- M5.1: held-clip RELEASE route (UI twin of `fanops unhold`) ----
+def _seed_held(cfg, tmp_path):
+    base, _variant = _seed(cfg, tmp_path)
+    led = Ledger.load(cfg)
+    led.add_clip(Clip(id="clip_held", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16,
+                      state=ClipState.held, held=True, held_reason="brand risk: slur"))
+    led.save()
+    return base
+
+def test_review_held_card_shows_release_button(tmp_path):
+    cfg = Config(root=tmp_path); _seed_held(cfg, tmp_path)
+    r = _client(cfg).get("/review")
+    assert r.status_code == 200
+    assert b"/unhold/clip_held" in r.data and b"Release" in r.data and b'hx-target="#card-clip_held"' in r.data
+
+def test_unhold_success_returns_empty_fragment(tmp_path):
+    cfg = Config(root=tmp_path); _seed_held(cfg, tmp_path)
+    r = _client(cfg).post("/unhold/clip_held")
+    assert r.status_code == 200
+    assert b"HELD" not in r.data and b"Release" not in r.data   # empty fragment: the held card is gone in place
+
+def test_unhold_success_clip_leaves_held_bucket(tmp_path):
+    cfg = Config(root=tmp_path); _seed_held(cfg, tmp_path)
+    c = _client(cfg); c.post("/unhold/clip_held")
+    r = c.get("/review")
+    assert r.status_code == 200                                 # guard: absence assert must not pass on a 500
+    assert b"card-clip_held" not in r.data                      # captions_requested + no posts -> surfaces nowhere
+    assert Ledger.load(cfg).clips["clip_held"].held is False
+
+def test_unhold_non_held_clip_returns_inline_error(tmp_path):
+    cfg = Config(root=tmp_path); _seed_held(cfg, tmp_path)      # clip_1 is queued, not held
+    r = _client(cfg).post("/unhold/clip_1")
+    assert r.status_code == 200 and b"not held" in r.data
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.queued

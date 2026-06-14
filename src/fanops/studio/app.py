@@ -242,6 +242,17 @@ def create_app(cfg: Config) -> Flask:
         result = actions.snooze_clip(cfg, clip_id)
         return render_template("_result.html", result=result)
 
+    @app.post("/unhold/<clip_id>")
+    def do_unhold(clip_id):
+        # Release a brand-risk hold from the Review tab (UI twin of `fanops unhold`). On success the clip
+        # becomes captions_requested with NO posts yet, so it leaves the held bucket entirely (and isn't
+        # editable until the next advance re-runs captions) — the outerHTML swap of an EMPTY fragment
+        # removes the held card in place, no dangling HELD badge. Failure shows the inline ✗.
+        result = actions.release_held_clip(cfg, clip_id)
+        if not result.ok:
+            return render_template("_result.html", result=result)
+        return ""                                        # released -> card vanishes from the held bucket
+
     @app.get("/golive")
     def golive_view():
         # Milestone 5 (operator-gated): turn FanOps from dryrun into real Postiz publishing entirely in
