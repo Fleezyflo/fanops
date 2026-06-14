@@ -68,6 +68,22 @@ def test_probe_timeout_is_per_file_fail_soft(tmp_path, mocker):
     assert has_video_stream(tmp_path / "a.mp4") is False
     assert seen.get("timeout") == 30.0                                # the bound is actually wired
 
+def test_has_video_stream_tolerates_trailing_csv_comma(tmp_path, mocker):
+    # ffprobe `-of csv=p=0` emits "video," (a trailing empty field) on some HEVC .mov muxings — a
+    # REAL case from real footage (two clips were silently dropped). An exact `== "video"` check
+    # then reads "video," != "video" and DROPS a genuine video as audio-only — the exact data-loss
+    # this guard exists to prevent, inverted. Parse the codec_type token robustly, not by equality.
+    cp = subprocess.CompletedProcess(["ffprobe"], 0, stdout="video,\n", stderr="")
+    mocker.patch("fanops.ingest.subprocess.run", return_value=cp)
+    assert has_video_stream(tmp_path / "a.mov") is True
+
+def test_has_video_stream_still_false_for_audio_only(tmp_path, mocker):
+    # The robust parse must NOT regress the audio-only drop: `-select_streams v:0` matches nothing,
+    # ffprobe prints an empty stdout -> still False (audio masquerading as a 9:16 clip stays out).
+    cp = subprocess.CompletedProcess(["ffprobe"], 0, stdout="\n", stderr="")
+    mocker.patch("fanops.ingest.subprocess.run", return_value=cp)
+    assert has_video_stream(tmp_path / "a.m4a") is False
+
 def test_download_url_is_time_bounded(tmp_path, mocker):
     # yt-dlp gets a hard bound too. It holds NO ledger lock (download runs outside the
     # transaction by design), but `fanops pull` must not hang forever on a dead CDN. The raise

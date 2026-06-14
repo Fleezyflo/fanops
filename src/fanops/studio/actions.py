@@ -11,7 +11,7 @@ from typing import Optional
 from pydantic import ValidationError
 
 from fanops.config import Config
-from fanops.errors import AuthError, reason
+from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ledger import Ledger
 from fanops.models import CaptionSet, MomentDecision, PostState
 from fanops.timeutil import parse_iso, iso_z
@@ -75,6 +75,75 @@ def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datet
             return ActionResult(ok=False, error=err)
         p.caption = caption
     return ActionResult(ok=True, detail={"post_id": post_id, "caption": caption})
+
+
+def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
+                       model=None, now: Optional[datetime] = None) -> ActionResult:
+    """Review-first milestone 3 — re-run the caption model for ONE queued post and write the new
+    caption back, so the operator changes a hint and 'gets it again' without hand-writing a caption
+    or touching the CLI. Reuses the PRODUCTION caption prompt (prompts.caption_prompt) for the post's
+    single surface, plus the operator's typed `guidance` as a highest-priority instruction. The SAME
+    off-brand guard the pipeline applies (caption.brand_risk_flag) re-runs on the result — a
+    regenerated off-brand caption is REJECTED, never written (no guardrail bypass). The slow model
+    call runs OUTSIDE the ledger flock (it can be a ~180s `claude -p`, and holding the lock that long
+    would deadlock a concurrent run — the 60s pytest timeout guards exactly that); the post is
+    re-guarded INSIDE a short transaction before the write, so a run that publishes the post mid-call
+    can't be clobbered. `model(prompt, schema)->dict` is injectable for tests; the default is the same
+    `claude -p` the llm responder uses. Bounded to ONE model call per click (PRD cost mitigation).
+    Does NOT publish — safe on any backend, so no confirm gate."""
+    from fanops.prompts import caption_prompt
+    from fanops.caption import brand_risk_flag
+    now = _now(now)
+    led = Ledger.load(cfg)                              # lock-free read: reject early, build context
+    p, err = _guard_editable_post(led, post_id, now)
+    if err:
+        return ActionResult(ok=False, error=err)
+    surface = f"{p.account}/{p.platform.value}"         # the documented caption lookup contract
+    clip = led.clips.get(p.parent_id)
+    moment = led.moments.get(clip.parent_id) if clip else None
+    src = led.sources.get(moment.parent_id) if moment else None
+    base = cfg.context_path.read_text() if cfg.context_path.exists() else ""
+    full_guidance = base
+    if (guidance or "").strip():                        # operator hint is highest priority for this re-roll
+        full_guidance = (base + "\n\nOPERATOR INSTRUCTION FOR THIS REGENERATION (highest priority): "
+                         + guidance.strip())
+    payload = {"clip_id": p.parent_id, "language": src.language if src else None,
+               "transcript_excerpt": moment.transcript_excerpt if moment else "",
+               "guidance": full_guidance,
+               "surfaces": [{"surface": surface, "platform": p.platform.value}]}
+    if model is None:
+        from fanops.llm import claude_json
+        model = claude_json
+    try:                                                # the slow generation, OUTSIDE any lock
+        out = model(caption_prompt(payload), CaptionSet.model_json_schema())
+    except ToolchainMissingError as exc:
+        return ActionResult(ok=False, error="Regenerate needs the `claude` CLI on PATH (run "
+                            f"`fanops autopilot` once to enable auto mode): {str(exc)[:160]}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"regenerate failed: {str(exc)[:160]}")
+    try:
+        cs = CaptionSet(**{**out, "request_id": "regen"})
+    except (ValidationError, TypeError) as exc:
+        return ActionResult(ok=False, error=f"regenerated caption was malformed: {reason(exc) if isinstance(exc, ValidationError) else exc}")
+    item = next((it for it in cs.items if it.surface == surface), None)
+    if item is None and len(cs.items) == 1:
+        item = cs.items[0]                              # single-surface regen: accept a lone item
+    if item is None:
+        return ActionResult(ok=False, error=f"model returned no caption for {surface}")
+    flag = brand_risk_flag(item.caption, cfg)           # SAME guard as ingest_captions — no bypass
+    if flag:
+        return ActionResult(ok=False, error=f"regenerated caption rejected — {flag}. "
+                            "Edit it by hand or regenerate again.")
+    new_caption, new_tags = item.caption, list(item.hashtags or [])
+    with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
+        # fresh now: the model call may have taken ~180s, during which the post could have become
+        # imminent/due — re-check against real wall-clock (fail-safe), not the stale entry-time now.
+        p2, err2 = _guard_editable_post(led2, post_id, _now(None))
+        if err2:
+            return ActionResult(ok=False, error=err2)
+        p2.caption = new_caption
+        p2.hashtags = new_tags
+    return ActionResult(ok=True, detail={"post_id": post_id, "caption": new_caption, "hashtags": new_tags})
 
 
 def approve_candidate(cfg: Config, eid: str) -> ActionResult:
@@ -162,6 +231,42 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
         return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
     except Exception as exc:
         return ActionResult(ok=False, error=f"advance failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail=summary)
+
+
+def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True) -> ActionResult:
+    """Auto-prepare (review-first, milestone 1): answer every pending moment/caption gate via the
+    configured responder, then advance — looped until no gate remains — so finished clips land in
+    Review WITHOUT the operator hand-writing a caption. With FANOPS_RESPONDER=llm the gates answer
+    themselves (the one-click/autopilot path); in manual mode the responder writes nothing and the
+    gates stay for the Gates tab. Same live-publish confirm + accounts guards as run_advance — a
+    prepare pass still crossposts/publishes due posts on a live backend. Mirrors cmd_run's loop."""
+    from fanops.pipeline import advance
+    from fanops.accounts import Accounts
+    from fanops.responder import get_responder
+    if cfg.poster_backend != "dryrun" and not confirmed:
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): a prepare pass "
+                            "PUBLISHES due posts to real accounts — tick the confirm box, then run again.")
+    try:
+        problems = Accounts.load(cfg).validate()       # malformed/empty-id accounts -> clean error, not 500
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
+    if problems:
+        return ActionResult(ok=False, error="accounts.json: " + "; ".join(problems))
+    bt = base_time or iso_z(_now(None))
+    responder = get_responder(cfg)
+    summary = None
+    for _ in range(10):                                # respond -> advance until stable (no gate left)
+        try:
+            responder.answer_pending(cfg)              # llm answers the gates; manual writes nothing
+            summary = advance(cfg, base_time=bt)
+        except AuthError as exc:
+            key = "POSTIZ_API_KEY" if cfg.poster_backend == "postiz" else "BLOTATO_API_KEY"
+            return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
+        except Exception as exc:
+            return ActionResult(ok=False, error=f"prepare failed: {str(exc)[:160]}")
+        if summary["awaiting"]["moments"] == 0 and summary["awaiting"]["captions"] == 0:
+            break
     return ActionResult(ok=True, detail=summary)
 
 

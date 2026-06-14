@@ -20,6 +20,7 @@ from fanops.track import pull_metrics, _default_list_posts
 from fanops.reconcile import reconcile_posts, _default_get_status, _RECONCILABLE
 from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
+from fanops import autopilot, daemon
 from fanops.log import get_logger
 
 def cmd_status(cfg: Config) -> int:
@@ -148,6 +149,42 @@ def cmd_cutover(cfg: Config, args) -> int:
     if act == "lift":    print(json.dumps(cutover.cutover_lift(cfg, args.submission_id), indent=2)); return 0
     return 2
 
+def cmd_compose(cfg: Config, args) -> int:
+    # Produced-clip compositing (operator verb; runs OUTSIDE any ledger lock — a long MoviePy render
+    # must never sit inside advance()'s flock). Composes ONE rendered clip into <clip>_composed.mp4:
+    # intro/outro brand cards + a dynamic title (the clip's hook) + crossfades. FAILS OPEN (uses the
+    # base clip, composed=false) on missing MoviePy / render error. Needs the [compose] extra.
+    import os
+    from pathlib import Path
+    from fanops import overlay
+    from fanops.compose import compose_clip, TemplateSpec
+    led = Ledger.load(cfg)
+    clip = led.clips.get(args.clip_id)
+    if clip is None or not clip.path:
+        print(f"no such clip (or unrendered): {args.clip_id}"); return 2
+    if not os.path.exists(clip.path):
+        print(f"clip file missing on disk: {clip.path}"); return 2
+    mom = led.moments.get(clip.parent_id)
+    title = args.title
+    if title is None and mom is not None:                    # default title = the clip's on-screen hook
+        title = mom.hook or overlay.derive_hook(mom.transcript_excerpt)
+    intro = cfg.artist_name if args.intro is None else args.intro   # default branded intro; '' disables
+    spec = TemplateSpec(title=title or None, intro_text=(intro or None), outro_text=(args.outro or None))
+    if spec.is_empty():
+        print("nothing to compose (no title/intro/outro) — pass --title/--intro/--outro"); return 0
+    out = str(Path(clip.path).with_name(Path(clip.path).stem + "_composed.mp4"))
+    log = get_logger(cfg); notes: list[str] = []
+    ok = compose_clip(clip.path, out, spec,
+                      log=lambda m: notes.append(m) or log("compose", args.clip_id, "info", err=m))
+    result = {"clip_id": args.clip_id, "composed": ok, "out": out,
+              "title": title, "intro": intro or None, "outro": args.outro or None}
+    if not ok and notes:                                # surface WHY it fell back (e.g. MoviePy absent)
+        result["reason"] = notes[-1]
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    # Exit nonzero when we fell back to the base clip (composed=false): a scripted `compose && upload`
+    # must be able to tell a real produced render from the fail-open copy. The file still exists at out.
+    return 0 if ok else 1
+
 def cmd_gc(cfg: Config, keep_days: int) -> int:
     # FIX F83: reclaim disk — drop the .mp4 files of retired/analyzed clips older than keep_days
     # (the ledger record + the post's cached media_url persist; the local file is dead weight
@@ -164,6 +201,68 @@ def cmd_gc(cfg: Config, keep_days: int) -> int:
             except OSError:
                 pass
     print(f"gc removed {removed} clip files older than {keep_days}d")
+    return 0
+
+def cmd_daemon(cfg: Config, args) -> int:
+    # Durable-unattended-run verb family (launchd packaging of `fanops run`). Thin: parse the interval,
+    # delegate to daemon.{install,status,stop,tail_logs}, print a report. macOS-only / launchctl-absent
+    # / bad-interval all degrade to one clean stderr line + exit 2 (the cli ladder posture), never a trace.
+    act = args.dae_cmd
+    try:
+        if act == "install":
+            interval = daemon.parse_interval(args.interval)
+            res = daemon.install(cfg, interval=interval, responder=args.responder)
+            print(f"daemon installed -> {res['plist']}")
+            print(f"  wrapper {res['wrapper']}  |  interval {interval}s  |  loaded {res['loaded']}  |  responder {args.responder}")
+            print("  next: fanops daemon status   |   stop: fanops daemon stop")
+            return 0
+        if act == "status":
+            rep = daemon.status(cfg, interval=daemon.installed_interval(cfg) or 600)
+            age = rep["heartbeat_age_s"]
+            print(f"fanops daemon ({daemon.LABEL})")
+            print(f"  loaded {rep['loaded']}  |  pid {rep['pid']}  |  last_exit {rep['last_exit']}"
+                  f"  |  heartbeat {'none' if age is None else f'{int(age)}s ago'}")
+            print(f"  -> {rep['verdict']}")
+            return 0
+        if act == "stop":
+            res = daemon.stop(cfg, remove=args.remove)
+            print(f"daemon stopped (label {res['label']})" + ("  + plist/wrapper removed" if res.get("removed") else ""))
+            return 0
+        if act == "logs":
+            print(daemon.tail_logs(cfg, args.n))
+            return 0
+        return 2
+    except (RuntimeError, ToolchainMissingError, ValueError) as e:
+        # non-darwin (RuntimeError), launchctl absent (ToolchainMissingError), bad --interval (ValueError)
+        print(f"daemon: {e}", file=sys.stderr)
+        return 2
+
+def cmd_autopilot(cfg: Config, args) -> int:
+    # One command -> autonomous: enable the llm responder (durably, in .env) + install the supervising
+    # daemon, then print a readiness report. BLOTATO-FREE: dryrun by default (publishes nothing); going
+    # live is a separate, deliberate step via Postiz or the manual publish-queue.
+    try:
+        interval = daemon.parse_interval(args.interval)
+        res = autopilot.autopilot(cfg, interval=interval, install_daemon=not args.no_daemon)
+    except (RuntimeError, ToolchainMissingError, ValueError, OSError) as e:
+        # non-darwin / launchctl absent / bad --interval / unwritable .env -> one clean line + exit 2
+        print(f"autopilot: {e}", file=sys.stderr); return 2
+    print("fanops autopilot — the per-clip work is now autonomous")
+    print(f"  responder -> {res['responder']} (answers its own moment/caption gates via your `claude` login; no hand-typing)")
+    print(f"  backend   -> {res['backend']}" + ("  (dryrun: schedules posts, publishes NOTHING)" if res["backend"] == "dryrun" else ""))
+    d = res["daemon"]
+    if d:
+        print(f"  daemon    -> loaded ({d['interval']}s cadence, survives logout, restarts on crash)   check: fanops daemon status")
+    else:
+        print(f"  daemon    -> not installed ({res['daemon_note']})")
+    failed = [c for c in res["checks"] if not c["ok"]]
+    if failed:
+        print("  still needs a human:")
+        for c in failed:
+            print(f"    [ ] {c['label']}  -> {c['hint']}")
+    else:
+        print("  readiness -> all checks pass")
+    print("  go-live (separate, when you want posts to ship): self-host Postiz (FANOPS_POSTER=postiz) OR `fanops publish-queue` by hand — Blotato not required")
     return 0
 
 def _http_url(s: str) -> str:
@@ -193,6 +292,11 @@ def main(argv: list[str] | None = None) -> int:
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
     p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
     sub.add_parser("intake")
+    p_comp = sub.add_parser("compose", help="produced clip: intro/outro brand cards + dynamic title + crossfades (MoviePy; needs .[compose])")
+    p_comp.add_argument("clip_id")
+    p_comp.add_argument("--title", default=None, help="on-screen title (default: the clip's hook)")
+    p_comp.add_argument("--intro", default=None, help="intro card text (default: artist name; pass '' to disable)")
+    p_comp.add_argument("--outro", default=None, help="outro card text, e.g. an @handle (default: none)")
     sub.add_parser("doctor", help="read-only first-run health screen (toolchain/accounts/key/go-live readiness)")
     sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
@@ -209,6 +313,15 @@ def main(argv: list[str] | None = None) -> int:
     p_clift = cut_sub.add_parser("lift", help="step 4: compute one real lift_score from the captured row")
     p_clift.add_argument("submission_id")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
+    p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
+    dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
+    p_dins = dae_sub.add_parser("install", help="install + load the launchd agent (macOS)")
+    p_dins.add_argument("--interval", default="10m"); p_dins.add_argument("--responder", default="llm", choices=["llm", "manual"])
+    dae_sub.add_parser("status", help="is the agent loaded + actually firing (heartbeat)?")
+    p_dstop = dae_sub.add_parser("stop", help="unload the launchd agent"); p_dstop.add_argument("--remove", action="store_true")
+    p_dlog = dae_sub.add_parser("logs", help="tail the run log"); p_dlog.add_argument("-n", type=int, default=40)
+    p_auto = sub.add_parser("autopilot", help="one command -> autonomous: enable llm responder (durably) + install the daemon")
+    p_auto.add_argument("--interval", default="10m"); p_auto.add_argument("--no-daemon", action="store_true")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
 
@@ -372,7 +485,10 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
     if args.cmd == "doctor":   return cmd_doctor(cfg)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
+    if args.cmd == "daemon":   return cmd_daemon(cfg, args)
+    if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
+    if args.cmd == "compose":  return cmd_compose(cfg, args)
     if args.cmd == "resolve":
         # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve
         # a post stuck in needs_reconcile (Blotato status ambiguous / never returns a terminal

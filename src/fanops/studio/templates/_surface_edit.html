@@ -1,0 +1,25 @@
+{# src/fanops/studio/templates/_surface_edit.html — the editable controls for ONE queued surface:
+   edit anything the system wrote, OR tell it what to change and regenerate, OR reschedule. Rendered
+   inline by _card.html and re-rendered STANDALONE by /regenerate (htmx outerHTML swap of #edit-<id>)
+   so the regenerated caption lands straight back in the box. The per-surface result sink
+   (#res-<id>) lives in _card.html, OUTSIDE this block, so it survives the regenerate swap. #}
+<div class="surface-edit" id="edit-{{ s.post_id }}">
+  {% if regen_note is defined and regen_note %}
+    <div class="result ok">Regenerated — the new caption is in the box below. Save it, reschedule, or regenerate again for another take.</div>
+  {% endif %}
+  <form hx-post="{{ url_for('do_caption', post_id=s.post_id) }}" hx-target="#res-{{ s.post_id }}" hx-swap="innerHTML">
+    <label>Caption — edit anything the system wrote</label>
+    <textarea name="caption" rows="3">{{ s.caption }}</textarea>
+    <button type="submit">Save caption</button>
+  </form>
+  <form hx-post="{{ url_for('do_regenerate', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
+    <label>Not right? Tell the system what to change, then regenerate</label>
+    <input type="text" name="guidance" placeholder="e.g. punchier · mention the beat drop · less hype">
+    <button type="submit" class="primary">Regenerate caption</button>
+  </form>
+  <form hx-post="{{ url_for('do_reschedule', post_id=s.post_id) }}" hx-target="#res-{{ s.post_id }}" hx-swap="innerHTML">
+    <label>Scheduled time</label>
+    <input type="text" name="new_time" value="{{ s.scheduled_time }}" placeholder="2026-06-08T14:00:00Z">
+    <button type="submit">Reschedule</button>
+  </form>
+</div>

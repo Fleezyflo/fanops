@@ -60,7 +60,14 @@ The only path with the automated metrics/learning loop (lift-by-variant, amplify
    Step 3's reconciliation tells you which lift weights are real; re-tune `00_control/tuning.json`
    `lift_weights` before enabling the learning loop. Until `cutover metrics` runs, the speculative
    learning toggles (`FANOPS_VARIANT_AMPLIFY/UCB/TRANSFER`) stay inert by design (OFF-until-proven).
-5. Go live: `fanops run --base-time <past-T>` (cron/launchd entry point; emits a heartbeat each run).
+5. Go autonomous (one command): `fanops autopilot` — enables the `llm` responder durably (writes
+   `FANOPS_RESPONDER=llm` to `.env`, so the pipeline answers its own moment/caption gates) **and**
+   installs the supervising launchd daemon (every 10m, survives logout, restarts on crash), then prints
+   a readiness report. dryrun by default — it schedules posts but **publishes nothing** until you
+   deliberately wire a poster (below). The pieces, if you prefer them by hand:
+   - `fanops daemon install --interval 10m` — just the launchd supervisor around `fanops run`.
+   - `fanops daemon status` (loaded + heartbeat-fresh) / `fanops daemon stop`.
+   - The bare `fanops run --base-time <past-T>` is the underlying cron/launchd entry point (heartbeat each run).
 
 ## Path B — Postiz (free, self-hosted, no learning loop)
 

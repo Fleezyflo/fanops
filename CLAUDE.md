@@ -5,7 +5,7 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
 
 ## Commands
 
-- Install: `pip install -e '.[dev]'` — extras: `[studio]` (Flask cockpit, imported lazily), `[transcribe]` (whisper CLI)
+- Install: `pip install -e '.[dev]'` — extras: `[studio]` (Flask cockpit, imported lazily), `[transcribe]` (whisper CLI), `[compose]` (MoviePy produced-clip compositing — `fanops compose`, lazy + fail-open)
 - Fast unit suite (CI `unit` job): `python -m pytest -q -m "not integration"`
 - Integration suite (CI `e2e` job): `python -m pytest -q -m integration -rs` — needs real ffmpeg/ffprobe/whisper/espeak on PATH; skips locally when absent; CI sets `FANOPS_REQUIRE_E2E=1` so a skip fails
 - Lint: `ruff check .` (pyflakes F + pycodestyle E only)

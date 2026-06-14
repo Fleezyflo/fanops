@@ -78,6 +78,70 @@ def test_run_advance_surfaces_fatal_auth(tmp_path, monkeypatch):
     assert not res.ok and "FATAL" in res.error and "BLOTATO_API_KEY" in res.error
 
 
+# ---- actions.run_prepare (auto-prepare: answer gates via the responder + advance until stable) ----
+def test_run_prepare_answers_gates_and_advances(tmp_path, monkeypatch):
+    # The review-first behavior (milestone 1): ONE action answers every moment/caption gate via the
+    # responder AND advances — so the operator NEVER hand-writes a caption. (run_advance does a bare
+    # advance that CREATES gates and leaves them pending in the Gates tab — the manual headache.)
+    cfg = Config(root=tmp_path)
+    calls = {"answer": 0, "advance": 0}
+    class FakeResp:
+        def answer_pending(self, c):
+            calls["answer"] += 1; return 1
+    monkeypatch.setattr("fanops.responder.get_responder", lambda c: FakeResp())
+    def fake_advance(c, *, base_time):
+        calls["advance"] += 1
+        return {"sources": 0, "awaiting": {"moments": 0, "captions": 0}}
+    monkeypatch.setattr("fanops.pipeline.advance", fake_advance)
+    res = actions.run_prepare(cfg)
+    assert res.ok
+    assert calls["answer"] >= 1 and calls["advance"] >= 1        # answered gates AND advanced
+    assert res.detail["awaiting"] == {"moments": 0, "captions": 0}
+
+def test_run_prepare_loops_until_no_gate_remains(tmp_path, monkeypatch):
+    # First advance still shows a pending gate; the responder answers it; the loop runs again until clear.
+    cfg = Config(root=tmp_path)
+    seq = iter([{"sources": 1, "awaiting": {"moments": 1, "captions": 0}},
+                {"sources": 1, "awaiting": {"moments": 0, "captions": 0}}])
+    monkeypatch.setattr("fanops.pipeline.advance", lambda c, *, base_time: next(seq))
+    monkeypatch.setattr("fanops.responder.get_responder",
+                        lambda c: type("R", (), {"answer_pending": lambda s, c: 1})())
+    res = actions.run_prepare(cfg)
+    assert res.ok and res.detail["awaiting"]["moments"] == 0
+
+def test_run_prepare_live_backend_requires_confirm(tmp_path, monkeypatch):
+    # A prepare pass crossposts/publishes due posts on a live backend -> same confirm guard as advance.
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    res = actions.run_prepare(Config(root=tmp_path), confirmed=False)
+    assert not res.ok and "confirm" in (res.error or "").lower()
+
+def test_run_prepare_surfaces_fatal_auth(tmp_path, monkeypatch):
+    # A fatal auth failure during a prepare pass surfaces FATAL + the right key, not a soft "failed".
+    from fanops.errors import BlotatoAuthError
+    monkeypatch.setattr("fanops.responder.get_responder",
+                        lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
+    def boom(c, *, base_time): raise BlotatoAuthError("Blotato 401 (body withheld)")
+    monkeypatch.setattr("fanops.pipeline.advance", boom)
+    res = actions.run_prepare(Config(root=tmp_path))
+    assert not res.ok and "FATAL" in res.error and "BLOTATO_API_KEY" in res.error
+
+def test_run_prepare_route(tmp_path, monkeypatch):
+    from fanops.studio.app import create_app
+    monkeypatch.setattr("fanops.responder.get_responder",
+                        lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
+    monkeypatch.setattr("fanops.pipeline.advance",
+                        lambda c, *, base_time: {"sources": 0, "awaiting": {"moments": 0, "captions": 0}})
+    app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
+    r = app.test_client().post("/run/prepare")
+    assert r.status_code == 200
+
+def test_run_route_shows_prepare_button(tmp_path):
+    from fanops.studio.app import create_app
+    app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
+    r = app.test_client().get("/run")
+    assert b"Prepare" in r.data
+
+
 # ---- actions.run_pull ----
 def test_run_pull_rejects_non_http_url(tmp_path):
     res = actions.run_pull(Config(root=tmp_path), "not-a-url")

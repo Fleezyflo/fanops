@@ -149,6 +149,26 @@ fanops run --base-time <T>           # responder.answer → advance, repeated un
 quarantined inside `advance`, and a fatal auth error (bad/missing `BLOTATO_API_KEY`, 401)
 halts the loop instead of burning the queue.
 
+**One command (`fanops autopilot`).** The shortcut for everything below: `fanops autopilot` enables the
+`llm` responder durably (writes `FANOPS_RESPONDER=llm` to `.env`, so the pipeline answers its own moment/
+caption gates — no hand-typing), installs the supervising daemon, and prints a readiness report. dryrun by
+default (publishes nothing); going live stays a separate, deliberate step (Postiz or the manual queue).
+
+**Supervised on macOS (`fanops daemon`).** `fanops run` is one-shot by design; to run it unattended
+without babysitting a session-bound process, install it as a launchd LaunchAgent:
+
+```bash
+fanops daemon install --interval 10m   # runs `fanops run` every 10m; survives logout, restarts on crash
+fanops daemon status                    # loaded? + actually firing? (reads the heartbeat below)
+fanops daemon logs                      # tail 07_reports/run.log
+fanops daemon stop                      # unload it
+```
+
+launchd owns the process, so closing the terminal no longer kills the run — the failure mode a plain
+`nohup`/`setsid` can't fix (macOS has no `setsid`). The agent runs **dryrun by default**; pass
+`--responder llm` only with `claude` logged in. macOS-only (launchd) — `install`/`stop` error loudly
+elsewhere instead of silently no-op'ing. `status` reports liveness from the same heartbeat below.
+
 **The learning loop now closes inside `run`.** After the respond→advance loop converges,
 `run` runs one `track → adjust` pass (`pull_metrics → classify_outcomes → amplify → retire`)
 in its own lock-safe `Ledger.transaction`, so an unattended deployment makes more of what
@@ -208,6 +228,8 @@ no progress, so the human knows to check the key, not the cron.
 | `fanops retry-metrics <post_id>` | re-pull metrics for a `published` post on the next `track` pass (no-op flip; exits 2 if the post isn't published) |
 | `fanops digest` | rewrite the human-readable ledger digest (incl. a `## Pending agent gates` section naming each unanswered gate by kind+key) |
 | `fanops run [--base-time T]` | unattended: respond + advance until stable, then a live-only `track`+`adjust` learning pass (and, if `FANOPS_VARIANT_AMPLIFY=1`, a separately-guarded variant-amplify pass); emits a heartbeat line every run |
+| `fanops autopilot [--interval 10m] [--no-daemon]` | **one command → autonomous**: enable the `llm` responder (durably, in `.env`) so it answers its own moment/caption gates, install the supervising daemon, then print a readiness report. dryrun by default (publishes nothing); go-live stays a separate, deliberate step |
+| `fanops daemon <install\|status\|stop\|logs>` | supervise `fanops run` as a macOS **launchd** LaunchAgent — `install --interval 10m` (survives logout, restarts on crash), `status` (loaded + heartbeat-fresh), `stop`, `logs`. macOS-only; dryrun by default |
 | `fanops doctor` | read-only first-run health screen: PASS/FAIL per setup gate (toolchain, `accounts.json`, poster+key, `claude` when `FANOPS_RESPONDER=llm`) + notes (go-live/learning-validation state, review-queue depth). Diagnoses + points; performs nothing |
 | `fanops cutover <auth\|post\|metrics\|lift>` | the **go-live validation harness** — the one safe, reversible path to prove the pipeline against REAL Blotato (see *Going live* below). Never reachable from `run`/`advance`; writes only `00_control/cutover.json`, never the ledger |
 

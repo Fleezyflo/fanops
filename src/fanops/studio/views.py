@@ -165,6 +165,15 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     return cards
 
 
+def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: datetime) -> Optional[SurfacePost]:
+    """The single-surface read-model for ONE post — used by the Regenerate route to re-render just
+    that surface's editable caption field after the model rewrites it. None if the post is gone."""
+    p = led.posts.get(post_id)
+    if p is None:
+        return None
+    return _surface(p, persona=_personas(accounts).get(p.account), now=now)
+
+
 def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRow]:
     """Queued posts (the editable timeline) plus recent published/analyzed posts (read-only past),
     sorted chronologically by scheduled_time. Rows with no/naive/unparseable time sort last."""
