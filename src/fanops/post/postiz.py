@@ -13,17 +13,29 @@ The created-post RESPONSE id key and the image-ref shape are INTEGRATION CHECKPO
 your Postiz version's API; the offline tests lock the SHAPE. accounts.json `account_id` carries the
 Postiz INTEGRATION id (from GET /public/v1/integrations) for a postiz deployment."""
 from __future__ import annotations
+import logging
 import random
 import time
 from pathlib import Path
+from typing import NamedTuple
 import requests
 from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
 from fanops.models import PostState
 
+_log = logging.getLogger("fanops.post.postiz")
 _MAX_RETRIES = 4
 _PUBLIC = "/public/v1"
+
+
+class PostizIntegration(NamedTuple):
+    """One connected Postiz channel from GET /public/v1/integrations. `id` is what accounts.json's
+    per-platform integrations[platform] (or the shared account_id fallback) carries for a postiz
+    deployment. A typed row (W7) rather than a bare dict — consumers use .id/.name/.platform."""
+    id: str
+    name: str
+    platform: str
 
 
 def _base(cfg: Config) -> str:
@@ -86,15 +98,15 @@ def postiz_upload_media(cfg: Config, path: Path) -> str:
     return path_url
 
 
-def postiz_list_integrations(cfg: Config) -> list[dict]:
+def postiz_list_integrations(cfg: Config) -> list[PostizIntegration]:
     """List the channels connected to the operator's Postiz instance (GET /public/v1/integrations) so
-    the Studio Go-Live tab can map each FanOps account to a Postiz integration id WITHOUT the operator
-    hand-pasting it into accounts.json. Returns [{"id","name","platform"}] — `id` is what accounts.json
-    `account_id` carries for a postiz deployment. 401 -> typed PostizAuthError (halt); any other non-2xx
-    -> RuntimeError. The response SHAPE is an INTEGRATION CHECKPOINT (not pinned in the public docs):
-    accept a bare list OR {"integrations":[...]}, pull id + a display name + platform per item, and SKIP
-    a malformed entry (no usable id / not a dict) rather than raise — a live verify happens when the
-    operator clicks Refresh, and a manual id paste stays available as the fallback."""
+    the Studio Go-Live tab can map each FanOps channel to a Postiz integration id WITHOUT the operator
+    hand-pasting it into accounts.json. Returns [PostizIntegration(id, name, platform)] — `id` is what
+    accounts.json carries per-platform for a postiz deployment. 401 -> typed PostizAuthError (halt); any
+    other non-2xx -> RuntimeError. The response SHAPE is an INTEGRATION CHECKPOINT (not pinned in the
+    public docs): accept a bare list OR {"integrations":[...]}, pull id + a display name + platform per
+    item, and SKIP a malformed entry (no usable id / not a dict) rather than raise — a live verify happens
+    when the operator clicks Refresh, and a manual id paste stays available as the fallback."""
     headers = {"Authorization": _key(cfg)}
     resp = requests.get(f"{_base(cfg)}{_PUBLIC}/integrations", headers=headers, timeout=30)
     if resp.status_code == 401:
@@ -105,7 +117,7 @@ def postiz_list_integrations(cfg: Config) -> list[dict]:
     items = body.get("integrations") if isinstance(body, dict) else body
     if not isinstance(items, list):
         return []
-    out: list[dict] = []
+    out: list[PostizIntegration] = []
     for it in items:
         if not isinstance(it, dict):
             continue
@@ -118,7 +130,7 @@ def postiz_list_integrations(cfg: Config) -> list[dict]:
             continue
         platform = it.get("identifier") or it.get("platform") or ""
         name = it.get("name") or it.get("displayName") or platform or iid
-        out.append({"id": iid, "name": str(name), "platform": str(platform)})
+        out.append(PostizIntegration(id=iid, name=str(name), platform=str(platform)))
     return out
 
 
@@ -126,13 +138,17 @@ def postiz_check_auth(cfg: Config) -> bool:
     """Cheap auth probe for the Go-Live 'Save & test' button: hit the integrations endpoint and report
     whether the key works. True on success, raise PostizAuthError on 401 (so the surface can name the
     key), False on any other failure (bad URL, 5xx, network) — the test must never crash the request
-    handler. NEVER returns or logs the key itself."""
+    handler. The swallowed (non-401) failure is LOGGED with its type + truncated message so a silent
+    'auth failed' is diagnosable (W8); the message carries response text / a network error, never the
+    key (the Authorization header is never echoed into an exception). NEVER returns or logs the key."""
     try:
         postiz_list_integrations(cfg)
         return True
     except PostizAuthError:
         raise
-    except Exception:
+    except Exception as exc:
+        _log.warning("Postiz auth probe failed (treating as unreachable): %s: %s",
+                     type(exc).__name__, str(exc)[:140])
         return False
 
 

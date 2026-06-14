@@ -64,6 +64,16 @@ def test_set_postiz_config_reports_auth_failure_redacted(tmp_path, monkeypatch):
     assert res.ok is False and "POSTIZ_API_KEY" in res.error
     assert "WRONGKEY" not in repr(res)                   # key never echoed even on failure
 
+def test_set_postiz_config_auth_fail_notes_credentials_saved(tmp_path, monkeypatch):
+    # W9: the key WAS written (dual-write happens before the auth test), so a rejected key must tell the
+    # operator it was saved (re-enter to correct) — not imply nothing happened. Still never echoes the key.
+    cfg = _clean(monkeypatch, tmp_path)
+    def boom(c): raise PostizAuthError("401 bad key")
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", boom)
+    res = golive.set_postiz_config(cfg, "https://x.example.com", "WRONGKEY")
+    assert res.ok is False and "saved" in res.error.lower() and "POSTIZ_API_KEY" in res.error
+    assert "WRONGKEY" not in repr(res)
+
 def test_set_postiz_config_url_only_keeps_existing_key(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "existing")
     monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)

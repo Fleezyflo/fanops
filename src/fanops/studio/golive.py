@@ -63,7 +63,10 @@ def set_postiz_config(cfg: Config, url: str, key: str = "") -> ActionResult:
     except PostizAuthError:
         # Discard the exception text on the key-handling surface — emit a FIXED message so a future
         # PostizAuthError that ever embedded the key value could not leak through str(exc) (ecc:python-review).
-        return ActionResult(ok=False, error="Postiz auth failed — check POSTIZ_API_KEY (the test request was rejected).")
+        # W9: the key WAS dual-written above, so tell the operator it's saved (re-enter to correct) rather
+        # than imply nothing happened. Still no key echo.
+        return ActionResult(ok=False, error="Postiz auth failed — check POSTIZ_API_KEY (the test request was "
+                            "rejected; credentials saved — re-enter to correct).")
     if not reachable:
         return ActionResult(ok=False, error=f"Saved POSTIZ_URL but could not reach Postiz at {url} — "
                             "check the URL points at your running Postiz instance.")

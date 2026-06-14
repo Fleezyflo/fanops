@@ -226,7 +226,12 @@ def cmd_daemon(cfg: Config, args) -> int:
             return 0
         if act == "stop":
             res = daemon.stop(cfg, remove=args.remove)
-            print(f"daemon stopped (label {res['label']})" + ("  + plist/wrapper removed" if res.get("removed") else ""))
+            removed = "  + plist/wrapper removed" if res.get("removed") else ""
+            if not res["stopped"]:                       # W10: reflect a real failure, don't claim success
+                print(f"daemon may still be loaded (label {res['label']}) — run `fanops daemon status`" + removed,
+                      file=sys.stderr)
+                return 1
+            print(f"daemon stopped (label {res['label']})" + removed)
             return 0
         if act == "logs":
             print(daemon.tail_logs(cfg, args.n))

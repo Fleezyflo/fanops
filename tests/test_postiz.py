@@ -8,7 +8,7 @@ from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState
 from fanops.post.postiz import (PostizPoster, build_postiz_payload, postiz_upload_media,
-                                postiz_list_integrations, postiz_check_auth)
+                                postiz_list_integrations, postiz_check_auth, PostizIntegration)
 from fanops.post import get_poster, get_media_uploader
 
 
@@ -163,27 +163,29 @@ def test_list_integrations_parses_id_name_platform(tmp_path, monkeypatch, mocker
     cfg = _cfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.postiz.requests.get",
                  return_value=_R(200, [{"id": "intg_42", "name": "IG Reels", "identifier": "instagram"}]))
-    assert postiz_list_integrations(cfg) == [{"id": "intg_42", "name": "IG Reels", "platform": "instagram"}]
+    out = postiz_list_integrations(cfg)
+    assert out == [PostizIntegration("intg_42", "IG Reels", "instagram")]
+    assert out[0].id == "intg_42" and out[0].name == "IG Reels" and out[0].platform == "instagram"  # named fields (W7)
 
 def test_list_integrations_accepts_wrapped_shape(tmp_path, monkeypatch, mocker):
     # name falls back to the platform identifier when Postiz omits a display name
     cfg = _cfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.postiz.requests.get",
                  return_value=_R(200, {"integrations": [{"id": "i1", "identifier": "tiktok"}]}))
-    assert postiz_list_integrations(cfg) == [{"id": "i1", "name": "tiktok", "platform": "tiktok"}]
+    assert postiz_list_integrations(cfg) == [PostizIntegration("i1", "tiktok", "tiktok")]
 
 def test_list_integrations_skips_malformed_item(tmp_path, monkeypatch, mocker):
     # no usable id, or a non-dict entry -> skipped (not raised); the good one survives
     cfg = _cfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.postiz.requests.get",
                  return_value=_R(200, [{"name": "no id"}, "garbage", {"id": "ok", "identifier": "youtube"}]))
-    assert postiz_list_integrations(cfg) == [{"id": "ok", "name": "youtube", "platform": "youtube"}]
+    assert postiz_list_integrations(cfg) == [PostizIntegration("ok", "youtube", "youtube")]
 
 def test_list_integrations_coerces_numeric_id(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.postiz.requests.get",
                  return_value=_R(200, [{"id": 51, "name": "TikTok", "identifier": "tiktok"}]))
-    assert postiz_list_integrations(cfg) == [{"id": "51", "name": "TikTok", "platform": "tiktok"}]
+    assert postiz_list_integrations(cfg) == [PostizIntegration("51", "TikTok", "tiktok")]
 
 def test_list_integrations_401_typed_redacted(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch)
@@ -216,6 +218,15 @@ def test_check_auth_false_on_other_failure(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.postiz.requests.get", return_value=_R(500, {}, text="boom"))
     assert postiz_check_auth(cfg) is False
+
+def test_check_auth_logs_swallowed_failure(tmp_path, monkeypatch, mocker, caplog):
+    # W8: a swallowed (non-401) probe failure must be LOGGED so a silent "auth failed" is diagnosable.
+    import logging
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(503, {}, text="down"))
+    with caplog.at_level(logging.WARNING, logger="fanops.post.postiz"):
+        assert postiz_check_auth(cfg) is False
+    assert "auth probe failed" in caplog.text
 
 def test_check_auth_false_on_network_error(tmp_path, monkeypatch, mocker):
     import requests as _rq

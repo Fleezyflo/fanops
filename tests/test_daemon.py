@@ -192,24 +192,38 @@ def test_status_no_heartbeat_handles_empty_log(tmp_path, monkeypatch):
 def test_stop_boots_out_label(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
-    fake = _fake_launchctl(bootout=(0, ""))
+    fake = _fake_launchctl(bootout=(0, ""), list=(1, ""))         # after bootout the label is not loaded
     monkeypatch.setattr(daemon.subprocess, "run", fake)
     cfg = Config(root=tmp_path)
 
-    daemon.stop(cfg)
+    res = daemon.stop(cfg)
 
     uid = os.getuid()
     assert ["launchctl", "bootout", f"gui/{uid}/{daemon.LABEL}"] in fake.calls
+    assert res["stopped"] is True                                 # list confirms it's no longer loaded
 
 
 def test_stop_idempotent_when_not_loaded(tmp_path, monkeypatch):
     # Booting out an already-stopped label returns rc != 0 — that is "already stopped", not an error.
+    # The list confirm finds it not loaded (rc != 0), so stopped is still True (W10: confirmed, not hardcoded).
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
-    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(1, ""), unload=(1, "")))
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(1, ""), unload=(1, ""), list=(1, "")))
     cfg = Config(root=tmp_path)
     res = daemon.stop(cfg)                                         # must not raise
     assert res["stopped"] is True
+
+
+def test_stop_reports_not_stopped_when_still_loaded(tmp_path, monkeypatch):
+    # W10 (the honest part): if bootout AND the unload fallback both fail and the agent is STILL loaded
+    # (list rc == 0), stopped must be False — not a hardcoded True that lies about the outcome.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.subprocess, "run",
+                        _fake_launchctl(bootout=(1, ""), unload=(1, ""), list=(0, '\t"PID" = 5;\n')))
+    cfg = Config(root=tmp_path)
+    res = daemon.stop(cfg)
+    assert res["stopped"] is False                                # still loaded -> honestly not stopped
 
 
 def test_tail_logs_returns_last_n_lines(tmp_path):
@@ -250,6 +264,27 @@ def test_main_daemon_logs_returns_0(tmp_path, monkeypatch, capsys):
     from fanops.cli import main
     assert main(["daemon", "logs"]) == 0
     assert "no logs yet" in capsys.readouterr().out
+
+
+def test_main_daemon_stop_success_returns_0(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path); monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(0, ""), list=(1, "")))
+    from fanops.cli import main
+    assert main(["daemon", "stop"]) == 0
+    assert "daemon stopped" in capsys.readouterr().out
+
+
+def test_main_daemon_stop_reports_failure_when_still_loaded(tmp_path, monkeypatch, capsys):
+    # W10 end-to-end: a stop that leaves the agent loaded exits non-zero with a clear stderr note,
+    # instead of printing "daemon stopped" and returning 0 (the old hardcoded-success lie).
+    monkeypatch.chdir(tmp_path); monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.subprocess, "run",
+                        _fake_launchctl(bootout=(1, ""), unload=(1, ""), list=(0, '\t"PID" = 5;\n')))
+    from fanops.cli import main
+    assert main(["daemon", "stop"]) == 1
+    assert "may still be loaded" in capsys.readouterr().err
 
 
 # ── review hardening (python-review HIGH/MEDIUM) ─────────────────────────────────────────────
