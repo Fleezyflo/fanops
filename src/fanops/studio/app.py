@@ -129,6 +129,13 @@ def create_app(cfg: Config) -> Flask:
         return _run_panel(actions.run_advance(cfg, request.form.get("base_time") or None,
                                               confirmed=bool(request.form.get("confirm"))))
 
+    @app.post("/run/prepare")
+    def do_run_prepare():
+        # Auto-prepare: answer the gates (via the responder) + advance until stable, so the operator
+        # never hand-writes a caption. Same live-publish confirm checkbox as advance.
+        return _run_panel(actions.run_prepare(cfg, request.form.get("base_time") or None,
+                                              confirmed=bool(request.form.get("confirm"))))
+
     @app.get("/candidates")
     def candidates():
         # Track C: approve discover footage in the browser (replaces the Finder drag into approved/).

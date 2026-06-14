@@ -165,6 +165,42 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     return ActionResult(ok=True, detail=summary)
 
 
+def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True) -> ActionResult:
+    """Auto-prepare (review-first, milestone 1): answer every pending moment/caption gate via the
+    configured responder, then advance — looped until no gate remains — so finished clips land in
+    Review WITHOUT the operator hand-writing a caption. With FANOPS_RESPONDER=llm the gates answer
+    themselves (the one-click/autopilot path); in manual mode the responder writes nothing and the
+    gates stay for the Gates tab. Same live-publish confirm + accounts guards as run_advance — a
+    prepare pass still crossposts/publishes due posts on a live backend. Mirrors cmd_run's loop."""
+    from fanops.pipeline import advance
+    from fanops.accounts import Accounts
+    from fanops.responder import get_responder
+    if cfg.poster_backend != "dryrun" and not confirmed:
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): a prepare pass "
+                            "PUBLISHES due posts to real accounts — tick the confirm box, then run again.")
+    try:
+        problems = Accounts.load(cfg).validate()       # malformed/empty-id accounts -> clean error, not 500
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
+    if problems:
+        return ActionResult(ok=False, error="accounts.json: " + "; ".join(problems))
+    bt = base_time or iso_z(_now(None))
+    responder = get_responder(cfg)
+    summary = None
+    for _ in range(10):                                # respond -> advance until stable (no gate left)
+        try:
+            responder.answer_pending(cfg)              # llm answers the gates; manual writes nothing
+            summary = advance(cfg, base_time=bt)
+        except AuthError as exc:
+            key = "POSTIZ_API_KEY" if cfg.poster_backend == "postiz" else "BLOTATO_API_KEY"
+            return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
+        except Exception as exc:
+            return ActionResult(ok=False, error=f"prepare failed: {str(exc)[:160]}")
+        if summary["awaiting"]["moments"] == 0 and summary["awaiting"]["captions"] == 0:
+            break
+    return ActionResult(ok=True, detail=summary)
+
+
 # Non-terminal states an operator may mark "posted by hand". `error` is included (ecc:python-review):
 # it is semantically a recoverable failure like `failed` (digest.py treats them alike), so the UI
 # must not strand an error-state post. Excludes the terminal published/analyzed/retired.

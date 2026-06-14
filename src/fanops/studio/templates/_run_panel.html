@@ -30,20 +30,27 @@
     <form hx-post="{{ url_for('do_run_ingest') }}" hx-target="#run-panel" hx-swap="outerHTML">
       <button type="submit">Ingest inbox</button>
     </form>
+    <form hx-post="{{ url_for('do_run_prepare') }}" hx-target="#run-panel" hx-swap="outerHTML">
+      {% if status.backend != 'dryrun' %}
+        <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
+          publish to REAL accounts (backend: {{ status.backend }})</label>
+      {% endif %}
+      <button type="submit" class="primary">Prepare everything</button>
+    </form>
     <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML">
       {% if status.backend != 'dryrun' %}
         <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
           publish to REAL accounts (backend: {{ status.backend }})</label>
       {% endif %}
-      <button type="submit">Run pipeline pass</button>
+      <button type="submit">Run one pass (advanced)</button>
     </form>
   </div>
 
   <ol class="muted run-steps">
     <li>Drop files in <code>01_inbox/</code> or <em>Pull URL</em>, then <em>Ingest inbox</em>.</li>
-    <li><em>Run pipeline pass</em> → transcribes, pauses at the moments gate.</li>
-    <li>Answer pending gates in the <strong>Gates</strong> tab.</li>
-    <li><em>Run pipeline pass</em> again → renders clips, pauses at the captions gate; answer it.</li>
-    <li><em>Run pipeline pass</em> once more → crossposts + publishes due. See cuts in <strong>Review</strong>.</li>
+    <li><em>Prepare everything</em> → the system writes its own captions and finishes the clips for you;
+      watch them appear in <strong>Review</strong>. No gates to answer by hand.</li>
+    <li class="muted">Auto-answering uses your <code>claude</code> login — run <code>fanops autopilot</code>
+      once to turn it on. Without it, the moment/caption gates wait for you in the <strong>Gates</strong> tab.</li>
   </ol>
 </div>
