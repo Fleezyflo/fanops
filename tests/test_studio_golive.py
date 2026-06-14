@@ -219,6 +219,29 @@ def test_golive_status_never_exposes_key(tmp_path, monkeypatch):
     assert "TOPSECRET" not in repr(st) and st["key_set"] is True
 
 
+# ---- .env write failure must surface as a clean ActionResult, never a 500 (the tab's invariant) ----
+def test_set_postiz_config_disk_error_is_clean_not_raise(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setattr(golive, "set_env_var", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only fs")))
+    res = golive.set_postiz_config(cfg, "https://x.example.com", "K")
+    assert res.ok is False and ".env" in res.error
+    assert "POSTIZ_URL" not in os.environ                # os.environ NOT mutated when the durable write failed
+
+def test_go_dryrun_disk_error_is_clean(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setattr(golive, "set_env_var", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    res = golive.go_dryrun(cfg)
+    assert res.ok is False and ".env" in res.error
+
+def test_set_postiz_config_newline_in_key_blocked_cleanly(tmp_path, monkeypatch):
+    # end-to-end: a key with an embedded newline (injection attempt) is rejected by set_env_var and
+    # surfaced as a clean ActionResult, never written, never a 500.
+    cfg = _clean(monkeypatch, tmp_path)
+    res = golive.set_postiz_config(cfg, "https://x.example.com", "good\nINJECTED=1")
+    assert res.ok is False
+    assert os.environ.get("INJECTED") is None            # the injected key never lands
+
+
 # ---- Flask wiring (create_app + test_client), mirroring test_studio_publish_now's route tests ----
 def _client(cfg):
     from fanops.studio.app import create_app

@@ -28,6 +28,8 @@ proven streak gate + wrong-signal no-op tests + the live-preservation assertion,
 tests/test_variant_amplify.py."""
 from __future__ import annotations
 from statistics import mean
+from fanops.config import Config
+from fanops.ledger import Ledger
 from fanops.adjust import amplify, MAX_AMPLIFY_PER_SOURCE   # AMPLIFY-ONLY: import amplify (+ the shared
 #                                          E1 budget constant), NEVER retire (C1 / G1)
 from fanops.ids import _hash
@@ -54,7 +56,7 @@ def _evidence_fingerprint(led, account: str, platform: Platform) -> str:
     return _hash("variant_streak", account, platform.value, *pids)
 
 
-def update_streaks(led, cfg):
+def update_streaks(led: Ledger, cfg: Config) -> None:
     """Advance/reset the per-surface sustained-win streak. Deterministic + idempotent on unchanged
     evidence. This is the ONLY state-mutating helper in this module, and it mutates ONLY
     led.variant_streaks (never a unit's state, never the amplify/retire path)."""
@@ -145,7 +147,7 @@ def amplify_candidates(led, cfg) -> list[dict]:
     return out
 
 
-def apply_variant_amplify(led, cfg):
+def apply_variant_amplify(led: Ledger, cfg: Config) -> Ledger:
     """Actuator. Update streaks, then amplify each fully-gated candidate's source — injecting the
     winning hook as extra guidance. AMPLIFY-ONLY: never calls retire/_delete_moment_cascade. FAIL-SAFE:
     any exception -> log once, NO partial mutation beyond what already committed, return led. The

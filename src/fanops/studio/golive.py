@@ -17,6 +17,7 @@ THREE load-bearing invariants:
      "set". set_postiz_config tests the key by calling Postiz; it never hands it back."""
 from __future__ import annotations
 import os
+from typing import Optional
 
 from fanops.config import Config
 from fanops.accounts import Accounts, write_account_id
@@ -26,12 +27,19 @@ from fanops.post import postiz
 from fanops.studio.actions import ActionResult
 
 
-def _dual_write(cfg: Config, key: str, value: str) -> None:
+def _dual_write(cfg: Config, key: str, value: str) -> Optional[str]:
     """Persist KEY=value to .env (durable) AND set os.environ[KEY] (this process) — the load-bearing
     dual-write mirrored from autopilot. One without the other is a bug: .env-only doesn't take effect
-    until a restart; os.environ-only is lost on restart."""
-    set_env_var(cfg.root / ".env", key, value)
+    until a restart; os.environ-only is lost on restart. Returns None on success, or an error string
+    if the DURABLE write failed (disk full / read-only / a newline-bearing value rejected by
+    set_env_var) — the caller surfaces it as a clean ActionResult so the Go-Live tab never 500s. On a
+    durable-write failure os.environ is left UNTOUCHED (never reflect a change that won't persist)."""
+    try:
+        set_env_var(cfg.root / ".env", key, value)
+    except (OSError, ValueError) as exc:
+        return f"could not write {key} to .env: {str(exc)[:140]}"
     os.environ[key] = value
+    return None
 
 
 def set_postiz_config(cfg: Config, url: str, key: str = "") -> ActionResult:
@@ -42,10 +50,14 @@ def set_postiz_config(cfg: Config, url: str, key: str = "") -> ActionResult:
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         return ActionResult(ok=False, error=f"Postiz URL must start with http:// or https:// — got {url!r}")
-    _dual_write(cfg, "POSTIZ_URL", url)
+    err = _dual_write(cfg, "POSTIZ_URL", url)
+    if err:
+        return ActionResult(ok=False, error=err)
     key = (key or "").strip()
     if key:
-        _dual_write(cfg, "POSTIZ_API_KEY", key)          # write-only: stored, never echoed back
+        err = _dual_write(cfg, "POSTIZ_API_KEY", key)    # write-only: stored, never echoed back
+        if err:
+            return ActionResult(ok=False, error=err)
     try:
         reachable = postiz.postiz_check_auth(cfg)
     except PostizAuthError:
@@ -110,12 +122,16 @@ def go_live(cfg: Config, confirmed: bool = False) -> ActionResult:
     if not confirmed:
         return ActionResult(ok=False, error="GO LIVE publishes to REAL accounts — tick the confirm box, "
                             "then click again.")
-    _dual_write(cfg, "FANOPS_POSTER", "postiz")
+    err = _dual_write(cfg, "FANOPS_POSTER", "postiz")
+    if err:
+        return ActionResult(ok=False, error=err)
     return ActionResult(ok=True, detail={"mode": "postiz", "live": True})
 
 
 def go_dryrun(cfg: Config) -> ActionResult:
     """Flip back to dryrun (writes payloads, posts nothing) — the SAFE direction, always allowed, no
     confirm. Dual-written so it takes effect immediately and persists."""
-    _dual_write(cfg, "FANOPS_POSTER", "dryrun")
+    err = _dual_write(cfg, "FANOPS_POSTER", "dryrun")
+    if err:
+        return ActionResult(ok=False, error=err)
     return ActionResult(ok=True, detail={"mode": "dryrun", "live": False})

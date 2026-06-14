@@ -2,7 +2,8 @@
 self-hosted). get_media_uploader dispatches the file->hosted-URL step per backend so publish_due
 uploads to the right place (Blotato presign vs Postiz upload vs dryrun file://)."""
 from __future__ import annotations
-from typing import Protocol
+from pathlib import Path
+from typing import Protocol, Callable
 from fanops.config import Config
 from fanops.ledger import Ledger
 
@@ -23,7 +24,7 @@ def get_poster(cfg: Config) -> "Poster":
     from fanops.post.dryrun import DryRunPoster
     return DryRunPoster(cfg)
 
-def get_media_uploader(cfg: Config):
+def get_media_uploader(cfg: Config) -> Callable[[Config, Path], str]:
     """Return the (cfg, Path) -> hosted-URL function for the active backend. dryrun -> file:// (no
     network); postiz -> Postiz upload (uploads.postiz.com); rest/mcp -> Blotato presign. Lazy imports
     keep the core importable without optional deps and avoid an import cycle with media.py."""

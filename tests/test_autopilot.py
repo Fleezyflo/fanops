@@ -62,6 +62,26 @@ def test_set_env_var_updates_export_prefixed_line(tmp_path):
     assert "manual" not in body
 
 
+def test_set_env_var_rejects_newline_in_value(tmp_path):
+    # A value with an embedded newline would inject an arbitrary KEY=VALUE line into .env (could
+    # silently overwrite POSTIZ_API_KEY/BLOTATO_API_KEY). Reject it; leave the file untouched.
+    import pytest
+    env = tmp_path / ".env"
+    env.write_text("BLOTATO_API_KEY=keep\n")
+    with pytest.raises(ValueError):
+        autopilot.set_env_var(env, "POSTIZ_API_KEY", "good\nBLOTATO_API_KEY=hijacked")
+    body = env.read_text()
+    assert "hijacked" not in body and "BLOTATO_API_KEY=keep" in body     # no partial write
+
+
+def test_set_env_var_is_atomic_no_tmp_leftover(tmp_path):
+    # Written via temp + os.replace so a crash mid-write never truncates the secrets-bearing .env.
+    env = tmp_path / ".env"
+    autopilot.set_env_var(env, "POSTIZ_URL", "https://p.example.com")
+    assert env.read_text().strip().endswith("https://p.example.com")
+    assert list(tmp_path.glob("*.tmp")) == []                            # temp file cleaned up
+
+
 def test_set_env_var_handles_spaces_and_skips_comment(tmp_path):
     env = tmp_path / ".env"
     env.write_text("# FANOPS_RESPONDER=commented\nFANOPS_RESPONDER = manual\n")

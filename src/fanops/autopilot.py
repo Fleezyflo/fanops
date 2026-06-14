@@ -23,7 +23,12 @@ def set_env_var(env_path: Path, key: str, value: str) -> None:
     """Idempotently set `KEY=value` in a .env file, PRESERVING every other line (the file may hold
     secrets like POSTIZ_API_KEY). Updates an existing assignment in place (tolerating `KEY = value`
     spacing AND a dotenv `export KEY=value` prefix, which it keeps; ignoring a commented `# KEY=...`);
-    appends if absent; creates the file if missing. NB: line endings are normalized to `\\n`."""
+    appends if absent; creates the file if missing. NB: line endings are normalized to `\\n`.
+    A value containing a newline is REJECTED (ValueError) — it would inject an arbitrary KEY=VALUE
+    line and could silently overwrite an adjacent secret. The write is ATOMIC (temp + os.replace) so
+    a crash mid-write never truncates the secrets-bearing .env (ecc audit: security + python)."""
+    if "\n" in value or "\r" in value:
+        raise ValueError(f"set_env_var: value for {key!r} contains a newline — rejected (would corrupt .env)")
     lines = env_path.read_text().splitlines() if env_path.exists() else []
     out: list[str] = []
     found = False
@@ -38,7 +43,9 @@ def set_env_var(env_path: Path, key: str, value: str) -> None:
             out.append(ln)
     if not found:
         out.append(f"{key}={value}")
-    env_path.write_text("\n".join(out) + "\n")
+    tmp = env_path.with_name(env_path.name + ".tmp")
+    tmp.write_text("\n".join(out) + "\n")
+    os.replace(tmp, env_path)                            # atomic: never a half-written .env (mirrors write_account_id)
 
 
 def autopilot(cfg: Config, *, interval: int, install_daemon: bool = True) -> dict:

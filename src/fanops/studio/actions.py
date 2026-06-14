@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ledger import Ledger
-from fanops.models import CaptionSet, MomentDecision, PostState
+from fanops.models import CaptionSet, MomentDecision, Post, PostState
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
 
@@ -41,7 +41,7 @@ def _normalize_z(new_time: str) -> str:
     return iso_z(dt)
 
 
-def _guard_editable_post(led: Ledger, post_id: str, now: datetime):
+def _guard_editable_post(led: Ledger, post_id: str, now: datetime) -> tuple[Optional[Post], Optional[str]]:
     """Return (post, None) if post exists, is queued, and is not imminent; else (None, error)."""
     if post_id not in led.posts:
         return None, f"no such post: {post_id}"
@@ -256,6 +256,7 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     bt = base_time or iso_z(_now(None))
     responder = get_responder(cfg)
     summary = None
+    done = False
     for _ in range(10):                                # respond -> advance until stable (no gate left)
         try:
             responder.answer_pending(cfg)              # llm answers the gates; manual writes nothing
@@ -266,7 +267,16 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
         except Exception as exc:
             return ActionResult(ok=False, error=f"prepare failed: {str(exc)[:160]}")
         if summary["awaiting"]["moments"] == 0 and summary["awaiting"]["captions"] == 0:
-            break
+            done = True; break
+    # In llm mode the responder is SUPPOSED to drain the gates; hitting the 10-pass cap with gates
+    # still pending means it isn't converging (malformed answers / gates regenerating) — surface that
+    # instead of a green "prepared" the operator would wrongly trust (ecc audit: code+python MEDIUM).
+    # In manual mode the responder writes nothing, so remaining gates are EXPECTED (they wait in the
+    # Gates tab) — that stays ok=True.
+    if not done and cfg.responder_mode == "llm":
+        return ActionResult(ok=False, detail=summary,
+                            error="auto-prepare did not finish — gates still pending after 10 passes "
+                            "(is `claude` working?); run Prepare again or answer them in the Gates tab")
     return ActionResult(ok=True, detail=summary)
 
 
