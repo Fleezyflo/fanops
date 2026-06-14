@@ -122,4 +122,25 @@
       </form>
     {% endif %}
   </section>
+
+  <section class="golive-step">
+    <h3>5 · Validate learning</h3>
+    {% if status.learning_validated %}
+      <p class="ok">✓ learning validated on Postiz — the loop is unfrozen (variant-amplify can act on real lift).</p>
+    {% elif status.is_live and status.mode == 'postiz' %}
+      <p class="muted">Prove the loop on real Postiz analytics: post ONE throwaway probe to a channel you control, reconcile its labels, and unfreeze learning.</p>
+      <form hx-post="{{ url_for('do_golive_validate') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        <label>Throwaway channel to probe:
+          <select name="integration_id">
+            <option value="">— pick a channel —</option>
+            {% for a in status.accounts %}{% for ch in a.channels %}{% if ch.integration_id %}<option value="{{ ch.integration_id }}">{{ a.handle }} · {{ ch.platform }} · {{ ch.integration_id }}</option>{% endif %}{% endfor %}{% endfor %}
+          </select>
+        </label>
+        <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> Validate publishes ONE real throwaway post to the channel selected above</label>
+        <button type="submit" class="danger">Validate learning (posts a probe)</button>
+      </form>
+    {% else %}
+      <p class="muted">GO LIVE on Postiz first, then validate the learning loop with one throwaway post.</p>
+    {% endif %}
+  </section>
 </div>

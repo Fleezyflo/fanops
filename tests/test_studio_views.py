@@ -193,3 +193,13 @@ def test_lift_amplify_section_present_when_flag_on(tmp_path, monkeypatch):
     view = lift_rows(led, cfg, Accounts.load(cfg))
     assert view.amplify_present is True
     assert view.amplify_rows == [] and view.amplify_empty_reason is not None
+
+
+def test_golive_status_reports_learning_validated(tmp_path):
+    # M3: the Go-Live read-model exposes whether the loop is unfrozen (cutover.json metrics_confirmed).
+    from fanops.studio.views import golive_status
+    from fanops import cutover
+    cfg = Config(root=tmp_path)
+    assert golive_status(cfg).learning_validated is False     # no cutover.json yet
+    cutover._save_state(cfg, {"metrics_confirmed": True})
+    assert golive_status(cfg).learning_validated is True

@@ -122,3 +122,93 @@ def test_cli_cutover_post_refuses_dryrun_exit2(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     assert main(["cutover", "post", "acct"]) == 2
+
+
+# ---- M3: Postiz cutover — dispatch + the 4 steps (offline, injected network; the LIVE post is operator-run) ----
+def _postiz_env(monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+
+def _integrations():
+    from fanops.post.postiz import PostizIntegration
+    return [PostizIntegration(id="ig_1", name="throwaway", platform="instagram")]
+
+# Task 1 — dispatch by backend
+def test_cutover_metrics_dispatches_postiz(tmp_path, monkeypatch):
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    rows = [{"postSubmissionId": "pz1", "metrics": {"likes": 10, "shares": 2}, "_raw_labels": ["Likes", "Shares"]}]
+    out = cutover.cutover_metrics(cfg, "pz1", list_posts=lambda w: rows)
+    assert out["reconciliation"]["scored"] == ["likes", "shares"]
+    state = json.loads(cfg.cutover_path.read_text())
+    assert state["metrics_confirmed"] is True and state["backend"] == "postiz"
+
+# Task 2 — Postiz auth
+def test_postiz_auth_ok(tmp_path, monkeypatch, mocker):
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.postiz.postiz_check_auth", return_value=True)
+    out = cutover.cutover_auth(cfg)
+    assert out["ok"] is True and out["backend"] == "postiz"
+
+def test_postiz_auth_requires_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    with pytest.raises(CutoverError, match="POSTIZ_API_KEY"):
+        cutover.cutover_auth(Config(root=tmp_path))
+
+def test_postiz_auth_401_propagates(tmp_path, monkeypatch, mocker):
+    from fanops.errors import PostizAuthError
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.postiz.postiz_check_auth", side_effect=PostizAuthError("401 — key withheld"))
+    with pytest.raises(PostizAuthError):
+        cutover.cutover_auth(cfg)
+
+# Task 3 — Postiz post (confirmed 2099 throwaway; operator-selected integration; SECURITY surface)
+def test_postiz_post_refuses_without_confirm(tmp_path, monkeypatch, mocker):
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=_integrations())
+    with pytest.raises(CutoverError, match="throwaway|confirm"):
+        cutover.cutover_post(cfg, "ig_1", confirmed=False)
+
+def test_postiz_post_refuses_unknown_integration(tmp_path, monkeypatch, mocker):
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=_integrations())
+    with pytest.raises(CutoverError, match="unknown postiz integration"):
+        cutover.cutover_post(cfg, "NOT_MAPPED", confirmed=True)
+
+def test_postiz_post_fires_and_saves_when_confirmed(tmp_path, monkeypatch, mocker):
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=_integrations())
+    captured = {}
+    def fake_post(url, **kw): captured["json"] = kw["json"]; return _R(201, {"id": "pz_LIVE_1"})
+    out = cutover.cutover_post(cfg, "ig_1", confirmed=True, post=fake_post)
+    assert out["submission_id"] == "pz_LIVE_1"
+    assert captured["json"]["date"] == "2099-01-01T00:00:00Z"                        # 2099 schedule, never near-now
+    assert captured["json"]["posts"][0]["settings"]["__type"] == "instagram"          # platform DERIVED, not hardcoded
+    state = json.loads(cfg.cutover_path.read_text())
+    assert state["submission_id"] == "pz_LIVE_1" and state["backend"] == "postiz"
+    assert not cfg.ledger_path.exists()                                               # ISOLATION: never the ledger
+
+def test_postiz_post_401_redacted(tmp_path, monkeypatch, mocker):
+    from fanops.errors import PostizAuthError
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=_integrations())
+    def fake_post(url, **kw): return _R(401, {"e": "key SENTINEL"}, text="key SENTINEL")
+    with pytest.raises(PostizAuthError) as ei:
+        cutover.cutover_post(cfg, "ig_1", confirmed=True, post=fake_post)
+    assert "SENTINEL" not in str(ei.value)
+
+# Task 4 — Postiz metrics (real-label reconcile → confirmed field map)
+def test_postiz_metrics_records_raw_labels_and_confirms(tmp_path, monkeypatch):
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    rows = [{"postSubmissionId": "pz1", "metrics": {"likes": 10, "shares": 2}, "_raw_labels": ["Likes", "Shares", "Saves"]}]
+    out = cutover.cutover_metrics(cfg, "pz1", list_posts=lambda w: rows)
+    assert out["postiz_labels"] == ["Likes", "Shares", "Saves"]                       # M3 records the RAW label set, no self-fetch
+    state = json.loads(cfg.cutover_path.read_text())
+    assert state["postiz_labels"] == ["Likes", "Shares", "Saves"] and state["label_map"]
+    assert state["metrics_confirmed"] is True
+
+def test_postiz_metrics_missing_row_says_postiz_not_blotato(tmp_path, monkeypatch):
+    _postiz_env(monkeypatch)
+    with pytest.raises(CutoverError, match="no metrics row") as ei:
+        cutover.cutover_metrics(Config(root=tmp_path), "pzX", list_posts=lambda w: [])
+    assert "Postiz" in str(ei.value) and "Blotato" not in str(ei.value)

@@ -69,7 +69,10 @@ def build_cutover_payload(account_id: str) -> dict:
 
 def cutover_auth(cfg: Config, *, get=None) -> dict:
     """Step 1: prove the key authenticates. GET /posts (read-only, no write). 401 -> typed
-    BlotatoAuthError (body redacted). Returns {ok, status_code}."""
+    BlotatoAuthError (body redacted). Returns {ok, status_code}. Postiz backend dispatches to
+    cutover_postiz (M3); the Blotato body below is byte-unchanged."""
+    if cfg.poster_backend == "postiz":
+        from fanops import cutover_postiz; return cutover_postiz.postiz_auth(cfg)
     key = _require_key(cfg)
     g = get or requests.get
     resp = g(f"{BASE_URL}/posts", headers={"blotato-api-key": key}, params={"window": "1d"}, timeout=30)
@@ -80,7 +83,11 @@ def cutover_auth(cfg: Config, *, get=None) -> dict:
 def cutover_post(cfg: Config, account_id: str, *, confirmed: bool, post=None) -> dict:
     """Step 2: publish ONE real post to a THROWAWAY account at the 2099 schedule. Refuses unless
     (a) the backend is live — dryrun posts nothing, wrong tool — and (b) the operator passed the
-    explicit confirm flag. Records the submission_id to cutover.json (NOT the ledger)."""
+    explicit confirm flag. Records the submission_id to cutover.json (NOT the ledger). Postiz backend
+    dispatches to cutover_postiz (account_id carries the operator-selected integration id); the Blotato
+    body below is byte-unchanged."""
+    if cfg.poster_backend == "postiz":
+        from fanops import cutover_postiz; return cutover_postiz.postiz_post(cfg, account_id, confirmed=confirmed, post=post)
     if cfg.poster_backend == "dryrun":
         raise CutoverError("cutover proves the LIVE path; FANOPS_POSTER=dryrun posts nothing — set FANOPS_POSTER=rest.")
     payload = build_cutover_payload(account_id)
@@ -104,7 +111,11 @@ def cutover_post(cfg: Config, account_id: str, *, confirmed: bool, post=None) ->
 def cutover_metrics(cfg: Config, submission_id: str, *, list_posts=None) -> dict:
     """Step 3: pull the real metrics row for the cutover post and reconcile its fields against
     track._W. Saves the raw row + reconciliation to cutover.json and stamps metrics_confirmed=True
-    (the flag Phase 2's validation gate keys off — the learning stack stays frozen until this runs)."""
+    (the flag Phase 2's validation gate keys off — the learning stack stays frozen until this runs).
+    Postiz backend dispatches to cutover_postiz (M2's per-post client + raw-label reconcile); the
+    Blotato body below is byte-unchanged."""
+    if cfg.poster_backend == "postiz":
+        from fanops import cutover_postiz; return cutover_postiz.postiz_metrics(cfg, submission_id, list_posts=list_posts)
     fetch = list_posts or _default_list_posts(cfg)
     row = next((r for r in fetch("30d") if r.get("postSubmissionId") == submission_id), None)
     if row is None:

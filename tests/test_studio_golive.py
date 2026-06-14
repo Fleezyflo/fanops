@@ -389,3 +389,80 @@ def test_post_golive_live_route_success_flips_and_shows_live(tmp_path, monkeypat
     r = _client(cfg).post("/golive/live", data={"confirm": "1"})
     assert r.status_code == 200 and cfg.poster_backend == "postiz"
     assert b"LIVE" in r.data
+
+
+# ---- M3: validate_learning — run the Postiz cutover from the browser, operator-gated, never auto-fires ----
+def _live_postiz(monkeypatch, tmp_path):
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "SECRETKEY")
+    return cfg
+
+def _one_integration(monkeypatch):
+    from fanops.post.postiz import PostizIntegration
+    monkeypatch.setattr(golive.postiz, "postiz_list_integrations",
+                        lambda c: [PostizIntegration(id="ig_1", name="throwaway", platform="instagram")])
+
+def test_validate_learning_refuses_dryrun(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)                       # dryrun, no postiz
+    res = golive.validate_learning(cfg, integration_id="ig_1", confirmed=True)
+    assert res.ok is False and "postiz" in res.error.lower()
+
+def test_validate_learning_refuses_missing_or_unknown_integration(tmp_path, monkeypatch):
+    cfg = _live_postiz(monkeypatch, tmp_path); _one_integration(monkeypatch)
+    assert golive.validate_learning(cfg, integration_id=None, confirmed=True).ok is False
+    res = golive.validate_learning(cfg, integration_id="NOT_MAPPED", confirmed=True)
+    assert res.ok is False and "throwaway channel" in res.error.lower()
+
+def test_validate_learning_refuses_unconfirmed(tmp_path, monkeypatch):
+    cfg = _live_postiz(monkeypatch, tmp_path); _one_integration(monkeypatch)
+    res = golive.validate_learning(cfg, integration_id="ig_1", confirmed=False)
+    assert res.ok is False and "confirm" in res.error.lower()
+
+def test_validate_learning_posts_to_selected_integration(tmp_path, monkeypatch):
+    cfg = _live_postiz(monkeypatch, tmp_path); _one_integration(monkeypatch)
+    calls = {}
+    monkeypatch.setattr(golive.cutover, "cutover_auth", lambda c: {"ok": True})
+    monkeypatch.setattr(golive.cutover, "cutover_post",
+                        lambda c, iid, **kw: (calls.update(integration=iid, confirmed=kw.get("confirmed")), {"submission_id": "pz1"})[1])
+    monkeypatch.setattr(golive.cutover, "cutover_metrics", lambda c, sid, **kw: {"reconciliation": {"scored": ["likes"]}})
+    monkeypatch.setattr(golive.cutover, "cutover_lift", lambda c, sid: {"lift_score": 5.0})
+    res = golive.validate_learning(cfg, integration_id="ig_1", confirmed=True)
+    assert res.ok and res.detail["validated"] is True
+    assert calls["integration"] == "ig_1" and calls["confirmed"] is True       # SELECTED id, never auto-picked
+    assert res.detail["lift_score"] == 5.0
+
+def test_validate_learning_never_echoes_key(tmp_path, monkeypatch):
+    cfg = _live_postiz(monkeypatch, tmp_path); _one_integration(monkeypatch)
+    monkeypatch.setattr(golive.cutover, "cutover_auth",
+                        lambda c: (_ for _ in ()).throw(PostizAuthError("denied for SECRETKEY")))
+    res = golive.validate_learning(cfg, integration_id="ig_1", confirmed=True)
+    assert res.ok is False
+    assert "SECRETKEY" not in (res.error or "") and "SECRETKEY" not in repr(res)
+
+
+def test_golive_validate_route_runs(tmp_path, monkeypatch):
+    # M3 route: POST /golive/validate runs the (mocked) cutover; the panel re-renders showing validated.
+    from fanops.studio.app import create_app
+    from fanops import cutover as cutmod
+    cfg = _live_postiz(monkeypatch, tmp_path); _one_integration(monkeypatch)
+    _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active", "integrations": {"instagram": "ig_1"}}])
+    monkeypatch.setattr(golive.cutover, "cutover_auth", lambda c: {"ok": True})
+    monkeypatch.setattr(golive.cutover, "cutover_post", lambda c, iid, **kw: {"submission_id": "pz1"})
+    def fake_metrics(c, sid, **kw): cutmod._save_state(c, {"metrics_confirmed": True}); return {"reconciliation": {"scored": ["likes"]}}
+    monkeypatch.setattr(golive.cutover, "cutover_metrics", fake_metrics)
+    monkeypatch.setattr(golive.cutover, "cutover_lift", lambda c, sid: {"lift_score": 5.0})
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().post("/golive/validate", data={"integration_id": "ig_1", "confirm": "1"})
+    assert r.status_code == 200 and b"validated" in r.data.lower()
+
+def test_golive_panel_renders_validate_select_when_live_postiz(tmp_path, monkeypatch):
+    # M3 panel: a live-postiz, not-yet-validated tab renders the "5 · Validate learning" step with the
+    # operator-selectable integration <select> (never auto-picked) + the danger-styled confirm form.
+    from fanops.studio.app import create_app
+    cfg = _live_postiz(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active", "integrations": {"instagram": "ig_1"}}])
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().get("/golive")
+    assert r.status_code == 200 and b'name="integration_id"' in r.data and b"Validate learning" in r.data
+    assert b"ig_1" in r.data            # the operator's mapped channel is offered as an option
