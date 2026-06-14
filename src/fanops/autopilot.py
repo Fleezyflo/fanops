@@ -45,7 +45,7 @@ def set_env_var(env_path: Path, key: str, value: str) -> None:
         out.append(f"{key}={value}")
     tmp = env_path.with_name(env_path.name + ".tmp")
     tmp.write_text("\n".join(out) + "\n")
-    os.replace(tmp, env_path)                            # atomic: never a half-written .env (mirrors write_account_id)
+    os.replace(tmp, env_path)                            # atomic: never a half-written .env (mirrors the atomic accounts.json write)
 
 
 def autopilot(cfg: Config, *, interval: int, install_daemon: bool = True) -> dict:

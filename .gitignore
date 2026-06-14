@@ -37,8 +37,15 @@ coverage.json
 .fanops-*.md
 .fanops-*.js
 
-# claude harness — keep workflows, ignore transient locks
+# claude harness — keep workflows, ignore transient locks + ephemeral planning artifacts
 .claude/scheduled_tasks.lock
+.claude/plans/
+.claude/prds/
+.claude/PRPs/
+
+# browser-QA / playwright scratch (screenshots, traces) — regenerated, never committed
+.playwright-mcp/
+/*.png
 
 # git worktrees (isolated dev workspaces) — never tracked
 .worktrees/
