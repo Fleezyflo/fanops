@@ -34,8 +34,8 @@ def doctor_report(cfg: Config) -> dict:
         problems = Accounts.load(cfg).validate()
     except Exception as e:                                # malformed accounts.json -> a check failure, not a crash
         problems = [str(e)[:160]]
-    checks.append(_check("accounts.json valid (active accounts have a numeric account_id)", not problems,
-                         "; ".join(problems) or "connect accounts in Blotato, paste numeric account_id into 00_control/accounts.json"))
+    checks.append(_check("accounts.json valid (every active channel mapped to an id)", not problems,
+                         "; ".join(problems) + " — add accounts + map each channel in the Studio Go-Live tab"))
     # 4. poster + key consistency (human step 3) — mirrors cli._check_preflight
     if cfg.poster_backend in {"rest", "mcp"}:
         checks.append(_check(f"BLOTATO_API_KEY set (FANOPS_POSTER={cfg.poster_backend})",
@@ -46,6 +46,15 @@ def doctor_report(cfg: Config) -> dict:
                              cfg.postiz_url is not None and cfg.postiz_api_key is not None,
                              "set POSTIZ_URL (your self-hosted instance) + POSTIZ_API_KEY (Postiz "
                              "Settings > Developers > Public API) — the free, non-Blotato publisher"))
+        # Postiz-learning readiness (booleans only, never the key): the loop only acts once the key is set,
+        # every active channel is mapped, AND cutover confirmed the lift fields. Hint names the FIRST gap.
+        lv = learning_validated(cfg)                     # one disk read, reused below (review: was called twice)
+        ready = cfg.postiz_api_key is not None and not problems and lv
+        if cfg.postiz_api_key is None: hint = "Connect Postiz (Go-Live > 1 · Connect Postiz)"
+        elif problems:                hint = "map every channel (Go-Live > 3 · Map each channel to Postiz)"
+        elif not lv:                  hint = "run the Studio Validate learning step (Go-Live > 5 · Validate learning)"
+        else:                         hint = ""
+        checks.append(_check("Postiz learning ready (key + channels mapped + cutover validated)", ready, hint))
 
     notes: list[str] = []
     notes.append(f"poster backend: {cfg.poster_backend}"
@@ -54,7 +63,7 @@ def doctor_report(cfg: Config) -> dict:
         notes.append("learning loop: validation-confirmed (lift fields reconciled by cutover) — amplify/bandit may be enabled")
     else:
         notes.append("learning loop: NOT validation-confirmed — variant-amplify stays inert even if enabled; "
-                     "run `fanops cutover` (auth -> post -> metrics -> lift) to confirm lift fields")
+                     "run the Studio Validate learning step (Go-Live > 5 · Validate learning), or `fanops cutover`, to confirm lift fields")
     try:
         n = len(list(cfg.review.glob("*.jpg"))) if cfg.review.exists() else 0
     except Exception:
