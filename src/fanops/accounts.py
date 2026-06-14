@@ -141,7 +141,11 @@ def write_integration(cfg: Config, handle: str, platform: str, integration_id: s
     accounts.json atomically — the per-platform Go-Live mapping that replaces hand-editing JSON, so a
     handle's Instagram and TikTok point at their DIFFERENT Postiz integrations. Creates the integrations
     sub-dict if absent; preserves every sibling account, unknown field, and other platform's id. The id
-    is coerced to str. Unknown handle -> KeyError (caller -> clean ActionResult)."""
+    is coerced to str. Unknown handle -> KeyError (caller -> clean ActionResult); unknown platform ->
+    ValueError (defense-in-depth at the boundary: never write a key that can't match a Platform.value)."""
+    platform = getattr(platform, "value", platform)              # accept a Platform enum or its value string
+    if platform not in {pf.value for pf in Platform}:
+        raise ValueError(f"unknown platform: {platform!r}")
     p = cfg.accounts_path
     raw, accounts = _load_raw_accounts(p)
     for a in accounts:

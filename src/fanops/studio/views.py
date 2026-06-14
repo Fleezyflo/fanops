@@ -71,7 +71,7 @@ class GoLiveChannel:
 class GoLiveAccount:
     handle: str
     persona: Optional[str]
-    channels: list             # list[GoLiveChannel] — one per platform this handle posts to
+    channels: list[GoLiveChannel]    # one per platform this handle posts to
 
 
 @dataclass
@@ -80,9 +80,9 @@ class GoLiveStatus:
     is_live: bool
     postiz_url: Optional[str]
     key_set: bool              # BOOL only — the POSTIZ_API_KEY value is NEVER carried in this read-model
-    accounts: list             # list[GoLiveAccount]
-    checks: list
-    notes: list
+    accounts: list[GoLiveAccount]
+    checks: list[dict]
+    notes: list[str]
 
 
 @dataclass

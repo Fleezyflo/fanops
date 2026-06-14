@@ -249,6 +249,16 @@ def test_write_integration_unknown_handle_raises(tmp_path):
     with pytest.raises(KeyError):
         write_integration(cfg, "@nope", "instagram", "x")
 
+def test_write_integration_rejects_unknown_platform(tmp_path):
+    # defense-in-depth at the control-file boundary: a typo'd/crafted platform must NOT be silently
+    # written (it would never match a Platform.value and the channel would stay invisibly unmapped).
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
+    with pytest.raises(ValueError):
+        write_integration(cfg, "@a", "insagram", "x")   # typo of instagram
+    raw = json.loads(cfg.accounts_path.read_text())
+    assert "integrations" not in raw["accounts"][0] or raw["accounts"][0].get("integrations") == {}
+
 def test_add_account_appends_with_defaults(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
