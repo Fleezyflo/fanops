@@ -90,7 +90,7 @@ def create_app(cfg: Config) -> Flask:
         led = Ledger.load(cfg)
         accounts = Accounts.load(cfg)
         cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
-        return render_template("review.html", cards=cards, tab="review")
+        return render_template("review.html", cards=cards, tab="review", backend=cfg.poster_backend)
 
     @app.get("/schedule")
     def schedule():
@@ -166,6 +166,14 @@ def create_app(cfg: Config) -> Flask:
         return render_template("_result.html",
                                result=actions.mark_published(cfg, post_id, request.form.get("url") or None))
 
+    @app.post("/publish/now/<post_id>")
+    def do_publish_now(post_id):
+        # Milestone 5 (publish in the UI): ship ONE reviewed post immediately via the same poster path
+        # the pipeline uses — dryrun marks it published locally; a live backend posts (same confirm
+        # checkbox as the Run actions). Ignores the post's future schedule (the operator clicked ship).
+        return render_template("_result.html",
+                               result=actions.publish_now(cfg, post_id, confirmed=bool(request.form.get("confirm"))))
+
     @app.get("/gates")
     def gates():
         # Phase 3a: the moment/caption agent gates — the actual product decisions — answerable from
@@ -215,7 +223,7 @@ def create_app(cfg: Config) -> Flask:
         if s is None:
             return render_template("_result.html",
                                    result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
-        return render_template("_surface_edit.html", s=s, regen_note=result.detail)
+        return render_template("_surface_edit.html", s=s, regen_note=result.detail, backend=cfg.poster_backend)
 
     @app.post("/snooze/<clip_id>")
     def do_snooze(clip_id):

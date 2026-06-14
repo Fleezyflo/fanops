@@ -22,4 +22,11 @@
     <input type="text" name="new_time" value="{{ s.scheduled_time }}" placeholder="2026-06-08T14:00:00Z">
     <button type="submit">Reschedule</button>
   </form>
+  <form hx-post="{{ url_for('do_publish_now', post_id=s.post_id) }}" hx-target="#res-{{ s.post_id }}" hx-swap="innerHTML">
+    <label>Happy with it? Ship this one now — skips the schedule</label>
+    {% if backend is defined and backend != 'dryrun' %}
+      <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> publish to the REAL account ({{ backend }})</label>
+    {% endif %}
+    <button type="submit" class="primary">Publish now</button>
+  </form>
 </div>
