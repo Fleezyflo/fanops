@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-13 | Files scanned: models.py, ledger.py, config.py, accounts.py | Token estimate: ~700 -->
+<!-- Generated: 2026-06-14 | Files scanned: models.py, ledger.py, config.py, accounts.py, cutover.py, autopilot.py | Token estimate: ~750 -->
 # FanOps Data
 
 No database. ONE JSON ledger + operator-editable control files, all under the data tree.
@@ -6,14 +6,15 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 ## Data tree (config.py — `<root>/MohFlow-FanOps/`)
 
 ```
-00_control/   ledger.json ledger.lock accounts.json context.md tuning.json ledger_digest.md
+00_control/   ledger.json ledger.lock accounts.json context.md tuning.json ledger_digest.md cutover.json
 00_review/    manifest.json intaken.json *.jpg + approved/   (discover/intake staging)
 01_inbox/     dropped/pulled media awaiting ingest
 02_sources/   content-addressed source copies (src_<sha>.mp4)
-03_clips/     rendered clips + per-account variant renders (Studio serves ONLY inside this tree)
+03_clips/     rendered clips + per-account variant renders + composed clips (Studio serves ONLY inside this tree)
 04_agent_io/  agentstep request/response JSONs (moments/captions)
 05_scheduled/ 06_published/  (reserved)
 07_reports/   run.log (TAB columns: ts\tstage\tunit\toutcome\textra)
+.env          (env vars: FANOPS_POSTER, POSTIZ_URL, POSTIZ_API_KEY, FANOPS_RESPONDER, etc.)
 ```
 
 ## Ledger (ledger.py — single state store)
@@ -46,9 +47,16 @@ constant — written only by track.record_metrics); `Clip.media_url` (per-clip u
 
 ## Control files (operator-editable; malformed -> ControlFileError, exit 2)
 
-- accounts.json: handle/account_id/platforms/status/persona per account; validate() pre-run.
-- tuning.json (OPTIONAL, fail-open): lift_weights override for track.lift_score.
-- context.md: free-text guidance injected into moment requests.
+- **accounts.json:** handle/account_id/platforms/status/persona per account; validate() pre-run.
+  `account_id` is numeric for Blotato or a UUID for Postiz integrations (same field, different schema).
+  Writable atomically via `write_account_id()` (ecc audit: python + security).
+  
+- **tuning.json** (OPTIONAL, fail-open): lift_weights override for track.lift_score.
+
+- **context.md:** free-text guidance injected into moment requests.
+
+- **cutover.json** (auto-written by `cutover` probe; not in the ledger): contains probe post state (cutover._probe_id, timestamp, etc.)
+  for Blotato validation before going live — separate from the ledger so a stray probe never pollutes it.
 
 ## Cascade-safety invariant (C1)
 
