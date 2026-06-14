@@ -1,0 +1,96 @@
+{# src/fanops/studio/templates/_golive_panel.html — the Go-Live tab body, htmx-swapped in place
+   (#golive-panel). Connect Postiz, map accounts to integrations, see readiness, flip dryrun<->live.
+   The API key is WRITE-ONLY: never rendered (status.key_set is a bool); autoescape stays on (no |safe).
+   Each form swaps the whole panel (outerHTML) so the mode banner + checks update after every action. #}
+<div id="golive-panel">
+  {% if status.is_live %}
+    <div class="banner live">● LIVE ({{ status.mode }}) — reviewed posts publish to REAL accounts</div>
+  {% else %}
+    <div class="banner dryrun">● DRYRUN — writes payloads, posts nothing</div>
+  {% endif %}
+
+  {% if result %}
+    <div class="result {{ 'ok' if result.ok else 'err' }}">
+      {% if result.ok %}✓ {{ result.detail or 'done' }}{% else %}✗ {{ result.error }}{% endif %}
+    </div>
+  {% endif %}
+
+  <section class="golive-step">
+    <h3>1 · Connect Postiz</h3>
+    <p class="muted">Point at your running Postiz instance (hosted or self-hosted) and paste its public
+      API key (Postiz → Settings → Developers → Public API). The key is stored write-only — tested
+      against Postiz, never shown back.</p>
+    <form hx-post="{{ url_for('do_golive_config') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+      <label>Postiz URL
+        <input type="text" name="url" value="{{ status.postiz_url or '' }}"
+               placeholder="https://postiz.example.com" size="36"></label>
+      <label>API key
+        <input type="password" name="key"
+               placeholder="{{ '•••••••• (set — leave blank to keep)' if status.key_set else 'paste your Postiz public API key' }}"></label>
+      <button type="submit" class="primary">Save &amp; test</button>
+    </form>
+  </section>
+
+  <section class="golive-step">
+    <h3>2 · Map your accounts to Postiz</h3>
+    <p class="muted">Each active account maps to one Postiz integration id. Click Refresh to pick from
+      your connected channels, or paste an id by hand.</p>
+    <form hx-post="{{ url_for('do_golive_refresh') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+      <button type="submit">Refresh from Postiz</button>
+    </form>
+    {% set integrations = (result.detail.get('integrations') if (result and result.detail and result.detail.get('integrations')) else None) %}
+    {% if integrations %}
+      <p class="muted">Found {{ integrations|length }} integration(s) — pick one per account, then Save.</p>
+    {% endif %}
+    {% if status.accounts %}
+      <form hx-post="{{ url_for('do_golive_map') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        <table class="golive-map">
+          {% for a in status.accounts %}
+            <tr>
+              <td><strong>{{ a.handle }}</strong> <span class="muted">{{ a.platforms|join(', ') }}</span></td>
+              <td>
+                {% if integrations %}
+                  <select name="map__{{ a.handle }}">
+                    <option value="">— keep current ({{ a.account_id or 'unmapped' }}) —</option>
+                    {% for it in integrations %}
+                      <option value="{{ it.id }}" {{ 'selected' if it.id == a.account_id else '' }}>{{ it.name }} · {{ it.platform }} ({{ it.id }})</option>
+                    {% endfor %}
+                  </select>
+                {% else %}
+                  <span class="muted">current: {{ a.account_id or 'unmapped' }}</span>
+                  <input type="text" name="map__{{ a.handle }}" placeholder="paste integration id (or Refresh to pick)">
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </table>
+        <button type="submit">Save account mappings</button>
+      </form>
+    {% else %}
+      <p class="muted">No active accounts yet — add accounts in <code>00_control/accounts.json</code> and set them active.</p>
+    {% endif %}
+  </section>
+
+  <section class="golive-step">
+    <h3>3 · Readiness</h3>
+    <ul class="checks">
+      {% for c in status.checks %}
+        <li class="{{ 'ok' if c.ok else 'err' }}">{{ '✓' if c.ok else '✗' }} {{ c.label }}{% if not c.ok and c.hint %} — <span class="muted">{{ c.hint }}</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% for n in status.notes %}<p class="muted">{{ n }}</p>{% endfor %}
+  </section>
+
+  <section class="golive-step">
+    {% if status.is_live %}
+      <form hx-post="{{ url_for('do_golive_dryrun') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        <button type="submit">Back to dryrun (stop publishing)</button>
+      </form>
+    {% else %}
+      <form hx-post="{{ url_for('do_golive_live') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> I understand this publishes to REAL accounts</label>
+        <button type="submit" class="primary danger">GO LIVE — publish for real</button>
+      </form>
+    {% endif %}
+  </section>
+</div>

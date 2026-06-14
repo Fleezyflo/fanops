@@ -4,6 +4,7 @@ participates. surfaces() yields each (handle, account_id, platform). resolve_acc
 maps a handle to its numeric Blotato id (FIX F06: v1 passed the handle straight to Blotato)."""
 from __future__ import annotations
 import json
+import os
 from enum import Enum
 from typing import Optional, NamedTuple
 from pydantic import BaseModel, Field
@@ -77,3 +78,30 @@ class Accounts:
 
     def surfaces(self) -> list[Surface]:
         return [Surface(a.handle, a.account_id, p) for a in self.active() for p in a.platforms]
+
+
+def write_account_id(cfg: Config, handle: str, account_id: str | int) -> str:
+    """Set ONE account's `account_id` (the Postiz INTEGRATION id for a postiz deployment) in
+    accounts.json and persist atomically, so the Studio Go-Live tab can map an account to a Postiz
+    integration WITHOUT the operator hand-editing JSON (the one non-technical win). Mutates the RAW
+    parsed dict — NOT Account.model_dump() — so any unknown/future field on the target account, and
+    every sibling account, is preserved exactly; only the target handle's account_id changes (a fresh
+    int/str is coerced to str, the form accounts.json stores). Unknown handle -> KeyError (the caller
+    turns it into a clean ActionResult). Written via temp file + os.replace so a crash mid-write never
+    leaves a torn accounts.json. Absent file -> KeyError (no account to map yet)."""
+    p = cfg.accounts_path
+    raw = json.loads(p.read_text()) if p.exists() else {"accounts": []}
+    accounts = raw.get("accounts") if isinstance(raw, dict) else None
+    if not isinstance(accounts, list):
+        raise ControlFileError(f"{p.name} invalid: expected a top-level 'accounts' list")
+    for a in accounts:
+        if isinstance(a, dict) and a.get("handle") == handle:
+            a["account_id"] = str(account_id)
+            break
+    else:
+        raise KeyError(handle)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(raw, indent=2) + "\n")     # readable for the operator who still hand-edits
+    os.replace(tmp, p)                                   # atomic: never a half-written accounts.json
+    return handle

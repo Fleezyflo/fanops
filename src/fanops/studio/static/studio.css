@@ -21,3 +21,11 @@ table { width:100%; border-collapse:collapse; } td, th { text-align:left; paddin
 .bar { height:14px; background:linear-gradient(90deg,#2f81f7,#3fb950); border-radius:7px; }
 .empty { color:var(--muted); font-style:italic; padding:.8rem; border:1px dashed var(--line); border-radius:8px; }
 h2 { margin:.2rem 0 1rem; } h3 { color:var(--muted); font-weight:600; margin:1.2rem 0 .5rem; }
+/* Go-Live: the dryrun<->LIVE banner is safety-critical state — make LIVE unmissable (red). */
+.banner { padding:.55rem .9rem; border-radius:8px; margin:.2rem 0 1rem; font-weight:600; border:1px solid var(--line); }
+.banner.dryrun { color:var(--muted); }
+.banner.live { color:#f85149; border-color:#f85149; background:rgba(248,81,73,.08); }
+button.danger { border-color:#f85149; color:#f85149; } button.danger:hover { background:rgba(248,81,73,.12); }
+.checks { list-style:none; padding-left:0; } .checks li { padding:.15rem 0; }
+.golive-step { border-top:1px solid var(--line); padding-top:.4rem; margin-top:1rem; }
+.confirm { display:block; color:var(--warn); margin:.4rem 0; }

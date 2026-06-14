@@ -1,7 +1,7 @@
 import json
 import pytest
 from fanops.config import Config
-from fanops.accounts import Accounts
+from fanops.accounts import Accounts, write_account_id
 
 def _seed(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,3 +87,48 @@ def test_load_missing_file_is_empty_registry(tmp_path):
     cfg = Config(root=tmp_path)
     accts = Accounts.load(cfg)             # nothing seeded
     assert accts.accounts == [] and accts.active() == [] and accts.validate() == []
+
+
+# ---- write_account_id: the Go-Live tab maps an account to a Postiz integration id WITHOUT the
+# operator hand-editing JSON. Atomic raw-dict write — unknown/future fields + sibling accounts preserved.
+def test_write_account_id_sets_and_preserves_siblings_and_unknown_fields(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [
+        {"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active", "note": "keep me"},
+        {"handle": "@b", "account_id": "old", "platforms": ["tiktok"], "status": "active"},
+    ])
+    assert write_account_id(cfg, "@a", "intg_42") == "@a"
+    raw = json.loads(cfg.accounts_path.read_text())
+    a = next(x for x in raw["accounts"] if x["handle"] == "@a")
+    b = next(x for x in raw["accounts"] if x["handle"] == "@b")
+    assert a["account_id"] == "intg_42"
+    assert a["note"] == "keep me"                       # unknown/future field preserved (no model_dump round-trip)
+    assert a["platforms"] == ["instagram"] and a["status"] == "active"
+    assert b == {"handle": "@b", "account_id": "old", "platforms": ["tiktok"], "status": "active"}  # sibling untouched
+
+def test_write_account_id_reload_resolves(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
+    write_account_id(cfg, "@a", "intg_99")
+    assert Accounts.load(cfg).resolve_account_id("@a") == "intg_99"   # round-trips through the model
+
+def test_write_account_id_unknown_handle_raises(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    with pytest.raises(KeyError):
+        write_account_id(cfg, "@nope", "x")
+
+def test_write_account_id_adds_key_when_absent(tmp_path):
+    # an account dict with no account_id key at all -> the key is added, not a KeyError
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active"}])
+    write_account_id(cfg, "@a", "intg_1")
+    raw = json.loads(cfg.accounts_path.read_text())
+    assert raw["accounts"][0]["account_id"] == "intg_1"
+
+def test_write_account_id_coerces_to_str(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
+    write_account_id(cfg, "@a", 51)                     # a numeric id from a picker still lands as a string
+    raw = json.loads(cfg.accounts_path.read_text())
+    assert raw["accounts"][0]["account_id"] == "51"
