@@ -1,7 +1,8 @@
 {# src/fanops/studio/templates/_golive_panel.html — the Go-Live tab body, htmx-swapped in place
-   (#golive-panel). Connect Postiz, map accounts to integrations, see readiness, flip dryrun<->live.
-   The API key is WRITE-ONLY: never rendered (status.key_set is a bool); autoescape stays on (no |safe).
-   Each form swaps the whole panel (outerHTML) so the mode banner + checks update after every action. #}
+   (#golive-panel). Add accounts, map each (handle × platform) channel to its own Postiz integration,
+   see readiness, flip dryrun<->live. The API key is WRITE-ONLY: never rendered (status.key_set is a
+   bool); autoescape stays on (no |safe). Each form swaps the whole panel (outerHTML) so the mode
+   banner + checks update after every action. #}
 <div id="golive-panel">
   {% if status.is_live %}
     <div class="banner live">● LIVE ({{ status.mode }}) — reviewed posts publish to REAL accounts</div>
@@ -11,7 +12,15 @@
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}✓ {{ result.detail or 'done' }}{% else %}✗ {{ result.error }}{% endif %}
+      {% if result.ok %}✓
+        {%- if result.detail and result.detail.added %} added {{ result.detail.added }} ({{ result.detail.platforms|join(', ') }})
+        {%- elif result.detail and result.detail.mapped is defined %} mapped {{ result.detail.mapped }} channel(s)
+        {%- elif result.detail and result.detail.handle and result.detail.platform %} mapped {{ result.detail.handle }} · {{ result.detail.platform }}
+        {%- elif result.detail and result.detail.integrations is defined %} found {{ result.detail.integrations|length }} integration(s)
+        {%- elif result.detail and result.detail.mode %} switched to {{ result.detail.mode }}
+        {%- elif result.detail and result.detail.url %} connected {{ result.detail.url }}
+        {%- else %} done{% endif %}
+      {% else %}✗ {{ result.error }}{% endif %}
     </div>
   {% endif %}
 
@@ -32,47 +41,67 @@
   </section>
 
   <section class="golive-step">
-    <h3>2 · Map your accounts to Postiz</h3>
-    <p class="muted">Each active account maps to one Postiz integration id. Click Refresh to pick from
-      your connected channels, or paste an id by hand.</p>
+    <h3>2 · Add an account</h3>
+    <p class="muted">Add a handle and tick the platforms it posts to — no JSON editing. It lands active,
+      ready to map below. (FanOps never logs into the social network; Postiz holds the channel auth.)</p>
+    <form hx-post="{{ url_for('do_golive_account_add') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+      <label>Handle <input type="text" name="handle" placeholder="@newaccount" size="20"></label>
+      <span class="platforms">
+        {% for p in all_platforms %}
+          <label class="platform-pick"><input type="checkbox" name="platform" value="{{ p }}"> {{ p }}</label>
+        {% endfor %}
+      </span>
+      <label>Persona <input type="text" name="persona" placeholder="optional — caption voice" size="24"></label>
+      <button type="submit">Add account</button>
+    </form>
+  </section>
+
+  <section class="golive-step">
+    <h3>3 · Map each channel to Postiz</h3>
+    <p class="muted">Every channel maps to its OWN Postiz integration — a handle's Instagram and TikTok
+      are different integrations. Click Refresh to pick from your connected channels, or paste an id.</p>
     <form hx-post="{{ url_for('do_golive_refresh') }}" hx-target="#golive-panel" hx-swap="outerHTML">
       <button type="submit">Refresh from Postiz</button>
     </form>
     {% set integrations = (result.detail.get('integrations') if (result and result.detail and result.detail.get('integrations')) else None) %}
     {% if integrations %}
-      <p class="muted">Found {{ integrations|length }} integration(s) — pick one per account, then Save.</p>
+      <p class="muted">Found {{ integrations|length }} integration(s) — pick one per channel, then Save.</p>
     {% endif %}
     {% if status.accounts %}
       <form hx-post="{{ url_for('do_golive_map') }}" hx-target="#golive-panel" hx-swap="outerHTML">
         <table class="golive-map">
           {% for a in status.accounts %}
-            <tr>
-              <td><strong>{{ a.handle }}</strong> <span class="muted">{{ a.platforms|join(', ') }}</span></td>
-              <td>
-                {% if integrations %}
-                  <select name="map__{{ a.handle }}">
-                    <option value="">— keep current ({{ a.account_id or 'unmapped' }}) —</option>
-                    {% for it in integrations %}
-                      <option value="{{ it.id }}" {{ 'selected' if it.id == a.account_id else '' }}>{{ it.name }} · {{ it.platform }} ({{ it.id }})</option>
-                    {% endfor %}
-                  </select>
-                {% else %}
-                  <span class="muted">current: {{ a.account_id or 'unmapped' }}</span>
-                  <input type="text" name="map__{{ a.handle }}" placeholder="paste integration id (or Refresh to pick)">
-                {% endif %}
-              </td>
-            </tr>
+            {% for ch in a.channels %}
+              <tr>
+                <td><strong>{{ a.handle }}</strong> <span class="muted">{{ ch.platform }}</span></td>
+                <td>
+                  {% if integrations %}
+                    {% set matches = integrations|selectattr('platform', 'equalto', ch.platform)|list %}
+                    {% set opts = matches if matches else integrations %}
+                    <select name="map__{{ a.handle }}__{{ ch.platform }}" aria-label="Postiz integration for {{ a.handle }} {{ ch.platform }}">
+                      <option value="">— keep current ({{ ch.integration_id or 'unmapped' }}) —</option>
+                      {% for it in opts %}
+                        <option value="{{ it.id }}" {{ 'selected' if it.id == ch.integration_id else '' }}>{{ it.name }} · {{ it.platform }} ({{ it.id }})</option>
+                      {% endfor %}
+                    </select>
+                  {% else %}
+                    <span class="muted">current: {{ ch.integration_id or 'unmapped' }}</span>
+                    <input type="text" name="map__{{ a.handle }}__{{ ch.platform }}" placeholder="paste integration id (or Refresh to pick)">
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
           {% endfor %}
         </table>
-        <button type="submit">Save account mappings</button>
+        <button type="submit">Save channel mappings</button>
       </form>
     {% else %}
-      <p class="muted">No active accounts yet — add accounts in <code>00_control/accounts.json</code> and set them active.</p>
+      <p class="muted">No active accounts yet — add one above, then map its channels here.</p>
     {% endif %}
   </section>
 
   <section class="golive-step">
-    <h3>3 · Readiness</h3>
+    <h3>4 · Readiness</h3>
     <ul class="checks">
       {% for c in status.checks %}
         <li class="{{ 'ok' if c.ok else 'err' }}">{{ '✓' if c.ok else '✗' }} {{ c.label }}{% if not c.ok and c.hint %} — <span class="muted">{{ c.hint }}</span>{% endif %}</li>

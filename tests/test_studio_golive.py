@@ -102,26 +102,61 @@ def test_refresh_integrations_other_error_clean(tmp_path, monkeypatch):
     assert res.ok is False and "postiz down" in res.error
 
 
-# ---- map_account ----
-def test_map_account_writes_id(tmp_path, monkeypatch):
+# ---- add_account: onboard a brand-new account in the UI (no JSON edit) ----
+def test_add_account_appends_active_postiz(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    res = golive.map_account(cfg, "@a", "intg_5")
-    assert res.ok is True
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    res = golive.add_account(cfg, "@new", ["instagram", "tiktok"], "hype edits")
+    assert res.ok is True and res.detail["added"] == "@new"
     raw = json.loads(cfg.accounts_path.read_text())
-    assert raw["accounts"][0]["account_id"] == "intg_5"
+    new = next(x for x in raw["accounts"] if x["handle"] == "@new")
+    assert new["status"] == "active" and new["access"] == "postiz"
+    assert new["platforms"] == ["instagram", "tiktok"] and new["persona"] == "hype edits"
+
+def test_add_account_requires_handle(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    res = golive.add_account(cfg, "  ", ["instagram"])
+    assert res.ok is False and "handle" in res.error.lower()
+
+def test_add_account_requires_a_platform(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    res = golive.add_account(cfg, "@x", [])
+    assert res.ok is False and "platform" in res.error.lower()
+
+def test_add_account_duplicate_handle_clean_error(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    res = golive.add_account(cfg, "@a", ["tiktok"])
+    assert res.ok is False and "duplicate" in res.error.lower()
+
+
+# ---- map_account: per (handle, platform) -> its own Postiz integration id ----
+def test_map_account_writes_per_platform_id(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"], "status": "active"}])
+    assert golive.map_account(cfg, "@a", "instagram", "ig_5").ok is True
+    assert golive.map_account(cfg, "@a", "tiktok", "tk_9").ok is True
+    raw = json.loads(cfg.accounts_path.read_text())
+    assert raw["accounts"][0]["integrations"] == {"instagram": "ig_5", "tiktok": "tk_9"}
+    assert raw["accounts"][0]["account_id"] == ""              # per-platform write does NOT touch the shared id
 
 def test_map_account_unknown_handle_clean_error(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    res = golive.map_account(cfg, "@nope", "x")
+    res = golive.map_account(cfg, "@nope", "instagram", "x")
     assert res.ok is False and "no such account" in res.error.lower()
 
 def test_map_account_blank_id_rejected(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    res = golive.map_account(cfg, "@a", "")
+    res = golive.map_account(cfg, "@a", "instagram", "")
     assert res.ok is False
+
+def test_map_account_blank_platform_rejected(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
+    res = golive.map_account(cfg, "@a", "", "ig_1")
+    assert res.ok is False and "platform" in res.error.lower()
 
 
 # ---- go_live: the ONLY FANOPS_POSTER=postiz setter; gated on readiness + explicit confirm ----
@@ -174,25 +209,35 @@ def test_golive_status_default_dryrun(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     from fanops.studio import views
     st = views.golive_status(cfg)
-    assert st["mode"] == "dryrun" and st["is_live"] is False
-    assert st["key_set"] is False and st["postiz_url"] is None
-    assert "checks" in st and "notes" in st
+    assert st.mode == "dryrun" and st.is_live is False
+    assert st.key_set is False and st.postiz_url is None
+    assert st.checks == [] or st.checks is not None         # dataclass attrs present
+    assert st.notes is not None
 
-def test_golive_status_reflects_config_and_active_accounts(tmp_path, monkeypatch):
+def test_golive_status_reflects_config_and_per_platform_channels(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     _seed_accounts(cfg, [
-        {"handle": "@a", "account_id": "i1", "platforms": ["instagram", "tiktok"], "status": "active"},
+        {"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"], "status": "active",
+         "integrations": {"instagram": "ig_1", "tiktok": "tk_9"}},
         {"handle": "@soon", "account_id": "", "platforms": ["instagram"], "status": "planned"},
     ])
     from fanops.studio import views
     st = views.golive_status(cfg)
-    assert st["mode"] == "postiz" and st["is_live"] is True
-    assert st["postiz_url"] == "https://p.example.com" and st["key_set"] is True
-    assert [a["handle"] for a in st["accounts"]] == ["@a"]      # active only; @soon (planned) excluded
-    assert st["accounts"][0]["account_id"] == "i1"
-    assert st["accounts"][0]["platforms"] == ["instagram", "tiktok"]
+    assert st.mode == "postiz" and st.is_live is True
+    assert st.postiz_url == "https://p.example.com" and st.key_set is True
+    assert [a.handle for a in st.accounts] == ["@a"]          # active only; @soon (planned) excluded
+    chans = {c.platform: c.integration_id for c in st.accounts[0].channels}
+    assert chans == {"instagram": "ig_1", "tiktok": "tk_9"}   # each channel shows its OWN integration id
+
+def test_golive_status_channel_falls_back_to_shared_account_id(tmp_path, monkeypatch):
+    # a legacy account (shared account_id, no integrations) shows that id as each channel's effective id.
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "shared", "platforms": ["instagram", "tiktok"], "status": "active"}])
+    from fanops.studio import views
+    st = views.golive_status(cfg)
+    assert all(c.integration_id == "shared" for c in st.accounts[0].channels)
 
 def test_golive_status_tolerates_malformed_accounts(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -200,7 +245,7 @@ def test_golive_status_tolerates_malformed_accounts(tmp_path, monkeypatch):
     cfg.accounts_path.write_text("{ not json")
     from fanops.studio import views
     st = views.golive_status(cfg)                              # must not raise
-    assert st["accounts"] == [] and st["mode"] == "dryrun"
+    assert st.accounts == [] and st.mode == "dryrun"
 
 def test_golive_status_tolerates_doctor_failure(tmp_path, monkeypatch):
     # invariant: the Go-Live tab must never 500 — a raising doctor_report falls back to an empty report
@@ -209,14 +254,14 @@ def test_golive_status_tolerates_doctor_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(doctor, "doctor_report", lambda c: (_ for _ in ()).throw(RuntimeError("doctor broke")))
     from fanops.studio import views
     st = views.golive_status(cfg)                              # must not raise
-    assert st["checks"] == [] and st["mode"] == "dryrun"
+    assert st.checks == [] and st.mode == "dryrun"
 
 def test_golive_status_never_exposes_key(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("POSTIZ_API_KEY", "TOPSECRET")
     from fanops.studio import views
     st = views.golive_status(cfg)
-    assert "TOPSECRET" not in repr(st) and st["key_set"] is True
+    assert "TOPSECRET" not in repr(st) and st.key_set is True
 
 
 # ---- .env write failure must surface as a clean ActionResult, never a 500 (the tab's invariant) ----
@@ -276,16 +321,35 @@ def test_post_golive_refresh_route_lists_integrations(tmp_path, monkeypatch):
     r = _client(cfg).post("/golive/refresh")
     assert r.status_code == 200 and b"IG Reels" in r.data
 
-def test_post_golive_map_route_maps_only_picked(tmp_path, monkeypatch):
+def test_post_golive_map_route_maps_only_picked_channel(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [
-        {"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"], "status": "active"},
         {"handle": "@b", "account_id": "", "platforms": ["tiktok"], "status": "active"},
     ])
-    r = _client(cfg).post("/golive/map", data={"map__@a": "intg_9", "map__@b": ""})  # @b left unset
+    # map only @a/instagram; leave @a/tiktok and @b/tiktok blank
+    r = _client(cfg).post("/golive/map", data={"map__@a__instagram": "ig_9",
+                                               "map__@a__tiktok": "", "map__@b__tiktok": ""})
     assert r.status_code == 200
-    by = {a["handle"]: a["account_id"] for a in json.loads(cfg.accounts_path.read_text())["accounts"]}
-    assert by["@a"] == "intg_9" and by["@b"] == ""    # only the picked account mapped
+    by = {a["handle"]: a.get("integrations", {}) for a in json.loads(cfg.accounts_path.read_text())["accounts"]}
+    assert by["@a"] == {"instagram": "ig_9"}          # only the picked channel mapped
+    assert by["@b"] == {}                              # @b untouched
+
+def test_post_golive_account_add_route_appends(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    r = _client(cfg).post("/golive/account/add",
+                          data={"handle": "@fresh", "platform": ["instagram", "tiktok"], "persona": "raw"})
+    assert r.status_code == 200
+    accts = json.loads(cfg.accounts_path.read_text())["accounts"]
+    fresh = next(a for a in accts if a["handle"] == "@fresh")
+    assert fresh["status"] == "active" and fresh["platforms"] == ["instagram", "tiktok"]
+    assert b"@fresh" in r.data                          # the new account shows in the refreshed panel
+
+def test_post_golive_account_add_route_rejects_no_platform(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    r = _client(cfg).post("/golive/account/add", data={"handle": "@x"})   # no platform checkboxes
+    assert r.status_code == 200 and b"platform" in r.data
+    assert not cfg.accounts_path.exists() or json.loads(cfg.accounts_path.read_text())["accounts"] == []
 
 def test_post_golive_dryrun_route_sets_dryrun(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_POSTER", "postiz")

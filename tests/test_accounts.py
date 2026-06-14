@@ -1,7 +1,7 @@
 import json
 import pytest
 from fanops.config import Config
-from fanops.accounts import Accounts, write_account_id
+from fanops.accounts import Accounts, write_account_id, write_integration, add_account
 
 def _seed(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,3 +208,78 @@ def test_validate_legacy_single_account_id_still_passes(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [{"handle": "@a", "account_id": "98432", "platforms": ["instagram", "tiktok"], "status": "active"}])
     assert Accounts.load(cfg).validate() == []
+
+
+# ---- M2.1: writers backing the UI onboarding. write_integration maps ONE (handle, platform) channel;
+# add_account onboards a brand-new account — both atomic raw-dict writes (siblings + unknown fields kept).
+def test_write_integration_sets_nested_id_and_preserves_siblings(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [
+        {"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"], "status": "active",
+         "integrations": {"instagram": "ig_old"}, "note": "keep me"},
+        {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"},
+    ])
+    assert write_integration(cfg, "@a", "tiktok", "tk_42") == "@a"
+    raw = json.loads(cfg.accounts_path.read_text())
+    a = next(x for x in raw["accounts"] if x["handle"] == "@a")
+    b = next(x for x in raw["accounts"] if x["handle"] == "@b")
+    assert a["integrations"] == {"instagram": "ig_old", "tiktok": "tk_42"}   # added, existing kept
+    assert a["note"] == "keep me"                                            # unknown field preserved
+    assert b == {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"}  # sibling untouched
+
+def test_write_integration_creates_map_when_absent(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
+    write_integration(cfg, "@a", "instagram", 7)                            # numeric id coerces to str
+    raw = json.loads(cfg.accounts_path.read_text())
+    assert raw["accounts"][0]["integrations"] == {"instagram": "7"}
+
+def test_write_integration_reload_resolves_per_platform(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"], "status": "active"}])
+    write_integration(cfg, "@a", "instagram", "ig_1")
+    write_integration(cfg, "@a", "tiktok", "tk_1")
+    accts = Accounts.load(cfg)
+    assert accts.resolve_account_id("@a", Platform.instagram) == "ig_1"
+    assert accts.resolve_account_id("@a", Platform.tiktok) == "tk_1"
+
+def test_write_integration_unknown_handle_raises(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    with pytest.raises(KeyError):
+        write_integration(cfg, "@nope", "instagram", "x")
+
+def test_add_account_appends_with_defaults(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    assert add_account(cfg, "@b", ["instagram", "tiktok"], persona="raw studio") == "@b"
+    raw = json.loads(cfg.accounts_path.read_text())
+    b = next(x for x in raw["accounts"] if x["handle"] == "@b")
+    assert b["status"] == "active" and b["access"] == "postiz"   # UI-added defaults
+    assert b["account_id"] == "" and b["integrations"] == {}     # mapped afterward
+    assert b["platforms"] == ["instagram", "tiktok"] and b["persona"] == "raw studio"
+    assert len(raw["accounts"]) == 2                             # @a untouched
+
+def test_add_account_to_absent_file_creates_it(tmp_path):
+    cfg = Config(root=tmp_path)                                  # nothing seeded
+    add_account(cfg, "@new", ["youtube"])
+    accts = Accounts.load(cfg)
+    assert [a.handle for a in accts.accounts] == ["@new"]
+    assert accts.accounts[0].status.value == "active"
+
+def test_add_account_rejects_duplicate_handle(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    with pytest.raises(ValueError):
+        add_account(cfg, "@a", ["tiktok"])
+
+def test_add_account_rejects_unknown_platform(tmp_path):
+    # input validation at the control-file boundary: never write an account that won't reload.
+    cfg = Config(root=tmp_path)
+    with pytest.raises(ValueError):
+        add_account(cfg, "@a", ["instagram", "myspace"])
+
+def test_add_account_requires_handle(tmp_path):
+    cfg = Config(root=tmp_path)
+    with pytest.raises(ValueError):
+        add_account(cfg, "   ", ["instagram"])

@@ -20,7 +20,7 @@ import os
 from typing import Optional
 
 from fanops.config import Config
-from fanops.accounts import Accounts, write_account_id
+from fanops.accounts import Accounts, write_integration, add_account as _accounts_add_account
 from fanops.autopilot import set_env_var
 from fanops.errors import PostizAuthError
 from fanops.post import postiz
@@ -84,22 +84,47 @@ def refresh_integrations(cfg: Config) -> ActionResult:
     return ActionResult(ok=True, detail={"integrations": integrations})
 
 
-def map_account(cfg: Config, handle: str, integration_id: str) -> ActionResult:
-    """Map ONE account (handle) to a Postiz integration id, persisted atomically to accounts.json (the
-    key non-technical win — replaces hand-editing JSON). Unknown handle / blank id -> clean error."""
+def add_account(cfg: Config, handle: str, platforms: list, persona: str = "") -> ActionResult:
+    """Onboard a NEW account ENTIRELY in the Go-Live tab (no accounts.json hand-edit): validate a
+    non-blank handle + at least one platform, then append it (status active, access postiz) so it shows
+    up in the channel-mapping list immediately. Duplicate handle / unknown platform / blank input ->
+    a clean one-line error, never a 500. account_id stays empty — each channel is mapped per-platform next."""
     handle = (handle or "").strip()
+    platforms = [p for p in (platforms or []) if (p or "").strip()]
+    if not handle:
+        return ActionResult(ok=False, error="enter a handle to add an account")
+    if not platforms:
+        return ActionResult(ok=False, error=f"pick at least one platform for {handle}")
+    try:
+        _accounts_add_account(cfg, handle, platforms, persona=(persona or "").strip())
+    except ValueError as exc:                            # duplicate handle / unknown platform / blank
+        return ActionResult(ok=False, error=str(exc))
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not add {handle}: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"added": handle, "platforms": platforms})
+
+
+def map_account(cfg: Config, handle: str, platform: str, integration_id: str) -> ActionResult:
+    """Map ONE (handle, platform) channel to its Postiz integration id, persisted atomically to
+    accounts.json (the key non-technical win — replaces hand-editing JSON). A handle's Instagram and
+    TikTok are different integrations, so the mapping is per-platform. Unknown handle / blank id ->
+    clean error."""
+    handle = (handle or "").strip()
+    platform = (platform or "").strip()
     integration_id = (integration_id or "").strip()
     if not handle:
         return ActionResult(ok=False, error="no account selected")
+    if not platform:
+        return ActionResult(ok=False, error=f"no platform selected for {handle}")
     if not integration_id:
-        return ActionResult(ok=False, error=f"pick a Postiz integration for {handle} (none selected)")
+        return ActionResult(ok=False, error=f"pick a Postiz integration for {handle} {platform} (none selected)")
     try:
-        write_account_id(cfg, handle, integration_id)
+        write_integration(cfg, handle, platform, integration_id)
     except KeyError:
         return ActionResult(ok=False, error=f"no such account: {handle}")
     except Exception as exc:
-        return ActionResult(ok=False, error=f"could not map {handle}: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"handle": handle, "account_id": integration_id})
+        return ActionResult(ok=False, error=f"could not map {handle} {platform}: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"handle": handle, "platform": platform, "account_id": integration_id})
 
 
 def go_live(cfg: Config, confirmed: bool = False) -> ActionResult:

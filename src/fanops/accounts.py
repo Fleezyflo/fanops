@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 from enum import Enum
+from pathlib import Path
 from typing import Optional, NamedTuple
 from pydantic import BaseModel, Field
 from fanops.config import Config
@@ -97,28 +98,88 @@ class Accounts:
                 for a in self.active() for p in a.platforms]
 
 
-def write_account_id(cfg: Config, handle: str, account_id: str | int) -> str:
-    """Set ONE account's `account_id` (the Postiz INTEGRATION id for a postiz deployment) in
-    accounts.json and persist atomically, so the Studio Go-Live tab can map an account to a Postiz
-    integration WITHOUT the operator hand-editing JSON (the one non-technical win). Mutates the RAW
-    parsed dict — NOT Account.model_dump() — so any unknown/future field on the target account, and
-    every sibling account, is preserved exactly; only the target handle's account_id changes (a fresh
-    int/str is coerced to str, the form accounts.json stores). Unknown handle -> KeyError (the caller
-    turns it into a clean ActionResult). Written via temp file + os.replace so a crash mid-write never
-    leaves a torn accounts.json. Absent file -> KeyError (no account to map yet)."""
-    p = cfg.accounts_path
+def _load_raw_accounts(p: Path) -> tuple[dict, list]:
+    """Read accounts.json as the RAW parsed dict (absent file -> empty registry) and return (raw, the
+    accounts list). Mutating the raw dict — not Account.model_dump() — is how every writer preserves
+    unknown/future fields and sibling accounts exactly. A non-list 'accounts' is a corrupt file."""
     raw = json.loads(p.read_text()) if p.exists() else {"accounts": []}
     accounts = raw.get("accounts") if isinstance(raw, dict) else None
     if not isinstance(accounts, list):
         raise ControlFileError(f"{p.name} invalid: expected a top-level 'accounts' list")
+    return raw, accounts
+
+
+def _write_accounts_atomic(p: Path, raw: dict) -> None:
+    """Persist the raw accounts dict via temp file + os.replace, so a crash mid-write never leaves a
+    torn accounts.json. Indented for the operator who still hand-edits."""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(raw, indent=2) + "\n")
+    os.replace(tmp, p)                                   # atomic: never a half-written accounts.json
+
+
+def write_account_id(cfg: Config, handle: str, account_id: str | int) -> str:
+    """Set ONE account's shared `account_id` (the fallback poster id) in accounts.json atomically. The
+    per-platform `write_integration` below is the preferred Go-Live mapping path; this stays for the
+    handle-level fallback + back-compat. Mutates the RAW dict so unknown/future fields and siblings are
+    preserved exactly; the id is coerced to str. Unknown handle -> KeyError (the caller turns it into a
+    clean ActionResult). Absent file -> KeyError (no account to map yet)."""
+    p = cfg.accounts_path
+    raw, accounts = _load_raw_accounts(p)
     for a in accounts:
         if isinstance(a, dict) and a.get("handle") == handle:
             a["account_id"] = str(account_id)
             break
     else:
         raise KeyError(handle)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(raw, indent=2) + "\n")     # readable for the operator who still hand-edits
-    os.replace(tmp, p)                                   # atomic: never a half-written accounts.json
+    _write_accounts_atomic(p, raw)
+    return handle
+
+
+def write_integration(cfg: Config, handle: str, platform: str, integration_id: str | int) -> str:
+    """Map ONE (handle, platform) channel to its own poster id: set integrations[platform] = id in
+    accounts.json atomically — the per-platform Go-Live mapping that replaces hand-editing JSON, so a
+    handle's Instagram and TikTok point at their DIFFERENT Postiz integrations. Creates the integrations
+    sub-dict if absent; preserves every sibling account, unknown field, and other platform's id. The id
+    is coerced to str. Unknown handle -> KeyError (caller -> clean ActionResult)."""
+    p = cfg.accounts_path
+    raw, accounts = _load_raw_accounts(p)
+    for a in accounts:
+        if isinstance(a, dict) and a.get("handle") == handle:
+            integ = a.get("integrations")
+            if not isinstance(integ, dict):
+                integ = {}
+            integ[str(platform)] = str(integration_id)
+            a["integrations"] = integ
+            break
+    else:
+        raise KeyError(handle)
+    _write_accounts_atomic(p, raw)
+    return handle
+
+
+def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
+                status: str = "active", access: str = "postiz") -> str:
+    """Onboard a BRAND-NEW account into accounts.json atomically — so the Go-Live tab adds an account
+    WITHOUT the operator hand-editing JSON. Validates at this control-file boundary: a non-blank handle,
+    and every platform a known Platform value (never write an account that won't reload). Rejects a
+    duplicate handle. New accounts default to status=active (so they appear in the mapping list at once)
+    and access=postiz; account_id stays empty — the per-platform ids are set afterward via
+    write_integration / the mapping UI. Returns the handle; raises ValueError on bad input."""
+    handle = (handle or "").strip()
+    if not handle:
+        raise ValueError("handle is required")
+    plats = [getattr(x, "value", x) for x in platforms]      # accept Platform enums or value strings
+    valid = {pf.value for pf in Platform}
+    bad = [x for x in plats if x not in valid]
+    if bad:
+        raise ValueError(f"unknown platform(s): {', '.join(map(str, bad))}")
+    p = cfg.accounts_path
+    raw, accounts = _load_raw_accounts(p)
+    if any(isinstance(a, dict) and a.get("handle") == handle for a in accounts):
+        raise ValueError(f"duplicate handle {handle} (already exists)")
+    accounts.append({"handle": handle, "account_id": "", "platforms": plats,
+                     "status": str(status), "access": str(access),
+                     "persona": persona or "", "integrations": {}})
+    _write_accounts_atomic(p, raw)
     return handle
