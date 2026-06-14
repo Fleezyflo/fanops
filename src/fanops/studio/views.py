@@ -83,6 +83,7 @@ class GoLiveStatus:
     accounts: list[GoLiveAccount]
     checks: list[dict]
     notes: list[str]
+    learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
 
 
 @dataclass
@@ -383,6 +384,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         report = doctor_report(cfg)
     except Exception:                                # invariant: the Go-Live tab must never 500 (ecc:python-review)
         report = {"checks": [], "notes": ["readiness check unavailable"]}
+    from fanops.validation_gate import learning_validated
     return GoLiveStatus(
         mode=cfg.poster_backend,
         is_live=cfg.poster_backend != "dryrun",
@@ -390,7 +392,8 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         key_set=cfg.postiz_api_key is not None,       # BOOL only — the API key value is NEVER exposed
         accounts=accts,
         checks=report["checks"],
-        notes=report["notes"])
+        notes=report["notes"],
+        learning_validated=learning_validated(cfg))   # M3: shows whether the loop is unfrozen (cutover done)
 
 
 def gate_rows(cfg: Config) -> list[dict]:

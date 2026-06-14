@@ -19,10 +19,11 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+from fanops import cutover
 from fanops.config import Config
 from fanops.accounts import Accounts, write_integration, add_account as _accounts_add_account
 from fanops.autopilot import set_env_var
-from fanops.errors import PostizAuthError
+from fanops.errors import CutoverError, PostizAuthError
 from fanops.post import postiz
 from fanops.studio.actions import ActionResult
 
@@ -163,3 +164,40 @@ def go_dryrun(cfg: Config) -> ActionResult:
     if err:
         return ActionResult(ok=False, error=err)
     return ActionResult(ok=True, detail={"mode": "dryrun", "live": False})
+
+
+def validate_learning(cfg: Config, *, integration_id: Optional[str] = None, confirmed: bool = False) -> ActionResult:
+    """Run the Postiz live-cutover (M3) from the browser to UNFREEZE the learning loop — posts ONE real
+    throwaway probe to the OPERATOR-SELECTED integration, reconciles its real analytics labels, and
+    writes metrics_confirmed (which learning_validated reads). Gated, in order: live-postiz + key →
+    integration_id must be one the operator mapped (never auto-pick a real channel) → explicit confirm.
+    NEVER 500s; the POSTIZ_API_KEY is never echoed (fixed-string auth errors). A missing metrics row is
+    surfaced as 'retry later' (Postiz analytics lag), not a failure."""
+    if not (cfg.poster_backend == "postiz" and cfg.postiz_api_key):
+        return ActionResult(ok=False, error="connect Postiz + GO LIVE first — Validate runs the Postiz cutover.")
+    integration_id = (integration_id or "").strip()
+    try:
+        known = {i.id for i in postiz.postiz_list_integrations(cfg)}
+    except PostizAuthError:
+        return ActionResult(ok=False, error="FATAL auth failure — check POSTIZ_API_KEY.")   # fixed string, never str(exc)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not list Postiz integrations: {str(exc)[:160]}")
+    if not integration_id or integration_id not in known:
+        return ActionResult(ok=False, error="pick the throwaway channel to validate against (one of your mapped Postiz integrations).")
+    if not confirmed:
+        return ActionResult(ok=False, error="Validate posts ONE real throwaway post — tick the confirm box, then click again.")
+    try:
+        if not cutover.cutover_auth(cfg).get("ok"):                          # postiz_check_auth returns False on a non-401 failure (unreachable/5xx)
+            return ActionResult(ok=False, error="Postiz auth probe failed — check POSTIZ_URL and POSTIZ_API_KEY (instance reachable?).")
+        posted = cutover.cutover_post(cfg, integration_id, confirmed=True)   # the operator-SELECTED integration, never auto-picked
+        sid = posted["submission_id"]
+        metrics = cutover.cutover_metrics(cfg, sid)
+        lift = cutover.cutover_lift(cfg, sid)
+    except PostizAuthError:
+        return ActionResult(ok=False, error="Postiz auth failed during validation — check POSTIZ_API_KEY.")   # fixed string
+    except CutoverError as exc:
+        return ActionResult(ok=False, error=str(exc))                        # cutover messages carry no key (ids/fixed text)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"validation failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"validated": True, "reconciliation": metrics.get("reconciliation"),
+                                         "lift_score": lift.get("lift_score")})

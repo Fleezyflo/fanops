@@ -303,6 +303,14 @@ def create_app(cfg: Config) -> Flask:
     def do_golive_dryrun():
         return _golive_panel(golive.go_dryrun(cfg))
 
+    @app.post("/golive/validate")
+    def do_golive_validate():
+        # M3: run the Postiz cutover from the browser to unfreeze the learning loop — posts ONE real
+        # throwaway probe to the operator-SELECTED integration behind a confirm. validate_learning
+        # re-gates (live-postiz + known integration + confirm); a stray POST can't fire it.
+        return _golive_panel(golive.validate_learning(cfg, integration_id=request.form.get("integration_id"),
+                                                       confirmed=bool(request.form.get("confirm"))))
+
     from werkzeug.exceptions import RequestEntityTooLarge
     @app.errorhandler(RequestEntityTooLarge)
     def _too_large(_e):
