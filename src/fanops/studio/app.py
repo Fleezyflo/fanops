@@ -12,7 +12,10 @@ from flask import Flask, abort, redirect, render_template, request, send_file, u
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
+from fanops.models import Platform
 from fanops.studio import views, actions, golive
+
+_ALL_PLATFORMS = [p.value for p in Platform]    # the add-account form's platform checkboxes (no enum drift)
 
 _HERE = Path(__file__).resolve().parent
 
@@ -233,17 +236,27 @@ def create_app(cfg: Config) -> Flask:
     @app.get("/golive")
     def golive_view():
         # Milestone 5 (operator-gated): turn FanOps from dryrun into real Postiz publishing entirely in
-        # the browser — connect Postiz, map accounts to integrations, see readiness, flip dryrun<->live.
-        return render_template("golive.html", status=views.golive_status(cfg), result=None, tab="golive")
+        # the browser — add accounts, map each channel to its integration, see readiness, flip dryrun<->live.
+        return render_template("golive.html", status=views.golive_status(cfg), result=None,
+                               all_platforms=_ALL_PLATFORMS, tab="golive")
 
     def _golive_panel(result):
         # Re-render the panel with FRESH golive_status after an action (htmx swaps #golive-panel), so the
         # mode banner + readiness checks update in place — mirrors _run_panel.
-        return render_template("_golive_panel.html", status=views.golive_status(cfg), result=result, tab="golive")
+        return render_template("_golive_panel.html", status=views.golive_status(cfg), result=result,
+                               all_platforms=_ALL_PLATFORMS, tab="golive")
 
     @app.post("/golive/config")
     def do_golive_config():
         return _golive_panel(golive.set_postiz_config(cfg, request.form.get("url", ""), request.form.get("key", "")))
+
+    @app.post("/golive/account/add")
+    def do_golive_account_add():
+        # Onboard a new account from the UI: handle + platform checkboxes + optional persona -> a new
+        # active/postiz account appended to accounts.json (no JSON hand-edit), ready to map below.
+        return _golive_panel(golive.add_account(cfg, request.form.get("handle", ""),
+                                                request.form.getlist("platform"),
+                                                request.form.get("persona", "")))
 
     @app.post("/golive/refresh")
     def do_golive_refresh():
@@ -251,14 +264,22 @@ def create_app(cfg: Config) -> Flask:
 
     @app.post("/golive/map")
     def do_golive_map():
-        # Batch-map: one <select name="map__<handle>"> per active account, submitted together. Map only
-        # the accounts the operator actually picked (non-blank), via the unit action golive.map_account.
-        picks = [(k[len("map__"):], (request.form.get(k) or "").strip())
-                 for k in request.form if k.startswith("map__")]
-        picks = [(h, v) for h, v in picks if v]
+        # Batch per-CHANNEL map: one <select name="map__<handle>__<platform>"> per channel, submitted
+        # together. Split on the LAST "__" so a handle keeps its own characters; map only the channels the
+        # operator actually picked (non-blank), via the per-platform unit action golive.map_account.
+        picks = []
+        for k in request.form:
+            if not k.startswith("map__"):
+                continue
+            v = (request.form.get(k) or "").strip()
+            rest = k[len("map__"):]
+            if not v or "__" not in rest:
+                continue
+            handle, platform = rest.rsplit("__", 1)
+            picks.append((handle, platform, v))
         if not picks:
-            return _golive_panel(actions.ActionResult(ok=False, error="pick a Postiz integration for at least one account"))
-        errors = [r.error for r in (golive.map_account(cfg, h, v) for h, v in picks) if not r.ok]
+            return _golive_panel(actions.ActionResult(ok=False, error="pick a Postiz integration for at least one channel"))
+        errors = [r.error for r in (golive.map_account(cfg, h, p, v) for h, p, v in picks) if not r.ok]
         if errors:
             return _golive_panel(actions.ActionResult(ok=False, error="; ".join(errors)))
         return _golive_panel(actions.ActionResult(ok=True, detail={"mapped": len(picks)}))

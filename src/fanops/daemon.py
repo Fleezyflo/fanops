@@ -172,14 +172,18 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     return {"loaded": loaded, "pid": pid, "last_exit": last_exit, "heartbeat_age_s": age, "verdict": verdict}
 
 def stop(cfg: Config, *, remove: bool = False) -> dict:
-    """Unload the agent. Idempotent: booting out an already-stopped label returns rc!=0 — that is
-    'already stopped', not an error. Leaves the plist/wrapper on disk unless remove=True."""
+    """Unload the agent, then CONFIRM the real outcome (W10) instead of hardcoding success: the agent is
+    stopped iff `launchctl list` no longer finds it (rc!=0). Idempotent — booting out an already-stopped
+    label returns rc!=0, but the list confirm still reports stopped because the label isn't loaded ('already
+    stopped' is not an error). The honest part: if an unload genuinely FAILED and the agent is STILL loaded,
+    stopped is now False rather than a false True. Leaves the plist/wrapper on disk unless remove=True."""
     _require_darwin()
     uid = os.getuid()
     r = _launchctl("bootout", f"gui/{uid}/{LABEL}")
     if r.returncode != 0:
-        _launchctl("unload", "-w", str(plist_path()))    # fallback; rc ignored (already-stopped is fine)
-    out = {"label": LABEL, "plist": str(plist_path()), "wrapper": str(wrapper_path(cfg)), "stopped": True}
+        _launchctl("unload", "-w", str(plist_path()))    # fallback for older macOS (already-stopped is fine)
+    stopped = _launchctl("list", LABEL).returncode != 0  # source of truth: not loaded -> stopped
+    out = {"label": LABEL, "plist": str(plist_path()), "wrapper": str(wrapper_path(cfg)), "stopped": stopped}
     if remove:
         for f in (plist_path(), wrapper_path(cfg)):
             try: f.unlink()

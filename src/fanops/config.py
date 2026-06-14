@@ -8,6 +8,7 @@ import logging
 import math
 import os
 from pathlib import Path
+from typing import Literal
 from dotenv import load_dotenv
 
 _log = logging.getLogger("fanops.config")
@@ -17,6 +18,11 @@ _STAGE = {
     "clips": "03_clips", "agent_io": "04_agent_io", "scheduled": "05_scheduled",
     "published": "06_published", "reports": "07_reports",
 }
+
+# The recognized poster backends. An unknown/typo'd FANOPS_POSTER resolves to dryrun (W4) — see
+# poster_backend. dryrun = posts nothing; postiz = free self-hosted; rest/mcp = Blotato (being retired).
+PosterBackend = Literal["dryrun", "postiz", "rest", "mcp"]
+_VALID_BACKENDS = frozenset({"dryrun", "postiz", "rest", "mcp"})
 
 class Config:
     def __init__(self, root: Path | str | None = None):
@@ -76,8 +82,20 @@ class Config:
         return v.strip() if v and v.strip() else None
 
     @property
-    def poster_backend(self) -> str:
-        return os.getenv("FANOPS_POSTER") or "dryrun"
+    def poster_backend(self) -> PosterBackend:
+        # THE poster mode. An UNKNOWN/typo'd value (e.g. FANOPS_POSTER=positz) must NOT present as live:
+        # get_poster falls back to DryRunPoster for any unrecognized backend, so a typo would otherwise
+        # show a LIVE banner while posting NOTHING (W4). Validate against the known set and fall back to
+        # dryrun + warn — the variant_ucb_c validate-or-default posture (never crash an autonomous run
+        # over a bad env). Surrounding whitespace trimmed (a .env value can carry a trailing newline).
+        v = (os.getenv("FANOPS_POSTER") or "").strip()
+        if not v:
+            return "dryrun"
+        if v not in _VALID_BACKENDS:
+            _log.warning("ignoring unknown FANOPS_POSTER=%r (using dryrun); valid: %s",
+                         v, ", ".join(sorted(_VALID_BACKENDS)))
+            return "dryrun"
+        return v
 
     @property
     def postiz_url(self) -> str | None:

@@ -103,6 +103,21 @@ def test_crosspost_fans_out_with_right_aspect_and_account_id(tmp_path, mocker):
     # staggered
     assert by_plat[Platform.instagram].scheduled_time != by_plat[Platform.youtube].scheduled_time
 
+def test_crosspost_one_handle_two_platforms_distinct_per_platform_ids(tmp_path, mocker):
+    # M1: a SINGLE multi-platform handle whose channels are different Postiz integrations -> each
+    # platform's Post carries its OWN integration id, not one shared id (the mis-routing fix). No
+    # crosspost.py change needed: surfaces() now sources the id per-platform.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "fallback",
+                          "platforms": ["instagram", "youtube"], "status": "active",
+                          "integrations": {"instagram": "ig_intg", "youtube": "yt_intg"}}])
+    led = Ledger.load(cfg); _captioned(led, cfg, mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    by_plat = {p.platform: p for p in led.posts.values()}
+    assert by_plat[Platform.instagram].account_id == "ig_intg"   # IG -> its own integration
+    assert by_plat[Platform.youtube].account_id == "yt_intg"     # YouTube -> a DIFFERENT integration
+    assert by_plat[Platform.instagram].account_id != by_plat[Platform.youtube].account_id
+
 def test_crosspost_idempotent_across_processes(tmp_path, mocker):
     # FIX F00/F56: re-running in a SEPARATE process must not duplicate posts.
     cfg = Config(root=tmp_path)

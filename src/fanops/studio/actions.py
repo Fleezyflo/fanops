@@ -21,11 +21,22 @@ SNOOZE_DAYS = 365
 _GATE_MODELS = {"moments": MomentDecision, "captions": CaptionSet}
 
 
-@dataclass
+@dataclass(frozen=True)
 class ActionResult:
+    """The outcome of one Studio action — frozen so a result can't be mutated after construction (every
+    action returns a fresh one; no call site reassigns ok/error/detail). Construct directly or via the
+    success()/failure() factories."""
     ok: bool
     error: Optional[str] = None
     detail: Optional[dict] = None
+
+    @classmethod
+    def success(cls, detail: Optional[dict] = None) -> "ActionResult":
+        return cls(ok=True, detail=detail)
+
+    @classmethod
+    def failure(cls, error: str) -> "ActionResult":
+        return cls(ok=False, error=error)
 
 
 def _now(now: Optional[datetime]) -> datetime:

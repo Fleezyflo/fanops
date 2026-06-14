@@ -61,6 +61,31 @@ class ScheduleRow:
 
 
 @dataclass
+class GoLiveChannel:
+    platform: str
+    integration_id: str        # effective current id: the per-platform integrations[platform], else the
+                               # shared account_id fallback, else "" (unmapped). NEVER a secret.
+
+
+@dataclass
+class GoLiveAccount:
+    handle: str
+    persona: Optional[str]
+    channels: list[GoLiveChannel]    # one per platform this handle posts to
+
+
+@dataclass
+class GoLiveStatus:
+    mode: str
+    is_live: bool
+    postiz_url: Optional[str]
+    key_set: bool              # BOOL only — the POSTIZ_API_KEY value is NEVER carried in this read-model
+    accounts: list[GoLiveAccount]
+    checks: list[dict]
+    notes: list[str]
+
+
+@dataclass
 class LiftRow:
     variant_hook: Optional[str]
     account: str
@@ -334,35 +359,38 @@ def pipeline_status(cfg: Config) -> dict:
     }
 
 
-def golive_status(cfg: Config) -> dict:
+def golive_status(cfg: Config) -> GoLiveStatus:
     """Lock-free read-model for the Go-Live tab: the publish mode (dryrun/live), whether Postiz is
     configured (postiz_url is shown — it is NON-secret; key_set is a BOOL only, the key itself is never
-    exposed), the ACTIVE accounts to map to Postiz integrations, and the doctor readiness checks/notes.
+    exposed), the ACTIVE accounts to map, and the doctor readiness checks/notes.
 
-    Accounts are listed PER-ACCOUNT (one row per active handle, with its platforms), NOT per surface:
-    accounts.json stores ONE account_id per handle (shared across that handle's platforms, the
-    pre-existing Blotato model), so the mapping is per-handle — a per-surface list would imply
-    independent per-platform ids the model can't store. Tolerates a malformed accounts.json (falls
-    back to an empty list) so the tab never 500s."""
+    Accounts are listed PER-CHANNEL: each active handle carries one GoLiveChannel per platform, because a
+    handle's Instagram and TikTok are DIFFERENT Postiz integrations (M1). Each channel's integration_id is
+    the effective current id — the per-platform integrations[platform], else the shared account_id
+    fallback, else "" (unmapped). Tolerates a malformed accounts.json (falls back to an empty list) so the
+    tab never 500s."""
     from fanops.doctor import doctor_report
     try:
-        accts = [{"handle": a.handle, "platforms": [p.value for p in a.platforms], "account_id": a.account_id}
-                 for a in Accounts.load(cfg).active()]
+        accts = [GoLiveAccount(
+            handle=a.handle, persona=a.persona,
+            channels=[GoLiveChannel(platform=p.value,
+                                    integration_id=a.integrations.get(p.value) or a.account_id or "")
+                      for p in a.platforms])
+            for a in Accounts.load(cfg).active()]
     except Exception:
         accts = []                                   # malformed accounts.json — doctor's readiness check below names it
     try:
         report = doctor_report(cfg)
     except Exception:                                # invariant: the Go-Live tab must never 500 (ecc:python-review)
         report = {"checks": [], "notes": ["readiness check unavailable"]}
-    return {
-        "mode": cfg.poster_backend,
-        "is_live": cfg.poster_backend != "dryrun",
-        "postiz_url": cfg.postiz_url,                 # non-secret; shown so the operator can confirm config
-        "key_set": cfg.postiz_api_key is not None,    # BOOL only — the API key value is NEVER exposed
-        "accounts": accts,
-        "checks": report["checks"],
-        "notes": report["notes"],
-    }
+    return GoLiveStatus(
+        mode=cfg.poster_backend,
+        is_live=cfg.poster_backend != "dryrun",
+        postiz_url=cfg.postiz_url,                    # non-secret; shown so the operator can confirm config
+        key_set=cfg.postiz_api_key is not None,       # BOOL only — the API key value is NEVER exposed
+        accounts=accts,
+        checks=report["checks"],
+        notes=report["notes"])
 
 
 def gate_rows(cfg: Config) -> list[dict]:

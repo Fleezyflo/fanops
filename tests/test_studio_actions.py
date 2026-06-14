@@ -1,9 +1,27 @@
 # tests/test_studio_actions.py — CREATE
+import dataclasses
+import pytest
 from datetime import datetime, timezone, timedelta
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
-from fanops.studio.actions import reschedule_post, edit_caption, snooze_clip
+from fanops.studio.actions import reschedule_post, edit_caption, snooze_clip, ActionResult
+
+
+# ---- M4.1: ActionResult is frozen (no accidental post-construction mutation) + ergonomic factories ----
+def test_action_result_is_frozen():
+    r = ActionResult(ok=True, detail={"x": 1})
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.ok = False                                     # frozen: a result can't be mutated after construction
+
+def test_action_result_success_factory():
+    r = ActionResult.success({"sources": 2})
+    assert r.ok is True and r.error is None and r.detail == {"sources": 2}
+    assert ActionResult.success().detail is None         # detail optional
+
+def test_action_result_failure_factory():
+    r = ActionResult.failure("nope")
+    assert r.ok is False and r.error == "nope" and r.detail is None
 
 NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
