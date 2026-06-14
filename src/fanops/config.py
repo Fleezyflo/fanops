@@ -109,8 +109,8 @@ class Config:
     def postiz_api_key(self) -> str | None:
         # Postiz public API key (Settings > Developers > Public API), sent as the Authorization
         # header. Distinct from BLOTATO_API_KEY — a Postiz deployment needs neither a Blotato account
-        # nor key, so is_live_backend (which gates the Blotato-only reconcile/metrics passes) stays
-        # False for a postiz backend, by design: postiz PUBLISHES, the Blotato learning loop does not run.
+        # nor key. is_live_backend is True for a postiz backend WITH this key (M2): postiz both
+        # PUBLISHES and now feeds the learning loop via its post analytics (PostizMetricsClient).
         v = os.getenv("POSTIZ_API_KEY")
         return v.strip() if v and v.strip() else None
 
@@ -118,8 +118,15 @@ class Config:
     def is_live_backend(self) -> bool:
         # THE "live backend + key" guard, one home (stage-6 audit): it was duplicated verbatim at
         # three call sites (reconcile + both learning passes); drift in any copy would silently
-        # enable/disable a pass. Live = a real poster AND a key to talk to it with.
-        return self.poster_backend != "dryrun" and bool(self.blotato_api_key)
+        # enable/disable a pass. Live = a real poster AND a key to talk to it with — backend-aware
+        # (M2): a postiz deployment is live on POSTIZ_API_KEY; a Blotato (rest/mcp) deployment on
+        # BLOTATO_API_KEY; dryrun (or any unrecognized backend) is never live. NB: this gates the
+        # learn/reconcile passes — the Blotato status reconciler (pipeline.py) further restricts itself
+        # to rest/mcp, and the speculative actuators stay frozen by learning_validated until cutover.
+        b = self.poster_backend
+        if b == "postiz": return bool(self.postiz_api_key)
+        if b in ("rest", "mcp"): return bool(self.blotato_api_key)
+        return False                                    # dryrun / anything unrecognized
 
     @property
     def responder_mode(self) -> str:

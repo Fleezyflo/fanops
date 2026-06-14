@@ -122,3 +122,86 @@ def test_defaults_unchanged_without_tuning_json(tmp_path):
     assert lift_score({"likes": 1}) == 0.05                    # default weight intact
     assert lift_score({"saves": 1}) == 4.0
     assert lift_score({"saves": 10, "shares": 5, "retention": 2, "reach": 1000, "likes": 20}) == 68.0
+
+
+# ---- M2 Task 3: backend-polymorphic _default_list_posts + BOTH id-threading sites (postiz per-post fetch) ----
+class _R:                                                       # FileStorage-free fake response (mirrors test_metrics._R)
+    def __init__(s, c, b): s.status_code = c; s._b = b; s.text = str(b)
+    def json(s): return s._b
+
+def _postiz_env(monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+
+def _published(pid, sid):
+    return Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                caption="x", state=PostState.published, submission_id=sid)
+
+def test_default_list_posts_postiz_backend_fetches_per_post(tmp_path, monkeypatch, mocker):
+    from fanops.track import _default_list_posts
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_R(200, [{"label": "Shares", "data": [{"total": "4", "date": "2026-06-12"}]}]))
+    rows = list(_default_list_posts(cfg, submission_ids=["sid1"])("30d"))
+    assert rows == [{"postSubmissionId": "sid1", "metrics": {"shares": 4.0}, "_raw_labels": ["Shares"]}]
+
+def test_default_list_posts_postiz_no_ids_yields_empty(tmp_path, monkeypatch, mocker):
+    from fanops.track import _default_list_posts
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    spy = mocker.patch("fanops.post.metrics.requests.get")
+    assert list(_default_list_posts(cfg)("30d")) == []          # positional → submission_ids=None → [] no-op
+    spy.assert_not_called()
+
+def test_default_list_posts_rest_backend_returns_blotato_client(tmp_path, monkeypatch):
+    from fanops.track import _default_list_posts
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    fetch = _default_list_posts(Config(root=tmp_path), submission_ids=["ignored"])  # kwarg inert for Blotato
+    assert fetch.__self__.__class__.__name__ == "BlotatoMetricsClient"
+
+def test_cmd_track_postiz_threads_published_ids(tmp_path, monkeypatch, mocker):
+    # 3a: cmd_track must snapshot the ledger's published ids and thread them into the postiz client —
+    # WITHOUT this, it builds submission_ids=None → fetches [] → the post is never matched (silent regression).
+    from fanops.cli import cmd_track
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(_published("p1", "sid1"))
+    spy = mocker.patch("fanops.post.metrics.requests.get",
+                       return_value=_R(200, [{"label": "Shares", "data": [{"total": "7", "date": "2026-06-12"}]}]))
+    cmd_track(cfg, "30d")
+    assert "analytics/post/sid1" in spy.call_args[0][0]          # the snapshot id was threaded, not an empty fetch
+    assert Ledger.load(cfg).posts["p1"].state is PostState.analyzed
+
+def test_pull_metrics_no_list_posts_postiz_fetches_published_ids(tmp_path, monkeypatch, mocker):
+    # 3b: the no-list_posts learn-pass caller (cli.py:594) must also thread ids, else postiz fetches [].
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(_published("p1", "sid1"))
+    spy = mocker.patch("fanops.post.metrics.requests.get",
+                       return_value=_R(200, [{"label": "Shares", "data": [{"total": "9", "date": "2026-06-12"}]}]))
+    led = pull_metrics(led, cfg)                                 # no list_posts injected → default postiz binding
+    assert "analytics/post/sid1" in spy.call_args[0][0]
+    assert led.posts["p1"].state is PostState.analyzed and led.posts["p1"].metrics["shares"] == 9.0
+
+def test_pull_metrics_blotato_path_unaffected_by_id_threading(tmp_path, monkeypatch, mocker):
+    # 3b back-compat: the Blotato default path is byte-identical — submission_ids is passed ONLY to the
+    # postiz branch, never to BlotatoMetricsClient; the bulk fetch + match is unchanged.
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(_published("p1", "s_A"))
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_R(200, [{"postSubmissionId": "s_A", "metrics": {"saves": 30}}]))
+    led = pull_metrics(led, cfg)                                 # default → BlotatoMetricsClient bulk, ignores ids
+    assert led.posts["p1"].state is PostState.analyzed and led.posts["p1"].metrics["saves"] == 30
+
+
+# ---- M2 Task 6: the full chain — documented Postiz array → analyzed + EXACT weighted lift_score ----
+def test_pull_metrics_postiz_computes_lift_score(tmp_path, monkeypatch, mocker):
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(_published("p1", "sid1"))
+    arr = [{"label": "Likes", "data": [{"total": "2", "date": "d"}]},
+           {"label": "Shares", "data": [{"total": "5", "date": "d"}]},
+           {"label": "Impressions", "data": [{"total": "1000", "date": "d"}]}]
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, arr))
+    led = pull_metrics(led, cfg)
+    p = led.posts["p1"]
+    assert p.state is PostState.analyzed
+    assert p.metrics["lift_score"] == round(0.05 * 2 + 4.0 * 5 + 0.001 * 1000, 4)   # 0.1 + 20 + 1.0 = 21.1

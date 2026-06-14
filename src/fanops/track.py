@@ -44,13 +44,23 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     post.state = PostState.analyzed
     return led
 
-def _default_list_posts(cfg: Config) -> ListPosts:
+def _default_list_posts(cfg: Config, *, submission_ids: Optional[list[str]] = None) -> ListPosts:
+    # Backend-polymorphic (M2): a postiz deployment reads per-post analytics (needs the published ids
+    # to fetch); rest/mcp reads the Blotato bulk list (ignores submission_ids — UNCHANGED). Lazy imports
+    # keep requests/postiz off the dryrun/core path.
+    if cfg.poster_backend == "postiz":
+        from fanops.post.metrics import PostizMetricsClient
+        return PostizMetricsClient(cfg, submission_ids=submission_ids).list_posts
     from fanops.post.metrics import BlotatoMetricsClient
     return BlotatoMetricsClient(cfg).list_posts
 
 def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = None,
                  window: str = "30d") -> Ledger:
-    fetch = list_posts or _default_list_posts(cfg)
+    # The no-list_posts callers (the cli.py learn pass) need the postiz client to know WHICH posts to
+    # fetch — thread the SAME published-id set built for by_sub below. Inert for Blotato (it ignores it).
+    fetch = list_posts or _default_list_posts(
+        cfg, submission_ids=[p.submission_id for p in led.posts.values()
+                             if p.submission_id and p.state is PostState.published])
     # Resolve the operator's lift-weight override ONCE per pull (audit b) and thread it down so the
     # real metrics path scores against the tuned optimization target; None -> the default _W.
     weights = cfg.tuning().get("lift_weights")

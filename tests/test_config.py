@@ -53,6 +53,18 @@ def test_is_live_backend_requires_backend_and_key(monkeypatch, tmp_path):
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     assert Config(root=tmp_path).is_live_backend is True
 
+def test_is_live_backend_postiz_uses_postiz_key(monkeypatch, tmp_path):
+    # M2: a Postiz deployment is live on POSTIZ_API_KEY, NOT on a Blotato key — the redefinition that
+    # unfreezes the learning loop on Postiz. dryrun/rest truth tables stay byte-identical (above).
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    assert Config(root=tmp_path).is_live_backend is False        # postiz but NO postiz key
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    assert Config(root=tmp_path).is_live_backend is False        # a Blotato key must NOT make postiz live
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    assert Config(root=tmp_path).is_live_backend is True         # postiz + postiz key → live
+
 def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
     assert Config(root=tmp_path).burn_subs is True            # default ON

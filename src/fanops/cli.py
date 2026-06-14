@@ -38,11 +38,16 @@ def cmd_status(cfg: Config) -> int:
 
 def cmd_track(cfg: Config, window: str) -> int:
     # Phase-B-followup: close the lost-update window for `track` too (B4 was scoped to advance).
-    # The Blotato metrics FETCH (up to ~30s network) runs OUTSIDE the ledger lock; only the apply
+    # The metrics FETCH (up to ~30s network) runs OUTSIDE the ledger lock; only the apply
     # (record_metrics on the freshly-loaded ledger) runs inside a tight transaction — so a slow
     # fetch never serializes behind the flock, and a concurrent advance can't clobber the result.
+    # Snapshot the published submission_ids FIRST (postiz reads per-post analytics, so the client must
+    # know which ids to fetch; the Blotato client ignores them and fetches the bulk list).
+    led0 = Ledger.load(cfg)
+    sub_ids = [p.submission_id for p in led0.posts.values()
+               if p.submission_id and p.state is PostState.published]
     try:
-        rows = list(_default_list_posts(cfg)(window))   # network, NO lock held
+        rows = list(_default_list_posts(cfg, submission_ids=sub_ids)(window))   # network, NO lock held
     except RuntimeError as e:
         print(f"track skipped: {e}"); return 0
     with Ledger.transaction(cfg) as led:

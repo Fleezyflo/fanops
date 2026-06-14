@@ -144,6 +144,17 @@ def test_lift_empty_no_analyzed_posts(tmp_path):
     assert "No analyzed posts yet" in view.variant_empty_reason
     assert view.amplify_present is False   # cfg.variant_amplify default OFF -> section absent
 
+def test_lift_empty_state_names_postiz(tmp_path, monkeypatch):
+    # M2: a Postiz operator must not be told only to set a Blotato key — the empty-state names Postiz too.
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.queued))
+    reason = lift_rows(led, cfg, Accounts.load(cfg)).variant_empty_reason
+    assert "postiz" in reason.lower() and "POSTIZ_API_KEY" in reason   # no key value rendered, just the env var name
+
 def test_lift_analyzed_but_no_variant_key(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
