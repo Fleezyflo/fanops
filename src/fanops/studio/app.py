@@ -12,7 +12,7 @@ from flask import Flask, abort, redirect, render_template, request, send_file, u
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.studio import views, actions
+from fanops.studio import views, actions, golive
 
 _HERE = Path(__file__).resolve().parent
 
@@ -229,5 +229,48 @@ def create_app(cfg: Config) -> Flask:
     def do_snooze(clip_id):
         result = actions.snooze_clip(cfg, clip_id)
         return render_template("_result.html", result=result)
+
+    @app.get("/golive")
+    def golive_view():
+        # Milestone 5 (operator-gated): turn FanOps from dryrun into real Postiz publishing entirely in
+        # the browser — connect Postiz, map accounts to integrations, see readiness, flip dryrun<->live.
+        return render_template("golive.html", status=views.golive_status(cfg), result=None, tab="golive")
+
+    def _golive_panel(result):
+        # Re-render the panel with FRESH golive_status after an action (htmx swaps #golive-panel), so the
+        # mode banner + readiness checks update in place — mirrors _run_panel.
+        return render_template("_golive_panel.html", status=views.golive_status(cfg), result=result, tab="golive")
+
+    @app.post("/golive/config")
+    def do_golive_config():
+        return _golive_panel(golive.set_postiz_config(cfg, request.form.get("url", ""), request.form.get("key", "")))
+
+    @app.post("/golive/refresh")
+    def do_golive_refresh():
+        return _golive_panel(golive.refresh_integrations(cfg))
+
+    @app.post("/golive/map")
+    def do_golive_map():
+        # Batch-map: one <select name="map__<handle>"> per active account, submitted together. Map only
+        # the accounts the operator actually picked (non-blank), via the unit action golive.map_account.
+        picks = [(k[len("map__"):], (request.form.get(k) or "").strip())
+                 for k in request.form if k.startswith("map__")]
+        picks = [(h, v) for h, v in picks if v]
+        if not picks:
+            return _golive_panel(actions.ActionResult(ok=False, error="pick a Postiz integration for at least one account"))
+        errors = [r.error for r in (golive.map_account(cfg, h, v) for h, v in picks) if not r.ok]
+        if errors:
+            return _golive_panel(actions.ActionResult(ok=False, error="; ".join(errors)))
+        return _golive_panel(actions.ActionResult(ok=True, detail={"mapped": len(picks)}))
+
+    @app.post("/golive/live")
+    def do_golive_live():
+        # The ONLY route that can set FANOPS_POSTER=postiz; confirm derived from the checkbox, and
+        # go_live itself re-gates on readiness — a stray POST can't flip the system live.
+        return _golive_panel(golive.go_live(cfg, confirmed=bool(request.form.get("confirm"))))
+
+    @app.post("/golive/dryrun")
+    def do_golive_dryrun():
+        return _golive_panel(golive.go_dryrun(cfg))
 
     return app

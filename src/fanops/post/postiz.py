@@ -86,6 +86,56 @@ def postiz_upload_media(cfg: Config, path: Path) -> str:
     return path_url
 
 
+def postiz_list_integrations(cfg: Config) -> list[dict]:
+    """List the channels connected to the operator's Postiz instance (GET /public/v1/integrations) so
+    the Studio Go-Live tab can map each FanOps account to a Postiz integration id WITHOUT the operator
+    hand-pasting it into accounts.json. Returns [{"id","name","platform"}] — `id` is what accounts.json
+    `account_id` carries for a postiz deployment. 401 -> typed PostizAuthError (halt); any other non-2xx
+    -> RuntimeError. The response SHAPE is an INTEGRATION CHECKPOINT (not pinned in the public docs):
+    accept a bare list OR {"integrations":[...]}, pull id + a display name + platform per item, and SKIP
+    a malformed entry (no usable id / not a dict) rather than raise — a live verify happens when the
+    operator clicks Refresh, and a manual id paste stays available as the fallback."""
+    headers = {"Authorization": _key(cfg)}
+    resp = requests.get(f"{_base(cfg)}{_PUBLIC}/integrations", headers=headers, timeout=30)
+    if resp.status_code == 401:
+        raise PostizAuthError("Postiz 401 on integrations — check POSTIZ_API_KEY (response body withheld)")
+    if resp.status_code >= 300:
+        raise RuntimeError(f"Postiz integrations failed ({resp.status_code}): {(resp.text or '')[:200]}")
+    body = resp.json()
+    items = body.get("integrations") if isinstance(body, dict) else body
+    if not isinstance(items, list):
+        return []
+    out: list[dict] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        iid = it.get("id")
+        if isinstance(iid, bool):                        # bool is an int subclass — never a valid id
+            continue
+        if isinstance(iid, int):
+            iid = str(iid)                               # coerce a numeric id to the string accounts.json stores
+        if not (isinstance(iid, str) and iid):
+            continue
+        platform = it.get("identifier") or it.get("platform") or ""
+        name = it.get("name") or it.get("displayName") or platform or iid
+        out.append({"id": iid, "name": str(name), "platform": str(platform)})
+    return out
+
+
+def postiz_check_auth(cfg: Config) -> bool:
+    """Cheap auth probe for the Go-Live 'Save & test' button: hit the integrations endpoint and report
+    whether the key works. True on success, raise PostizAuthError on 401 (so the surface can name the
+    key), False on any other failure (bad URL, 5xx, network) — the test must never crash the request
+    handler. NEVER returns or logs the key itself."""
+    try:
+        postiz_list_integrations(cfg)
+        return True
+    except PostizAuthError:
+        raise
+    except Exception:
+        return False
+
+
 class PostizPoster:
     def __init__(self, cfg: Config):
         self.cfg = cfg

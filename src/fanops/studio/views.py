@@ -334,6 +334,37 @@ def pipeline_status(cfg: Config) -> dict:
     }
 
 
+def golive_status(cfg: Config) -> dict:
+    """Lock-free read-model for the Go-Live tab: the publish mode (dryrun/live), whether Postiz is
+    configured (postiz_url is shown — it is NON-secret; key_set is a BOOL only, the key itself is never
+    exposed), the ACTIVE accounts to map to Postiz integrations, and the doctor readiness checks/notes.
+
+    Accounts are listed PER-ACCOUNT (one row per active handle, with its platforms), NOT per surface:
+    accounts.json stores ONE account_id per handle (shared across that handle's platforms, the
+    pre-existing Blotato model), so the mapping is per-handle — a per-surface list would imply
+    independent per-platform ids the model can't store. Tolerates a malformed accounts.json (falls
+    back to an empty list) so the tab never 500s."""
+    from fanops.doctor import doctor_report
+    try:
+        accts = [{"handle": a.handle, "platforms": [p.value for p in a.platforms], "account_id": a.account_id}
+                 for a in Accounts.load(cfg).active()]
+    except Exception:
+        accts = []                                   # malformed accounts.json — doctor's readiness check below names it
+    try:
+        report = doctor_report(cfg)
+    except Exception:                                # invariant: the Go-Live tab must never 500 (ecc:python-review)
+        report = {"checks": [], "notes": ["readiness check unavailable"]}
+    return {
+        "mode": cfg.poster_backend,
+        "is_live": cfg.poster_backend != "dryrun",
+        "postiz_url": cfg.postiz_url,                 # non-secret; shown so the operator can confirm config
+        "key_set": cfg.postiz_api_key is not None,    # BOOL only — the API key value is NEVER exposed
+        "accounts": accts,
+        "checks": report["checks"],
+        "notes": report["notes"],
+    }
+
+
 def gate_rows(cfg: Config) -> list[dict]:
     """Lock-free read-model for the Gates tab (Phase 3a): every PENDING moment/caption agent gate
     with the request context the operator needs to answer it (transcript/signals for moments, the

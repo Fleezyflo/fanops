@@ -10,6 +10,7 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
 - Integration suite (CI `e2e` job): `python -m pytest -q -m integration -rs` — needs real ffmpeg/ffprobe/whisper/espeak on PATH; skips locally when absent; CI sets `FANOPS_REQUIRE_E2E=1` so a skip fails
 - Lint: `ruff check .` (pyflakes F + pycodestyle E only)
 - Studio dev server: `fanops studio` (localhost:8787; requires `[studio]` extra)
+- Go live (no env vars / CLI / JSON): the Studio **Go Live** tab connects Postiz, maps each account to a Postiz integration id, and flips dryrun↔live behind a confirm (dual-writes `.env` + `os.environ`; the API key is write-only — never rendered). `go_live` is the only setter of `FANOPS_POSTER=postiz`, gated on readiness + confirm; the "Publish by hand" tab stays the zero-infra fallback.
 
 ## Constraints
 

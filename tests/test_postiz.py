@@ -7,7 +7,8 @@ from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState
-from fanops.post.postiz import PostizPoster, build_postiz_payload, postiz_upload_media
+from fanops.post.postiz import (PostizPoster, build_postiz_payload, postiz_upload_media,
+                                postiz_list_integrations, postiz_check_auth)
 from fanops.post import get_poster, get_media_uploader
 
 
@@ -153,3 +154,71 @@ def test_doctor_flags_postiz_creds(tmp_path, monkeypatch):
     monkeypatch.delenv("POSTIZ_URL", raising=False); monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
     rep = doctor.doctor_report(Config(root=tmp_path))
     assert any("POSTIZ" in c["label"] and not c["ok"] for c in rep["checks"])
+
+
+# ---- integrations list (Go-Live tab: map an account to a Postiz integration without hand-editing
+# accounts.json). GET /public/v1/integrations; response SHAPE is an integration checkpoint (locked
+# here): a bare list OR {"integrations":[...]}, each item -> {id, name, platform}, malformed skipped.
+def test_list_integrations_parses_id_name_platform(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get",
+                 return_value=_R(200, [{"id": "intg_42", "name": "IG Reels", "identifier": "instagram"}]))
+    assert postiz_list_integrations(cfg) == [{"id": "intg_42", "name": "IG Reels", "platform": "instagram"}]
+
+def test_list_integrations_accepts_wrapped_shape(tmp_path, monkeypatch, mocker):
+    # name falls back to the platform identifier when Postiz omits a display name
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get",
+                 return_value=_R(200, {"integrations": [{"id": "i1", "identifier": "tiktok"}]}))
+    assert postiz_list_integrations(cfg) == [{"id": "i1", "name": "tiktok", "platform": "tiktok"}]
+
+def test_list_integrations_skips_malformed_item(tmp_path, monkeypatch, mocker):
+    # no usable id, or a non-dict entry -> skipped (not raised); the good one survives
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get",
+                 return_value=_R(200, [{"name": "no id"}, "garbage", {"id": "ok", "identifier": "youtube"}]))
+    assert postiz_list_integrations(cfg) == [{"id": "ok", "name": "youtube", "platform": "youtube"}]
+
+def test_list_integrations_coerces_numeric_id(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get",
+                 return_value=_R(200, [{"id": 51, "name": "TikTok", "identifier": "tiktok"}]))
+    assert postiz_list_integrations(cfg) == [{"id": "51", "name": "TikTok", "platform": "tiktok"}]
+
+def test_list_integrations_401_typed_redacted(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get",
+                 return_value=_R(401, {"e": "denied SENTINEL"}, text="denied SENTINEL"))
+    with pytest.raises(PostizAuthError) as ei:
+        postiz_list_integrations(cfg)
+    assert "SENTINEL" not in str(ei.value)
+
+def test_list_integrations_5xx_raises_runtime(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(503, {}, text="down"))
+    with pytest.raises(RuntimeError):
+        postiz_list_integrations(cfg)
+
+
+# ---- cheap auth probe (Go-Live "Save & test"): 2xx -> True, 401 -> typed (halt), else False
+def test_check_auth_true_on_2xx(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(200, []))
+    assert postiz_check_auth(cfg) is True
+
+def test_check_auth_raises_on_401(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(401, {}, text="x"))
+    with pytest.raises(PostizAuthError):
+        postiz_check_auth(cfg)
+
+def test_check_auth_false_on_other_failure(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(500, {}, text="boom"))
+    assert postiz_check_auth(cfg) is False
+
+def test_check_auth_false_on_network_error(tmp_path, monkeypatch, mocker):
+    import requests as _rq
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.postiz.requests.get", side_effect=_rq.exceptions.ConnectionError("dropped"))
+    assert postiz_check_auth(cfg) is False
