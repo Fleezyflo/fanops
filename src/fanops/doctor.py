@@ -48,10 +48,11 @@ def doctor_report(cfg: Config) -> dict:
                              "Settings > Developers > Public API) — the free, non-Blotato publisher"))
         # Postiz-learning readiness (booleans only, never the key): the loop only acts once the key is set,
         # every active channel is mapped, AND cutover confirmed the lift fields. Hint names the FIRST gap.
-        ready = cfg.postiz_api_key is not None and not problems and learning_validated(cfg)
+        lv = learning_validated(cfg)                     # one disk read, reused below (review: was called twice)
+        ready = cfg.postiz_api_key is not None and not problems and lv
         if cfg.postiz_api_key is None: hint = "Connect Postiz (Go-Live > 1 · Connect Postiz)"
         elif problems:                hint = "map every channel (Go-Live > 3 · Map each channel to Postiz)"
-        elif not learning_validated(cfg): hint = "run the Studio Validate learning step (Go-Live > 5 · Validate learning)"
+        elif not lv:                  hint = "run the Studio Validate learning step (Go-Live > 5 · Validate learning)"
         else:                         hint = ""
         checks.append(_check("Postiz learning ready (key + channels mapped + cutover validated)", ready, hint))
 
