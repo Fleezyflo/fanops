@@ -10,11 +10,15 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import LIFT_SCORE, PostState
+from fanops.models import LIFT_SCORE, ClipState, PostState
 from fanops.timeutil import parse_iso
 
 IMMINENT_THRESHOLD_MINUTES = 5     # spec §4: a post within this of now (or past) is edit-disabled
 RECENT_WINDOW_HOURS = 24           # spec §6: "what just shipped" read-only context window
+# A clip is "prepared" (produced, awaiting crosspost) when it has NO posts yet and isn't held — these
+# post-less clips used to vanish from Review entirely (the 57-clips-0-posts bug). Only actionable
+# in-flight states qualify; retired/error/terminal clips are not surfaced as prepare-able.
+PREPARABLE_STATES = (ClipState.rendered, ClipState.captions_requested, ClipState.captioned, ClipState.queued)
 
 
 @dataclass
@@ -46,6 +50,7 @@ class ReviewCard:
     transcript_excerpt: Optional[str]
     surfaces: list[SurfacePost]
     bucket: str
+    clip_state: Optional[str] = None     # the clip's own state — shown on a post-less 'prepared' card
 
 
 @dataclass
@@ -153,7 +158,7 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name,
         moment_window=window, reason=reason, language=language, subtitles_burned=cfg.burn_subs,
         held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
-        surfaces=surfaces, bucket=bucket)
+        surfaces=surfaces, bucket=bucket, clip_state=clip.state.value)
 
 def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime) -> list[ReviewCard]:
     """Three buckets (spec §6): editable (queued posts grouped by clip), recent (published/analyzed
@@ -179,15 +184,18 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
                 recent_by_clip.setdefault(p.parent_id, []).append(p)
     for clip_id, posts in queued_by_clip.items():
         clip = led.clips.get(clip_id)
-        if clip is not None:
+        if clip is not None and not clip.held:        # a held clip belongs ONLY in the held bucket
             cards.append(_card(led, clip, posts, "editable", cfg, personas, now))
     for clip_id, posts in recent_by_clip.items():
         clip = led.clips.get(clip_id)
-        if clip is not None:
+        if clip is not None and not clip.held:        # (same rule for the recent/shipped bucket)
             cards.append(_card(led, clip, posts, "recent", cfg, personas, now))
+    clips_with_posts = {p.parent_id for p in led.posts.values()}
     for clip in led.clips.values():
         if clip.held:
             cards.append(_card(led, clip, [], "held", cfg, personas, now))
+        elif clip.id not in clips_with_posts and clip.state in PREPARABLE_STATES:
+            cards.append(_card(led, clip, [], "prepared", cfg, personas, now))
     return cards
 
 
