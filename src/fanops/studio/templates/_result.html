@@ -1,6 +1,9 @@
 {# src/fanops/studio/templates/_result.html #}
 {% if result.ok %}
-  <span class="ok">✓ {{ (result.detail or {}).get('scheduled_time') or (result.detail or {}).get('caption') or result.detail or 'saved' }}</span>
+  {# Surface the one human-readable field an action carries (a rescheduled time, an edited caption);
+     otherwise a plain word — NEVER `result.detail` itself, whose Python dict repr leaked to the
+     operator as `✓ {'post_id': 'p1', 'url': None}` (studio audit). #}
+  <span class="ok">✓ {{ (result.detail or {}).get('scheduled_time') or (result.detail or {}).get('caption') or 'saved' }}</span>
 {% else %}
   <span class="err">✗ {{ result.error }}</span>
 {% endif %}

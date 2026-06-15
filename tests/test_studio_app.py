@@ -207,3 +207,20 @@ def test_review_empty_state_honest_when_truly_empty(tmp_path):
     assert r.status_code == 200
     assert b"No footage yet" in r.data                          # honest empty message
     assert b"fanops advance" not in r.data                      # no CLI verb in a no-terminal product
+
+def test_mark_posted_success_does_not_leak_raw_dict_repr(tmp_path):
+    # DEFECT: _result.html dumped result.detail's Python repr when it had no scheduled_time/caption
+    # key — so "Mark posted" with no URL showed the operator `✓ {'post_id': 'p_base', 'url': None}`.
+    # A success message must be human-readable, never a dict repr.
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    r = _client(cfg).post("/publish/posted/p_base")            # no url -> detail={'post_id':..,'url':None}
+    assert r.status_code == 200
+    assert b"post_id" not in r.data                             # no raw Python dict key leaked (Jinja escapes ' -> &#39;)
+    assert b"\xe2\x9c\x93" in r.data                            # still shows the ✓ success mark
+
+def test_publish_now_success_does_not_leak_raw_dict_repr(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)           # dryrun backend -> publishes locally only
+    r = _client(cfg).post("/publish/now/p_base", data={"confirm": "1"})
+    assert r.status_code == 200
+    assert b"post_id" not in r.data and b"&#39;" not in r.data  # no leaked dict repr (key or escaped quote)
+    assert b"\xe2\x9c\x93" in r.data                            # ✓ success, human-readable
