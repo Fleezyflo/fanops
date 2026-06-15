@@ -3,7 +3,61 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Clip, Post, SourceState, Platform, MomentDecision, MomentPick
 from fanops.agentstep import response_path, request_path, latest_request_id
-from fanops.moments import request_moments, ingest_moments, validate_pick
+from fanops.moments import request_moments, ingest_moments, validate_pick, _drop_overlaps
+
+def _mp(s, e, reason="r"):
+    return MomentPick(start=s, end=e, reason=reason)
+
+def _ingest_picks(led, cfg, source_id, picks):
+    rid = latest_request_id(cfg, "moments", source_id)
+    response_path(cfg, "moments", source_id).write_text(
+        MomentDecision(source_id=source_id, request_id=rid, picks=picks).model_dump_json())
+    return ingest_moments(led, cfg, source_id)
+
+def test_drop_overlaps_keeps_first_drops_near_dupe():
+    kept = _drop_overlaps([_mp(0, 18), _mp(5, 20), _mp(40, 58)])
+    assert [(p.start, p.end) for p in kept] == [(0, 18), (40, 58)]
+
+def test_drop_overlaps_all_overlap_keeps_first():
+    kept = _drop_overlaps([_mp(0, 18), _mp(3, 20), _mp(5, 19)])
+    assert len(kept) == 1 and (kept[0].start, kept[0].end) == (0, 18)
+
+def test_drop_overlaps_disjoint_all_kept():
+    assert len(_drop_overlaps([_mp(0, 15), _mp(20, 35), _mp(40, 55)])) == 3
+
+def test_ingest_short_source_yields_clip_not_error(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=10.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [_mp(0.0, 10.0, "whole short source")])
+    assert len(led.moments_of("src_1")) == 1
+    assert led.sources["src_1"].state is SourceState.moments_decided   # NOT error
+
+def test_ingest_overlapping_picks_deduped(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [_mp(0, 18), _mp(5, 20), _mp(40, 58)])
+    assert len(led.moments_of("src_1")) == 2          # the near-dupe middle pick dropped
+
+def test_ingest_empty_picks_visible_not_silent_cascade(tmp_path):
+    # The model returns [] -> source ends moments_decided (re-runnable), and a PRIOR moment is
+    # PRESERVED (no cascade-delete on an empty re-pick — the silent-drop fix).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [_mp(10, 28, "first")])
+    assert len(led.moments_of("src_1")) == 1
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [])
+    assert led.sources["src_1"].state is SourceState.moments_decided   # not error
+    assert len(led.moments_of("src_1")) == 1                            # prior moment preserved
+
+def test_ingest_sanitizes_em_dash_in_reason_and_hook(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=10, end=28, reason="punchline — then the beat drops",
+                                    transcript_excerpt="they slept on me — wait")])
+    m = led.moments_of("src_1")[0]
+    assert "—" not in m.reason and "—" not in (m.hook or "")
 
 def _src(led, cfg, dur=20.0):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),

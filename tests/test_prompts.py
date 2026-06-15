@@ -14,14 +14,48 @@ def test_moment_prompt_includes_transcript_duration_guidance_and_bounds_rule():
     # explicitly forbids out-of-bounds / NaN
     assert "0" in p and ("duration" in p.lower() or "bounds" in p.lower())
 
-def test_moment_prompt_targets_15_to_20_seconds():
-    # The clip-length fix: the model is told to pick 15-20s windows, not 3-4s fragments. The old
-    # ">= 0.5 seconds" floor must be gone (a render-time safety net now guarantees the minimum).
+def test_moment_prompt_targets_12_to_22_seconds():
+    # The clip-length fix: 12-22s windows (loosened from 15-20 so more moments qualify), not 3-4s.
     p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
                        "language": "en", "guidance": ""})
-    assert "15" in p and "20" in p             # the target band, stated explicitly
-    assert "second" in p.lower()               # expressed as a length in seconds
+    assert "12" in p and "22" in p             # the target band, stated explicitly
+    assert "second" in p.lower()
     assert ">= 0.5 seconds" not in p           # the old fragment-floor rule is gone
+
+def test_target_pick_count_is_proportional_with_floor():
+    from fanops.prompts import _target_pick_count
+    assert _target_pick_count(0.0) == 0        # unprobed -> no target (let the model decide)
+    assert _target_pick_count(9.0) == 1        # short source -> one whole-source pick
+    assert _target_pick_count(12.0) == 1       # band floor -> 1 (no dead band)
+    assert _target_pick_count(24.0) == 1
+    assert _target_pick_count(36.0) == 2
+    assert _target_pick_count(45.0) == 3
+    assert _target_pick_count(60.0) == 4
+    assert _target_pick_count(90.0) == 5       # well under the cap of 6
+    assert _target_pick_count(300.0) == 6      # cap holds
+
+def test_moment_prompt_short_source_demands_one_whole_pick():
+    p = moment_prompt({"duration": 10.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "whole source" in low or "whole clip" in low   # use the whole short source
+    assert "never" in low and "empty" in low              # never return empty for a short source
+
+def test_moment_prompt_long_source_asks_for_multiple_nonoverlapping():
+    p = moment_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    assert "5" in p                            # the proportional target count for ~90s
+    assert "overlap" in p.lower()              # they must not overlap
+
+def test_moment_prompt_unprobed_omits_target_count():
+    p = moment_prompt({"duration": 0.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    assert "aim for" not in p.lower()          # target 0 -> no count line
+
+def test_moment_prompt_forbids_em_dash_in_reason():
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    assert "em-dash" in p.lower() or "em dash" in p.lower()   # belt-and-suspenders for the sanitizer
 
 def test_caption_prompt_is_fan_third_person_voice():
     # Fan accounts repost/celebrate the artist — captions must NOT read first-person as the artist.
@@ -49,6 +83,12 @@ def test_caption_prompt_honors_surface_persona():
                                       "persona": "hype superfan"}]})
     assert "hype superfan" in p                # the persona value reaches the model
     assert "persona" in p.lower()              # named as a voice instruction
+
+def test_caption_prompt_forbids_em_dash_in_hook():
+    p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
+                        "transcript_excerpt": "x",
+                        "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
+    assert "em-dash" in p.lower() or "em dash" in p.lower()   # belt-and-suspenders for the sanitizer
 
 def test_caption_prompt_lists_every_surface_and_language():
     payload = {"clip_id": "c1",
