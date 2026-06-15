@@ -24,6 +24,20 @@ def test_moment_prompt_demands_retention_hook_not_a_transcript_quote():
     assert "not a caption" in low and "not a quote" in low      # forbids transcribing the audio
     assert "signal peaks" in low                                # leans on transcription-independent signal
 
+def test_moment_prompt_hook_encodes_retention_archetype_framework():
+    # The hook instruction must carry real hook-writing UNDERSTANDING, not just "be punchy": the
+    # muted/first-seconds reasoning (why on-screen text carries the hook), the curiosity-loop
+    # mechanism, an explicit ARCHETYPE menu the model ideates from, and the specific+must-pay-off
+    # guardrail. Research-grounded rebuild of short-form retention best practice (not a blind tweak).
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": "BRAND: confident."})
+    low = p.lower()
+    assert "muted" in low                       # ~70% watch sound-off -> on-screen text carries the hook
+    assert "curiosity loop" in low              # the mechanism: open a loop THIS clip pays off
+    assert "archetype" in low                   # a deliberate menu to choose from, not one canned style
+    assert "wait for" in low and "claim" in low # at least the wait-for-it + bold-claim archetypes named
+    assert "specific" in low                    # must be specific to THIS moment, not a generic line
+
 def test_moment_prompt_targets_12_to_22_seconds():
     # The clip-length fix: 12-22s windows (loosened from 15-20 so more moments qualify), not 3-4s.
     p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
