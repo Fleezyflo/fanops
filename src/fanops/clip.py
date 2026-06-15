@@ -20,6 +20,31 @@ _TARGETS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 # every other pass and Studio write. 10min covers a multi-minute 1080p re-encode with headroom.
 _FFMPEG_TIMEOUT = 600.0
 
+# A real clip is watchable, not a 3-4s fragment. The model is asked for 15-20s windows
+# (prompts.moment_prompt); this is the render-time SAFETY NET that guarantees it even when a pick
+# comes back short (or long). The subtitle overlay uses the SAME fitted window so captions stay
+# aligned with the cut.
+_MIN_CLIP_S = 15.0
+_MAX_CLIP_S = 20.0
+
+def fit_window(start: float, end: float, duration: float,
+               *, lo: float = _MIN_CLIP_S, hi: float = _MAX_CLIP_S) -> tuple[float, float]:
+    """Fit a picked [start,end] to a lo..hi-second clip. In-band picks are returned unchanged. A
+    short pick grows forward from `start` (borrowing lead-in only when it would overrun EOF); a long
+    pick is trimmed to `hi` from `start`. A source shorter than `lo` yields the whole source. The
+    start is floored at 0; the end is EOF-clamped to `duration` when probed (duration<=0 means
+    unprobed -> grow/trim without an EOF clamp)."""
+    length = end - start
+    if lo <= length <= hi:
+        return start, end
+    if duration and duration <= lo:
+        return 0.0, duration
+    target = lo if length < lo else hi
+    s, e = start, start + target
+    if duration and e > duration:
+        e = duration; s = e - target
+    return max(0.0, s), e
+
 def reframe_filter(aspect: str, src_w: int, src_h: int) -> str:
     """Pick a safe ffmpeg -vf for the target aspect given the source dimensions."""
     tw, th = _TARGETS[aspect]
@@ -51,7 +76,8 @@ def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
             "-vf", vf,
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
 
-def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt):
+def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
+                  *, clip_start: float, clip_end: float):
     """Build the burned-subtitles `-vf` fragment for this clip, or return None (render with the
     reframe only). FAIL-OPEN by contract: a clip is NEVER blocked on subtitles. Returns None when
     burn_subs is off, the source has no transcript, or build_ass yields nothing. When subtitles are
@@ -72,7 +98,7 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
                         reason="ffmpeg lacks the text filter — rendering without subtitles")
         return None
     tw, th = _TARGETS[aspect.value]
-    ass_text = overlay.build_ass(transcript, hook=m.hook, clip_start=m.start, clip_end=m.end,
+    ass_text = overlay.build_ass(transcript, hook=m.hook, clip_start=clip_start, clip_end=clip_end,
                                  width=tw, height=th, font=cfg.subtitle_font)
     if not ass_text or not ass_text.strip():
         return None
@@ -87,8 +113,9 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     cid = child_id("clip", moment_id, aspect.value)      # content-addressed by aspect
     cfg.clips.mkdir(parents=True, exist_ok=True)
     dst = cfg.clips / f"{cid}.mp4"
-    extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect)
-    cmd = ffmpeg_clip_cmd(src.source_path, str(dst), m.start, m.end, aspect.value,
+    cs, ce = fit_window(m.start, m.end, src.duration or 0.0)   # widen a short pick to a real 15-20s clip
+    extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
+    cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf)
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)

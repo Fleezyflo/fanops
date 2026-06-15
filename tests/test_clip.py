@@ -3,7 +3,7 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt
-from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for
+from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for, fit_window
 from fanops import overlay
 
 
@@ -246,3 +246,54 @@ def test_render_moment_records_error_when_ffmpeg_hangs(tmp_path, mocker):
     assert "timed out" in (clip.error_reason or "")
     assert led.moments["mom_1"].state is MomentState.decided          # retriable, not terminal
     assert seen.get("timeout") == 600.0                               # the bound is actually wired
+
+# --- clip-length enforcement: a real clip is 15-20s, not a 3-4s fragment ---------------------
+# The model picks a moment; render widens it to a watchable 15-20s window (and the subtitle overlay
+# follows the same window). fit_window is the pure lever; render_moment is where it's applied.
+
+def test_fit_window_expands_short_pick_to_min():
+    s, e = fit_window(10.0, 13.0, 120.0)        # a 3s pick on a long source
+    assert 15.0 <= (e - s) <= 20.0
+    assert s == 10.0 and e == 25.0              # keeps the chosen entry, grows the tail to 15s
+
+def test_fit_window_keeps_in_band_pick_unchanged():
+    assert fit_window(10.0, 27.0, 120.0) == (10.0, 27.0)   # 17s already in band -> untouched
+
+def test_fit_window_trims_overlong_pick_to_max():
+    assert fit_window(10.0, 40.0, 120.0) == (10.0, 30.0)   # 30s -> trimmed to 20s from the entry
+
+def test_fit_window_borrows_lead_in_at_eof():
+    # a short pick at the very end can't grow forward past EOF, so pull the start back instead
+    assert fit_window(58.0, 59.0, 60.0) == (45.0, 60.0)    # 15s window butted against the end
+
+def test_fit_window_uses_whole_source_when_shorter_than_min():
+    assert fit_window(2.0, 4.0, 8.0) == (0.0, 8.0)         # source < 15s -> use all of it
+
+def test_fit_window_unprobed_duration_grows_without_clamp():
+    assert fit_window(10.0, 12.0, 0.0) == (10.0, 25.0)     # duration 0 (unprobed) -> no EOF clamp
+
+def _capture_render(tmp_path, mocker, start, end, *, duration):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=duration))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=start, end=end, reason="r", state=MomentState.decided))
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    cmd = captured["cmd"]
+    return float(cmd[cmd.index("-ss") + 1]), float(cmd[cmd.index("-to") + 1])  # (seek, output-relative duration)
+
+def test_render_moment_widens_short_pick_to_real_clip(tmp_path, mocker):
+    ss, dur = _capture_render(tmp_path, mocker, 10.0, 14.0, duration=120.0)  # 4s pick
+    assert 15.0 <= dur <= 20.0                                               # widened to a real clip
+
+def test_render_moment_keeps_in_band_window(tmp_path, mocker):
+    ss, dur = _capture_render(tmp_path, mocker, 10.0, 28.0, duration=120.0)  # 18s pick already
+    assert ss == 10.0 and dur == 18.0                                        # left exactly as picked

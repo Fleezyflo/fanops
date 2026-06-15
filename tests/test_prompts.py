@@ -14,6 +14,42 @@ def test_moment_prompt_includes_transcript_duration_guidance_and_bounds_rule():
     # explicitly forbids out-of-bounds / NaN
     assert "0" in p and ("duration" in p.lower() or "bounds" in p.lower())
 
+def test_moment_prompt_targets_15_to_20_seconds():
+    # The clip-length fix: the model is told to pick 15-20s windows, not 3-4s fragments. The old
+    # ">= 0.5 seconds" floor must be gone (a render-time safety net now guarantees the minimum).
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    assert "15" in p and "20" in p             # the target band, stated explicitly
+    assert "second" in p.lower()               # expressed as a length in seconds
+    assert ">= 0.5 seconds" not in p           # the old fragment-floor rule is gone
+
+def test_caption_prompt_is_fan_third_person_voice():
+    # Fan accounts repost/celebrate the artist — captions must NOT read first-person as the artist.
+    p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
+                        "transcript_excerpt": "x",
+                        "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
+    low = p.lower()
+    assert "fan" in low
+    assert "third person" in low or "third-person" in low
+    assert "first person" in low or "as the artist" in low   # explicitly forbids the artist voice
+
+def test_caption_prompt_caption_is_hashtags_only():
+    # Real fan pages post a stack of hashtags as the caption — nothing else.
+    p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
+                        "transcript_excerpt": "x",
+                        "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
+    low = p.lower()
+    assert "hashtag" in low and "only" in low                 # caption == hashtags only
+
+def test_caption_prompt_honors_surface_persona():
+    # A per-surface persona (the UI-set fan voice) must reach the model as a voice instruction.
+    p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
+                        "transcript_excerpt": "x",
+                        "surfaces": [{"surface": "@a/instagram", "platform": "instagram",
+                                      "persona": "hype superfan"}]})
+    assert "hype superfan" in p                # the persona value reaches the model
+    assert "persona" in p.lower()              # named as a voice instruction
+
 def test_caption_prompt_lists_every_surface_and_language():
     payload = {"clip_id": "c1",
                "surfaces": [{"surface": "@a/instagram", "platform": "instagram"},

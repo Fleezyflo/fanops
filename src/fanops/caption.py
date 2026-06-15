@@ -136,12 +136,16 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     src = led.sources.get(moment.parent_id)
     learned = _learned_hooks(led, cfg, surfaces)
     transferred = _transferred_hooks(led, cfg, accounts, surfaces)
+    # Per-surface persona (the UI-set fan voice). Carried into the payload so caption_prompt writes
+    # in that voice. Absent registry or a None persona -> no `persona` key (byte-identical to before).
+    personas = {a.handle: a.persona for a in accounts.accounts} if accounts is not None else {}
     payload = {
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
         "language": src.language if src else None,
         "guidance": _guidance(cfg),
-        "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value}
+        "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value,
+                      **({"persona": pv} if (pv := personas.get(acct)) else {})}
                      for acct, plat in surfaces],
         # variation v2: only present when a surface crossed the trust gate -> OFF/below-gate keeps
         # the payload byte-identical to pre-v2 (caption_prompt renders this block when present).
