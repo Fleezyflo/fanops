@@ -19,7 +19,7 @@
       <textarea readonly rows="2">{{ r.caption }}</textarea>
       <form hx-post="{{ url_for('do_mark_posted', post_id=r.post_id) }}"
             hx-target="#res-{{ r.post_id }}" hx-swap="innerHTML">
-        <input name="url" placeholder="live post URL (optional)">
+        <input name="url" aria-label="Live post URL (optional)" placeholder="live post URL (optional)">
         <button type="submit">Mark posted</button>
       </form>
       <div id="res-{{ r.post_id }}"></div>

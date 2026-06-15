@@ -160,3 +160,37 @@ def test_responder_drops_stale_answer_when_gate_reseeded_mid_model_call(tmp_path
     assert fresh is None, "stale P1-derived answer was wrongly accepted as fresh for the re-seeded gate (TOCTOU)"
     # And answer_pending must report it did NOT successfully answer the (now-stale) request.
     assert n == 0
+
+
+def test_llm_responder_retries_once_on_timeout(tmp_path, monkeypatch):
+    # A transient caption-gate timeout (which stranded 2 clips before) is RETRIED once, then succeeds.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmTimeoutError
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 20.0,
+                           "transcript": [{"start": 14, "end": 18, "text": "x"}], "signal_peaks": []})
+    calls = {"n": 0}
+    def flaky(kind, payload):
+        calls["n"] += 1
+        if calls["n"] == 1: raise LlmTimeoutError("claude -p timed out after 300s")
+        return {"source_id": payload["source_id"],
+                "picks": [{"start": 14.0, "end": 18.0, "reason": "punchline"}]}
+    n = LlmResponder(cfg, model=flaky).answer_pending(cfg)
+    assert n == 1 and calls["n"] == 2                       # retried once, then answered
+    assert response_path(cfg, "moments", "src_1").exists()
+
+def test_llm_responder_double_timeout_leaves_gate_pending_not_raise(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmTimeoutError
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 20.0, "transcript": [], "signal_peaks": []})
+    def always_timeout(kind, payload): raise LlmTimeoutError("timed out")
+    n = LlmResponder(cfg, model=always_timeout).answer_pending(cfg)   # must NOT raise
+    assert n == 0                                          # not answered
+    assert not response_path(cfg, "moments", "src_1").exists()   # gate stays pending (visible via log)

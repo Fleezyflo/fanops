@@ -6,25 +6,52 @@ request payload (MomentRequest/CaptionRequest, already carrying context.md brand
 --json-schema, so these prompts describe INTENT + CONSTRAINTS; the schema enforces SHAPE."""
 from __future__ import annotations
 import json
+from fanops.bands import Band, TALK, band_for
+
+# Clip-length band lives in fanops.bands (ONE home shared with clip.fit_window). A source below the
+# band floor becomes one whole-source clip; the band midpoint sets how many clips a long source
+# should yield. The per-source profile rides in the request payload as `clip_profile`.
+_MAX_TARGET_PICKS = 6
+
+def _target_pick_count(duration: float, band: Band = TALK) -> int:
+    """How many non-overlapping clips to AIM for, by source length and content BAND. <=0 (unprobed)
+    -> 0 (no target, let the model decide); a source below the band floor -> 1 (one whole-source
+    clip); else ~one per band-span, floored at 1 (NO dead band) and capped so a long source can't
+    request an unbounded list. A song's wider span yields fewer, longer clips than talk."""
+    if duration <= 0: return 0
+    if duration < band.lo: return 1
+    return max(1, min(_MAX_TARGET_PICKS, round(duration / band.span)))
 
 def moment_prompt(payload: dict) -> str:
     duration = payload.get("duration", 0.0)
+    band = band_for(payload.get("clip_profile"))
+    lo, hi = int(band.lo), int(band.hi)
+    target = _target_pick_count(duration, band)
+    aim = (f"  - AIM FOR about {target} non-overlapping clip(s) for this ~{duration:.0f}s source. "
+           "Spread them across the timeline; picks MUST NOT overlap each other. Return fewer ONLY if "
+           "the material genuinely lacks that many distinct moments.\n") if target else ""
+    short = (f"  - SHORT SOURCE: this source is under {band.lo:.0f}s, so return EXACTLY ONE "
+             "pick covering the whole source (start=0, end=SOURCE DURATION). NEVER return an empty "
+             "list for a short source — a short clip is still worth posting.\n"
+             ) if 0 < duration < band.lo else ""
     return (
         "You are the editorial brain of an autonomous fan-account engine for a bilingual (EN/AR) "
         "rapper. From the transcript and signal peaks below, choose the MOMENTS most worth cutting "
-        "into 15-20 second vertical clips. Return picks as JSON matching the provided schema.\n\n"
+        f"into {lo}-{hi} second vertical clips. Return picks as JSON matching the provided schema.\n\n"
         f"SOURCE DURATION (seconds): {duration}\n"
         "HARD RULES for every pick:\n"
         f"  - 0 <= start < end <= {duration} (timestamps MUST be real, finite seconds, in-bounds; "
         "never NaN/Infinity).\n"
-        "  - Each clip MUST run 15-20 seconds: set start/end so (end - start) is 15-20 seconds. "
-        "Widen the window around the key line to include its lead-in and payoff; NEVER return a 2-6 "
-        "second fragment (a bare punchline with no build-up reads as broken).\n"
+        f"  - TARGET {lo}-{hi} seconds per clip: set start/end so (end - start) is about {lo}-{hi} "
+        "seconds. Widen around the key line to include its lead-in and payoff; NEVER a 2-6 second "
+        "fragment.\n"
+        f"{short}"
+        f"{aim}"
         "  - `reason` is REQUIRED: one sentence on WHY this moment hits (punchline, beat drop, "
-        "quotable bar).\n"
+        "quotable bar). Never use em-dashes (—) or en-dashes (–); use a comma or period.\n"
         "  - Prefer moments that align with a transcript line and/or a signal peak.\n"
-        "  - Return as many GOOD picks as exist; do not pad. An empty list is valid if nothing is "
-        "worth posting.\n\n"
+        "  - A long source almost always has several distinct moments; an empty list is valid ONLY "
+        "when nothing is genuinely worth posting.\n\n"
         f"BRAND GUIDANCE:\n{payload.get('guidance', '')}\n\n"
         f"LANGUAGE: {payload.get('language')}\n"
         f"TRANSCRIPT (JSON):\n{json.dumps(payload.get('transcript', []), ensure_ascii=False)}\n"
@@ -82,8 +109,9 @@ def caption_prompt(payload: dict) -> str:
         "  - ALSO return a short on-screen `hook` per item: a punchy <=7-word HYPE line ABOUT the "
         "artist (THIRD-PERSON fan voice, never first person), in the source language, that grabs "
         "attention in the first 2 seconds. Make each surface's hook GENUINELY DIFFERENT (different "
-        "angle/words) — these are A/B creative variants per account. If you cannot, omit `hook` and "
-        "a default will be used.\n"
+        "angle/words); these are A/B creative variants per account. NEVER use em-dashes (—), "
+        "en-dashes (–), or curly/smart quotes in the hook — use a comma, period, or straight "
+        "apostrophe. If you cannot, omit `hook` and a default will be used.\n"
         f"{learned_block}"
         f"{transferred_block}"
         "\n"

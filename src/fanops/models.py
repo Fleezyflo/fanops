@@ -148,6 +148,7 @@ class MomentRequest(BaseModel):
     signal_peaks: list[dict] = Field(default_factory=list)
     language: Optional[str] = None
     guidance: str = ""
+    clip_profile: str = "talk"      # content-type band selector (bands.band_for); "talk" -> today's behavior
 
 class MomentPick(BaseModel):
     start: float

@@ -11,7 +11,8 @@
     <span>posts <strong>{{ status.posts }}</strong></span> ·
     <span>published <strong>{{ status.published }}</strong></span> ·
     <span>holds <strong>{{ status.holds }}</strong></span> ·
-    <span>pending gates — moments <strong>{{ status.pending_moments }}</strong>, captions <strong>{{ status.pending_captions }}</strong></span> ·
+    <span>pending moments <strong>{{ status.pending_moments }}</strong></span> ·
+    <span>pending captions <strong>{{ status.pending_captions }}</strong></span> ·
     <span>backend <strong>{{ status.backend }}</strong></span>
   </div>
 
@@ -29,7 +30,7 @@
       <button type="submit">Upload video</button>
     </form>
     <form hx-post="{{ url_for('do_run_pull') }}" hx-target="#run-panel" hx-swap="outerHTML">
-      <input name="url" placeholder="https://… (pull a video)" size="36">
+      <input name="url" aria-label="Video URL to pull" placeholder="https://… (pull a video)" size="36">
       <button type="submit">Pull URL</button>
     </form>
     <form hx-post="{{ url_for('do_run_ingest') }}" hx-target="#run-panel" hx-swap="outerHTML">

@@ -26,6 +26,7 @@ from fanops.variant_learning import ucb_rank
 # (the amplify/delete path stays blind to it; the isolation tests enforce it). Bound at module scope
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
+from fanops.text import sanitize_generated_text
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         if reason and held_reason is None:
             held_reason = reason
         clip.meta_captions[item.surface] = {"caption": item.caption, "hashtags": item.hashtags,
-                                            "hook": item.hook}
+                                            "hook": sanitize_generated_text(item.hook, max_words=7)}
     answered = {item.surface for item in cs.items}
     missing = requested - answered
     if missing and held_reason is None:

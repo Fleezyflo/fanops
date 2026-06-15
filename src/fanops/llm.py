@@ -23,7 +23,11 @@ from __future__ import annotations
 import json, subprocess
 from fanops.errors import ToolchainMissingError
 
-def claude_json(prompt: str, schema: dict, *, timeout: float = 180.0) -> dict:
+class LlmTimeoutError(RuntimeError):
+    """`claude -p` exceeded its time budget. Distinct from a generic RuntimeError so the responder
+    can RETRY it (a timeout is usually transient) rather than treating it like a hard failure."""
+
+def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0) -> dict:
     """Call `claude -p` with a JSON schema; return the model's schema-valid object.
     Prefers the envelope's `structured_output`; falls back to json.loads(`result`).
     Raises ToolchainMissingError if `claude` is absent, RuntimeError on nonzero exit or
@@ -43,7 +47,7 @@ def claude_json(prompt: str, schema: dict, *, timeout: float = 180.0) -> dict:
             f"claude not found on PATH — install Claude Code to run the autonomous responder "
             f"({type(e).__name__})") from e
     except subprocess.TimeoutExpired as e:
-        raise RuntimeError(f"claude -p timed out after {timeout}s") from e
+        raise LlmTimeoutError(f"claude -p timed out after {timeout}s") from e
     if r.returncode != 0:
         raise RuntimeError(f"claude -p failed (rc={r.returncode}): {(r.stderr or r.stdout or '')[:300]}")
     try:

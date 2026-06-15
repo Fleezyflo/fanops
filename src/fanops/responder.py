@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.models import MomentDecision, CaptionSet
 from fanops.agentstep import pending, request_path, response_path, latest_request_id
-from fanops.llm import claude_json
+from fanops.llm import claude_json, LlmTimeoutError
 from fanops.prompts import moment_prompt, caption_prompt
 from fanops.log import get_logger
 
@@ -55,7 +55,11 @@ class LlmResponder:
                     # up-to-180s claude -p behind every other gate. (Mirrors the FIX-F21 request_id
                     # correlation that already guards the read side.)
                     rid_before = latest_request_id(cfg, kind, key)
-                    out = self._model(kind, payload)
+                    try:
+                        out = self._model(kind, payload)
+                    except LlmTimeoutError:         # transient: a caption gate timed out (stranded 2 clips before)
+                        log("responder", f"{kind}:{key}", "timeout_retry", err="model timed out; retrying once")
+                        out = self._model(kind, payload)   # second timeout -> falls to the except below -> visible, pending
                     rid_after = latest_request_id(cfg, kind, key)
                     if rid_after is None or rid_after != rid_before:
                         log("responder", f"{kind}:{key}", "stale",

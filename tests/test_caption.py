@@ -457,3 +457,27 @@ def test_request_captions_no_persona_key_without_accounts(tmp_path):
     led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])  # no accounts arg
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "persona" not in payload["surfaces"][0]                  # backward-compatible default
+
+
+# --- M2: em-dash / overlong-hook sanitation at caption ingest ------------------------------------
+def test_ingest_captions_sanitizes_em_dash_in_hook(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="#fyp #bars", language="en",
+                    hook="Hometown hero snapped — Moh Flow")]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    h = led.clips["clip_1"].meta_captions["@a/instagram"]["hook"]
+    assert h == "Hometown hero snapped, Moh Flow" and "—" not in h
+
+def test_ingest_captions_trims_overlong_hook(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="#fyp", language="en",
+                    hook="one two three four five six seven eight nine ten")]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    h = led.clips["clip_1"].meta_captions["@a/instagram"]["hook"]
+    assert len(h.split()) <= 7
