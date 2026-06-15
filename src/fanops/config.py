@@ -154,11 +154,27 @@ class Config:
 
     @property
     def whisper_model(self) -> str:
-        # Operator override for the local Whisper model. Default "turbo" (fast, good
-        # timestamps). Pin a smaller model (e.g. "tiny"/"base") for offline / air-gapped /
-        # CI hosts where the larger checkpoints cannot be downloaded.
+        # The legacy `whisper` CLI model — used ONLY when faster-whisper (the [asr] extra) is absent.
+        # Default "turbo" (fast, good timestamps). Pin a smaller model (e.g. "tiny"/"base") for
+        # offline / air-gapped / CI hosts where the larger checkpoints cannot be downloaded.
         v = os.getenv("FANOPS_WHISPER_MODEL")
         return v.strip() if v and v.strip() else "turbo"
+
+    @property
+    def asr_model(self) -> str:
+        # The faster-whisper (CTranslate2) model — the proven music/rap accuracy winner over turbo
+        # (clean Arabic where turbo gave gibberish). Default "large-v3"; int8 makes it practical on
+        # CPU. Override FANOPS_ASR_MODEL with a smaller fw model (e.g. "medium") on a slow host.
+        v = os.getenv("FANOPS_ASR_MODEL")
+        return v.strip() if v and v.strip() else "large-v3"
+
+    @property
+    def asr_language(self) -> str:
+        # "" = auto-detect (handles EN+AR per clip; proven equal to pinning, just slower). Pin e.g.
+        # "ar" via FANOPS_ASR_LANGUAGE only for a single-language account where the ~3x decode
+        # speedup is worth losing English clips.
+        v = os.getenv("FANOPS_ASR_LANGUAGE")
+        return v.strip() if v and v.strip() else ""
 
     @property
     def isolate_vocals(self) -> bool:

@@ -100,6 +100,22 @@ def test_isolate_vocals_defaults_on_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
     assert Config(root=tmp_path).isolate_vocals is True
 
+def test_asr_model_defaults_large_v3_and_respects_env(monkeypatch, tmp_path):
+    # The faster-whisper model — the proven music/rap accuracy winner over turbo. Default large-v3
+    # (int8 makes it practical on CPU). Override picks a smaller fw model on a slow host.
+    monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
+    assert Config(root=tmp_path).asr_model == "large-v3"
+    monkeypatch.setenv("FANOPS_ASR_MODEL", " medium ")
+    assert Config(root=tmp_path).asr_model == "medium"
+
+def test_asr_language_defaults_auto_and_respects_env(monkeypatch, tmp_path):
+    # "" = auto-detect (handles EN+AR per clip; proven equal to pinning, just slower). An operator
+    # with a single-language account can pin e.g. "ar" for the ~3x decode speedup.
+    monkeypatch.delenv("FANOPS_ASR_LANGUAGE", raising=False)
+    assert Config(root=tmp_path).asr_language == ""
+    monkeypatch.setenv("FANOPS_ASR_LANGUAGE", "ar")
+    assert Config(root=tmp_path).asr_language == "ar"
+
 def test_subtitle_font_default_and_override(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_SUBTITLE_FONT", raising=False)
     assert Config(root=tmp_path).subtitle_font == "Arial Unicode MS"

@@ -18,12 +18,13 @@ studio = ["flask>=3.0"]
 # fanops.compose imports it lazily and FAILS OPEN (copies the base clip) when absent, so a
 # no-[compose] install never breaks the render path. MoviePy 2.x API only (no moviepy.editor).
 compose = ["moviepy>=2.0"]
-# Vocal isolation for accurate music transcription (the biggest ASR-accuracy lever for rap/song:
-# strip the beat with Demucs so Whisper reads the lyrics, not the instrumental). OPTIONAL + lazy +
-# FAIL-OPEN like the others — `pip install -e .` stays Demucs-free; only `.[asr]` pulls it (drags
-# torch). vocals.isolate_vocals returns the RAW audio when demucs is absent, so a no-[asr] install
-# transcribes exactly as before. certifi ships the CA bundle for the model download (macOS cert fix).
-asr = ["demucs>=4.0", "certifi"]
+# Accurate music transcription (the two biggest ASR-accuracy levers for rap/song): Demucs strips the
+# beat so Whisper reads the lyrics, not the instrumental; faster-whisper runs large-v3 (the proven
+# accuracy winner over turbo) at int8 so it's practical on CPU. OPTIONAL + lazy + FAIL-OPEN like the
+# others — `pip install -e .` stays free of both; only `.[asr]` pulls them (drags torch). Without the
+# extra, isolate_vocals returns RAW audio and transcribe falls back to the legacy `whisper` CLI, so a
+# no-[asr] install transcribes exactly as before. certifi ships the CA bundle (macOS model-download fix).
+asr = ["demucs>=4.0", "faster-whisper>=1.0", "certifi"]
 
 [project.scripts]
 fanops = "fanops.cli:main"

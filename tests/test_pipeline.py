@@ -7,10 +7,16 @@ from fanops.pipeline import advance
 
 def _put(p, b): p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
 
+def _is_asr(cmd):
+    # The transcribe subprocess, EITHER engine: the legacy `whisper` CLI, or the default
+    # faster-whisper runner (`python -m fanops._fwrun`). Both carry --output_dir + audio-last, so the
+    # fakes below are engine-agnostic (dev has the [asr] extra -> fw runner; CI doesn't -> whisper CLI).
+    return cmd[0] == "whisper" or "fanops._fwrun" in cmd
+
 def _ff(mocker):
     def fake(cmd, **kw):
         joined = " ".join(cmd)
-        if cmd[0] == "whisper":
+        if _is_asr(cmd):
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
                 {"language": "en", "segments": [{"start": 14.0, "end": 18.0, "text": "they slept on me"}]}))
@@ -112,9 +118,9 @@ def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
                 returncode=0; stderr=""
                 stdout = "video" if "codec_type" in " ".join(cmd) else "1920\n1080\n20.0\n"
             return R()
-        if cmd[0] == "whisper":
+        if _is_asr(cmd):
             call["n"] += 1
-            if call["n"] == 1:                      # first source: whisper raises
+            if call["n"] == 1:                      # first source: the transcribe subprocess raises
                 raise OSError("whisper exploded")
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
