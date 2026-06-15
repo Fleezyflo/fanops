@@ -38,6 +38,19 @@ def test_moment_prompt_hook_encodes_retention_archetype_framework():
     assert "wait for" in low and "claim" in low # at least the wait-for-it + bold-claim archetypes named
     assert "specific" in low                    # must be specific to THIS moment, not a generic line
 
+def test_moment_prompt_hook_bans_generic_demands_concrete_and_selects():
+    # Round-2 refinement, diagnosed from real weak output: the model fell back on generic-superlative
+    # filler ('his hardest bar', 'the bar everyone replayed'), overused wait-for-it, and hooked on the
+    # scene-cuts. The fix: require a CONCRETE specific, BAN generic filler, generate-and-select among
+    # several candidates, and never hook on the editing. These separate the strong real hooks from slop.
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "concrete" in low                      # must name a concrete specific, not an abstraction
+    assert "generic" in low                        # explicitly bans generic superlative filler
+    assert "candidate" in low                      # draft several, output the strongest (not first-draft)
+    assert "editing" in low or "scene-cut" in low  # never hook on the cuts instead of the content
+
 def test_moment_prompt_targets_12_to_22_seconds():
     # The clip-length fix: 12-22s windows (loosened from 15-20 so more moments qualify), not 3-4s.
     p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
