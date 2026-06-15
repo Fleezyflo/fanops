@@ -13,6 +13,7 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import Platform
+from fanops.discover import make_thumbnail        # reuse the cheap one-frame ffmpeg extractor for clip posters
 from fanops.studio import views, actions, golive
 
 _ALL_PLATFORMS = [p.value for p in Platform]    # the add-account form's platform checkboxes (no enum drift)
@@ -86,6 +87,14 @@ def create_app(cfg: Config) -> Flask:
     app = Flask(__name__, template_folder=str(_HERE / "templates"), static_folder=str(_HERE / "static"))
     app.config["MAX_CONTENT_LENGTH"] = _MAX_UPLOAD_BYTES    # Werkzeug refuses an oversize upload body BEFORE the view runs (413)
 
+    def _offset_arg() -> int:
+        # The grid show-more offset from ?offset=. A garbage/negative value -> 0 (paginate clamps too),
+        # so a hand-typed URL can never 500 the grid.
+        try:
+            return max(0, int(request.args.get("offset", 0)))
+        except (TypeError, ValueError):
+            return 0
+
     @app.get("/")
     def index():
         return redirect(url_for("review"))
@@ -95,7 +104,9 @@ def create_app(cfg: Config) -> Flask:
         led = Ledger.load(cfg)
         accounts = Accounts.load(cfg)
         cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
-        return render_template("review.html", cards=cards, tab="review", backend=cfg.poster_backend)
+        page = views.paginate(cards, _offset_arg())
+        return render_template("review.html", cards=page.items, page=page, tab="review",
+                               backend=cfg.poster_backend)
 
     @app.get("/schedule")
     def schedule():
@@ -169,9 +180,12 @@ def create_app(cfg: Config) -> Flask:
     @app.get("/publish")
     def publish_panel():
         # Track B: the manual / no-service worklist — queued posts to post by hand, with the clip to
-        # download (/media/<post_id>) + the caption to copy + a "Mark posted" button.
-        return render_template("publish.html",
-                               rows=views.publish_queue(cfg, now=datetime.now(timezone.utc)), tab="publish")
+        # download (/media/<post_id>) + the caption to copy + a "Mark posted" button. Capped to a page
+        # (the 164-<video>-at-once perf problem); the total stays visible with a show-more link.
+        rows = views.publish_queue(cfg, now=datetime.now(timezone.utc))
+        page = views.paginate(rows, _offset_arg())
+        return render_template("publish.html", rows=page.items, page=page, tab="publish",
+                               backend=cfg.poster_backend)
 
     @app.post("/publish/posted/<post_id>")
     def do_mark_posted(post_id):
@@ -211,6 +225,27 @@ def create_app(cfg: Config) -> Flask:
         if not path or not os.path.exists(path):
             abort(404)
         return send_file(path)
+
+    @app.get("/clip-thumb/<clip_id>")
+    def clip_thumb(clip_id):
+        # A cached JPEG first-frame for a clip, so the grid's <video preload="none"> shows a real
+        # frame (poster=) instead of a black box. Mirrors clip_media's ledger-resolve + _bounded
+        # path-safety; reuses discover.make_thumbnail (one ffmpeg frame). FAIL-OPEN: a missing clip,
+        # a vanished file, or ffmpeg absent/failing is a 404, never a 500 — the player just shows its
+        # own blank box, exactly as before, and the operator can still click to load the video.
+        if "/" in clip_id or "\\" in clip_id or ".." in clip_id:  # bare id only — mirror review_thumb's guard
+            abort(404)
+        clip = Ledger.load(cfg).clips.get(clip_id)
+        src = _bounded(cfg, clip.path if clip else None)
+        if not src or not os.path.exists(src):
+            abort(404)
+        cache = _bounded(cfg, cfg.clips / f"{clip_id}.jpg")   # cache next to the clip, inside cfg.base
+        if cache is None:
+            abort(404)
+        if not (cache.exists() and cache.stat().st_size > 0):   # absent OR a 0-byte partial (timed-out write) -> (re)extract
+            if not make_thumbnail(src, cache, at_seconds=0.5) or cache.stat().st_size == 0:
+                abort(404)                                    # ffmpeg missing/failed/empty -> fail-open
+        return send_file(cache, mimetype="image/jpeg")
 
     @app.post("/reschedule/<post_id>")
     def do_reschedule(post_id):

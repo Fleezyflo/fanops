@@ -17,5 +17,16 @@
       </div>
     {% endif %}
   {% endfor %}
+  {% if page and page.total > page.items|length %}
+    <div class="grid-more meta">
+      Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
+      {% if page.next_offset is not none %}
+        <a class="button" href="{{ url_for('review', offset=page.next_offset) }}">Show more</a>
+      {% endif %}
+      {% if page.offset > 0 %}
+        <a class="button" href="{{ url_for('review') }}">Back to start</a>
+      {% endif %}
+    </div>
+  {% endif %}
   {% if not cards %}<div class="empty">No footage yet — add videos in the Make tab to begin.</div>{% endif %}
 {% endblock %}

@@ -15,6 +15,30 @@ from fanops.timeutil import parse_iso
 
 IMMINENT_THRESHOLD_MINUTES = 5     # spec §4: a post within this of now (or past) is edit-disabled
 RECENT_WINDOW_HOURS = 24           # spec §6: "what just shipped" read-only context window
+GRID_PAGE_SIZE = 24                # max cards rendered per surface page — rendering all 164 <video> at
+                                   # once is a real perf + usability problem (the black-box-wall report);
+                                   # the total stays VISIBLE with a show-more link, never silent truncation
+
+
+@dataclass
+class GridPage:
+    """A paginated slice of a card/row list for the Review/Publish grids. `items` is the visible page;
+    `total` is the full count (shown so nothing is silently truncated); `next_offset` is the offset for
+    the show-more link, or None when this is the last page."""
+    items: list
+    total: int
+    offset: int
+    next_offset: Optional[int]
+
+
+def paginate(rows: list, offset: int, *, page_size: int = GRID_PAGE_SIZE) -> "GridPage":
+    """Slice `rows` to one page. Clamps a negative/oversize offset into range; next_offset is None when
+    the page reaches the end. Pure — no I/O, trivially testable."""
+    total = len(rows)
+    off = max(0, min(offset, total))
+    page = rows[off:off + page_size]
+    nxt = off + page_size if off + page_size < total else None
+    return GridPage(items=page, total=total, offset=off, next_offset=nxt)
 # A clip is "prepared" (produced, awaiting crosspost) when it has NO posts yet and isn't held — these
 # post-less clips used to vanish from Review entirely (the 57-clips-0-posts bug). Only actionable
 # in-flight states qualify; retired/error/terminal clips are not surfaced as prepare-able.
