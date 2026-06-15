@@ -10,6 +10,28 @@ def test_whisper_cmd_shape():
     cmd = whisper_cmd("/s/x.mp4", "/out", model="small")
     assert cmd[0] == "whisper" and "--output_format" in cmd and "json" in cmd
     assert "--output_dir" in cmd and "small" in cmd
+    # word-level timestamps drive the active-caption sync — request them from whisper
+    assert "--word_timestamps" in cmd and cmd[cmd.index("--word_timestamps") + 1] == "True"
+
+def test_transcribe_captures_word_timestamps_when_present(tmp_path, mocker):
+    # whisper --word_timestamps adds a per-segment `words` list ([{word,start,end}]); capture it so
+    # the overlay can sync active captions word-by-word. Absent -> the field is simply omitted.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.catalogued))
+    def fake_run(cmd, **kw):
+        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({
+            "language": "en",
+            "segments": [{"start": 0.0, "end": 2.0, "text": " hi there",
+                          "words": [{"word": " hi", "start": 0.0, "end": 0.5},
+                                    {"word": " there", "start": 0.5, "end": 1.2}]}]}))
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    led = transcribe_source(led, cfg, "src_1")
+    seg = led.sources["src_1"].transcript[0]
+    assert seg["words"][0]["word"] == " hi" and seg["words"][1]["end"] == 1.2
 
 def test_transcribe_parses_segments_language_and_advances(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

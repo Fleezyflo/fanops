@@ -162,14 +162,14 @@ class Config:
 
     @property
     def burn_subs(self) -> bool:
-        # On/off toggle for ALL burned-in on-screen text — both the top-third HOOK title card and
-        # the bottom-third transcript subtitles flow through this one gate (clip._subtitles_vf).
-        # DEFAULT OFF (opt-in): the baseline ships CLEAN reframed cuts with no burned text, because
-        # an auto-generated hook card + dumped transcript read as AI slop to a viewer. Only the
-        # explicit on-words "1"/"true"/"yes"/"on" (case-insensitive, ws-trimmed) enable it; unset,
-        # blank, or anything else stays OFF. Mirrors creative_variation's opt-in shape.
-        v = (os.getenv("FANOPS_BURN_SUBS") or "").strip().lower()
-        return v in {"1", "true", "yes", "on"}
+        # On/off toggle for burned-in on-screen text (clip._subtitles_vf). DEFAULT ON: the burn now
+        # produces ACTIVE CAPTIONS — a few words at a time, synced to speech, big and popping (the
+        # produced short-form look), NOT the old slop (a dumped transcript + a fixed "first N words"
+        # amber hook card, both of which screamed automation). The default clip path no longer burns
+        # any hook card at all (clip.py passes hook=None). Only the explicit off-words
+        # "0"/"false"/"no"/"off" (case-insensitive, ws-trimmed) disable it; everything else stays ON.
+        v = os.getenv("FANOPS_BURN_SUBS")
+        return (v or "").strip().lower() not in {"0", "false", "no", "off"}
 
     @property
     def subtitle_font(self) -> str:

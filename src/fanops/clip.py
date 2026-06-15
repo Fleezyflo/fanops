@@ -128,7 +128,10 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
                         reason="ffmpeg lacks the text filter — rendering without subtitles")
         return None
     tw, th = _TARGETS[aspect.value]
-    ass_text = overlay.build_ass(transcript, hook=m.hook, clip_start=clip_start, clip_end=clip_end,
+    # hook=None on the DEFAULT clip path: NO top-third template card (the amber "first N words" box
+    # reads as AI slop). The clip carries clean active captions only; the hook title card survives
+    # solely for the opt-in per-account variation pass (crosspost.burn_hook_only).
+    ass_text = overlay.build_ass(transcript, hook=None, clip_start=clip_start, clip_end=clip_end,
                                  width=tw, height=th, font=cfg.subtitle_font)
     if not ass_text or not ass_text.strip():
         return None

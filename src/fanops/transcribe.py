@@ -79,8 +79,21 @@ def real_transcript_signal(transcript: list[dict]) -> bool:
     return len(words) >= 4
 
 def whisper_cmd(src: str, out_dir: str, model: str = "turbo") -> list[str]:
-    return ["whisper", "--model", model, "--output_format", "json",
+    # --word_timestamps True makes whisper emit per-segment word timings ([{word,start,end}]) so the
+    # overlay can sync active captions word-by-word (without it the captions fall back to an even
+    # split of each segment). Negligible extra cost on the turbo model.
+    return ["whisper", "--model", model, "--output_format", "json", "--word_timestamps", "True",
             "--output_dir", out_dir, "--task", "transcribe", src]
+
+def _segment(s: dict) -> dict:
+    """One transcript segment: {start,end,text}, plus `words` ([{word,start,end}]) when whisper
+    emitted word timestamps (--word_timestamps). The words list is kept only when it's a non-empty
+    list of dicts carrying a "word" key, so a schema quirk can never poison the overlay's sync."""
+    seg = {"start": s["start"], "end": s["end"], "text": s["text"].strip()}
+    words = s.get("words")
+    if isinstance(words, list) and words and all(isinstance(w, dict) and "word" in w for w in words):
+        seg["words"] = [{"word": w["word"], "start": w.get("start"), "end": w.get("end")} for w in words]
+    return seg
 
 def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None) -> Ledger:
     src = led.sources[source_id]
@@ -114,8 +127,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         return led
     try:
         data = json.loads(js.read_text())
-        src.transcript = [{"start": s["start"], "end": s["end"], "text": s["text"].strip()}
-                          for s in data.get("segments", [])]
+        src.transcript = [_segment(s) for s in data.get("segments", [])]
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
         # whisper killed mid-write (disk full, OOM) leaves TRUNCATED JSON; a schema drift loses
         # start/end/text keys. Same per-source shape as the absent/timeout/no-JSON branches above —
