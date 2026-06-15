@@ -20,12 +20,12 @@ _TARGETS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 # every other pass and Studio write. 10min covers a multi-minute 1080p re-encode with headroom.
 _FFMPEG_TIMEOUT = 600.0
 
-# A real clip is watchable, not a 3-4s fragment. The model is asked for 15-20s windows
+# A real clip is watchable, not a 3-4s fragment. The model is asked for 12-22s windows
 # (prompts.moment_prompt); this is the render-time SAFETY NET that guarantees it even when a pick
-# comes back short (or long). The subtitle overlay uses the SAME fitted window so captions stay
-# aligned with the cut.
-_MIN_CLIP_S = 15.0
-_MAX_CLIP_S = 20.0
+# comes back short (or long). The 12s floor lets short sources (and the model's tighter picks)
+# qualify; sources below the floor render whole. The subtitle overlay uses the SAME fitted window.
+_MIN_CLIP_S = 12.0
+_MAX_CLIP_S = 22.0
 
 def fit_window(start: float, end: float, duration: float,
                *, lo: float = _MIN_CLIP_S, hi: float = _MAX_CLIP_S) -> tuple[float, float]:
