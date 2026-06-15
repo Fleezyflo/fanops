@@ -4,7 +4,7 @@
 <div class="card clip-card" id="card-{{ card.clip_id }}">
   <div class="clip-frame">
     {% if card.bucket == 'held' %}<span class="badge held-badge">HELD</span>{% endif %}
-    <video controls preload="metadata" src="{{ card.preview_url }}" aria-label="{{ card.label }} preview"></video>
+    <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=card.clip_id) }}" src="{{ card.preview_url }}" aria-label="{{ card.label }} preview"></video>
   </div>
 
   <div class="clip-body">

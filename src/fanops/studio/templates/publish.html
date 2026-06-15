@@ -10,7 +10,7 @@
     <div class="card clip-card" id="pub-{{ r.post_id }}">
       <div class="clip-frame">
         {% if r.due %}<span class="badge held-badge">DUE</span>{% endif %}
-        <video controls preload="none" src="{{ url_for('media', post_id=r.post_id) }}" aria-label="{{ r.account }} {{ r.platform }} clip"></video>
+        <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=r.clip_id) }}" src="{{ url_for('media', post_id=r.post_id) }}" aria-label="{{ r.account }} {{ r.platform }} clip"></video>
       </div>
       <div class="clip-body">
         <div class="clip-title">{{ r.account }} <span class="muted">{{ r.platform }}</span></div>
@@ -22,10 +22,30 @@
           <input name="url" aria-label="Live post URL (optional)" placeholder="live post URL (optional)">
           <button type="submit" class="primary">Mark posted</button>
         </form>
+        <form hx-post="{{ url_for('do_publish_now', post_id=r.post_id) }}"
+              hx-target="#res-{{ r.post_id }}" hx-swap="innerHTML"
+              {% if backend is defined and backend != 'dryrun' %}hx-confirm="Publish this to the live account now?"{% endif %}>
+          <label class="muted">Ship this one now — skips the schedule</label>
+          {% if backend is defined and backend != 'dryrun' %}
+            <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> publish to the REAL account ({{ backend }})</label>
+          {% endif %}
+          <button type="submit">Publish now</button>
+        </form>
         <div id="res-{{ r.post_id }}"></div>
       </div>
     </div>
   {% endfor %}
   </div>
+  {% if page and page.total > rows|length %}
+    <div class="grid-more meta">
+      Showing {{ page.offset + 1 }}–{{ page.offset + rows|length }} of {{ page.total }}.
+      {% if page.next_offset is not none %}
+        <a class="button" href="{{ url_for('publish_panel', offset=page.next_offset) }}">Show more</a>
+      {% endif %}
+      {% if page.offset > 0 %}
+        <a class="button" href="{{ url_for('publish_panel') }}">Back to start</a>
+      {% endif %}
+    </div>
+  {% endif %}
   {% if not rows %}<div class="empty">Nothing queued to post. Prepare clips in the Make tab first.</div>{% endif %}
 {% endblock %}
