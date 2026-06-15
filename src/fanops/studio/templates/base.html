@@ -9,16 +9,27 @@
   <script src="{{ url_for('static', filename='htmx.min.js') }}" defer></script>
 </head>
 <body>
+  {# Primary flow: Make → Review → Publish → Results. Everything else (Footage, Schedule, Gates,
+     Go Live) is a diagnostic/utility surface, demoted into the Advanced group so it never competes
+     with the everyday path. Routes are unchanged; only the grouping + active-state mapping moved. #}
+  {% set advanced = ['footage','schedule','gates','golive'] %}
   <header class="nav">
-    <strong>FanOps Studio</strong>
-    <a href="{{ url_for('run_panel') }}" class="{{ 'active' if tab=='run' else '' }}">Run</a>
-    <a href="{{ url_for('candidates') }}" class="{{ 'active' if tab=='footage' else '' }}">Footage</a>
-    <a href="{{ url_for('review') }}" class="{{ 'active' if tab=='review' else '' }}">Review</a>
-    <a href="{{ url_for('schedule') }}" class="{{ 'active' if tab=='schedule' else '' }}">Schedule</a>
-    <a href="{{ url_for('lift') }}" class="{{ 'active' if tab=='lift' else '' }}">Lift</a>
-    <a href="{{ url_for('gates') }}" class="{{ 'active' if tab=='gates' else '' }}">Gates</a>
-    <a href="{{ url_for('publish_panel') }}" class="{{ 'active' if tab=='publish' else '' }}">Publish</a>
-    <a href="{{ url_for('golive_view') }}" class="{{ 'active' if tab=='golive' else '' }}">Go Live</a>
+    <h1 class="nav-brand">FanOps Studio</h1>
+    <nav class="nav-primary" aria-label="Primary">
+      <a href="{{ url_for('run_panel') }}" class="{{ 'active' if tab=='run' else '' }}">Make</a>
+      <a href="{{ url_for('review') }}" class="{{ 'active' if tab=='review' else '' }}">Review</a>
+      <a href="{{ url_for('publish_panel') }}" class="{{ 'active' if tab=='publish' else '' }}">Publish</a>
+      <a href="{{ url_for('lift') }}" class="{{ 'active' if tab=='lift' else '' }}">Results</a>
+    </nav>
+    <details class="nav-more"{{ ' open' if tab in advanced else '' }}>
+      <summary class="{{ 'active' if tab in advanced else '' }}">Advanced</summary>
+      <div class="nav-more-menu" role="navigation" aria-label="Advanced">
+        <a href="{{ url_for('candidates') }}" class="{{ 'active' if tab=='footage' else '' }}">Footage intake</a>
+        <a href="{{ url_for('schedule') }}" class="{{ 'active' if tab=='schedule' else '' }}">Schedule</a>
+        <a href="{{ url_for('gates') }}" class="{{ 'active' if tab=='gates' else '' }}">Processing decisions</a>
+        <a href="{{ url_for('golive_view') }}" class="{{ 'active' if tab=='golive' else '' }}">Go Live &amp; connect</a>
+      </div>
+    </details>
   </header>
   <main>{% block body %}{% endblock %}</main>
 </body>

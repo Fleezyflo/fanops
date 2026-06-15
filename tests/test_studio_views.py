@@ -179,7 +179,7 @@ def test_lift_empty_no_analyzed_posts(tmp_path):
                       platform=Platform.instagram, caption="x", state=PostState.queued))
     view = lift_rows(led, cfg, Accounts.load(cfg))
     assert view.variant_rows == []
-    assert "No analyzed posts yet" in view.variant_empty_reason
+    assert "No results yet" in view.variant_empty_reason
     assert view.amplify_present is False   # cfg.variant_amplify default OFF -> section absent
 
 def test_lift_empty_state_names_postiz(tmp_path, monkeypatch):

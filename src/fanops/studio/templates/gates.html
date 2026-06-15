@@ -2,10 +2,9 @@
 {% extends "base.html" %}
 {% block title %}Gates{% endblock %}
 {% block body %}
-  <h2>Agent gates</h2>
-  <p class="muted">The two decisions only judgment can make: which moments to clip, and what each
-    surface's caption is. Answering here writes the same validated response <code>fanops respond</code>
-    would — then run <code>fanops advance</code> to apply it.</p>
+  <h2>Processing decisions</h2>
+  <p class="muted">The two calls only judgment can make: which moments to clip, and what each post's
+    caption is. Answer them here, then Prepare again in the Make tab to apply them.</p>
 
   {% set moments = rows | selectattr('kind','equalto','moments') | list %}
   {% set captions = rows | selectattr('kind','equalto','captions') | list %}
@@ -65,7 +64,7 @@
     {% endfor %}
   {% endif %}
 
-  {% if not rows %}<div class="empty">No pending gates. Run <code>fanops advance</code> to produce some.</div>{% endif %}
+  {% if not rows %}<div class="empty">Nothing waiting on you. Prepare clips in the Make tab to produce decisions.</div>{% endif %}
 
   <script>
   // Progressive enhancement (Track C): click a transcript line to fill the first empty pick row in

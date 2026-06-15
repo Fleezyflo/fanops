@@ -5,15 +5,17 @@
   <h2>Review</h2>
   {% set prepared = cards | selectattr('bucket','equalto','prepared') | list %}
   {% if prepared %}
-    <div class="meta">{{ prepared|length }} clip(s) produced and waiting — <a class="button" href="{{ url_for('run_panel') }}">Prepare all &rarr; Run</a> to write captions &amp; finish them.</div>
+    <div class="meta">{{ prepared|length }} clip(s) waiting — <a class="button" href="{{ url_for('run_panel') }}">Prepare all</a> to write captions and finish them.</div>
   {% endif %}
-  {% set buckets = {'editable':'Editable (upcoming)','prepared':'Ready to prepare','held':'Held for review','recent':'Recently shipped'} %}
+  {% set buckets = {'editable':'Upcoming','prepared':'Ready to prepare','held':'Held for review','recent':'Recently shipped'} %}
   {% for key, label in buckets.items() %}
     {% set group = cards | selectattr('bucket','equalto',key) | list %}
     {% if group %}
       <h3>{{ label }} ({{ group|length }})</h3>
-      {% for card in group %}{% include "_card.html" %}{% endfor %}
+      <div class="clip-grid">
+        {% for card in group %}{% include "_card.html" %}{% endfor %}
+      </div>
     {% endif %}
   {% endfor %}
-  {% if not cards %}<div class="empty">No footage yet — add videos in the Run tab to begin.</div>{% endif %}
+  {% if not cards %}<div class="empty">No footage yet — add videos in the Make tab to begin.</div>{% endif %}
 {% endblock %}
