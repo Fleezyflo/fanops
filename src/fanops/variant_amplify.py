@@ -78,7 +78,9 @@ def update_streaks(led: Ledger, cfg: Config) -> None:
             led.variant_streaks[key] = {"hook": winner, "fingerprint": fp,
                                         "streak": int(prior.get("streak", 0)) + 1}
         # else: same winner, SAME evidence -> no change (idempotent re-run).
-    return led
+    # NB: returns None (the `-> None` annotation) — the mutation propagates IN PLACE on led.variant_
+    # streaks; the sole caller (apply_variant_amplify) ignores the return, so the old `return led`
+    # was dead. Behavior is identical.
 
 
 def _source_for_surface(led, account: str, platform: Platform, hook: str):

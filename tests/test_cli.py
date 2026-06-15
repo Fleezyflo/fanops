@@ -636,3 +636,44 @@ def test_pull_rejects_non_http_url(tmp_path, monkeypatch, capsys):
         with pytest.raises(SystemExit) as ei:
             main(["pull", bad])
         assert ei.value.code == 2
+
+
+def test_gc_surfaces_oserror_not_silent(tmp_path, monkeypatch, capsys, mocker):
+    # FIX 9: cmd_gc's `except OSError: pass` hid a failed clip removal (could mask a disk-fill / perms
+    # problem). An OSError during removal must be surfaced to stderr; gc still completes (exit 0).
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Clip, ClipState, Fmt
+    cfg = Config(root=tmp_path)
+    clip_file = tmp_path / "old_clip.mp4"; clip_file.write_bytes(b"X")
+    import os as _os
+    _os.utime(clip_file, (0, 0))                              # mtime far in the past -> past the cutoff
+    led = Ledger.load(cfg)
+    led.add_clip(Clip(id="c_old", parent_id="m", path=str(clip_file), aspect=Fmt.r9x16,
+                      state=ClipState.analyzed))
+    led.save()
+    mocker.patch("os.remove", side_effect=OSError(13, "Permission denied"))
+    rc = main(["gc", "--keep-days", "0"])
+    assert rc == 0                                            # gc still completes
+    err = capsys.readouterr().err
+    assert "gc:" in err and "old_clip.mp4" in err            # the failed removal is surfaced, not silent
+
+
+def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, mocker):
+    # FIX 10: the learn block's `except Exception as e:` logged everything at one level, so a swallowed
+    # AuthError looked like a transient 5xx. The log entry must include the exception TYPE name so an
+    # auth failure in the learn pass is distinguishable in run.log.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k-test")
+    import fanops.cli as cli
+    from fanops.errors import BlotatoAuthError
+    mocker.patch.object(cli, "pull_metrics", side_effect=BlotatoAuthError("Blotato 401 — bad key"))
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
+    assert rc == 0                                            # learn hiccup is swallowed (run stays 0)
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "BlotatoAuthError" in log                         # the type name is in the breadcrumb

@@ -4,7 +4,7 @@
 <kind>__<key>.response.json echoing that request_id; code validates it AND checks the id
 matches the latest request (FIX F21 — a stale response can never be applied)."""
 from __future__ import annotations
-import json
+import json, os
 from pathlib import Path
 from typing import Type, TypeVar
 from pydantic import BaseModel, ValidationError
@@ -43,12 +43,16 @@ def write_request(cfg: Config, *, kind: str, key: str, payload: dict) -> str:
     prev = latest_request_id(cfg, kind, key) or "0"
     rid = _hash(kind, key, prev, json.dumps(payload, sort_keys=True, default=str))
     payload = {**payload, "request_id": rid}
-    p.write_text(json.dumps(payload, indent=2, default=str))
-    # a freshly (re)written request invalidates any prior response on disk
-    # Single-writer, small JSON: a plain write + unlink is sufficient here. The
-    # request_id check in read_response/pending is the real safety net (a torn or
-    # stale response can never be *applied*), so we intentionally skip the
-    # temp-file+os.replace+lock machinery the ledger needs for its multi-stage state.
+    # ATOMIC write (temp + os.replace, the ledger._save_unlocked pattern): the old plain write_text
+    # left a concurrent reader exposed to a torn request — safe ONLY by the implicit "all writers
+    # hold the ledger flock" invariant. os.replace makes the swap-in atomic regardless, so a reader
+    # always sees either the prior request or the complete new one, never a partial.
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2, default=str))
+    os.replace(str(tmp), str(p))
+    # a freshly (re)written request invalidates any prior response on disk. The request_id check in
+    # read_response/pending remains the real safety net (a torn or stale response can never be
+    # *applied*); the atomic write just removes the torn-read window on the request itself.
     rp = response_path(cfg, kind, key)
     if rp.exists():
         rp.unlink()
@@ -83,7 +87,11 @@ def pending(cfg: Config, *, kind: str) -> list[str]:
         if rp.exists():
             try:
                 ok = json.loads(rp.read_text()).get("request_id") == want
-            except Exception:
+            except Exception as e:
+                # Torn/corrupt response.json: keep fail-closed (still pending) but leave ONE
+                # breadcrumb — read_response/latest_request_id both log corruption; pending was the
+                # silent gap, so a stuck gate here is now distinguishable from "no response yet".
+                get_logger(cfg)("agent_io", key, "corrupt_response_in_pending", kind=kind, err=str(e)[:120])
                 ok = False
         if not ok:
             out.append(key)

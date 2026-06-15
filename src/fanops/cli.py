@@ -203,8 +203,10 @@ def cmd_gc(cfg: Config, keep_days: int) -> int:
             try:
                 if os.path.getmtime(c.path) < cutoff:
                     os.remove(c.path); removed += 1
-            except OSError:
-                pass
+            except OSError as exc:
+                # Surface a failed removal (perms / read-only mount / disk issue) instead of hiding
+                # it — a silent pass could mask a disk filling up. gc still completes (other clips).
+                print(f"gc: could not remove {c.path}: {exc}", file=sys.stderr)
     print(f"gc removed {removed} clip files older than {keep_days}d")
     return 0
 
@@ -604,7 +606,9 @@ def _dispatch(cfg: Config, args) -> int:
                     led = amplify(led, cfg, r["winners"])
                     led = retire(led, r["losers"])
             except Exception as e:
-                get_logger(cfg)("learn", "-", "error", err=str(e)[:120])
+                # Include the exception TYPE so a swallowed AuthError (a real auth failure that must be
+                # actioned) is distinguishable in run.log from a transient 5xx — not all one level.
+                get_logger(cfg)("learn", "-", "error", err=f"{type(e).__name__}: {str(e)[:120]}")
         # variant-amplify (v3): a SEPARATE, independently-gated learning pass — proven SUSTAINED
         # variant winners auto-amplify their source. Gated by its OWN kill switch (cfg.variant_amplify,
         # default OFF) AND the same live-backend+key guard as the learn block. Its OWN try/except so it

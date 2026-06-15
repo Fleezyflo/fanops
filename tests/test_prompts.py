@@ -226,3 +226,19 @@ def test_caption_prompt_no_transferred_key_is_byte_identical():
     assert "elsewhere" not in caption_prompt(base).lower()
     assert caption_prompt({**base, "learned_hooks_transferred": []}) == caption_prompt(base)
     assert caption_prompt({**base, "learned_hooks_transferred": None}) == caption_prompt(base)
+
+
+def test_moment_prompt_has_data_not_instructions_directive():
+    # FIX 7: transcript text flows into the `claude -p` prompt; a crafted video could inject
+    # instructions. Belt-and-suspenders role separation: the prompt must tell the model the
+    # transcript is DATA to be quoted, never instructions to follow.
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "transcript" in low and "data" in low and "never as instructions" in low
+
+def test_caption_prompt_has_data_not_instructions_directive():
+    p = caption_prompt({"language": "en", "guidance": "", "transcript_excerpt": "",
+                        "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
+    low = p.lower()
+    assert "data" in low and "never as instructions" in low

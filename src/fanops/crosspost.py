@@ -16,6 +16,7 @@ from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 from fanops.timeutil import parse_iso as _parse, iso_z
+from fanops.log import get_logger
 
 # Staggering constants. _STEP_MIN is the fixed per-index spacing; _JITTER_MAX is the bounded
 # random nudge. AUDIT H1/H2: _JITTER_MAX MUST stay strictly less than _STEP_MIN so that
@@ -94,7 +95,12 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
             pid = child_id("post", target_clip.id, skey)        # stable, content-addressed
             cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
             if cap is None:
-                continue   # TODO(Task 23): log skipped surface — activated after captioning, no caption
+                # No caption for THIS surface (clip captioned for some surfaces but not this one).
+                # An autonomous run would otherwise drop a real post with zero trace — leave a
+                # breadcrumb before skipping so the missing post is diagnosable in run.log.
+                get_logger(cfg)("crosspost", clip.id, "skipped_surface",
+                                surface=f"{surf.account}/{surf.platform.value}")
+                continue
             caption = cap["caption"]
             # subtle, non-synchronized artist tag on its own line (FIX F31)
             # clip.id (the captioned seed clip) keys the schedule so two different clips don't

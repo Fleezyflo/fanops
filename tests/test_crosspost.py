@@ -452,3 +452,33 @@ def test_crosspost_clips_applies_publish_lead_minutes(tmp_path, mocker, monkeypa
     t_no = _run("")
     t_lead = _run("90")
     assert t_lead - t_no == timedelta(minutes=90)
+
+def test_crosspost_logs_skipped_surface_missing_caption(tmp_path, mocker):
+    # FIX 1: when a surface has no caption (clip captioned for some surfaces but not this one), the
+    # surface is silently continue'd — in an autonomous run that drops a real post with no trace.
+    # crosspost_clips must emit a `skipped_surface` log breadcrumb before skipping.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "98432",
+                          "platforms": ["instagram", "youtube"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
+                state=ClipState.captioned)
+    clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": []}}   # NO youtube caption
+    led.add_clip(clip)
+    real_run = subprocess.run
+    def fake_run(cmd, **kw):
+        if not (isinstance(cmd, (list, tuple)) and cmd and cmd[0] == "ffmpeg"): return real_run(cmd, **kw)
+        out = Path(cmd[-1])
+        if not str(cmd[-1]).startswith("-"):
+            out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    posts = [p for p in led.posts.values() if led.clips[p.parent_id].parent_id == "mom_1"]
+    assert {p.platform.value for p in posts} == {"instagram"}   # only IG posted, YT skipped
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "skipped_surface" in log and "youtube" in log       # the skip left a breadcrumb

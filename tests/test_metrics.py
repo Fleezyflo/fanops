@@ -117,12 +117,24 @@ def test_postiz_401_is_typed_auth_with_redacted_body(tmp_path, monkeypatch, mock
     assert "SENTINEL-KEY-ECHO" not in str(ei.value) and "401" in str(ei.value)
     assert cfg.postiz_api_key not in str(ei.value)              # the KEY VALUE itself must never appear in the error
 
-def test_postiz_non_2xx_raises_runtimeerror(tmp_path, monkeypatch, mocker):
+def test_postiz_fetch_one_non_2xx_raises_runtimeerror(tmp_path, monkeypatch, mocker):
+    # _fetch_one still raises a RuntimeError on a 5xx (the per-post contract is unchanged at that
+    # level). FIX 6 moved the ISOLATION up into list_posts (see below), so the loop catches this
+    # per id rather than letting one 5xx abort the whole pass.
     from fanops.post.metrics import PostizMetricsClient
     cfg = _pcfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(503, "down"))
     with pytest.raises(RuntimeError, match="503"):
-        PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()
+        PostizMetricsClient(cfg, submission_ids=["s"])._fetch_one("s", 7)
+
+def test_postiz_list_posts_isolates_a_single_5xx(tmp_path, monkeypatch, mocker):
+    # FIX 6: a single post's 5xx must NOT abort the pass — list_posts logs+skips it (empty row) and
+    # still returns the (lone) row rather than raising, so a co-batched healthy post isn't lost.
+    from fanops.post.metrics import PostizMetricsClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(503, "down"))
+    rows = PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()
+    assert rows == [{"postSubmissionId": "s", "metrics": {}, "_raw_labels": []}]   # skipped, not fatal
 
 # ---- M2 Task 2: lock the label→lift mapping + the window→date helper (the integration checkpoint) ----
 def test_postiz_map_analytics_maps_four_documented_labels():
@@ -137,3 +149,22 @@ def test_postiz_map_analytics_maps_four_documented_labels():
 def test_postiz_window_days_table():
     from fanops.post.metrics import _window_days
     assert (_window_days("30d"), _window_days("7d"), _window_days(""), _window_days("garbage")) == (30, 7, 7, 7)
+
+
+def test_postiz_list_posts_one_failing_sid_does_not_lose_the_others(tmp_path, monkeypatch, mocker):
+    # FIX 6: the `for sid: self._fetch_one(...)` loop had no per-post isolation, so a single post's
+    # 5xx analytics aborted the WHOLE pass and lost every other post's metrics. One failing sid must
+    # be logged + skipped; the others' rows must still be collected.
+    from fanops.post.metrics import PostizMetricsClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    good = [{"label": "Likes", "data": [{"total": "7", "date": "2026-06-12"}]}]
+    def fake_get(url, **kw):
+        return _R(500, {"e": "down"}) if "BAD" in url else _R(200, good)
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
+    rows = PostizMetricsClient(cfg, submission_ids=["BAD", "OK1", "OK2"]).list_posts("30d")
+    by_sid = {r["postSubmissionId"]: r for r in rows}
+    assert by_sid["OK1"]["metrics"] == {"likes": 7.0}         # survivors collected
+    assert by_sid["OK2"]["metrics"] == {"likes": 7.0}
+    assert "BAD" not in by_sid or not by_sid["BAD"]["metrics"]  # failing sid skipped/empty, not fatal
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "BAD" in log                                       # breadcrumb for the failed fetch

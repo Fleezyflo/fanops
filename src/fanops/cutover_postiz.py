@@ -80,6 +80,11 @@ def postiz_metrics(cfg: Config, submission_id: str, *, list_posts=None) -> dict:
     if row is None:
         raise CutoverError(f"no metrics row for submission_id={submission_id} yet — Postiz analytics may lag; retry later.")
     metrics = row.get("metrics", {})
+    if not metrics:
+        # An EMPTY metrics row means the analytics fetch was skipped (a transient 5xx isolated by
+        # PostizMetricsClient.list_posts) or returned nothing usable yet. Confirming the freeze flag
+        # on empty data would be a false 'metrics_confirmed' — treat it as retry-later, like a missing row.
+        raise CutoverError(f"metrics row for submission_id={submission_id} has no usable analytics yet — Postiz analytics may lag or the fetch failed; retry later.")
     rec = reconcile_fields(metrics)
     labels = row.get("_raw_labels", [])
     _save_state(cfg, {"metrics_row": metrics, "reconciliation": rec, "postiz_labels": labels,
