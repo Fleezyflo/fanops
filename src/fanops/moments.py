@@ -92,7 +92,10 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                            content_token=token, start=pick.start, end=pick.end,
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
                            transcript_excerpt=pick.transcript_excerpt,
-                           hook=sanitize_generated_text(derive_hook(pick.transcript_excerpt)),
+                           # On-screen text = the model's RETENTION hook (curiosity-gap, signal-driven —
+                           # NOT a transcript quote). derive_hook (transcript first-clause) is only a
+                           # last-resort fallback when the model omitted a hook; sanitize either way.
+                           hook=sanitize_generated_text((pick.hook or "").strip() or derive_hook(pick.transcript_excerpt)),
                            signal_score=pick.signal_score)
     if not keep:
         if dec.picks:

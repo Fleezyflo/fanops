@@ -162,14 +162,14 @@ class Config:
 
     @property
     def burn_subs(self) -> bool:
-        # On/off toggle for burned-in on-screen text (clip._subtitles_vf). DEFAULT ON: the burn now
-        # produces ACTIVE CAPTIONS — a few words at a time, synced to speech, big and popping (the
-        # produced short-form look), NOT the old slop (a dumped transcript + a fixed "first N words"
-        # amber hook card, both of which screamed automation). The default clip path no longer burns
-        # any hook card at all (clip.py passes hook=None). Only the explicit off-words
-        # "0"/"false"/"no"/"off" (case-insensitive, ws-trimmed) disable it; everything else stays ON.
-        v = os.getenv("FANOPS_BURN_SUBS")
-        return (v or "").strip().lower() not in {"0", "false", "no", "off"}
+        # Opt-in toggle for burning the TRANSCRIPT as captions (clip._subtitles_vf). DEFAULT OFF:
+        # captioning what the audio already says is redundant AND only as good as the unreliable
+        # auto-transcription — fine for talking-head content, wrong for music. The on-screen
+        # RETENTION HOOK (m.hook) is a SEPARATE layer that burns by default regardless of this flag;
+        # this only adds the transcript on top. Only the explicit on-words "1"/"true"/"yes"/"on"
+        # enable it; unset/blank/anything else stays OFF. Mirrors creative_variation's opt-in shape.
+        v = (os.getenv("FANOPS_BURN_SUBS") or "").strip().lower()
+        return v in {"1", "true", "yes", "on"}
 
     @property
     def subtitle_font(self) -> str:

@@ -108,30 +108,30 @@ def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
 
 def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
                   *, clip_start: float, clip_end: float):
-    """Build the burned-subtitles `-vf` fragment for this clip, or return None (render with the
-    reframe only). FAIL-OPEN by contract: a clip is NEVER blocked on subtitles. Returns None when
-    burn_subs is off, the source has no transcript, or build_ass yields nothing. When subtitles are
-    REQUESTED (burn_subs on, transcript present) but this ffmpeg lacks the text filter, log ONE
-    warning and return None. Writes the .ass adjacent to the clip (cfg.clips/<cid>.ass) on success."""
-    if not cfg.burn_subs:
-        return None
+    """Build the burned-on-screen-text `-vf` fragment for this clip, or return None (reframe only).
+    FAIL-OPEN by contract: a clip is NEVER blocked on its text. Two independent layers:
+      • the RETENTION HOOK (m.hook) — the default on-screen text, a curiosity-gap line that drives
+        watch-through (NOT a transcript). Burned whenever the moment has a hook. SUPPRESSED here when
+        creative_variation is on: the per-account burn_hook_only pass burns a per-surface hook, and
+        burning the moment hook too would STACK two hooks on one clip.
+      • the TRANSCRIPT captions — OPT-IN via burn_subs (default OFF). Showing what the audio says is
+        redundant (the viewer hears it) and only as good as the auto-transcription; useful for
+        talking-head content, wrong for music — so it ships only when the operator asks.
+    Returns None when there's nothing to burn, or (logged once) when ffmpeg lacks the text filter."""
     m = led.moments[moment_id]
     src = led.sources[m.parent_id]
-    transcript = src.transcript
-    if not transcript:                                   # None or [] -> nothing to burn
+    hook = None if cfg.creative_variation else ((m.hook or "").strip() or None)  # per-surface hook owns it under variation; blank -> None
+    segments = (src.transcript or []) if cfg.burn_subs else []   # transcript is opt-in
+    if not hook and not segments:                        # no hook, no opted-in transcript -> clean clip
         return None
     if not overlay.ffmpeg_has_textfilter():
-        # Subtitles were asked for but the toolchain can't burn them. Don't block the clip — log
-        # once and render plain. (One line per clip; the cache in ffmpeg_has_textfilter means the
-        # probe itself runs at most once per process.)
+        # Text was asked for but the toolchain can't burn it. Don't block the clip — log once and
+        # render plain. (One line per clip; ffmpeg_has_textfilter caches, so the probe runs once.)
         get_logger(cfg)("clip", cid, "subs_skipped",
-                        reason="ffmpeg lacks the text filter — rendering without subtitles")
+                        reason="ffmpeg lacks the text filter — rendering without subtitles/hook")
         return None
     tw, th = _TARGETS[aspect.value]
-    # hook=None on the DEFAULT clip path: NO top-third template card (the amber "first N words" box
-    # reads as AI slop). The clip carries clean active captions only; the hook title card survives
-    # solely for the opt-in per-account variation pass (crosspost.burn_hook_only).
-    ass_text = overlay.build_ass(transcript, hook=None, clip_start=clip_start, clip_end=clip_end,
+    ass_text = overlay.build_ass(segments, hook=hook, clip_start=clip_start, clip_end=clip_end,
                                  width=tw, height=th, font=cfg.subtitle_font)
     if not ass_text or not ass_text.strip():
         return None

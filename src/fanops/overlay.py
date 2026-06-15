@@ -22,16 +22,12 @@ from pathlib import Path
 # Sentence/clause boundary for the deterministic hook: split on . ! ? or a newline.
 _CLAUSE_SPLIT = re.compile(r"[.!?\n]")
 
-# ASS colours are &HAABBGGRR (alpha+BGR, hex). White text, black outline/shadow for legibility on
-# any footage; the hook gets a punchy amber (&H0000C8FF == RGB FFC800) to pop against the subtitle.
+# ASS colours are &HAABBGGRR (alpha+BGR, hex). White text + heavy black outline reads on ANY footage
+# without a coloured box — the old amber-on-scrim hook card looked like a template (AI slop), so the
+# hook now uses the same clean white-bold-outline treatment as the captions, just bigger and on top.
 _WHITE = "&H00FFFFFF"
 _BLACK = "&H00000000"
-_HOOK_COLOR = "&H0000C8FF"
-# Hook title-card box: ASS BorderStyle=3 draws an OPAQUE BOX behind the hook in the OutlineColour,
-# so the opener reads on ANY footage (a thin outline vanishes over busy frames). Semi-transparent
-# black (&H59 alpha ~= 65% opaque; 00=opaque, FF=clear) — a scrim, not a heavy solid slab.
-_HOOK_BOX = "&H59000000"
-# Fade the opener in/out (milliseconds) so the first-~2s card pops instead of hard-cutting.
+# Fade the opener in/out (milliseconds) so the first-~2s hook pops instead of hard-cutting.
 _HOOK_FADE_MS = 200
 
 # Active captions (the "produced" short-form look — CapCut/Submagic style): show a FEW words at a
@@ -158,11 +154,10 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
     (source time). `segments` is the SOURCE-time transcript: list[{start,end,text[,words]}]. Each
     segment is rebased to clip time, dropped if it does not overlap, and rendered as ACTIVE CAPTIONS
     (a few words at a time, synced to speech — see caption_events), NOT one bulk line. If `hook` is a
-    non-empty string, one HOOK-style title card spans the clip's first min(2.5, clip_len) seconds —
-    retained for the opt-in per-account variation pass (burn_hook_only); the default clip path passes
-    hook=None so a clip carries clean active captions and no template card."""
+    non-empty string, one clean top-third HOOK line (the retention opener) spans the clip's first
+    min(2.5, clip_len) seconds. The default clip path passes the moment's retention hook; the
+    transcript captions are layered in only when the caller opts in (clip._subtitles_vf / burn_subs)."""
     clip_len = max(0.0, clip_end - clip_start)
-    margin_v = max(10, int(round(height * 0.12)))      # generous bottom margin -> bottom third
 
     lines: list[str] = []
     # --- [Script Info] : PlayRes drives libass coordinate scaling; must match the render size ---
@@ -179,7 +174,8 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
     # Format columns are the standard libass V4+ set; field order is load-bearing.
     cap_fontsize = max(48, int(round(height * 0.075)))   # BIG active caption, ~144 at 1920 tall
     cap_margin_v = max(10, int(round(height * 0.16)))    # sit it in the lower third, raised off the edge
-    hook_fontsize = max(28, int(round(height * 0.060)))  # ~115 at 1920 tall
+    hook_fontsize = max(44, int(round(height * 0.072)))  # BIG opener, ~138 at 1920 tall
+    hook_margin_v = max(10, int(round(height * 0.14)))   # sit it in the top third, off the edge
     lines += [
         "[V4+ Styles]",
         ("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
@@ -189,10 +185,10 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
         # Alignment=2 (bottom-centre), lower-third margin. Outline=4 thick, Shadow=2.
         (f"Style: CAPTION,{font},{cap_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
          f"-1,0,0,0,100,100,0,0,1,4,2,2,80,80,{cap_margin_v},1"),
-        # HOOK: amber text on a semi-transparent BOX (BorderStyle=3, box=OutlineColour=_HOOK_BOX),
-        # BOLD, Alignment=8 (top-centre), top-third margin, LARGER. Outline=6 = box padding; Shadow=0.
-        (f"Style: HOOK,{font},{hook_fontsize},{_HOOK_COLOR},{_HOOK_COLOR},{_HOOK_BOX},{_BLACK},"
-         f"-1,0,0,0,100,100,0,0,3,6,0,8,60,60,{margin_v},1"),
+        # HOOK: same clean BIG white BOLD + thick black outline as the caption (NO amber, NO box —
+        # that read as a template), Alignment=8 (top-centre), top-third margin. Outline=4, Shadow=2.
+        (f"Style: HOOK,{font},{hook_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
+         f"-1,0,0,0,100,100,0,0,1,4,2,8,60,60,{hook_margin_v},1"),
         "",
     ]
     # --- [Events] : the optional hook card first, then the active-caption groups ---
@@ -213,6 +209,8 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
             events.append(
                 f"Dialogue: 0,{_fmt_ts(ev_start)},{_fmt_ts(ev_end)},CAPTION,,0,0,0,,{cap_fade}{_escape_text(text)}"
             )
+    if not events:
+        return ""                          # nothing to burn — caller treats "" as a no-op (no .ass, no filter)
     lines += events
     return "\n".join(lines) + "\n"
 

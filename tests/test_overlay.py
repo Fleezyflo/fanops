@@ -66,13 +66,15 @@ def _hook_style_fields(ass: str) -> list[str]:
     line = [ln for ln in ass.splitlines() if ln.startswith("Style: HOOK,")][0]
     return line.split(",")
 
-def test_build_ass_hook_is_boxed_title_card():
-    # The produced look: the hook sits on a readable box (BorderStyle 3 = opaque box), not a thin
-    # outline that vanishes over busy footage. The box is a semi-transparent scrim, not solid black.
+def test_build_ass_hook_is_clean_outline_not_boxed():
+    # The hook is the same CLEAN look as the captions — big WHITE bold text with a thick black
+    # OUTLINE (BorderStyle 1), NOT an amber-on-box template card (that read as AI slop). Top-centred.
     a = build_ass([], hook="WATCH THIS", clip_start=0.0, clip_end=6.0)
     f = _hook_style_fields(a)
-    assert f[15] == "3"                              # BorderStyle field == opaque box
-    assert f[5].startswith("&H") and f[5] != "&H00000000"   # OutlineColour (the box) is a scrim, not opaque black
+    assert f[15] == "1"                              # BorderStyle 1 = outline+shadow, NOT a box (3)
+    assert f[3] == "&H00FFFFFF"                      # PrimaryColour white (no amber)
+    assert f[5] == "&H00000000"                      # OutlineColour solid black (no scrim box)
+    assert f[18] == "8"                              # Alignment 8 = top-centre
 
 def test_build_ass_hook_fades_in_and_out():
     # An opener should pop in/out, not hard-cut — a produced touch on the first ~2s card.
@@ -136,6 +138,15 @@ def test_build_ass_even_splits_without_word_timestamps():
     assert len(cap) == 2
     assert "0:00:00.00" in cap[0] and "0:00:02.00" in cap[0]
     assert "0:00:02.00" in cap[1] and "0:00:04.00" in cap[1]
+
+
+def test_build_ass_returns_empty_when_nothing_to_burn():
+    # No segments and no/blank hook -> "" (nothing to burn). The caller treats "" as a no-op so it
+    # never writes a stale event-less .ass or runs ffmpeg's subtitles filter for nothing.
+    assert build_ass([], hook=None, clip_start=0.0, clip_end=5.0) == ""
+    assert build_ass([], hook="   ", clip_start=0.0, clip_end=5.0) == ""
+    # a real hook still produces a file
+    assert build_ass([], hook="wait for it", clip_start=0.0, clip_end=5.0) != ""
 
 
 def test_build_ass_escapes_and_handles_arabic():
