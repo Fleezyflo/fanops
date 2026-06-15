@@ -8,6 +8,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
 from fanops.ids import child_id
+from fanops.bands import band_for, TALK
 from fanops import overlay
 from fanops.log import get_logger
 
@@ -20,12 +21,41 @@ _TARGETS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 # every other pass and Studio write. 10min covers a multi-minute 1080p re-encode with headroom.
 _FFMPEG_TIMEOUT = 600.0
 
-# A real clip is watchable, not a 3-4s fragment. The model is asked for 12-22s windows
+# A real clip is watchable, not a 3-4s fragment. The model is asked for in-band windows
 # (prompts.moment_prompt); this is the render-time SAFETY NET that guarantees it even when a pick
-# comes back short (or long). The 12s floor lets short sources (and the model's tighter picks)
-# qualify; sources below the floor render whole. The subtitle overlay uses the SAME fitted window.
-_MIN_CLIP_S = 12.0
-_MAX_CLIP_S = 22.0
+# comes back short (or long). The default band is TALK (12-22s); render_moment passes the per-source
+# band (band_for(cfg.clip_profile)) so a song gets the wider 18-35s band. Sources below the floor
+# render whole. The subtitle overlay uses the SAME fitted window. Band lives in fanops.bands (one home).
+_MIN_CLIP_S, _MAX_CLIP_S = TALK.lo, TALK.hi
+
+# How far (seconds) snap_window may move a cut edge to land on a transcript-line boundary. A small
+# nudge: it polishes mid-word starts / mid-phrase ends without overriding the band (fit_window's job).
+_SNAP_MAX_SHIFT_S = 1.5
+
+def _nearest(value: float, candidates: list[float], max_shift: float) -> float | None:
+    in_range = [c for c in candidates if abs(c - value) <= max_shift]
+    return min(in_range, key=lambda c: abs(c - value)) if in_range else None
+
+def snap_window(start: float, end: float, transcript: list[dict] | None,
+                *, duration: float = 0.0, max_shift: float = _SNAP_MAX_SHIFT_S) -> tuple[float, float]:
+    """Nudge [start,end] onto nearby transcript-line boundaries so a clip never begins mid-word or
+    ends mid-phrase: start -> nearest line `start`, end -> nearest line `end`, each only if within
+    `max_shift` seconds (else that edge is left as-is). Returns the window UNCHANGED when there is no
+    transcript, or when snapping would invert/empty it (snapped start >= snapped end). Pure; applied
+    AFTER fit_window so the band is enforced first, then the edges land on clean cuts. Lines missing
+    a numeric start/end are skipped (semi-trusted whisper output). Re-applies fit_window's bounds
+    invariants the snap could break — a whisper line `start` can be slightly negative and a line `end`
+    can overshoot the real EOF — so the snapped start is floored at 0 and the end is clamped to
+    `duration` when probed (duration<=0 means unprobed -> no EOF clamp)."""
+    if not transcript:
+        return start, end
+    starts = [ln["start"] for ln in transcript if isinstance(ln.get("start"), (int, float))]
+    ends = [ln["end"] for ln in transcript if isinstance(ln.get("end"), (int, float))]
+    ns = _nearest(start, starts, max_shift); ne = _nearest(end, ends, max_shift)
+    s = max(0.0, ns if ns is not None else start)
+    e = ne if ne is not None else end
+    if duration and e > duration: e = duration
+    return (s, e) if s < e else (start, end)
 
 def fit_window(start: float, end: float, duration: float,
                *, lo: float = _MIN_CLIP_S, hi: float = _MAX_CLIP_S) -> tuple[float, float]:
@@ -113,7 +143,9 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     cid = child_id("clip", moment_id, aspect.value)      # content-addressed by aspect
     cfg.clips.mkdir(parents=True, exist_ok=True)
     dst = cfg.clips / f"{cid}.mp4"
-    cs, ce = fit_window(m.start, m.end, src.duration or 0.0)   # widen a short pick to a real 12-22s clip
+    band = band_for(cfg.clip_profile)                          # talk 12-22s / song 18-35s
+    cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
+    cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
     extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf)

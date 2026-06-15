@@ -3,7 +3,7 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt
-from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for, fit_window
+from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for, fit_window, snap_window
 from fanops import overlay
 
 
@@ -303,3 +303,76 @@ def test_render_moment_widens_short_pick_to_real_clip(tmp_path, mocker):
 def test_render_moment_keeps_in_band_window(tmp_path, mocker):
     ss, dur = _capture_render(tmp_path, mocker, 10.0, 28.0, duration=120.0)  # 18s pick already
     assert ss == 10.0 and dur == 18.0                                        # left exactly as picked
+
+# --- boundary snapping: a clip should never begin mid-word or end mid-phrase -------------------
+# snap_window nudges each edge (<= max_shift) onto a nearby transcript-line boundary; render_moment
+# applies it AFTER fit_window so the band is enforced first, then the edges land on clean cuts.
+
+def test_snap_window_pulls_start_to_line_start():
+    tr = [{"start": 9.4, "end": 12.0, "text": "a"}, {"start": 12.0, "end": 16.0, "text": "b"}]
+    assert snap_window(10.0, 16.0, tr) == (9.4, 16.0)      # mid-line start 10.0 -> line start 9.4
+
+def test_snap_window_extends_end_to_line_end():
+    tr = [{"start": 0.0, "end": 4.0, "text": "a"}, {"start": 4.0, "end": 17.2, "text": "b"}]
+    assert snap_window(0.0, 16.5, tr) == (0.0, 17.2)       # mid-phrase end 16.5 -> phrase end 17.2
+
+def test_snap_window_leaves_edges_with_no_near_boundary():
+    tr = [{"start": 0.0, "end": 5.0, "text": "a"}]
+    assert snap_window(20.0, 35.0, tr) == (20.0, 35.0)     # nearest boundary > max_shift -> unchanged
+
+def test_snap_window_no_transcript_is_identity():
+    assert snap_window(10.0, 22.0, None) == (10.0, 22.0)
+    assert snap_window(10.0, 22.0, []) == (10.0, 22.0)
+
+def test_snap_window_ignores_malformed_lines():
+    tr = [{"text": "no times"}, {"start": 9.5, "end": 20.0, "text": "ok"}]
+    assert snap_window(10.0, 20.4, tr) == (9.5, 20.0)      # lines missing start/end are skipped
+
+def test_snap_window_never_inverts():
+    # snapping the start forward and the end backward could cross them — must keep the original window
+    tr = [{"start": 13.0, "end": 99.0, "text": "late"}, {"start": 0.0, "end": 12.5, "text": "early"}]
+    assert snap_window(12.9, 13.1, tr) == (12.9, 13.1)
+
+def test_snap_window_clamps_end_to_duration():
+    # a whisper line end can overshoot the real file end; the snapped end must not exceed duration
+    # (restores fit_window's EOF clamp, which snap runs after and would otherwise undo).
+    tr = [{"start": 0.0, "end": 23.4, "text": "x"}]
+    assert snap_window(0.0, 22.0, tr, duration=22.0) == (0.0, 22.0)   # 23.4 within max_shift but EOF-clamped
+
+def test_snap_window_clamps_negative_start_to_zero():
+    # a whisper first-segment start can be slightly negative; the snapped start must stay >= 0
+    tr = [{"start": -0.8, "end": 20.0, "text": "x"}]
+    assert snap_window(0.3, 20.0, tr, duration=60.0) == (0.0, 20.0)
+
+def _capture_render_full(tmp_path, mocker, monkeypatch, *, start, end, duration, transcript=None, profile=None):
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")            # isolate: no subtitle pass in these cuts
+    if profile: monkeypatch.setenv("FANOPS_CLIP_PROFILE", profile)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=duration, transcript=transcript))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=start, end=end, reason="r", state=MomentState.decided))
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    cmd = captured["cmd"]
+    return float(cmd[cmd.index("-ss") + 1]), float(cmd[cmd.index("-to") + 1])
+
+def test_render_moment_snaps_cut_to_transcript_boundaries(tmp_path, mocker, monkeypatch):
+    tr = [{"start": 9.3, "end": 12.0, "text": "a"}, {"start": 25.0, "end": 28.4, "text": "b"}]
+    ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=28.0,
+                                  duration=120.0, transcript=tr)   # 18s in-band pick
+    assert ss == 9.3                                       # start snapped to the line boundary
+    assert round(ss + to, 1) == 28.4                       # end snapped to the phrase end
+
+def test_render_moment_song_profile_uses_wider_band(tmp_path, mocker, monkeypatch):
+    # a 14s pick on a song source grows to the 18s SONG floor (talk would keep it at 14)
+    ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=24.0,
+                                  duration=120.0, profile="song")
+    assert to == 18.0 and 18.0 <= to <= 35.0

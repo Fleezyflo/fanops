@@ -36,6 +36,14 @@ def test_poster_backend_trims_whitespace(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_POSTER", "  postiz\n")    # a .env value can carry surrounding ws
     assert Config(root=tmp_path).poster_backend == "postiz"
 
+def test_clip_profile_defaults_talk(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_CLIP_PROFILE", raising=False)
+    assert Config(root=tmp_path).clip_profile == "talk"     # unset -> talk band, today's behavior
+
+def test_clip_profile_env_trimmed(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_CLIP_PROFILE", "  song\n")   # a .env value can carry surrounding ws
+    assert Config(root=tmp_path).clip_profile == "song"
+
 def test_responder_defaults_manual(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     c = Config(root=tmp_path)

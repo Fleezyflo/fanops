@@ -6,41 +6,45 @@ request payload (MomentRequest/CaptionRequest, already carrying context.md brand
 --json-schema, so these prompts describe INTENT + CONSTRAINTS; the schema enforces SHAPE."""
 from __future__ import annotations
 import json
+from fanops.bands import Band, TALK, band_for
 
-# Clip-length band (mirrors clip._MIN_CLIP_S/_MAX_CLIP_S). A source below the floor becomes one
-# whole-source clip; the band midpoint sets how many clips a long source should yield.
-_SHORT_SOURCE_S = 12.0
-_BAND_SPAN_S = 17.0     # (12+22)/2 = midpoint of the 12-22 band: aim for one clip per ~17s of source
+# Clip-length band lives in fanops.bands (ONE home shared with clip.fit_window). A source below the
+# band floor becomes one whole-source clip; the band midpoint sets how many clips a long source
+# should yield. The per-source profile rides in the request payload as `clip_profile`.
 _MAX_TARGET_PICKS = 6
 
-def _target_pick_count(duration: float) -> int:
-    """How many non-overlapping clips to AIM for, by source length. <=0 (unprobed) -> 0 (no target,
-    let the model decide); a short source -> 1 (one whole-source clip); else ~one per band-span,
-    floored at 1 (NO dead band) and capped so a long source can't request an unbounded list."""
+def _target_pick_count(duration: float, band: Band = TALK) -> int:
+    """How many non-overlapping clips to AIM for, by source length and content BAND. <=0 (unprobed)
+    -> 0 (no target, let the model decide); a source below the band floor -> 1 (one whole-source
+    clip); else ~one per band-span, floored at 1 (NO dead band) and capped so a long source can't
+    request an unbounded list. A song's wider span yields fewer, longer clips than talk."""
     if duration <= 0: return 0
-    if duration < _SHORT_SOURCE_S: return 1
-    return max(1, min(_MAX_TARGET_PICKS, round(duration / _BAND_SPAN_S)))
+    if duration < band.lo: return 1
+    return max(1, min(_MAX_TARGET_PICKS, round(duration / band.span)))
 
 def moment_prompt(payload: dict) -> str:
     duration = payload.get("duration", 0.0)
-    target = _target_pick_count(duration)
+    band = band_for(payload.get("clip_profile"))
+    lo, hi = int(band.lo), int(band.hi)
+    target = _target_pick_count(duration, band)
     aim = (f"  - AIM FOR about {target} non-overlapping clip(s) for this ~{duration:.0f}s source. "
            "Spread them across the timeline; picks MUST NOT overlap each other. Return fewer ONLY if "
            "the material genuinely lacks that many distinct moments.\n") if target else ""
-    short = (f"  - SHORT SOURCE: this source is under {_SHORT_SOURCE_S:.0f}s, so return EXACTLY ONE "
+    short = (f"  - SHORT SOURCE: this source is under {band.lo:.0f}s, so return EXACTLY ONE "
              "pick covering the whole source (start=0, end=SOURCE DURATION). NEVER return an empty "
              "list for a short source — a short clip is still worth posting.\n"
-             ) if 0 < duration < _SHORT_SOURCE_S else ""
+             ) if 0 < duration < band.lo else ""
     return (
         "You are the editorial brain of an autonomous fan-account engine for a bilingual (EN/AR) "
         "rapper. From the transcript and signal peaks below, choose the MOMENTS most worth cutting "
-        "into 12-22 second vertical clips. Return picks as JSON matching the provided schema.\n\n"
+        f"into {lo}-{hi} second vertical clips. Return picks as JSON matching the provided schema.\n\n"
         f"SOURCE DURATION (seconds): {duration}\n"
         "HARD RULES for every pick:\n"
         f"  - 0 <= start < end <= {duration} (timestamps MUST be real, finite seconds, in-bounds; "
         "never NaN/Infinity).\n"
-        "  - TARGET 12-22 seconds per clip: set start/end so (end - start) is about 12-22 seconds. "
-        "Widen around the key line to include its lead-in and payoff; NEVER a 2-6 second fragment.\n"
+        f"  - TARGET {lo}-{hi} seconds per clip: set start/end so (end - start) is about {lo}-{hi} "
+        "seconds. Widen around the key line to include its lead-in and payoff; NEVER a 2-6 second "
+        "fragment.\n"
         f"{short}"
         f"{aim}"
         "  - `reason` is REQUIRED: one sentence on WHY this moment hits (punchline, beat drop, "

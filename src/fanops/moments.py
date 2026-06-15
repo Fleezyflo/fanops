@@ -60,7 +60,8 @@ def request_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                             transcript=src.transcript or [],
                             signal_peaks=src.signal_peaks or [],
                             language=src.language,
-                            guidance=_guidance(cfg)).model_dump()
+                            guidance=_guidance(cfg),
+                            clip_profile=cfg.clip_profile).model_dump()   # band reaches the model's picks
     payload.pop("request_id", None)
     write_request(cfg, kind="moments", key=source_id, payload=payload)
     led.set_source_state(source_id, SourceState.moments_requested)

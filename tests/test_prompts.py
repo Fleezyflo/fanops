@@ -57,6 +57,26 @@ def test_moment_prompt_forbids_em_dash_in_reason():
                        "language": "en", "guidance": ""})
     assert "em-dash" in p.lower() or "em dash" in p.lower()   # belt-and-suspenders for the sanitizer
 
+def test_target_pick_count_song_band_fewer_longer_picks():
+    # A song's hook/verse (SONG span 26.5s) is a longer unit than talk (17s), so the same source
+    # yields FEWER, longer clips. The floor/cap/unprobed rules hold regardless of band.
+    from fanops.prompts import _target_pick_count
+    from fanops.bands import SONG
+    assert _target_pick_count(90.0, SONG) == 3       # vs 5 for the talk band
+    assert _target_pick_count(15.0, SONG) == 1       # under the 18s song floor -> one whole pick
+    assert _target_pick_count(0.0, SONG) == 0        # unprobed -> no target regardless of band
+
+def test_moment_prompt_song_profile_targets_18_to_35():
+    p = moment_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": "", "clip_profile": "song"})
+    assert "18-35 second" in p                       # the song band, stated explicitly
+    assert "12-22" not in p                           # the talk band is gone for a song
+
+def test_moment_prompt_unknown_profile_falls_back_to_talk_band():
+    p = moment_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": "", "clip_profile": "bogus"})
+    assert "12-22 second" in p                        # unknown profile -> talk band (today's behavior)
+
 def test_caption_prompt_is_fan_third_person_voice():
     # Fan accounts repost/celebrate the artist — captions must NOT read first-person as the artist.
     p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",

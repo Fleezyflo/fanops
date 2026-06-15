@@ -60,7 +60,8 @@ def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
             guidance += f" {extra_guidance}"
         payload = MomentRequest(source_id=src.id, request_id="", duration=src.duration or 0.0,
                                 transcript=src.transcript or [], signal_peaks=src.signal_peaks or [],
-                                language=src.language, guidance=guidance).model_dump()
+                                language=src.language, guidance=guidance,
+                                clip_profile=cfg.clip_profile).model_dump()
         payload.pop("request_id", None)
         write_request(cfg, kind="moments", key=src.id, payload=payload)   # invalidates stale resp
         src.meta["amplify_count"] = used + 1              # E1: count only successful amplifies

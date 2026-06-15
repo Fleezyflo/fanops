@@ -144,6 +144,15 @@ class Config:
         return v.strip() if v and v.strip() else "Moh Flow"
 
     @property
+    def clip_profile(self) -> str:
+        # Content-type profile selecting the clip-length BAND (bands.band_for): "song" widens clips to
+        # a full hook/verse (18-35s) and asks the model for fewer, longer picks; "talk" keeps the tight
+        # 12-22s default. DEFAULT "talk" -> today's behavior unchanged. Set FANOPS_CLIP_PROFILE=song for
+        # a music account. An unknown value resolves to the talk band in band_for (validate-or-default).
+        v = os.getenv("FANOPS_CLIP_PROFILE")
+        return v.strip() if v and v.strip() else "talk"
+
+    @property
     def whisper_model(self) -> str:
         # Operator override for the local Whisper model. Default "turbo" (fast, good
         # timestamps). Pin a smaller model (e.g. "tiny"/"base") for offline / air-gapped /

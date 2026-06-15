@@ -78,6 +78,15 @@ def test_request_moments_writes_request_with_transcript_signals_language(tmp_pat
     assert "request_id" in payload
     assert led.sources["src_1"].state is SourceState.moments_requested
 
+def test_request_moments_carries_clip_profile(tmp_path, monkeypatch):
+    # The content-type profile (talk/song) must travel IN the request payload so the model is ASKED
+    # for band-appropriate picks — moment_prompt reads payload["clip_profile"], it has no cfg.
+    monkeypatch.setenv("FANOPS_CLIP_PROFILE", "song")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    assert payload["clip_profile"] == "song"
+
 def test_validate_pick_rejects_bad_bounds():
     assert validate_pick(MomentPick(start=5, end=3, reason="r"), duration=20.0) is not None  # end<start
     assert validate_pick(MomentPick(start=-1, end=3, reason="r"), duration=20.0) is not None # start<0
