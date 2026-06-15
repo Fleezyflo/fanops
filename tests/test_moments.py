@@ -174,6 +174,21 @@ def test_moment_prefers_llm_retention_hook_over_transcript(tmp_path):
     assert moms[0].hook == "wait for the beat switch"       # the LLM retention hook, not...
     assert moms[0].hook != derive_hook(excerpt)             # ...the transcript first-clause
 
+def test_ingest_rejects_weak_hook_to_clean_clip(tmp_path):
+    # The deterministic guard (hookcheck.is_weak_hook): a generic-superlative hook the model emitted
+    # ('his hardest bar') is rejected to a CLEAN clip (hook=None), never burned on screen. A concrete
+    # hook in the same shape is kept untouched.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moments", "src_1")
+    response_path(cfg, "moments", "src_1").write_text(MomentDecision(
+        source_id="src_1", request_id=rid,
+        picks=[MomentPick(start=14.0, end=18.5, reason="punchline", transcript_excerpt="x",
+                          signal_score=0.6, hook="his hardest bar")]
+    ).model_dump_json())
+    led = ingest_moments(led, cfg, "src_1")
+    assert led.moments_of("src_1")[0].hook is None          # weak slop -> clean clip, not burned
+
 def test_ingest_all_invalid_marks_source_error(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
