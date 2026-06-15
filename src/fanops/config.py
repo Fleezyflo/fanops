@@ -161,6 +161,17 @@ class Config:
         return v.strip() if v and v.strip() else "turbo"
 
     @property
+    def isolate_vocals(self) -> bool:
+        # Strip the beat with Demucs BEFORE Whisper (vocals.isolate_vocals) — the single biggest
+        # transcription-accuracy lever for music/rap: the instrumental is what wrecks the lyrics, and
+        # removing it turned near-gibberish Arabic into coherent lines + fixed clear English errors on
+        # real clips. DEFAULT ON; only the explicit off-words "0"/"false"/"no"/"off" disable it.
+        # Safe to default ON: if demucs/the [asr] extra isn't installed, isolation FAILS OPEN to the
+        # raw audio (today's behavior), so this never breaks a host without Demucs.
+        v = os.getenv("FANOPS_ISOLATE_VOCALS")
+        return (v or "").strip().lower() not in {"0", "false", "no", "off"}
+
+    @property
     def burn_subs(self) -> bool:
         # Opt-in toggle for burning the TRANSCRIPT as captions (clip._subtitles_vf). DEFAULT OFF:
         # captioning what the audio already says is redundant AND only as good as the unreliable

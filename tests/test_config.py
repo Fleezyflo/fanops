@@ -87,6 +87,19 @@ def test_burn_subs_defaults_off_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "on")
     assert Config(root=tmp_path).burn_subs is True
 
+def test_isolate_vocals_defaults_on_and_respects_env(monkeypatch, tmp_path):
+    # DEFAULT ON: stripping the beat (Demucs) before Whisper is the music-transcription fix; it
+    # fails open to raw audio when demucs is absent, so ON is safe. Only off-words disable it.
+    # (conftest forces it OFF for hermeticity, so delenv to read the true default.)
+    monkeypatch.delenv("FANOPS_ISOLATE_VOCALS", raising=False)
+    assert Config(root=tmp_path).isolate_vocals is True
+    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")
+    assert Config(root=tmp_path).isolate_vocals is False
+    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "off")
+    assert Config(root=tmp_path).isolate_vocals is False
+    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
+    assert Config(root=tmp_path).isolate_vocals is True
+
 def test_subtitle_font_default_and_override(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_SUBTITLE_FONT", raising=False)
     assert Config(root=tmp_path).subtitle_font == "Arial Unicode MS"

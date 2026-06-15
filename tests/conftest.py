@@ -26,6 +26,11 @@ def _hermetic_publish_env():
     saved = {k: os.environ.get(k) for k in _LEAKY_ENV}
     for k in _LEAKY_ENV:
         os.environ.pop(k, None)
+    # Force vocal isolation OFF for the unit suite: it DEFAULTS ON (the music transcription fix), but
+    # transcribe_source would then shell real `demucs` on fixture audio — slow + non-hermetic. Tests
+    # that exercise the isolation wiring opt back in explicitly (and monkeypatch isolate_vocals).
+    iso_saved = os.environ.get("FANOPS_ISOLATE_VOCALS")
+    os.environ["FANOPS_ISOLATE_VOCALS"] = "0"
     try:
         yield
     finally:
@@ -34,3 +39,7 @@ def _hermetic_publish_env():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        if iso_saved is None:
+            os.environ.pop("FANOPS_ISOLATE_VOCALS", None)
+        else:
+            os.environ["FANOPS_ISOLATE_VOCALS"] = iso_saved
