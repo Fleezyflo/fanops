@@ -100,7 +100,9 @@ def cutover_post(cfg: Config, account_id: str, *, confirmed: bool, post=None) ->
                   json=payload, timeout=30)
     _raise_for_auth(resp)
     if resp.status_code not in (200, 201):
-        raise CutoverError(f"blotato post {resp.status_code}: {resp.text[:200]}")
+        # Body WITHHELD (no-echo posture — matches cutover_postiz + the metrics/blotato_rest
+        # redactions): a failure body could echo the key/PII into stdout/cutover.json.
+        raise CutoverError(f"blotato post {resp.status_code}: response body withheld")
     body = resp.json()
     sub = _extract_submission_id(body)
     _save_state(cfg, {"submission_id": sub, "account_id": account_id,

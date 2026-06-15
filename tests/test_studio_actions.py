@@ -155,3 +155,16 @@ def test_actions_use_single_transaction(tmp_path, mocker):
     spy = mocker.spy(Ledger, "transaction")
     reschedule_post(cfg, "p_edit", _z(NOW + timedelta(hours=8)), now=NOW)
     assert spy.call_count == 1   # exactly one lock acquisition per mutation (no lock-free load+save)
+
+
+# ---- FIX 2: publish_now must not let a NON-auth exception from publish_post escape as a Flask 500 ----
+def test_publish_now_non_auth_error_yields_ok_false_not_raise(tmp_path, monkeypatch, mocker):
+    from fanops.studio.actions import publish_now
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)        # dryrun (no live confirm needed)
+    cfg = Config(root=tmp_path); _seed(cfg)
+    # publish_post raises a NON-auth error (e.g. media upload RuntimeError / corrupt clip.path)
+    mocker.patch("fanops.post.run.publish_post", side_effect=RuntimeError("media upload boom"))
+    res = publish_now(cfg, "p_edit")
+    assert res.ok is False                                    # surfaced cleanly, not a raise (500)
+    assert "publish failed" in (res.error or "")
+    assert "boom" in (res.error or "")

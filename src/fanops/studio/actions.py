@@ -394,6 +394,10 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
         # bad/missing key fails every post — publish_post re-raises (halt); name the right key per backend.
         key = "POSTIZ_API_KEY" if cfg.poster_backend == "postiz" else "BLOTATO_API_KEY"
         return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
+    except Exception as exc:
+        # A non-auth failure (media upload RuntimeError, corrupt clip.path, etc.) must NOT escape to
+        # Flask as a 500 — the cockpit surfaces it cleanly (mirrors run_advance's broad catch).
+        return ActionResult(ok=False, error=f"publish failed: {str(exc)[:160]}")
     # ONLY 'published' is success: _submit_one advances submitted -> published on a clean poster
     # return, so any other terminal state (failed, or a poster that stalled at submitting/submitted)
     # means the post did NOT fully ship — report it incomplete rather than a false success.

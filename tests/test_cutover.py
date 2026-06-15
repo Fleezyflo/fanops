@@ -212,3 +212,16 @@ def test_postiz_metrics_missing_row_says_postiz_not_blotato(tmp_path, monkeypatc
     with pytest.raises(CutoverError, match="no metrics row") as ei:
         cutover.cutover_metrics(Config(root=tmp_path), "pzX", list_posts=lambda w: [])
     assert "Postiz" in str(ei.value) and "Blotato" not in str(ei.value)
+
+
+def test_post_non_2xx_withholds_response_body(tmp_path, monkeypatch):
+    # FIX 8: the only non-auth poster path that embedded the raw response body was
+    # `raise CutoverError(f"blotato post {code}: {resp.text[:200]}")` — inconsistent with the
+    # no-echo posture everywhere else (cutover_postiz withholds it). The body must NOT leak.
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    def fake_post(url, **kw): return _R(500, {"e": "BODY_SENTINEL"}, text="BODY_SENTINEL details")
+    with pytest.raises(CutoverError) as ei:
+        cutover.cutover_post(Config(root=tmp_path), "acct", confirmed=True, post=fake_post)
+    msg = str(ei.value)
+    assert "BODY_SENTINEL" not in msg                         # raw body withheld
+    assert "500" in msg and "withheld" in msg.lower()         # status kept, body explicitly withheld

@@ -432,3 +432,13 @@ def test_apply_amplify_postiz_amplifies_once_metrics_confirmed(tmp_path, monkeyp
     _validate(cfg)                                       # simulate M3: metrics_confirmed=True
     apply_variant_amplify(led, cfg)
     assert led.sources["s1"].state is SourceState.moments_requested   # amplified once validated, even on postiz
+
+
+def test_update_streaks_returns_none_mutates_in_place(tmp_path):
+    # FIX 5: update_streaks is annotated `-> None` but `return led` (dead — the caller ignores it).
+    # Behavior must be unchanged (in-place mutation of led.variant_streaks); the function returns None.
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    out = update_streaks(led, cfg)
+    assert out is None                                         # annotation honored, no dead return
+    assert led.variant_streaks["@a|instagram"]["hook"] == "WIN"   # mutation still propagates in place

@@ -15,6 +15,7 @@ from fanops.config import Config
 from fanops.errors import BlotatoAuthError, PostizAuthError
 from fanops.post.blotato_base import BASE_URL
 from fanops.post.postiz import _base, _key
+from fanops.log import get_logger
 
 # A 401 on a metrics/status read is the SAME fatal auth condition as a 401 on publish — raise the
 # TYPED error so reconcile's halt-on-auth guard fires (else a bad key grinds every parked post) and
@@ -133,6 +134,14 @@ class PostizMetricsClient:
         if not self.submission_ids: return []
         date = _window_days(window); rows = []
         for sid in self.submission_ids:
-            metrics, labels = self._fetch_one(sid, date)
+            try:
+                metrics, labels = self._fetch_one(sid, date)
+            except PostizAuthError:
+                raise                                       # a 401 is FATAL for every post — never swallow
+            except Exception as e:
+                # Per-post isolation: a single post's 5xx/transport failure must NOT abort the whole
+                # pass and lose every OTHER post's metrics. Log + skip THIS id (empty row), keep going.
+                get_logger(self.cfg)("postiz_metrics", str(sid), "fetch_failed", err=str(e)[:120])
+                metrics, labels = {}, []
             rows.append({"postSubmissionId": sid, "metrics": metrics, "_raw_labels": labels})
         return rows
