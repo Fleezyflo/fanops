@@ -11,6 +11,8 @@ from fanops.models import Moment, MomentRequest, MomentDecision, MomentPick, Mom
 from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response
 from fanops.overlay import derive_hook
+from fanops.text import sanitize_generated_text
+from fanops.log import get_logger
 
 def _guidance(cfg: Config) -> str:
     return cfg.context_path.read_text() if cfg.context_path.exists() else ""
@@ -22,6 +24,20 @@ def _token(pick: MomentPick) -> str:
 _EOF_TOLERANCE_S = 0.5
 # shorter than this can't carry a hook + payoff — reject as noise
 _MIN_MOMENT_S = 0.5
+# two picks overlapping by more than this fraction of the SHORTER window are near-duplicate clips;
+# keep the first (start-ordered), drop the later. The cross-pick guard validate_pick can't do.
+_MAX_OVERLAP_FRAC = 0.5
+
+def _drop_overlaps(picks: list[MomentPick]) -> list[MomentPick]:
+    """Keep start-ordered picks, dropping any that overlap an already-kept pick by more than
+    _MAX_OVERLAP_FRAC of the shorter window. Keeps the FIRST of an overlapping pair, so an
+    all-overlapping set still yields one pick (never empties a valid decision -> never a false error)."""
+    out: list[MomentPick] = []
+    for p in sorted(picks, key=lambda x: (x.start, x.end)):
+        if not any((min(p.end, q.end) - max(p.start, q.start)) >
+                   _MAX_OVERLAP_FRAC * min(p.end - p.start, q.end - q.start) for q in out):
+            out.append(p)
+    return out
 
 def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
     """Return a reason string if the pick is invalid, else None."""
@@ -44,7 +60,8 @@ def request_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                             transcript=src.transcript or [],
                             signal_peaks=src.signal_peaks or [],
                             language=src.language,
-                            guidance=_guidance(cfg)).model_dump()
+                            guidance=_guidance(cfg),
+                            clip_profile=cfg.clip_profile).model_dump()   # band reaches the model's picks
     payload.pop("request_id", None)
     write_request(cfg, kind="moments", key=source_id, payload=payload)
     led.set_source_state(source_id, SourceState.moments_requested)
@@ -55,28 +72,41 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     if dec is None:
         return led                                  # still pending / stale ignored
     src = led.sources[source_id]
-    keep: dict[str, Moment] = {}
     rejected = 0
     reasons: list[str] = []
+    valid: list[MomentPick] = []
     for pick in dec.picks:
         bad = validate_pick(pick, duration=src.duration or 0.0)
         if bad:
             rejected += 1; reasons.append(bad)
             continue
+        valid.append(pick)
+    keep: dict[str, Moment] = {}
+    deduped = _drop_overlaps(valid)                 # drop near-duplicate windows (keep first)
+    if len(deduped) < len(valid):                   # don't silently suppress picks — surface the count
+        get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
+    for pick in deduped:
         token = _token(pick)
         mid = child_id("moment", source_id, token)
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.decided,
                            content_token=token, start=pick.start, end=pick.end,
-                           reason=pick.reason, transcript_excerpt=pick.transcript_excerpt,
-                           hook=derive_hook(pick.transcript_excerpt),
+                           reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
+                           transcript_excerpt=pick.transcript_excerpt,
+                           hook=sanitize_generated_text(derive_hook(pick.transcript_excerpt)),
                            signal_score=pick.signal_score)
-    if not keep and dec.picks:
-        # Intentional: a wholly-invalid NEW decision quarantines the source but does NOT
-        # reconcile — prior valid moments/lineage are preserved, not cascade-deleted.
-        src.state = SourceState.error
-        # name WHY (stage-6 audit): the distinct reasons tell a garbage-timestamp model apart from
-        # a bad duration probe — a bare count couldn't.
-        src.error_reason = f"all {rejected} moment picks invalid: {'; '.join(sorted(set(reasons)))[:200]}"
+    if not keep:
+        if dec.picks:
+            # a wholly-INVALID new decision quarantines the source but does NOT reconcile — prior
+            # valid moments/lineage are preserved. name WHY (distinct reasons) for the operator.
+            src.state = SourceState.error
+            src.error_reason = f"all {rejected} moment picks invalid: {'; '.join(sorted(set(reasons)))[:200]}"
+        else:
+            # the model returned [] (nothing worth posting): VISIBLE but NON-terminal. Log loudly so
+            # 'most content wasn't generated' is never silent, but DON'T reconcile (that would
+            # cascade-delete a prior good moment set) and DON'T error (the prompt blesses empty as
+            # valid — erroring would wrongly need a manual retry-source).
+            get_logger(cfg)("source", source_id, "zero_moments", warn=True)
+            led.set_source_state(source_id, SourceState.moments_decided)
         return led
     led.reconcile_moments(source_id, keep)          # upsert + cascade-delete dropped lineages
     led.set_source_state(source_id, SourceState.moments_decided)
