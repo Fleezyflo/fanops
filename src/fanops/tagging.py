@@ -1,4 +1,4 @@
-"""Subtle, NON-SYNCHRONIZED artist tagging. A minority of posts carry a buried @mohflow
+"""Subtle, NON-SYNCHRONIZED artist tagging. A minority of posts carry a buried @mohflowmusic
 (decided deterministically), and never two accounts within min_gap_minutes (tracked on
 ledger.tag_log, keyed per (account,clip) so a re-tag can't overwrite a time the window still
 needs — AUDIT H3; writes are made durable by the ledger's atomic save). decide_tag() returns
@@ -11,7 +11,7 @@ from datetime import datetime
 from fanops.ledger import Ledger
 from fanops.timeutil import parse_iso as _parse
 
-ARTIST_HANDLE = "@mohflow"
+ARTIST_HANDLE = "@mohflowmusic"
 
 def should_tag(clip_id: str, account: str, *, rate: float = 0.25) -> bool:
     h = int(hashlib.sha1(f"{clip_id}|{account}".encode()).hexdigest()[:8], 16)
