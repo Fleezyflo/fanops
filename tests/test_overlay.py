@@ -82,13 +82,68 @@ def test_build_ass_hook_fades_in_and_out():
     assert hook_line.rstrip().endswith("WATCH THIS")  # the hook text survives after the override tag
 
 
+def _caption_dialogues(ass_text: str) -> list[str]:
+    """Active-caption Dialogue lines (the CAPTION style), excluding any HOOK card."""
+    return [ln for ln in _dialogues(ass_text) if ",CAPTION," in ln]
+
+
+def test_build_ass_active_captions_chunk_into_short_groups():
+    # The produced look: a long spoken segment becomes SEVERAL short caption events (a few words
+    # each), NOT one bulk line dumped on screen (the AI-slop tell). 7 words, <=3/group -> 3 events.
+    segs = [{"start": 0.0, "end": 6.0, "text": "they really slept on me back then"}]  # 7 words
+    cap = _caption_dialogues(build_ass(segs, clip_start=0.0, clip_end=6.0, max_words=3))
+    assert len(cap) == 3                                  # 7 words / 3 -> 3 groups, 3 events
+    # every caption event carries at most max_words words (after the {\fad(..)} override prefix)
+    for ln in cap:
+        text = ln.split(",,", 1)[1].split("}", 1)[-1]     # drop the leading {\fad(..)} tag
+        assert 1 <= len(text.split()) <= 3
+    assert ",CAPTION," in cap[0] and "\\fad(" in cap[0]   # styled CAPTION + snappy pop-in
+
+
+def test_build_ass_uses_word_timestamps_when_present():
+    # When whisper word timestamps ride on the segment, each group is timed to its OWN words
+    # (first-word-start .. last-word-end), not an even split of the segment.
+    seg = {"start": 0.0, "end": 4.0, "text": "alpha beta gamma delta",
+           "words": [{"word": "alpha", "start": 0.0, "end": 0.4},
+                     {"word": " beta", "start": 0.4, "end": 0.8},
+                     {"word": " gamma", "start": 2.0, "end": 2.5},
+                     {"word": " delta", "start": 2.5, "end": 3.0}]}
+    cap = _caption_dialogues(build_ass([seg], clip_start=0.0, clip_end=4.0, max_words=2))
+    assert len(cap) == 2
+    # group 1 = "alpha beta" over [0.00, 0.80]; group 2 = "gamma delta" over [2.00, 3.00]
+    assert "0:00:00.00" in cap[0] and "0:00:00.80" in cap[0] and "alpha beta" in cap[0]
+    assert "0:00:02.00" in cap[1] and "0:00:03.00" in cap[1] and "gamma delta" in cap[1]
+
+
+def test_build_ass_word_timestamps_with_null_edges_does_not_crash():
+    # whisper sometimes emits a word token with a null start/end (typically the first/last word of a
+    # segment). The caption builder must NOT raise (float(None)) — it falls back to the segment
+    # boundary for the missing edge, and the word's TEXT is still shown.
+    seg = {"start": 0.0, "end": 4.0, "text": "alpha beta",
+           "words": [{"word": "alpha", "start": None, "end": 0.6},
+                     {"word": " beta", "start": 0.6, "end": None}]}
+    cap = _caption_dialogues(build_ass([seg], clip_start=0.0, clip_end=4.0, max_words=3))
+    assert len(cap) == 1                                  # one group, no crash
+    assert "alpha beta" in cap[0]                         # text preserved
+    assert "0:00:00.00" in cap[0] and "0:00:04.00" in cap[0]   # null start->seg start, null end->seg end
+
+
+def test_build_ass_even_splits_without_word_timestamps():
+    # No word timestamps -> the segment window is split EVENLY across its groups. 4 words, 2/group
+    # over a clip-time [0,4] window -> group1 [0,2], group2 [2,4].
+    seg = {"start": 0.0, "end": 4.0, "text": "one two three four"}
+    cap = _caption_dialogues(build_ass([seg], clip_start=0.0, clip_end=4.0, max_words=2))
+    assert len(cap) == 2
+    assert "0:00:00.00" in cap[0] and "0:00:02.00" in cap[0]
+    assert "0:00:02.00" in cap[1] and "0:00:04.00" in cap[1]
+
+
 def test_build_ass_escapes_and_handles_arabic():
-    # newline -> ASS \N hard line break (literal backslash-N, not a real newline inside the event)
-    nl = build_ass([{"start": 10.0, "end": 12.0, "text": "line one\nline two"}],
-                   clip_start=8.0, clip_end=14.0)
-    nl_dlg = [ln for ln in _dialogues(nl) if "line one" in ln][0]
-    assert "\\N" in nl_dlg
-    assert "line one\nline two" not in nl_dlg   # the raw newline must not survive inside the event
+    # a curly brace (an ASS override-block delimiter) is stripped so it can't corrupt the event
+    braced = build_ass([{"start": 10.0, "end": 12.0, "text": "drop {these}"}],
+                       clip_start=8.0, clip_end=14.0)
+    brace_dlg = [ln for ln in _caption_dialogues(braced) if "drop" in ln]
+    assert brace_dlg and "{these}" not in brace_dlg[0] and "these" in brace_dlg[0]
 
     # an Arabic string round-trips unmangled
     arabic = "مرحبا بالعالم"

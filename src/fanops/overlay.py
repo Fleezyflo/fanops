@@ -34,6 +34,16 @@ _HOOK_BOX = "&H59000000"
 # Fade the opener in/out (milliseconds) so the first-~2s card pops instead of hard-cutting.
 _HOOK_FADE_MS = 200
 
+# Active captions (the "produced" short-form look — CapCut/Submagic style): show a FEW words at a
+# time, synced to speech, big and centred, popping in — NOT the whole transcript dumped at once
+# (that bulk dump reads as AI slop). A segment is split into <=_CAPTION_MAX_WORDS-word groups; each
+# group is its own short Dialogue timed to when those words are spoken (real word timestamps when
+# whisper provides them, else the segment window split evenly across its groups). The quick fade is
+# the snappy pop-in (faster than the hook's, so captions feel kinetic, not laggy).
+_CAPTION_MAX_WORDS = 3
+_CAP_FADE_IN_MS = 100
+_CAP_FADE_OUT_MS = 60
+
 # Cached result of the ffmpeg text-filter probe. None = not yet probed; once probed it holds the
 # bool so repeated clip renders reuse it instead of re-spawning ffmpeg (a per-render cost we pay
 # for nothing — the filter set doesn't change within a process). Reset in tests via this name.
@@ -90,12 +100,67 @@ def derive_hook(transcript_excerpt: str | None, *, max_words: int = 7) -> str | 
     return " ".join(words)
 
 
+def _chunk(items: list, size: int) -> list[list]:
+    """Split `items` into consecutive groups of at most `size` (the last group may be shorter)."""
+    size = max(1, size)
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def caption_events(seg: dict, clip_start: float, clip_end: float, *, max_words: int = _CAPTION_MAX_WORDS):
+    """Active-caption events for ONE source-time transcript segment, rebased into clip time and
+    clamped to the clip window. Returns a list of (start, end, text) tuples — a few words each —
+    instead of one bulk line. Two timing modes:
+      • word timestamps present (seg['words'] = [{word,start,end}, ...], from whisper
+        --word_timestamps): group consecutive words into <=max_words chunks, each timed to its own
+        first-word-start .. last-word-end;
+      • absent (the common case on already-transcribed footage): split the segment's text into
+        <=max_words groups and distribute them EVENLY across the segment's (clip-clamped) window.
+    A segment that does not overlap the clip, or yields no visible text, returns []."""
+    seg_start = float(seg["start"]); seg_end = float(seg["end"])
+    if seg_end <= clip_start or seg_start >= clip_end:
+        return []
+    out: list[tuple[float, float, str]] = []
+    words_meta = seg.get("words")
+    has_word_ts = (isinstance(words_meta, list) and words_meta
+                   and all(isinstance(w, dict) and "word" in w for w in words_meta))
+    if has_word_ts:
+        for grp in _chunk(words_meta, max_words):
+            txt = "".join(str(w.get("word", "")) for w in grp).strip()   # whisper tokens carry a leading space
+            if not txt: continue
+            # whisper occasionally emits a null start/end on the first/last word of a segment — a
+            # PRESENT key with value None (so .get(key, default) won't fire). Guard explicitly and
+            # fall back to the segment boundary so float(None) can't crash the render path.
+            raw_s = grp[0].get("start"); gs = float(raw_s) if raw_s is not None else seg_start
+            raw_e = grp[-1].get("end"); ge = float(raw_e) if raw_e is not None else seg_end
+            ev_s = max(0.0, gs - clip_start); ev_e = min(clip_end, ge) - clip_start
+            if ev_e > ev_s: out.append((ev_s, ev_e, txt))
+        return out
+    words = [w for w in str(seg.get("text", "")).split() if w]            # whitespace-split (eats \n too)
+    if not words:
+        return []
+    groups = _chunk(words, max_words)
+    win_s = max(clip_start, seg_start); win_e = min(clip_end, seg_end)
+    span = win_e - win_s
+    if span <= 0:
+        return []
+    per = span / len(groups)
+    for i, grp in enumerate(groups):
+        ev_s = max(0.0, (win_s + i * per) - clip_start)
+        ev_e = (win_s + (i + 1) * per) - clip_start
+        if ev_e > ev_s: out.append((ev_s, ev_e, " ".join(grp)))
+    return out
+
+
 def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end: float,
-              width: int = 1080, height: int = 1920, font: str = "Arial Unicode MS") -> str:
+              width: int = 1080, height: int = 1920, font: str = "Arial Unicode MS",
+              max_words: int = _CAPTION_MAX_WORDS) -> str:
     """Return the full text of an ASS subtitle file for the clip window [clip_start, clip_end]
-    (source time). `segments` is the SOURCE-time transcript: list[{start,end,text}]. Each segment
-    is rebased to clip time and dropped if it does not overlap the window. If `hook` is a non-empty
-    string, one HOOK-style Dialogue spans the clip's first min(2.5, clip_len) seconds."""
+    (source time). `segments` is the SOURCE-time transcript: list[{start,end,text[,words]}]. Each
+    segment is rebased to clip time, dropped if it does not overlap, and rendered as ACTIVE CAPTIONS
+    (a few words at a time, synced to speech — see caption_events), NOT one bulk line. If `hook` is a
+    non-empty string, one HOOK-style title card spans the clip's first min(2.5, clip_len) seconds —
+    retained for the opt-in per-account variation pass (burn_hook_only); the default clip path passes
+    hook=None so a clip carries clean active captions and no template card."""
     clip_len = max(0.0, clip_end - clip_start)
     margin_v = max(10, int(round(height * 0.12)))      # generous bottom margin -> bottom third
 
@@ -110,25 +175,27 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
         f"PlayResY: {height}",
         "",
     ]
-    # --- [V4+ Styles] : a bold centered SUBTITLE (bottom third) and a punchier HOOK (top third) ---
+    # --- [V4+ Styles] : a big bold CAPTION (active, lower-third) and a punchier HOOK (top third) ---
     # Format columns are the standard libass V4+ set; field order is load-bearing.
-    sub_fontsize = max(24, int(round(height * 0.045)))   # ~86 at 1920 tall
-    hook_fontsize = max(28, int(round(height * 0.060)))  # larger, ~115 at 1920 tall
+    cap_fontsize = max(48, int(round(height * 0.075)))   # BIG active caption, ~144 at 1920 tall
+    cap_margin_v = max(10, int(round(height * 0.16)))    # sit it in the lower third, raised off the edge
+    hook_fontsize = max(28, int(round(height * 0.060)))  # ~115 at 1920 tall
     lines += [
         "[V4+ Styles]",
         ("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
          "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
          "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"),
-        # SUBTITLE: white text, black outline+shadow, BOLD, Alignment=2 (bottom-centre), bottom-third margin.
-        (f"Style: SUBTITLE,{font},{sub_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
-         f"-1,0,0,0,100,100,0,0,1,3,2,2,60,60,{margin_v},1"),
+        # CAPTION: BIG white BOLD text, thick black outline + drop shadow (reads on any footage),
+        # Alignment=2 (bottom-centre), lower-third margin. Outline=4 thick, Shadow=2.
+        (f"Style: CAPTION,{font},{cap_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
+         f"-1,0,0,0,100,100,0,0,1,4,2,2,80,80,{cap_margin_v},1"),
         # HOOK: amber text on a semi-transparent BOX (BorderStyle=3, box=OutlineColour=_HOOK_BOX),
         # BOLD, Alignment=8 (top-centre), top-third margin, LARGER. Outline=6 = box padding; Shadow=0.
         (f"Style: HOOK,{font},{hook_fontsize},{_HOOK_COLOR},{_HOOK_COLOR},{_HOOK_BOX},{_BLACK},"
          f"-1,0,0,0,100,100,0,0,3,6,0,8,60,60,{margin_v},1"),
         "",
     ]
-    # --- [Events] : Dialogue lines (hook first so it draws beneath/over per layer, then subtitles) ---
+    # --- [Events] : the optional hook card first, then the active-caption groups ---
     lines += [
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -140,20 +207,12 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
         events.append(
             f"Dialogue: 0,{_fmt_ts(0.0)},{_fmt_ts(hook_end)},HOOK,,0,0,0,,{fade}{_escape_text(hook)}"
         )
+    cap_fade = f"{{\\fad({_CAP_FADE_IN_MS},{_CAP_FADE_OUT_MS})}}"   # snappy active-caption pop-in
     for seg in segments:
-        seg_start = float(seg["start"])
-        seg_end = float(seg["end"])
-        # drop segments that do not overlap [clip_start, clip_end]
-        if seg_end <= clip_start or seg_start >= clip_end:
-            continue
-        ev_start = max(0.0, seg_start - clip_start)
-        ev_end = min(clip_end, seg_end) - clip_start
-        if ev_end <= 0.0 or ev_end <= ev_start:
-            continue                                    # nothing visible after clamping
-        text = _escape_text(str(seg.get("text", "")))
-        events.append(
-            f"Dialogue: 0,{_fmt_ts(ev_start)},{_fmt_ts(ev_end)},SUBTITLE,,0,0,0,,{text}"
-        )
+        for ev_start, ev_end, text in caption_events(seg, clip_start, clip_end, max_words=max_words):
+            events.append(
+                f"Dialogue: 0,{_fmt_ts(ev_start)},{_fmt_ts(ev_end)},CAPTION,,0,0,0,,{cap_fade}{_escape_text(text)}"
+            )
     lines += events
     return "\n".join(lines) + "\n"
 
