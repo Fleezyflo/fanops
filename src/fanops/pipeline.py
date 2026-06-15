@@ -13,6 +13,7 @@ from fanops.ingest import ingest_drops
 from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments
+from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pending
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
 from fanops.crosspost import crosspost_clips
@@ -76,8 +77,25 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                     led.sources[s.id].state = SourceState.error
                     led.sources[s.id].error_reason = f"{type(e).__name__}: {e}"
                     log("moments", s.id, "error", err=str(e)[:120])
+        # Feed-aware hook editor (opt-in, fail-open): one pass over the WHOLE feed of decided hooks
+        # rewrites the weak/duplicated/templated ones into strong, DISTINCT hooks BEFORE any clip
+        # burns one — the per-clip moment responder answers in isolation and cannot diversify across
+        # the feed. Gated on cfg.hook_editor AND the llm responder (the only path that can answer the
+        # gate; without it the gate would never clear and HOLD rendering forever). DEFAULT OFF -> this
+        # block is skipped entirely and rendering is byte-identical to today.
+        hold_hooks = False
+        if cfg.hook_editor and cfg.responder_mode == "llm":
+            try:
+                led = request_hook_edit(led, cfg)        # write the single feed gate (no-op if nothing to edit)
+                led = ingest_hook_edit(led, cfg)         # apply the editor's answer if it's already on disk
+                hold_hooks = hook_edit_pending(led, cfg)  # still unanswered -> HOLD clip rendering this pass
+            except Exception as e:                       # fail-open: never let the editor wedge a pass
+                log("hookedit", "-", "error", err=str(e)[:120])
+                hold_hooks = False
         for m in list(led.moments.values()):
             if m.state is MomentState.decided:
+                if hold_hooks and not m.hook_edited:
+                    continue                             # wait for the feed editor before burning this hook
                 try:
                     led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
                     for clip in clips:
@@ -167,7 +185,8 @@ def advance(cfg: Config, *, base_time: str) -> dict:
             "holds": sum(1 for c in led.clips.values() if c.held),
             "errors": sum(1 for s in led.sources.values() if s.state is SourceState.error),
             "awaiting": {"moments": len(pending(cfg, kind="moments")),
-                         "captions": len(pending(cfg, kind="captions"))},
+                         "captions": len(pending(cfg, kind="captions")),
+                         "hookedit": len(pending(cfg, kind="hookedit"))},
         }
     # digest is read-only reporting: build it from the just-committed ledger, OUTSIDE the lock, so
     # the slow markdown render never extends the lock-held window (it would block an overlapping

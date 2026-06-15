@@ -13,7 +13,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Moment, MomentState, HookEditDecision
 from fanops.ids import _hash
-from fanops.agentstep import write_request, read_response
+from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
 from fanops.moments import _guidance
@@ -40,12 +40,20 @@ def request_hook_edit(led: Ledger, cfg: Config) -> Ledger:
     items = _editable(led)
     if not items:
         return led
+    key = _digest(items)
+    # Idempotent: the gate key is the EDITABLE SET (ids only), unchanged until ingest flips
+    # hook_edited. Re-writing it every pass would mint a fresh request_id and DELETE the editor's
+    # already-written response (write_request invalidates the old answer) -> the gate would never
+    # clear and clip rendering would HOLD forever. So write once per feed set; a changed set yields a
+    # new digest -> a new gate.
+    if latest_request_id(cfg, "hookedit", key) is not None:
+        return led
     payload = {"guidance": _guidance(cfg),
                "items": [{"moment_id": m.id, "hook": m.hook,
                           "transcript_excerpt": m.transcript_excerpt, "reason": m.reason,
                           "language": led.sources[m.parent_id].language if m.parent_id in led.sources else None,
                           "signal_score": m.signal_score} for m in items]}
-    write_request(cfg, kind="hookedit", key=_digest(items), payload=payload)
+    write_request(cfg, kind="hookedit", key=key, payload=payload)
     return led
 
 def hook_edit_pending(led: Ledger, cfg: Config) -> bool:

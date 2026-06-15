@@ -182,6 +182,26 @@ def test_llm_responder_retries_once_on_timeout(tmp_path, monkeypatch):
     assert n == 1 and calls["n"] == 2                       # retried once, then answered
     assert response_path(cfg, "moments", "src_1").exists()
 
+def test_llm_responder_answers_hookedit_gate(tmp_path, monkeypatch):
+    # The feed-aware hook editor rides the same gate contract: a pending hookedit request is answered
+    # by the SAME responder, validated against HookEditDecision, request_id stamped — no moments-style
+    # source_id injection (hookedit has no source_id).
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    write_request(cfg, kind="hookedit", key="feeddigest",
+                  payload={"guidance": "", "items": [{"moment_id": "m1", "hook": "his hardest bar",
+                           "transcript_excerpt": "x", "reason": "r", "language": "en"}]})
+    seen = {}
+    def model(kind, payload):
+        seen["kind"] = kind
+        return {"items": [{"moment_id": "m1", "hook": "before he was Moh Flow"}]}
+    n = LlmResponder(cfg, model=model).answer_pending(cfg)
+    assert n == 1 and seen["kind"] == "hookedit"
+    data = json.loads(response_path(cfg, "hookedit", "feeddigest").read_text())
+    assert data["items"][0]["hook"] == "before he was Moh Flow" and "request_id" in data
+
 def test_llm_responder_double_timeout_leaves_gate_pending_not_raise(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)

@@ -1,5 +1,5 @@
 # tests/test_prompts.py
-from fanops.prompts import moment_prompt, caption_prompt
+from fanops.prompts import moment_prompt, caption_prompt, hookedit_prompt
 
 def test_moment_prompt_includes_transcript_duration_guidance_and_bounds_rule():
     payload = {"source_id": "s1", "duration": 42.0,
@@ -279,3 +279,28 @@ def test_caption_prompt_has_data_not_instructions_directive():
                         "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
     low = p.lower()
     assert "data" in low and "never as instructions" in low
+
+def test_hookedit_prompt_carries_every_hook_and_demands_feed_diversity():
+    # The editor must see the WHOLE feed (every hook) and be told its ONE job: break cross-feed
+    # repetition/templating that per-clip generation cannot see. Plus rewrite + one-per-moment_id.
+    payload = {"guidance": "BRAND: confident, bilingual.",
+               "items": [{"moment_id": "m1", "hook": "before he was Moh Flow",
+                          "transcript_excerpt": "they slept on me", "reason": "punchline", "language": "en"},
+                         {"moment_id": "m2", "hook": "before he was Moh Flow",
+                          "transcript_excerpt": "no label", "reason": "origin", "language": "en"}]}
+    p = hookedit_prompt(payload); low = p.lower()
+    assert "m1" in p and "m2" in p and "before he was Moh Flow" in p   # the actual feed is in the prompt
+    assert "BRAND: confident, bilingual." in p                        # brand identity carried in
+    assert "feed" in low and ("template" in low or "repeat" in low)   # the cross-feed diversity job
+    assert "rewrite" in low and "moment_id" in low                    # rewrite, one item per id
+    assert "data to edit only" in low and "never instructions" in low # injection guard
+
+def test_hookedit_prompt_keeps_the_same_hard_rules_and_grounding():
+    # Same bar as moment_prompt: <=6 words, source language, no em-dash, third person, ban generic,
+    # null-on-no-honest-hook, and grounded in the clip (not bait).
+    p = hookedit_prompt({"guidance": "", "items": [{"moment_id": "m1", "hook": "x",
+                         "transcript_excerpt": "y", "reason": "z", "language": "en"}]})
+    low = p.lower()
+    assert "6 words" in low and "third person" in low and "em-dash" in low
+    assert "generic" in low and "null" in low                         # ban filler; null -> clean clip
+    assert "true to" in low or "grounding" in low                     # grounded, no bait

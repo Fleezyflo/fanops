@@ -10,14 +10,16 @@ import json
 from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
-from fanops.models import MomentDecision, CaptionSet
+from fanops.models import MomentDecision, CaptionSet, HookEditDecision
 from fanops.agentstep import pending, request_path, response_path, latest_request_id
 from fanops.llm import claude_json, LlmTimeoutError
-from fanops.prompts import moment_prompt, caption_prompt
+from fanops.prompts import moment_prompt, caption_prompt, hookedit_prompt
 from fanops.log import get_logger
 
-_SCHEMA = {"moments": MomentDecision, "captions": CaptionSet}
-_PROMPT = {"moments": moment_prompt, "captions": caption_prompt}
+# hookedit (feed-aware hook editor, hookedit.py) rides the same gate contract: when no hookedit
+# request is pending the inner loop is empty, so registering it is inert unless cfg.hook_editor is on.
+_SCHEMA = {"moments": MomentDecision, "captions": CaptionSet, "hookedit": HookEditDecision}
+_PROMPT = {"moments": moment_prompt, "captions": caption_prompt, "hookedit": hookedit_prompt}
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg

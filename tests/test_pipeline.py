@@ -317,3 +317,56 @@ def test_advance_rest_backend_still_calls_reconciler(tmp_path, monkeypatch, mock
     spy = mocker.patch("fanops.pipeline.reconcile_posts", side_effect=lambda _led, _cfg: _led)
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     spy.assert_called_once()
+
+def _accts_one(cfg):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "98432", "platforms": ["instagram"], "status": "active"}]}))
+
+def _answer_moments_with_hook(cfg, hook):
+    from fanops.models import MomentDecision, MomentPick
+    from fanops.agentstep import response_path, latest_request_id
+    src_id = next(iter(Ledger.load(cfg).sources))
+    rid = latest_request_id(cfg, "moments", src_id)
+    response_path(cfg, "moments", src_id).write_text(MomentDecision(
+        source_id=src_id, request_id=rid,
+        picks=[MomentPick(start=14.0, end=18.0, reason="punchline",
+                          transcript_excerpt="they slept on me", hook=hook)]).model_dump_json())
+
+def test_hook_editor_holds_then_rewrites_across_the_feed(tmp_path, monkeypatch, mocker):
+    # FANOPS_HOOK_EDITOR on + llm responder: after moments are decided, advance() opens ONE feed-level
+    # hookedit gate and HOLDS clip rendering until it's answered, then renders with the REWRITTEN hook.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
+    from fanops.models import HookEditDecision, HookEditItem
+    from fanops.agentstep import response_path, latest_request_id, pending
+
+    advance(cfg, base_time="2026-07-01T18:00:00Z")                 # -> moments gate
+    _answer_moments_with_hook(cfg, "the word he repeated twice")    # a guard-passing hook to be rewritten
+
+    s = advance(cfg, base_time="2026-07-01T18:00:00Z")             # ingest moments -> hookedit gate, HOLD
+    assert s["awaiting"]["hookedit"] == 1 and s["clips"] == 0       # rendering held until the editor answers
+
+    mid = next(iter(Ledger.load(cfg).moments))
+    key = pending(cfg, kind="hookedit")[0]
+    rid = latest_request_id(cfg, "hookedit", key)
+    response_path(cfg, "hookedit", key).write_text(HookEditDecision(
+        request_id=rid, items=[HookEditItem(moment_id=mid, hook="before he was Moh Flow")]).model_dump_json())
+
+    s = advance(cfg, base_time="2026-07-01T18:00:00Z")            # ingest hookedit -> render with edited hook
+    assert s["clips"] >= 1 and s["awaiting"]["hookedit"] == 0
+    m = Ledger.load(cfg).moments[mid]
+    assert m.hook == "before he was Moh Flow" and m.hook_edited is True
+
+def test_hook_editor_off_renders_immediately_no_gate(tmp_path, monkeypatch, mocker):
+    # Default OFF: no hookedit gate, clips render in the same pass moments are ingested (today's flow).
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("FANOPS_HOOK_EDITOR", raising=False)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
+    advance(cfg, base_time="2026-07-01T18:00:00Z")
+    _answer_moments_with_hook(cfg, "the word he repeated twice")
+    s = advance(cfg, base_time="2026-07-01T18:00:00Z")
+    assert s["clips"] >= 1 and s["awaiting"]["hookedit"] == 0       # no hold, no gate
