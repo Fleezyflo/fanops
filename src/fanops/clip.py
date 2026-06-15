@@ -113,7 +113,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     cid = child_id("clip", moment_id, aspect.value)      # content-addressed by aspect
     cfg.clips.mkdir(parents=True, exist_ok=True)
     dst = cfg.clips / f"{cid}.mp4"
-    cs, ce = fit_window(m.start, m.end, src.duration or 0.0)   # widen a short pick to a real 15-20s clip
+    cs, ce = fit_window(m.start, m.end, src.duration or 0.0)   # widen a short pick to a real 12-22s clip
     extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf)

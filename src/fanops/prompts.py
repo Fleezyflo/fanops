@@ -10,7 +10,7 @@ import json
 # Clip-length band (mirrors clip._MIN_CLIP_S/_MAX_CLIP_S). A source below the floor becomes one
 # whole-source clip; the band midpoint sets how many clips a long source should yield.
 _SHORT_SOURCE_S = 12.0
-_BAND_SPAN_S = 17.0     # ~midpoint of the 12-22 band: aim for one clip per ~17s of source
+_BAND_SPAN_S = 17.0     # (12+22)/2 = midpoint of the 12-22 band: aim for one clip per ~17s of source
 _MAX_TARGET_PICKS = 6
 
 def _target_pick_count(duration: float) -> int:

@@ -64,3 +64,7 @@ def test_max_words_after_dash_strip():
     # the dash collapse must happen BEFORE the word trim, so the 7 kept words are real words
     out = sanitize_generated_text("snapped — one two three four five six", max_words=7)
     assert len(out.split()) == 7 and "—" not in out
+
+def test_max_words_trim_leaves_no_dangling_comma():
+    # a trim boundary landing on a dash-replacement comma must NOT burn a trailing comma on-screen
+    assert sanitize_generated_text("top — bar", max_words=1) == "top"

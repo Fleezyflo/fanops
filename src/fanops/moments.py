@@ -81,7 +81,10 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
             continue
         valid.append(pick)
     keep: dict[str, Moment] = {}
-    for pick in _drop_overlaps(valid):              # drop near-duplicate windows (keep first)
+    deduped = _drop_overlaps(valid)                 # drop near-duplicate windows (keep first)
+    if len(deduped) < len(valid):                   # don't silently suppress picks — surface the count
+        get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
+    for pick in deduped:
         token = _token(pick)
         mid = child_id("moment", source_id, token)
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.decided,

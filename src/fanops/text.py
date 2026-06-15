@@ -23,5 +23,5 @@ def sanitize_generated_text(text: str | None, *, max_words: int | None = None) -
     text = _ZEROWIDTH.sub("", text)
     text = re.sub(r"\s+", " ", text).strip().strip(" ,")   # collapse runs, drop dash-artifact edge commas
     if max_words is not None:
-        text = " ".join(text.split()[:max_words])
+        text = " ".join(text.split()[:max_words]).strip(" ,")   # a trim boundary can't leave a dangling comma
     return text
