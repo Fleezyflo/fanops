@@ -1,36 +1,44 @@
-{# src/fanops/studio/templates/_card.html #}
-<div class="card" id="card-{{ card.clip_id }}">
-  {% if card.bucket == 'held' %}
-    <div class="meta"><span class="badge">HELD</span> {{ card.held_reason or 'held for review' }}</div>
-    <video controls preload="metadata" src="{{ card.preview_url }}"></video>
-    <form hx-post="{{ url_for('do_unhold', clip_id=card.clip_id) }}" hx-target="#card-{{ card.clip_id }}" hx-swap="outerHTML">
-      <button type="submit">Release (re-run captions)</button></form>
-  {% elif card.bucket == 'prepared' %}
-    <div class="meta"><span class="badge">{{ (card.clip_state or 'queued')|replace('_',' ')|upper }}</span> · produced, not yet posted</div>
-    <video controls preload="metadata" src="{{ card.preview_url }}"></video>
-  {% else %}
-    <video controls preload="metadata" src="{{ card.preview_url }}"></video>
-  {% endif %}
-  <div class="meta">
-    {{ card.source_name }} · {{ card.moment_window }} · {{ card.language or '—' }}
-    · subs: {{ 'on' if card.subtitles_burned else 'off' }} · <em>{{ card.reason }}</em>
+{# src/fanops/studio/templates/_card.html — one clip, shown in a vertical 9:16 frame. The clip video
+   renders ONCE; per-surface posts list compactly below it. Editing a surface opens a disclosure so the
+   grid stays scannable instead of stacking giant players. #}
+<div class="card clip-card" id="card-{{ card.clip_id }}">
+  <div class="clip-frame">
+    {% if card.bucket == 'held' %}<span class="badge held-badge">HELD</span>{% endif %}
+    <video controls preload="metadata" src="{{ card.preview_url }}" aria-label="{{ card.label }} preview"></video>
   </div>
-  {% if card.transcript_excerpt %}<div class="meta">“{{ card.transcript_excerpt }}”</div>{% endif %}
-  {% for s in card.surfaces %}
-    <div class="surface">
-      <div class="meta">{{ s.account }}/{{ s.platform }}{% if s.persona %} · {{ s.persona }}{% endif %}
-        · {{ s.scheduled_time or 'unscheduled' }}
-        {% if s.imminent %}<span class="badge {{ 'shipped' if s.state != 'queued' else '' }}">{{ 'shipped' if s.state != 'queued' else 'shipping now' }}</span>{% endif %}
+
+  <div class="clip-body">
+    <div class="clip-title">{{ card.label }}</div>
+    <div class="meta clip-reason">{{ card.reason }}</div>
+
+    {% if card.bucket == 'held' %}
+      <div class="meta">{{ card.held_reason or 'held for review' }}</div>
+      <form hx-post="{{ url_for('do_unhold', clip_id=card.clip_id) }}" hx-target="#card-{{ card.clip_id }}" hx-swap="outerHTML">
+        <button type="submit">Release (re-run captions)</button></form>
+    {% elif card.bucket == 'prepared' %}
+      <div class="meta clip-state">Produced — not yet posted</div>
+    {% endif %}
+
+    {% for s in card.surfaces %}
+      <div class="surface">
+        <div class="surface-head">
+          <span class="surface-name">{{ s.account }} <span class="muted">{{ s.platform }}</span></span>
+          {% if s.imminent %}<span class="badge {{ 'shipped' if s.state != 'queued' else '' }}">{{ 'shipped' if s.state != 'queued' else 'shipping now' }}</span>{% endif %}
+        </div>
+        {% if s.editable %}
+          <div class="ro surface-caption">{{ s.caption }}</div>
+          <details class="surface-editor"><summary>Edit</summary>{% include "_surface_edit.html" %}</details>
+        {% else %}
+          <div class="ro surface-caption">{{ s.caption }}</div>
+        {% endif %}
+        <div id="res-{{ s.post_id }}"></div>
       </div>
-      <video controls preload="none" src="{{ s.media_url }}"></video>
-      {% if s.editable %}{% include "_surface_edit.html" %}{% else %}<div class="ro">{{ s.caption }}</div>{% endif %}
-      {% if s.hashtags %}<div class="meta ro">{{ s.hashtags|join(' ') }} <em>(stored, not posted)</em></div>{% endif %}
-      <div id="res-{{ s.post_id }}"></div>
-    </div>
-  {% endfor %}
-  {% if card.bucket == 'editable' and card.surfaces %}
-    <form hx-post="{{ url_for('do_snooze', clip_id=card.clip_id) }}" hx-target="#card-{{ card.clip_id }}" hx-swap="afterend">
-      <button type="submit">Snooze clip (+{{ 365 }}d)</button>
-    </form>
-  {% endif %}
+    {% endfor %}
+
+    {% if card.bucket == 'editable' and card.surfaces %}
+      <form class="snooze" hx-post="{{ url_for('do_snooze', clip_id=card.clip_id) }}" hx-target="#card-{{ card.clip_id }}" hx-swap="afterend">
+        <button type="submit">Snooze</button>
+      </form>
+    {% endif %}
+  </div>
 </div>

@@ -41,6 +41,7 @@ class ReviewCard:
     clip_id: str
     preview_url: str
     source_name: str
+    label: str                  # operator-facing clip name (timecode-based), never the content-addressed id
     moment_window: str
     reason: str
     language: Optional[str]
@@ -129,17 +130,29 @@ def _imminent(scheduled_time: Optional[str], now: datetime,
 def _personas(accounts: Accounts) -> dict:
     return {a.handle: a.persona for a in accounts.accounts}
 
+def _timecode(seconds: float) -> str:
+    """Whole-second m:ss timecode for an operator-facing clip label (e.g. 73 -> '1:13'). Non-finite
+    (inf/nan) degrades to 0:00 — Moment's validator already rejects these, this is belt-and-suspenders."""
+    import math
+    s = max(0, int(seconds)) if math.isfinite(seconds) else 0
+    return f"{s // 60}:{s % 60:02d}"
+
 def _lineage_for_clip(led: Ledger, clip):
-    """Return (source_name, moment_window, reason, language, transcript_excerpt) for a clip,
-    walking clip -> moment -> source. Missing links degrade to safe '—'/None."""
+    """Return (source_name, label, moment_window, reason, language, transcript_excerpt) for a clip,
+    walking clip -> moment -> source. Missing links degrade to safe '—'/None. `label` is the
+    operator-facing clip name — a timecode window, never the content-addressed source/clip id."""
     mom = led.moments.get(clip.parent_id)
     src = led.sources.get(mom.parent_id) if mom is not None else None
     source_name = Path(src.source_path).name if (src and src.source_path) else "—"
-    moment_window = f"{int(mom.start)}–{int(mom.end)}" if mom is not None else "—"   # en dash
+    if mom is not None:
+        moment_window = f"{int(mom.start)}–{int(mom.end)}"                      # en dash (raw seconds)
+        label = f"{_timecode(mom.start)}–{_timecode(mom.end)} clip"            # human label
+    else:
+        moment_window = "—"; label = "Clip"
     reason = mom.reason if (mom and mom.reason) else "—"
     language = src.language if src else None
     excerpt = mom.transcript_excerpt if mom else None
-    return source_name, moment_window, reason, language, excerpt
+    return source_name, label, moment_window, reason, language, excerpt
 
 def _surface(post, *, persona, now: datetime) -> SurfacePost:
     imm = _imminent(post.scheduled_time, now)
@@ -151,11 +164,11 @@ def _surface(post, *, persona, now: datetime) -> SurfacePost:
         state=state, imminent=imm, editable=(state == PostState.queued.value and not imm))
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime) -> ReviewCard:
-    source_name, window, reason, language, excerpt = _lineage_for_clip(led, clip)
+    source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
     surfaces = [_surface(p, persona=personas.get(p.account), now=now)
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     return ReviewCard(
-        clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name,
+        clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name, label=label,
         moment_window=window, reason=reason, language=language, subtitles_burned=cfg.burn_subs,
         held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
         surfaces=surfaces, bucket=bucket, clip_state=clip.state.value)
@@ -271,9 +284,8 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
     if not variant_posts:
         any_analyzed = any(p.state is PostState.analyzed for p in led.posts.values())
         if not any_analyzed:
-            variant_empty_reason = ("No analyzed posts yet — a live metrics backend "
-                                    "(FANOPS_POSTER=postiz + POSTIZ_API_KEY, or rest/mcp + "
-                                    "BLOTATO_API_KEY) or fed metrics is required.")
+            variant_empty_reason = ("No results yet — connect Postiz (Go Live) so posts come back "
+                                    "with analytics. (Needs a POSTIZ_API_KEY, or a Blotato backend.)")
         else:
             variant_empty_reason = ("Creative variation (FANOPS_CREATIVE_VARIATION) was off when "
                                     "these posts were crossposted — no per-variant lift.")

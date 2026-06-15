@@ -121,4 +121,4 @@ def test_run_route_shows_upload_form(tmp_path):
     from fanops.studio.app import create_app
     app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
     r = app.test_client().get("/run")
-    assert r.status_code == 200 and b'type="file"' in r.data and b"Upload" in r.data
+    assert r.status_code == 200 and b'type="file"' in r.data and b"Add video" in r.data

@@ -1,62 +1,63 @@
 {# src/fanops/studio/templates/_run_panel.html — the pipeline-driver panel (htmx-swapped in place) #}
 <div id="run-panel">
-  <h2>Run the pipeline</h2>
-  <p class="muted">Drop video files into <code>MohFlow-FanOps/01_inbox/</code> (or pull a URL), then
-    drive the pipeline here — no terminal needed. Answer the two gates in the <strong>Gates</strong>
-    tab; watch the finished cuts in <strong>Review</strong>.</p>
+  <h2>Make clips</h2>
+  <p class="muted">Add a video, then let the system cut clips and write captions. They land in
+    <strong>Review</strong>.</p>
 
   <div class="status">
-    <span>sources <strong>{{ status.sources }}</strong></span> ·
-    <span>clips <strong>{{ status.clips }}</strong></span> ·
-    <span>posts <strong>{{ status.posts }}</strong></span> ·
-    <span>published <strong>{{ status.published }}</strong></span> ·
-    <span>holds <strong>{{ status.holds }}</strong></span> ·
-    <span>pending moments <strong>{{ status.pending_moments }}</strong></span> ·
-    <span>pending captions <strong>{{ status.pending_captions }}</strong></span> ·
-    <span>backend <strong>{{ status.backend }}</strong></span>
+    <span>Clips ready<strong>{{ status.clips }}</strong></span>
+    <span>Published<strong>{{ status.published }}</strong></span>
+    <span>Mode<strong>{{ status.backend }}</strong></span>
   </div>
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}OK{% if result.detail %} — {% if result.detail.saved is defined %}{{ result.detail.saved|length }} saved, {{ result.detail.skipped|length }} skipped{% else %}{{ result.detail }}{% endif %}{% endif %}
+      {% if result.ok %}Done{% if result.detail %} — {% if result.detail.saved is defined %}{{ result.detail.saved|length }} added, {{ result.detail.skipped|length }} skipped{% else %}{{ result.detail }}{% endif %}{% endif %}
       {% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
 
-  <div class="run-actions">
+  {# ONE dominant action: Prepare everything (cut clips + write captions, no gates to answer). #}
+  <form class="run-primary" hx-post="{{ url_for('do_run_prepare') }}" hx-target="#run-panel" hx-swap="outerHTML">
+    {% if status.backend != 'dryrun' %}
+      <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
+        publish to REAL accounts (mode: {{ status.backend }})</label>
+    {% endif %}
+    <button type="submit" class="primary">Prepare everything</button>
+    <span class="muted">Cuts clips and writes captions for you — watch them appear in Review.</span>
+  </form>
+
+  <div class="run-add">
     <form hx-post="{{ url_for('do_run_upload') }}" hx-target="#run-panel" hx-swap="outerHTML"
           hx-encoding="multipart/form-data" class="upload-form">
-      <input type="file" name="files" accept="video/*" multiple aria-label="Choose video files to upload" title="Choose video files to upload">
-      <button type="submit">Upload video</button>
-    </form>
-    <form hx-post="{{ url_for('do_run_pull') }}" hx-target="#run-panel" hx-swap="outerHTML">
-      <input name="url" aria-label="Video URL to pull" placeholder="https://… (pull a video)" size="36">
-      <button type="submit">Pull URL</button>
+      <input type="file" name="files" accept="video/*" multiple aria-label="Choose video files to add" title="Choose video files to add">
+      <button type="submit">Add video</button>
     </form>
     <form hx-post="{{ url_for('do_run_ingest') }}" hx-target="#run-panel" hx-swap="outerHTML">
-      <button type="submit">Ingest inbox</button>
-    </form>
-    <form hx-post="{{ url_for('do_run_prepare') }}" hx-target="#run-panel" hx-swap="outerHTML">
-      {% if status.backend != 'dryrun' %}
-        <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
-          publish to REAL accounts (backend: {{ status.backend }})</label>
-      {% endif %}
-      <button type="submit" class="primary">Prepare everything</button>
-    </form>
-    <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML">
-      {% if status.backend != 'dryrun' %}
-        <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
-          publish to REAL accounts (backend: {{ status.backend }})</label>
-      {% endif %}
-      <button type="submit">Run one pass (advanced)</button>
+      <button type="submit">Ingest added videos</button>
     </form>
   </div>
 
-  <ol class="muted run-steps">
-    <li><em>Upload video</em> here (or drop files in <code>01_inbox/</code>, or <em>Pull URL</em>), then <em>Ingest inbox</em> — no Finder needed.</li>
-    <li><em>Prepare everything</em> → the system writes its own captions and finishes the clips for you;
-      watch them appear in <strong>Review</strong>. No gates to answer by hand.</li>
-    <li class="muted">Auto-answering uses your <code>claude</code> login — run <code>fanops autopilot</code>
-      once to turn it on. Without it, the moment/caption gates wait for you in the <strong>Gates</strong> tab.</li>
-  </ol>
+  <details class="run-advanced">
+    <summary>More</summary>
+    <div class="run-advanced-body">
+      <div class="status status-sub">
+        <span>Sources<strong>{{ status.sources }}</strong></span>
+        <span>Posts<strong>{{ status.posts }}</strong></span>
+        <span>Held<strong>{{ status.holds }}</strong></span>
+        <span>Awaiting<strong>{{ status.pending_moments + status.pending_captions }}</strong></span>
+      </div>
+      <form hx-post="{{ url_for('do_run_pull') }}" hx-target="#run-panel" hx-swap="outerHTML">
+        <input name="url" aria-label="Video link to add" placeholder="paste a video link…" size="30">
+        <button type="submit">Add from link</button>
+      </form>
+      <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML">
+        {% if status.backend != 'dryrun' %}
+          <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
+            publish to REAL accounts (mode: {{ status.backend }})</label>
+        {% endif %}
+        <button type="submit">Run one step</button>
+      </form>
+    </div>
+  </details>
 </div>
