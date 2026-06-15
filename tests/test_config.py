@@ -73,20 +73,18 @@ def test_is_live_backend_postiz_uses_postiz_key(monkeypatch, tmp_path):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     assert Config(root=tmp_path).is_live_backend is True         # postiz + postiz key → live
 
-def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
-    # DEFAULT ON: the burn now produces active captions (the produced look), not slop — so it ships
-    # by default. Only the explicit off-words disable it.
+def test_burn_subs_defaults_off_and_respects_env(monkeypatch, tmp_path):
+    # DEFAULT OFF (opt-in): burn_subs only adds the TRANSCRIPT captions on top of the retention hook;
+    # captioning the audio is redundant + transcription-dependent, so it ships only when asked.
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
-    assert Config(root=tmp_path).burn_subs is True            # default ON (unset)
+    assert Config(root=tmp_path).burn_subs is False           # default OFF (unset)
     monkeypatch.setenv("FANOPS_BURN_SUBS", "")
-    assert Config(root=tmp_path).burn_subs is True            # blank = treat as unset = ON
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    assert Config(root=tmp_path).burn_subs is False
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "false")
-    assert Config(root=tmp_path).burn_subs is False
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "off")
-    assert Config(root=tmp_path).burn_subs is False
+    assert Config(root=tmp_path).burn_subs is False           # blank stays OFF
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "maybe")
+    assert Config(root=tmp_path).burn_subs is False           # anything not an on-word stays OFF
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    assert Config(root=tmp_path).burn_subs is True
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "on")
     assert Config(root=tmp_path).burn_subs is True
 
 def test_subtitle_font_default_and_override(monkeypatch, tmp_path):

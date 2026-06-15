@@ -14,6 +14,16 @@ def test_moment_prompt_includes_transcript_duration_guidance_and_bounds_rule():
     # explicitly forbids out-of-bounds / NaN
     assert "0" in p and ("duration" in p.lower() or "bounds" in p.lower())
 
+def test_moment_prompt_demands_retention_hook_not_a_transcript_quote():
+    # The prompt must ask for an on-screen RETENTION hook (curiosity-gap, keep-watching) and
+    # explicitly tell the model NOT to caption/quote the (unreliable) transcript.
+    p = moment_prompt({"duration": 42.0, "transcript": [{"start": 1.0, "end": 3.0, "text": "x"}],
+                       "signal_peaks": [], "language": "en", "guidance": "BRAND: confident."})
+    low = p.lower()
+    assert "`hook`" in p and "watching" in low                  # asks for a hook that retains
+    assert "not a caption" in low and "not a quote" in low      # forbids transcribing the audio
+    assert "signal peaks" in low                                # leans on transcription-independent signal
+
 def test_moment_prompt_targets_12_to_22_seconds():
     # The clip-length fix: 12-22s windows (loosened from 15-20 so more moments qualify), not 3-4s.
     p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],

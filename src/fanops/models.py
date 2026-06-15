@@ -156,6 +156,7 @@ class MomentPick(BaseModel):
     reason: str
     transcript_excerpt: str = ""
     signal_score: float = 0.0
+    hook: Optional[str] = None      # on-screen RETENTION hook (curiosity-gap, NOT a transcript quote); None -> derive a default
 
     @field_validator("start", "end")
     @classmethod

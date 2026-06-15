@@ -188,28 +188,49 @@ def test_render_failopen_when_no_textfilter(tmp_path, mocker, monkeypatch):
     assert "subtitles" in log.lower() and "without" in log.lower()
 
 
-def test_render_failopen_when_no_transcript(tmp_path, mocker, monkeypatch):
-    # burn_subs ON, ffmpeg HAS the filter, but the source transcript is None -> no "subtitles="
-    # in -vf, the clip still renders. (Empty transcript == nothing to burn; not an error.)
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+def _fake_run_writing_clip(captured):
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        if not str(cmd[-1]).startswith("-"):     # FLAG last-arg (capability probe) is not an output path
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    return fake_run
+
+def test_render_burns_hook_even_without_transcript(tmp_path, mocker, monkeypatch):
+    # The RETENTION HOOK is the default on-screen text and does NOT need a transcript — a moment with
+    # a hook burns it (subtitles= chained + .ass written) even when the source has no transcript and
+    # burn_subs is OFF. (This is the whole point: the screen shows a hook, not the audio's words.)
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)        # default OFF -> no transcript captions
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, transcript=None))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
-                          start=0, end=7, reason="r", state=MomentState.decided, hook="hook"))
+                          start=0, end=7, reason="r", state=MomentState.decided, hook="wait for the drop"))
     captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        # FLAG last-arg (capability probe) is not an output path — see the b"X" stub above
-        if not str(cmd[-1]).startswith("-"):
-            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
-    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered
-    assert "subtitles=" not in _vf_of(captured["cmd"])
+    assert "subtitles=" in _vf_of(captured["cmd"])              # the hook IS burned
+    ass = list(cfg.clips.glob("*.ass"))
+    assert ass and "wait for the drop" in ass[0].read_text(encoding="utf-8")   # ...carrying the hook text
+
+def test_render_clean_when_no_hook_and_subs_off(tmp_path, mocker, monkeypatch):
+    # No hook AND transcript captions not opted in -> a CLEAN clip: no "subtitles=" in -vf, no .ass.
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)        # default OFF
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080,
+                          transcript=[{"start": 0.0, "end": 3.0, "text": "hello world"}]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook=None))
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    assert "subtitles=" not in _vf_of(captured["cmd"])          # nothing to burn -> clean clip
     assert not list(cfg.clips.glob("*.ass"))
 
 

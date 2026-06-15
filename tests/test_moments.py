@@ -158,6 +158,25 @@ def test_moment_gets_derived_hook(tmp_path):
     assert moms[0].hook == derive_hook(excerpt)             # the derived first clause
     assert moms[0].hook == "This changed everything for me"
 
+def test_moment_prefers_llm_retention_hook_over_transcript(tmp_path):
+    # When the model returns a `hook` (a curiosity-gap RETENTION line), it WINS over the transcript
+    # first-clause fallback — the on-screen text is a hook that keeps people watching, NOT the words
+    # the audio already says (and NOT the unreliable transcript).
+    from fanops.overlay import derive_hook
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moments", "src_1")
+    excerpt = "This changed everything for me."
+    response_path(cfg, "moments", "src_1").write_text(MomentDecision(
+        source_id="src_1", request_id=rid,
+        picks=[MomentPick(start=14.0, end=18.5, reason="punchline", transcript_excerpt=excerpt,
+                          signal_score=0.6, hook="wait for the beat switch")]
+    ).model_dump_json())
+    led = ingest_moments(led, cfg, "src_1")
+    moms = led.moments_of("src_1")
+    assert moms[0].hook == "wait for the beat switch"       # the LLM retention hook, not...
+    assert moms[0].hook != derive_hook(excerpt)             # ...the transcript first-clause
+
 def test_ingest_all_invalid_marks_source_error(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
