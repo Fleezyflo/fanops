@@ -58,7 +58,7 @@ def test_tag_log_does_not_prune_by_when_out_of_order_safe(tmp_path):
 
 
 def test_artist_handle_value():
-    assert ARTIST_HANDLE == "@mohflow"
+    assert ARTIST_HANDLE == "@mohflowmusic"
 
 def test_parse_handles_z_suffix_round_trip():
     from datetime import timezone
