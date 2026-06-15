@@ -460,8 +460,6 @@ def test_request_captions_no_persona_key_without_accounts(tmp_path):
 
 
 # --- M2: em-dash / overlong-hook sanitation at caption ingest ------------------------------------
-from fanops.models import CaptionItem, CaptionSet
-
 def test_ingest_captions_sanitizes_em_dash_in_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
