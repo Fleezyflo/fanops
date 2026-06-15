@@ -73,14 +73,20 @@ def test_is_live_backend_postiz_uses_postiz_key(monkeypatch, tmp_path):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     assert Config(root=tmp_path).is_live_backend is True         # postiz + postiz key → live
 
-def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
+def test_burn_subs_defaults_off_and_respects_env(monkeypatch, tmp_path):
+    # DEFAULT OFF (opt-in): clean clips with NO burned text are the baseline — burned hooks/captions
+    # read as AI slop, so they ship only when the operator explicitly turns them on.
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
-    assert Config(root=tmp_path).burn_subs is True            # default ON
+    assert Config(root=tmp_path).burn_subs is False           # default OFF (unset)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "")
+    assert Config(root=tmp_path).burn_subs is False           # blank stays OFF
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     assert Config(root=tmp_path).burn_subs is False
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "false")
-    assert Config(root=tmp_path).burn_subs is False
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "maybe")
+    assert Config(root=tmp_path).burn_subs is False           # anything not an on-word stays OFF
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    assert Config(root=tmp_path).burn_subs is True
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "on")
     assert Config(root=tmp_path).burn_subs is True
 
 def test_subtitle_font_default_and_override(monkeypatch, tmp_path):
