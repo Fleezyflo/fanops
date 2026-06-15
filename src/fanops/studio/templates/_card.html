@@ -5,6 +5,9 @@
     <video controls preload="metadata" src="{{ card.preview_url }}"></video>
     <form hx-post="{{ url_for('do_unhold', clip_id=card.clip_id) }}" hx-target="#card-{{ card.clip_id }}" hx-swap="outerHTML">
       <button type="submit">Release (re-run captions)</button></form>
+  {% elif card.bucket == 'prepared' %}
+    <div class="meta"><span class="badge">{{ (card.clip_state or 'queued')|replace('_',' ')|upper }}</span> · produced, not yet posted</div>
+    <video controls preload="metadata" src="{{ card.preview_url }}"></video>
   {% else %}
     <video controls preload="metadata" src="{{ card.preview_url }}"></video>
   {% endif %}

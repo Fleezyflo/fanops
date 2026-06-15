@@ -166,7 +166,10 @@ def test_unhold_success_clip_leaves_held_bucket(tmp_path):
     c = _client(cfg); c.post("/unhold/clip_held")
     r = c.get("/review")
     assert r.status_code == 200                                 # guard: absence assert must not pass on a 500
-    assert b"card-clip_held" not in r.data                      # captions_requested + no posts -> surfaces nowhere
+    assert b"/unhold/clip_held" not in r.data                   # left the held bucket (no Release form)
+    # NEW behavior: a released clip (captions_requested, no posts) now surfaces in the 'prepared'
+    # bucket instead of vanishing — the post-less-clips-are-invisible bug is fixed.
+    assert b"card-clip_held" in r.data
     assert Ledger.load(cfg).clips["clip_held"].held is False
 
 def test_unhold_non_held_clip_returns_inline_error(tmp_path):
@@ -174,3 +177,33 @@ def test_unhold_non_held_clip_returns_inline_error(tmp_path):
     r = _client(cfg).post("/unhold/clip_1")
     assert r.status_code == 200 and b"not held" in r.data
     assert Ledger.load(cfg).clips["clip_1"].state is ClipState.queued
+
+# ---- prepared bucket: produced-but-post-less clips must be visible (the 57-clips-0-posts bug) ----
+def _seed_prepared(cfg, tmp_path):
+    # one source -> one clip, queued, NO posts (mirrors a fresh ingest+advance that hasn't crossposted)
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "prep.mp4"; base.write_bytes(b"\x00\x00\x00\x18ftypmp42PREP")
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_p", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_p", parent_id="src_p", content_token="0-7", start=0, end=7,
+                          reason="big drop", state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_p", parent_id="mom_p", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+    led.save()
+    return base
+
+def test_review_surfaces_prepared_clips(tmp_path):
+    cfg = Config(root=tmp_path); _seed_prepared(cfg, tmp_path)
+    r = _client(cfg).get("/review")
+    assert r.status_code == 200
+    assert b"card-clip_p" in r.data                             # the post-less clip is VISIBLE now
+    assert b"Ready to prepare" in r.data                        # the prepared bucket header
+    assert b"Nothing in the ledger" not in r.data               # the false-empty message is gone
+    assert b'href="/run"' in r.data                             # a working forward path (the Run tab)
+
+def test_review_empty_state_honest_when_truly_empty(tmp_path):
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": []}))  # no sources, no clips
+    r = _client(cfg).get("/review")
+    assert r.status_code == 200
+    assert b"No footage yet" in r.data                          # honest empty message
+    assert b"fanops advance" not in r.data                      # no CLI verb in a no-terminal product
