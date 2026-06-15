@@ -360,6 +360,28 @@ def test_hook_editor_holds_then_rewrites_across_the_feed(tmp_path, monkeypatch, 
     m = Ledger.load(cfg).moments[mid]
     assert m.hook == "before he was Moh Flow" and m.hook_edited is True
 
+def test_hook_editor_consumes_answer_even_after_responder_flipped_to_manual(tmp_path, monkeypatch, mocker):
+    # Review HIGH: a gate answered under llm must still be APPLIED if the operator flips
+    # FANOPS_RESPONDER->manual mid-session, never orphaned + never rendered with the un-edited hook.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
+    from fanops.models import HookEditDecision, HookEditItem
+    from fanops.agentstep import response_path, latest_request_id, pending
+    advance(cfg, base_time="2026-07-01T18:00:00Z")
+    _answer_moments_with_hook(cfg, "the word he repeated twice")
+    advance(cfg, base_time="2026-07-01T18:00:00Z")                 # opens hookedit gate, holds
+    mid = next(iter(Ledger.load(cfg).moments)); key = pending(cfg, kind="hookedit")[0]
+    rid = latest_request_id(cfg, "hookedit", key)
+    response_path(cfg, "hookedit", key).write_text(HookEditDecision(
+        request_id=rid, items=[HookEditItem(moment_id=mid, hook="before he was Moh Flow")]).model_dump_json())
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")               # operator flips mid-session
+    s = advance(cfg, base_time="2026-07-01T18:00:00Z")
+    m = Ledger.load(cfg).moments[mid]
+    assert m.hook == "before he was Moh Flow" and m.hook_edited is True   # answer consumed, not orphaned
+    assert s["clips"] >= 1
+
 def test_hook_editor_off_renders_immediately_no_gate(tmp_path, monkeypatch, mocker):
     # Default OFF: no hookedit gate, clips render in the same pass moments are ingested (today's flow).
     monkeypatch.delenv("FANOPS_POSTER", raising=False)

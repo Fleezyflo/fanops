@@ -84,11 +84,18 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # gate; without it the gate would never clear and HOLD rendering forever). DEFAULT OFF -> this
         # block is skipped entirely and rendering is byte-identical to today.
         hold_hooks = False
-        if cfg.hook_editor and cfg.responder_mode == "llm":
+        if cfg.hook_editor:
             try:
-                led = request_hook_edit(led, cfg)        # write the single feed gate (no-op if nothing to edit)
-                led = ingest_hook_edit(led, cfg)         # apply the editor's answer if it's already on disk
-                hold_hooks = hook_edit_pending(led, cfg)  # still unanswered -> HOLD clip rendering this pass
+                # ALWAYS consume an already-written answer (review HIGH): if the operator flips
+                # FANOPS_RESPONDER llm->manual while a gate is pending, ingest must still apply the
+                # editor's answer rather than orphan it. Only REQUEST + HOLD on the llm path — the
+                # only responder that can answer the gate; holding for an unanswerable (manual) gate
+                # would wedge rendering forever.
+                if cfg.responder_mode == "llm":
+                    led = request_hook_edit(led, cfg)    # open the feed gate (idempotent per feed set)
+                led = ingest_hook_edit(led, cfg)         # apply the editor's answer whenever it lands
+                if cfg.responder_mode == "llm":
+                    hold_hooks = hook_edit_pending(led, cfg)  # still unanswered -> HOLD rendering this pass
             except Exception as e:                       # fail-open: never let the editor wedge a pass
                 log("hookedit", "-", "error", err=str(e)[:120])
                 hold_hooks = False
