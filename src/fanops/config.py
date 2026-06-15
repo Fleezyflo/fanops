@@ -217,6 +217,19 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def hook_editor(self) -> bool:
+        # Feed-aware on-screen-hook editor (Phase 2 of the hook framework): with this ON, after all
+        # moments are decided a SINGLE LLM pass sees EVERY clip's hook at once and rewrites the
+        # weak/duplicated/templated ones into strong, DISTINCT hooks before any clip burns them. The
+        # moment responder answers each clip in isolation, so it CANNOT diversify across the feed (the
+        # 'before he was Moh Flow' x6 round-2 failure); only a feed-level pass can. DEFAULT OFF
+        # (opt-in), fail-open — mirrors creative_variation. Requires FANOPS_RESPONDER=llm to be
+        # answered; with the flag off there is no hookedit gate and behavior is byte-identical. Only
+        # the explicit on-words enable it; unset/empty/other stays OFF.
+        v = (os.getenv("FANOPS_HOOK_EDITOR") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def variant_learning(self) -> bool:
         # Creative variation v2 (closing the learning loop): with this ON, request_captions biases
         # the next caption toward the per-account hook variant that has earned a TRUSTWORTHY win

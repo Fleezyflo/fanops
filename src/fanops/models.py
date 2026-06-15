@@ -103,6 +103,10 @@ class Moment(BaseModel):
     hook: Optional[str] = None                  # punchy top-third line for the clip; deterministic
                                                 # first-clause default (overlay.derive_hook), an LLM
                                                 # may overwrite. Optional/None -> old ledgers load fine.
+    hook_edited: bool = False                   # the feed-aware hook editor (hookedit.py) has run on
+                                                # this moment's hook; latches True so it never re-edits
+                                                # (no loop). Default False -> old ledgers load + are
+                                                # eligible for one edit pass.
     signal_score: float = 0.0
     error_reason: Optional[str] = None
 
@@ -188,3 +192,15 @@ class CaptionItem(BaseModel):
 class CaptionSet(BaseModel):
     request_id: str
     items: list[CaptionItem] = Field(default_factory=list)
+
+# Feed-aware hook editor (hookedit.py): a SINGLE gate over the WHOLE feed of decided hooks. The
+# moment responder answers each clip in isolation, so it cannot avoid reusing a hook/template across
+# clips; this gate hands the editor every hook at once to rewrite the weak/duplicated/templated ones
+# into strong, DISTINCT hooks. Response = one item per moment_id; hook None -> no honest hook (clean clip).
+class HookEditItem(BaseModel):
+    moment_id: str
+    hook: Optional[str] = None
+
+class HookEditDecision(BaseModel):
+    request_id: str
+    items: list[HookEditItem] = Field(default_factory=list)
