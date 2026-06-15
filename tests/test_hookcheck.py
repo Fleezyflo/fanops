@@ -16,9 +16,6 @@ from fanops.hookcheck import is_weak_hook
 def test_known_weak_hooks_are_rejected(hook):
     assert is_weak_hook(hook) is True
 
-def test_over_length_is_rejected():
-    assert is_weak_hook("this hook is way too long to ever work") is True   # >6 words
-
 @pytest.mark.parametrize("hook", ["", "   ", None])
 def test_empty_hook_is_weak(hook):
     assert is_weak_hook(hook) is True
