@@ -61,6 +61,26 @@ def test_build_ass_includes_hook_when_present():
     no_hook = build_ass([{"start": 10.0, "end": 12.0, "text": "hi"}], clip_start=8.0, clip_end=14.0)
     assert ",HOOK," not in no_hook
 
+def _hook_style_fields(ass: str) -> list[str]:
+    """The comma-split fields of the `Style: HOOK,...` row (V4+ Format order)."""
+    line = [ln for ln in ass.splitlines() if ln.startswith("Style: HOOK,")][0]
+    return line.split(",")
+
+def test_build_ass_hook_is_boxed_title_card():
+    # The produced look: the hook sits on a readable box (BorderStyle 3 = opaque box), not a thin
+    # outline that vanishes over busy footage. The box is a semi-transparent scrim, not solid black.
+    a = build_ass([], hook="WATCH THIS", clip_start=0.0, clip_end=6.0)
+    f = _hook_style_fields(a)
+    assert f[15] == "3"                              # BorderStyle field == opaque box
+    assert f[5].startswith("&H") and f[5] != "&H00000000"   # OutlineColour (the box) is a scrim, not opaque black
+
+def test_build_ass_hook_fades_in_and_out():
+    # An opener should pop in/out, not hard-cut — a produced touch on the first ~2s card.
+    a = build_ass([], hook="WATCH THIS", clip_start=0.0, clip_end=6.0)
+    hook_line = [ln for ln in a.splitlines() if ",HOOK," in ln][0]
+    assert "\\fad(" in hook_line                     # ASS fade override present
+    assert hook_line.rstrip().endswith("WATCH THIS")  # the hook text survives after the override tag
+
 
 def test_build_ass_escapes_and_handles_arabic():
     # newline -> ASS \N hard line break (literal backslash-N, not a real newline inside the event)

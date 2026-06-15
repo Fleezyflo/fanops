@@ -27,6 +27,12 @@ _CLAUSE_SPLIT = re.compile(r"[.!?\n]")
 _WHITE = "&H00FFFFFF"
 _BLACK = "&H00000000"
 _HOOK_COLOR = "&H0000C8FF"
+# Hook title-card box: ASS BorderStyle=3 draws an OPAQUE BOX behind the hook in the OutlineColour,
+# so the opener reads on ANY footage (a thin outline vanishes over busy frames). Semi-transparent
+# black (&H59 alpha ~= 65% opaque; 00=opaque, FF=clear) — a scrim, not a heavy solid slab.
+_HOOK_BOX = "&H59000000"
+# Fade the opener in/out (milliseconds) so the first-~2s card pops instead of hard-cutting.
+_HOOK_FADE_MS = 200
 
 # Cached result of the ffmpeg text-filter probe. None = not yet probed; once probed it holds the
 # bool so repeated clip renders reuse it instead of re-spawning ffmpeg (a per-render cost we pay
@@ -116,9 +122,10 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
         # SUBTITLE: white text, black outline+shadow, BOLD, Alignment=2 (bottom-centre), bottom-third margin.
         (f"Style: SUBTITLE,{font},{sub_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
          f"-1,0,0,0,100,100,0,0,1,3,2,2,60,60,{margin_v},1"),
-        # HOOK: amber text, black outline, BOLD, Alignment=8 (top-centre), top-third margin, LARGER.
-        (f"Style: HOOK,{font},{hook_fontsize},{_HOOK_COLOR},{_HOOK_COLOR},{_BLACK},{_BLACK},"
-         f"-1,0,0,0,100,100,0,0,1,4,3,8,60,60,{margin_v},1"),
+        # HOOK: amber text on a semi-transparent BOX (BorderStyle=3, box=OutlineColour=_HOOK_BOX),
+        # BOLD, Alignment=8 (top-centre), top-third margin, LARGER. Outline=6 = box padding; Shadow=0.
+        (f"Style: HOOK,{font},{hook_fontsize},{_HOOK_COLOR},{_HOOK_COLOR},{_HOOK_BOX},{_BLACK},"
+         f"-1,0,0,0,100,100,0,0,3,6,0,8,60,60,{margin_v},1"),
         "",
     ]
     # --- [Events] : Dialogue lines (hook first so it draws beneath/over per layer, then subtitles) ---
@@ -129,8 +136,9 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
     events: list[str] = []
     if hook and hook.strip():
         hook_end = min(2.5, clip_len)
+        fade = f"{{\\fad({_HOOK_FADE_MS},{_HOOK_FADE_MS})}}"   # ASS \fad(in,out) ms — produced pop
         events.append(
-            f"Dialogue: 0,{_fmt_ts(0.0)},{_fmt_ts(hook_end)},HOOK,,0,0,0,,{_escape_text(hook)}"
+            f"Dialogue: 0,{_fmt_ts(0.0)},{_fmt_ts(hook_end)},HOOK,,0,0,0,,{fade}{_escape_text(hook)}"
         )
     for seg in segments:
         seg_start = float(seg["start"])
