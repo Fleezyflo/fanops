@@ -137,26 +137,23 @@ def test_amplify_style_reingest_reconciles_not_noop(tmp_path):
     assert tokens["14.00-18.00"].reason == "B-better"       # B updated in place (not blocked)
     assert "c_a" not in led.clips and "p_a" not in led.posts # A's lineage cascade-deleted
 
-def test_moment_gets_derived_hook(tmp_path):
-    # A reconciled Moment carries a deterministic hook derived from its transcript_excerpt
-    # (the spoken text's first clause) — a punchy top-third line even with NO LLM. A future
-    # LLM can overwrite Moment.hook directly.
-    from fanops.overlay import derive_hook
+def test_moment_without_hook_shows_no_onscreen_text(tmp_path):
+    # When the model OMITS a hook, the moment carries NO on-screen text (hook=None) -> a CLEAN clip.
+    # It must NEVER fall back to the transcript first-clause: burning the unreliable auto-transcript on
+    # screen is the exact "random transcript fragment" slop the operator rejected. A clean clip beats
+    # slop; the model supplies a real curiosity-gap hook the vast majority of the time (it's REQUIRED).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     rid = latest_request_id(cfg, "moments", "src_1")
-    excerpt = "This changed everything for me."
     response_path(cfg, "moments", "src_1").write_text(MomentDecision(
         source_id="src_1", request_id=rid,
         picks=[MomentPick(start=14.0, end=18.5, reason="punchline",
-                          transcript_excerpt=excerpt, signal_score=0.6)]
+                          transcript_excerpt="This changed everything for me.", signal_score=0.6)]
     ).model_dump_json())
     led = ingest_moments(led, cfg, "src_1")
     moms = led.moments_of("src_1")
     assert len(moms) == 1
-    assert moms[0].hook                                      # non-empty
-    assert moms[0].hook == derive_hook(excerpt)             # the derived first clause
-    assert moms[0].hook == "This changed everything for me"
+    assert moms[0].hook is None                             # clean clip — NOT the transcript first-clause
 
 def test_moment_prefers_llm_retention_hook_over_transcript(tmp_path):
     # When the model returns a `hook` (a curiosity-gap RETENTION line), it WINS over the transcript

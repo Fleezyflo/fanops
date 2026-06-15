@@ -10,7 +10,6 @@ from fanops.ledger import Ledger
 from fanops.models import Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState
 from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response
-from fanops.overlay import derive_hook
 from fanops.text import sanitize_generated_text
 from fanops.log import get_logger
 
@@ -92,10 +91,13 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                            content_token=token, start=pick.start, end=pick.end,
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
                            transcript_excerpt=pick.transcript_excerpt,
-                           # On-screen text = the model's RETENTION hook (curiosity-gap, signal-driven —
-                           # NOT a transcript quote). derive_hook (transcript first-clause) is only a
-                           # last-resort fallback when the model omitted a hook; sanitize either way.
-                           hook=sanitize_generated_text((pick.hook or "").strip() or derive_hook(pick.transcript_excerpt)),
+                           # On-screen text = the model's RETENTION hook ONLY (curiosity-gap,
+                           # signal-driven — NOT a transcript quote). If the model omitted a hook,
+                           # show NOTHING (None -> clean clip): burning the unreliable transcript's
+                           # first-clause on screen is the exact "random transcript fragment" slop the
+                           # operator rejected. A clean clip beats slop. (derive_hook still serves the
+                           # cli title path; it is no longer a fallback for the BURNED on-screen text.)
+                           hook=(sanitize_generated_text(h) if (h := (pick.hook or "").strip()) else None),
                            signal_score=pick.signal_score)
     if not keep:
         if dec.picks:
