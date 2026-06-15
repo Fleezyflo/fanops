@@ -9,6 +9,7 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import SourceState
+from fanops.vocals import isolate_vocals
 
 # Hard bound on the whisper run — THE flock-critical timeout: transcribe_source is called INSIDE
 # Ledger.transaction (pipeline.py), so an UNBOUNDED hang held the ledger lock against every cron
@@ -102,7 +103,18 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     out_dir = cfg.agent_io / "transcripts"
     out_dir.mkdir(parents=True, exist_ok=True)
     model = model or cfg.whisper_model               # env override (FANOPS_WHISPER_MODEL), default turbo
-    cmd = whisper_cmd(src.source_path, str(out_dir), _resolve_model(model))
+    # Vocal isolation (the music-transcription fix): strip the beat with Demucs so Whisper reads the
+    # LYRICS, not the instrumental. FAIL-OPEN — isolate_vocals returns the RAW path if demucs is
+    # absent/fails, so this never blocks transcription. The isolated mp3 is moved next to the whisper
+    # output under the SOURCE stem so the per-source .json lookup below stays unique + unchanged.
+    audio = src.source_path
+    if cfg.isolate_vocals:
+        voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
+        if voc != src.source_path:
+            target = out_dir / f"{Path(src.source_path).stem}.mp3"
+            try: Path(voc).replace(target); audio = str(target)
+            except OSError: audio = voc
+    cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model))
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_WHISPER_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
@@ -120,7 +132,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         src.state = SourceState.error
         src.error_reason = f"whisper timed out after {_WHISPER_TIMEOUT:.0f}s"
         return led
-    js = out_dir / f"{Path(src.source_path).stem}.json"
+    js = out_dir / f"{Path(audio).stem}.json"        # whisper names its json by the INPUT stem
     if not js.exists():
         src.state = SourceState.error
         src.error_reason = f"whisper produced no JSON (rc={r.returncode}): {(r.stderr or '')[:200]}"

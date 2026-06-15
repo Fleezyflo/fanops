@@ -13,6 +13,51 @@ def test_whisper_cmd_shape():
     # word-level timestamps drive the active-caption sync — request them from whisper
     assert "--word_timestamps" in cmd and cmd[cmd.index("--word_timestamps") + 1] == "True"
 
+def test_transcribe_uses_isolated_vocals_when_enabled(tmp_path, mocker, monkeypatch):
+    # With isolation ON, transcribe_source strips the beat first and whisper transcribes the ISOLATED
+    # vocals (moved under the source stem), not the raw mix. isolate_vocals is mocked (the demucs run
+    # is covered in test_vocals); here we prove the WIRING + that the .json lookup still resolves.
+    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")        # conftest forces 0; opt back in
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.catalogued))
+    voc = tmp_path / "isolated_vocals.mp3"; voc.write_bytes(b"VOCALS")   # exists so the move succeeds
+    iso = mocker.patch("fanops.transcribe.isolate_vocals", return_value=str(voc))
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({
+            "language": "ar", "segments": [{"start": 0.0, "end": 2.0, "text": " ورا الستارة"}]}))
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    led = transcribe_source(led, cfg, "src_1")
+    iso.assert_called_once()                                # isolation ran
+    assert captured["cmd"][-1].endswith("src_1.mp3")       # whisper transcribed the ISOLATED mp3 (source stem)
+    s = led.sources["src_1"]
+    assert s.state is SourceState.transcribed and s.transcript[0]["text"] == "ورا الستارة"
+
+def test_transcribe_failopen_to_raw_when_isolation_unavailable(tmp_path, mocker, monkeypatch):
+    # isolation ON but demucs absent -> isolate_vocals returns the RAW path -> whisper transcribes the
+    # original source (today's behavior). Never blocks.
+    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.catalogued))
+    mocker.patch("fanops.transcribe.isolate_vocals", side_effect=lambda p, o, **k: p)   # fail-open: raw
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "en", "segments": []}))
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    led = transcribe_source(led, cfg, "src_1")
+    assert captured["cmd"][-1].endswith("src_1.mp4")       # transcribed the RAW source, not a vocals file
+    assert led.sources["src_1"].state is SourceState.transcribed
+
 def test_transcribe_captures_word_timestamps_when_present(tmp_path, mocker):
     # whisper --word_timestamps adds a per-segment `words` list ([{word,start,end}]); capture it so
     # the overlay can sync active captions word-by-word. Absent -> the field is simply omitted.
