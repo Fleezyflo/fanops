@@ -537,3 +537,44 @@ def test_render_silent_for_legible_hook(tmp_path, mocker, monkeypatch):
     assert clip.state is ClipState.rendered
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "hook_legibility" not in log                          # a clear hook is silent
+
+def test_render_reruns_when_visual_start_changes_fingerprint(tmp_path, mocker, monkeypatch):
+    # P1 T4: the chosen visual start flows into cs -> _render_fingerprint, so a DIFFERENT pick must
+    # bust the Phase D warm-skip and RE-RENDER (never silently reuse the clip cut at the old start).
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)     # ON
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided))
+    a, b = _vstart_candidate_times(10.0, 28.0)[1], _vstart_candidate_times(10.0, 28.0)[3]
+    cap1 = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(cap1, strong_at=a))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    ss1 = float(cap1["cmd"][cap1["cmd"].index("-ss") + 1]); assert abs(ss1 - a) < 1e-3
+    for f in cfg.clips.glob("vstart_*.json"): f.unlink()          # clear the cached decision -> re-pick
+    led.set_moment_state("mom_1", MomentState.decided)
+    cap2 = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(cap2, strong_at=b))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert "cmd" in cap2, "a changed visual start must re-render (fingerprint busts the warm skip)"
+    ss2 = float(cap2["cmd"][cap2["cmd"].index("-ss") + 1])
+    assert abs(ss2 - b) < 1e-3 and ss1 != ss2
+
+def test_native_default_render_has_no_template_overlay(tmp_path, mocker, monkeypatch):
+    # P1 T5: the default render is the base REFRAMED clip — no burned template card, no compose layer
+    # (the produced MoviePy layer stays opt-in via `fanops compose`). vf is exactly the reframe filter.
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)     # ON (default)
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)        # transcript captions OFF (default)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided, hook=None))
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    vf = _vf_of(captured["cmd"])
+    assert vf == reframe_filter("9:16", 1920, 1080)              # exactly the reframe — no template/subtitle filter
+    assert "subtitles=" not in vf
