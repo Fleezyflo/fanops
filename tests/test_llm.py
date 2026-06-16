@@ -83,3 +83,36 @@ def test_claude_json_raises_on_non_object_json(mocker):
         mocker.patch("fanops.llm.subprocess.run", return_value=R())
         with pytest.raises(RuntimeError, match="could not parse"):
             claude_json("q", _SCHEMA)
+
+def _rl_envelope():
+    # what `claude -p` actually emits when rate-limited (observed live): rc=1 + an envelope on stdout
+    # carrying api_error_status 429. The creative responder used to treat this as a generic failure
+    # and silently produce nothing.
+    return json.dumps({"type": "result", "subtype": "success", "is_error": True,
+                       "api_error_status": 429, "result": "rate limited"})
+
+def test_claude_json_retries_on_rate_limit_then_succeeds(mocker):
+    from fanops.llm import claude_json as cj
+    class RL: returncode = 1; stdout = _rl_envelope(); stderr = ""
+    class OK: returncode = 0; stdout = json.dumps({"structured_output": {"x": 3}}); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=[RL(), RL(), OK()])
+    sleep = mocker.patch("fanops.llm._sleep")                  # don't actually wait in tests
+    assert cj("q", _SCHEMA) == {"x": 3}                        # succeeds after backing off the 429s
+    assert run.call_count == 3 and sleep.call_count == 2       # retried twice, slept before each retry
+
+def test_claude_json_raises_typed_error_on_persistent_rate_limit(mocker):
+    from fanops.llm import LlmRateLimitError
+    class RL: returncode = 1; stdout = _rl_envelope(); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=RL())
+    mocker.patch("fanops.llm._sleep")
+    with pytest.raises(LlmRateLimitError):                     # typed, not a generic RuntimeError
+        claude_json("q", _SCHEMA)
+
+def test_claude_json_hard_failure_not_retried(mocker):
+    # a non-rate-limit nonzero exit (e.g. auth) must FAIL FAST — no backoff, no retry.
+    class R: returncode = 1; stdout = ""; stderr = "auth failed"
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    sleep = mocker.patch("fanops.llm._sleep")
+    with pytest.raises(RuntimeError, match="claude -p failed"):
+        claude_json("q", _SCHEMA)
+    assert run.call_count == 1 and sleep.call_count == 0

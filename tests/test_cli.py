@@ -1,6 +1,16 @@
 import json
 from fanops.cli import main
 
+def test_gates_blocked_note_flags_remaining_gates():
+    # After the run loop, gates still awaiting must produce a LOUD, distinct signal — not be buried
+    # in the summary. (B1 already makes a sustained rate-limit halt loud; this covers gates that stay
+    # stuck for any reason after the iteration cap.)
+    from fanops.cli import _gates_blocked_note
+    assert _gates_blocked_note({"awaiting": {"moments": 2, "captions": 0}}) is not None
+    assert "BLOCKED" in _gates_blocked_note({"awaiting": {"moments": 0, "captions": 3}})
+    assert _gates_blocked_note({"awaiting": {"moments": 0, "captions": 0}}) is None   # converged -> quiet
+    assert _gates_blocked_note(None) is None                                          # no status -> quiet
+
 def test_main_status(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert main(["status"]) == 0
