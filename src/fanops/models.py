@@ -203,6 +203,8 @@ class CaptionItem(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     language: Optional[str] = None      # AUDIT H5: the LLM declares the caption's language
     hook: Optional[str] = None          # per-surface on-screen hook (creative variation); None -> use moment default
+    axis: Optional[str] = None          # P2: the ONE cheap-text axis this variant moves (normalized at ingest)
+    rationale: Optional[str] = None     # P2: one-line WHY this variant is a coherent, justified difference
 
 class CaptionSet(BaseModel):
     request_id: str

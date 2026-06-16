@@ -34,6 +34,19 @@ logger = logging.getLogger(__name__)
 
 _TAG_RE = re.compile(r"#\S+")
 
+# P2 coherent variations. The CHEAP-TEXT axes a justified variant may move (render-expensive frame/
+# length axes are a P4-gated follow-up, NOT here). normalize_variation_axis maps an LLM label to a
+# canonical key (case/space/dash-insensitive), unknown -> None — so a bad label is "unlabeled", never a
+# crash. The coherence gate (T2) requires a KNOWN axis + a rationale; P3 attributes reach by the axis.
+VARIATION_AXES = ("hook_pattern", "hook_string", "caption_angle", "hook_placement")
+
+def normalize_variation_axis(value) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    key = re.sub(r"[\s/\-]+", "_", value.strip().lower())
+    return key if key in VARIATION_AXES else None
+
+
 def _tags_in(caption: str | None) -> list[str]:
     """Hashtags found inside a caption line (the model's tags live in the array AND the caption
     text); used as the fallback when the structured `hashtags` array is empty."""
@@ -224,7 +237,10 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         tags = vet_hashtags(item.hashtags or _tags_in(item.caption), plat,
                             src.language if src else None)
         clip.meta_captions[item.surface] = {"caption": " ".join(tags), "hashtags": tags,
-                                            "hook": sanitize_generated_text(item.hook, max_words=7)}
+                                            "hook": sanitize_generated_text(item.hook, max_words=7),
+                                            # P2: carry the variant's declared axis (normalized) + rationale
+                                            "axis": normalize_variation_axis(item.axis),
+                                            "rationale": (item.rationale or "").strip() or None}
     answered = {item.surface for item in cs.items}
     missing = requested - answered
     if missing and held_reason is None:
