@@ -208,6 +208,10 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
                         reason="ffmpeg lacks the text filter — rendering without subtitles/hook")
         return None
     tw, th = _TARGETS[aspect.value]
+    if hook:                                             # P1 T2: fail-open legibility guard — warn once, never block
+        warns = overlay.hook_legibility_warnings(hook, width=tw, height=th)
+        if warns:
+            get_logger(cfg)("clip", cid, "hook_legibility", warning="; ".join(warns))
     ass_text = overlay.build_ass(segments, hook=hook, clip_start=clip_start, clip_end=clip_end,
                                  width=tw, height=th, font=cfg.subtitle_font)
     if not ass_text or not ass_text.strip():

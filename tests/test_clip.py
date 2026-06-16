@@ -506,3 +506,34 @@ def test_render_moment_visual_start_off_does_not_probe(tmp_path, mocker, monkeyp
     assert clip.first_frame_kind is None                           # dim not engaged
     rend = [c for c in calls if not str(c[-1]).startswith("-")][0]
     assert float(rend[rend.index("-ss") + 1]) == 10.0              # band/snap start, unchanged
+
+def test_render_logs_legibility_warning_for_overlong_hook(tmp_path, mocker, monkeypatch):
+    # P1 T2: an overlong hook logs ONE legibility warning and the clip STILL renders (fail-open).
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")               # isolate from the probe path
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t", start=10, end=28,
+                          reason="r", state=MomentState.decided,
+                          hook="wait for the absolutely incredible unbelievable final climactic drop here"))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered                      # never blocked
+    assert "hook_legibility" in cfg.log_path.read_text()         # warned once
+
+def test_render_silent_for_legible_hook(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t", start=10, end=28,
+                          reason="r", state=MomentState.decided, hook="wait for the drop"))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "hook_legibility" not in log                          # a clear hook is silent

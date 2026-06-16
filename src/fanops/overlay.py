@@ -14,6 +14,7 @@ reframe with a comma). ffmpeg_has_textfilter() probes `ffmpeg -filters` ONCE and
 result so repeated clip renders don't re-spawn ffmpeg; it never raises if ffmpeg is absent.
 """
 from __future__ import annotations
+import math
 import re
 import shutil
 import subprocess
@@ -71,6 +72,36 @@ def _escape_text(text: str) -> str:
     text = text.replace("\n", "\\N")
     text = text.replace("{", "").replace("}", "")
     return text
+
+
+# P1 T2 legibility guard (heuristic, fail-open). The hook burns white over a thick black outline (reads
+# on any footage), so the residual legibility risk is a hook too LONG to read in its ~2.5s top card. With
+# no font metrics available we estimate the rendered line width from a conservative em ratio and WARN —
+# never block — when the line would need more than _MAX_HOOK_LINES to fit, or one unbreakable word
+# overflows the card. The ratios MUST track build_ass's hook style (fontsize + MarginL/R).
+_HOOK_EM_RATIO = 0.45
+_MAX_HOOK_LINES = 2
+_HOOK_FONTSIZE_RATIO = 0.072        # == build_ass hook_fontsize ratio
+_HOOK_MARGIN_LR = 60                # == HOOK style MarginL/MarginR in build_ass
+
+def hook_legibility_warnings(hook: str | None, *, width: int, height: int) -> list[str]:
+    """Return legibility warnings for a burned hook, or [] if it should read fine. PURE + fail-open:
+    the caller logs these once and renders the clip regardless (a hook is NEVER blocked). Heuristic
+    only — estimates rendered width from a conservative em ratio, so a false warning costs one log line."""
+    text = (hook or "").strip()
+    if not text:
+        return []
+    fontsize = max(44, int(round(height * _HOOK_FONTSIZE_RATIO)))
+    usable = max(1, width - 2 * _HOOK_MARGIN_LR)
+    glyph = _HOOK_EM_RATIO * fontsize
+    warns: list[str] = []
+    est_lines = int(math.ceil(len(text) * glyph / usable))
+    if est_lines > _MAX_HOOK_LINES:
+        warns.append(f"hook '{text}' likely needs ~{est_lines} lines at {fontsize}px — may spill the top safe area")
+    longest = max((len(w) for w in text.split()), default=0)
+    if longest * glyph > usable:
+        warns.append(f"hook '{text}' has a word too wide ({longest} chars) for the {usable}px card")
+    return warns
 
 
 def derive_hook(transcript_excerpt: str | None, *, max_words: int = 7) -> str | None:
