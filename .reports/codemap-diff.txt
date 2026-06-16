@@ -1,35 +1,26 @@
-Codemap generation report — 2026-06-13
-========================================
+Codemap update — 2026-06-16
+Scan: 58 src modules (src/fanops/ + studio/), ~70 test files.
 
-Mode: FIRST GENERATION (no prior docs/CODEMAPS/ existed; no diff gate applicable).
+Modules added since last codemap (2026-06-14):
+  + hookedit.py    feed-aware vision hook editor (chunked gates, cross-feed dedup)
+  + keyframes.py   source-frame extraction (the vision editor's eyes)
+  + hashtags.py    vet_hashtags — ≤4 reach-vetted hashtag selection
+  + (hookcheck.py / vocals.py already present; now grouped under Hook+hashtag quality)
 
-Files written:
-  docs/CODEMAPS/architecture.md  (~900 tokens) — pipeline flow, module map, CLI verbs,
-                                  Studio routes, learning-gate seams
-  docs/CODEMAPS/data.md          (~700 tokens) — data tree, ledger concurrency/atomicity,
-                                  unit lifecycles, control files, C1 cascade invariant
-  docs/CODEMAPS/dependencies.md  (~600 tokens) — external binaries + timeout bounds,
-                                  Blotato surface, py deps/extras, env flags, CI jobs
+Architecture changes:
+  * Pipeline: NEW hookedit stage between moments_decided and clip render
+    (Moment.decided -> [hookedit] -> hook_edited -> clip burns the retention hook).
+  * On-screen text reframed: RETENTION hook (not transcript caption); burn_subs default OFF.
+  * Caption stage: hashtags now hard-capped at 4 and restricted to a reach-vetted set.
+  * prompts.py: one shared _hook_spec (retention-only, no artist hype) across
+    moment/hookedit/caption.
+  * New sourced knowledge artifact: .claude/skills/fanops-hook-hashtag/SKILL.md.
 
-Layout note: the skill's backend.md/frontend.md split does not fit a single-process CLI
-tool — Studio's 8 Flask routes are folded into architecture.md instead of a frontend map.
+Added section: "Output levers" — the control surface (every flag/prompt/knowledge
+file/threshold that changes the produced clips/posts).
 
-Scan basis: 45 src files (src/fanops/** incl. post/, studio/) + 38 test files, at commit
-02c3e32 (post stage-7 refactor-clean). Structure facts verified against live source this
-session, not recalled: module line counts (wc), CLI verbs (argparse add_parser grep),
-env flags (os.getenv grep), state enums (models.py), data tree (_STAGE in config.py).
+Diff magnitude: additive, < 30% -> updated architecture.md in place.
+data.md / dependencies.md: no structural change (ledger model + external deps
+unchanged; claude -p now also passes image frames to the vision hook editor).
 
-Architecture changes captured vs pre-stage-7 state:
-  + Config.is_live_backend property (replaces 3 duplicated live-guards)
-  + digest.gate_state now PUBLIC (was _gate_state; Studio imports it)
-  + models.LIFT_SCORE constant (the Post.metrics contract key)
-  + Studio media routes bounded to cfg.base; app.run(debug=False)
-  + pull url validated http(s)-only at argparse
-  + discover/intake writes atomic; reads raise typed ControlFileError
-  - discover._entry_id, Config.escalation_budget_usd (deleted dead code)
-
-Known-gap annotations carried into the maps (deferred items, do not "fix" silently):
-  ledger has no schema_version; variant_streaks is an untyped dict; no ruff step in CI.
-
-Staleness: docs/handoff.md frozen at rev 28 by operator directive (ECC-only skills) —
-intentionally NOT counted as stale. No other doc older than 90 days.
+Staleness: none > 90 days.

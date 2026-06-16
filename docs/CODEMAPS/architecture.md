@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-14 | Files scanned: 55 src + 65 test | Token estimate: ~1100 -->
+<!-- Generated: 2026-06-16 | Files scanned: 58 src + 70 test | Token estimate: ~1250 -->
 # FanOps Architecture
 
 Single-operator local CLI (`fanops`) that turns long-form source video into scheduled
@@ -14,8 +14,9 @@ Optional MoviePy produced-clip compositing with template cards + overlays (impor
 01_inbox media ──ingest──> Source(catalogued)
   ──transcribe(whisper)──> transcribed ──signals(ffmpeg)──> signalled
   ──moments(agent req/resp via agentstep+llm)──> moments_decided -> Moment(decided)
-  ──clip(ffmpeg render per aspect)──> Clip(rendered)
-  ──caption(agent + brand gate)──> captioned
+  ──[hookedit: feed-aware, VISION-grounded RETENTION-hook editor; opt-in FANOPS_HOOK_EDITOR]──> Moment(hook_edited)
+  ──clip(ffmpeg render per aspect; burns the on-screen RETENTION hook top-center)──> Clip(rendered)
+  ──caption(agent + brand gate; hashtags VETTED to ≤4 from a reach-ranked set)──> captioned
   ──crosspost(schedule per account×platform surface)──> Post(queued)
   ──publish_due(post/run.py)──> submitting -> submitted -> published
   ──track(pull Blotato metrics)──> analyzed ──adjust──> amplify/retire
@@ -31,7 +32,8 @@ Optional MoviePy produced-clip compositing with template cards + overlays (impor
 |---|---|
 | Orchestration | cli.py (verbs+catch ladder), pipeline.py (advance), config.py (env+paths) |
 | Ingest/discover | ingest.py, discover.py (00_review intake), transcribe.py, signals.py |
-| Decide/render | moments.py, clip.py, overlay.py (hook/subtitle burn), caption.py (gate), prompts.py |
+| Decide/render | moments.py, clip.py (+fit_window/snap), overlay.py (hook/subtitle burn, build_ass), caption.py (brand gate + hashtag vet), prompts.py (moment/hookedit/caption, shared `_hook_spec`) |
+| Hook + hashtag quality | hookedit.py (feed-aware vision hook editor, chunked gates), keyframes.py (source-frame extraction = the editor's eyes), hookcheck.py (deterministic weak-hook guard), hashtags.py (vet_hashtags ≤4 reach-vetted), text.py (em-dash sanitizer). Sourced knowledge: `.claude/skills/fanops-hook-hashtag/SKILL.md` |
 | Compositing (optional [compose]) | compose.py (MoviePy produced clip layer w/ template cards, fail-open to base clip) |
 | Agent I/O | agentstep.py (request/response files), llm.py (`claude -p`, 180s cap), responder.py |
 | Schedule/post | crosspost.py (deterministic schedule), tagging.py, post/{run,media,payload,blotato_rest,blotato_mcp,postiz,dryrun,metrics}.py |
@@ -80,6 +82,24 @@ POST /golive/{config,refresh,map,live,dryrun}   (Milestone 5 operator-gated: Pos
 
 All POST routes return ActionResult (ok + detail/error) wrapped in _result.html (htmx swap).
 Gates/Run panels re-render on success with fresh status (lock-free Ledger.load).
+
+## Output levers (what changes the produced clips/posts)
+
+The control surface — every input that changes what the engine outputs:
+
+| Lever | Where read | Changes |
+|---|---|---|
+| `context.md` (brand brief) | moments/caption `_guidance` | clip-pick + hook + caption voice (injected verbatim into every agent prompt) |
+| `FANOPS_HOOK_EDITOR` | config → pipeline | on: feed-aware vision editor rewrites all hooks before render; off: per-clip hooks only |
+| `prompts._hook_spec` | moment/hookedit/caption | the ONE retention-hook definition (open-loop/curiosity/comment-bait/POV, no hype) |
+| `hashtags.py` vetted set + `vet_hashtags` | caption ingest | the ≤4 reach-vetted tags actually posted (model picks from the menu; code hard-caps) |
+| `FANOPS_RESPONDER` (llm/manual) | pipeline/responder | who answers moment/caption/hookedit gates (llm = autonomous; manual = operator) |
+| `FANOPS_CLIP_PROFILE` + bands.py | clip.fit_window | clip length band (talk 12-22s vs song 18-35s) + snap window |
+| `burn_subs` | clip/overlay | transcript captions burned (default OFF; hook is NOT the transcript) |
+| `tuning.json` offbrand_en/ar | caption brand gate | what HOLDS a caption as off-brand |
+| `accounts.json` personas | caption per-surface | per-account voice/angle |
+| `FANOPS_VARIANT_*` (learning/amplify/ucb/transfer) | caption bias + post-loop | hook A/B learning (default OFF, fail-safe) |
+| `FANOPS_POSTER` | config → publish | dryrun (no-op) vs postiz/blotato (real posts) |
 
 ## Learning-gate seams (the C1-sensitive area)
 
