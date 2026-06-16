@@ -484,6 +484,25 @@ def test_render_moment_visual_start_moves_cut_and_stamps_provenance(tmp_path, mo
     assert abs(float(cmd[cmd.index("-ss") + 1]) - target) < 1e-3   # cut start moved onto the strong frame
     assert "-c:a" in cmd                                            # audio still encoded -> untouched
 
+def test_visual_start_provenance_honest_with_transcript(tmp_path, mocker, monkeypatch):
+    # snap runs BEFORE visual, so first_frame_kind="visual" iff the visual pick is the ACTUAL rendered
+    # start — snap can't silently pull it back while the dim still claims "visual" (the P4-poisoning bug).
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    tr = [{"start": 9.3, "end": 12.0, "text": "a"}, {"start": 25.0, "end": 28.4, "text": "b"}]
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0, transcript=tr))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided))
+    target = _vstart_candidate_times(9.3, 28.4)[2]               # candidates start from the SNAPPED window
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured, strong_at=target))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.first_frame_kind == "visual"
+    ss = float(captured["cmd"][captured["cmd"].index("-ss") + 1])
+    assert abs(ss - target) < 1e-3                               # rendered start IS the visual pick
+
 def test_render_moment_visual_start_off_does_not_probe(tmp_path, mocker, monkeypatch):
     # FANOPS_VISUAL_START=0 -> no signalstats probe at all, start unchanged, first_frame_kind None.
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")

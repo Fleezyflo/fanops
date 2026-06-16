@@ -66,6 +66,19 @@ def test_fail_open_when_ffmpeg_absent(tmp_path, mocker):
     start, kind = pick_visual_start("/s/x.mp4", 10.0, 28.0, scene_peaks=[], out_dir=tmp_path)  # never raises
     assert start == 10.0 and kind == "transcript"
 
+def test_fail_open_on_corrupt_scene_peaks(tmp_path, mocker):
+    # signal_peaks is loaded from an unvalidated JSON sidecar; a non-numeric 't' must NOT raise out of
+    # the picker (fail-open contract) — it just contributes no tiebreak.
+    def run(cmd, **kw):
+        class R:
+            returncode = 0; stderr = ""
+            stdout = _stats(120.0, 16, 200)
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    bad = [{"kind": "scene_cut", "t": "not-a-number", "score": 0.5}]
+    start, kind = pick_visual_start("/s/x.mp4", 10.0, 28.0, scene_peaks=bad, out_dir=tmp_path)  # must not raise
+    assert isinstance(start, float)
+
 def test_scene_cut_breaks_a_strength_tie(tmp_path, mocker):
     times = _vstart_candidate_times(10.0, 28.0)
     a, b = times[1], times[3]                  # two equally-strong frames

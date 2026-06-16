@@ -114,10 +114,18 @@ def _probe_frame_strength(src: str, t: float):
     return frames.parse_signalstats((getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or ""))
 
 def _scene_score_near(scene_peaks, t: float) -> float:
+    # signal_peaks is loaded from an unvalidated JSON sidecar, so a non-numeric t/score must not raise
+    # out of the picker (fail-open contract) — a bad peak just contributes no tiebreak.
     best = 0.0
     for p in scene_peaks or []:
-        if p.get("kind") == "scene_cut" and abs(float(p.get("t", 0.0)) - t) <= _SCENE_NEAR_S:
-            best = max(best, float(p.get("score", 0.0)))
+        if not isinstance(p, dict) or p.get("kind") != "scene_cut":
+            continue
+        try:
+            pt = float(p.get("t", 0.0)); ps = float(p.get("score", 0.0))
+        except (ValueError, TypeError):
+            continue
+        if abs(pt - t) <= _SCENE_NEAR_S:
+            best = max(best, ps)
     return best
 
 def pick_visual_start(src_path: str, start: float, end: float, *, scene_peaks, out_dir) -> tuple[float, str]:
@@ -248,13 +256,15 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     dst = cfg.clips / f"{cid}.mp4"
     band = band_for(cfg.clip_profile)                          # talk 12-22s / song 18-35s
     cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
-    # P1 T1: refine the entry onto the strongest opening frame (after the band, before transcript-snap)
-    # — runs in the lock-free pre-warm and is sidecar-cached so the in-lock commit re-probes nothing.
+    cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
+    # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after band + snap) so the
+    # rendered cut and the first_frame_kind provenance AGREE — snap can't silently undo a visual pick and
+    # leave the dim lying (it would poison P4, which ranks first_frame_kind). Both 1.5s shifts otherwise
+    # overlap. Runs in the lock-free pre-warm + is sidecar-cached so the in-lock commit re-probes nothing.
     first_frame_kind = None
     if cfg.visual_start:
         cs, first_frame_kind = pick_visual_start(src.source_path, cs, ce,
                                                  scene_peaks=src.signal_peaks, out_dir=cfg.clips)
-    cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
     cut_seconds = round(ce - cs, 3)                            # P1 provenance (observational; length not varied)
     extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
     # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
