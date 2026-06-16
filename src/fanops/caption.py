@@ -28,6 +28,7 @@ from fanops.variant_learning import ucb_rank
 from fanops.variant_transfer import transferred_hooks
 from fanops.text import sanitize_generated_text
 from fanops.hashtags import vet_hashtags
+from fanops.control import load_guidance
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +85,6 @@ def brand_risk_flag(caption: str, cfg: Config | None = None) -> str | None:
     m = _risk_re(cfg).search(caption or "")
     return (f"off-brand / breaks bravado guardrail: matched '{m.group(0)}'") if m else None
 
-def _guidance(cfg: Config) -> str:
-    return cfg.context_path.read_text() if cfg.context_path.exists() else ""
 
 def _surface_str(account: str, platform: Platform) -> str:
     return f"{account}/{platform.value}"                  # the documented lookup contract
@@ -161,7 +160,7 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
         "language": src.language if src else None,
-        "guidance": _guidance(cfg),
+        "guidance": load_guidance(cfg),
         "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value,
                       **({"persona": pv} if (pv := personas.get(acct)) else {})}
                      for acct, plat in surfaces],

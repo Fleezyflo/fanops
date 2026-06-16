@@ -13,9 +13,7 @@ from fanops.agentstep import write_request, read_response
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
 from fanops.log import get_logger
-
-def _guidance(cfg: Config) -> str:
-    return cfg.context_path.read_text() if cfg.context_path.exists() else ""
+from fanops.control import load_guidance
 
 def _token(pick: MomentPick) -> str:
     return f"{pick.start:.2f}-{pick.end:.2f}"
@@ -60,7 +58,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                             transcript=src.transcript or [],
                             signal_peaks=src.signal_peaks or [],
                             language=src.language,
-                            guidance=_guidance(cfg),
+                            guidance=load_guidance(cfg),
                             clip_profile=cfg.clip_profile).model_dump()   # band reaches the model's picks
     payload.pop("request_id", None)
     write_request(cfg, kind="moments", key=source_id, payload=payload)

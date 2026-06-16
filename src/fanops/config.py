@@ -7,11 +7,39 @@ import json
 import logging
 import math
 import os
+import re
 from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
 
 _log = logging.getLogger("fanops.config")
+
+def _sanitize_tuning(raw: dict) -> dict:
+    """Drop only the INVALID entries from a tuning.json override, keeping the good ones (a single bad
+    regex used to make the consumer fall back to ALL defaults, silently losing every valid override).
+    Stay fail-open — warn + drop, never raise. offbrand_* entries must be strings that compile as
+    regex; lift_weights values must be real numbers (a non-numeric weight would crash lift_score)."""
+    out = dict(raw)
+    for key in ("offbrand_en", "offbrand_ar"):
+        pats = out.get(key)
+        if isinstance(pats, list):
+            kept = []
+            for p in pats:
+                try:
+                    re.compile(p); kept.append(p)
+                except (re.error, TypeError):
+                    _log.warning("tuning.json %s: dropping invalid regex %r (using remaining + defaults)", key, p)
+            out[key] = kept
+    weights = out.get("lift_weights")
+    if isinstance(weights, dict):
+        kept_w = {}
+        for k, v in weights.items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                kept_w[k] = v
+            else:
+                _log.warning("tuning.json lift_weights: dropping non-numeric weight %r=%r", k, v)
+        out["lift_weights"] = kept_w
+    return out
 
 _STAGE = {
     "control": "00_control", "review": "00_review", "inbox": "01_inbox", "sources": "02_sources",
@@ -63,7 +91,7 @@ class Config:
         if not isinstance(raw, dict):                       # e.g. a top-level list/number
             _log.warning("ignoring %s (expected a JSON object, using built-in defaults)", p.name)
             return {}
-        return raw
+        return _sanitize_tuning(raw)                         # warn+drop invalid entries, keep good ones
 
     @property
     def blotato_api_key(self) -> str | None:

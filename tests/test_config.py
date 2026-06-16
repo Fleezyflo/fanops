@@ -1,5 +1,35 @@
 # tests/test_config.py
+import json
+import logging
 from fanops.config import Config
+
+def _tuning_cfg(tmp_path, obj):
+    cfg = Config(root=tmp_path)
+    cfg.tuning_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.tuning_path.write_text(json.dumps(obj))
+    return cfg
+
+def test_tuning_drops_uncompilable_regex_keeps_good(tmp_path, caplog):
+    # A single bad override regex must not nuke the whole override (it used to fall back to ALL
+    # defaults at the consumer); tuning() drops only the bad entry, keeps the good ones, warns.
+    cfg = _tuning_cfg(tmp_path, {"offbrand_en": ["\\bpls\\b", "(unclosed"]})
+    with caplog.at_level(logging.WARNING):
+        t = cfg.tuning()
+    assert t["offbrand_en"] == ["\\bpls\\b"]
+    assert any("offbrand_en" in r.getMessage() for r in caplog.records)
+
+def test_tuning_drops_nonnumeric_lift_weight(tmp_path, caplog):
+    # a non-numeric weight value would crash track.lift_score arithmetic — drop it, keep numerics.
+    cfg = _tuning_cfg(tmp_path, {"lift_weights": {"saves": 4.0, "bad": "lots"}})
+    with caplog.at_level(logging.WARNING):
+        t = cfg.tuning()
+    assert t["lift_weights"] == {"saves": 4.0}
+    assert any("lift_weights" in r.getMessage() for r in caplog.records)
+
+def test_tuning_passes_clean_overrides_unchanged(tmp_path):
+    cfg = _tuning_cfg(tmp_path, {"offbrand_en": ["\\bpls\\b"], "lift_weights": {"saves": 5}})
+    t = cfg.tuning()
+    assert t["offbrand_en"] == ["\\bpls\\b"] and t["lift_weights"] == {"saves": 5}
 
 def test_dirs(tmp_path):
     c = Config(root=tmp_path)

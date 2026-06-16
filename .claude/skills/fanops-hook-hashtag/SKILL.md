@@ -5,11 +5,33 @@ description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOp
 
 # FanOps Hooks & Hashtags — researched, reach-vetted
 
+> **Source of truth = code.** The runtime values live in `hashtags.VETTED` and
+> `prompts._hook_spec`; this file documents them. The DRIFT-GUARD blocks below are
+> mirror-tested by `tests/test_skill_drift.py` — if this doc and the code disagree,
+> that test goes red. Edit code + doc together.
+
 The knowledge that drives two things the engine generates: the **on-screen hook**
 (big text in a clip's first ~2s) and the **hashtag caption**. Both were freestyled
 by the model before this skill existed — hooks paraphrased the lyric transcript
 ("shackled up, feels like flying"), hashtags were 5–15 random words. Both are now
 grounded in what actually works, with proof.
+
+## Drift guards (machine-readable; mirror-tested against the code)
+
+<!-- DRIFT-GUARD:hashtags — the reach-vetted set; must equal hashtags.VETTED exactly -->
+```text
+#hiphop #hiphopmusic #rap #rapper #bars #undergroundhiphop #newmusic #arabicmusic #arabtiktok #arabicmusiclovers #fyp #foryou #viral #reels
+```
+
+<!-- DRIFT-GUARD:patterns — the 6 canonical retention patterns; each must appear in prompts._hook_spec -->
+```text
+open loop
+curiosity gap
+comment
+contrarian
+pov
+proof
+```
 
 ## Operator hard rules (override any generic advice below)
 

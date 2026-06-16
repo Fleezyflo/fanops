@@ -18,7 +18,7 @@ from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
-from fanops.moments import _guidance
+from fanops.control import load_guidance
 
 def _frames(led: Ledger, cfg: Config, m: Moment) -> list[str]:
     """A few source frames in the moment's window — the editor's eyes. Fail-open: no real source
@@ -71,7 +71,7 @@ def request_hook_edit(led: Ledger, cfg: Config) -> Ledger:
         # rendering HOLDS forever. Write once per batch; a changed set yields a new digest -> new gate.
         if latest_request_id(cfg, "hookedit", key) is not None:
             continue
-        payload = {"guidance": _guidance(cfg),
+        payload = {"guidance": load_guidance(cfg),
                    "items": [{"moment_id": m.id, "hook": m.hook,
                               "transcript_excerpt": m.transcript_excerpt, "reason": m.reason,
                               "language": led.sources[m.parent_id].language if m.parent_id in led.sources else None,
