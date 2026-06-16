@@ -155,6 +155,7 @@ class Post(BaseModel):
     first_frame_kind: Optional[str] = None  # "visual" | "transcript" — how the opening frame was chosen
     clip_profile: Optional[str] = None      # song | talk — the per-video-type group ("hook for which video type")
     cut_seconds: Optional[float] = None     # rendered clip length (observational; length not varied)
+    variation_axis: Optional[str] = None    # P2 (one writer = crosspost): the cheap-text axis this variant moved
 
 
 # ---- agent-step contracts (all carry request_id for correlation — FIX F21) ----

@@ -506,3 +506,24 @@ def test_crosspost_stamps_creative_provenance_onto_post(tmp_path, mocker, monkey
     assert post.first_frame_kind == "visual"
     assert post.cut_seconds == 18.0
     assert post.clip_profile == "song"
+
+
+def test_crosspost_stamps_variation_axis_from_caption(tmp_path, mocker, monkeypatch):
+    # P2 T3: the per-surface variant's declared axis is stamped onto its Post (variation_axis) so P3 can
+    # attribute reach by the axis a variation moved. P1 owns hook_pattern; P2 writes ONLY variation_axis.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1",
+                          "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-18", start=0, end=18,
+                          reason="r", state=MomentState.clipped))
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
+                state=ClipState.captioned)
+    clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": ["#x"],
+                                           "hook": "wait for the drop", "axis": "hook_pattern",
+                                           "rationale": "open-loop tease"}}
+    led.add_clip(clip)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    post = list(led.posts.values())[0]
+    assert post.variation_axis == "hook_pattern"

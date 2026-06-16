@@ -293,3 +293,19 @@ def test_transferred_hooks_called_only_on_safe_read_or_request_side():
         f"C1 violation: transferred_hooks called from the amplify/delete path: {leaked_into_danger}"
     assert callers <= allowed, \
         f"transferred_hooks called from an unexpected file (review for safety): {sorted(callers - allowed)}"
+
+
+# P1/P2 creative-provenance dims (hook_pattern, first_frame_kind, variation_axis) are STAMPED for
+# attribution (P3/P4) and must — like variant_* signal — never reach the amplify/delete-cascade path.
+# They don't intersect _FORBIDDEN_IN_AMPLIFY (exact-match), so this is a SEPARATE data-flow lock: the
+# obligation per the audit is "if a dim ever flows into amplify/retire/cascade, this goes red".
+_FORBIDDEN_PROVENANCE_IN_AMPLIFY = ("hook_pattern", "first_frame_kind", "variation_axis")
+
+def test_amplify_path_blind_to_creative_provenance():
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
+    adjust_names = _names_in(root / "adjust.py", {"classify_outcomes", "amplify", "retire"})
+    cascade_names = _names_in(root / "ledger.py", {"_delete_moment_cascade"})
+    leaked = sorted((adjust_names | cascade_names) & set(_FORBIDDEN_PROVENANCE_IN_AMPLIFY))
+    assert not leaked, (
+        f"C1: the amplify/delete-cascade path references creative-provenance signal {leaked} — P1/P2 "
+        f"stamp these for attribution ONLY; a noisy 'winning' pattern/axis must never reach amplify/retire.")

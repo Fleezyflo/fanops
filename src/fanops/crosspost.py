@@ -149,6 +149,7 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 # global video-type knob (its only home today — config.py). Absent dims default None cleanly.
                 hook_pattern=(m.hook_pattern if m is not None else None),
                 first_frame_kind=target_clip.first_frame_kind, cut_seconds=target_clip.cut_seconds,
-                clip_profile=cfg.clip_profile))
+                clip_profile=cfg.clip_profile,
+                variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))   # P2: the axis this variant moved
         led.set_clip_state(clip.id, ClipState.queued)
     return led
