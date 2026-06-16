@@ -182,6 +182,22 @@ def test_llm_responder_retries_once_on_timeout(tmp_path, monkeypatch):
     assert n == 1 and calls["n"] == 2                       # retried once, then answered
     assert response_path(cfg, "moments", "src_1").exists()
 
+def test_hookedit_model_passes_frames_as_images_for_vision(mocker):
+    # The production model for a hookedit gate must hand the clip's frames to claude_json as images
+    # (Read tool) so the editor SEES each clip; moments/captions stay pure text generators.
+    from fanops.responder import _default_claude_model
+    spy = mocker.patch("fanops.responder.claude_json", return_value={"items": []})
+    payload = {"items": [{"moment_id": "m1", "hook": "x", "frames": ["/t/a.jpg", "/t/b.jpg"]},
+                         {"moment_id": "m2", "hook": "y", "frames": ["/t/c.jpg"]}]}
+    _default_claude_model("hookedit", payload)
+    assert spy.call_args.kwargs.get("images") == ["/t/a.jpg", "/t/b.jpg", "/t/c.jpg"]
+
+def test_moments_model_passes_no_images(mocker):
+    from fanops.responder import _default_claude_model
+    spy = mocker.patch("fanops.responder.claude_json", return_value={"picks": []})
+    _default_claude_model("moments", {"source_id": "s", "duration": 10.0})
+    assert not spy.call_args.kwargs.get("images")        # text-only path unchanged
+
 def test_llm_responder_answers_hookedit_gate(tmp_path, monkeypatch):
     # The feed-aware hook editor rides the same gate contract: a pending hookedit request is answered
     # by the SAME responder, validated against HookEditDecision, request_id stamped — no moments-style

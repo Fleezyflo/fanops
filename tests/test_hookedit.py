@@ -47,6 +47,27 @@ def test_request_writes_feed_gate_with_all_hooked_moments(tmp_path, monkeypatch)
     assert it["hook"] == "before he was Moh Flow"      # carries the current hook +
     assert it["transcript_excerpt"] and it["reason"]   # grounding context for the editor
 
+def test_request_attaches_keyframes_when_source_exists(tmp_path, monkeypatch, mocker):
+    # The editor sees each clip: request_hook_edit extracts source frames in the moment window and
+    # carries them on the item so the responder can hand them to the vision model.
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    cfg = Config(root=tmp_path); led = _seed_feed(cfg)
+    mocker.patch("fanops.hookedit.os.path.exists", return_value=True)
+    mocker.patch("fanops.hookedit.extract_keyframes", return_value=["/kf/0.jpg", "/kf/1.jpg"])
+    led = request_hook_edit(led, cfg)
+    key = pending(cfg, kind="hookedit")[0]
+    payload = json.loads((cfg.agent_io / "requests" / f"hookedit__{key}.request.json").read_text())
+    assert payload["items"][0]["frames"] == ["/kf/0.jpg", "/kf/1.jpg"]
+
+def test_request_frames_empty_when_source_absent(tmp_path, monkeypatch):
+    # Fail-open: no real source file → no frames → the editor degrades to text-only, never crashes.
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    cfg = Config(root=tmp_path); led = _seed_feed(cfg)
+    led = request_hook_edit(led, cfg)                    # _seed_feed sources point at non-existent files
+    key = pending(cfg, kind="hookedit")[0]
+    payload = json.loads((cfg.agent_io / "requests" / f"hookedit__{key}.request.json").read_text())
+    assert payload["items"][0]["frames"] == []
+
 def test_request_noop_when_disabled(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_HOOK_EDITOR", raising=False)
     cfg = Config(root=tmp_path); led = _seed_feed(cfg)

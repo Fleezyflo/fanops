@@ -27,18 +27,27 @@ class LlmTimeoutError(RuntimeError):
     """`claude -p` exceeded its time budget. Distinct from a generic RuntimeError so the responder
     can RETRY it (a timeout is usually transient) rather than treating it like a hard failure."""
 
-def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0) -> dict:
+def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
+                images: list[str] | None = None) -> dict:
     """Call `claude -p` with a JSON schema; return the model's schema-valid object.
     Prefers the envelope's `structured_output`; falls back to json.loads(`result`).
     Raises ToolchainMissingError if `claude` is absent, RuntimeError on nonzero exit or
     unparseable output. The CALLER (the responder) validates against the pydantic model and
     quarantines per-request, so this stays a thin, honest shell wrapper.
     NO `--bare`: the operator uses the existing `claude` subscription/OAuth (not ANTHROPIC_API_KEY);
-    `--strict-mcp-config` + `--allowedTools ""` keep it a clean, no-tool, no-MCP generator."""
+    `--strict-mcp-config` + `--allowedTools ""` keep it a clean, no-tool, no-MCP generator.
+    `images`: when given (the vision-grounded hook editor), the Read tool is granted and the frame
+    paths are named in the prompt so the model READS and SEES them before deciding (proven in the
+    Task 0a spike). Read is the ONLY tool granted — still no write/exec/MCP — and the default
+    (images=None) path is byte-identical to before (pure no-tool generator)."""
+    if images:
+        prompt = ("FIRST read these image frames with the Read tool, then answer using what you SEE:\n"
+                  + "\n".join(images) + "\n\n" + prompt)
+    allowed = "Read" if images else ""
     cmd = ["claude", "-p", prompt,
            "--output-format", "json",
            "--json-schema", json.dumps(schema),
-           "--allowedTools", "",
+           "--allowedTools", allowed,
            "--strict-mcp-config"]
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)

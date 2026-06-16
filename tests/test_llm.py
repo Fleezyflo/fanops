@@ -27,6 +27,28 @@ def test_claude_json_extracts_structured_output(mocker):
     assert "--json-schema" in cmd
     i = cmd.index("--allowedTools"); assert cmd[i + 1] == ""   # pure generator
 
+def test_claude_json_with_images_allows_read_and_references_paths(mocker):
+    # The vision-grounded hook editor must SEE frames: with images, the call grants the Read tool and
+    # names the frame paths in the prompt so the model reads them (proven viable in the Task 0a spike).
+    envelope = {"structured_output": {"x": 5}, "result": "", "session_id": "s"}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    out = claude_json("judge these", _SCHEMA, images=["/tmp/a.jpg", "/tmp/b.jpg"])
+    assert out == {"x": 5}
+    cmd = run.call_args[0][0]
+    i = cmd.index("--allowedTools"); assert cmd[i + 1] == "Read"          # vision needs the Read tool
+    prompt = cmd[cmd.index("-p") + 1]
+    assert "/tmp/a.jpg" in prompt and "/tmp/b.jpg" in prompt              # told which frames to read
+
+def test_claude_json_without_images_stays_pure_generator(mocker):
+    # Regression: the default (text-only) path is byte-identical — no Read tool, no file access.
+    envelope = {"structured_output": {"x": 1}}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA)
+    cmd = run.call_args[0][0]
+    i = cmd.index("--allowedTools"); assert cmd[i + 1] == ""
+
 def test_claude_json_falls_back_to_parsing_result_when_no_structured(mocker):
     # If structured_output is absent/null, parse the JSON in `result`.
     envelope = {"structured_output": None, "result": "{\"x\": 9}", "session_id": "s"}

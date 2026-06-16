@@ -27,9 +27,14 @@ class ManualResponder:
         return 0                                    # a human (or external cron) writes responses
 
 def _default_claude_model(kind: str, payload: dict) -> dict:
-    """The production model: hand claude -p the committed prompt + the gate's JSON schema."""
+    """The production model: hand claude -p the committed prompt + the gate's JSON schema. For the
+    hookedit gate, also hand it the clip frames (collected from the payload items) as images so the
+    editor SEES each clip and grounds its rewrite in the footage; moments/captions stay text-only."""
     schema = _SCHEMA[kind].model_json_schema()
-    return claude_json(_PROMPT[kind](payload), schema)
+    images = None
+    if kind == "hookedit":
+        images = [f for it in payload.get("items", []) for f in (it.get("frames") or [])] or None
+    return claude_json(_PROMPT[kind](payload), schema, images=images)
 
 class LlmResponder:
     """model(kind, request_payload_dict) -> response_dict. Defaults to `claude -p`; injectable for

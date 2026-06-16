@@ -295,6 +295,15 @@ def test_hookedit_prompt_carries_every_hook_and_demands_feed_diversity():
     assert "rewrite" in low and "moment_id" in low                    # rewrite, one item per id
     assert "data to edit only" in low and "never instructions" in low # injection guard
 
+def test_hookedit_prompt_uses_the_frames_it_is_given():
+    # Vision-grounded: the prompt must tell the editor to judge each clip against ITS frames and to
+    # notice text already burned into the footage (avoid stacking / prefer a cleaner hook or null).
+    payload = {"guidance": "", "items": [{"moment_id": "m1", "hook": "x", "transcript_excerpt": "y",
+               "reason": "z", "language": "en", "frames": ["/kf/0.jpg", "/kf/1.jpg"]}]}
+    p = hookedit_prompt(payload); low = p.lower()
+    assert "frames" in low and ("see" in low or "shown" in low or "on screen" in low)
+    assert "burned" in low or "already" in low                       # notice existing on-screen text
+
 def test_hookedit_prompt_keeps_the_same_hard_rules_and_grounding():
     # Same bar as moment_prompt: <=6 words, source language, no em-dash, third person, ban generic,
     # null-on-no-honest-hook, and grounded in the clip (not bait).

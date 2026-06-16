@@ -9,6 +9,7 @@ them. The deterministic guard (hookcheck.is_weak_hook) is the floor: a rewrite t
 STILL a cross-feed duplicate is nulled to a clean clip (clean beats slop). Gated by cfg.hook_editor
 (DEFAULT OFF, opt-in, fail-open); with the flag off there is no gate and behavior is byte-identical."""
 from __future__ import annotations
+import os
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Moment, MomentState, HookEditDecision
@@ -16,7 +17,18 @@ from fanops.ids import _hash
 from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
+from fanops.keyframes import extract_keyframes
 from fanops.moments import _guidance
+
+def _frames(led: Ledger, cfg: Config, m: Moment) -> list[str]:
+    """A few source frames in the moment's window — the editor's eyes. Fail-open: no real source
+    file (tests / not-yet-downloaded) → [] → the editor degrades to text-only, never spawns ffmpeg
+    on a path that isn't there."""
+    src = led.sources.get(m.parent_id)
+    if not (src and src.source_path and os.path.exists(src.source_path)):
+        return []
+    return extract_keyframes(src.source_path, m.start, m.end, count=3,
+                             out_dir=cfg.agent_io / "keyframes" / m.id)
 
 def _editable(led: Ledger) -> list[Moment]:
     """Decided moments that HAVE a hook and have not yet been edited — the batch this pass owns.
@@ -52,7 +64,7 @@ def request_hook_edit(led: Ledger, cfg: Config) -> Ledger:
                "items": [{"moment_id": m.id, "hook": m.hook,
                           "transcript_excerpt": m.transcript_excerpt, "reason": m.reason,
                           "language": led.sources[m.parent_id].language if m.parent_id in led.sources else None,
-                          "signal_score": m.signal_score} for m in items]}
+                          "signal_score": m.signal_score, "frames": _frames(led, cfg, m)} for m in items]}
     write_request(cfg, kind="hookedit", key=key, payload=payload)
     return led
 
