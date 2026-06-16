@@ -16,7 +16,7 @@ from fanops.models import Moment, MomentState, HookEditDecision
 from fanops.ids import _hash
 from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.text import sanitize_generated_text
-from fanops.hookcheck import is_weak_hook
+from fanops.hookcheck import is_weak_hook, normalize_hook_pattern
 from fanops.keyframes import extract_keyframes
 from fanops.control import load_guidance
 
@@ -72,7 +72,7 @@ def request_hook_edit(led: Ledger, cfg: Config) -> Ledger:
         if latest_request_id(cfg, "hookedit", key) is not None:
             continue
         payload = {"guidance": load_guidance(cfg),
-                   "items": [{"moment_id": m.id, "hook": m.hook,
+                   "items": [{"moment_id": m.id, "hook": m.hook, "hook_pattern": m.hook_pattern,
                               "transcript_excerpt": m.transcript_excerpt, "reason": m.reason,
                               "language": led.sources[m.parent_id].language if m.parent_id in led.sources else None,
                               "signal_score": m.signal_score, "frames": _frames(led, cfg, m)} for m in batch]}
@@ -117,6 +117,7 @@ def ingest_hook_edit(led: Ledger, cfg: Config) -> Ledger:
         ordered = sorted(batch, key=lambda m: 0 if (by_id.get(m.id) and by_id[m.id].hook) else 1)
         for m in ordered:
             it = by_id.get(m.id)
+            old_pattern = m.hook_pattern
             candidate = it.hook if (it is not None and it.hook) else m.hook   # rewrite wins; else keep
             new = None
             if candidate:
@@ -124,6 +125,15 @@ def ingest_hook_edit(led: Ledger, cfg: Config) -> Ledger:
                 if h and not is_weak_hook(h, used):
                     new = h
                     used.add(h.lower())
+            # P1: track the pattern with the surviving hook — an editor rewrite carries its declared
+            # pattern (else keep the old one); a kept original keeps its pattern; a nulled hook -> None.
+            if new is None:
+                pattern = None
+            elif it is not None and it.hook:
+                pattern = normalize_hook_pattern(it.hook_pattern) or old_pattern
+            else:
+                pattern = old_pattern
             led.moments[m.id].hook = new
+            led.moments[m.id].hook_pattern = pattern
             led.moments[m.id].hook_edited = True
     return led

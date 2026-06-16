@@ -175,6 +175,7 @@ class MomentPick(BaseModel):
     transcript_excerpt: str = ""
     signal_score: float = 0.0
     hook: Optional[str] = None      # on-screen RETENTION hook (curiosity-gap, NOT a transcript quote); None -> derive a default
+    hook_pattern: Optional[str] = None  # which of the 6 _hook_spec patterns this hook is; normalized at ingest
 
     @field_validator("start", "end")
     @classmethod
@@ -214,6 +215,7 @@ class CaptionSet(BaseModel):
 class HookEditItem(BaseModel):
     moment_id: str
     hook: Optional[str] = None
+    hook_pattern: Optional[str] = None  # the editor's pattern for its rewrite (normalized at ingest)
 
 class HookEditDecision(BaseModel):
     request_id: str

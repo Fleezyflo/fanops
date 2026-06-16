@@ -49,3 +49,29 @@ def is_weak_hook(text: str | None, used: set[str] = frozenset()) -> bool:
     if any(c in low for c in _CLICHES):
         return True                                   # tired filler cliche
     return False
+
+
+# P1 hook-pattern provenance. The 6 proven retention formulas defined in prompts._hook_spec, as stable
+# snake_case KEYS the responder/editor declare and P3/P4 group by. normalize_hook_pattern maps an LLM's
+# label (any case/spacing/synonym) to a canonical key, or None when it is absent/unknown — so a bad
+# label degrades to "unknown pattern" (validate-or-default) and never crashes an ingest.
+HOOK_PATTERNS = ("open_loop", "curiosity", "comment_bait", "contrarian", "pov", "proof")
+_PATTERN_ALIASES = {
+    "open_loop": "open_loop", "openloop": "open_loop", "open": "open_loop", "loop": "open_loop",
+    "payoff": "open_loop", "payoff_tease": "open_loop",
+    "curiosity": "curiosity", "curiosity_gap": "curiosity", "gap": "curiosity",
+    "comment_bait": "comment_bait", "comment": "comment_bait", "opinion": "comment_bait",
+    "opinion_bait": "comment_bait", "comment_opinion": "comment_bait", "comment_opinion_bait": "comment_bait",
+    "contrarian": "contrarian", "bold": "contrarian", "bold_claim": "contrarian", "contrarian_bold": "contrarian",
+    "pov": "pov", "relatable": "pov", "pov_relatable": "pov",
+    "proof": "proof", "stakes": "proof", "proof_stakes": "proof",
+}
+
+def normalize_hook_pattern(value) -> str | None:
+    """Map an LLM-declared hook-pattern label to a canonical HOOK_PATTERNS key, or None if it is
+    empty/non-string/unknown. Case-, space-, slash- and dash-insensitive (e.g. 'Open Loop',
+    'curiosity-gap', 'POV / relatable' all resolve). Unknown labels -> None (never raises)."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    key = re.sub(r"[\s/\-]+", "_", value.strip().lower())
+    return _PATTERN_ALIASES.get(key)

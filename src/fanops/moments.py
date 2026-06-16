@@ -11,7 +11,7 @@ from fanops.models import Moment, MomentRequest, MomentDecision, MomentPick, Mom
 from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response
 from fanops.text import sanitize_generated_text
-from fanops.hookcheck import is_weak_hook
+from fanops.hookcheck import is_weak_hook, normalize_hook_pattern
 from fanops.log import get_logger
 from fanops.control import load_guidance
 
@@ -100,11 +100,14 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
             hook = None
         if hook:
             used.add(hook.lower())
+        # P1: persist the chosen pattern (normalized) only when the hook survives; a nulled hook has no
+        # pattern (P3/P4 group on this, so it must track the actual on-screen hook, not a rejected one).
+        pattern = normalize_hook_pattern(pick.hook_pattern) if hook else None
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.decided,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
                            transcript_excerpt=pick.transcript_excerpt, hook=hook,
-                           signal_score=pick.signal_score)
+                           hook_pattern=pattern, signal_score=pick.signal_score)
     if not keep:
         if dec.picks:
             # a wholly-INVALID new decision quarantines the source but does NOT reconcile — prior
