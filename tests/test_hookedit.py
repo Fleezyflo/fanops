@@ -68,6 +68,40 @@ def test_request_frames_empty_when_source_absent(tmp_path, monkeypatch):
     payload = json.loads((cfg.agent_io / "requests" / f"hookedit__{key}.request.json").read_text())
     assert payload["items"][0]["frames"] == []
 
+def test_request_chunks_large_feed_into_multiple_gates(tmp_path, monkeypatch):
+    # Vision sends frames per item; one giant gate would pile ~all clips' frames into a single
+    # claude call. The feed is CHUNKED so each gate carries a sane batch (<= _MAX_EDIT_BATCH).
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    from fanops.hookedit import _MAX_EDIT_BATCH
+    n = _MAX_EDIT_BATCH + 3
+    for i in range(n):
+        _src(led, cfg, f"s{i}"); _moment(led, f"s{i}", f"m{i}", f"hook number {i}")
+    led = request_hook_edit(led, cfg)
+    import math
+    assert len(pending(cfg, kind="hookedit")) == math.ceil(n / _MAX_EDIT_BATCH)   # > 1 gate
+
+def test_chunked_feed_applies_all_batches_when_answered(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    from fanops.hookedit import _MAX_EDIT_BATCH
+    n = _MAX_EDIT_BATCH + 3
+    for i in range(n):
+        _src(led, cfg, f"s{i}"); _moment(led, f"s{i}", f"m{i}", f"hook number {i}")
+    led = request_hook_edit(led, cfg)
+    # answer EVERY pending batch gate with a distinct rewrite per moment
+    for key in pending(cfg, kind="hookedit"):
+        rid = latest_request_id(cfg, "hookedit", key)
+        payload = json.loads((cfg.agent_io / "requests" / f"hookedit__{key}.request.json").read_text())
+        items = [HookEditItem(moment_id=it["moment_id"], hook=f"rewritten {it['moment_id']}")
+                 for it in payload["items"]]
+        response_path(cfg, "hookedit", key).write_text(
+            HookEditDecision(request_id=rid, items=items).model_dump_json())
+    assert hook_edit_pending(led, cfg) is False
+    led = ingest_hook_edit(led, cfg)
+    assert all(led.moments[f"m{i}"].hook == f"rewritten m{i}" for i in range(n))
+    assert all(led.moments[f"m{i}"].hook_edited for i in range(n))
+
 def test_request_noop_when_disabled(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_HOOK_EDITOR", raising=False)
     cfg = Config(root=tmp_path); led = _seed_feed(cfg)

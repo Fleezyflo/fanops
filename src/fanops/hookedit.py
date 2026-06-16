@@ -30,18 +30,29 @@ def _frames(led: Ledger, cfg: Config, m: Moment) -> list[str]:
     return extract_keyframes(src.source_path, m.start, m.end, count=3,
                              out_dir=cfg.agent_io / "keyframes" / m.id)
 
-def _editable(led: Ledger) -> list[Moment]:
-    """Decided moments that HAVE a hook and have not yet been edited — the batch this pass owns.
-    A None hook is a deliberate clean clip (the brain found no honest hook); the editor refines
-    EXISTING hooks for strength + cross-feed distinctness, it does not invent hooks for clean clips."""
-    return [m for m in led.moments.values()
-            if m.state is MomentState.decided and m.hook and not m.hook_edited]
+# Vision sends a few FRAMES per item; one gate over the whole feed would pile ~all clips' frames
+# into a single claude call (46 clips x 3 = ~138 images). So the editable set is CHUNKED into gates
+# of at most this many moments — sane image counts per call, while ingest's cross-batch `used` dedup
+# still enforces feed-wide distinctness.
+_MAX_EDIT_BATCH = 8
 
-def _digest(items: list[Moment]) -> str:
-    # Stable, order-independent feed key: the SET of moment ids being edited. Reseeds (new gate) when
-    # the editable set changes; identical across request->ingest within a pass (the responder writes
+def _editable(led: Ledger) -> list[Moment]:
+    """Decided moments that HAVE a hook and have not yet been edited — what this pass owns. A None
+    hook is a deliberate clean clip (the brain found no honest hook); the editor refines EXISTING
+    hooks for strength + cross-feed distinctness, it does not invent hooks for clean clips. Sorted by
+    id so the chunk boundaries are stable across request->ingest within a pass."""
+    return sorted([m for m in led.moments.values()
+                   if m.state is MomentState.decided and m.hook and not m.hook_edited],
+                  key=lambda m: m.id)
+
+def _batches(items: list[Moment]) -> list[list[Moment]]:
+    return [items[i:i + _MAX_EDIT_BATCH] for i in range(0, len(items), _MAX_EDIT_BATCH)]
+
+def _digest(batch: list[Moment]) -> str:
+    # Stable, order-independent key for ONE batch: the SET of its moment ids. Reseeds (new gate) when
+    # that batch's set changes; identical across request->ingest within a pass (the responder writes
     # only the response file, never the ledger, so the set + hooks are unchanged between the two).
-    return _hash("hookedit", *sorted(m.id for m in items))
+    return _hash("hookedit", *sorted(m.id for m in batch))
 
 def request_hook_edit(led: Ledger, cfg: Config) -> Ledger:
     """Write the single feed-level hookedit gate carrying every editable hook + its grounding context
@@ -52,20 +63,20 @@ def request_hook_edit(led: Ledger, cfg: Config) -> Ledger:
     items = _editable(led)
     if not items:
         return led
-    key = _digest(items)
-    # Idempotent: the gate key is the EDITABLE SET (ids only), unchanged until ingest flips
-    # hook_edited. Re-writing it every pass would mint a fresh request_id and DELETE the editor's
-    # already-written response (write_request invalidates the old answer) -> the gate would never
-    # clear and clip rendering would HOLD forever. So write once per feed set; a changed set yields a
-    # new digest -> a new gate.
-    if latest_request_id(cfg, "hookedit", key) is not None:
-        return led
-    payload = {"guidance": _guidance(cfg),
-               "items": [{"moment_id": m.id, "hook": m.hook,
-                          "transcript_excerpt": m.transcript_excerpt, "reason": m.reason,
-                          "language": led.sources[m.parent_id].language if m.parent_id in led.sources else None,
-                          "signal_score": m.signal_score, "frames": _frames(led, cfg, m)} for m in items]}
-    write_request(cfg, kind="hookedit", key=key, payload=payload)
+    for batch in _batches(items):
+        key = _digest(batch)
+        # Idempotent per batch: the gate key is that batch's id SET, unchanged until ingest flips
+        # hook_edited. Re-writing it would mint a fresh request_id and DELETE the editor's already
+        # written response (write_request invalidates the old answer) -> the gate never clears and
+        # rendering HOLDS forever. Write once per batch; a changed set yields a new digest -> new gate.
+        if latest_request_id(cfg, "hookedit", key) is not None:
+            continue
+        payload = {"guidance": _guidance(cfg),
+                   "items": [{"moment_id": m.id, "hook": m.hook,
+                              "transcript_excerpt": m.transcript_excerpt, "reason": m.reason,
+                              "language": led.sources[m.parent_id].language if m.parent_id in led.sources else None,
+                              "signal_score": m.signal_score, "frames": _frames(led, cfg, m)} for m in batch]}
+        write_request(cfg, kind="hookedit", key=key, payload=payload)
     return led
 
 def hook_edit_pending(led: Ledger, cfg: Config) -> bool:
@@ -76,7 +87,8 @@ def hook_edit_pending(led: Ledger, cfg: Config) -> bool:
     items = _editable(led)
     if not items:
         return False
-    return read_response(cfg, "hookedit", _digest(items), HookEditDecision) is None
+    return any(read_response(cfg, "hookedit", _digest(b), HookEditDecision) is None
+               for b in _batches(items))
 
 def ingest_hook_edit(led: Ledger, cfg: Config) -> Ledger:
     """Apply the editor's response: each moment's hook becomes the editor's rewrite (or its original
@@ -89,27 +101,29 @@ def ingest_hook_edit(led: Ledger, cfg: Config) -> Ledger:
     items = _editable(led)
     if not items:
         return led
-    dec = read_response(cfg, "hookedit", _digest(items), HookEditDecision)
-    if dec is None:
-        return led
-    by_id = {it.moment_id: it for it in dec.items}
     edit_ids = {m.id for m in items}
-    # cross-feed dedup: seed `used` from hooks on moments OUTSIDE this batch (already-edited / other
-    # passes), then add each kept hook as we go so two clips in this batch can't land the same hook.
+    # cross-feed dedup spans ALL batches: seed `used` from hooks on moments OUTSIDE this edit set
+    # (already-edited / prior passes), then accumulate each kept hook as we walk the batches, so two
+    # clips anywhere in the feed can't land the same hook.
     used = {(m.hook or "").strip().lower() for m in led.moments.values()
             if m.hook and m.id not in edit_ids}
-    # Editor's EXPLICIT rewrites claim hooks before clips falling back to their original, so a
-    # deliberate rewrite wins a cross-feed tie over a kept-original (stable within each group).
-    ordered = sorted(items, key=lambda m: 0 if (by_id.get(m.id) and by_id[m.id].hook) else 1)
-    for m in ordered:
-        it = by_id.get(m.id)
-        candidate = it.hook if (it is not None and it.hook) else m.hook   # rewrite wins; else keep original
-        new = None
-        if candidate:
-            h = sanitize_generated_text(candidate.strip())
-            if h and not is_weak_hook(h, used):
-                new = h
-                used.add(h.lower())
-        led.moments[m.id].hook = new
-        led.moments[m.id].hook_edited = True
+    for batch in _batches(items):
+        dec = read_response(cfg, "hookedit", _digest(batch), HookEditDecision)
+        if dec is None:
+            continue                                     # this batch's gate not answered yet
+        by_id = {it.moment_id: it for it in dec.items}
+        # Editor's EXPLICIT rewrites claim hooks before clips falling back to their original, so a
+        # deliberate rewrite wins a cross-feed tie over a kept-original (stable within each group).
+        ordered = sorted(batch, key=lambda m: 0 if (by_id.get(m.id) and by_id[m.id].hook) else 1)
+        for m in ordered:
+            it = by_id.get(m.id)
+            candidate = it.hook if (it is not None and it.hook) else m.hook   # rewrite wins; else keep
+            new = None
+            if candidate:
+                h = sanitize_generated_text(candidate.strip())
+                if h and not is_weak_hook(h, used):
+                    new = h
+                    used.add(h.lower())
+            led.moments[m.id].hook = new
+            led.moments[m.id].hook_edited = True
     return led
