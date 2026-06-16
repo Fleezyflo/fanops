@@ -24,18 +24,19 @@ def test_moment_prompt_demands_retention_hook_not_a_transcript_quote():
     assert "not a caption" in low and "not a quote" in low      # forbids transcribing the audio
     assert "signal peaks" in low                                # leans on transcription-independent signal
 
-def test_moment_prompt_hook_encodes_retention_archetype_framework():
-    # The hook instruction must carry real hook-writing UNDERSTANDING, not just "be punchy": the
-    # muted/first-seconds reasoning (why on-screen text carries the hook), the curiosity-loop
-    # mechanism, an explicit ARCHETYPE menu the model ideates from, and the specific+must-pay-off
-    # guardrail. Research-grounded rebuild of short-form retention best practice (not a blind tweak).
+def test_moment_prompt_hook_encodes_retention_pattern_framework():
+    # The hook is a RETENTION mechanic, NOT artist hype (operator correction): the muted/first-seconds
+    # reasoning, the curiosity-loop mechanism, an explicit PATTERN menu the model picks from, and the
+    # specific+must-pay-off guardrail — framed about the VIEWER'S attention, never about the artist.
     p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
                        "language": "en", "guidance": "BRAND: confident."})
     low = p.lower()
     assert "muted" in low                       # ~70% watch sound-off -> on-screen text carries the hook
     assert "curiosity loop" in low              # the mechanism: open a loop THIS clip pays off
-    assert "archetype" in low                   # a deliberate menu to choose from, not one canned style
-    assert "wait for" in low and "claim" in low # at least the wait-for-it + bold-claim archetypes named
+    assert "retention" in low                   # the hook's stated job
+    assert "pattern" in low                     # a deliberate menu to choose from, not one canned style
+    assert "wait for" in low and "claim" in low # at least the open-loop + contrarian-claim patterns named
+    assert "never about the artist" in low      # the no-hype contract: it's about the viewer, not praise
     assert "specific" in low                    # must be specific to THIS moment, not a generic line
 
 def test_moment_prompt_hook_bans_generic_demands_concrete_and_selects():
@@ -305,11 +306,12 @@ def test_hookedit_prompt_uses_the_frames_it_is_given():
     assert "burned" in low or "already" in low                       # notice existing on-screen text
 
 def test_hookedit_prompt_keeps_the_same_hard_rules_and_grounding():
-    # Same bar as moment_prompt: <=6 words, source language, no em-dash, third person, ban generic,
-    # null-on-no-honest-hook, and grounded in the clip (not bait).
+    # Same shared _hook_spec bar as moment_prompt: <=6 words, no em-dash, retention-not-hype,
+    # ban generic, null-on-no-honest-hook, and grounded in the clip (not bait).
     p = hookedit_prompt({"guidance": "", "items": [{"moment_id": "m1", "hook": "x",
                          "transcript_excerpt": "y", "reason": "z", "language": "en"}]})
     low = p.lower()
-    assert "6 words" in low and "third person" in low and "em-dash" in low
+    assert "6 words" in low and "retention" in low and "em-dash" in low
+    assert "never about the artist" in low                            # no-hype contract (operator rule)
     assert "generic" in low and "null" in low                         # ban filler; null -> clean clip
     assert "true to" in low or "grounding" in low                     # grounded, no bait

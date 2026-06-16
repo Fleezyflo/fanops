@@ -43,7 +43,8 @@ def test_ingest_captions_clean_advances_and_stores(tmp_path):
     led = ingest_captions(led, cfg, "clip_1")
     assert led.clips["clip_1"].state is ClipState.captioned
     assert led.clips["clip_1"].held is False
-    assert led.clips["clip_1"].meta_captions["@a/instagram"]["caption"].startswith("no warning")
+    mc = led.clips["clip_1"].meta_captions["@a/instagram"]
+    assert len(mc["hashtags"]) <= 4 and all(t.startswith("#") for t in mc["hashtags"])   # vetted, capped
 
 def test_ingest_captions_missing_surface_holds_not_default(tmp_path):
     # FIX F74: a response missing a requested surface must HOLD, not silently post a default.
@@ -93,14 +94,22 @@ def test_ingest_captions_multi_surface_clean_advances(tmp_path):
     assert c.state is ClipState.captioned and c.held is False
     assert set(c.meta_captions) == {"@a/instagram", "@a/tiktok"}
 
-def test_ingest_captions_stores_hashtags(tmp_path):
+def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
+    # The operator rule: <=4 hashtags, HARD, and only reach-vetted tags (never random AI words).
+    # ingest must filter whatever the model returns through vet_hashtags before storing.
+    from fanops.hashtags import VETTED
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="@a/instagram", caption="no warning.", hashtags=["#mohflow", "#fyp"])]).model_dump_json())
+        CaptionItem(surface="@a/instagram", caption="#hiphop #rap #rapper #bars #newmusic #mohflow",
+                    hashtags=["#hiphop", "#rap", "#rapper", "#bars", "#newmusic", "#mohflow"])]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
-    assert led.clips["clip_1"].meta_captions["@a/instagram"]["hashtags"] == ["#mohflow", "#fyp"]
+    mc = led.clips["clip_1"].meta_captions["@a/instagram"]
+    assert len(mc["hashtags"]) <= 4                       # hard cap
+    assert "#mohflow" not in mc["hashtags"]               # non-vetted random word dropped
+    assert all(t in VETTED for t in mc["hashtags"])       # every survivor is reach-vetted
+    assert mc["caption"] == " ".join(mc["hashtags"])      # posted caption == the vetted tag line
 
 def test_ingest_captions_noop_without_response(tmp_path):
     # No response on disk -> ledger untouched, not held (stale/pending guard).

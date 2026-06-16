@@ -27,8 +27,25 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.text import sanitize_generated_text
+from fanops.hashtags import vet_hashtags
 
 logger = logging.getLogger(__name__)
+
+_TAG_RE = re.compile(r"#\S+")
+
+def _tags_in(caption: str | None) -> list[str]:
+    """Hashtags found inside a caption line (the model's tags live in the array AND the caption
+    text); used as the fallback when the structured `hashtags` array is empty."""
+    return _TAG_RE.findall(caption or "")
+
+def _platform_of(surface: str) -> Platform:
+    """The platform half of an 'account/platform' surface key. An unknown/missing platform falls
+    back to instagram (a sane default) rather than crashing an autonomous ingest on a typo'd key."""
+    tail = (surface or "").rsplit("/", 1)[-1].strip().lower()
+    try:
+        return Platform(tail)
+    except ValueError:
+        return Platform.instagram
 
 # DEFAULT English off-brand / begging / main-brand-linkage anti-patterns. Operator-overridable
 # via 00_control/tuning.json -> "offbrand_en" (audit b); when that key is present it REPLACES this
@@ -198,9 +215,16 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
             led.set_clip_state(clip_id, ClipState.held)
             return led
         reason = brand_risk_flag(item.caption, cfg)          # audit b: honor tuning.json override
+        # brand-risk runs on the ORIGINAL caption (the guardrail stays on what the model wrote);
         if reason and held_reason is None:
             held_reason = reason
-        clip.meta_captions[item.surface] = {"caption": item.caption, "hashtags": item.hashtags,
+        # ...THEN the hashtags are vetted: the model's tags filtered to the reach-vetted set,
+        # reach-ordered, backfilled, and HARD-capped at 4 (operator rule). Whatever it returned
+        # (5-15 random words) becomes <=4 proven tags. The posted caption IS that vetted tag line.
+        plat = _platform_of(item.surface)
+        tags = vet_hashtags(item.hashtags or _tags_in(item.caption), plat,
+                            src.language if src else None)
+        clip.meta_captions[item.surface] = {"caption": " ".join(tags), "hashtags": tags,
                                             "hook": sanitize_generated_text(item.hook, max_words=7)}
     answered = {item.surface for item in cs.items}
     missing = requested - answered
