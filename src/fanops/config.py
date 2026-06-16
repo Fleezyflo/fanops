@@ -181,6 +181,18 @@ class Config:
         return v.strip() if v and v.strip() else "talk"
 
     @property
+    def visual_start(self) -> bool:
+        # P1 strongest-frame cut start (clip.pick_visual_start): refine the cut entry onto the strongest
+        # opening FRAME within a small bounded shift — the top muted-autoplay lever after the text hook
+        # (a black/flat/transition opener is the weakest still). DEFAULT ON (mirrors hook_editor: the
+        # weakest link is closed by default, not by remembering a flag) and FAIL-OPEN: with ffmpeg absent
+        # or no strong frame, the start is left exactly as the band/transcript-snap chose it (today's
+        # behavior). Only the explicit off-words disable it; the decision is cached per-window so the
+        # in-lock commit pass re-spawns no frame-probe ffmpeg (Phase D).
+        v = (os.getenv("FANOPS_VISUAL_START") or "").strip().lower()
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
+
+    @property
     def whisper_model(self) -> str:
         # The legacy `whisper` CLI model — used ONLY when faster-whisper (the [asr] extra) is absent.
         # Default "turbo" (fast, good timestamps). Pin a smaller model (e.g. "tiny"/"base") for

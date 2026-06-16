@@ -438,3 +438,71 @@ def test_render_moment_song_profile_uses_wider_band(tmp_path, mocker, monkeypatc
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=24.0,
                                   duration=120.0, profile="song")
     assert to == 18.0 and 18.0 <= to <= 35.0
+
+# --- P1 T1: strongest-frame cut start (visual_start) --------------------------------------------
+# render_moment refines the cut start (after the band, before transcript-snap) onto the strongest
+# opening frame within a bounded shift, stamps first_frame_kind/cut_seconds, and leaves audio alone.
+
+from fanops.clip import _vstart_candidate_times
+
+def _run_render_with_probe(captured, *, strong_at=None):
+    """subprocess.run side_effect: signalstats probes (cmd ends with '-') return strong stats at
+    `strong_at` (near-black elsewhere); the render call (cmd ends with the mp4 path) writes a file."""
+    def run(cmd, **kw):
+        last = str(cmd[-1])
+        if last == "-":                                   # signalstats probe
+            t = float(cmd[cmd.index("-ss") + 1])
+            strong = strong_at is not None and abs(t - strong_at) < 1e-3
+            class R:
+                returncode = 0; stderr = ""
+                stdout = ("lavfi.signalstats.YMIN=16\nlavfi.signalstats.YAVG=120\nlavfi.signalstats.YMAX=210\n"
+                          if strong else "lavfi.signalstats.YMIN=0\nlavfi.signalstats.YAVG=3\nlavfi.signalstats.YMAX=5\n")
+            return R()
+        if not last.startswith("-"):                      # render output path
+            captured["cmd"] = cmd
+            out = Path(last); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R2: returncode = 0; stderr = ""; stdout = ""
+        return R2()
+    return run
+
+def test_render_moment_visual_start_moves_cut_and_stamps_provenance(tmp_path, mocker, monkeypatch):
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)      # default ON
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided))
+    target = _vstart_candidate_times(10.0, 28.0)[2]
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured, strong_at=target))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    assert clip.first_frame_kind == "visual"
+    assert clip.cut_seconds is not None and clip.cut_seconds > 0
+    cmd = captured["cmd"]
+    assert abs(float(cmd[cmd.index("-ss") + 1]) - target) < 1e-3   # cut start moved onto the strong frame
+    assert "-c:a" in cmd                                            # audio still encoded -> untouched
+
+def test_render_moment_visual_start_off_does_not_probe(tmp_path, mocker, monkeypatch):
+    # FANOPS_VISUAL_START=0 -> no signalstats probe at all, start unchanged, first_frame_kind None.
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided))
+    calls = []
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert not any("signalstats" in str(c) for c in calls)         # feature off -> no probe
+    assert clip.first_frame_kind is None                           # dim not engaged
+    rend = [c for c in calls if not str(c[-1]).startswith("-")][0]
+    assert float(rend[rend.index("-ss") + 1]) == 10.0              # band/snap start, unchanged
