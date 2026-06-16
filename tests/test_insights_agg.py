@@ -59,3 +59,40 @@ def test_aggregate_by_dim_works_on_clip_profile(tmp_path):
     led.add_post(_analyzed("p2", hook_pattern="pov", clip_profile="talk", reach=400))
     agg = aggregate_by_dim(led, "clip_profile")
     assert agg["song"]["reach_mean"] == 2000.0 and agg["talk"]["reach_mean"] == 400.0
+
+
+# --- P3 T4: the P4 unlock gate (plumbing AND signal) --------------------------------------------
+import json
+from fanops.validation_gate import enough_attributed_signal, p4_unlocked
+
+def _seed_n(led, value, n, *, dim_value_kw):
+    for i in range(n):
+        led.add_post(_analyzed(f"{value}_{i}", reach=1000, **dim_value_kw))
+
+def test_enough_signal_false_below_threshold(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _seed_n(led, "ol", 8, dim_value_kw={"hook_pattern": "open_loop"})
+    _seed_n(led, "cu", 3, dim_value_kw={"hook_pattern": "curiosity"})   # only 1 value clears >=8
+    assert enough_attributed_signal(led, "hook_pattern") is False
+
+def test_enough_signal_true_when_two_values_clear(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _seed_n(led, "ol", 8, dim_value_kw={"hook_pattern": "open_loop"})
+    _seed_n(led, "cu", 9, dim_value_kw={"hook_pattern": "curiosity"})
+    assert enough_attributed_signal(led, "hook_pattern") is True
+
+def test_p4_unlocked_requires_both_validation_and_signal(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _seed_n(led, "ol", 8, dim_value_kw={"hook_pattern": "open_loop"})
+    _seed_n(led, "cu", 8, dim_value_kw={"hook_pattern": "curiosity"})
+    assert p4_unlocked(led, cfg, "hook_pattern") is False           # signal present but not validated
+    cfg.cutover_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.cutover_path.write_text(json.dumps({"metrics_confirmed": True}))
+    assert p4_unlocked(led, cfg, "hook_pattern") is True            # plumbing + signal
+
+def test_p4_unlocked_false_when_validated_but_thin(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    cfg.cutover_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.cutover_path.write_text(json.dumps({"metrics_confirmed": True}))
+    _seed_n(led, "ol", 8, dim_value_kw={"hook_pattern": "open_loop"})  # only 1 value -> thin
+    assert p4_unlocked(led, cfg, "hook_pattern") is False
