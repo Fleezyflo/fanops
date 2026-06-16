@@ -482,3 +482,27 @@ def test_crosspost_logs_skipped_surface_missing_caption(tmp_path, mocker):
     assert {p.platform.value for p in posts} == {"instagram"}   # only IG posted, YT skipped
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "skipped_surface" in log and "youtube" in log       # the skip left a breadcrumb
+
+
+def test_crosspost_stamps_creative_provenance_onto_post(tmp_path, mocker, monkeypatch):
+    # P1 T3b: the Post carries the attribution key P3 aggregates reach by — hook_pattern (moment),
+    # first_frame_kind + cut_seconds (clip), clip_profile (the global video-type knob, stamped here).
+    monkeypatch.setenv("FANOPS_CLIP_PROFILE", "song")
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1",
+                          "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-18", start=0, end=18,
+                          reason="r", state=MomentState.clipped,
+                          hook="wait for the drop", hook_pattern="open_loop"))
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
+                state=ClipState.captioned, first_frame_kind="visual", cut_seconds=18.0)
+    clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": ["#x"]}}
+    led.add_clip(clip)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    post = list(led.posts.values())[0]
+    assert post.hook_pattern == "open_loop"
+    assert post.first_frame_kind == "visual"
+    assert post.cut_seconds == 18.0
+    assert post.clip_profile == "song"

@@ -143,6 +143,12 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 # an ambiguous publish is ALWAYS pollable (a real Blotato id overwrites it in
                 # blotato_rest). pid is content-addressed -> a re-run computes the identical token.
                 submission_id=f"fanops_{_hash('idemp', pid)}",
-                variant_key=variant_key, variant_hook=variant_hook))
+                variant_key=variant_key, variant_hook=variant_hook,
+                # P1 attribution key (one writer = here): the creative dims P3 groups reach by. hook_pattern
+                # from the moment, first_frame_kind/cut_seconds from the rendered clip, clip_profile from the
+                # global video-type knob (its only home today — config.py). Absent dims default None cleanly.
+                hook_pattern=(m.hook_pattern if m is not None else None),
+                first_frame_kind=target_clip.first_frame_kind, cut_seconds=target_clip.cut_seconds,
+                clip_profile=cfg.clip_profile))
         led.set_clip_state(clip.id, ClipState.queued)
     return led
