@@ -29,6 +29,7 @@ from fanops.variant_transfer import transferred_hooks
 from fanops.text import sanitize_generated_text
 from fanops.hashtags import vet_hashtags
 from fanops.control import load_guidance
+from fanops.hookcheck import is_weak_hook
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,18 @@ def normalize_variation_axis(value) -> str | None:
         return None
     key = re.sub(r"[\s/\-]+", "_", value.strip().lower())
     return key if key in VARIATION_AXES else None
+
+def coherent_variation(hook, rationale, *, siblings=frozenset()) -> bool:
+    """T2 coherence gate: a variant earns its extra post ONLY when it is distinct, on-brand AND
+    explained — (a) a non-empty hook that (b) clears the deterministic slop/template/cross-feed-dup
+    floor against its siblings (is_weak_hook), and (c) carries a non-empty rationale. Else dropped:
+    clean beats noise. Pure. NB this proves distinct+on-brand+EXPLAINED, NOT reach-relevant — the
+    empirical justification only arrives with P3/P4."""
+    if not (rationale and str(rationale).strip()):
+        return False
+    if not (hook and str(hook).strip()):
+        return False
+    return not is_weak_hook(hook, siblings)
 
 
 def _tags_in(caption: str | None) -> list[str]:

@@ -50,3 +50,25 @@ def test_ingest_round_trips_axis_and_rationale(tmp_path):
     mc = led.clips["clip_1"].meta_captions["@a/instagram"]
     assert mc["axis"] == "hook_pattern"                  # normalized
     assert mc["rationale"] == "open-loop tease"
+
+
+# --- P2 T2: the coherence gate (clean beats noise) ----------------------------------------------
+from fanops.caption import coherent_variation
+
+def test_gate_drops_rationale_less_variant():
+    assert coherent_variation("the part nobody clipped", "", siblings=set()) is False
+    assert coherent_variation("the part nobody clipped", None, siblings=set()) is False
+
+def test_gate_drops_weak_hook_variant():
+    assert coherent_variation("his hardest bar", "contrarian take", siblings=set()) is False  # superlative slop
+
+def test_gate_drops_near_duplicate_of_a_sibling():
+    assert coherent_variation("wait for the drop", "open loop", siblings={"wait for the drop"}) is False
+
+def test_gate_keeps_distinct_onbrand_justified_variant():
+    assert coherent_variation("the part nobody clipped", "curiosity angle",
+                              siblings={"wait for the drop"}) is True
+
+def test_gate_drops_empty_hook():
+    assert coherent_variation("", "has a reason", siblings=set()) is False
+    assert coherent_variation(None, "has a reason", siblings=set()) is False
