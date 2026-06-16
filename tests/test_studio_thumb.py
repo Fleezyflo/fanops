@@ -86,6 +86,25 @@ def test_clip_thumb_zero_byte_cache_is_reextracted(tmp_path, monkeypatch):
     assert calls == [1]                                       # the empty cache forced a re-extract
 
 
+def test_clip_thumb_reextracted_when_clip_is_newer_than_cache(tmp_path, monkeypatch):
+    # The staleness bug behind "the UI shows the old hooks": a RE-RENDERED clip keeps the same
+    # clip_id, so the cached poster .jpg (with the OLD burned hook) was served forever. The cache
+    # must be treated as stale and regenerated when the mp4 is newer than the cached jpg.
+    import os
+    cfg = Config(root=tmp_path); _seed_clip(cfg)
+    cache = cfg.clips / "clip_1.jpg"
+    cache.write_bytes(b"\xff\xd8\xffOLDPOSTER")                # a warm cache from a prior render
+    base = cache.stat().st_mtime
+    os.utime(cfg.clips / "clip_1.mp4", (base + 10, base + 10))  # re-render bumps the mp4 mtime
+    calls = []
+    def fake_thumb(path, out_jpg, *, at_seconds=0.5):
+        calls.append(1); out_jpg.write_bytes(b"\xff\xd8\xffNEWPOSTER"); return True
+    monkeypatch.setattr(app_mod, "make_thumbnail", fake_thumb)
+    r = _client(cfg).get("/clip-thumb/clip_1")
+    assert r.status_code == 200 and r.mimetype == "image/jpeg" and len(r.data) > 0
+    assert calls == [1]                                        # mp4 newer than cache -> regenerated
+
+
 def test_clip_thumb_missing_clip_file_404(tmp_path, monkeypatch):
     # ledger has the clip but the underlying mp4 is gone -> 404 (no extraction attempt).
     cfg = Config(root=tmp_path); _seed_clip(cfg)
