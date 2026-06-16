@@ -36,23 +36,73 @@ def _parse(ts):
     except Exception:
         return None
 
+def _prewarm(cfg: Config, aspects: set[Fmt], log) -> None:
+    """Phase D: run ONLY the slow subprocess stages (whisper / ffmpeg signals / ffmpeg render) with NO
+    ledger lock held, against a THROWAWAY ledger, so they populate their deterministic on-disk artifacts
+    (transcript JSON, signals sidecar, clip mp4 + render fingerprint). The authoritative transaction in
+    advance() then re-runs the same stages, which SKIP the now-warm subprocess and only flip ledger
+    state under a short lock — keeping the multi-minute transcodes OUT of the lock (the LockBusyError
+    starvation hit live). Writes NO gate requests and saves NO ledger state; only the on-disk artifacts
+    persist. Fail-open per unit: a warm miss/error just means that stage runs inside the lock (today's
+    behavior), never a crash."""
+    try:
+        led = Ledger.load(cfg)
+    except Exception as e:
+        log("prewarm", "-", "warn", err=str(e)[:120]); return
+    for s in list(led.sources.values()):
+        try:
+            if s.state is SourceState.catalogued:
+                led = transcribe_source(led, cfg, s.id)
+            if led.sources[s.id].state is SourceState.transcribed:
+                led = detect_signals(led, cfg, s.id)
+        except Exception as e:                            # fail-open: the commit pass retries in-lock
+            log("prewarm", s.id, "warn", err=str(e)[:120])
+    # Finalize hooks on the throwaway ledger (ingest_hook_edit only READS the response + mutates the
+    # ledger — no disk side effects) so a warmed render's fingerprint matches the in-lock render and the
+    # commit skips ffmpeg. Mirror advance()'s render gate so we don't warm a hook the editor will rewrite.
+    hold = False
+    if cfg.hook_editor:
+        try:
+            led = ingest_hook_edit(led, cfg)
+            if cfg.responder_mode == "llm":
+                hold = hook_edit_pending(led, cfg)
+        except Exception:
+            hold = False
+    for m in list(led.moments.values()):
+        if m.state is MomentState.decided and not (hold and not m.hook_edited):
+            try:
+                led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
+            except Exception as e:
+                log("prewarm", m.id, "warn", err=str(e)[:120])
+
 def advance(cfg: Config, *, base_time: str) -> dict:
     accts = Accounts.load(cfg)
     log = get_logger(cfg)
     aspects = _aspects_for(accts)
 
-    # AUDIT B4: the whole load-mutate-save pass runs inside ONE ledger transaction — the lock is
-    # acquired BEFORE load and the single save happens on clean exit. This closes the lost-update
-    # window the save()-only lock left open (two overlapping cron passes both loaded a stale
-    # snapshot; last save() won; the other's updates — a published post, a submitting flip —
-    # vanished silently). A second live pass is excluded (typed LockBusyError, bounded by timeout),
-    # not silently overwritten.
+    # Phase D: ingest in a SHORT transaction FIRST so a brand-new drop is catalogued and VISIBLE to the
+    # lock-free pre-warm below — otherwise its transcribe would run inside the main lock. ingest_drops is
+    # idempotent (content-addressed dedup), so this never double-catalogues.
     with Ledger.transaction(cfg) as led:
-        # B5/E2: snapshot the already-published post ids at transaction ENTRY (before ingest) so the
-        # summary's published_in_run is a THIS-RUN delta — a post already published when the pass
-        # opened is in `before` and is NOT counted (set difference against the exit state).
-        before = {p.id for p in led.posts_in_state(PostState.published)}
         led = ingest_drops(led, cfg)
+    # Phase D: warm the slow subprocess stages with NO lock held (see _prewarm). The main transaction
+    # then re-runs them and they skip on the warm artifacts — so a render no longer starves a concurrent
+    # Studio write / second pass. Lock-free; saves nothing; fail-open.
+    _prewarm(cfg, aspects, log)
+
+    # AUDIT B4: the load-mutate-save COMMIT runs inside ONE ledger transaction — the lock is acquired
+    # BEFORE load and the single save happens on clean exit. This closes the lost-update window the
+    # save()-only lock left open (two overlapping cron passes both loaded a stale snapshot; last save()
+    # won; the other's updates — a published post, a submitting flip — vanished silently). A second live
+    # pass is excluded (typed LockBusyError, bounded by timeout), not silently overwritten. (Phase D: the
+    # SLOW subprocesses already ran lock-free above; this transaction only flips state + does the cheap
+    # gate/crosspost/publish work, so the lock-held window is short.)
+    with Ledger.transaction(cfg) as led:
+        # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
+        # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in
+        # `before` and is NOT counted (set difference against the exit state). Ingest already ran (above)
+        # and never publishes, so the snapshot here is the correct baseline.
+        before = {p.id for p in led.posts_in_state(PostState.published)}
 
         # transcribe -> signals -> request moments (per source), each quarantined
         for s in list(led.sources.values()):

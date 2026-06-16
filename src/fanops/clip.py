@@ -3,7 +3,7 @@
 Reframe is chosen from the PROBED source dimensions so vertical/odd sources don't break.
 render_aspects_for renders one clip per distinct aspect the active platforms need."""
 from __future__ import annotations
-import subprocess
+import hashlib, json, subprocess
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
@@ -139,6 +139,25 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
     overlay.write_ass(ass_text, ass_path)
     return overlay.subtitles_vf(ass_path)
 
+# Phase D: the clip's content-address (child_id of moment+aspect) does NOT include the burned hook or
+# the cut window, so an mp4 on disk is NOT proof it matches the INTENDED render — a changed hook would
+# leave a stale clip (the stale-render class of bug). The render fingerprint captures everything that
+# determines the rendered bytes (source, window, aspect, source dims, the burned .ass text), so the
+# lock-free pre-warm and the in-lock commit agree on when an existing mp4 may be reused. This is what
+# lets the heavy ffmpeg run OUTSIDE the ledger lock and the commit pass skip it.
+def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
+                        src_w: int, src_h: int, ass_text: str) -> str:
+    payload = {"src": src_path, "cs": round(cs, 3), "ce": round(ce, 3), "aspect": aspect_value,
+               "w": src_w, "h": src_h, "ass": ass_text}
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+def _fingerprint_matches(fp_path, fp: str) -> bool:
+    try:
+        return fp_path.exists() and json.loads(fp_path.read_text()).get("fp") == fp
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+
 def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                   aspect: Fmt = Fmt.r9x16) -> tuple[Ledger, Clip]:
     m = led.moments[moment_id]
@@ -150,6 +169,18 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
     cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
     extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
+    # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
+    # render (a pre-warm pass produced it), adopt it and SKIP ffmpeg — record the clip + advance the
+    # moment. A changed hook/window yields a different fingerprint -> re-render (no stale clip reuse).
+    ass_path = cfg.clips / f"{cid}.ass"
+    ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
+    fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0, ass_text)
+    fp_path = cfg.clips / f"{cid}.render.json"
+    if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
+        clip = Clip(id=cid, parent_id=moment_id, state=ClipState.rendered, path=str(dst), aspect=aspect)
+        led.clips[cid] = clip
+        led.set_moment_state(moment_id, MomentState.clipped)
+        return led, clip
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf)
     try:
@@ -188,6 +219,13 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     # per (moment, aspect), so the latest successful render is authoritative.
     led.clips[cid] = clip
     led.set_moment_state(moment_id, MomentState.clipped)
+    # Stamp the render fingerprint (Phase D) so a later pass — or the in-lock commit after a lock-free
+    # pre-warm — can skip re-rendering an identical clip. Best-effort: a write failure just costs a
+    # re-render, never a crash. Written ONLY on success, so a failed render never leaves a skip stamp.
+    try:
+        fp_path.write_text(json.dumps({"fp": fp}))
+    except OSError:
+        pass
     return led, clip
 
 def render_aspects_for(led: Ledger, cfg: Config, moment_id: str, *,

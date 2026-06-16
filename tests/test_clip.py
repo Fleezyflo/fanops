@@ -234,6 +234,47 @@ def test_render_clean_when_no_hook_and_subs_off(tmp_path, mocker, monkeypatch):
     assert not list(cfg.clips.glob("*.ass"))
 
 
+def test_render_skips_ffmpeg_when_warm_artifact_matches(tmp_path, mocker, monkeypatch):
+    # Phase D: a lock-free pre-warm pass already rendered cid.mp4 + wrote its fingerprint. render_moment
+    # must adopt the existing file and SKIP ffmpeg when the intended-render fingerprint matches — this is
+    # what keeps the multi-minute transcode out of the ledger lock. It still records the clip + advances
+    # the moment, so the in-lock commit pass is fast.
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=10, end=28, reason="r", state=MomentState.decided, hook=None))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)   # warm: produces mp4 + fingerprint
+    assert clip.state is ClipState.rendered
+    led.set_moment_state("mom_1", MomentState.decided)              # reset so a 2nd render is attempted
+    spy = mocker.patch("fanops.clip.subprocess.run")
+    led, clip2 = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    spy.assert_not_called()                                          # warm artifact reused — no ffmpeg
+    assert clip2.state is ClipState.rendered and led.moments["mom_1"].state is MomentState.clipped
+
+def test_render_reruns_when_hook_changes_fingerprint(tmp_path, mocker, monkeypatch):
+    # The render fingerprint must capture the burned hook: if the hook changes, the warm artifact is
+    # STALE and render_moment must RE-RENDER (never silently reuse the old clip — the stale-render class
+    # of bug). A blind skip-if-exists would wrongly keep the old hook.
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=10, end=28, reason="r", state=MomentState.decided, hook="first hook"))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    led.moments["mom_1"].hook = "different hook"                    # hook changed -> warm artifact stale
+    led.set_moment_state("mom_1", MomentState.decided)
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert "cmd" in captured, "ffmpeg must re-run when the hook changes (stale clip not reused)"
+    assert clip.state is ClipState.rendered
+
 def test_reframe_branches_exact():
     # 16:9 from a tall source -> crop height then scale to even 1920x1080
     assert reframe_filter("16:9", 1080, 1920) == "crop=iw:iw*1080/1920,scale=1920:1080,setsar=1"

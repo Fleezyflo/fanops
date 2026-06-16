@@ -8,7 +8,7 @@ Blotato REST API, or Postiz (self-hosted). Autonomous learning features are defa
 Optional Flask-based Studio web cockpit (imported lazily; core install Flask-free).
 Optional MoviePy produced-clip compositing with template cards + overlays (imported lazily; core install MoviePy-free).
 
-## Pipeline (the `advance` pass, pipeline.py — runs INSIDE one ledger flock)
+## Pipeline (the `advance` pass, pipeline.py — short ingest tx → lock-free pre-warm → main commit tx)
 
 ```
 01_inbox media ──ingest──> Source(catalogued)
@@ -24,7 +24,7 @@ Optional MoviePy produced-clip compositing with template cards + overlays (impor
 
 - Per-unit error quarantine: any stage failure parks THAT unit in `error` + reason; never wedges the pass.
 - Crash-safe publish: `submitting` persisted BEFORE the network call; ambiguous results -> `needs_reconcile`, never blind re-POST (reconcile.py polls).
-- Slow network ops that must NOT hold the flock run outside transactions: yt-dlp download (`pull`), `claude -p` (responder.py).
+- Slow ops that must NOT hold the flock run outside transactions: yt-dlp download (`pull`), `claude -p` (responder.py), and (Phase D) the heavy subprocess stages — whisper, ffmpeg signals, ffmpeg render — which `pipeline._prewarm` runs lock-free into deterministic on-disk artifacts (transcript JSON, signals sidecar, `cid.render.json` fingerprint + mp4) BEFORE the main commit transaction re-runs them and SKIPS the warm subprocess. A multi-minute render no longer starves a concurrent Studio write / second pass.
 
 ## Module map (src/fanops/)
 

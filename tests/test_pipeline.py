@@ -104,14 +104,16 @@ def test_signals_toolchain_absent_is_quarantined_not_a_crash(tmp_path, monkeypat
     assert s["errors"] >= 1                                    # surfaced in the summary count
 
 def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
-    # FIX F03: a source whose whisper crashes goes to error; others still advance.
+    # FIX F03: a source whose whisper crashes goes to error; others still advance. The fault is keyed to
+    # the BAD source's content (b"B"), NOT a call counter — Phase D's lock-free pre-warm runs the
+    # transcribe subprocess too, so a call-count fault would fire on the wrong (warm) attempt. A
+    # deterministic per-source fault models a genuinely-corrupt source (which fails every attempt).
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     _put(cfg.inbox / "good.mp4", b"G"); _put(cfg.inbox / "bad.mp4", b"B")
-    call = {"n": 0}
     def fake(cmd, **kw):
         if cmd[0] == "ffprobe":
             class R:
@@ -119,8 +121,8 @@ def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
                 stdout = "video" if "codec_type" in " ".join(cmd) else "1920\n1080\n20.0\n"
             return R()
         if _is_asr(cmd):
-            call["n"] += 1
-            if call["n"] == 1:                      # first source: the transcribe subprocess raises
+            audio = Path(cmd[-1])
+            if audio.exists() and audio.read_bytes() == b"B":   # the corrupt source: whisper always fails
                 raise OSError("whisper exploded")
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
@@ -145,9 +147,14 @@ def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
     assert any(v in states for v in ("moments_requested", "signalled", "transcribed"))  # good one progressed
 
 
-def test_advance_runs_inside_a_single_transaction(tmp_path, monkeypatch, mocker):
-    # B1 (AUDIT B4): advance() must take the ledger transaction lock for the WHOLE pass (no
-    # lock-free load + trailing save). Exactly ONE transaction wraps the pass.
+def test_advance_mutations_are_all_under_a_held_lock(tmp_path, monkeypatch, mocker):
+    # AUDIT B4 (Phase D restructure): every ledger mutation must happen inside a held-lock transaction
+    # — no lock-free load + trailing save. Phase D moved the SLOW subprocess stages (whisper/ffmpeg) out
+    # of the lock into a lock-free pre-warm BETWEEN two transactions: a short INGEST transaction and the
+    # main commit transaction. So advance() opens exactly TWO transactions (not one), and the lost-update
+    # protection still holds (proved by test_pipeline_prewarm.test_main_transaction_excludes_concurrent_writer
+    # + test_ledger_lock.test_transaction_holds_lock_across_the_whole_block). The pre-warm holds NO lock
+    # and saves NO state.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,7 +162,7 @@ def test_advance_runs_inside_a_single_transaction(tmp_path, monkeypatch, mocker)
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     spy = mocker.spy(Ledger, "transaction")
     advance(cfg, base_time="2026-06-02T18:00:00Z")
-    assert spy.call_count == 1            # exactly one transaction wraps the pass
+    assert spy.call_count == 2            # ingest tx + main tx; slow work runs lock-free between them
 
 
 def test_advance_persists_progress_when_crosspost_raises(tmp_path, monkeypatch, mocker):

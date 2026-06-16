@@ -118,6 +118,23 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     if src.meta.get("transcribed") is True:           # FIX: idempotent only when it actually ran
         return led
     out_dir = cfg.agent_io / "transcripts"
+    # Phase D (out-of-lock): the whisper JSON is named by the source stem and is DETERMINISTIC per
+    # source. A lock-free pre-warm pass runs whisper to this path BEFORE the ledger transaction; if that
+    # artifact is already present + parseable, adopt it and SKIP the multi-minute subprocess (and vocal
+    # isolation) entirely — this is what keeps whisper OUT of the lock. The stem is the SOURCE stem in
+    # both engines (isolation moves vocals to "{source_stem}.mp3"), so it's stable. A corrupt/truncated
+    # cache is NOT adopted: parse failure falls through to a real run (which overwrites it).
+    cached = out_dir / f"{Path(src.source_path).stem}.json"
+    if cached.exists():
+        try:
+            data = json.loads(cached.read_text())
+            src.transcript = [_segment(s) for s in data.get("segments", [])]
+            src.language = data.get("language")
+            src.meta["transcribed"] = True
+            led.set_source_state(source_id, SourceState.transcribed)
+            return led
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+            pass                                       # corrupt cache -> fall through to a real run
     out_dir.mkdir(parents=True, exist_ok=True)
     # Vocal isolation (the music-transcription fix): strip the beat with Demucs so Whisper reads the
     # LYRICS, not the instrumental. FAIL-OPEN — isolate_vocals returns the RAW path if demucs is

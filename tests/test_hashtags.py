@@ -2,7 +2,6 @@
 freely chooses tags: whatever it returns is filtered to the reach-vetted set, reach-ordered,
 backfilled to a strong default, and HARD-capped at 4 (the operator rule). See the
 fanops-hook-hashtag skill for the sourced reach data this encodes."""
-import pytest
 from fanops.models import Platform
 from fanops.hashtags import vet_hashtags, VETTED
 

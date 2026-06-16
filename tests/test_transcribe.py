@@ -238,6 +238,43 @@ def test_whisper_hang_goes_to_error_not_crash(tmp_path, mocker):
     assert led.sources["src_1"].meta.get("transcribed") is not True   # a re-run actually retries
     assert seen.get("timeout") == 1800.0                              # the bound is actually wired
 
+def test_transcribe_adopts_existing_json_and_skips_subprocess(tmp_path, mocker):
+    # Phase D: a lock-free pre-warm pass already ran whisper to its DETERMINISTIC per-stem JSON.
+    # transcribe_source must ADOPT that artifact and NOT shell whisper again — this is what keeps the
+    # multi-minute subprocess OUT of the ledger lock. Whisper output is deterministic per source, so
+    # reusing the JSON is equivalent to re-running it.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.catalogued))
+    out_dir = cfg.agent_io / "transcripts"; out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "src_1.json").write_text(json.dumps(
+        {"language": "en", "segments": [{"start": 0.0, "end": 2.0, "text": " cached line"}]}))
+    spy = mocker.patch("fanops.transcribe.subprocess.run")
+    led = transcribe_source(led, cfg, "src_1")
+    spy.assert_not_called()                                   # warm artifact reused — no whisper, no isolation
+    s = led.sources["src_1"]
+    assert s.state is SourceState.transcribed and s.language == "en"
+    assert s.transcript[0]["text"] == "cached line" and s.meta.get("transcribed") is True
+
+def test_transcribe_reruns_when_cached_json_is_corrupt(tmp_path, mocker):
+    # Conservative skip: a truncated/corrupt cached JSON must NOT be adopted — fall through to a real
+    # run (which overwrites it), never silently produce an empty/garbage transcript.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.catalogued))
+    out_dir = cfg.agent_io / "transcripts"; out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "src_1.json").write_text('{"language": "en", "segme')        # truncated
+    def fake_run(cmd, **kw):
+        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
+            {"language": "en", "segments": [{"start": 0.0, "end": 1.0, "text": " real"}]}))
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    led = transcribe_source(led, cfg, "src_1")               # must re-run, not adopt the corrupt cache
+    assert led.sources["src_1"].state is SourceState.transcribed
+    assert led.sources["src_1"].transcript[0]["text"] == "real"
+
 def test_malformed_whisper_json_is_per_source_error_not_crash(tmp_path, mocker):
     # Stage-6 audit: whisper killed mid-write (disk full, OOM kill) leaves TRUNCATED JSON on disk.
     # That must park THIS source as a retriable error whose reason points at whisper — exactly like
