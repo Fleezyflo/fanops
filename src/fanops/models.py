@@ -108,6 +108,10 @@ class Moment(BaseModel):
                                                 # (no loop). Default False -> old ledgers load + are
                                                 # eligible for one edit pass.
     signal_score: float = 0.0
+    hook_pattern: Optional[str] = None          # P1 provenance: which of the 6 _hook_spec patterns the
+                                                # responder/editor chose for this hook (open_loop|curiosity|
+                                                # comment_bait|contrarian|pov|proof). None = unknown/clean.
+                                                # The dim P4 ranks FIRST. One writer: moments/hookedit ingest.
     error_reason: Optional[str] = None
 
 class Clip(BaseModel):
@@ -116,6 +120,10 @@ class Clip(BaseModel):
     state: ClipState = ClipState.rendered
     path: str
     aspect: Fmt = Fmt.r9x16
+    first_frame_kind: Optional[str] = None      # P1 provenance: "visual" if pick_visual_start moved the cut
+                                                # start onto a stronger opening frame, else "transcript".
+    cut_seconds: Optional[float] = None         # P1 provenance: the rendered window length (ce-cs).
+                                                # OBSERVATIONAL only — length is not varied, so not P4-ranked.
     held: bool = False
     held_reason: Optional[str] = None
     tagged_artist: bool = False
@@ -141,6 +149,12 @@ class Post(BaseModel):
     metrics: dict = Field(default_factory=dict)
     variant_key: Optional[str] = None   # creative-variation attribution: deterministic per-(account,platform,clip) key
     variant_hook: Optional[str] = None  # the burned-in hook text this account's variant used (observe-only)
+    # P1 attribution key (one writer = crosspost): the creative dims P3 aggregates reach by and P4 ranks.
+    # All None on old ledgers + when the upstream dim is unknown (validate-or-default; never crashes a load).
+    hook_pattern: Optional[str] = None      # the moment's chosen _hook_spec pattern (P4 ranks this FIRST)
+    first_frame_kind: Optional[str] = None  # "visual" | "transcript" — how the opening frame was chosen
+    clip_profile: Optional[str] = None      # song | talk — the per-video-type group ("hook for which video type")
+    cut_seconds: Optional[float] = None     # rendered clip length (observational; length not varied)
 
 
 # ---- agent-step contracts (all carry request_id for correlation — FIX F21) ----
