@@ -103,10 +103,10 @@ def test_chunked_feed_applies_all_batches_when_answered(tmp_path, monkeypatch):
     assert all(led.moments[f"m{i}"].hook_edited for i in range(n))
 
 def test_request_noop_when_disabled(tmp_path, monkeypatch):
-    monkeypatch.delenv("FANOPS_HOOK_EDITOR", raising=False)
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")    # editor now defaults ON; disable EXPLICITLY
     cfg = Config(root=tmp_path); led = _seed_feed(cfg)
     led = request_hook_edit(led, cfg)
-    assert pending(cfg, kind="hookedit") == []         # off by default -> no gate, no behavior change
+    assert pending(cfg, kind="hookedit") == []         # explicitly off -> no gate, no behavior change
 
 def test_request_noop_when_no_hooked_moments(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
@@ -185,7 +185,7 @@ def test_ingest_noop_when_response_absent(tmp_path, monkeypatch):
     assert hook_edit_pending(led, cfg) is True
 
 def test_ingest_noop_when_disabled(tmp_path, monkeypatch):
-    monkeypatch.delenv("FANOPS_HOOK_EDITOR", raising=False)
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")             # editor defaults ON now; disable EXPLICITLY
     cfg = Config(root=tmp_path); led = _seed_feed(cfg)
     led = ingest_hook_edit(led, cfg)                            # disabled -> never touches hooks
     assert led.moments["m1"].hook == "before he was Moh Flow"

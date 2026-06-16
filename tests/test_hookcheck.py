@@ -39,3 +39,22 @@ def test_duplicate_against_used_is_rejected():
     used = {"wait for the switch up"}
     assert is_weak_hook("Wait For The Switch Up", used=used) is True
     assert is_weak_hook("wait for the punch in", used=used) is False   # a different, fresh hook passes
+
+def test_opening_template_cluster_is_rejected():
+    # The "before he was Moh Flow x6" failure: distinct STRINGS that share an opening TEMPLATE read
+    # like a bot. Once >=2 accepted hooks share the first two words, the next one is rejected. This is
+    # the no-LLM floor that closes feed-clustering for EVERY config (not just hook-editor-on).
+    used = {"wait for the beat drop", "wait for the last line"}        # 2 already share "wait for"
+    assert is_weak_hook("wait for the hometown line", used=used) is True   # the 3rd -> cluster, rejected
+
+def test_second_shared_opening_still_allowed():
+    used = {"wait for the beat drop"}                                  # only one so far
+    assert is_weak_hook("wait for the last line", used=used) is False  # the 2nd is fine; not yet a cluster
+
+def test_distinct_openings_are_not_clustered():
+    used = {"wait for the beat drop", "wait for the last line"}        # a "wait for" cluster exists
+    assert is_weak_hook("nobody clipped this part", used=used) is False  # a DIFFERENT opening is unaffected
+
+def test_common_first_word_different_second_not_clustered():
+    used = {"the bar nobody saw", "the last word lands"}               # share only "the", not 2 tokens
+    assert is_weak_hook("the line he kept", used=used) is False        # second token differs -> not a cluster

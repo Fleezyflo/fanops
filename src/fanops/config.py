@@ -250,12 +250,12 @@ class Config:
         # moments are decided a SINGLE LLM pass sees EVERY clip's hook at once and rewrites the
         # weak/duplicated/templated ones into strong, DISTINCT hooks before any clip burns them. The
         # moment responder answers each clip in isolation, so it CANNOT diversify across the feed (the
-        # 'before he was Moh Flow' x6 round-2 failure); only a feed-level pass can. DEFAULT OFF
-        # (opt-in), fail-open — mirrors creative_variation. Requires FANOPS_RESPONDER=llm to be
-        # answered; with the flag off there is no hookedit gate and behavior is byte-identical. Only
-        # the explicit on-words enable it; unset/empty/other stays OFF.
+        # 'before he was Moh Flow' x6 round-2 failure); only a feed-level pass can. DEFAULT ON (Phase
+        # C2 — the weakest link must be closed by default, not by remembering a flag); fail-open +
+        # idempotent. Only answered under FANOPS_RESPONDER=llm; with it explicitly off there is no
+        # hookedit gate and behavior is the pre-C2 flow. Only explicit off-words disable it.
         v = (os.getenv("FANOPS_HOOK_EDITOR") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
 
     @property
     def variant_learning(self) -> bool:

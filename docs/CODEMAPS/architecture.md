@@ -90,7 +90,7 @@ The control surface — every input that changes what the engine outputs:
 | Lever | Where read | Changes |
 |---|---|---|
 | `context.md` (brand brief) | moments/caption `_guidance` | clip-pick + hook + caption voice (injected verbatim into every agent prompt) |
-| `FANOPS_HOOK_EDITOR` | config → pipeline | on: feed-aware vision editor rewrites all hooks before render; off: per-clip hooks only |
+| `FANOPS_HOOK_EDITOR` | config → pipeline | **default ON** (C2): feed-aware vision editor rewrites all hooks before render; explicit `off` → per-clip hooks only. Deterministic opening-template guard (hookcheck) is the no-LLM floor for every config |
 | `prompts._hook_spec` | moment/hookedit/caption | the ONE retention-hook definition (open-loop/curiosity/comment-bait/POV, no hype) |
 | `hashtags.py` vetted set + `vet_hashtags` | caption ingest | the ≤4 reach-vetted tags actually posted (model picks from the menu; code hard-caps) |
 | `FANOPS_RESPONDER` (llm/manual) | pipeline/responder | who answers moment/caption/hookedit gates (llm = autonomous; manual = operator) |

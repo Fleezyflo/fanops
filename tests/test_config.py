@@ -31,6 +31,21 @@ def test_tuning_passes_clean_overrides_unchanged(tmp_path):
     t = cfg.tuning()
     assert t["offbrand_en"] == ["\\bpls\\b"] and t["lift_weights"] == {"saves": 5}
 
+def test_hook_editor_defaults_on(monkeypatch, tmp_path):
+    # Phase C2: the feed-aware hook editor closes the weakest link (template clustering); it must be
+    # ON by default, not gated on the operator remembering a flag. It is fail-open + idempotent.
+    monkeypatch.delenv("FANOPS_HOOK_EDITOR", raising=False)
+    assert Config(root=tmp_path).hook_editor is True
+
+def test_hook_editor_explicit_off_disables(monkeypatch, tmp_path):
+    for off in ("0", "false", "no", "off"):
+        monkeypatch.setenv("FANOPS_HOOK_EDITOR", off)
+        assert Config(root=tmp_path).hook_editor is False
+
+def test_hook_editor_explicit_on(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    assert Config(root=tmp_path).hook_editor is True
+
 def test_dirs(tmp_path):
     c = Config(root=tmp_path)
     assert c.inbox == tmp_path / "MohFlow-FanOps" / "01_inbox"

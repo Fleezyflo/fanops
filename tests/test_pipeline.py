@@ -383,9 +383,10 @@ def test_hook_editor_consumes_answer_even_after_responder_flipped_to_manual(tmp_
     assert s["clips"] >= 1
 
 def test_hook_editor_off_renders_immediately_no_gate(tmp_path, monkeypatch, mocker):
-    # Default OFF: no hookedit gate, clips render in the same pass moments are ingested (today's flow).
+    # Explicitly OFF (editor now defaults ON): no hookedit gate, clips render in the same pass moments
+    # are ingested (the pre-C2 flow, still available when an operator opts out).
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    monkeypatch.delenv("FANOPS_HOOK_EDITOR", raising=False)
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
     advance(cfg, base_time="2026-07-01T18:00:00Z")

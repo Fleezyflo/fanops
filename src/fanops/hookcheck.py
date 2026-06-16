@@ -20,15 +20,28 @@ _EDITING = re.compile(r"\bcuts\b", re.IGNORECASE)
 # tired filler cliches that read as generic regardless of the clip
 _CLICHES = ("hits different", "everyone replayed", "everybody replayed")
 
+# Opening-template clustering (the 'before he was X' x6 / 'wait for the Y' x6 tell): EXACT-string
+# dedup misses it because the strings differ. We key on the first two WORD tokens; once this many
+# accepted hooks already share that opening, the next one reads like a bot and is rejected. Two
+# tokens (not one) keeps precision high — many hooks may legitimately start 'the', few share 'the bar'.
+_TEMPLATE_PREFIX_TOKENS = 2
+_TEMPLATE_CLUSTER_MAX = 2                             # the (MAX+1)th hook sharing the opening is rejected
+
+def _prefix_key(text: str) -> tuple:
+    return tuple(re.findall(r"\w+", text.lower())[:_TEMPLATE_PREFIX_TOKENS])
 
 def is_weak_hook(text: str | None, used: set[str] = frozenset()) -> bool:
     """True if `text` is a hook to REJECT (-> clean clip). `used` is the set of hooks already taken
-    this run; a case/space-insensitive repeat is rejected to kill cross-feed repetition."""
+    this run; a case/space-insensitive repeat OR an opening-template cluster is rejected to kill
+    cross-feed repetition (the 'reads like a bot' tell)."""
     if not text or not text.strip():
         return True                                   # nothing to show
     low = text.strip().lower()
     if low in {u.strip().lower() for u in used}:
         return True                                   # duplicate of another clip's hook
+    key = _prefix_key(low)
+    if key and sum(1 for u in used if _prefix_key(u) == key) >= _TEMPLATE_CLUSTER_MAX:
+        return True                                   # >=2 accepted hooks share this opening -> a template cluster
     if _SUPERLATIVE.search(low):
         return True                                   # 'his hardest/coldest/most ...' generic template
     if _EDITING.search(low):
