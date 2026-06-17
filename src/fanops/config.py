@@ -286,6 +286,15 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def hook_router(self) -> bool:
+        # M2 structural-hooks router: a read-only Moment classifier (runs AFTER the critic, BEFORE the
+        # render loop) that records hook_strategy and RENDERS NOTHING. DEFAULT OFF (opt-in, like
+        # hook_judge): observe-only, so the annotation is the SOLE delta and feature-off render/post
+        # bytes are byte-identical. Only explicit on-words enable it.
+        v = (os.getenv("FANOPS_HOOK_ROUTER") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def variant_learning(self) -> bool:
         # Creative variation v2 (closing the learning loop): with this ON, request_captions biases
         # the next caption toward the per-account hook variant that has earned a TRUSTWORTHY win

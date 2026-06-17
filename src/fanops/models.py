@@ -120,6 +120,9 @@ class Moment(BaseModel):
                                                 # responder/editor chose for this hook (open_loop|curiosity|
                                                 # comment_bait|contrarian|pov|proof). None = unknown/clean.
                                                 # The dim P4 ranks FIRST. One writer: moments/hookedit ingest.
+    hook_strategy: Optional[str] = None         # M2 router: text | clean_final | clean_awaiting_strategy:<key>
+                                                # | stitch:<format>. Observe-only annotation; None = unrouted
+                                                # (router off / old ledgers load). One writer: router.route_moments.
     error_reason: Optional[str] = None
 
 class Clip(BaseModel):
