@@ -10,7 +10,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import LIFT_SCORE, ClipState, PostState
+from fanops.models import LIFT_SCORE, ClipState, PostState, StitchState
 from fanops.timeutil import parse_iso
 
 IMMINENT_THRESHOLD_MINUTES = 5     # spec §4: a post within this of now (or past) is edit-disabled
@@ -420,6 +420,20 @@ def asset_catalog(cfg: Config) -> dict:
         from fanops.log import get_logger             # a read-fail is RECORDED, never silently shown as "empty"
         get_logger(cfg)("library", "-", "error", err=str(exc)[:160])
         return {"native": [], "third_party": []}
+
+
+def pending_stitches(cfg: Config) -> list:
+    """Lock-free read-model for the Stitches tab (M3): the SUGGESTED stitch_plans awaiting operator
+    approval. Fail-open — a torn/absent ledger yields [] (and logs), never a 500 (the Studio invariant)."""
+    try:
+        led = Ledger.load(cfg)
+        return [{"id": p.id, "clip_id": p.clip_id, "strategy_key": p.strategy_key,
+                 "asset_ids": p.asset_ids, "state": p.state.value}
+                for p in led.stitch_plans.values() if p.state is StitchState.suggested]
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("stitches", "-", "error", err=str(exc)[:160])
+        return []
 
 
 def golive_status(cfg: Config) -> GoLiveStatus:

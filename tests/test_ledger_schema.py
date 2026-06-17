@@ -41,3 +41,25 @@ def test_roundtrip_upgrades_unversioned_on_save(tmp_path):
     with Ledger.transaction(cfg):                 # load (v0) -> save (stamps current)
         pass
     assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
+
+def test_v1_ledger_migrates_to_current_with_empty_stitch_plans(tmp_path):
+    # M3: the new top-level stitch_plans map needs a _MIGRATIONS step + a version bump. A v1 on-disk
+    # ledger (no stitch_plans key) must migrate cleanly to the current version and load with an empty
+    # stitch_plans map — never raise "no migration path to v2".
+    assert SCHEMA_VERSION >= 2                     # bumped for the new top-level collection
+    cfg = Config(root=tmp_path); _seed(cfg)
+    raw = json.loads(cfg.ledger_path.read_text())
+    raw["schema_version"] = 1; raw.pop("stitch_plans", None)   # simulate a v1 ledger
+    cfg.ledger_path.write_text(json.dumps(raw))
+    led = Ledger.load(cfg)                                     # must NOT raise
+    assert led.stitch_plans == {} and "s1" in led.sources      # migrated; sources intact
+
+def test_stitch_plan_round_trips(tmp_path):
+    # M3: the stitch_plans map serializes + reloads (additive top-level collection, like tag_log).
+    from fanops.models import StitchPlan, StitchState
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.stitch_plans["sp1"] = StitchPlan(id="sp1", clip_id="clip_1", strategy_key="impact_cut")
+    led = Ledger.load(cfg)
+    assert "sp1" in led.stitch_plans and led.stitch_plans["sp1"].clip_id == "clip_1"
+    assert led.stitch_plans["sp1"].state is StitchState.suggested

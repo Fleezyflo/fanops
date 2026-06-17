@@ -490,3 +490,26 @@ def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
         if not c.held: return ActionResult(ok=False, error=f"clip {clip_id} is not held (state={c.state.value})")
         c.held = False; c.held_reason = None; c.state = ClipState.captions_requested
     return ActionResult(ok=True, detail={"clip_id": clip_id, "state": ClipState.captions_requested.value})
+
+
+def approve_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
+    """M3 operator approval (multi-select): suggested -> approved for each selected stitch_plan in ONE
+    transaction, idempotent (a non-suggested plan is a no-op). Never a 500."""
+    sel = [i for i in (ids or []) if i]
+    try:
+        with Ledger.transaction(cfg) as led:
+            for pid in sel: led.approve_stitch_plan(pid)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"approved": len(sel)})
+
+def dismiss_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
+    """M3 operator dismiss (multi-select): suggested|approved -> dismissed (terminal) for each selected
+    stitch_plan in ONE transaction, idempotent. Never a 500."""
+    sel = [i for i in (ids or []) if i]
+    try:
+        with Ledger.transaction(cfg) as led:
+            for pid in sel: led.dismiss_stitch_plan(pid)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"dismiss failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"dismissed": len(sel)})

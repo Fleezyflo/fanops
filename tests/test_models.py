@@ -15,6 +15,23 @@ def test_moment_hook_strategy_defaults_none():
     m = Moment(id="m1", parent_id="src_1", start=0.0, end=10.0, reason="x")
     assert m.hook_strategy is None                # M2: router annotation; old ledgers load (no migration)
 
+def test_stitch_plan_defaults_suggested():
+    from fanops.models import StitchPlan, StitchState
+    sp = StitchPlan(id="sp1", clip_id="c1", strategy_key="impact_cut")
+    assert sp.state is StitchState.suggested      # born suggested (operator-approval gated)
+    assert sp.asset_ids == [] and sp.plan_params == {}
+    assert sp.base_fingerprint is None and sp.error_reason is None
+
+def test_stitch_plan_id_is_deterministic_and_content_addressed():
+    from fanops.models import stitch_plan_id
+    a = stitch_plan_id("clip_1", ["asset_b", "asset_a"], "impact_cut", {"cut": 1.0})
+    b = stitch_plan_id("clip_1", ["asset_a", "asset_b"], "impact_cut", {"cut": 1.0})   # asset order swapped
+    c = stitch_plan_id("clip_1", ["asset_a"], "impact_cut", {"cut": 1.0})              # different asset set
+    d = stitch_plan_id("clip_2", ["asset_a", "asset_b"], "impact_cut", {"cut": 1.0})   # different clip
+    assert a == b                                 # deterministic + asset-order-independent (dedup key)
+    assert a != c and a != d                      # different pairing / clip -> different id
+    assert a.startswith("stitch_")
+
 def test_unit_parent_chain():
     s = Source(id="src_1", source_path="/s/x.mp4")
     m = Moment(id="mom_1", parent_id=s.id, start=1.0, end=8.0,

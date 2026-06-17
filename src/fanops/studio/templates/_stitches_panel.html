@@ -1,0 +1,22 @@
+{# src/fanops/studio/templates/_stitches_panel.html — M3 operator-approval surface (htmx-swapped in place) #}
+<div id="stitches-panel">
+  <h2>Stitch suggestions</h2>
+  <p class="muted">Structural-hook ideas the system proposes (impact-cut, intro-tease, …). <strong>Nothing
+    posts until you approve it.</strong> Tick the ones you want, then approve — or dismiss the rest.</p>
+
+  {% if result %}
+    <div class="result {{ 'ok' if result.ok else 'err' }}">
+      {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }}{% else %}Dismissed {{ result.detail.dismissed }}{% endif %} suggestion(s){% else %}{{ result.error }}{% endif %}
+    </div>
+  {% endif %}
+
+  <form hx-post="{{ url_for('do_approve_stitches') }}" hx-target="#stitches-panel" hx-swap="outerHTML">
+    <ul class="stitch-list">
+      {% for p in plans %}<li><label><input type="checkbox" name="ids" value="{{ p.id }}">
+        <strong>{{ p.strategy_key }}</strong> <span class="muted">· clip {{ p.clip_id }} · {{ p.id }}</span></label></li>{% endfor %}
+      {% if not plans %}<li class="empty">no suggestions awaiting approval</li>{% endif %}
+    </ul>
+    <button type="submit">Approve selected</button>
+    <button type="submit" hx-post="{{ url_for('do_dismiss_stitches') }}" hx-target="#stitches-panel" hx-swap="outerHTML">Dismiss selected</button>
+  </form>
+</div>

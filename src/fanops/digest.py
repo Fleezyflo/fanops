@@ -105,7 +105,7 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
               if p.state in (PostState.failed, PostState.error)] +          # M4: error too
              [f"- {kind} `{u.id}`: {u.error_reason or '(no reason given)'}"
               for kind, store in (("source", led.sources), ("moment", led.moments),
-                                  ("clip", led.clips))
+                                  ("clip", led.clips), ("stitch", led.stitch_plans))  # M3 structural-hooks
               for u in store.values() if u.state.value == "error"])         # M3: drop getattr
     if fails:
         out.append("\n## Failures (need attention)\n" + "\n".join(fails) + "\n")

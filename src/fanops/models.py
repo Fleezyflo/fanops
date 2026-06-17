@@ -3,10 +3,11 @@
 Separate state enums per unit (no shared linear enum). failed (Post) is distinct from
 analyzed. Every unit has an `error` state for per-unit quarantine."""
 from __future__ import annotations
-import math
+import json, math
 from enum import Enum
 from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator
+from fanops.ids import content_id
 
 
 class SourceState(str, Enum):
@@ -22,6 +23,9 @@ class ClipState(str, Enum):
     rendered = "rendered"; captions_requested = "captions_requested"; captioned = "captioned"
     queued = "queued"; published = "published"; analyzed = "analyzed"
     held = "held"; retired = "retired"; error = "error"
+    stitch_draft = "stitch_draft"   # M3: a stitched clip is BORN here — structurally unpostable (absent from
+                                    # crosspost's captioned-selection AND _REUSABLE_CLIP_STATES) until an
+                                    # operator approval transitions it to captioned. Reusing `held` is forbidden.
 
 class PostState(str, Enum):
     queued = "queued"; submitting = "submitting"; submitted = "submitted"
@@ -167,6 +171,30 @@ class Post(BaseModel):
     clip_profile: Optional[str] = None      # song | talk — the per-video-type group ("hook for which video type")
     cut_seconds: Optional[float] = None     # rendered clip length (observational; length not varied)
     variation_axis: Optional[str] = None    # P2 (one writer = crosspost): the cheap-text axis this variant moved
+
+
+# ---- M3 (structural-hooks): the stitch_plan entity — the operator-approval spine ----
+class StitchState(str, Enum):
+    suggested = "suggested"; approved = "approved"; in_use = "in_use"   # lifecycle
+    dismissed = "dismissed"; error = "error"                            # terminal
+
+class StitchPlan(BaseModel):
+    id: str                                     # content-addressed (stitch_plan_id) — the durable dedup key
+    clip_id: str                                # the base clip this stitch wraps / re-cuts
+    strategy_key: str                           # a router.STRATEGY_KEYS member (impact_cut, intro_tease, ...)
+    asset_ids: list[str] = Field(default_factory=list)   # native/third-party assets the stitch pairs in
+    plan_params: dict = Field(default_factory=dict)      # format-specific params (cut window, intro id, ...)
+    state: StitchState = StitchState.suggested  # born suggested -> operator approval -> approved -> in_use
+    base_fingerprint: Optional[str] = None      # base clip's render fingerprint, PINNED at approval (stale -> dismiss)
+    error_reason: Optional[str] = None
+
+def stitch_plan_id(clip_id: str, asset_ids: list[str], strategy_key: str, plan_params: dict) -> str:
+    """Content-addressed id keyed on the CLIP id + the sorted pairing inputs (NOT the render
+    fingerprint), so re-emitting the same pairing yields the same id (dedup) while re-rendering the
+    base clip never re-mints it. Deterministic across processes (ids.content_id)."""
+    token = json.dumps({"assets": sorted(asset_ids), "strategy": strategy_key, "params": plan_params},
+                       sort_keys=True, default=str)
+    return content_id("stitch", clip_id, token)
 
 
 # ---- agent-step contracts (all carry request_id for correlation — FIX F21) ----

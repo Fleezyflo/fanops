@@ -154,6 +154,19 @@ def test_crosspost_skips_held_and_retired(tmp_path, mocker):
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert [p for p in led.posts.values()] == []
 
+def test_stitch_draft_clip_is_structurally_unpostable(tmp_path, mocker):
+    # M3 safety spine: a clip born in stitch_draft is UNSELECTABLE by crosspost_clips — it is neither
+    # `captioned` (the selection state) nor in _REUSABLE_CLIP_STATES (the render-reuse allowlist). The
+    # posting query literally cannot reach it until an operator approval transitions it to captioned.
+    from fanops.crosspost import _REUSABLE_CLIP_STATES
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _captioned(led, cfg, mocker)
+    led.clips["clip_1"].state = ClipState.stitch_draft         # born pre-approval
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert [p for p in led.posts.values()] == []               # ZERO posts (structurally unpostable)
+    assert ClipState.stitch_draft not in _REUSABLE_CLIP_STATES  # never reused as a render target either
+
 def test_crosspost_multi_account_fans_out_n_times_m(tmp_path, mocker):
     # N accounts x M platforms = N*M posts, distinct account_ids.
     cfg = Config(root=tmp_path)

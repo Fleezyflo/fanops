@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
-from fanops.models import (Source, Moment, Clip, Post,
+from fanops.models import (Source, Moment, Clip, Post, StitchPlan, StitchState,
                            SourceState, MomentState, ClipState, PostState)
 
 
@@ -19,9 +19,11 @@ _DEFAULT_LOCK_TIMEOUT = 30.0
 # ledger (no schema_version key) reads as v0; v0->v1 is the no-op baseline stamp (the shape was
 # already stable). The point is forward safety: a future field change becomes a migration step, not
 # a silent field-drop (pydantic extra="ignore") or a load crash.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
-_MIGRATIONS = {1: lambda raw: raw}
+# v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
+_MIGRATIONS = {1: lambda raw: raw,
+               2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})}}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
@@ -104,6 +106,9 @@ class Ledger:
                                               # (variant-amplify v3: sustained-win streak per surface;
                                               # deterministic, idempotent on unchanged evidence; inert
                                               # when FANOPS_VARIANT_AMPLIFY off)
+        self.stitch_plans: dict[str, StitchPlan] = {}   # M3: structural-hook plans (suggested->approved->
+                                              # in_use / dismissed / error); additive top-level map, the
+                                              # operator-approval spine. Empty until a format (M4+) emits one.
 
     @classmethod
     def load(cls, cfg: Config) -> "Ledger":
@@ -127,6 +132,7 @@ class Ledger:
                 led.posts = {k: Post(**v) for k, v in raw.get("posts", {}).items()}
                 led.tag_log = raw.get("tag_log", {})
                 led.variant_streaks = raw.get("variant_streaks", {})
+                led.stitch_plans = {k: StitchPlan(**v) for k, v in raw.get("stitch_plans", {}).items()}
             except ControlFileError:
                 raise                                  # _NewerSchema / _migrate gap: pass through, unreworded
             except Exception as e:
@@ -169,6 +175,7 @@ class Ledger:
             "posts": {k: v.model_dump() for k, v in self.posts.items()},
             "tag_log": self.tag_log,
             "variant_streaks": self.variant_streaks,
+            "stitch_plans": {k: v.model_dump() for k, v in self.stitch_plans.items()},
         }
         self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
@@ -302,3 +309,15 @@ class Ledger:
                 continue                               # junk / non-source-named file -> ignore
             if f.stem not in self.sources:             # orphan on disk -> surface as discovered (inert)
                 self.sources[f.stem] = Source(id=f.stem, state=SourceState.discovered, source_path=str(f))
+
+    # ---- M3 (structural-hooks): stitch_plan ops (operator-approval spine; caller holds the transaction) ----
+    def add_stitch_plan(self, plan: StitchPlan) -> None:
+        self.stitch_plans.setdefault(plan.id, plan)    # idempotent by content-addressed id (dedup re-emit)
+    def approve_stitch_plan(self, plan_id: str) -> None:
+        p = self.stitch_plans.get(plan_id)             # in-lock re-check: ONLY a suggested plan approves, so a
+        if p is not None and p.state is StitchState.suggested:   # second/contended approval is a clean no-op
+            p.state = StitchState.approved                       # (never a second render in M4)
+    def dismiss_stitch_plan(self, plan_id: str) -> None:
+        p = self.stitch_plans.get(plan_id)             # suggested|approved -> dismissed (terminal); an in_use
+        if p is not None and p.state in (StitchState.suggested, StitchState.approved):   # plan is forward-only
+            p.state = StitchState.dismissed

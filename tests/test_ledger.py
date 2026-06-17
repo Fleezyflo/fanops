@@ -72,6 +72,34 @@ def test_reconcile_preserves_clean_awaiting_strategy_moment(tmp_path):
     assert led.moments["m_await"].state is MomentState.decided  # still routable for a future strategy
     assert "m_plain" not in led.moments                         # control: plain moment cascade-deleted
 
+# ---- M3 (structural-hooks): stitch_plan lifecycle + in-lock idempotent approval ----
+def test_add_stitch_plan_idempotent_by_id(tmp_path):
+    from fanops.models import StitchPlan
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_stitch_plan(StitchPlan(id="sp1", clip_id="c1", strategy_key="impact_cut"))
+    led.add_stitch_plan(StitchPlan(id="sp1", clip_id="c1", strategy_key="intro_tease"))  # same id -> dedup
+    assert len(led.stitch_plans) == 1 and led.stitch_plans["sp1"].strategy_key == "impact_cut"
+
+def test_approve_stitch_plan_idempotent(tmp_path):
+    from fanops.models import StitchPlan, StitchState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_stitch_plan(StitchPlan(id="sp1", clip_id="c1", strategy_key="impact_cut"))
+    led.approve_stitch_plan("sp1"); assert led.stitch_plans["sp1"].state is StitchState.approved
+    led.approve_stitch_plan("sp1"); assert led.stitch_plans["sp1"].state is StitchState.approved  # no 2nd transition
+
+def test_approve_does_not_revive_a_dismissed_plan(tmp_path):
+    from fanops.models import StitchPlan, StitchState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_stitch_plan(StitchPlan(id="sp1", clip_id="c1", strategy_key="impact_cut"))
+    led.dismiss_stitch_plan("sp1"); assert led.stitch_plans["sp1"].state is StitchState.dismissed
+    led.approve_stitch_plan("sp1"); assert led.stitch_plans["sp1"].state is StitchState.dismissed  # terminal, in-lock re-check
+
+def test_dismiss_stitch_plan(tmp_path):
+    from fanops.models import StitchPlan, StitchState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_stitch_plan(StitchPlan(id="sp1", clip_id="c1", strategy_key="impact_cut"))
+    led.dismiss_stitch_plan("sp1"); assert led.stitch_plans["sp1"].state is StitchState.dismissed
+
 def test_cascade_preserves_needs_reconcile_post(tmp_path):
     # AUDIT C1: a needs_reconcile post MAY be live on the platform (ambiguous publish). If its
     # moment is dropped by a re-decision, the cascade must NOT delete it — that would orphan a

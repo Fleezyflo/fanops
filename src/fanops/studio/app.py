@@ -173,6 +173,21 @@ def create_app(cfg: Config) -> Flask:
             res = actions.run_ingest_thirdparty(cfg)
         return render_template("_library_panel.html", catalog=views.asset_catalog(cfg), result=res, tab="library")
 
+    @app.get("/stitches")
+    def stitches():
+        # M3 approval spine: structural-hook suggestions awaiting operator approval (multi-select checkbox).
+        return render_template("stitches.html", plans=views.pending_stitches(cfg), tab="stitches")
+
+    @app.post("/stitches/approve")
+    def do_approve_stitches():
+        res = actions.approve_stitches(cfg, request.form.getlist("ids"))
+        return render_template("_stitches_panel.html", plans=views.pending_stitches(cfg), result=res, tab="stitches")
+
+    @app.post("/stitches/dismiss")
+    def do_dismiss_stitches():
+        res = actions.dismiss_stitches(cfg, request.form.getlist("ids"))
+        return render_template("_stitches_panel.html", plans=views.pending_stitches(cfg), result=res, tab="stitches")
+
     @app.get("/candidates")
     def candidates():
         # Track C: approve discover footage in the browser (replaces the Finder drag into approved/).

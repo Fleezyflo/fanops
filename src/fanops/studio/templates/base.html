@@ -12,7 +12,7 @@
   {# Primary flow: Make → Review → Publish → Results. Everything else (Footage, Schedule, Gates,
      Go Live) is a diagnostic/utility surface, demoted into the Advanced group so it never competes
      with the everyday path. Routes are unchanged; only the grouping + active-state mapping moved. #}
-  {% set advanced = ['footage','library','schedule','gates','golive'] %}
+  {% set advanced = ['footage','library','stitches','schedule','gates','golive'] %}
   <header class="nav">
     <h1 class="nav-brand">FanOps Studio</h1>
     <nav class="nav-primary" aria-label="Primary">
@@ -26,6 +26,7 @@
       <div class="nav-more-menu" role="navigation" aria-label="Advanced">
         <a href="{{ url_for('candidates') }}" class="{{ 'active' if tab=='footage' else '' }}">Footage intake</a>
         <a href="{{ url_for('library') }}" class="{{ 'active' if tab=='library' else '' }}">Asset library</a>
+        <a href="{{ url_for('stitches') }}" class="{{ 'active' if tab=='stitches' else '' }}">Stitch approvals</a>
         <a href="{{ url_for('schedule') }}" class="{{ 'active' if tab=='schedule' else '' }}">Schedule</a>
         <a href="{{ url_for('gates') }}" class="{{ 'active' if tab=='gates' else '' }}">Processing decisions</a>
         <a href="{{ url_for('golive_view') }}" class="{{ 'active' if tab=='golive' else '' }}">Go Live &amp; connect</a>
