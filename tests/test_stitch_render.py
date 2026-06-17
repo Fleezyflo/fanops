@@ -8,7 +8,8 @@ from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, Post, MomentState, SourceState, ClipState,
                            StitchState, StitchPlan, PostState, Platform, Fmt)
 from fanops.router import awaiting, CLEAN_FINAL
-from fanops.stitch_render import mine_suggestions, render_approved_stitches, approved_impact_cut_count
+from fanops.stitch_render import (mine_suggestions, render_approved_stitches, approved_impact_cut_count,
+                                  prewarm_approved_stitches, _stitch_clip_id)
 
 
 def _seed(cfg, *, peaks, hook_strategy, clip_state=ClipState.rendered):
@@ -308,3 +309,92 @@ def test_intro_tease_ranks_against_impact_cut_by_fit(tmp_path, monkeypatch):
     mine_suggestions(led, cfg)
     assert len(led.stitch_plans) == 1
     assert next(iter(led.stitch_plans.values())).strategy_key == "intro_tease"   # 0.97 beats 0.3
+
+
+# ---- M6 Task 5: render-approved DISPATCHES by strategy_key. intro_tease renders via the compose-PREPEND
+# path (MoviePy, LOCK-FREE prewarm + in-lock fingerprint-skip ADOPT — never MoviePy under the flock), born
+# stitch_draft, same supersede precedence as impact_cut. impact_cut keeps the render_moment cut-window path. ----
+def _seed_intro_approved(cfg, *, asset_id="intro1", base_fp="basefp", cur_fp="basefp", add_intro=True):
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path=str(cfg.sources / "s1.mp4"), state=SourceState.signalled,
+                          width=1920, height=1080, duration=20.0))
+    if add_intro:
+        led.add_source(Source(id="intro1", source_path=str(cfg.sources / "intro1.mp4"),
+                              state=SourceState.catalogued, origin_kind="third_party"))
+    led.add_moment(Moment(id="m1", parent_id="s1", state=MomentState.clipped, start=0.0, end=18.0, reason="r"))
+    led.clips["clip_base"] = Clip(id="clip_base", parent_id="m1", path=str(cfg.clips / "clip_base.mp4"),
+                                  state=ClipState.rendered, aspect=Fmt.r9x16)
+    _write_fp(cfg, "clip_base", cur_fp)
+    params = {"intro_asset_id": asset_id, "tease_text": "wait for it", "intro_seconds": 2.0}
+    led.add_stitch_plan(StitchPlan(id="iplan", clip_id="clip_base", strategy_key="intro_tease",
+                                   asset_ids=[asset_id], plan_params=params,
+                                   state=StitchState.approved, base_fingerprint=base_fp))
+    return led
+
+def _prewarm_intro_composite(cfg, led, *, asset_id="intro1"):
+    # lay down the prewarmed composite mp4 + the compose-fp sidecar the in-lock commit checks (matching what
+    # the code computes: base.path, intro.source_path, plan_params, src.width=1920, src.height=1080)
+    from fanops.compose import _compose_fingerprint
+    base = led.clips["clip_base"]; intro = led.sources[asset_id]
+    cid = _stitch_clip_id("iplan", base.aspect.value)
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    (cfg.clips / f"{cid}.mp4").write_bytes(b"COMPOSED")
+    fp = _compose_fingerprint(base.path, intro.source_path, led.stitch_plans["iplan"].plan_params, 1920, 1080)
+    (cfg.clips / f"{cid}.render.json").write_text(json.dumps({"fp": fp}))
+    return cid
+
+def test_intro_render_adopts_prewarmed_composite(tmp_path):
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg)
+    cid = _prewarm_intro_composite(cfg, led)
+    render_approved_stitches(led, cfg)                              # adopts the warm mp4 — NO MoviePy in-lock
+    assert led.clips[cid].state is ClipState.stitch_draft and led.clips[cid].parent_id == "m1"
+    assert led.stitch_plans["iplan"].state is StitchState.in_use
+
+def test_intro_render_waits_when_not_prewarmed(tmp_path):
+    # lock-free discipline: with no prewarmed composite the commit must NOT render MoviePy under the lock —
+    # it leaves the plan approved so the next prewarm produces it, then a later commit adopts.
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg)
+    render_approved_stitches(led, cfg)
+    assert led.stitch_plans["iplan"].state is StitchState.approved  # still approved, not errored
+    assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
+
+def test_intro_render_errors_when_intro_asset_missing(tmp_path):
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg, asset_id="ghost", add_intro=False)
+    render_approved_stitches(led, cfg)
+    assert led.stitch_plans["iplan"].state is StitchState.error
+    assert "intro asset missing" in (led.stitch_plans["iplan"].error_reason or "")
+
+def test_intro_render_retires_queued_base_post(tmp_path):
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg); _prewarm_intro_composite(cfg, led)
+    led.posts["post_base"] = _base_post(PostState.queued)
+    render_approved_stitches(led, cfg)
+    assert led.posts["post_base"].state is PostState.retired
+    assert led.stitch_plans["iplan"].state is StitchState.in_use
+
+def test_intro_render_base_superseded_dismiss(tmp_path):
+    # shared supersede precedence applies to intro_tease too: a drifted base fingerprint auto-dismisses
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg, base_fp="OLD", cur_fp="NEW")
+    _prewarm_intro_composite(cfg, led)
+    render_approved_stitches(led, cfg)
+    assert led.stitch_plans["iplan"].state is StitchState.dismissed
+    assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
+
+def test_intro_render_blocks_on_live_base_post(tmp_path):
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg); _prewarm_intro_composite(cfg, led)
+    led.posts["post_base"] = _base_post(PostState.published)        # LIVE base post
+    render_approved_stitches(led, cfg)
+    assert led.stitch_plans["iplan"].state is StitchState.error
+    assert "live post" in (led.stitch_plans["iplan"].error_reason or "")
+
+def test_prewarm_intro_stamps_fp_lockfree(tmp_path, mocker):
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg); logs = []
+    def fake_prepend(b, i, o, *, tease_text, intro_seconds, **kw):
+        from pathlib import Path
+        Path(o).parent.mkdir(parents=True, exist_ok=True); Path(o).write_bytes(b"COMPOSED"); return True
+    mocker.patch("fanops.compose.prepend_intro", side_effect=fake_prepend)
+    prewarm_approved_stitches(led, cfg, lambda *a, **k: logs.append(a))
+    cid = _stitch_clip_id("iplan", "9:16")
+    assert (cfg.clips / f"{cid}.mp4").exists()
+    # the stamped fp must equal what the in-lock commit will recompute -> a following commit ADOPTS it
+    render_approved_stitches(led, cfg)
+    assert led.clips[cid].state is ClipState.stitch_draft and led.stitch_plans["iplan"].state is StitchState.in_use
