@@ -31,6 +31,17 @@ def test_asset_catalog_fail_open_on_absent_ledger(tmp_path):
     cat = views.asset_catalog(Config(root=tmp_path))
     assert cat["native"] == [] and cat["third_party"] == []
 
+def test_asset_catalog_records_read_failure_not_silent(tmp_path, monkeypatch):
+    # fail-open must NOT be silent: a real read failure (vs a genuinely-empty library) must leave a
+    # run.log signal, else the operator reads "0 assets" as "nothing uploaded" when the ledger is torn.
+    cfg = Config(root=tmp_path)
+    def _boom(_cfg): raise RuntimeError("torn ledger")
+    monkeypatch.setattr(Ledger, "load", _boom)
+    cat = views.asset_catalog(cfg)
+    assert cat == {"native": [], "third_party": []}              # still fail-open (never 500)
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "library" in log and "error" in log                   # the failure is RECORDED, not swallowed
+
 def test_pipeline_status_chain_count_excludes_third_party(tmp_path):
     cfg = Config(root=tmp_path); _seed_mixed(cfg)
     st = views.pipeline_status(cfg)

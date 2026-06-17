@@ -179,6 +179,19 @@ def test_run_ingest_thirdparty_surfaces_pii_excluded(tmp_path, mocker):
     res = actions.run_ingest_thirdparty(cfg)
     assert res.detail["sources"] == 0 and res.detail["excluded"] == 1
 
+def test_run_ingest_thirdparty_reports_added_not_cumulative(tmp_path, mocker):
+    # the panel renders "Added N" — N must be THIS call's delta, not the cumulative library total, else a
+    # repeat ingest that catalogues nothing new still claims "Added <total>" (a false success signal).
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 0.0))
+    cfg = Config(root=tmp_path)
+    actions.save_thirdparty_uploads(cfg, [_Up("a.jpg")])
+    r1 = actions.run_ingest_thirdparty(cfg)
+    assert r1.detail["added"] == 1 and r1.detail["sources"] == 1       # first pass: delta == total
+    actions.save_thirdparty_uploads(cfg, [_Up("b.jpg")])
+    r2 = actions.run_ingest_thirdparty(cfg)
+    assert r2.detail["added"] == 1 and r2.detail["sources"] == 2       # delta=1 (new), sources=2 (cumulative)
+
 def test_native_ingest_cannot_reach_thirdparty_inbox(tmp_path, mocker):
     # the structural anti-mislabel guarantee: a native ingest_drops pass over the default inbox can
     # NEVER reach the peer staging dir, so a staged third-party file is never catalogued native.
