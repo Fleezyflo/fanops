@@ -61,3 +61,28 @@ def test_route_ignores_malformed_peak_t(tmp_path):
     _add(led, "m1", hook=None, start=0.0, end=18.0)
     route_moments(led, cfg)                                  # must not raise on bad sidecar data
     assert led.moments["m1"].hook_strategy == CLEAN_FINAL    # bad peak ignored -> no reservable peak
+
+
+# ---- M6 (intro-tease): a clean moment with NO usable peak is reserved for intro_tease WHEN that format is
+# enabled (so the matcher can pair it with an intro asset); with intro_tease OFF it stays clean_final
+# (non-regression). A peak moment still goes to impact_cut (the deterministic high-confidence format wins). ----
+def test_route_clean_intro_tease_when_enabled_and_no_peak(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
+    cfg = Config(root=tmp_path); led = _seed(cfg, peaks=[])           # clean clip, no peak
+    _add(led, "m1", hook=None, start=0.0, end=18.0)
+    route_moments(led, cfg)
+    assert led.moments["m1"].hook_strategy == awaiting("intro_tease")
+
+def test_route_clean_final_when_intro_tease_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_INTRO_TEASE", raising=False)
+    cfg = Config(root=tmp_path); led = _seed(cfg, peaks=[])
+    _add(led, "m1", hook=None, start=0.0, end=18.0)
+    route_moments(led, cfg)
+    assert led.moments["m1"].hook_strategy == CLEAN_FINAL             # off -> today's behavior unchanged
+
+def test_route_peak_still_impact_cut_when_intro_tease_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
+    cfg = Config(root=tmp_path); led = _seed(cfg, peaks=[{"t": 6.0, "score": 0.9}])
+    _add(led, "m1", hook=None, start=0.0, end=18.0)                   # peak in window -> impact_cut precedence
+    route_moments(led, cfg)
+    assert led.moments["m1"].hook_strategy == awaiting("impact_cut")

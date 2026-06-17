@@ -238,3 +238,73 @@ def test_mine_per_candidate_fail_open(tmp_path, mocker):
     mine_suggestions(led, cfg)                                       # must NOT raise
     assert len(led.stitch_plans) == 1                                # clip1 still emitted; clip0 skipped
     assert led.moments["m0"].hook_strategy == awaiting("impact_cut")  # failed moment stays reserved (retries next pass)
+
+
+# ---- M6 (intro-tease): the SECOND producer registered in mine_suggestions. For each moment the router
+# reserved clean_awaiting_strategy:intro_tease whose matcher pairings landed (Moment.intro_matches), emit a
+# suggested intro_tease StitchPlan for the TOP pairing, ranked against impact_cut by fit; re-route the moment
+# stitch:intro_tease once its plan exists. Gated on cfg.intro_tease (a stale reservation after disable -> no plan). ----
+def _seed_intro(cfg, *, matches):
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path=str(cfg.sources / "s1.mp4"), state=SourceState.signalled,
+                          width=1920, height=1080, duration=20.0))
+    led.add_source(Source(id="intro1", source_path=str(cfg.sources / "intro1.mp4"),
+                          state=SourceState.catalogued, origin_kind="third_party"))
+    led.add_moment(Moment(id="m1", parent_id="s1", state=MomentState.clipped, start=0.0, end=18.0,
+                          reason="r", hook_strategy=awaiting("intro_tease"), intro_matches=matches))
+    led.clips["clip_base"] = Clip(id="clip_base", parent_id="m1", path=str(cfg.clips / "clip_base.mp4"),
+                                  state=ClipState.rendered)
+    return led
+
+def test_intro_tease_suggest_creates_plan_and_reroutes(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
+    cfg = Config(root=tmp_path)
+    led = _seed_intro(cfg, matches=[{"asset_id": "intro1", "fit_score": 0.88,
+                                     "rationale": "stage entrance", "tease_text": "wait for it"}])
+    _write_fp(cfg, "clip_base", "basefp")
+    mine_suggestions(led, cfg)
+    plans = [p for p in led.stitch_plans.values() if p.strategy_key == "intro_tease"]
+    assert len(plans) == 1
+    p = plans[0]
+    assert p.clip_id == "clip_base" and p.asset_ids == ["intro1"] and p.base_fingerprint == "basefp"
+    assert p.plan_params["intro_asset_id"] == "intro1" and p.plan_params["tease_text"] == "wait for it"
+    assert p.rank_score == 0.88 and p.rationale == "stage entrance"
+    assert led.moments["m1"].hook_strategy == "stitch:intro_tease"   # the intro_tease handler acted
+
+def test_intro_tease_no_plan_when_unmatched(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
+    cfg = Config(root=tmp_path)
+    led = _seed_intro(cfg, matches=None)                             # matcher hasn't answered yet
+    _write_fp(cfg, "clip_base", "basefp")
+    mine_suggestions(led, cfg)
+    assert led.stitch_plans == {}                                    # benign: nothing to suggest yet
+    assert led.moments["m1"].hook_strategy == awaiting("intro_tease")  # stays reserved for next pass
+
+def test_intro_tease_off_emits_nothing(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_INTRO_TEASE", raising=False)
+    cfg = Config(root=tmp_path)
+    led = _seed_intro(cfg, matches=[{"asset_id": "intro1", "fit_score": 0.88,
+                                     "rationale": "x", "tease_text": "wait"}])      # a stale reservation
+    _write_fp(cfg, "clip_base", "basefp")
+    mine_suggestions(led, cfg)
+    assert led.stitch_plans == {}                                    # format off -> no intro_tease plans
+
+def test_intro_tease_ranks_against_impact_cut_by_fit(tmp_path, monkeypatch):
+    # both producers feed ONE ranked pass: a higher-fit intro_tease outranks a lower-score impact_cut.
+    monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
+    cfg = Config(root=tmp_path)
+    led = _seed_intro(cfg, matches=[{"asset_id": "intro1", "fit_score": 0.97,
+                                     "rationale": "x", "tease_text": "wait"}])
+    _write_fp(cfg, "clip_base", "basefp")
+    # add a competing impact_cut-routed moment with a weaker peak score
+    led.add_source(Source(id="s2", source_path=str(cfg.sources / "s2.mp4"), state=SourceState.signalled,
+                          signal_peaks=[{"t": 12.0, "score": 0.3}], width=1920, height=1080, duration=20.0))
+    led.add_moment(Moment(id="m2", parent_id="s2", state=MomentState.clipped, start=0.0, end=18.0,
+                          reason="r", hook_strategy=awaiting("impact_cut")))
+    led.clips["clip2"] = Clip(id="clip2", parent_id="m2", path=str(cfg.clips / "clip2.mp4"), state=ClipState.rendered)
+    _write_fp(cfg, "clip2", "fp2")
+    import fanops.stitch_render as sr
+    monkeypatch.setattr(sr, "MAX_SUGGESTIONS_PER_PASS", 1)           # only the BEST-fit suggestion survives the cap
+    mine_suggestions(led, cfg)
+    assert len(led.stitch_plans) == 1
+    assert next(iter(led.stitch_plans.values())).strategy_key == "intro_tease"   # 0.97 beats 0.3
