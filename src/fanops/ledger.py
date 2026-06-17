@@ -3,7 +3,7 @@
 Writes are ATOMIC (temp file + os.replace) under a file lock so the 're-run advance()'
 model cannot corrupt or lose updates. Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
-import fcntl, json, os, time
+import fcntl, json, os, re, time
 from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
@@ -22,6 +22,11 @@ _DEFAULT_LOCK_TIMEOUT = 30.0
 SCHEMA_VERSION = 1
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 _MIGRATIONS = {1: lambda raw: raw}
+
+# M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
+# (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
+# (.gitkeep / .DS_Store / a hand-dropped misnamed file) — only a matching stem becomes a discovered row.
+_SID_RE = re.compile(r"^src_[0-9a-f]{12}$")
 
 
 class _NewerSchema(ControlFileError):
@@ -266,3 +271,30 @@ class Ledger:
     def is_retired_moment(self, moment_id: str) -> bool:
         m = self.moments.get(moment_id)
         return bool(m and m.state is MomentState.retired)
+
+    # ---- M1 (structural-hooks): asset memory — retire-with-cascade + disk<->ledger rebuild ----
+    def retire_source(self, source_id: str) -> None:
+        # Remove a source: cascade-drop its moments/clips via reconcile with an EMPTY keep-set (a live
+        # descendant is preserved + retired, NEVER deleted — the performance record survives), then mark
+        # the source retired. The source FILE is LEFT on disk (a live post's media_url may point at it);
+        # rebuild_catalog will not re-add it (its retired row remains, blocking resurrection).
+        self.reconcile_moments(source_id, {})
+        if source_id in self.sources:
+            self.sources[source_id].state = SourceState.retired
+    def is_retired_source(self, source_id: str) -> bool:
+        s = self.sources.get(source_id)
+        return bool(s and s.state is SourceState.retired)
+
+    def rebuild_catalog(self, cfg: Config) -> None:
+        # Reconcile the on-disk sources dir against the ledger: an orphaned source file (a src_*.<ext>
+        # with no ledger row) is surfaced as a `discovered` source — INERT to clip-production until an
+        # operator confirms it; a `retired` source is never resurrected; a ledger source whose file is
+        # missing is never dropped. Idempotent. Iterates the DIR (not self.sources) -> no mutate-in-iter.
+        from fanops.ingest import MEDIA_EXT            # local import: ingest imports ledger (avoid a cycle)
+        if not cfg.sources.exists():
+            return
+        for f in sorted(cfg.sources.iterdir()):
+            if not f.is_file() or f.suffix.lower() not in MEDIA_EXT or not _SID_RE.match(f.stem):
+                continue                               # junk / non-source-named file -> ignore
+            if f.stem not in self.sources:             # orphan on disk -> surface as discovered (inert)
+                self.sources[f.stem] = Source(id=f.stem, state=SourceState.discovered, source_path=str(f))
