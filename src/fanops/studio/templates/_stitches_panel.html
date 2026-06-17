@@ -13,7 +13,8 @@
   <form hx-post="{{ url_for('do_approve_stitches') }}" hx-target="#stitches-panel" hx-swap="outerHTML">
     <ul class="stitch-list">
       {% for p in plans %}<li><label><input type="checkbox" name="ids" value="{{ p.id }}">
-        <strong>{{ p.strategy_key }}</strong> <span class="muted">· clip {{ p.clip_id }} · {{ p.id }}</span></label></li>{% endfor %}
+        <strong>{{ p.strategy_key }}</strong>{% if p.rationale %} <span class="rationale">— {{ p.rationale }}</span>{% endif %}
+        <span class="muted">· clip {{ p.clip_id }} · {{ p.id }}</span></label></li>{% endfor %}
       {% if not plans %}<li class="empty">no suggestions awaiting approval</li>{% endif %}
     </ul>
     <button type="submit">Approve selected</button>

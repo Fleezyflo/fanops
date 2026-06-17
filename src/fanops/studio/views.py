@@ -427,9 +427,13 @@ def pending_stitches(cfg: Config) -> list:
     approval. Fail-open — a torn/absent ledger yields [] (and logs), never a 500 (the Studio invariant)."""
     try:
         led = Ledger.load(cfg)
-        return [{"id": p.id, "clip_id": p.clip_id, "strategy_key": p.strategy_key,
-                 "asset_ids": p.asset_ids, "state": p.state.value}
+        rows = [{"id": p.id, "clip_id": p.clip_id, "strategy_key": p.strategy_key,
+                 "asset_ids": p.asset_ids, "state": p.state.value,
+                 "rank_score": p.rank_score, "rationale": p.rationale}      # M5: the routine-loop's WHY + fit
                 for p in led.stitch_plans.values() if p.state is StitchState.suggested]
+        # best-fit first (highest rank_score); a None rank sinks to the bottom; tie -> stable by id
+        rows.sort(key=lambda r: (-(r["rank_score"] or 0.0), r["id"]))
+        return rows
     except Exception as exc:
         from fanops.log import get_logger
         get_logger(cfg)("stitches", "-", "error", err=str(exc)[:160])
