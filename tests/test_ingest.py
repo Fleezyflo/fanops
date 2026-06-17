@@ -178,3 +178,42 @@ def test_ingest_does_not_persist_original_filename(tmp_path, mocker):
     s = next(iter(led.sources.values()))
     assert "original_name" not in s.meta
     assert "MY-PRIVATE-NAME" not in json.dumps(s.model_dump())   # the filename is nowhere in the unit
+
+# ---- M1 (structural-hooks): origin_kind + inbox threading + dedup-conflict visibility ----
+def test_ingest_stamps_third_party_origin_kind(tmp_path, mocker):
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"AAA")
+    led = ingest_drops(Ledger.load(cfg), cfg, origin_kind="third_party")
+    assert next(iter(led.sources.values())).origin_kind == "third_party"
+
+def test_ingest_default_origin_kind_is_native(tmp_path, mocker):
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"AAA")
+    led = ingest_drops(Ledger.load(cfg), cfg)
+    assert next(iter(led.sources.values())).origin_kind == "native"
+
+def test_ingest_scans_explicit_inbox(tmp_path, mocker):
+    # inbox= lets a caller catalogue from a non-default dir (the third-party staging dir)
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    cfg = Config(root=tmp_path); staging = tmp_path / "staging"; _put(staging / "b.mp4", b"BBB")
+    led = ingest_drops(Ledger.load(cfg), cfg, inbox=staging, origin_kind="third_party")
+    assert len(led.sources) == 1 and next(iter(led.sources.values())).origin_kind == "third_party"
+
+def test_ingest_same_sha_keeps_origin_and_warns(tmp_path, mocker):
+    # same bytes catalogued native, then offered as third_party from staging -> dedup KEEPS native
+    # (write-once) and logs an origin_conflict WARN (never a silent flip to third_party).
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 0.0))
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"SAME")
+    with Ledger.transaction(cfg) as led:
+        ingest_drops(led, cfg)                                       # native, persisted
+    sid = next(iter(Ledger.load(cfg).sources.values())).id
+    staging = tmp_path / "staging"; _put(staging / "dup.mp4", b"SAME")
+    with Ledger.transaction(cfg) as led:
+        ingest_drops(led, cfg, inbox=staging, origin_kind="third_party")
+    led3 = Ledger.load(cfg)
+    assert led3.sources[sid].origin_kind == "native"                 # unchanged (no silent flip)
+    assert "origin_conflict" in cfg.log_path.read_text()             # the conflict is visible

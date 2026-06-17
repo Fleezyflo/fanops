@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-14 | Files scanned: models.py, ledger.py, config.py, accounts.py, cutover.py, autopilot.py | Token estimate: ~750 -->
+<!-- Generated: 2026-06-17 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, cutover.py, autopilot.py | Token estimate: ~820 -->
 # FanOps Data
 
 No database. ONE JSON ledger + operator-editable control files, all under the data tree.
@@ -8,8 +8,9 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 ```
 00_control/   ledger.json ledger.lock accounts.json context.md tuning.json ledger_digest.md cutover.json
 00_review/    manifest.json intaken.json *.jpg + approved/   (discover/intake staging)
-01_inbox/     dropped/pulled media awaiting ingest
-02_sources/   content-addressed source copies (src_<sha>.mp4)
+01_inbox/     dropped/pulled media awaiting ingest (native — the pipeline cuts these)
+01_thirdparty_inbox/   M1: PEER of 01_inbox (outside the native rglob) — handed-in third-party assets (video/photo), catalogued as origin_kind=third_party, INERT to clip-production
+02_sources/   content-addressed source copies (src_<sha>.mp4; both native + third-party land here)
 03_clips/     rendered clips + per-account variant renders + composed clips (Studio serves ONLY inside this tree)
 04_agent_io/  agentstep request/response JSONs (moments/captions)
 05_scheduled/ 06_published/  (reserved)
@@ -24,12 +25,15 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 - Writes: tmp file + `os.replace` (atomic). Reads in Studio are lock-free (atomic replace
   guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log`.
-  No schema_version (known gap — pydantic `extra="ignore"` drops unknown fields on old-binary load).
+  Versioned: `SCHEMA_VERSION=1` + `_MIGRATIONS` (ledger.py); a NEWER on-disk version → `_NewerSchema`
+  refuses to load (exit 2) rather than silently drop fields. Inner dicts of variant_streaks/tag_log
+  remain untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
 
 ```
 Source: catalogued -> transcribed -> signalled -> moments_requested -> moments_decided | error
+        | retired (M1 retire_source: cascade-drop descendants, file KEPT on disk) | discovered (M1 rebuild_catalog orphan — inert until confirmed)
 Moment: decided -> clipped | retired | error
 Clip:   rendered -> captions_requested -> captioned -> queued -> published -> analyzed
         | held | retired | error
@@ -38,7 +42,9 @@ Post:   queued -> submitting -> submitted -> published -> analyzed
         never blind re-POST) | error
 ```
 
-Key fields: parent_id lineage Post→Clip→Moment→Source; `Post.submission_id` (content-addressed
+Key fields: parent_id lineage Post→Clip→Moment→Source; `Source.origin_kind` (M1: native|third_party;
+write-once via add_source setdefault — the axis that gates clip-production, third_party is inert);
+`Post.submission_id` (content-addressed
 client idempotency token, stamped at birth); `Post.media_urls` ([] -> uploaded at publish;
 `file://` variant renders uploaded on live backends); `Post.metrics[LIFT_SCORE]` (models.py
 constant — written only by track.record_metrics); `Clip.media_url` (per-clip upload cache);
@@ -62,4 +68,6 @@ constant — written only by track.record_metrics); `Clip.media_url` (per-clip u
 
 `ledger._delete_moment_cascade` preserves LIVE descendants (`_LIVE_CLIP_STATES` /
 `_LIVE_POST_STATES`); a re-decided source retires the old moment instead of deleting when a
-live post/clip survives. Retired moments are never resurrected.
+live post/clip survives. Retired moments are never resurrected. M1 `retire_source` rides this same
+cascade (reconcile with an EMPTY keep-set), so retiring a source preserves + retires any live
+descendant rather than orphaning a live post; `rebuild_catalog` never resurrects a retired source.

@@ -80,3 +80,22 @@ def test_post_has_optional_variant_fields():
     p2 = Post(id="p2", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
               caption="x", state=PostState.queued)
     assert p2.variant_key is None and p2.variant_hook is None
+
+# ---- M1 (structural-hooks): asset origin (native vs third-party) ----
+# origin_kind is a THIRD axis, distinct from source_origin (drop|url|scan, HOW it arrived) and the
+# P1 creative-provenance (first_frame_kind/hook_pattern, attribution). WRITE-ONCE at catalogue.
+def test_source_origin_kind_defaults_native():
+    s = Source(id="src_1", source_path="/s/x.mp4")          # old ledgers (no field) load as native
+    assert s.origin_kind == "native"
+
+def test_source_origin_kind_accepts_third_party():
+    s = Source(id="src_1", source_path="/s/x.mp4", origin_kind="third_party")
+    assert s.origin_kind == "third_party"
+
+def test_source_origin_kind_rejects_unknown_value():
+    with pytest.raises(ValidationError):                    # a Literal -> bad value rejected at construct/load
+        Source(id="src_1", source_path="/s/x.mp4", origin_kind="borrowed")
+
+def test_source_state_has_retired_and_discovered():
+    # retired = removed (never deleted); discovered = a rebuild orphan, inert until an operator confirms
+    assert SourceState.retired.value == "retired" and SourceState.discovered.value == "discovered"

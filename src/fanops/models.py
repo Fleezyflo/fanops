@@ -5,13 +5,14 @@ analyzed. Every unit has an `error` state for per-unit quarantine."""
 from __future__ import annotations
 import math
 from enum import Enum
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
 class SourceState(str, Enum):
     catalogued = "catalogued"; transcribed = "transcribed"; signalled = "signalled"
     moments_requested = "moments_requested"; moments_decided = "moments_decided"
+    retired = "retired"; discovered = "discovered"   # M1: removed-but-kept / rebuild-orphan (inert until confirmed)
     error = "error"
 
 class MomentState(str, Enum):
@@ -78,7 +79,10 @@ class Source(BaseModel):
     id: str
     state: SourceState = SourceState.catalogued
     source_path: str
-    source_origin: str = "drop"                 # drop | url | scan
+    source_origin: str = "drop"                 # drop | url | scan (HOW it arrived — intake channel)
+    origin_kind: Literal["native", "third_party"] = "native"   # M1: WHOSE it is — a THIRD axis, distinct from
+                                                # source_origin (channel) and P1 provenance (attribution). WRITE-ONCE
+                                                # at catalogue (add_source setdefault); old ledgers load native.
     sha256: Optional[str] = None
     duration: Optional[float] = None
     width: Optional[int] = None                 # FIX F68 — probed at ingest for safe reframe

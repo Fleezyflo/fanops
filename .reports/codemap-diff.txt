@@ -1,26 +1,40 @@
-Codemap update — 2026-06-16
-Scan: 58 src modules (src/fanops/ + studio/), ~70 test files.
+Codemap update — 2026-06-17
+Scan: 65 src modules (src/fanops/ + studio/), 93 test files.
 
-Modules added since last codemap (2026-06-14):
-  + hookedit.py    feed-aware vision hook editor (chunked gates, cross-feed dedup)
-  + keyframes.py   source-frame extraction (the vision editor's eyes)
-  + hashtags.py    vet_hashtags — ≤4 reach-vetted hashtag selection
-  + (hookcheck.py / vocals.py already present; now grouped under Hook+hashtag quality)
+Milestone shipped since last codemap (2026-06-16): M1 — Asset Memory & Awareness
+(branch feat/structural-hooks-m1; 14 commits, strict RED→GREEN; suite 1244 unit / 16 deselected).
 
-Architecture changes:
-  * Pipeline: NEW hookedit stage between moments_decided and clip render
-    (Moment.decided -> [hookedit] -> hook_edited -> clip burns the retention hook).
-  * On-screen text reframed: RETENTION hook (not transcript caption); burn_subs default OFF.
-  * Caption stage: hashtags now hard-capped at 4 and restricted to a reach-vetted set.
-  * prompts.py: one shared _hook_spec (retention-only, no artist hype) across
-    moment/hookedit/caption.
-  * New sourced knowledge artifact: .claude/skills/fanops-hook-hashtag/SKILL.md.
+New capability (NO new src module — threaded through existing files):
+  * models.Source.origin_kind: Literal["native","third_party"] — a THIRD axis, distinct from
+    source_origin (intake channel) and P1 creative provenance (attribution). Write-once via the
+    add_source setdefault. + SourceState.{discovered, retired}.
+  * ingest._catalogue_file: single catalogue spine; origin_kind + inbox threaded through it; on a
+    sha256-dedup hit with a different kind it logs an origin_conflict WARN and never flips a
+    remembered asset's kind (write-once).
+  * config.thirdparty_inbox = 01_thirdparty_inbox — PEER of 01_inbox, OUTSIDE the native rglob.
+  * pipeline: third_party sources SKIPPED at the source loop (BOTH _prewarm and the in-lock
+    advance) — handed-in footage is remembered but inert to clip-production (spy-proven, not a
+    0-count assertion).
+  * ledger.retire_source (cascade via reconcile_moments({}), source file KEPT) + rebuild_catalog
+    (disk↔ledger reconcile: orphan→discovered, never resurrect retired, never drop a missing-file
+    row). Tested as ledger primitives; operator write-surface deferred to a later milestone.
+  * studio: asset_catalog read-model + save_thirdparty_uploads/run_ingest_thirdparty actions +
+    /library tab (GET /library, POST /library/upload).
 
-Added section: "Output levers" — the control surface (every flag/prompt/knowledge
-file/threshold that changes the produced clips/posts).
+Review-hardening (ecc:python-review + silent-failure-hunter; verdict WARN → PASS, 0 CRIT/HIGH):
+  * asset_catalog: whole body fail-open + structured library/error log (read-fail ≠ empty library).
+  * run_ingest_thirdparty: reports added-this-call delta (not the cumulative total); panel renders
+    an honest "Added N (M in library)" — a repeat ingest with nothing new says "Added 0".
+  5 further findings DECLINED with rationale (sha1-comment correct, dead conflict branch, peer-mutator
+  txn-comment convention, pipeline_status state-filter = YAGNI, dormant mutable-default).
 
-Diff magnitude: additive, < 30% -> updated architecture.md in place.
-data.md / dependencies.md: no structural change (ledger model + external deps
-unchanged; claude -p now also passes image frames to the vision hook editor).
+Codemaps updated:
+  * architecture.md: + asset-memory intro line, + pipeline inert-guard bullet, + "Asset memory (M1)"
+    cross-cutting module-map row (mirrors the "Creative provenance (P1)" row), + /library routes.
+  * data.md: + 01_thirdparty_inbox in the data tree, + Source discovered/retired states,
+    + Source.origin_kind key field, + retire_source/rebuild_catalog note on the C1 cascade.
+  * dependencies.md: NO change (no new external binary, service, or env flag — M1 is pure-internal).
 
+Diff magnitude: additive, < 30% -> updated in place (no approval gate triggered).
 Staleness: none > 90 days.
+NB: the prior 2026-06-16 header undercounted at 58 src / 70 test; corrected to the actual 65 / 93.

@@ -1,0 +1,33 @@
+{# src/fanops/studio/templates/_library_panel.html — M1 asset-memory panel (htmx-swapped in place) #}
+<div id="library-panel">
+  <h2>Asset library</h2>
+  <p class="muted"><strong>Native</strong> is the artist's own footage the system catalogued.
+    <strong>Third-party</strong> is outside footage you hand in — remembered and held aside, never
+    auto-posted and never cut into clips until you choose to use it.</p>
+
+  {% if result %}
+    <div class="result {{ 'ok' if result.ok else 'err' }}">
+      {% if result.ok %}Added {{ result.detail.added }} third-party asset(s){% if result.detail.sources %} ({{ result.detail.sources }} in library){% endif %}{% if result.detail.excluded %} — {{ result.detail.excluded }} skipped (name looked sensitive){% endif %}
+      {% else %}{{ result.error }}{% endif %}
+    </div>
+  {% endif %}
+
+  <form hx-post="{{ url_for('do_thirdparty_upload') }}" hx-target="#library-panel" hx-swap="outerHTML"
+        hx-encoding="multipart/form-data" class="upload-form">
+    <input type="file" name="files" accept="video/*,image/*" multiple
+           aria-label="Choose third-party assets to add" title="Choose third-party assets (video or photo)">
+    <button type="submit">Add third-party asset</button>
+  </form>
+
+  <h3>Native <span class="muted">({{ catalog.native|length }})</span></h3>
+  <ul class="asset-list">
+    {% for s in catalog.native %}<li>{{ s.id }} <span class="muted">· {{ s.state }}</span></li>{% endfor %}
+    {% if not catalog.native %}<li class="empty">none yet</li>{% endif %}
+  </ul>
+
+  <h3>Third-party <span class="muted">({{ catalog.third_party|length }})</span></h3>
+  <ul class="asset-list">
+    {% for s in catalog.third_party %}<li>{{ s.id }} <span class="muted">· {{ s.state }}</span></li>{% endfor %}
+    {% if not catalog.third_party %}<li class="empty">none yet</li>{% endif %}
+  </ul>
+</div>

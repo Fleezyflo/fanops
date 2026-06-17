@@ -6,8 +6,10 @@ misnamed slips through; a human still reviews held/odd clips before posting."""
 from __future__ import annotations
 import hashlib, re, shutil, subprocess
 from pathlib import Path
+from typing import Literal
 from fanops.config import Config
 from fanops.ledger import Ledger
+from fanops.log import get_logger
 from fanops.models import Source, SourceState
 from fanops.ids import make_id
 from fanops.errors import ToolchainMissingError, DownloadError
@@ -88,27 +90,40 @@ def has_video_stream(path: Path) -> bool:
     # "video" codec_type appears among the comma/space-separated fields; empty stdout -> still False.
     return "video" in r.stdout.replace(",", " ").split()
 
-def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop") -> Ledger:
+def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str,
+                    origin_kind: Literal["native", "third_party"] = "native") -> None:
+    """Catalogue ONE file as a Source (content-addressed, deduped, probed) — the single spine shared by
+    the native drop/url scan and the third-party intake; the caller sets origin_kind. Same bytes already
+    seen under a DIFFERENT origin_kind = a conflict: keep the first (origin_kind is WRITE-ONCE), surface
+    it via a visible log line, never silently flip native<->third_party."""
+    digest = sha256_of(f)
+    if led.already_seen(sha256=digest):
+        prior = next((s for s in led.sources.values() if s.sha256 == digest), None)
+        if prior is not None and prior.origin_kind != origin_kind:   # dedup-suppressed an upload — make it visible
+            get_logger(cfg)("ingest", prior.id, "origin_conflict", want=origin_kind, have=prior.origin_kind)
+        return
+    sid = make_id("src", digest)                  # identity = content, not path
+    dest = cfg.sources / f"{sid}{f.suffix.lower()}"
+    if not dest.exists():
+        shutil.copy2(f, dest)
+    w, h, dur = probe_dimensions(dest)
+    led.add_source(Source(id=sid, state=SourceState.catalogued, source_path=str(dest),
+                          source_origin=origin, origin_kind=origin_kind, sha256=digest, width=w, height=h,
+                          duration=dur or None,
+                          meta={"bytes": f.stat().st_size}))   # AUDIT: no original_name (PII)
+
+def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
+                 origin_kind: Literal["native", "third_party"] = "native",
+                 inbox: Path | None = None) -> Ledger:
     cfg.sources.mkdir(parents=True, exist_ok=True)
-    for f in sorted(cfg.inbox.rglob("*")):
+    for f in sorted((inbox or cfg.inbox).rglob("*")):     # inbox= lets third-party scan its own staging dir
         if not f.is_file() or f.name == ".gitkeep" or f.suffix.lower() not in MEDIA_EXT:
             continue
         if is_excluded(f.name):
             continue
         if not has_video_stream(f):
             continue                              # audio-only (no video stream): not a clip source (FIX)
-        digest = sha256_of(f)
-        if led.already_seen(sha256=digest):
-            continue
-        sid = make_id("src", digest)              # identity = content, not path
-        dest = cfg.sources / f"{sid}{f.suffix.lower()}"
-        if not dest.exists():
-            shutil.copy2(f, dest)
-        w, h, dur = probe_dimensions(dest)
-        led.add_source(Source(id=sid, state=SourceState.catalogued, source_path=str(dest),
-                              source_origin=origin, sha256=digest, width=w, height=h,
-                              duration=dur or None,
-                              meta={"bytes": f.stat().st_size}))   # AUDIT: no original_name (PII)
+        _catalogue_file(led, cfg, f, origin=origin, origin_kind=origin_kind)
     return led
 
 def download_url(cfg: Config, url: str) -> None:
