@@ -192,6 +192,8 @@ class StitchPlan(BaseModel):
     state: StitchState = StitchState.suggested  # born suggested -> operator approval -> approved -> in_use
     base_fingerprint: Optional[str] = None      # base clip's render fingerprint, PINNED at approval (stale -> dismiss)
     error_reason: Optional[str] = None
+    rank_score: Optional[float] = None          # M5: fit score the routine loop ranks suggestions by (higher first)
+    rationale: Optional[str] = None             # M5: one-line human-readable WHY, shown in Studio (operator-facing)
 
 def stitch_plan_id(clip_id: str, asset_ids: list[str], strategy_key: str, plan_params: dict) -> str:
     """Content-addressed id keyed on the CLIP id + the sorted pairing inputs (NOT the render

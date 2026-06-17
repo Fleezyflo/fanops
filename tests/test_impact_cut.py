@@ -2,7 +2,7 @@
 # no ffmpeg, no LLM, no third-party asset — it ranks a source's existing signal_peaks and computes
 # a cut-before-peak window [m.start, peak_t - IMPACT_LEAD_EPS] (the "wait for it" tease ends just
 # before impact). Task 1 covers the pure planner + the StitchPlan builder; render/pipeline come later.
-from fanops.models import Source, Moment, Clip, MomentState, SourceState, ClipState, StitchState
+from fanops.models import Source, Moment, Clip, MomentState, SourceState, ClipState, StitchState, StitchPlan
 from fanops.impact_cut import (IMPACT_LEAD_EPS, DURATION_TOLERANCE, IMPACT_MIN_DURATION,
                                plan_impact_cut, make_stitch_plan)
 from fanops.models import stitch_plan_id

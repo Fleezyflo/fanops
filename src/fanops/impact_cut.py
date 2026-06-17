@@ -28,19 +28,18 @@ IMPACT_MIN_DURATION = 3.0
 STRATEGY_KEY = "impact_cut"
 
 
-def _impact_peak_t(src: "Source", lo: float, hi: float) -> Optional[float]:
-    """The time of the strongest peak inside [lo, hi] (max score, tie -> earliest t), or None if the
+def _impact_peak(src: "Source", lo: float, hi: float) -> Optional[tuple[float, float]]:
+    """The strongest peak inside [lo, hi] as (t, score) — max score, tie -> earliest t — or None if the
     window holds no usable peak. A peak with a non-numeric t or score is skipped (semi-trusted sidecar)."""
-    best: Optional[tuple[float, float]] = None     # (score, t) — higher score wins; on a tie the earlier t wins
-    best_t: Optional[float] = None
+    best: Optional[tuple[float, float]] = None     # (t, score) of the current best
     for p in src.signal_peaks or []:
         try: t = float(p.get("t")); score = float(p.get("score"))
         except (TypeError, ValueError): continue
         if not (lo <= t <= hi): continue
         # rank: higher score wins; on a tie the earlier t wins (deterministic)
-        if best is None or score > best[0] or (score == best[0] and t < best[1]):
-            best = (score, t); best_t = t
-    return best_t
+        if best is None or score > best[1] or (score == best[1] and t < best[0]):
+            best = (t, score)
+    return best
 
 
 def plan_impact_cut(m: "Moment", src: "Source") -> Optional[dict]:
@@ -49,11 +48,11 @@ def plan_impact_cut(m: "Moment", src: "Source") -> Optional[dict]:
     Returns {"cut_start", "cut_end"} where cut_start = m.start and cut_end = peak_t - IMPACT_LEAD_EPS.
     None (benign, not an error) when: no peak in [m.start, m.end], or the resulting span is shorter than
     IMPACT_MIN_DURATION (too close to the start). Deterministic and side-effect-free."""
-    peak_t = _impact_peak_t(src, m.start, m.end)
-    if peak_t is None:
+    peak = _impact_peak(src, m.start, m.end)
+    if peak is None:
         return None
     cut_start = round(float(m.start), 3)
-    cut_end = round(peak_t - IMPACT_LEAD_EPS, 3)
+    cut_end = round(peak[0] - IMPACT_LEAD_EPS, 3)
     if cut_end - cut_start < IMPACT_MIN_DURATION:
         return None                                # degenerate / out of range -> no plan
     return {"cut_start": cut_start, "cut_end": cut_end}
@@ -65,10 +64,16 @@ def make_stitch_plan(clip: "Clip", m: "Moment", src: "Source", *, base_fp: Optio
     The id is content-addressed on the clip id + the (empty) asset set + strategy + params, so re-emitting
     the same pairing yields the same id (dedup) while re-rendering the base never re-mints it. `base_fp`
     pins the base clip's current render fingerprint so a later re-render of the base auto-dismisses the
-    plan (the supersede rule). Impact-cut uses no paired assets (asset_ids stays empty)."""
+    plan (the supersede rule). Impact-cut uses no paired assets (asset_ids stays empty). M5: the routine
+    loop ranks suggestions by `rank_score` (= the impact peak's score) and shows `rationale` to the operator."""
     params = plan_impact_cut(m, src)
     if params is None:
         return None
+    peak = _impact_peak(src, m.start, m.end)       # non-None here (plan_impact_cut returned params)
+    peak_t, score = peak
+    rationale = (f"impact peak at {round(peak_t, 1)}s (score {round(score, 2)}) "
+                 f"-> cut {IMPACT_LEAD_EPS}s before it")
     return StitchPlan(id=stitch_plan_id(clip.id, [], STRATEGY_KEY, params), clip_id=clip.id,
                       strategy_key=STRATEGY_KEY, asset_ids=[], plan_params=params,
-                      state=StitchState.suggested, base_fingerprint=base_fp)
+                      state=StitchState.suggested, base_fingerprint=base_fp,
+                      rank_score=round(score, 4), rationale=rationale)
