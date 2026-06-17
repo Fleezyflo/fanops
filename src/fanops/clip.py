@@ -247,24 +247,47 @@ def _fingerprint_matches(fp_path, fp: str) -> bool:
     except (OSError, json.JSONDecodeError, ValueError):
         return False
 
+# M4 (impact-cut): a stitched render's validity is DURATION-checked, not size-checked — a short/empty
+# container that passes "size > 0" must still fail. Probe the rendered output's duration via ffprobe;
+# None on any failure (the caller treats an unprobeable stitch as invalid -> error + bare-clip fallback).
+# Module-level so tests can patch it without a real ffprobe (mirrors the subprocess.run patch pattern).
+def _probe_duration(path: str) -> float | None:
+    from fanops.ingest import probe_dimensions          # local: avoid an import cycle at module load
+    from fanops.errors import ToolchainMissingError
+    try:
+        _, _, dur = probe_dimensions(Path(path))
+        return dur or None
+    except (ToolchainMissingError, OSError, ValueError):
+        return None
+
 def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
-                  aspect: Fmt = Fmt.r9x16) -> tuple[Ledger, Clip]:
+                  aspect: Fmt = Fmt.r9x16, cut_window: tuple[float, float] | None = None,
+                  clip_id: str | None = None, born_state: ClipState = ClipState.rendered) -> tuple[Ledger, Clip]:
+    # M4 (impact-cut): when `cut_window` is given, render a STITCH — a new clip with the caller's distinct
+    # `clip_id` (never the content-addressed bare cid, so it can't overwrite the bare clip — the supersede
+    # rule), the peak-derived window verbatim (no band/snap/visual refine — the cut is already decided),
+    # and `born_state` (stitch_draft, structurally unpostable). Its duration is validity-checked post-render.
+    # The DEFAULT path (cut_window is None) is byte-identical to before. is_stitch guards every new branch.
+    is_stitch = cut_window is not None
     m = led.moments[moment_id]
     src = led.sources[m.parent_id]
-    cid = child_id("clip", moment_id, aspect.value)      # content-addressed by aspect
+    cid = clip_id if is_stitch else child_id("clip", moment_id, aspect.value)  # content-addressed by aspect (bare)
     cfg.clips.mkdir(parents=True, exist_ok=True)
     dst = cfg.clips / f"{cid}.mp4"
-    band = band_for(cfg.clip_profile)                          # talk 12-22s / song 18-35s
-    cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
-    cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
-    # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after band + snap) so the
-    # rendered cut and the first_frame_kind provenance AGREE — snap can't silently undo a visual pick and
-    # leave the dim lying (it would poison P4, which ranks first_frame_kind). Both 1.5s shifts otherwise
-    # overlap. Runs in the lock-free pre-warm + is sidecar-cached so the in-lock commit re-probes nothing.
     first_frame_kind = None
-    if cfg.visual_start:
-        cs, first_frame_kind = pick_visual_start(src.source_path, cs, ce,
-                                                 scene_peaks=src.signal_peaks, out_dir=cfg.clips)
+    if is_stitch:
+        cs, ce = float(cut_window[0]), float(cut_window[1])    # the impact-cut window, verbatim
+    else:
+        band = band_for(cfg.clip_profile)                          # talk 12-22s / song 18-35s
+        cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
+        cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
+        # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after band + snap) so the
+        # rendered cut and the first_frame_kind provenance AGREE — snap can't silently undo a visual pick and
+        # leave the dim lying (it would poison P4, which ranks first_frame_kind). Both 1.5s shifts otherwise
+        # overlap. Runs in the lock-free pre-warm + is sidecar-cached so the in-lock commit re-probes nothing.
+        if cfg.visual_start:
+            cs, first_frame_kind = pick_visual_start(src.source_path, cs, ce,
+                                                     scene_peaks=src.signal_peaks, out_dir=cfg.clips)
     cut_seconds = round(ce - cs, 3)                            # P1 provenance (observational; length not varied)
     extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
     # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
@@ -275,10 +298,13 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0, ass_text)
     fp_path = cfg.clips / f"{cid}.render.json"
     if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
-        clip = Clip(id=cid, parent_id=moment_id, state=ClipState.rendered, path=str(dst), aspect=aspect,
+        # An fp-match means a prior render of THIS exact window already passed (the fp is stamped only
+        # after a successful render + a passing duration check for stitches), so adopt it without re-probing.
+        clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
                     first_frame_kind=first_frame_kind, cut_seconds=cut_seconds)
         led.clips[cid] = clip
-        led.set_moment_state(moment_id, MomentState.clipped)
+        if not is_stitch:                                     # a stitch never advances the moment (the bare clip owns it)
+            led.set_moment_state(moment_id, MomentState.clipped)
         return led, clip
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf)
@@ -312,13 +338,27 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                     aspect=aspect, error_reason=f"ffmpeg rc={r.returncode}: {(r.stderr or '')[:200]}")
         led.clips[cid] = clip
         return led, clip
-    clip = Clip(id=cid, parent_id=moment_id, state=ClipState.rendered, path=str(dst), aspect=aspect,
+    if is_stitch:
+        # Output validity is DURATION-checked, not size-checked (PRD): a short/empty container that
+        # passes "size > 0" must fail. expected = cut_end - cut_start; a render outside DURATION_TOLERANCE
+        # is errored (bare clip already shipped upstream — fail-open + fail-visible), no skip-stamp so a
+        # re-render retries. The moment is left alone (the bare clip owns its state).
+        from fanops.impact_cut import DURATION_TOLERANCE
+        expected = round(ce - cs, 3)
+        actual = _probe_duration(str(dst))
+        if actual is None or abs(actual - expected) > DURATION_TOLERANCE:
+            clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst), aspect=aspect,
+                        error_reason=f"duration {actual} vs {expected}")
+            led.clips[cid] = clip
+            return led, clip
+    clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
                 first_frame_kind=first_frame_kind, cut_seconds=cut_seconds)
     # Overwrite any prior clip at this content-addressed id (e.g. a previous error-state
     # render) so a re-render self-heals; setdefault would pin the stale clip. id is unique
     # per (moment, aspect), so the latest successful render is authoritative.
     led.clips[cid] = clip
-    led.set_moment_state(moment_id, MomentState.clipped)
+    if not is_stitch:                                         # a stitch never advances the moment (the bare clip owns it)
+        led.set_moment_state(moment_id, MomentState.clipped)
     # Stamp the render fingerprint (Phase D) so a later pass — or the in-lock commit after a lock-free
     # pre-warm — can skip re-rendering an identical clip. Best-effort: a write failure just costs a
     # re-render, never a crash. Written ONLY on success, so a failed render never leaves a skip stamp.
