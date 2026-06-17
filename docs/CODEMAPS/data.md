@@ -25,7 +25,9 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 - Writes: tmp file + `os.replace` (atomic). Reads in Studio are lock-free (atomic replace
   guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log`.
-  No schema_version (known gap — pydantic `extra="ignore"` drops unknown fields on old-binary load).
+  Versioned: `SCHEMA_VERSION=1` + `_MIGRATIONS` (ledger.py); a NEWER on-disk version → `_NewerSchema`
+  refuses to load (exit 2) rather than silently drop fields. Inner dicts of variant_streaks/tag_log
+  remain untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
 
