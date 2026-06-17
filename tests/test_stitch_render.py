@@ -160,3 +160,21 @@ def test_approved_impact_cut_count(tmp_path):
     assert approved_impact_cut_count(led) == 1
     led.stitch_plans["plan1"].state = StitchState.in_use
     assert approved_impact_cut_count(led) == 0
+
+
+# ---- Task 6: resilience sweep (failure-mode table) ----
+def test_render_approved_cut_out_of_range_errors(tmp_path, mocker):
+    # a plan whose window is invalid (cut_end <= cut_start) must error BEFORE rendering — never a render
+    cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
+    led.stitch_plans["plan1"].plan_params = {"cut_start": 10.0, "cut_end": 4.0}   # inverted -> out of range
+    render_approved_stitches(led, cfg)
+    p = led.stitch_plans["plan1"]
+    assert p.state is StitchState.error and "out of range" in (p.error_reason or "")
+    assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
+
+def test_render_approved_cut_beyond_source_duration_errors(tmp_path, mocker):
+    cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
+    led.stitch_plans["plan1"].plan_params = {"cut_start": 0.0, "cut_end": 99.0}   # source is 20s
+    render_approved_stitches(led, cfg)
+    p = led.stitch_plans["plan1"]
+    assert p.state is StitchState.error and "out of range" in (p.error_reason or "")

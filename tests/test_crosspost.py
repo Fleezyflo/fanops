@@ -540,3 +540,20 @@ def test_crosspost_stamps_variation_axis_from_caption(tmp_path, mocker, monkeypa
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     post = list(led.posts.values())[0]
     assert post.variation_axis == "hook_pattern"
+
+
+def test_stitch_draft_clip_never_crossposts(tmp_path, mocker):
+    # M4 structural operator-gate: a stitch_draft clip in EVERY pre-release state is absent from the
+    # crosspost selection predicate -> crosspost_clips creates ZERO posts for it (the M3 guarantee, asserted
+    # for an impact-cut-born clip). Only the explicit operator RELEASE (-> captioned) makes it postable.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", state=MomentState.clipped))
+    stitch = Clip(id="stitch_x", parent_id="mom_1", path="/stitch_x.mp4", aspect=Fmt.r9x16,
+                  state=ClipState.stitch_draft)
+    stitch.meta_captions = {"@a/instagram": {"caption": "c", "hashtags": ["#x"]}}   # even WITH captions
+    led.add_clip(stitch)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert not any(p.parent_id == "stitch_x" for p in led.posts.values())           # structurally unpostable
