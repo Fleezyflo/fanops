@@ -122,3 +122,71 @@ def test_run_route_shows_upload_form(tmp_path):
     app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
     r = app.test_client().get("/run")
     assert r.status_code == 200 and b'type="file"' in r.data and b"Add video" in r.data
+
+
+# ---- M1 (structural-hooks): third-party asset intake — peer staging dir, photos allowed ----
+def test_thirdparty_inbox_is_a_peer_of_inbox(tmp_path):
+    # the staging dir MUST be a sibling of 01_inbox, never under it — else ingest_drops' recursive
+    # rglob over cfg.inbox would catch it and catalogue it as NATIVE (the mislabel timebomb).
+    cfg = Config(root=tmp_path)
+    assert cfg.thirdparty_inbox == cfg.base / "01_thirdparty_inbox"
+    assert cfg.thirdparty_inbox.parent == cfg.inbox.parent and cfg.thirdparty_inbox != cfg.inbox
+
+def test_save_uploads_accepts_photo_with_media_ext(tmp_path):
+    from fanops.ingest import MEDIA_EXT          # photos are in MEDIA_EXT but NOT the default _VIDEO_EXT
+    cfg = Config(root=tmp_path)
+    res = actions.save_uploads(cfg, [_Up("hold.jpg")], probe=False, allowed_ext=MEDIA_EXT)
+    assert res.ok and res.detail["saved"] == ["hold.jpg"]
+
+def test_save_uploads_default_still_rejects_photo(tmp_path):
+    # backward-compat: the default allowed_ext is _VIDEO_EXT, so native upload still rejects a photo
+    cfg = Config(root=tmp_path)
+    res = actions.save_uploads(cfg, [_Up("hold.jpg")], probe=False)
+    assert not res.ok and res.detail["skipped"]
+
+def test_save_thirdparty_lands_in_peer_dir_not_inbox(tmp_path, mocker):
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)   # fake bytes pass the probe
+    cfg = Config(root=tmp_path)
+    res = actions.save_thirdparty_uploads(cfg, [_Up("clip.mp4")])
+    assert res.ok and (cfg.thirdparty_inbox / "clip.mp4").exists()
+    assert not (cfg.inbox / "clip.mp4").exists()                # never the native inbox
+
+def test_run_ingest_thirdparty_catalogues_third_party(tmp_path, mocker):
+    from fanops.ledger import Ledger
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    cfg = Config(root=tmp_path)
+    actions.save_thirdparty_uploads(cfg, [_Up("clip.mp4")])
+    res = actions.run_ingest_thirdparty(cfg)
+    assert res.ok and res.detail["sources"] == 1
+    assert next(iter(Ledger.load(cfg).sources.values())).origin_kind == "third_party"
+
+def test_run_ingest_thirdparty_accepts_photo(tmp_path, mocker):
+    # a still photo passes has_video_stream (still = video stream) -> catalogued third_party
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 0.0))
+    cfg = Config(root=tmp_path)
+    actions.save_thirdparty_uploads(cfg, [_Up("hold.jpg")])
+    assert actions.run_ingest_thirdparty(cfg).detail["sources"] == 1
+
+def test_run_ingest_thirdparty_surfaces_pii_excluded(tmp_path, mocker):
+    # a deliberately-uploaded PII-named file is dropped by the ingest name-filter — surface the COUNT
+    # in the ActionResult (not just run.log) so the operator knows their upload was suppressed.
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 0.0))
+    cfg = Config(root=tmp_path)
+    actions.save_thirdparty_uploads(cfg, [_Up("passport scan.jpg")])
+    res = actions.run_ingest_thirdparty(cfg)
+    assert res.detail["sources"] == 0 and res.detail["excluded"] == 1
+
+def test_native_ingest_cannot_reach_thirdparty_inbox(tmp_path, mocker):
+    # the structural anti-mislabel guarantee: a native ingest_drops pass over the default inbox can
+    # NEVER reach the peer staging dir, so a staged third-party file is never catalogued native.
+    from fanops.ledger import Ledger
+    from fanops.ingest import ingest_drops
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    cfg = Config(root=tmp_path)
+    actions.save_thirdparty_uploads(cfg, [_Up("clip.mp4")])     # lands in cfg.thirdparty_inbox
+    led = ingest_drops(Ledger.load(cfg), cfg)                   # native pass, default inbox
+    assert len(led.sources) == 0                                # rglob can't descend into the peer dir
