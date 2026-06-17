@@ -22,6 +22,9 @@ class ClipState(str, Enum):
     rendered = "rendered"; captions_requested = "captions_requested"; captioned = "captioned"
     queued = "queued"; published = "published"; analyzed = "analyzed"
     held = "held"; retired = "retired"; error = "error"
+    stitch_draft = "stitch_draft"   # M3: a stitched clip is BORN here — structurally unpostable (absent from
+                                    # crosspost's captioned-selection AND _REUSABLE_CLIP_STATES) until an
+                                    # operator approval transitions it to captioned. Reusing `held` is forbidden.
 
 class PostState(str, Enum):
     queued = "queued"; submitting = "submitting"; submitted = "submitted"
