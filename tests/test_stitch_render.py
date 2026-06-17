@@ -125,22 +125,26 @@ def test_render_approved_stale_fingerprint_auto_dismisses(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = _seed_approved(cfg, base_fp="OLD", cur_fp="NEW"); _ff(mocker)
     render_approved_stitches(led, cfg)
     p = led.stitch_plans["plan1"]
-    assert p.state is StitchState.dismissed and "superseded" in (p.error_reason or "")
+    assert p.state is StitchState.dismissed and "re-rendered" in (p.error_reason or "")  # stale-plan guard
     assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())  # never rendered
 
-def test_render_approved_blocks_on_live_base_post(tmp_path, mocker):
+def test_render_approved_renders_even_with_live_base_post(tmp_path, mocker):
+    # FAN ACCOUNTS repost freely: an already-published base does NOT block its stitch — a stitch is an
+    # ADDITIVE post (both go out). The live base post is left untouched.
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
     led.posts["post_base"] = _base_post(PostState.published)            # a LIVE base post
     render_approved_stitches(led, cfg)
-    p = led.stitch_plans["plan1"]
-    assert p.state is StitchState.error and "live post" in (p.error_reason or "")
-    assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
+    assert led.stitch_plans["plan1"].state is StitchState.in_use
+    assert any(c.state is ClipState.stitch_draft for c in led.clips.values())
+    assert led.posts["post_base"].state is PostState.published          # untouched (additive, not supersede)
 
-def test_render_approved_retires_queued_base_post(tmp_path, mocker):
+def test_render_approved_does_not_retire_queued_base_post(tmp_path, mocker):
+    # FAN ACCOUNTS: the bare post is NOT retired when a stitch renders — the bare clip and the stitch
+    # both ship (no double-post prevention).
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
-    led.posts["post_base"] = _base_post(PostState.queued)               # a not-yet-live base post
+    led.posts["post_base"] = _base_post(PostState.queued)
     render_approved_stitches(led, cfg)
-    assert led.posts["post_base"].state is PostState.retired            # retired so the feed never double-posts
+    assert led.posts["post_base"].state is PostState.queued             # still queued -> bare clip still posts
     assert led.stitch_plans["plan1"].state is StitchState.in_use
 
 def test_render_approved_duration_fail_errors_plan(tmp_path, mocker):
@@ -364,11 +368,12 @@ def test_intro_render_errors_when_intro_asset_missing(tmp_path):
     assert led.stitch_plans["iplan"].state is StitchState.error
     assert "intro asset missing" in (led.stitch_plans["iplan"].error_reason or "")
 
-def test_intro_render_retires_queued_base_post(tmp_path):
+def test_intro_render_does_not_retire_queued_base_post(tmp_path):
+    # FAN ACCOUNTS: additive — the bare post survives alongside the intro_tease stitch (no double-post block)
     cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg); _prewarm_intro_composite(cfg, led)
     led.posts["post_base"] = _base_post(PostState.queued)
     render_approved_stitches(led, cfg)
-    assert led.posts["post_base"].state is PostState.retired
+    assert led.posts["post_base"].state is PostState.queued
     assert led.stitch_plans["iplan"].state is StitchState.in_use
 
 def test_intro_render_base_superseded_dismiss(tmp_path):
@@ -379,12 +384,14 @@ def test_intro_render_base_superseded_dismiss(tmp_path):
     assert led.stitch_plans["iplan"].state is StitchState.dismissed
     assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
 
-def test_intro_render_blocks_on_live_base_post(tmp_path):
+def test_intro_render_renders_even_with_live_base_post(tmp_path):
+    # FAN ACCOUNTS: a published base does NOT block its intro_tease stitch — both ship (additive)
     cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg); _prewarm_intro_composite(cfg, led)
     led.posts["post_base"] = _base_post(PostState.published)        # LIVE base post
     render_approved_stitches(led, cfg)
-    assert led.stitch_plans["iplan"].state is StitchState.error
-    assert "live post" in (led.stitch_plans["iplan"].error_reason or "")
+    assert led.stitch_plans["iplan"].state is StitchState.in_use
+    assert any(c.state is ClipState.stitch_draft for c in led.clips.values())
+    assert led.posts["post_base"].state is PostState.published      # untouched
 
 def test_prewarm_intro_stamps_fp_lockfree(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg); logs = []
