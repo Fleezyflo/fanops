@@ -132,6 +132,10 @@ class Moment(BaseModel):
     hook_strategy: Optional[str] = None         # M2 router: text | clean_final | clean_awaiting_strategy:<key>
                                                 # | stitch:<format>. Observe-only annotation; None = unrouted
                                                 # (router off / old ledgers load). One writer: router.route_moments.
+    intro_matches: Optional[list[dict]] = None  # M6 intro-tease: the LLM-vision matcher's ranked pairings for
+                                                # this moment — [{asset_id, fit_score, rationale, tease_text}, ...],
+                                                # best-fit first. None = unmatched (matcher off / no answer / old
+                                                # ledgers load). One writer: intro_match.ingest_intro_match.
     error_reason: Optional[str] = None
 
 class Clip(BaseModel):
@@ -283,3 +287,19 @@ class HookJudgeItem(BaseModel):
 class HookJudgeDecision(BaseModel):
     request_id: str
     items: list[HookJudgeItem] = Field(default_factory=list)
+
+# M6 intro-tease: the LLM-vision pairing matcher (intro_match.py). The matcher sees a clean clip's context
+# (keyframes, router reason, transcript, hook) against candidate intro assets (thumbnail, origin_kind) and
+# returns RANKED pairings, each a {asset_id, fit_score, rationale, tease_text}. fit_score becomes the plan's
+# rank_score; tease_text is the "wait for it / [X] incoming" line the prepend burns. One+ items per moment_id;
+# ingest filters to real candidate asset_ids and orders best-fit first. Fail-open: no response -> no pairing.
+class IntroMatchItem(BaseModel):
+    moment_id: str
+    asset_id: str
+    fit_score: float = 0.0
+    rationale: str = ""
+    tease_text: str = ""
+
+class IntroMatchDecision(BaseModel):
+    request_id: str
+    items: list[IntroMatchItem] = Field(default_factory=list)

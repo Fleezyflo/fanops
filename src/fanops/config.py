@@ -304,6 +304,16 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def intro_tease(self) -> bool:
+        # M6 structural-hooks: the intro-tease PRODUCER (an LLM-vision matcher pairs a clean clip with a
+        # relevant intro asset, then a compose-prepend renders the "wait for it" tease into a stitch_draft).
+        # Per-format gate, DEFAULT OFF (PRD "intro-tease family disableable"). Needs the router on (to reserve
+        # clean_awaiting_strategy:intro_tease moments) AND FANOPS_RESPONDER=llm (the matcher is an agent gate);
+        # with this off there is no matcher gate and no intro_tease plans/renders -> non-regression.
+        v = (os.getenv("FANOPS_INTRO_TEASE") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def variant_learning(self) -> bool:
         # Creative variation v2 (closing the learning loop): with this ON, request_captions biases
         # the next caption toward the per-account hook variant that has earned a TRUSTWORTHY win
