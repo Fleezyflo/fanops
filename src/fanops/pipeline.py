@@ -15,6 +15,7 @@ from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments
 from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pending
 from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending
+from fanops.router import route_moments
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
 from fanops.crosspost import crosspost_clips
@@ -174,6 +175,14 @@ def advance(cfg: Config, *, base_time: str) -> dict:
             except Exception as e:
                 log("hookjudge", "-", "error", err=str(e)[:120])
                 hold_judge = False
+        # M2 structural-hooks router (opt-in, observe-only): classify each FINAL decided hook into a
+        # hook_strategy reason BEFORE the render loop. Renders nothing; a router error never wedges the
+        # pass (fail-open, like the editor/critic blocks above). Default OFF -> byte-identical to today.
+        if cfg.hook_router:
+            try:
+                led = route_moments(led, cfg, hold_hooks=hold_hooks, hold_judge=hold_judge)
+            except Exception as e:
+                log("router", "-", "error", err=str(e)[:120])
         for m in list(led.moments.values()):
             if m.state is MomentState.decided:
                 if hold_hooks and not m.hook_edited:
