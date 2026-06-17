@@ -219,7 +219,8 @@ def run_pull(cfg: Config, url: str) -> ActionResult:
     return ActionResult(ok=True, detail={"sources": n})
 
 
-def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = True) -> ActionResult:
+def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = True,
+                 allowed_ext: set[str] = _VIDEO_EXT, dest_dir: Optional[Path] = None) -> ActionResult:
     """Stream operator-uploaded raw video into cfg.inbox so `run_ingest` catalogues it — the browser
     replacement for a Finder drag. Each file is validated (video ext, traversal-safe name), streamed to
     a `.uploadpart` temp in the inbox, then os.replace'd into place (so a half-upload never appears to
@@ -231,15 +232,16 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
     if not files:
         return ActionResult(ok=False, error="no files selected — choose a video to upload")
     saved, skipped = [], []
-    cfg.inbox.mkdir(parents=True, exist_ok=True)
-    inbox = cfg.inbox.resolve()
+    dest_root = dest_dir or cfg.inbox                              # M1: third-party intake lands in a peer staging dir
+    dest_root.mkdir(parents=True, exist_ok=True)
+    inbox = dest_root.resolve()                                    # the bound everything below is kept within
     for f in files:
         raw = f.filename or ""
         name = secure_filename(raw)                                    # strips path, .., unsafe chars; "" if hostile
         if not name or "/" in raw or "\\" in raw or ".." in raw:       # reject traversal on the RAW name (mirror approve_candidate)
             skipped.append((raw, "unsafe name")); continue
-        if Path(name).suffix.lower() not in _VIDEO_EXT:
-            skipped.append((raw, "not a video")); continue
+        if Path(name).suffix.lower() not in allowed_ext:
+            skipped.append((raw, "unsupported type")); continue
         suffix = Path(name).suffix
         name = Path(name).stem[:255 - len(suffix) - len(".uploadpart")] + suffix   # keep name + temp-suffix ≤ NAME_MAX so an overlong name never trips an OSError that embeds the fs path in a skip reason
         dest = (inbox / name).resolve()
@@ -264,6 +266,35 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
     if not saved:                                                     # every file was rejected → a real failure, not a green "0 saved"
         return ActionResult(ok=False, error=f"nothing saved — {len(skipped)} file(s) rejected (wrong type, unsafe name, or unreadable)", detail={"saved": saved, "skipped": skipped})
     return ActionResult(ok=True, detail={"saved": saved, "skipped": skipped})
+
+
+def save_thirdparty_uploads(cfg: Config, files: Sequence[FileStorage]) -> ActionResult:
+    """Land operator-uploaded THIRD-PARTY assets (video OR photo) through the EXACT same validated
+    contract as save_uploads (traversal triad + secure_filename + dir-bound resolve + atomic replace +
+    probe), but into the PEER staging dir cfg.thirdparty_inbox — never the native 01_inbox, so a native
+    ingest pass can't reach and mislabel them — with the photo-inclusive MEDIA_EXT gate."""
+    from fanops.ingest import MEDIA_EXT
+    return save_uploads(cfg, files, allowed_ext=MEDIA_EXT, dest_dir=cfg.thirdparty_inbox)
+
+
+def run_ingest_thirdparty(cfg: Config) -> ActionResult:
+    """Catalogue the third-party staging dir as third_party Sources (inert to clip-production). Mirrors
+    run_ingest (one transaction + write_digest, never a 500). Surfaces the PII-excluded COUNT so a
+    deliberately-uploaded file the ingest name-filter drops is visible to the operator, not silently lost."""
+    from fanops.ingest import ingest_drops, is_excluded, MEDIA_EXT
+    from fanops.digest import write_digest
+    staged = ([f for f in cfg.thirdparty_inbox.rglob("*") if f.is_file() and f.suffix.lower() in MEDIA_EXT]
+              if cfg.thirdparty_inbox.exists() else [])
+    excluded = sum(1 for f in staged if is_excluded(f.name))      # deliberate uploads the name-filter drops
+    n = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            led = ingest_drops(led, cfg, origin="upload", origin_kind="third_party", inbox=cfg.thirdparty_inbox)
+            n = sum(1 for s in led.sources.values() if s.origin_kind == "third_party")
+        write_digest(Ledger.load(cfg), cfg)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"third-party ingest failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"sources": n, "excluded": excluded})
 
 
 def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True) -> ActionResult:

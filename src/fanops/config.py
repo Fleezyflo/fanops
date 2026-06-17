@@ -42,7 +42,11 @@ def _sanitize_tuning(raw: dict) -> dict:
     return out
 
 _STAGE = {
-    "control": "00_control", "review": "00_review", "inbox": "01_inbox", "sources": "02_sources",
+    "control": "00_control", "review": "00_review", "inbox": "01_inbox",
+    "thirdparty_inbox": "01_thirdparty_inbox",   # M1: PEER of 01_inbox (NOT under it) — outside the
+                                                 # native ingest_drops rglob, so a third-party staged
+                                                 # asset can never be mislabeled native.
+    "sources": "02_sources",
     "clips": "03_clips", "agent_io": "04_agent_io", "scheduled": "05_scheduled",
     "published": "06_published", "reports": "07_reports",
 }
