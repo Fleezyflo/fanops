@@ -519,3 +519,23 @@ def test_impact_cut_off_no_plans(tmp_path, monkeypatch, mocker):
     assert led.stitch_plans == {}
     from fanops.router import awaiting
     assert led.moments["mom_w"].hook_strategy == awaiting("impact_cut")  # reserved, not produced
+
+def test_impact_cut_killswitch_warns_and_does_not_render(tmp_path, monkeypatch, mocker):
+    # forward-only kill-switch: an approved plan with the feature OFF stays approved (not rendered, not
+    # retracted) and the pass logs a WARNING naming the count — never a silent freeze (PRD).
+    from fanops.models import StitchPlan, StitchState, ClipState, Clip
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False); monkeypatch.delenv("FANOPS_IMPACT_CUT", raising=False)
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_k", source_path=str(cfg.sources / "src_k.mp4"),
+                              state=SourceState.signalled, sha256="k", width=1920, height=1080, duration=20.0))
+        led.clips["clip_k"] = Clip(id="clip_k", parent_id="m_k", path=str(cfg.clips / "clip_k.mp4"),
+                                   state=ClipState.rendered)
+        led.add_stitch_plan(StitchPlan(id="plan_k", clip_id="clip_k", strategy_key="impact_cut",
+                                       plan_params={"cut_start": 0.0, "cut_end": 11.6}, state=StitchState.approved))
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    led = Ledger.load(cfg)
+    assert led.stitch_plans["plan_k"].state is StitchState.approved      # not rendered, not retracted
+    assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
+    assert "feature OFF" in cfg.log_path.read_text()                     # the warning fired

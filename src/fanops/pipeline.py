@@ -16,7 +16,8 @@ from fanops.moments import request_moments, ingest_moments
 from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pending
 from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending
 from fanops.router import route_moments
-from fanops.stitch_render import suggest_impact_cuts
+from fanops.stitch_render import (suggest_impact_cuts, render_approved_stitches,
+                                  prewarm_approved_stitches, approved_impact_cut_count)
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
 from fanops.crosspost import crosspost_clips
@@ -86,6 +87,11 @@ def _prewarm(cfg: Config, aspects: set[Fmt], log) -> None:
                 led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
             except Exception as e:
                 log("prewarm", m.id, "warn", err=str(e)[:120])
+    # M4 structural-hooks: warm the heavy ffmpeg for operator-APPROVED impact-cuts here, lock-free, so the
+    # in-lock commit (render_approved_stitches) adopts the warm mp4 via the fingerprint-skip — keeping the
+    # transcode OUT of the ledger lock (PRD: "approval gates the render, which runs lock-free next pass").
+    if cfg.impact_cut:
+        prewarm_approved_stitches(led, cfg, log)
 
 def advance(cfg: Config, *, base_time: str) -> dict:
     accts = Accounts.load(cfg)
@@ -207,8 +213,15 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         if cfg.impact_cut:
             try:
                 led = suggest_impact_cuts(led, cfg)
+                led = render_approved_stitches(led, cfg)     # adopts the lock-free prewarmed mp4 (no ffmpeg here)
             except Exception as e:
                 log("impact_cut", "-", "error", err=str(e)[:120])
+        else:
+            # Forward-only kill-switch (PRD): with the feature OFF, approved plans are NOT rendered and NOT
+            # retracted — but never a SILENT freeze. Log the count so the operator sees they'll render on re-enable.
+            n = approved_impact_cut_count(led)
+            if n:
+                log("impact_cut", "-", "warn", err=f"{n} plans approved but feature OFF — will render when re-enabled")
 
         # ingest captions -> crosspost -> publish due
         for c in list(led.clips.values()):
