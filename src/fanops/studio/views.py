@@ -410,14 +410,16 @@ def asset_catalog(cfg: Config) -> dict:
     """Lock-free read-model for the Library tab (M1): every remembered Source split by origin_kind, with
     just-enough metadata to recognize it. Fail-open — a torn/absent ledger yields empty lists, never a
     500 (the Studio invariant)."""
-    try:
+    try:                                             # whole body guarded: a torn row must not 500 either
         led = Ledger.load(cfg)
-    except Exception:                                # invariant: the Library tab must never 500
+        rows = [{"id": s.id, "origin_kind": s.origin_kind, "state": s.state.value,
+                 "duration": s.duration, "width": s.width, "height": s.height} for s in led.sources.values()]
+        return {"native": [r for r in rows if r["origin_kind"] == "native"],
+                "third_party": [r for r in rows if r["origin_kind"] == "third_party"]}
+    except Exception as exc:                          # invariant: the Library tab must never 500 — but
+        from fanops.log import get_logger             # a read-fail is RECORDED, never silently shown as "empty"
+        get_logger(cfg)("library", "-", "error", err=str(exc)[:160])
         return {"native": [], "third_party": []}
-    rows = [{"id": s.id, "origin_kind": s.origin_kind, "state": s.state.value,
-             "duration": s.duration, "width": s.width, "height": s.height} for s in led.sources.values()]
-    return {"native": [r for r in rows if r["origin_kind"] == "native"],
-            "third_party": [r for r in rows if r["origin_kind"] == "third_party"]}
 
 
 def golive_status(cfg: Config) -> GoLiveStatus:

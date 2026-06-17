@@ -286,15 +286,17 @@ def run_ingest_thirdparty(cfg: Config) -> ActionResult:
     staged = ([f for f in cfg.thirdparty_inbox.rglob("*") if f.is_file() and f.suffix.lower() in MEDIA_EXT]
               if cfg.thirdparty_inbox.exists() else [])
     excluded = sum(1 for f in staged if is_excluded(f.name))      # deliberate uploads the name-filter drops
-    n = 0
+    n = added = 0
     try:
         with Ledger.transaction(cfg) as led:
+            before = sum(1 for s in led.sources.values() if s.origin_kind == "third_party")
             led = ingest_drops(led, cfg, origin="upload", origin_kind="third_party", inbox=cfg.thirdparty_inbox)
             n = sum(1 for s in led.sources.values() if s.origin_kind == "third_party")
+            added = n - before                                    # THIS call's delta (sha256 dedup → 0 on a repeat)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"third-party ingest failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"sources": n, "excluded": excluded})
+    return ActionResult(ok=True, detail={"sources": n, "added": added, "excluded": excluded})
 
 
 def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True) -> ActionResult:

@@ -7,7 +7,7 @@
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}Added {{ result.detail.sources }} third-party asset(s){% if result.detail.excluded %} — {{ result.detail.excluded }} skipped (name looked sensitive){% endif %}
+      {% if result.ok %}Added {{ result.detail.added }} third-party asset(s){% if result.detail.sources %} ({{ result.detail.sources }} in library){% endif %}{% if result.detail.excluded %} — {{ result.detail.excluded }} skipped (name looked sensitive){% endif %}
       {% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}

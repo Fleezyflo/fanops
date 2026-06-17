@@ -185,12 +185,14 @@ def test_run_ingest_thirdparty_reports_added_not_cumulative(tmp_path, mocker):
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 0.0))
     cfg = Config(root=tmp_path)
-    actions.save_thirdparty_uploads(cfg, [_Up("a.jpg")])
+    actions.save_thirdparty_uploads(cfg, [_Up("a.jpg", b"AAAA")])
     r1 = actions.run_ingest_thirdparty(cfg)
     assert r1.detail["added"] == 1 and r1.detail["sources"] == 1       # first pass: delta == total
-    actions.save_thirdparty_uploads(cfg, [_Up("b.jpg")])
+    actions.save_thirdparty_uploads(cfg, [_Up("b.jpg", b"BBBB")])      # genuinely NEW content (distinct sha256)
     r2 = actions.run_ingest_thirdparty(cfg)
     assert r2.detail["added"] == 1 and r2.detail["sources"] == 2       # delta=1 (new), sources=2 (cumulative)
+    r3 = actions.run_ingest_thirdparty(cfg)                            # repeat: same staged files, nothing new
+    assert r3.detail["added"] == 0 and r3.detail["sources"] == 2       # the false-success guard: "Added 0", not 2
 
 def test_native_ingest_cannot_reach_thirdparty_inbox(tmp_path, mocker):
     # the structural anti-mislabel guarantee: a native ingest_drops pass over the default inbox can
