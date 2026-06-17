@@ -29,6 +29,10 @@ _IMPACT_STITCHED = stitched("impact_cut")        # "stitch:impact_cut"
 INTRO_STRATEGY = "intro_tease"
 _INTRO_AWAITING = awaiting("intro_tease")        # "clean_awaiting_strategy:intro_tease"
 INTRO_TEASE_SECONDS = 2.0
+# M6 retry-cap: an intro_tease plan whose lock-free prewarm keeps failing (a flaky matcher pair / unrenderable
+# intro asset) is PARKED after this many failed in-lock commit passes — bounded, not retried forever. The
+# prewarm runs once per advance before the commit, so each commit-with-no-warm-composite = one failed attempt.
+MAX_INTRO_RENDER_ATTEMPTS = 3
 # A base post in any of these states is LIVE on (or in-flight to) a platform — supersede must BLOCK and let
 # the operator decide, never silently retire a possibly-published post. A `queued` post is retired instead.
 _LIVE_POST_STATES = (PostState.submitting, PostState.submitted, PostState.published,
@@ -105,7 +109,13 @@ def _intro_tease_candidates(led: Ledger, cfg: Config, log) -> list[tuple]:
     return out
 
 
-def mine_suggestions(led: Ledger, cfg: Config, log=None) -> Ledger:
+def _enabled(strategies, key: str) -> bool:
+    """A strategy is active for this pass when no filter is given (None = all, the default the unit tests use)
+    or it is in the per-format enabled set the pipeline passes (so a disabled format produces/renders nothing)."""
+    return strategies is None or key in strategies
+
+
+def mine_suggestions(led: Ledger, cfg: Config, log=None, strategies=None) -> Ledger:
     """The routine pairing pass (M5) — the load-bearing loop. Collect candidate stitch suggestions across
     strategies (impact_cut is the only producer today; M6 adds intro-tease), RANK by `rank_score` (desc;
     tie -> content-addressed id, deterministic), DEDUPE against the ledger (an id already present in ANY
@@ -114,7 +124,11 @@ def mine_suggestions(led: Ledger, cfg: Config, log=None) -> Ledger:
     candidates exist in the ledger, so a capped-out aspect stays reserved and is reconsidered next pass.
     Ledger-only mutation (safe in-lock); renders nothing."""
     log = log or (lambda *a, **k: None)
-    candidates = _impact_cut_candidates(led, cfg, log) + _intro_tease_candidates(led, cfg, log)
+    candidates: list[tuple] = []
+    if _enabled(strategies, STRATEGY_KEY):
+        candidates += _impact_cut_candidates(led, cfg, log)
+    if _enabled(strategies, INTRO_STRATEGY):
+        candidates += _intro_tease_candidates(led, cfg, log)
     fresh = [(p, mid) for (p, mid) in candidates if p.id not in led.stitch_plans]
     fresh.sort(key=lambda pm: (-(pm[0].rank_score or 0.0), pm[0].id))   # best fit first, deterministic tie-break
     for plan, _mid in fresh[:MAX_SUGGESTIONS_PER_PASS]:
@@ -160,9 +174,18 @@ def approved_impact_cut_count(led: Ledger) -> int:
     return len(_approved_impact_plans(led))
 
 
-def _approved_plans(led: Ledger):
-    """Every approved-but-unrendered plan across ALL strategies (render_approved dispatches by strategy_key)."""
-    return [p for p in led.stitch_plans.values() if p.state is StitchState.approved]
+def _approved_plans(led: Ledger, strategies=None):
+    """Approved-but-unrendered plans (render_approved dispatches by strategy_key), filtered to the per-format
+    enabled set when given — so a disabled format's approved plans are FROZEN (the forward-only kill-switch)."""
+    return [p for p in led.stitch_plans.values()
+            if p.state is StitchState.approved and _enabled(strategies, p.strategy_key)]
+
+
+def approved_disabled_count(led: Ledger, *, enabled) -> int:
+    """How many approved plans belong to a DISABLED format (strategy not in `enabled`). The pipeline logs this
+    so a per-format kill-switch never silently freezes plans — they render when the format is re-enabled."""
+    return sum(1 for p in led.stitch_plans.values()
+               if p.state is StitchState.approved and p.strategy_key not in enabled)
 
 
 def _retire_queued_base(led: Ledger, p: StitchPlan) -> None:
@@ -195,13 +218,13 @@ def _intro_compose_fp(led: Ledger, base: Clip, intro, params: dict) -> str:
     return _compose_fingerprint(base.path, intro.source_path, params, w, h)
 
 
-def prewarm_approved_stitches(led: Ledger, cfg: Config, log) -> None:
+def prewarm_approved_stitches(led: Ledger, cfg: Config, log, strategies=None) -> None:
     """Lock-free: render each approved plan's mp4 + render-fingerprint sidecar so the in-lock commit ADOPTS
     the warm output with no heavy render under the lock. Dispatches by strategy_key (impact_cut -> ffmpeg
-    cut-window; intro_tease -> MoviePy compose-prepend). Mutations to this throwaway `led` are discarded;
-    only the on-disk artifacts persist. Fail-open per plan."""
+    cut-window; intro_tease -> MoviePy compose-prepend) and skips disabled formats. Mutations to this
+    throwaway `led` are discarded; only the on-disk artifacts persist. Fail-open per plan."""
     from fanops.clip import render_moment                # local import: clip imports are heavy; avoid at module load
-    for p in _approved_plans(led):
+    for p in _approved_plans(led, strategies):
         if p.strategy_key == INTRO_STRATEGY:
             _prewarm_intro(led, cfg, p, log)
         else:
@@ -246,15 +269,15 @@ def _prewarm_intro(led: Ledger, cfg: Config, p: StitchPlan, log) -> None:
         log("intro_tease", p.id, "warn", err=str(e)[:120])
 
 
-def render_approved_stitches(led: Ledger, cfg: Config) -> Ledger:
-    """In-lock commit for each approved plan. COMMON supersede precedence (PRD, CLOSED requirement) runs first
-    for every strategy: base clip gone -> `error` "base clip missing"; base fingerprint drifted -> auto-
-    `dismissed` "base superseded"; a LIVE base post exists -> `error` "cannot supersede a live post". Then the
-    render DISPATCHES by strategy_key (impact_cut -> render_moment cut-window; intro_tease -> adopt the
-    prewarmed compose composite). A successful commit sets the plan `in_use` and RETIRES any still-queued base
-    post; a failed render errors the plan (the bare clip already shipped upstream)."""
+def render_approved_stitches(led: Ledger, cfg: Config, strategies=None) -> Ledger:
+    """In-lock commit for each approved plan (of an ENABLED format). COMMON supersede precedence (PRD, CLOSED
+    requirement) runs first for every strategy: base clip gone -> `error` "base clip missing"; base fingerprint
+    drifted -> auto-`dismissed` "base superseded"; a LIVE base post exists -> `error` "cannot supersede a live
+    post". Then the render DISPATCHES by strategy_key (impact_cut -> render_moment cut-window; intro_tease ->
+    adopt the prewarmed compose composite). A successful commit sets the plan `in_use` and RETIRES any
+    still-queued base post; a failed render errors the plan (the bare clip already shipped upstream)."""
     from fanops.clip import render_moment
-    for p in _approved_plans(led):
+    for p in _approved_plans(led, strategies):
         base = _precheck(led, cfg, p)
         if base is None:
             continue                                      # precheck set the terminal state + reason
@@ -307,4 +330,10 @@ def _commit_intro(led: Ledger, cfg: Config, p: StitchPlan, base: Clip) -> None:
                               path=str(out_path), aspect=base.aspect)
         p.state = StitchState.in_use
         _retire_queued_base(led, p)
-    # else: not prewarmed yet -> leave approved; next pass's lock-free prewarm produces it, a later commit adopts
+        return
+    # not warm: the prewarm ran first this pass and produced no valid composite -> a FAILED attempt. Bound the
+    # retries (flaky matcher pair / unrenderable intro asset) — park at the cap instead of looping forever.
+    p.render_attempts += 1
+    if p.render_attempts >= MAX_INTRO_RENDER_ATTEMPTS:
+        p.state = StitchState.error
+        p.error_reason = f"intro compose failed after {p.render_attempts} attempts"

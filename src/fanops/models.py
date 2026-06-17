@@ -198,6 +198,9 @@ class StitchPlan(BaseModel):
     error_reason: Optional[str] = None
     rank_score: Optional[float] = None          # M5: fit score the routine loop ranks suggestions by (higher first)
     rationale: Optional[str] = None             # M5: one-line human-readable WHY, shown in Studio (operator-facing)
+    render_attempts: int = 0                    # M6: failed in-lock commit passes for a flaky (clip, asset) pair;
+                                                # at the cap the plan is PARKED (error) instead of retried forever.
+                                                # Resets implicitly when the clip/asset changes (a new plan id).
 
 def stitch_plan_id(clip_id: str, asset_ids: list[str], strategy_key: str, plan_params: dict) -> str:
     """Content-addressed id keyed on the CLIP id + the sorted pairing inputs (NOT the render

@@ -38,10 +38,15 @@ def _candidates(led: Ledger) -> list[Source]:
                   key=lambda s: s.id)
 
 
+_TERMINAL_MOMENT_STATES = (MomentState.retired, MomentState.error)
+
 def _reserved(led: Ledger) -> list[Moment]:
-    """Decided moments the router reserved for intro_tease — what this matcher owns (sorted for stability)."""
+    """Moments the router reserved for intro_tease — what this matcher owns. NOT filtered to `decided`: the
+    bare-render loop advances a reserved moment to `clipped` BEFORE this matcher runs, and the reservation
+    (hook_strategy) persists across that — so matching on the reservation (minus terminal states) is correct,
+    mirroring the producer. Sorted by id for stable gate keys across request->ingest within a pass."""
     return sorted([m for m in led.moments.values()
-                   if m.state is MomentState.decided and (m.hook_strategy or "") == _INTRO_AWAITING],
+                   if (m.hook_strategy or "") == _INTRO_AWAITING and m.state not in _TERMINAL_MOMENT_STATES],
                   key=lambda m: m.id)
 
 

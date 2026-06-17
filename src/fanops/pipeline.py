@@ -17,7 +17,8 @@ from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pendi
 from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending
 from fanops.router import route_moments
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
-                                  prewarm_approved_stitches, approved_impact_cut_count)
+                                  prewarm_approved_stitches, approved_disabled_count)
+from fanops.intro_match import request_intro_match, ingest_intro_match
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
 from fanops.crosspost import crosspost_clips
@@ -30,6 +31,12 @@ from fanops.timeutil import parse_iso
 
 def _aspects_for(accts: Accounts) -> set[Fmt]:
     return {PLATFORM_ASPECT.get(s.platform, Fmt.r9x16) for s in accts.surfaces()} or {Fmt.r9x16}
+
+def _enabled_strategies(cfg: Config) -> set[str]:
+    """The structural-hook formats turned ON this pass — the per-format gate the producers + render honor
+    (a disabled format produces/renders nothing; its approved plans freeze). Empty set -> the whole block
+    is skipped and behavior is byte-identical to pre-structural-hooks."""
+    return {k for k, on in (("impact_cut", cfg.impact_cut), ("intro_tease", cfg.intro_tease)) if on}
 
 def _parse(ts):
     # Parse an ISO-8601 scheduled_time (may carry a 'Z') into an aware datetime, or None if
@@ -87,11 +94,12 @@ def _prewarm(cfg: Config, aspects: set[Fmt], log) -> None:
                 led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
             except Exception as e:
                 log("prewarm", m.id, "warn", err=str(e)[:120])
-    # M4 structural-hooks: warm the heavy ffmpeg for operator-APPROVED impact-cuts here, lock-free, so the
-    # in-lock commit (render_approved_stitches) adopts the warm mp4 via the fingerprint-skip — keeping the
-    # transcode OUT of the ledger lock (PRD: "approval gates the render, which runs lock-free next pass").
-    if cfg.impact_cut:
-        prewarm_approved_stitches(led, cfg, log)
+    # M4/M6 structural-hooks: warm the heavy render for operator-APPROVED stitches here, lock-free (impact-cut
+    # ffmpeg + intro-tease MoviePy), so the in-lock commit adopts the warm mp4 via the fingerprint-skip —
+    # keeping the transcode OUT of the ledger lock (PRD: "approval gates the render, which runs lock-free").
+    strategies = _enabled_strategies(cfg)
+    if strategies:
+        prewarm_approved_stitches(led, cfg, log, strategies=strategies)
 
 def advance(cfg: Config, *, base_time: str) -> dict:
     accts = Accounts.load(cfg)
@@ -206,22 +214,27 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                     led.moments[m.id].state = MomentState.error
                     led.moments[m.id].error_reason = f"{type(e).__name__}: {e}"
                     log("clip", m.id, "error", err=str(e)[:120])
-        # M4 structural-hooks: after the bare clips render, propose impact-cuts for router-reserved moments
-        # (suggested StitchPlans the operator approves in Studio). Ledger-only mutation, so it's safe in-lock;
-        # renders nothing here (the approved-plan RENDER is lock-free, in the prewarm pass). Opt-in
-        # (cfg.impact_cut) + fail-open: a producer error never wedges a pass. Default OFF -> byte-identical.
-        if cfg.impact_cut:
+        # M4/M5/M6 structural-hooks: after the bare clips render, run the per-format producers + render the
+        # operator-approved plans. intro_tease first OPENS its LLM-vision matcher gate (request) + applies any
+        # landed pairings (ingest) so mine_suggestions can pair them. Ledger-only mutation here (safe in-lock);
+        # the heavy approved-plan RENDER is lock-free in the prewarm pass. Per-format opt-in + fail-open: a
+        # producer error never wedges a pass. Both formats OFF -> byte-identical to pre-structural-hooks.
+        strategies = _enabled_strategies(cfg)
+        if strategies:
             try:
-                led = mine_suggestions(led, cfg, log)        # M5: ranked, top-N-capped suggestions (impact_cut today)
-                led = render_approved_stitches(led, cfg)     # normally adopts the prewarmed mp4 (ffmpeg in-lock only for a just-approved plan)
+                if cfg.intro_tease:                          # M6: the matcher gate (fail-open; no answer -> no plan)
+                    led = request_intro_match(led, cfg)
+                    led = ingest_intro_match(led, cfg)
+                led = mine_suggestions(led, cfg, log, strategies=strategies)   # ranked, top-N-capped, multi-strategy
+                led = render_approved_stitches(led, cfg, strategies=strategies)  # adopts prewarmed mp4s
             except Exception as e:
-                log("impact_cut", "-", "error", err=str(e)[:120])
-        else:
-            # Forward-only kill-switch (PRD): with the feature OFF, approved plans are NOT rendered and NOT
-            # retracted — but never a SILENT freeze. Log the count so the operator sees they'll render on re-enable.
-            n = approved_impact_cut_count(led)
-            if n:
-                log("impact_cut", "-", "warn", err=f"{n} plans approved but feature OFF — will render when re-enabled")
+                log("structural_hooks", "-", "error", err=str(e)[:120])
+        # Forward-only kill-switch (PRD): an approved plan of a DISABLED format is NOT rendered and NOT
+        # retracted — but never a SILENT freeze. Log the count so the operator knows it renders on re-enable.
+        n = approved_disabled_count(led, enabled=strategies)
+        if n:
+            log("structural_hooks", "-", "warn",
+                err=f"{n} approved plans for disabled formats (feature OFF) — will render when re-enabled")
 
         # ingest captions -> crosspost -> publish due
         for c in list(led.clips.values()):
