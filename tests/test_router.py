@@ -86,3 +86,14 @@ def test_route_peak_still_impact_cut_when_intro_tease_on(tmp_path, monkeypatch):
     _add(led, "m1", hook=None, start=0.0, end=18.0)                   # peak in window -> impact_cut precedence
     route_moments(led, cfg)
     assert led.moments["m1"].hook_strategy == awaiting("impact_cut")
+
+def test_route_preserves_existing_reservation_when_format_toggled_off(tmp_path, monkeypatch):
+    # forward-only kill-switch at the RESERVATION layer: a held moment ALREADY reserved for intro_tease must
+    # NOT be silently demoted to clean_final when the format is toggled OFF mid-run (it freezes, ships bare,
+    # and re-matches when re-enabled) — never a silent strip of a structural reservation.
+    monkeypatch.delenv("FANOPS_INTRO_TEASE", raising=False)
+    cfg = Config(root=tmp_path); led = _seed(cfg, peaks=[])
+    _add(led, "m1", hook=None, start=0.0, end=18.0)
+    led.moments["m1"].hook_strategy = awaiting("intro_tease")         # reserved on a prior pass (feature was on)
+    route_moments(led, cfg)
+    assert led.moments["m1"].hook_strategy == awaiting("intro_tease")  # preserved, not demoted to clean_final

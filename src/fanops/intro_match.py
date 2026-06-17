@@ -111,8 +111,10 @@ def request_intro_match(led: Ledger, cfg: Config) -> Ledger:
 
 def intro_match_pending(led: Ledger, cfg: Config) -> bool:
     """True when the matcher is ON, there is a reserved moment + a candidate set, and any gate is not yet
-    answered — the pipeline HOLDs intro_tease producing until the pairings land (don't suggest an unpaired
-    tease). False when off / nothing reserved / no candidates (never a spurious hold)."""
+    answered — a queryable "matcher still working" read-model (e.g. for Studio status). NOTE: unlike
+    hookedit/hookjudge, the pipeline does NOT hold rendering on this — the bare clip always ships and the
+    intro stitch is purely additive, so the producer self-defers (a moment with no `intro_matches` yields no
+    candidate) until the pairings land. False when off / nothing reserved / no candidates (never spurious)."""
     if not (cfg.intro_tease and cfg.responder_mode == "llm"):
         return False
     cands = _candidates(led)
