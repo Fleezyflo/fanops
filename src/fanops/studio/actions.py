@@ -513,3 +513,38 @@ def dismiss_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
     except Exception as exc:
         return ActionResult(ok=False, error=f"dismiss failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"dismissed": len(sel)})
+
+def release_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
+    """M4 operator RELEASE (multi-select): the second gate — a rendered `stitch_draft` clip the operator
+    reviewed is promoted to `captioned` (now crosspost-eligible), inheriting the base clip's per-surface
+    captions (an impact-cut keeps the same subject/caption as the bare clip the operator already saw). The
+    ONLY transition out of stitch_draft is this explicit operator action — re-checked in-lock so a
+    non-stitch_draft id is a clean no-op. Captions come from the best captioned sibling (same moment +
+    aspect); none found -> released with whatever captions the base carries (crosspost skips empty surfaces).
+    One transaction, idempotent, never a 500."""
+    sel = [i for i in (ids or []) if i]
+    released = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            for cid in sel:
+                c = led.clips.get(cid)
+                if c is None or c.state is not ClipState.stitch_draft:
+                    continue                                  # only a rendered stitch_draft releases
+                base = _best_caption_sibling(led, c)
+                if base is not None:
+                    c.meta_captions = dict(base.meta_captions)
+                c.state = ClipState.captioned
+                released += 1
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"released": released})
+
+def _best_caption_sibling(led, stitch):
+    """The clip whose captions the stitch inherits: a non-stitch sibling (same moment + aspect) that
+    carries meta_captions, preferring a captioned one. None if no caption-bearing sibling exists."""
+    sibs = [c for c in led.clips.values() if c.parent_id == stitch.parent_id and c.aspect is stitch.aspect
+            and c.id != stitch.id and c.state is not ClipState.stitch_draft and c.meta_captions]
+    if not sibs:
+        return None
+    sibs.sort(key=lambda c: (c.state is not ClipState.captioned, c.id))   # captioned first, then deterministic
+    return sibs[0]

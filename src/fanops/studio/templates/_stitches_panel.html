@@ -6,7 +6,7 @@
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }}{% else %}Dismissed {{ result.detail.dismissed }}{% endif %} suggestion(s){% else %}{{ result.error }}{% endif %}
+      {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }} suggestion(s){% elif result.detail.dismissed is defined %}Dismissed {{ result.detail.dismissed }} suggestion(s){% else %}Released {{ result.detail.released }} draft(s){% endif %}{% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
 
@@ -18,5 +18,18 @@
     </ul>
     <button type="submit">Approve selected</button>
     <button type="submit" hx-post="{{ url_for('do_dismiss_stitches') }}" hx-target="#stitches-panel" hx-swap="outerHTML">Dismiss selected</button>
+  </form>
+
+  <h2>Rendered drafts — release to publish</h2>
+  <p class="muted">Approved stitches the system has rendered. They are <strong>unpostable</strong> until you
+    release them — review each, then release. A released draft inherits the base clip's caption and becomes
+    eligible to publish.</p>
+  <form hx-post="{{ url_for('do_release_stitches') }}" hx-target="#stitches-panel" hx-swap="outerHTML">
+    <ul class="stitch-list">
+      {% for d in drafts %}<li><label><input type="checkbox" name="ids" value="{{ d.id }}">
+        <strong>{{ d.id }}</strong> <span class="muted">· {{ d.aspect }} · moment {{ d.parent_id }}</span></label></li>{% endfor %}
+      {% if not drafts %}<li class="empty">no rendered drafts awaiting release</li>{% endif %}
+    </ul>
+    <button type="submit">Release selected</button>
   </form>
 </div>
