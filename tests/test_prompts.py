@@ -1,5 +1,5 @@
 # tests/test_prompts.py
-from fanops.prompts import moment_prompt, caption_prompt
+from fanops.prompts import moment_prompt, caption_prompt, hookedit_prompt
 
 def test_moment_prompt_includes_transcript_duration_guidance_and_bounds_rule():
     payload = {"source_id": "s1", "duration": 42.0,
@@ -23,6 +23,34 @@ def test_moment_prompt_demands_retention_hook_not_a_transcript_quote():
     assert "`hook`" in p and "watching" in low                  # asks for a hook that retains
     assert "not a caption" in low and "not a quote" in low      # forbids transcribing the audio
     assert "signal peaks" in low                                # leans on transcription-independent signal
+
+def test_moment_prompt_hook_encodes_retention_pattern_framework():
+    # The hook is a RETENTION mechanic, NOT artist hype (operator correction): the muted/first-seconds
+    # reasoning, the curiosity-loop mechanism, an explicit PATTERN menu the model picks from, and the
+    # specific+must-pay-off guardrail — framed about the VIEWER'S attention, never about the artist.
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": "BRAND: confident."})
+    low = p.lower()
+    assert "muted" in low                       # ~70% watch sound-off -> on-screen text carries the hook
+    assert "curiosity loop" in low              # the mechanism: open a loop THIS clip pays off
+    assert "retention" in low                   # the hook's stated job
+    assert "pattern" in low                     # a deliberate menu to choose from, not one canned style
+    assert "wait for" in low and "claim" in low # at least the open-loop + contrarian-claim patterns named
+    assert "never about the artist" in low      # the no-hype contract: it's about the viewer, not praise
+    assert "specific" in low                    # must be specific to THIS moment, not a generic line
+
+def test_moment_prompt_hook_bans_generic_demands_concrete_and_selects():
+    # Round-2 refinement, diagnosed from real weak output: the model fell back on generic-superlative
+    # filler ('his hardest bar', 'the bar everyone replayed'), overused wait-for-it, and hooked on the
+    # scene-cuts. The fix: require a CONCRETE specific, BAN generic filler, generate-and-select among
+    # several candidates, and never hook on the editing. These separate the strong real hooks from slop.
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "concrete" in low                      # must name a concrete specific, not an abstraction
+    assert "generic" in low                        # explicitly bans generic superlative filler
+    assert "candidate" in low                      # draft several, output the strongest (not first-draft)
+    assert "editing" in low or "scene-cut" in low  # never hook on the cuts instead of the content
 
 def test_moment_prompt_targets_12_to_22_seconds():
     # The clip-length fix: 12-22s windows (loosened from 15-20 so more moments qualify), not 3-4s.
@@ -252,3 +280,63 @@ def test_caption_prompt_has_data_not_instructions_directive():
                         "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
     low = p.lower()
     assert "data" in low and "never as instructions" in low
+
+def test_hookedit_prompt_carries_every_hook_and_demands_feed_diversity():
+    # The editor must see the WHOLE feed (every hook) and be told its ONE job: break cross-feed
+    # repetition/templating that per-clip generation cannot see. Plus rewrite + one-per-moment_id.
+    payload = {"guidance": "BRAND: confident, bilingual.",
+               "items": [{"moment_id": "m1", "hook": "before he was Moh Flow",
+                          "transcript_excerpt": "they slept on me", "reason": "punchline", "language": "en"},
+                         {"moment_id": "m2", "hook": "before he was Moh Flow",
+                          "transcript_excerpt": "no label", "reason": "origin", "language": "en"}]}
+    p = hookedit_prompt(payload); low = p.lower()
+    assert "m1" in p and "m2" in p and "before he was Moh Flow" in p   # the actual feed is in the prompt
+    assert "BRAND: confident, bilingual." in p                        # brand identity carried in
+    assert "feed" in low and ("template" in low or "repeat" in low)   # the cross-feed diversity job
+    assert "rewrite" in low and "moment_id" in low                    # rewrite, one item per id
+    assert "data to edit only" in low and "never instructions" in low # injection guard
+
+def test_hookedit_prompt_uses_the_frames_it_is_given():
+    # Vision-grounded: the prompt must tell the editor to judge each clip against ITS frames and to
+    # notice text already burned into the footage (avoid stacking / prefer a cleaner hook or null).
+    payload = {"guidance": "", "items": [{"moment_id": "m1", "hook": "x", "transcript_excerpt": "y",
+               "reason": "z", "language": "en", "frames": ["/kf/0.jpg", "/kf/1.jpg"]}]}
+    p = hookedit_prompt(payload); low = p.lower()
+    assert "frames" in low and ("see" in low or "shown" in low or "on screen" in low)
+    assert "burned" in low or "already" in low                       # notice existing on-screen text
+
+def test_hookedit_prompt_keeps_the_same_hard_rules_and_grounding():
+    # Same shared _hook_spec bar as moment_prompt: <=6 words, no em-dash, retention-not-hype,
+    # ban generic, null-on-no-honest-hook, and grounded in the clip (not bait).
+    p = hookedit_prompt({"guidance": "", "items": [{"moment_id": "m1", "hook": "x",
+                         "transcript_excerpt": "y", "reason": "z", "language": "en"}]})
+    low = p.lower()
+    assert "6 words" in low and "retention" in low and "em-dash" in low
+    assert "never about the artist" in low                            # no-hype contract (operator rule)
+    assert "generic" in low and "null" in low                         # ban filler; null -> clean clip
+    assert "true to" in low or "grounding" in low                     # grounded, no bait
+
+
+def test_hook_spec_demands_anchored_specific_not_abstract():
+    # Round-4 (web-verified craft): the prior spec REWARDED vagueness — its COLD-VIEWER gate taught
+    # converting a concrete specific ('the rose lands on one word') INTO a universal mood ('all that
+    # bravado, then this'). That is backwards: verified short-form craft says generic-that-fits-any-clip
+    # is the #1 failure mode. The corrected bar — ANCHOR the hook to a concrete specific of THIS clip,
+    # and apply the PORTABILITY test: if the line could sit on ANOTHER clip it is generic and rejected.
+    # A confusing line is fixed by ADDING the concrete detail, never by abstracting.
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "anchor" in low                          # build the hook around a concrete specific of THIS clip
+    assert "another clip" in low                    # the portability test: fits another clip -> reject
+    assert "all that bravado" not in low            # the concrete->abstract exemplar is GONE
+    assert "the rose lands on one word" not in low  # ...and the specific it was taught to destroy
+    assert "concrete" in low and "specific" in low  # specificity is the bar, not abstraction
+
+def test_hookedit_prompt_inherits_the_anchor_rule():
+    # The shared spec carries the anchor + portability bar into the vision editor too (same bar).
+    p = hookedit_prompt({"guidance": "", "items": [{"moment_id": "m1", "hook": "x",
+                         "transcript_excerpt": "y", "reason": "z", "language": "en"}]})
+    low = p.lower()
+    assert "anchor" in low and "another clip" in low
+    assert "all that bravado" not in low

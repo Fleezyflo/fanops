@@ -50,6 +50,43 @@ def test_detect_signals_merges_advances_and_backfills_duration(tmp_path, mocker)
     assert "speech_resume" in kinds and "scene_cut" in kinds
     assert s.duration == 12.0                       # backfilled
 
+def test_detect_signals_adopts_sidecar_and_skips_ffmpeg(tmp_path, mocker):
+    # Phase D: a lock-free pre-warm pass wrote a deterministic per-source signals sidecar. detect_signals
+    # must adopt it and NOT shell ffmpeg — keeping the two signal passes out of the ledger lock.
+    import json
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.transcribed, meta={"transcribed": True}))
+    sc = cfg.agent_io / "signals"; sc.mkdir(parents=True, exist_ok=True)
+    (sc / "src_1.json").write_text(json.dumps(
+        {"peaks": [{"t": 4.0, "kind": "speech_resume", "score": 0.5}], "duration": 12.0}))
+    spy = mocker.patch("fanops.signals.subprocess.run")
+    led = detect_signals(led, cfg, "src_1")
+    spy.assert_not_called()                                  # warm sidecar reused — no ffmpeg
+    s = led.sources["src_1"]
+    assert s.state is SourceState.signalled and s.duration == 12.0
+    assert s.signal_peaks[0]["kind"] == "speech_resume"
+
+def test_detect_signals_writes_sidecar_for_the_commit_pass(tmp_path, mocker):
+    # The warm (real) run must PERSIST a sidecar so the in-lock commit pass can skip the ffmpeg passes.
+    import json
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.transcribed, meta={"transcribed": True}))
+    def fake_run(cmd, **kw):
+        joined = " ".join(cmd)
+        class R:
+            returncode = 0; stdout = ""
+            stderr = SILENCE_STDERR if "silencedetect" in joined else SCENE_STDERR
+        return R()
+    mocker.patch("fanops.signals.subprocess.run", side_effect=fake_run)
+    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    detect_signals(led, cfg, "src_1")
+    sidecar = cfg.agent_io / "signals" / "src_1.json"
+    assert sidecar.exists(), "expected a written signals sidecar"
+    d = json.loads(sidecar.read_text())
+    assert d["duration"] == 12.0 and any(p["kind"] == "scene_cut" for p in d["peaks"])
+
 def test_detect_signals_raises_toolchain_error_when_ffmpeg_absent(tmp_path, mocker):
     # ffmpeg off PATH -> subprocess.run raises FileNotFoundError before the process starts
     # (check=False suppresses only a nonzero RETURNCODE). detect_signals runs INSIDE the pipeline's

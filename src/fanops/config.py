@@ -7,11 +7,39 @@ import json
 import logging
 import math
 import os
+import re
 from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
 
 _log = logging.getLogger("fanops.config")
+
+def _sanitize_tuning(raw: dict) -> dict:
+    """Drop only the INVALID entries from a tuning.json override, keeping the good ones (a single bad
+    regex used to make the consumer fall back to ALL defaults, silently losing every valid override).
+    Stay fail-open — warn + drop, never raise. offbrand_* entries must be strings that compile as
+    regex; lift_weights values must be real numbers (a non-numeric weight would crash lift_score)."""
+    out = dict(raw)
+    for key in ("offbrand_en", "offbrand_ar"):
+        pats = out.get(key)
+        if isinstance(pats, list):
+            kept = []
+            for p in pats:
+                try:
+                    re.compile(p); kept.append(p)
+                except (re.error, TypeError):
+                    _log.warning("tuning.json %s: dropping invalid regex %r (using remaining + defaults)", key, p)
+            out[key] = kept
+    weights = out.get("lift_weights")
+    if isinstance(weights, dict):
+        kept_w = {}
+        for k, v in weights.items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                kept_w[k] = v
+            else:
+                _log.warning("tuning.json lift_weights: dropping non-numeric weight %r=%r", k, v)
+        out["lift_weights"] = kept_w
+    return out
 
 _STAGE = {
     "control": "00_control", "review": "00_review", "inbox": "01_inbox", "sources": "02_sources",
@@ -63,7 +91,7 @@ class Config:
         if not isinstance(raw, dict):                       # e.g. a top-level list/number
             _log.warning("ignoring %s (expected a JSON object, using built-in defaults)", p.name)
             return {}
-        return raw
+        return _sanitize_tuning(raw)                         # warn+drop invalid entries, keep good ones
 
     @property
     def blotato_api_key(self) -> str | None:
@@ -153,12 +181,40 @@ class Config:
         return v.strip() if v and v.strip() else "talk"
 
     @property
+    def visual_start(self) -> bool:
+        # P1 strongest-frame cut start (clip.pick_visual_start): refine the cut entry onto the strongest
+        # opening FRAME within a small bounded shift — the top muted-autoplay lever after the text hook
+        # (a black/flat/transition opener is the weakest still). DEFAULT ON (mirrors hook_editor: the
+        # weakest link is closed by default, not by remembering a flag) and FAIL-OPEN: with ffmpeg absent
+        # or no strong frame, the start is left exactly as the band/transcript-snap chose it (today's
+        # behavior). Only the explicit off-words disable it; the decision is cached per-window so the
+        # in-lock commit pass re-spawns no frame-probe ffmpeg (Phase D).
+        v = (os.getenv("FANOPS_VISUAL_START") or "").strip().lower()
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
+
+    @property
     def whisper_model(self) -> str:
-        # Operator override for the local Whisper model. Default "turbo" (fast, good
-        # timestamps). Pin a smaller model (e.g. "tiny"/"base") for offline / air-gapped /
-        # CI hosts where the larger checkpoints cannot be downloaded.
+        # The legacy `whisper` CLI model — used ONLY when faster-whisper (the [asr] extra) is absent.
+        # Default "turbo" (fast, good timestamps). Pin a smaller model (e.g. "tiny"/"base") for
+        # offline / air-gapped / CI hosts where the larger checkpoints cannot be downloaded.
         v = os.getenv("FANOPS_WHISPER_MODEL")
         return v.strip() if v and v.strip() else "turbo"
+
+    @property
+    def asr_model(self) -> str:
+        # The faster-whisper (CTranslate2) model — the proven music/rap accuracy winner over turbo
+        # (clean Arabic where turbo gave gibberish). Default "large-v3"; int8 makes it practical on
+        # CPU. Override FANOPS_ASR_MODEL with a smaller fw model (e.g. "medium") on a slow host.
+        v = os.getenv("FANOPS_ASR_MODEL")
+        return v.strip() if v and v.strip() else "large-v3"
+
+    @property
+    def asr_language(self) -> str:
+        # "" = auto-detect (handles EN+AR per clip; proven equal to pinning, just slower). Pin e.g.
+        # "ar" via FANOPS_ASR_LANGUAGE only for a single-language account where the ~3x decode
+        # speedup is worth losing English clips.
+        v = os.getenv("FANOPS_ASR_LANGUAGE")
+        return v.strip() if v and v.strip() else ""
 
     @property
     def isolate_vocals(self) -> bool:
@@ -198,6 +254,31 @@ class Config:
         # an A/B experiment, not a baseline behavior. Only the explicit on-words enable it; unset,
         # empty, or anything else stays OFF (today's shared-clip behavior).
         v = (os.getenv("FANOPS_CREATIVE_VARIATION") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def hook_editor(self) -> bool:
+        # Feed-aware on-screen-hook editor (Phase 2 of the hook framework): with this ON, after all
+        # moments are decided a SINGLE LLM pass sees EVERY clip's hook at once and rewrites the
+        # weak/duplicated/templated ones into strong, DISTINCT hooks before any clip burns them. The
+        # moment responder answers each clip in isolation, so it CANNOT diversify across the feed (the
+        # 'before he was Moh Flow' x6 round-2 failure); only a feed-level pass can. DEFAULT ON (Phase
+        # C2 — the weakest link must be closed by default, not by remembering a flag); fail-open +
+        # idempotent. Only answered under FANOPS_RESPONDER=llm; with it explicitly off there is no
+        # hookedit gate and behavior is the pre-C2 flow. Only explicit off-words disable it.
+        v = (os.getenv("FANOPS_HOOK_EDITOR") or "").strip().lower()
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
+
+    @property
+    def hook_judge(self) -> bool:
+        # Specificity critic (Phase 3 of the hook framework): with this ON, AFTER the editor finalizes
+        # each hook an INDEPENDENT LLM pass judges it against the verified retention rubric (anchored to
+        # a concrete specific of THIS clip; passes the portability test; opens a loop) and REJECTS to a
+        # clean clip whatever fails — the enforcement (teeth) the deterministic floor defers to a critic.
+        # DEFAULT OFF (opt-in, exactly like hook_editor was at introduction): proven on the corpus first,
+        # then promoted to default. Only requested/held under FANOPS_RESPONDER=llm; runs only on hooks
+        # the editor has already finalized (hook_edited). Only explicit on-words enable it.
+        v = (os.getenv("FANOPS_HOOK_JUDGE") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property

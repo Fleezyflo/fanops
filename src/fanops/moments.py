@@ -10,12 +10,10 @@ from fanops.ledger import Ledger
 from fanops.models import Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState
 from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response
-from fanops.overlay import derive_hook
 from fanops.text import sanitize_generated_text
+from fanops.hookcheck import is_weak_hook, normalize_hook_pattern
 from fanops.log import get_logger
-
-def _guidance(cfg: Config) -> str:
-    return cfg.context_path.read_text() if cfg.context_path.exists() else ""
+from fanops.control import load_guidance
 
 def _token(pick: MomentPick) -> str:
     return f"{pick.start:.2f}-{pick.end:.2f}"
@@ -60,7 +58,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                             transcript=src.transcript or [],
                             signal_peaks=src.signal_peaks or [],
                             language=src.language,
-                            guidance=_guidance(cfg),
+                            guidance=load_guidance(cfg),
                             clip_profile=cfg.clip_profile).model_dump()   # band reaches the model's picks
     payload.pop("request_id", None)
     write_request(cfg, kind="moments", key=source_id, payload=payload)
@@ -85,18 +83,31 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     deduped = _drop_overlaps(valid)                 # drop near-duplicate windows (keep first)
     if len(deduped) < len(valid):                   # don't silently suppress picks — surface the count
         get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
+    # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks so a repeat is rejected (the
+    # 'reads like a bot' tell), then add each kept hook as we go.
+    used = {(m.hook or "").strip().lower() for m in led.moments.values()
+            if m.hook and m.parent_id != source_id}
     for pick in deduped:
         token = _token(pick)
         mid = child_id("moment", source_id, token)
+        # On-screen text = the model's RETENTION hook ONLY (curiosity-gap, signal-driven, NOT a
+        # transcript quote). Reject KNOWN slop (hookcheck.is_weak_hook: generic-superlative templates,
+        # cliches, editing/cuts hooks, cross-clip repeats) AND an omitted hook to None -> a CLEAN clip;
+        # burning slop or the unreliable transcript on screen is exactly what the operator rejected.
+        h = (pick.hook or "").strip()
+        hook = sanitize_generated_text(h) if h else None
+        if hook and is_weak_hook(hook, used):
+            hook = None
+        if hook:
+            used.add(hook.lower())
+        # P1: persist the chosen pattern (normalized) only when the hook survives; a nulled hook has no
+        # pattern (P3/P4 group on this, so it must track the actual on-screen hook, not a rejected one).
+        pattern = normalize_hook_pattern(pick.hook_pattern) if hook else None
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.decided,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
-                           transcript_excerpt=pick.transcript_excerpt,
-                           # On-screen text = the model's RETENTION hook (curiosity-gap, signal-driven —
-                           # NOT a transcript quote). derive_hook (transcript first-clause) is only a
-                           # last-resort fallback when the model omitted a hook; sanitize either way.
-                           hook=sanitize_generated_text((pick.hook or "").strip() or derive_hook(pick.transcript_excerpt)),
-                           signal_score=pick.signal_score)
+                           transcript_excerpt=pick.transcript_excerpt, hook=hook,
+                           hook_pattern=pattern, signal_score=pick.signal_score)
     if not keep:
         if dec.picks:
             # a wholly-INVALID new decision quarantines the source but does NOT reconcile — prior

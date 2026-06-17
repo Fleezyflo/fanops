@@ -103,7 +103,19 @@ class Moment(BaseModel):
     hook: Optional[str] = None                  # punchy top-third line for the clip; deterministic
                                                 # first-clause default (overlay.derive_hook), an LLM
                                                 # may overwrite. Optional/None -> old ledgers load fine.
+    hook_edited: bool = False                   # the feed-aware hook editor (hookedit.py) has run on
+                                                # this moment's hook; latches True so it never re-edits
+                                                # (no loop). Default False -> old ledgers load + are
+                                                # eligible for one edit pass.
+    hook_judged: bool = False                   # the specificity critic (hookjudge.py) has judged this
+                                                # hook against the rubric; latches True so it never
+                                                # re-judges (no loop). Default False -> old ledgers
+                                                # load + are eligible for one judge pass.
     signal_score: float = 0.0
+    hook_pattern: Optional[str] = None          # P1 provenance: which of the 6 _hook_spec patterns the
+                                                # responder/editor chose for this hook (open_loop|curiosity|
+                                                # comment_bait|contrarian|pov|proof). None = unknown/clean.
+                                                # The dim P4 ranks FIRST. One writer: moments/hookedit ingest.
     error_reason: Optional[str] = None
 
 class Clip(BaseModel):
@@ -112,6 +124,10 @@ class Clip(BaseModel):
     state: ClipState = ClipState.rendered
     path: str
     aspect: Fmt = Fmt.r9x16
+    first_frame_kind: Optional[str] = None      # P1 provenance: "visual" if pick_visual_start moved the cut
+                                                # start onto a stronger opening frame, else "transcript".
+    cut_seconds: Optional[float] = None         # P1 provenance: the rendered window length (ce-cs).
+                                                # OBSERVATIONAL only — length is not varied, so not P4-ranked.
     held: bool = False
     held_reason: Optional[str] = None
     tagged_artist: bool = False
@@ -137,6 +153,13 @@ class Post(BaseModel):
     metrics: dict = Field(default_factory=dict)
     variant_key: Optional[str] = None   # creative-variation attribution: deterministic per-(account,platform,clip) key
     variant_hook: Optional[str] = None  # the burned-in hook text this account's variant used (observe-only)
+    # P1 attribution key (one writer = crosspost): the creative dims P3 aggregates reach by and P4 ranks.
+    # All None on old ledgers + when the upstream dim is unknown (validate-or-default; never crashes a load).
+    hook_pattern: Optional[str] = None      # the moment's chosen _hook_spec pattern (P4 ranks this FIRST)
+    first_frame_kind: Optional[str] = None  # "visual" | "transcript" — how the opening frame was chosen
+    clip_profile: Optional[str] = None      # song | talk — the per-video-type group ("hook for which video type")
+    cut_seconds: Optional[float] = None     # rendered clip length (observational; length not varied)
+    variation_axis: Optional[str] = None    # P2 (one writer = crosspost): the cheap-text axis this variant moved
 
 
 # ---- agent-step contracts (all carry request_id for correlation — FIX F21) ----
@@ -157,6 +180,7 @@ class MomentPick(BaseModel):
     transcript_excerpt: str = ""
     signal_score: float = 0.0
     hook: Optional[str] = None      # on-screen RETENTION hook (curiosity-gap, NOT a transcript quote); None -> derive a default
+    hook_pattern: Optional[str] = None  # which of the 6 _hook_spec patterns this hook is; normalized at ingest
 
     @field_validator("start", "end")
     @classmethod
@@ -184,7 +208,36 @@ class CaptionItem(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     language: Optional[str] = None      # AUDIT H5: the LLM declares the caption's language
     hook: Optional[str] = None          # per-surface on-screen hook (creative variation); None -> use moment default
+    axis: Optional[str] = None          # P2: the ONE cheap-text axis this variant moves (normalized at ingest)
+    rationale: Optional[str] = None     # P2: one-line WHY this variant is a coherent, justified difference
 
 class CaptionSet(BaseModel):
     request_id: str
     items: list[CaptionItem] = Field(default_factory=list)
+
+# Feed-aware hook editor (hookedit.py): a SINGLE gate over the WHOLE feed of decided hooks. The
+# moment responder answers each clip in isolation, so it cannot avoid reusing a hook/template across
+# clips; this gate hands the editor every hook at once to rewrite the weak/duplicated/templated ones
+# into strong, DISTINCT hooks. Response = one item per moment_id; hook None -> no honest hook (clean clip).
+class HookEditItem(BaseModel):
+    moment_id: str
+    hook: Optional[str] = None
+    hook_pattern: Optional[str] = None  # the editor's pattern for its rewrite (normalized at ingest)
+
+class HookEditDecision(BaseModel):
+    request_id: str
+    items: list[HookEditItem] = Field(default_factory=list)
+
+# Specificity critic (hookjudge.py): the INDEPENDENT LLM judge the hookcheck floor references ("a later
+# LLM critic") but that was never built. Runs AFTER the editor on each kept hook and applies the verified
+# retention rubric (anchored to a concrete specific of THIS clip; passes the portability test; opens a
+# loop). reject (keep=False) -> the hook is nulled to a clean clip (clean beats slop). One verdict per
+# moment_id; keep defaults True so the judge's silence/omission NEVER strips a hook (fail-open).
+class HookJudgeItem(BaseModel):
+    moment_id: str
+    keep: bool = True               # True = hook clears the rubric; False = reject to a clean clip
+    why: str = ""                   # one line: the deciding rubric test (unanchored / generic / no loop)
+
+class HookJudgeDecision(BaseModel):
+    request_id: str
+    items: list[HookJudgeItem] = Field(default_factory=list)

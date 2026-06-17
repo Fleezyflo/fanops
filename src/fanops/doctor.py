@@ -29,6 +29,15 @@ def doctor_report(cfg: Config) -> dict:
     if cfg.responder_mode == "llm":
         checks.append(_check("claude on PATH (FANOPS_RESPONDER=llm)", shutil.which("claude") is not None,
                              "install Claude Code + run `claude login` (uses your subscription, no API key)"))
+    # 2b. brand brief present + non-empty. context.md is injected verbatim into every moment +
+    # caption decision (the #1 output lever); its absence used to be SILENT (load_guidance now warns,
+    # but a preflight is the visible gate). Read directly + safely so the report never crashes.
+    try:
+        brief_ok = bool(cfg.context_path.read_text().strip()) if cfg.context_path.exists() else False
+    except OSError:
+        brief_ok = False
+    checks.append(_check("brand brief present (context.md)", brief_ok,
+                         f"create {cfg.context_path} — it steers every clip/caption; without it the engine runs UNGROUNDED"))
     # 3. accounts.json valid + every active account has a numeric account_id (human step 2)
     try:
         problems = Accounts.load(cfg).validate()

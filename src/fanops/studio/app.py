@@ -242,7 +242,12 @@ def create_app(cfg: Config) -> Flask:
         cache = _bounded(cfg, cfg.clips / f"{clip_id}.jpg")   # cache next to the clip, inside cfg.base
         if cache is None:
             abort(404)
-        if not (cache.exists() and cache.stat().st_size > 0):   # absent OR a 0-byte partial (timed-out write) -> (re)extract
+        # Cache is FRESH only if it exists, is non-empty, AND is at least as new as the clip mp4. A
+        # re-rendered clip (new burned hook, SAME clip_id) bumps the mp4 mtime, so a poster older than
+        # the mp4 is stale and must be re-extracted — otherwise the cockpit shows the OLD hook forever.
+        fresh = (cache.exists() and cache.stat().st_size > 0
+                 and cache.stat().st_mtime >= os.path.getmtime(src))
+        if not fresh:                                         # absent / 0-byte partial / older than the clip -> (re)extract
             if not make_thumbnail(src, cache, at_seconds=0.5) or cache.stat().st_size == 0:
                 abort(404)                                    # ffmpeg missing/failed/empty -> fail-open
         return send_file(cache, mimetype="image/jpeg")

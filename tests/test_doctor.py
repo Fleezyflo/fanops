@@ -22,6 +22,33 @@ def _learning_check(rep):
     return next((c for c in rep["checks"] if "learning" in c["label"].lower() and "postiz" in c["label"].lower()), None)
 
 
+def test_doctor_flags_missing_brand_brief(tmp_path):
+    # context.md is the #1 output lever; its ABSENCE used to be silent. doctor must surface it as a
+    # readiness failure so an operator never runs an ungrounded engine without knowing.
+    cfg = Config(root=tmp_path)                          # no context.md written
+    rep = doctor.doctor_report(cfg)
+    bc = next((c for c in rep["checks"] if "brand brief" in c["label"].lower()), None)
+    assert bc is not None and bc["ok"] is False and "context.md" in bc["hint"]
+
+
+def test_doctor_passes_with_brand_brief(tmp_path):
+    cfg = Config(root=tmp_path)
+    cfg.context_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.context_path.write_text("BRAND: confident, bilingual. Pick the bars.")
+    rep = doctor.doctor_report(cfg)
+    bc = next((c for c in rep["checks"] if "brand brief" in c["label"].lower()), None)
+    assert bc is not None and bc["ok"] is True
+
+
+def test_doctor_flags_empty_brand_brief(tmp_path):
+    cfg = Config(root=tmp_path)
+    cfg.context_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.context_path.write_text("   \n\t  ")             # present but blank -> still ungrounded
+    rep = doctor.doctor_report(cfg)
+    bc = next((c for c in rep["checks"] if "brand brief" in c["label"].lower()), None)
+    assert bc is not None and bc["ok"] is False
+
+
 def test_doctor_flags_missing_blotato_key_when_live(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "rest")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)

@@ -7,10 +7,16 @@ from fanops.pipeline import advance
 
 def _put(p, b): p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
 
+def _is_asr(cmd):
+    # The transcribe subprocess, EITHER engine: the legacy `whisper` CLI, or the default
+    # faster-whisper runner (`python -m fanops._fwrun`). Both carry --output_dir + audio-last, so the
+    # fakes below are engine-agnostic (dev has the [asr] extra -> fw runner; CI doesn't -> whisper CLI).
+    return cmd[0] == "whisper" or "fanops._fwrun" in cmd
+
 def _ff(mocker):
     def fake(cmd, **kw):
         joined = " ".join(cmd)
-        if cmd[0] == "whisper":
+        if _is_asr(cmd):
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
                 {"language": "en", "segments": [{"start": 14.0, "end": 18.0, "text": "they slept on me"}]}))
@@ -98,23 +104,25 @@ def test_signals_toolchain_absent_is_quarantined_not_a_crash(tmp_path, monkeypat
     assert s["errors"] >= 1                                    # surfaced in the summary count
 
 def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
-    # FIX F03: a source whose whisper crashes goes to error; others still advance.
+    # FIX F03: a source whose whisper crashes goes to error; others still advance. The fault is keyed to
+    # the BAD source's content (b"B"), NOT a call counter — Phase D's lock-free pre-warm runs the
+    # transcribe subprocess too, so a call-count fault would fire on the wrong (warm) attempt. A
+    # deterministic per-source fault models a genuinely-corrupt source (which fails every attempt).
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     _put(cfg.inbox / "good.mp4", b"G"); _put(cfg.inbox / "bad.mp4", b"B")
-    call = {"n": 0}
     def fake(cmd, **kw):
         if cmd[0] == "ffprobe":
             class R:
                 returncode=0; stderr=""
                 stdout = "video" if "codec_type" in " ".join(cmd) else "1920\n1080\n20.0\n"
             return R()
-        if cmd[0] == "whisper":
-            call["n"] += 1
-            if call["n"] == 1:                      # first source: whisper raises
+        if _is_asr(cmd):
+            audio = Path(cmd[-1])
+            if audio.exists() and audio.read_bytes() == b"B":   # the corrupt source: whisper always fails
                 raise OSError("whisper exploded")
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
@@ -139,9 +147,14 @@ def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
     assert any(v in states for v in ("moments_requested", "signalled", "transcribed"))  # good one progressed
 
 
-def test_advance_runs_inside_a_single_transaction(tmp_path, monkeypatch, mocker):
-    # B1 (AUDIT B4): advance() must take the ledger transaction lock for the WHOLE pass (no
-    # lock-free load + trailing save). Exactly ONE transaction wraps the pass.
+def test_advance_mutations_are_all_under_a_held_lock(tmp_path, monkeypatch, mocker):
+    # AUDIT B4 (Phase D restructure): every ledger mutation must happen inside a held-lock transaction
+    # — no lock-free load + trailing save. Phase D moved the SLOW subprocess stages (whisper/ffmpeg) out
+    # of the lock into a lock-free pre-warm BETWEEN two transactions: a short INGEST transaction and the
+    # main commit transaction. So advance() opens exactly TWO transactions (not one), and the lost-update
+    # protection still holds (proved by test_pipeline_prewarm.test_main_transaction_excludes_concurrent_writer
+    # + test_ledger_lock.test_transaction_holds_lock_across_the_whole_block). The pre-warm holds NO lock
+    # and saves NO state.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +162,7 @@ def test_advance_runs_inside_a_single_transaction(tmp_path, monkeypatch, mocker)
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     spy = mocker.spy(Ledger, "transaction")
     advance(cfg, base_time="2026-06-02T18:00:00Z")
-    assert spy.call_count == 1            # exactly one transaction wraps the pass
+    assert spy.call_count == 2            # ingest tx + main tx; slow work runs lock-free between them
 
 
 def test_advance_persists_progress_when_crosspost_raises(tmp_path, monkeypatch, mocker):
@@ -311,3 +324,79 @@ def test_advance_rest_backend_still_calls_reconciler(tmp_path, monkeypatch, mock
     spy = mocker.patch("fanops.pipeline.reconcile_posts", side_effect=lambda _led, _cfg: _led)
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     spy.assert_called_once()
+
+def _accts_one(cfg):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "98432", "platforms": ["instagram"], "status": "active"}]}))
+
+def _answer_moments_with_hook(cfg, hook):
+    from fanops.models import MomentDecision, MomentPick
+    from fanops.agentstep import response_path, latest_request_id
+    src_id = next(iter(Ledger.load(cfg).sources))
+    rid = latest_request_id(cfg, "moments", src_id)
+    response_path(cfg, "moments", src_id).write_text(MomentDecision(
+        source_id=src_id, request_id=rid,
+        picks=[MomentPick(start=14.0, end=18.0, reason="punchline",
+                          transcript_excerpt="they slept on me", hook=hook)]).model_dump_json())
+
+def test_hook_editor_holds_then_rewrites_across_the_feed(tmp_path, monkeypatch, mocker):
+    # FANOPS_HOOK_EDITOR on + llm responder: after moments are decided, advance() opens ONE feed-level
+    # hookedit gate and HOLDS clip rendering until it's answered, then renders with the REWRITTEN hook.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
+    from fanops.models import HookEditDecision, HookEditItem
+    from fanops.agentstep import response_path, latest_request_id, pending
+
+    advance(cfg, base_time="2026-07-01T18:00:00Z")                 # -> moments gate
+    _answer_moments_with_hook(cfg, "the word he repeated twice")    # a guard-passing hook to be rewritten
+
+    s = advance(cfg, base_time="2026-07-01T18:00:00Z")             # ingest moments -> hookedit gate, HOLD
+    assert s["awaiting"]["hookedit"] == 1 and s["clips"] == 0       # rendering held until the editor answers
+
+    mid = next(iter(Ledger.load(cfg).moments))
+    key = pending(cfg, kind="hookedit")[0]
+    rid = latest_request_id(cfg, "hookedit", key)
+    response_path(cfg, "hookedit", key).write_text(HookEditDecision(
+        request_id=rid, items=[HookEditItem(moment_id=mid, hook="before he was Moh Flow")]).model_dump_json())
+
+    s = advance(cfg, base_time="2026-07-01T18:00:00Z")            # ingest hookedit -> render with edited hook
+    assert s["clips"] >= 1 and s["awaiting"]["hookedit"] == 0
+    m = Ledger.load(cfg).moments[mid]
+    assert m.hook == "before he was Moh Flow" and m.hook_edited is True
+
+def test_hook_editor_consumes_answer_even_after_responder_flipped_to_manual(tmp_path, monkeypatch, mocker):
+    # Review HIGH: a gate answered under llm must still be APPLIED if the operator flips
+    # FANOPS_RESPONDER->manual mid-session, never orphaned + never rendered with the un-edited hook.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
+    from fanops.models import HookEditDecision, HookEditItem
+    from fanops.agentstep import response_path, latest_request_id, pending
+    advance(cfg, base_time="2026-07-01T18:00:00Z")
+    _answer_moments_with_hook(cfg, "the word he repeated twice")
+    advance(cfg, base_time="2026-07-01T18:00:00Z")                 # opens hookedit gate, holds
+    mid = next(iter(Ledger.load(cfg).moments)); key = pending(cfg, kind="hookedit")[0]
+    rid = latest_request_id(cfg, "hookedit", key)
+    response_path(cfg, "hookedit", key).write_text(HookEditDecision(
+        request_id=rid, items=[HookEditItem(moment_id=mid, hook="before he was Moh Flow")]).model_dump_json())
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")               # operator flips mid-session
+    s = advance(cfg, base_time="2026-07-01T18:00:00Z")
+    m = Ledger.load(cfg).moments[mid]
+    assert m.hook == "before he was Moh Flow" and m.hook_edited is True   # answer consumed, not orphaned
+    assert s["clips"] >= 1
+
+def test_hook_editor_off_renders_immediately_no_gate(tmp_path, monkeypatch, mocker):
+    # Explicitly OFF (editor now defaults ON): no hookedit gate, clips render in the same pass moments
+    # are ingested (the pre-C2 flow, still available when an operator opts out).
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
+    advance(cfg, base_time="2026-07-01T18:00:00Z")
+    _answer_moments_with_hook(cfg, "the word he repeated twice")
+    s = advance(cfg, base_time="2026-07-01T18:00:00Z")
+    assert s["clips"] >= 1 and s["awaiting"]["hookedit"] == 0       # no hold, no gate

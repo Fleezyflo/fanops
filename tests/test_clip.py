@@ -234,6 +234,47 @@ def test_render_clean_when_no_hook_and_subs_off(tmp_path, mocker, monkeypatch):
     assert not list(cfg.clips.glob("*.ass"))
 
 
+def test_render_skips_ffmpeg_when_warm_artifact_matches(tmp_path, mocker, monkeypatch):
+    # Phase D: a lock-free pre-warm pass already rendered cid.mp4 + wrote its fingerprint. render_moment
+    # must adopt the existing file and SKIP ffmpeg when the intended-render fingerprint matches — this is
+    # what keeps the multi-minute transcode out of the ledger lock. It still records the clip + advances
+    # the moment, so the in-lock commit pass is fast.
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=10, end=28, reason="r", state=MomentState.decided, hook=None))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)   # warm: produces mp4 + fingerprint
+    assert clip.state is ClipState.rendered
+    led.set_moment_state("mom_1", MomentState.decided)              # reset so a 2nd render is attempted
+    spy = mocker.patch("fanops.clip.subprocess.run")
+    led, clip2 = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    spy.assert_not_called()                                          # warm artifact reused — no ffmpeg
+    assert clip2.state is ClipState.rendered and led.moments["mom_1"].state is MomentState.clipped
+
+def test_render_reruns_when_hook_changes_fingerprint(tmp_path, mocker, monkeypatch):
+    # The render fingerprint must capture the burned hook: if the hook changes, the warm artifact is
+    # STALE and render_moment must RE-RENDER (never silently reuse the old clip — the stale-render class
+    # of bug). A blind skip-if-exists would wrongly keep the old hook.
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=10, end=28, reason="r", state=MomentState.decided, hook="first hook"))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    led.moments["mom_1"].hook = "different hook"                    # hook changed -> warm artifact stale
+    led.set_moment_state("mom_1", MomentState.decided)
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert "cmd" in captured, "ffmpeg must re-run when the hook changes (stale clip not reused)"
+    assert clip.state is ClipState.rendered
+
 def test_reframe_branches_exact():
     # 16:9 from a tall source -> crop height then scale to even 1920x1080
     assert reframe_filter("16:9", 1080, 1920) == "crop=iw:iw*1080/1920,scale=1920:1080,setsar=1"
@@ -397,3 +438,162 @@ def test_render_moment_song_profile_uses_wider_band(tmp_path, mocker, monkeypatc
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=24.0,
                                   duration=120.0, profile="song")
     assert to == 18.0 and 18.0 <= to <= 35.0
+
+# --- P1 T1: strongest-frame cut start (visual_start) --------------------------------------------
+# render_moment refines the cut start (after the band, before transcript-snap) onto the strongest
+# opening frame within a bounded shift, stamps first_frame_kind/cut_seconds, and leaves audio alone.
+
+from fanops.clip import _vstart_candidate_times
+
+def _run_render_with_probe(captured, *, strong_at=None):
+    """subprocess.run side_effect: signalstats probes (cmd ends with '-') return strong stats at
+    `strong_at` (near-black elsewhere); the render call (cmd ends with the mp4 path) writes a file."""
+    def run(cmd, **kw):
+        last = str(cmd[-1])
+        if last == "-":                                   # signalstats probe
+            t = float(cmd[cmd.index("-ss") + 1])
+            strong = strong_at is not None and abs(t - strong_at) < 1e-3
+            class R:
+                returncode = 0; stderr = ""
+                stdout = ("lavfi.signalstats.YMIN=16\nlavfi.signalstats.YAVG=120\nlavfi.signalstats.YMAX=210\n"
+                          if strong else "lavfi.signalstats.YMIN=0\nlavfi.signalstats.YAVG=3\nlavfi.signalstats.YMAX=5\n")
+            return R()
+        if not last.startswith("-"):                      # render output path
+            captured["cmd"] = cmd
+            out = Path(last); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R2: returncode = 0; stderr = ""; stdout = ""
+        return R2()
+    return run
+
+def test_render_moment_visual_start_moves_cut_and_stamps_provenance(tmp_path, mocker, monkeypatch):
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)      # default ON
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided))
+    target = _vstart_candidate_times(10.0, 28.0)[2]
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured, strong_at=target))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    assert clip.first_frame_kind == "visual"
+    assert clip.cut_seconds is not None and clip.cut_seconds > 0
+    cmd = captured["cmd"]
+    assert abs(float(cmd[cmd.index("-ss") + 1]) - target) < 1e-3   # cut start moved onto the strong frame
+    assert "-c:a" in cmd                                            # audio still encoded -> untouched
+
+def test_visual_start_provenance_honest_with_transcript(tmp_path, mocker, monkeypatch):
+    # snap runs BEFORE visual, so first_frame_kind="visual" iff the visual pick is the ACTUAL rendered
+    # start — snap can't silently pull it back while the dim still claims "visual" (the P4-poisoning bug).
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    tr = [{"start": 9.3, "end": 12.0, "text": "a"}, {"start": 25.0, "end": 28.4, "text": "b"}]
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0, transcript=tr))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided))
+    target = _vstart_candidate_times(9.3, 28.4)[2]               # candidates start from the SNAPPED window
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured, strong_at=target))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.first_frame_kind == "visual"
+    ss = float(captured["cmd"][captured["cmd"].index("-ss") + 1])
+    assert abs(ss - target) < 1e-3                               # rendered start IS the visual pick
+
+def test_render_moment_visual_start_off_does_not_probe(tmp_path, mocker, monkeypatch):
+    # FANOPS_VISUAL_START=0 -> no signalstats probe at all, start unchanged, first_frame_kind None.
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided))
+    calls = []
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert not any("signalstats" in str(c) for c in calls)         # feature off -> no probe
+    assert clip.first_frame_kind is None                           # dim not engaged
+    rend = [c for c in calls if not str(c[-1]).startswith("-")][0]
+    assert float(rend[rend.index("-ss") + 1]) == 10.0              # band/snap start, unchanged
+
+def test_render_logs_legibility_warning_for_overlong_hook(tmp_path, mocker, monkeypatch):
+    # P1 T2: an overlong hook logs ONE legibility warning and the clip STILL renders (fail-open).
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")               # isolate from the probe path
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t", start=10, end=28,
+                          reason="r", state=MomentState.decided,
+                          hook="wait for the absolutely incredible unbelievable final climactic drop here"))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered                      # never blocked
+    assert "hook_legibility" in cfg.log_path.read_text()         # warned once
+
+def test_render_silent_for_legible_hook(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t", start=10, end=28,
+                          reason="r", state=MomentState.decided, hook="wait for the drop"))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "hook_legibility" not in log                          # a clear hook is silent
+
+def test_render_reruns_when_visual_start_changes_fingerprint(tmp_path, mocker, monkeypatch):
+    # P1 T4: the chosen visual start flows into cs -> _render_fingerprint, so a DIFFERENT pick must
+    # bust the Phase D warm-skip and RE-RENDER (never silently reuse the clip cut at the old start).
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)     # ON
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided))
+    a, b = _vstart_candidate_times(10.0, 28.0)[1], _vstart_candidate_times(10.0, 28.0)[3]
+    cap1 = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(cap1, strong_at=a))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    ss1 = float(cap1["cmd"][cap1["cmd"].index("-ss") + 1]); assert abs(ss1 - a) < 1e-3
+    for f in cfg.clips.glob("vstart_*.json"): f.unlink()          # clear the cached decision -> re-pick
+    led.set_moment_state("mom_1", MomentState.decided)
+    cap2 = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(cap2, strong_at=b))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert "cmd" in cap2, "a changed visual start must re-render (fingerprint busts the warm skip)"
+    ss2 = float(cap2["cmd"][cap2["cmd"].index("-ss") + 1])
+    assert abs(ss2 - b) < 1e-3 and ss1 != ss2
+
+def test_native_default_render_has_no_template_overlay(tmp_path, mocker, monkeypatch):
+    # P1 T5: the default render is the base REFRAMED clip — no burned template card, no compose layer
+    # (the produced MoviePy layer stays opt-in via `fanops compose`). vf is exactly the reframe filter.
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)     # ON (default)
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)        # transcript captions OFF (default)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided, hook=None))
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    vf = _vf_of(captured["cmd"])
+    assert vf == reframe_filter("9:16", 1920, 1080)              # exactly the reframe — no template/subtitle filter
+    assert "subtitles=" not in vf

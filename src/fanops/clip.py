@@ -3,13 +3,14 @@
 Reframe is chosen from the PROBED source dimensions so vertical/odd sources don't break.
 render_aspects_for renders one clip per distinct aspect the active platforms need."""
 from __future__ import annotations
-import subprocess
+import hashlib, json, subprocess
+from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
 from fanops.ids import child_id
 from fanops.bands import band_for, TALK
-from fanops import overlay
+from fanops import overlay, frames
 from fanops.log import get_logger
 
 # Target render size per aspect. The subtitle .ass PlayResX/Y must match the rendered frame so
@@ -75,6 +76,90 @@ def fit_window(start: float, end: float, duration: float,
         e = duration; s = e - target
     return max(0.0, s), e
 
+# P1 T1 (strongest-frame cut start). How far the entry may shift to land on a stronger frame (a small
+# nudge, like snap_window's max_shift — never overrides the band), how many candidate frames to probe,
+# the per-frame probe bound (keyframes.py idiom), and the minimum move to count as a real visual pick.
+_VSTART_MAX_SHIFT_S = 1.5
+_VSTART_CANDIDATES = 5
+_VSTART_PROBE_TIMEOUT = 30.0
+_VSTART_MIN_MOVE_S = 0.05
+_SCENE_NEAR_S = 0.3          # a scene-cut peak within this of a candidate counts as "on a cut" (tiebreak)
+
+def _vstart_candidate_times(start: float, end: float) -> list[float]:
+    """Evenly-spaced candidate entry times in [start, min(start+shift, end)], INCLUDING `start` itself
+    (so 'no better frame than the current start' is always reachable -> no spurious move). Pure."""
+    hi = min(start + _VSTART_MAX_SHIFT_S, end)
+    if hi <= start:
+        return [start]
+    n = _VSTART_CANDIDATES
+    return [start + (hi - start) * i / (n - 1) for i in range(n)]
+
+def _signalstats_cmd(src: str, t: float) -> list[str]:
+    # One bounded ffmpeg per candidate: seek, decode ONE frame, print its luma stats (YAVG/YMIN/YMAX)
+    # via the signalstats+metadata filter. `-f null -` discards output (no jpg written) — we only parse
+    # the printed text. info loglevel makes metadata=print emit the lavfi.signalstats.* lines.
+    return ["ffmpeg", "-hide_banner", "-loglevel", "info", "-ss", f"{t:.3f}", "-i", src,
+            "-frames:v", "1", "-vf", "signalstats,metadata=print", "-f", "null", "-"]
+
+def _probe_frame_strength(src: str, t: float):
+    """Run the signalstats probe for ONE candidate time and return (luma, contrast) or None. Fail-open
+    (ffmpeg absent/hung/error -> None) exactly like keyframes.extract_keyframes — never raises."""
+    try:
+        r = subprocess.run(_signalstats_cmd(src, t), check=False, capture_output=True, text=True,
+                           timeout=_VSTART_PROBE_TIMEOUT)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    # getattr-defensive: the probe is fail-open, so a result missing stdout/stderr -> no stats -> None
+    # (a real capture_output run always has both as strings; this also tolerates minimal test fakes).
+    return frames.parse_signalstats((getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or ""))
+
+def _scene_score_near(scene_peaks, t: float) -> float:
+    # signal_peaks is loaded from an unvalidated JSON sidecar, so a non-numeric t/score must not raise
+    # out of the picker (fail-open contract) — a bad peak just contributes no tiebreak.
+    best = 0.0
+    for p in scene_peaks or []:
+        if not isinstance(p, dict) or p.get("kind") != "scene_cut":
+            continue
+        try:
+            pt = float(p.get("t", 0.0)); ps = float(p.get("score", 0.0))
+        except (ValueError, TypeError):
+            continue
+        if abs(pt - t) <= _SCENE_NEAR_S:
+            best = max(best, ps)
+    return best
+
+def pick_visual_start(src_path: str, start: float, end: float, *, scene_peaks, out_dir) -> tuple[float, str]:
+    """Refine the cut entry onto the strongest opening frame within a bounded shift. Returns
+    (new_start, kind): kind="visual" when a stronger frame moved the start, else "transcript" (the
+    band/snap start is kept). The decision is CACHED in a per-(source,window) sidecar so the in-lock
+    commit pass adopts it with NO ffmpeg (Phase D); the lock-free pre-warm pays the probe cost once.
+    Fail-open: any probe failure leaves the start unchanged. PURE selection lives in frames.py."""
+    out = Path(out_dir)
+    key = hashlib.sha256(f"{src_path}|{round(start, 3)}|{round(end, 3)}".encode()).hexdigest()[:16]
+    sidecar = out / f"vstart_{key}.json"
+    if sidecar.exists():
+        try:
+            d = json.loads(sidecar.read_text())
+            return float(d["start"]), str(d["kind"])      # cached -> no re-probe (commit stays lock-cheap)
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+            pass                                            # corrupt sidecar -> fall through to a real probe
+    cands = []
+    for t in _vstart_candidate_times(start, end):
+        ls = _probe_frame_strength(src_path, t)
+        if ls is not None:
+            cands.append({"t": t, "luma": ls[0], "contrast": ls[1], "scene": _scene_score_near(scene_peaks, t)})
+    win = frames.pick_strongest(cands)
+    if win is not None and abs(win["t"] - start) > _VSTART_MIN_MOVE_S:
+        new_start, kind = float(win["t"]), "visual"
+    else:
+        new_start, kind = start, "transcript"
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        sidecar.write_text(json.dumps({"start": new_start, "kind": kind}))
+    except OSError:
+        pass                                                # write failure just re-probes next time
+    return new_start, kind
+
 def reframe_filter(aspect: str, src_w: int, src_h: int) -> str:
     """Pick a safe ffmpeg -vf for the target aspect given the source dimensions."""
     tw, th = _TARGETS[aspect]
@@ -131,6 +216,10 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
                         reason="ffmpeg lacks the text filter — rendering without subtitles/hook")
         return None
     tw, th = _TARGETS[aspect.value]
+    if hook:                                             # P1 T2: fail-open legibility guard — warn once, never block
+        warns = overlay.hook_legibility_warnings(hook, width=tw, height=th)
+        if warns:
+            get_logger(cfg)("clip", cid, "hook_legibility", warning="; ".join(warns))
     ass_text = overlay.build_ass(segments, hook=hook, clip_start=clip_start, clip_end=clip_end,
                                  width=tw, height=th, font=cfg.subtitle_font)
     if not ass_text or not ass_text.strip():
@@ -138,6 +227,25 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
     ass_path = cfg.clips / f"{cid}.ass"
     overlay.write_ass(ass_text, ass_path)
     return overlay.subtitles_vf(ass_path)
+
+# Phase D: the clip's content-address (child_id of moment+aspect) does NOT include the burned hook or
+# the cut window, so an mp4 on disk is NOT proof it matches the INTENDED render — a changed hook would
+# leave a stale clip (the stale-render class of bug). The render fingerprint captures everything that
+# determines the rendered bytes (source, window, aspect, source dims, the burned .ass text), so the
+# lock-free pre-warm and the in-lock commit agree on when an existing mp4 may be reused. This is what
+# lets the heavy ffmpeg run OUTSIDE the ledger lock and the commit pass skip it.
+def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
+                        src_w: int, src_h: int, ass_text: str) -> str:
+    payload = {"src": src_path, "cs": round(cs, 3), "ce": round(ce, 3), "aspect": aspect_value,
+               "w": src_w, "h": src_h, "ass": ass_text}
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+def _fingerprint_matches(fp_path, fp: str) -> bool:
+    try:
+        return fp_path.exists() and json.loads(fp_path.read_text()).get("fp") == fp
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
 
 def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                   aspect: Fmt = Fmt.r9x16) -> tuple[Ledger, Clip]:
@@ -149,7 +257,29 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     band = band_for(cfg.clip_profile)                          # talk 12-22s / song 18-35s
     cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
     cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
+    # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after band + snap) so the
+    # rendered cut and the first_frame_kind provenance AGREE — snap can't silently undo a visual pick and
+    # leave the dim lying (it would poison P4, which ranks first_frame_kind). Both 1.5s shifts otherwise
+    # overlap. Runs in the lock-free pre-warm + is sidecar-cached so the in-lock commit re-probes nothing.
+    first_frame_kind = None
+    if cfg.visual_start:
+        cs, first_frame_kind = pick_visual_start(src.source_path, cs, ce,
+                                                 scene_peaks=src.signal_peaks, out_dir=cfg.clips)
+    cut_seconds = round(ce - cs, 3)                            # P1 provenance (observational; length not varied)
     extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
+    # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
+    # render (a pre-warm pass produced it), adopt it and SKIP ffmpeg — record the clip + advance the
+    # moment. A changed hook/window yields a different fingerprint -> re-render (no stale clip reuse).
+    ass_path = cfg.clips / f"{cid}.ass"
+    ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
+    fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0, ass_text)
+    fp_path = cfg.clips / f"{cid}.render.json"
+    if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
+        clip = Clip(id=cid, parent_id=moment_id, state=ClipState.rendered, path=str(dst), aspect=aspect,
+                    first_frame_kind=first_frame_kind, cut_seconds=cut_seconds)
+        led.clips[cid] = clip
+        led.set_moment_state(moment_id, MomentState.clipped)
+        return led, clip
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf)
     try:
@@ -182,12 +312,20 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                     aspect=aspect, error_reason=f"ffmpeg rc={r.returncode}: {(r.stderr or '')[:200]}")
         led.clips[cid] = clip
         return led, clip
-    clip = Clip(id=cid, parent_id=moment_id, state=ClipState.rendered, path=str(dst), aspect=aspect)
+    clip = Clip(id=cid, parent_id=moment_id, state=ClipState.rendered, path=str(dst), aspect=aspect,
+                first_frame_kind=first_frame_kind, cut_seconds=cut_seconds)
     # Overwrite any prior clip at this content-addressed id (e.g. a previous error-state
     # render) so a re-render self-heals; setdefault would pin the stale clip. id is unique
     # per (moment, aspect), so the latest successful render is authoritative.
     led.clips[cid] = clip
     led.set_moment_state(moment_id, MomentState.clipped)
+    # Stamp the render fingerprint (Phase D) so a later pass — or the in-lock commit after a lock-free
+    # pre-warm — can skip re-rendering an identical clip. Best-effort: a write failure just costs a
+    # re-render, never a crash. Written ONLY on success, so a failed render never leaves a skip stamp.
+    try:
+        fp_path.write_text(json.dumps({"fp": fp}))
+    except OSError:
+        pass
     return led, clip
 
 def render_aspects_for(led: Ledger, cfg: Config, moment_id: str, *,

@@ -1,5 +1,50 @@
 # tests/test_config.py
+import json
+import logging
 from fanops.config import Config
+
+def _tuning_cfg(tmp_path, obj):
+    cfg = Config(root=tmp_path)
+    cfg.tuning_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.tuning_path.write_text(json.dumps(obj))
+    return cfg
+
+def test_tuning_drops_uncompilable_regex_keeps_good(tmp_path, caplog):
+    # A single bad override regex must not nuke the whole override (it used to fall back to ALL
+    # defaults at the consumer); tuning() drops only the bad entry, keeps the good ones, warns.
+    cfg = _tuning_cfg(tmp_path, {"offbrand_en": ["\\bpls\\b", "(unclosed"]})
+    with caplog.at_level(logging.WARNING):
+        t = cfg.tuning()
+    assert t["offbrand_en"] == ["\\bpls\\b"]
+    assert any("offbrand_en" in r.getMessage() for r in caplog.records)
+
+def test_tuning_drops_nonnumeric_lift_weight(tmp_path, caplog):
+    # a non-numeric weight value would crash track.lift_score arithmetic — drop it, keep numerics.
+    cfg = _tuning_cfg(tmp_path, {"lift_weights": {"saves": 4.0, "bad": "lots"}})
+    with caplog.at_level(logging.WARNING):
+        t = cfg.tuning()
+    assert t["lift_weights"] == {"saves": 4.0}
+    assert any("lift_weights" in r.getMessage() for r in caplog.records)
+
+def test_tuning_passes_clean_overrides_unchanged(tmp_path):
+    cfg = _tuning_cfg(tmp_path, {"offbrand_en": ["\\bpls\\b"], "lift_weights": {"saves": 5}})
+    t = cfg.tuning()
+    assert t["offbrand_en"] == ["\\bpls\\b"] and t["lift_weights"] == {"saves": 5}
+
+def test_hook_editor_defaults_on(monkeypatch, tmp_path):
+    # Phase C2: the feed-aware hook editor closes the weakest link (template clustering); it must be
+    # ON by default, not gated on the operator remembering a flag. It is fail-open + idempotent.
+    monkeypatch.delenv("FANOPS_HOOK_EDITOR", raising=False)
+    assert Config(root=tmp_path).hook_editor is True
+
+def test_hook_editor_explicit_off_disables(monkeypatch, tmp_path):
+    for off in ("0", "false", "no", "off"):
+        monkeypatch.setenv("FANOPS_HOOK_EDITOR", off)
+        assert Config(root=tmp_path).hook_editor is False
+
+def test_hook_editor_explicit_on(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    assert Config(root=tmp_path).hook_editor is True
 
 def test_dirs(tmp_path):
     c = Config(root=tmp_path)
@@ -99,6 +144,22 @@ def test_isolate_vocals_defaults_on_and_respects_env(monkeypatch, tmp_path):
     assert Config(root=tmp_path).isolate_vocals is False
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
     assert Config(root=tmp_path).isolate_vocals is True
+
+def test_asr_model_defaults_large_v3_and_respects_env(monkeypatch, tmp_path):
+    # The faster-whisper model — the proven music/rap accuracy winner over turbo. Default large-v3
+    # (int8 makes it practical on CPU). Override picks a smaller fw model on a slow host.
+    monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
+    assert Config(root=tmp_path).asr_model == "large-v3"
+    monkeypatch.setenv("FANOPS_ASR_MODEL", " medium ")
+    assert Config(root=tmp_path).asr_model == "medium"
+
+def test_asr_language_defaults_auto_and_respects_env(monkeypatch, tmp_path):
+    # "" = auto-detect (handles EN+AR per clip; proven equal to pinning, just slower). An operator
+    # with a single-language account can pin e.g. "ar" for the ~3x decode speedup.
+    monkeypatch.delenv("FANOPS_ASR_LANGUAGE", raising=False)
+    assert Config(root=tmp_path).asr_language == ""
+    monkeypatch.setenv("FANOPS_ASR_LANGUAGE", "ar")
+    assert Config(root=tmp_path).asr_language == "ar"
 
 def test_subtitle_font_default_and_override(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_SUBTITLE_FONT", raising=False)

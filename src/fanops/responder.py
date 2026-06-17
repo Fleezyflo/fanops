@@ -10,14 +10,20 @@ import json
 from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
-from fanops.models import MomentDecision, CaptionSet
+from fanops.models import MomentDecision, CaptionSet, HookEditDecision, HookJudgeDecision
 from fanops.agentstep import pending, request_path, response_path, latest_request_id
 from fanops.llm import claude_json, LlmTimeoutError
-from fanops.prompts import moment_prompt, caption_prompt
+from fanops.prompts import moment_prompt, caption_prompt, hookedit_prompt, hookjudge_prompt
 from fanops.log import get_logger
 
-_SCHEMA = {"moments": MomentDecision, "captions": CaptionSet}
-_PROMPT = {"moments": moment_prompt, "captions": caption_prompt}
+# hookedit (feed-aware hook editor) + hookjudge (specificity critic) ride the same gate contract: when
+# no request of that kind is pending the inner loop is empty, so registering them is inert unless
+# cfg.hook_editor is on. hookjudge is TEXT-ONLY (no frames) — _default_claude_model attaches images
+# only for the hookedit kind, so the critic call carries no vision payload.
+_SCHEMA = {"moments": MomentDecision, "captions": CaptionSet, "hookedit": HookEditDecision,
+           "hookjudge": HookJudgeDecision}
+_PROMPT = {"moments": moment_prompt, "captions": caption_prompt, "hookedit": hookedit_prompt,
+           "hookjudge": hookjudge_prompt}
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg
@@ -25,9 +31,14 @@ class ManualResponder:
         return 0                                    # a human (or external cron) writes responses
 
 def _default_claude_model(kind: str, payload: dict) -> dict:
-    """The production model: hand claude -p the committed prompt + the gate's JSON schema."""
+    """The production model: hand claude -p the committed prompt + the gate's JSON schema. For the
+    hookedit gate, also hand it the clip frames (collected from the payload items) as images so the
+    editor SEES each clip and grounds its rewrite in the footage; moments/captions stay text-only."""
     schema = _SCHEMA[kind].model_json_schema()
-    return claude_json(_PROMPT[kind](payload), schema)
+    images = None
+    if kind == "hookedit":
+        images = [f for it in payload.get("items", []) for f in (it.get("frames") or [])] or None
+    return claude_json(_PROMPT[kind](payload), schema, images=images)
 
 class LlmResponder:
     """model(kind, request_payload_dict) -> response_dict. Defaults to `claude -p`; injectable for

@@ -27,6 +27,28 @@ def test_claude_json_extracts_structured_output(mocker):
     assert "--json-schema" in cmd
     i = cmd.index("--allowedTools"); assert cmd[i + 1] == ""   # pure generator
 
+def test_claude_json_with_images_allows_read_and_references_paths(mocker):
+    # The vision-grounded hook editor must SEE frames: with images, the call grants the Read tool and
+    # names the frame paths in the prompt so the model reads them (proven viable in the Task 0a spike).
+    envelope = {"structured_output": {"x": 5}, "result": "", "session_id": "s"}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    out = claude_json("judge these", _SCHEMA, images=["/tmp/a.jpg", "/tmp/b.jpg"])
+    assert out == {"x": 5}
+    cmd = run.call_args[0][0]
+    i = cmd.index("--allowedTools"); assert cmd[i + 1] == "Read"          # vision needs the Read tool
+    prompt = cmd[cmd.index("-p") + 1]
+    assert "/tmp/a.jpg" in prompt and "/tmp/b.jpg" in prompt              # told which frames to read
+
+def test_claude_json_without_images_stays_pure_generator(mocker):
+    # Regression: the default (text-only) path is byte-identical — no Read tool, no file access.
+    envelope = {"structured_output": {"x": 1}}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA)
+    cmd = run.call_args[0][0]
+    i = cmd.index("--allowedTools"); assert cmd[i + 1] == ""
+
 def test_claude_json_falls_back_to_parsing_result_when_no_structured(mocker):
     # If structured_output is absent/null, parse the JSON in `result`.
     envelope = {"structured_output": None, "result": "{\"x\": 9}", "session_id": "s"}
@@ -61,3 +83,36 @@ def test_claude_json_raises_on_non_object_json(mocker):
         mocker.patch("fanops.llm.subprocess.run", return_value=R())
         with pytest.raises(RuntimeError, match="could not parse"):
             claude_json("q", _SCHEMA)
+
+def _rl_envelope():
+    # what `claude -p` actually emits when rate-limited (observed live): rc=1 + an envelope on stdout
+    # carrying api_error_status 429. The creative responder used to treat this as a generic failure
+    # and silently produce nothing.
+    return json.dumps({"type": "result", "subtype": "success", "is_error": True,
+                       "api_error_status": 429, "result": "rate limited"})
+
+def test_claude_json_retries_on_rate_limit_then_succeeds(mocker):
+    from fanops.llm import claude_json as cj
+    class RL: returncode = 1; stdout = _rl_envelope(); stderr = ""
+    class OK: returncode = 0; stdout = json.dumps({"structured_output": {"x": 3}}); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=[RL(), RL(), OK()])
+    sleep = mocker.patch("fanops.llm._sleep")                  # don't actually wait in tests
+    assert cj("q", _SCHEMA) == {"x": 3}                        # succeeds after backing off the 429s
+    assert run.call_count == 3 and sleep.call_count == 2       # retried twice, slept before each retry
+
+def test_claude_json_raises_typed_error_on_persistent_rate_limit(mocker):
+    from fanops.llm import LlmRateLimitError
+    class RL: returncode = 1; stdout = _rl_envelope(); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=RL())
+    mocker.patch("fanops.llm._sleep")
+    with pytest.raises(LlmRateLimitError):                     # typed, not a generic RuntimeError
+        claude_json("q", _SCHEMA)
+
+def test_claude_json_hard_failure_not_retried(mocker):
+    # a non-rate-limit nonzero exit (e.g. auth) must FAIL FAST — no backoff, no retry.
+    class R: returncode = 1; stdout = ""; stderr = "auth failed"
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    sleep = mocker.patch("fanops.llm._sleep")
+    with pytest.raises(RuntimeError, match="claude -p failed"):
+        claude_json("q", _SCHEMA)
+    assert run.call_count == 1 and sleep.call_count == 0

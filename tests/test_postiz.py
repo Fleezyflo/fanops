@@ -46,6 +46,18 @@ def test_payload_shape():
     assert body["value"][0]["image"][0]["path"] == "https://uploads.postiz.com/x.mp4"
 
 
+def test_payload_image_carries_id_and_path_and_post_type():
+    # Round-3 contract fix (verified live vs the running Postiz): this version's image[] requires BOTH
+    # `id` AND `path` (it validates id as a string and the path's extension), and settings needs a
+    # `post_type` of "post"/"story". The uploader feeds "id|path"; build_postiz_payload splits it.
+    p = build_postiz_payload(integration_id="intg_1", platform="instagram", content="fire",
+                             media_urls=["mid_9|https://uploads.postiz.com/x.mp4"],
+                             scheduled_time="2099-01-01T00:00:00Z")
+    img = p["posts"][0]["value"][0]["image"][0]
+    assert img["id"] == "mid_9" and img["path"] == "https://uploads.postiz.com/x.mp4"
+    assert p["posts"][0]["settings"]["post_type"] == "post"
+
+
 # ---- factory wiring ----
 def test_get_poster_returns_postiz(tmp_path, monkeypatch):
     assert isinstance(get_poster(_cfg(tmp_path, monkeypatch)), PostizPoster)
@@ -122,12 +134,14 @@ def test_missing_url_raises(tmp_path, monkeypatch):
 
 
 # ---- media upload (multipart -> uploads.postiz.com path) ----
-def test_postiz_upload_media_returns_hosted_url(tmp_path, monkeypatch, mocker):
+def test_postiz_upload_media_returns_id_and_path(tmp_path, monkeypatch, mocker):
+    # Round-3 contract fix: image[] needs BOTH the media id and its public path, so the uploader returns
+    # them joined "id|path" (build_postiz_payload splits them back). Locked vs the real /upload response.
     cfg = _cfg(tmp_path, monkeypatch)
     f = tmp_path / "a.mp4"; f.write_bytes(b"V")
     mocker.patch("fanops.post.postiz.requests.post",
                  return_value=_R(201, {"id": "img1", "path": "https://uploads.postiz.com/a.mp4"}))
-    assert postiz_upload_media(cfg, f) == "https://uploads.postiz.com/a.mp4"
+    assert postiz_upload_media(cfg, f) == "img1|https://uploads.postiz.com/a.mp4"
 
 def test_postiz_upload_media_401_typed(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch)

@@ -1,10 +1,14 @@
 # src/fanops/transcribe.py
-"""Local Whisper transcription (free, offline, EN/AR). Shells out to `whisper`, parses its
+"""Local Whisper transcription (free, offline, EN/AR). Shells a bounded subprocess, parses its
 JSON into [{start,end,text}] + detected language. Distinguishes 'ran, no speech' (transcript
 [], meta.transcribed=True) from 'not run' (transcript None) so a failed run can recover.
-Falls back turbo->small. Missing JSON -> error state, never a crash."""
+Missing JSON -> error state, never a crash.
+
+ENGINE: prefers faster-whisper large-v3 (the [asr] extra, via the fanops._fwrun runner) — the
+proven music/rap accuracy winner (int8 makes large-v3 practical on CPU). FAILS OPEN to the legacy
+`whisper` CLI (turbo) when faster-whisper is absent (CI / air-gapped), so transcription always runs."""
 from __future__ import annotations
-import json, subprocess
+import json, subprocess, sys
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -86,6 +90,19 @@ def whisper_cmd(src: str, out_dir: str, model: str = "turbo") -> list[str]:
     return ["whisper", "--model", model, "--output_format", "json", "--word_timestamps", "True",
             "--output_dir", out_dir, "--task", "transcribe", src]
 
+def _fw_available() -> bool:
+    """True iff the faster-whisper engine (the [asr] extra) is importable. When False,
+    transcribe_source degrades to the legacy `whisper` CLI — fail-open, today's behavior."""
+    try: import faster_whisper; return True       # noqa: F401  (probe only)
+    except Exception: return False
+
+def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
+    # faster-whisper runner invocation (`python -m fanops._fwrun`). Same --model/--output_dir flags
+    # and audio-LAST shape as whisper_cmd, so the per-source .json lookup and the engine-agnostic
+    # transcribe tests don't care which engine ran. --language "" -> the runner auto-detects (EN+AR).
+    return [sys.executable, "-m", "fanops._fwrun", "--model", model, "--language", language,
+            "--output_dir", out_dir, src]
+
 def _segment(s: dict) -> dict:
     """One transcript segment: {start,end,text}, plus `words` ([{word,start,end}]) when whisper
     emitted word timestamps (--word_timestamps). The words list is kept only when it's a non-empty
@@ -101,8 +118,24 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     if src.meta.get("transcribed") is True:           # FIX: idempotent only when it actually ran
         return led
     out_dir = cfg.agent_io / "transcripts"
+    # Phase D (out-of-lock): the whisper JSON is named by the source stem and is DETERMINISTIC per
+    # source. A lock-free pre-warm pass runs whisper to this path BEFORE the ledger transaction; if that
+    # artifact is already present + parseable, adopt it and SKIP the multi-minute subprocess (and vocal
+    # isolation) entirely — this is what keeps whisper OUT of the lock. The stem is the SOURCE stem in
+    # both engines (isolation moves vocals to "{source_stem}.mp3"), so it's stable. A corrupt/truncated
+    # cache is NOT adopted: parse failure falls through to a real run (which overwrites it).
+    cached = out_dir / f"{Path(src.source_path).stem}.json"
+    if cached.exists():
+        try:
+            data = json.loads(cached.read_text())
+            src.transcript = [_segment(s) for s in data.get("segments", [])]
+            src.language = data.get("language")
+            src.meta["transcribed"] = True
+            led.set_source_state(source_id, SourceState.transcribed)
+            return led
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+            pass                                       # corrupt cache -> fall through to a real run
     out_dir.mkdir(parents=True, exist_ok=True)
-    model = model or cfg.whisper_model               # env override (FANOPS_WHISPER_MODEL), default turbo
     # Vocal isolation (the music-transcription fix): strip the beat with Demucs so Whisper reads the
     # LYRICS, not the instrumental. FAIL-OPEN — isolate_vocals returns the RAW path if demucs is
     # absent/fails, so this never blocks transcription. The isolated mp3 is moved next to the whisper
@@ -114,7 +147,13 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
             target = out_dir / f"{Path(src.source_path).stem}.mp3"
             try: Path(voc).replace(target); audio = str(target)
             except OSError: audio = voc
-    cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model))
+    # Engine: prefer faster-whisper large-v3 (FANOPS_ASR_MODEL, default large-v3) — the proven music
+    # winner; fail open to the legacy `whisper` CLI (FANOPS_WHISPER_MODEL turbo) when the [asr] extra
+    # is absent. Both write JSON named by the INPUT stem, so the parse below is engine-agnostic.
+    if _fw_available():
+        cmd = fw_cmd(audio, str(out_dir), model or cfg.asr_model, cfg.asr_language)
+    else:
+        cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model or cfg.whisper_model))
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_WHISPER_TIMEOUT)
     except (FileNotFoundError, OSError) as e:

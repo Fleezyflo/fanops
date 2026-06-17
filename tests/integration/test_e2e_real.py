@@ -62,6 +62,12 @@ def _make_spoken_sample(dst: Path) -> bool:
 def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypatch):
     if not _have("ffmpeg", "ffprobe", "whisper"):
         _skip_or_fail("needs ffmpeg + whisper on PATH")
+    # This is the legacy `whisper` CLI golden path (gated on the `whisper` binary, pinned to a cached
+    # `tiny` checkpoint). Pin the engine to the CLI so the proof is deterministic even where the [asr]
+    # extra (faster-whisper) is installed — otherwise transcribe would divert to the fw large-v3 runner,
+    # ignore FANOPS_WHISPER_MODEL, and attempt a >1GB download. The fw+large-v3 default is proven on real
+    # data by the operator-run full re-transcribe, not gated into CI behind a heavy model.
+    monkeypatch.setattr("fanops.transcribe._fw_available", lambda: False)
     # Pin the model in-test so the golden path is self-contained: `advance()` -> transcribe
     # reads FANOPS_WHISPER_MODEL, and this guarantees `tiny` regardless of the caller's env.
     monkeypatch.setenv("FANOPS_WHISPER_MODEL", _PINNED_WHISPER_MODEL)

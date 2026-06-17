@@ -302,3 +302,49 @@ def test_burn_hook_only_failopen_on_timeout(tmp_path, mocker):
     ok = overlay.burn_hook_only(str(base), str(out), "WATCH THIS", width=1080, height=1920)
     assert ok is False and out.read_bytes() == b"BASE"    # fail-open: usable file, no hook
     assert seen.get("timeout") == 600.0                   # the bound is actually wired
+
+
+# --- P1 T2: burned-hook legibility guard --------------------------------------------------------
+# The hook already burns white with a thick black outline (reads on any footage), so the remaining
+# legibility risk is a hook too long to read in its ~2.5s top-card window. hook_legibility_warnings
+# is a PURE, fail-open heuristic: it never blocks a clip — the caller logs once and renders anyway.
+
+def test_hook_legibility_clean_for_a_short_hook():
+    assert overlay.hook_legibility_warnings("wait for the drop", width=1080, height=1920) == []
+
+def test_hook_legibility_empty_for_no_hook():
+    assert overlay.hook_legibility_warnings("", width=1080, height=1920) == []
+    assert overlay.hook_legibility_warnings(None, width=1080, height=1920) == []
+
+def test_hook_legibility_warns_on_overlong_hook():
+    long_hook = "wait for the absolutely incredible unbelievable final climactic drop here"
+    warns = overlay.hook_legibility_warnings(long_hook, width=1080, height=1920)
+    assert warns, "an overlong hook should produce a legibility warning"
+
+def test_hook_legibility_warns_on_unbreakable_long_word():
+    warns = overlay.hook_legibility_warnings("a" * 60, width=1080, height=1920)
+    assert warns, "a single word too wide to fit should warn"
+
+
+# --- round-3: auto-fit hook font (a 5-6 word hook must FIT 2 lines, not spill 3 lines off the top) ---
+def test_hook_fontsize_caps_for_short_hooks():
+    cap = int(round(1920 * overlay._HOOK_FONTSIZE_RATIO))
+    assert overlay._hook_fontsize("wait for the drop", 1080, 1920) == cap   # short -> the full big cap
+
+def test_hook_fontsize_shrinks_long_hook_and_clears_the_warning():
+    # The real round-3 case: a 6-word hook warned at the fixed font; auto-fit drops it just enough to
+    # fit 2 lines, so the font is smaller AND the legibility warning is gone.
+    h = "been through the worst, came up anyway"
+    cap = int(round(1920 * overlay._HOOK_FONTSIZE_RATIO))
+    assert overlay._hook_fontsize(h, 1080, 1920) < cap
+    assert overlay.hook_legibility_warnings(h, width=1080, height=1920) == []
+
+def test_hook_fontsize_never_below_floor():
+    floor = int(round(1920 * overlay._HOOK_FONTSIZE_FLOOR))
+    assert overlay._hook_fontsize("x" * 80, 1080, 1920) >= floor
+
+def test_build_ass_burns_a_smaller_font_for_a_long_hook():
+    long_h = "been through the worst, came up anyway"
+    f_long = _hook_style_fields(build_ass([], hook=long_h, clip_start=0.0, clip_end=6.0))
+    f_short = _hook_style_fields(build_ass([], hook="wait for it", clip_start=0.0, clip_end=6.0))
+    assert int(f_long[2]) < int(f_short[2])    # the long hook's burned Fontsize is smaller (field 2)

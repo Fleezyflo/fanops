@@ -27,6 +27,37 @@ def _counts(units) -> str:
     c = Counter(u.state.value for u in units)
     return "".join(f"  - {s}: {n}\n" for s, n in sorted(c.items())) or "  (none)\n"
 
+
+# P3 attribution: which creative decision earns REACH. The signals the algorithm rewards (saves/shares/
+# retention) feed lift_score, but REACH (impressions) is the operator's objective — and lift weights it
+# 0.001 (inert), so this reports the RAW reach per stamped dim value, never lift_score. P4's INPUT.
+_ENGAGEMENT_KEYS = ("saves", "shares", "retention")
+
+def aggregate_by_dim(led: Ledger, dim: str) -> dict:
+    """Group ANALYZED posts by one stamped creative dim (hook_pattern | first_frame_kind | clip_profile
+    | variation_axis) and report per value: n, raw reach (sum+mean), and mean engagement context. REACH-
+    FIRST — the primary number is the raw `reach` metric, not the engagement-skewed lift_score. Posts
+    missing the dim (None) or not yet analyzed are skipped. Pure + empty-safe ({} when nothing matches)."""
+    buckets: dict[str, list] = {}
+    for p in led.posts.values():
+        if p.state is not PostState.analyzed:
+            continue
+        value = getattr(p, dim, None)
+        if value is None:
+            continue
+        buckets.setdefault(str(value), []).append(p)
+    out: dict = {}
+    for value, posts in buckets.items():
+        n = len(posts)
+        reaches = [float(p.metrics.get("reach", 0.0) or 0.0) for p in posts]
+        reach_sum = round(sum(reaches), 4)
+        row = {"n": n, "reach_sum": reach_sum, "reach_mean": round(reach_sum / n, 4)}
+        for k in _ENGAGEMENT_KEYS:
+            vals = [float(p.metrics.get(k, 0.0) or 0.0) for p in posts]
+            row[f"{k}_mean"] = round(sum(vals) / n, 4)
+        out[value] = row
+    return out
+
 def gate_state(led: Ledger, cfg: Config, account: str, platform: Platform,
                _cache: dict[tuple[str, str], str] | None = None, accounts=None) -> str:
     """The learning-loop state for one (account, platform) surface, for the "Lift by variant" digest

@@ -27,8 +27,52 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.text import sanitize_generated_text
+from fanops.hashtags import vet_hashtags
+from fanops.control import load_guidance
+from fanops.hookcheck import is_weak_hook
 
 logger = logging.getLogger(__name__)
+
+_TAG_RE = re.compile(r"#\S+")
+
+# P2 coherent variations. The CHEAP-TEXT axes a justified variant may move (render-expensive frame/
+# length axes are a P4-gated follow-up, NOT here). normalize_variation_axis maps an LLM label to a
+# canonical key (case/space/dash-insensitive), unknown -> None — so a bad label is "unlabeled", never a
+# crash. The coherence gate (T2) requires a KNOWN axis + a rationale; P3 attributes reach by the axis.
+VARIATION_AXES = ("hook_pattern", "hook_string", "caption_angle", "hook_placement")
+
+def normalize_variation_axis(value) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    key = re.sub(r"[\s/\-]+", "_", value.strip().lower())
+    return key if key in VARIATION_AXES else None
+
+def coherent_variation(hook, rationale, *, siblings=frozenset()) -> bool:
+    """T2 coherence gate: a variant earns its extra post ONLY when it is distinct, on-brand AND
+    explained — (a) a non-empty hook that (b) clears the deterministic slop/template/cross-feed-dup
+    floor against its siblings (is_weak_hook), and (c) carries a non-empty rationale. Else dropped:
+    clean beats noise. Pure. NB this proves distinct+on-brand+EXPLAINED, NOT reach-relevant — the
+    empirical justification only arrives with P3/P4."""
+    if not (rationale and str(rationale).strip()):
+        return False
+    if not (hook and str(hook).strip()):
+        return False
+    return not is_weak_hook(hook, siblings)
+
+
+def _tags_in(caption: str | None) -> list[str]:
+    """Hashtags found inside a caption line (the model's tags live in the array AND the caption
+    text); used as the fallback when the structured `hashtags` array is empty."""
+    return _TAG_RE.findall(caption or "")
+
+def _platform_of(surface: str) -> Platform:
+    """The platform half of an 'account/platform' surface key. An unknown/missing platform falls
+    back to instagram (a sane default) rather than crashing an autonomous ingest on a typo'd key."""
+    tail = (surface or "").rsplit("/", 1)[-1].strip().lower()
+    try:
+        return Platform(tail)
+    except ValueError:
+        return Platform.instagram
 
 # DEFAULT English off-brand / begging / main-brand-linkage anti-patterns. Operator-overridable
 # via 00_control/tuning.json -> "offbrand_en" (audit b); when that key is present it REPLACES this
@@ -67,8 +111,6 @@ def brand_risk_flag(caption: str, cfg: Config | None = None) -> str | None:
     m = _risk_re(cfg).search(caption or "")
     return (f"off-brand / breaks bravado guardrail: matched '{m.group(0)}'") if m else None
 
-def _guidance(cfg: Config) -> str:
-    return cfg.context_path.read_text() if cfg.context_path.exists() else ""
 
 def _surface_str(account: str, platform: Platform) -> str:
     return f"{account}/{platform.value}"                  # the documented lookup contract
@@ -144,7 +186,7 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
         "language": src.language if src else None,
-        "guidance": _guidance(cfg),
+        "guidance": load_guidance(cfg),
         "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value,
                       **({"persona": pv} if (pv := personas.get(acct)) else {})}
                      for acct, plat in surfaces],
@@ -198,10 +240,20 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
             led.set_clip_state(clip_id, ClipState.held)
             return led
         reason = brand_risk_flag(item.caption, cfg)          # audit b: honor tuning.json override
+        # brand-risk runs on the ORIGINAL caption (the guardrail stays on what the model wrote);
         if reason and held_reason is None:
             held_reason = reason
-        clip.meta_captions[item.surface] = {"caption": item.caption, "hashtags": item.hashtags,
-                                            "hook": sanitize_generated_text(item.hook, max_words=7)}
+        # ...THEN the hashtags are vetted: the model's tags filtered to the reach-vetted set,
+        # reach-ordered, backfilled, and HARD-capped at 4 (operator rule). Whatever it returned
+        # (5-15 random words) becomes <=4 proven tags. The posted caption IS that vetted tag line.
+        plat = _platform_of(item.surface)
+        tags = vet_hashtags(item.hashtags or _tags_in(item.caption), plat,
+                            src.language if src else None)
+        clip.meta_captions[item.surface] = {"caption": " ".join(tags), "hashtags": tags,
+                                            "hook": sanitize_generated_text(item.hook, max_words=7),
+                                            # P2: carry the variant's declared axis (normalized) + rationale
+                                            "axis": normalize_variation_axis(item.axis),
+                                            "rationale": (item.rationale or "").strip() or None}
     answered = {item.surface for item in cs.items}
     missing = requested - answered
     if missing and held_reason is None:

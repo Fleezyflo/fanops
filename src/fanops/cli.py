@@ -23,6 +23,17 @@ from fanops.variant_amplify import apply_variant_amplify
 from fanops import autopilot, daemon
 from fanops.log import get_logger
 
+def _gates_blocked_note(s) -> str | None:
+    """A LOUD note when the run loop ends with gates still awaiting — distinguishes 'all blocked'
+    from 'nothing to do' (which the bare summary buries). None when converged / no status, so the
+    caller can `if (note := ...)` unconditionally."""
+    aw = (s or {}).get("awaiting", {})
+    m, c = aw.get("moments", 0), aw.get("captions", 0)
+    if m or c:
+        return (f"gates STILL BLOCKED after the run loop: moments={m} captions={c} — the responder "
+                f"is not clearing them (rate limit? repeated validation failures? run `fanops doctor`)")
+    return None
+
 def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
     print(f"sources={len(led.sources)} moments={len(led.moments)} clips={len(led.clips)} "
@@ -593,6 +604,13 @@ def _dispatch(cfg: Config, args) -> int:
                 return 1
             if s["awaiting"]["moments"] == 0 and s["awaiting"]["captions"] == 0:
                 break
+        # B2: if the loop ended with gates still awaiting, say so LOUDLY (a stuck responder used to
+        # exhaust the iterations and fall through silently). Exit stays 0 — a stuck gate is not a
+        # crash; the distinct stderr line + run.log event is what monitoring greps.
+        if (note := _gates_blocked_note(s)):
+            print(note, file=sys.stderr)
+            get_logger(cfg)("run", "-", "gates_blocked",
+                            moments=s["awaiting"]["moments"], captions=s["awaiting"]["captions"])
         # E1: post-loop learning pass — close the feedback loop ONCE per `run` after respond+advance
         # converges. Gated by the identical reconcile guard (pipeline.py:106): live backend + key
         # only. In dryrun (default) the guard short-circuits and the pass is NEVER entered. Runs in
