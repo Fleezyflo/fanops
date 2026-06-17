@@ -46,6 +46,16 @@ def test_hook_editor_explicit_on(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
     assert Config(root=tmp_path).hook_editor is True
 
+def test_hook_router_default_off(monkeypatch, tmp_path):
+    # M2 structural-hooks router: opt-in, default OFF (observe-only annotation when on; non-regression)
+    monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False)
+    assert Config(root=tmp_path).hook_router is False
+
+def test_hook_router_opt_in(monkeypatch, tmp_path):
+    for on in ("1", "true", "yes", "on"):
+        monkeypatch.setenv("FANOPS_HOOK_ROUTER", on)
+        assert Config(root=tmp_path).hook_router is True
+
 def test_dirs(tmp_path):
     c = Config(root=tmp_path)
     assert c.inbox == tmp_path / "MohFlow-FanOps" / "01_inbox"

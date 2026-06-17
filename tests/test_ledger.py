@@ -56,6 +56,22 @@ def test_reconcile_moments_upserts_and_deletes_cascade(tmp_path):
     assert led.moments["m_b"].reason == "b2"                    # B updated in place
     assert "c_a" not in led.clips and "p_a" not in led.posts    # cascade deleted A's lineage
 
+def test_reconcile_preserves_clean_awaiting_strategy_moment(tmp_path):
+    # M2: a clean clip reserved for a not-yet-built strategy (clean_awaiting_strategy:<key>) must NOT be
+    # GC'd when a re-decision drops it from the keep-set — else the future strategy it was reserved for
+    # finds nothing. A plain dropped moment IS still cascade-deleted (control).
+    from fanops.models import MomentState
+    from fanops.router import awaiting
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s", source_path="/x"))
+    led.add_moment(Moment(id="m_await", parent_id="s", content_token="A", start=0, end=2,
+                          reason="a", hook_strategy=awaiting("impact_cut")))   # reserved -> preserve
+    led.add_moment(Moment(id="m_plain", parent_id="s", content_token="B", start=3, end=5, reason="b"))  # control
+    led.reconcile_moments("s", {})                              # empty keep-set: would delete all of s's moments
+    assert "m_await" in led.moments                             # reserved moment SURVIVES GC
+    assert led.moments["m_await"].state is MomentState.decided  # still routable for a future strategy
+    assert "m_plain" not in led.moments                         # control: plain moment cascade-deleted
+
 def test_cascade_preserves_needs_reconcile_post(tmp_path):
     # AUDIT C1: a needs_reconcile post MAY be live on the platform (ambiguous publish). If its
     # moment is dropped by a re-decision, the cascade must NOT delete it — that would orphan a

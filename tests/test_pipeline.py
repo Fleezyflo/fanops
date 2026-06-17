@@ -451,3 +451,35 @@ def test_native_renders_clip_while_third_party_inert(tmp_path, monkeypatch, mock
     assert any(c.parent_id == "mom_n" for c in led.clips.values())     # native moment rendered
     assert led.sources["src_tp"].state is SourceState.catalogued       # third-party untouched
     assert all(m.parent_id != "src_tp" for m in led.moments.values())  # no moment from third-party
+
+
+# ---- M2 (structural-hooks): the hook-strategy router is wired after the critic, before render ----
+def _seed_clean_decided(cfg):
+    # a clean (no-hook) decided moment whose source has a signal peak inside the moment window
+    src = cfg.sources / "src_r.mp4"; _put(src, b"V")
+    from fanops.models import Moment, MomentState
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_r", source_path=str(src), state=SourceState.moments_decided,
+                              sha256="r", width=1920, height=1080, duration=20.0,
+                              signal_peaks=[{"t": 16.0, "score": 0.9}],
+                              transcript=[{"start": 0, "end": 2, "text": "hi"}]))
+        led.add_moment(Moment(id="mom_r", parent_id="src_r", state=MomentState.decided,
+                              start=14.0, end=18.0, reason="punchline"))   # hook=None -> clean
+
+def test_router_on_annotates_clean_moment_with_impact_cut_reservation(tmp_path, monkeypatch, mocker):
+    from fanops.router import awaiting
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_decided(cfg)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")                     # router runs after critic, before render
+    assert Ledger.load(cfg).moments["mom_r"].hook_strategy == awaiting("impact_cut")
+
+def test_router_off_no_annotation_clip_still_renders(tmp_path, monkeypatch, mocker):
+    # non-regression: router DEFAULT OFF -> no annotation, and the clean clip renders exactly as before
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False)
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_decided(cfg)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    led = Ledger.load(cfg)
+    assert led.moments["mom_r"].hook_strategy is None                  # observe-only; OFF = no delta
+    assert any(c.parent_id == "mom_r" for c in led.clips.values())     # clip still renders
