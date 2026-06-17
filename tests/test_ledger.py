@@ -133,3 +133,68 @@ def test_old_ledger_without_variant_streaks_loads(tmp_path):
     cfg.ledger_path.write_text(json.dumps({"sources": {}, "moments": {}, "clips": {}, "posts": {}}))
     led = Ledger.load(cfg)
     assert led.variant_streaks == {}
+
+
+# ---- M1 (structural-hooks): retire_source (cascade, file kept) + rebuild_catalog ----
+def test_retire_source_cascades_non_live_children(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_x", source_path="/x.mp4", sha256="d"))
+    led.add_moment(Moment(id="m", parent_id="src_x", content_token="A", start=0, end=2, reason="a"))
+    led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.rendered))
+    led.retire_source("src_x")
+    assert led.is_retired_source("src_x") and led.sources["src_x"].state is SourceState.retired
+    assert "m" not in led.moments and "c" not in led.clips          # non-live lineage cascade-dropped
+
+def test_retire_source_preserves_live_descendants(tmp_path):
+    from fanops.models import PostState, MomentState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_y", source_path="/y.mp4", sha256="e"))
+    led.add_moment(Moment(id="m", parent_id="src_y", content_token="A", start=0, end=2, reason="a"))
+    led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.published))
+    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.published))
+    led.retire_source("src_y")
+    assert led.is_retired_source("src_y")
+    assert led.moments["m"].state is MomentState.retired           # kept but suppressed (live descendant)
+    assert "c" in led.clips and "p" in led.posts                   # the performance record survives
+
+def test_retire_source_leaves_file_on_disk(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    f = cfg.sources / "src_0123456789ab.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    led.add_source(Source(id="src_0123456789ab", source_path=str(f), sha256="d"))
+    led.retire_source("src_0123456789ab")
+    assert f.exists()                                              # file kept — a live media_url may point at it
+
+def test_rebuild_surfaces_orphan_as_discovered(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    cfg.sources.mkdir(parents=True, exist_ok=True)
+    (cfg.sources / "src_aabbccddeeff.mp4").write_bytes(b"V")        # on disk, no ledger row
+    led.rebuild_catalog(cfg)
+    assert led.sources["src_aabbccddeeff"].state is SourceState.discovered
+
+def test_rebuild_skips_non_source_files(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    cfg.sources.mkdir(parents=True, exist_ok=True)
+    for name in (".gitkeep", ".DS_Store", "notes.txt", "random.mp4"):   # junk / non-src-named
+        (cfg.sources / name).write_bytes(b"x")
+    led.rebuild_catalog(cfg)
+    assert led.sources == {}                                       # nothing bogus catalogued
+
+def test_rebuild_never_resurrects_retired(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    f = cfg.sources / "src_0123456789ab.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    led.add_source(Source(id="src_0123456789ab", source_path=str(f), sha256="d", state=SourceState.retired))
+    led.rebuild_catalog(cfg)
+    assert led.sources["src_0123456789ab"].state is SourceState.retired   # not flipped to discovered
+
+def test_rebuild_idempotent_and_keeps_missing_file_sources(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    cfg.sources.mkdir(parents=True, exist_ok=True)
+    led.add_source(Source(id="src_111111111111", source_path="/gone.mp4", sha256="d",   # file missing on disk
+                          state=SourceState.catalogued))
+    (cfg.sources / "src_aabbccddeeff.mp4").write_bytes(b"V")
+    led.rebuild_catalog(cfg); first = set(led.sources)
+    led.rebuild_catalog(cfg)                                       # re-run is a no-op
+    assert set(led.sources) == first
+    assert led.sources["src_111111111111"].state is SourceState.catalogued   # missing-file source NOT dropped
+    assert led.sources["src_aabbccddeeff"].state is SourceState.discovered
