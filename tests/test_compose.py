@@ -83,3 +83,21 @@ def test_real_moviepy_compose_produces_longer_clip(tmp_path):
     from moviepy import VideoFileClip
     with VideoFileClip(str(out)) as v:
         assert v.duration > 2.0                                # intro + outro cards extend the 2s base
+
+
+# ---- M6 (intro-tease): the compose fingerprint — compose.py has none today (always re-renders). It lets
+# the lock-free prewarm + in-lock commit agree on when an existing composed mp4 may be adopted (no MoviePy
+# under the flock), exactly like clip._render_fingerprint does for the base render. Pure, no MoviePy. ----
+def test_compose_fingerprint_is_deterministic():
+    from fanops.compose import _compose_fingerprint
+    fp1 = _compose_fingerprint("/s/base.mp4", "/s/intro.mp4", {"tease_text": "wait for it"}, 1080, 1920)
+    fp2 = _compose_fingerprint("/s/base.mp4", "/s/intro.mp4", {"tease_text": "wait for it"}, 1080, 1920)
+    assert fp1 == fp2 and isinstance(fp1, str) and len(fp1) == 64   # sha256 hex, stable
+
+def test_compose_fingerprint_changes_with_any_input():
+    from fanops.compose import _compose_fingerprint
+    base = _compose_fingerprint("/s/base.mp4", "/s/intro.mp4", {"tease_text": "wait for it"}, 1080, 1920)
+    assert _compose_fingerprint("/s/OTHER.mp4", "/s/intro.mp4", {"tease_text": "wait for it"}, 1080, 1920) != base
+    assert _compose_fingerprint("/s/base.mp4", "/s/OTHER.mp4", {"tease_text": "wait for it"}, 1080, 1920) != base
+    assert _compose_fingerprint("/s/base.mp4", "/s/intro.mp4", {"tease_text": "DIFFERENT"}, 1080, 1920) != base
+    assert _compose_fingerprint("/s/base.mp4", "/s/intro.mp4", {"tease_text": "wait for it"}, 720, 1280) != base
