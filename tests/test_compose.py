@@ -6,7 +6,7 @@
 import subprocess
 from pathlib import Path
 import pytest
-from fanops.compose import compose_clip, TemplateSpec
+from fanops.compose import compose_clip, prepend_intro, TemplateSpec
 
 
 def _basefile(tmp_path, name="base.mp4", data=b"BASECLIP"):
@@ -101,3 +101,71 @@ def test_compose_fingerprint_changes_with_any_input():
     assert _compose_fingerprint("/s/base.mp4", "/s/OTHER.mp4", {"tease_text": "wait for it"}, 1080, 1920) != base
     assert _compose_fingerprint("/s/base.mp4", "/s/intro.mp4", {"tease_text": "DIFFERENT"}, 1080, 1920) != base
     assert _compose_fingerprint("/s/base.mp4", "/s/intro.mp4", {"tease_text": "wait for it"}, 720, 1280) != base
+
+
+# ---- M6 Task 2: prepend_intro — the compose-PREPEND primitive. Prepends an aspect-normalized intro
+# (video/photo) before the base clip, over a CONTINUOUS music bed (PRD: no silent opener). FAIL-OPEN to
+# a base byte-copy exactly like compose_clip; the validity gate is DURATION-based (expected = intro_seconds
+# + base_dur, within impact_cut.DURATION_TOLERANCE) — a render that drops audio/frames lands a wrong total
+# duration and is rejected. The injected render + probe seams prove the contract with no MoviePy/ffprobe. ----
+def _stub_probe(durs):
+    # path -> duration map; unknown path -> None (unprobeable). Mirrors the real clip._probe_duration shape.
+    return lambda path: durs.get(path)
+
+def test_prepend_missing_intro_failopens(tmp_path):
+    base = _basefile(tmp_path); out = tmp_path / "out.mp4"; logs = []
+    ok = prepend_intro(str(base), str(tmp_path / "nope.mp4"), str(out), tease_text="wait for it",
+                       intro_seconds=2.0, log=logs.append,
+                       render=lambda *a, **k: pytest.fail("renderer must NOT run when the intro asset is missing"),
+                       probe_duration=_stub_probe({}))
+    assert ok is False and out.read_bytes() == b"BASECLIP"
+    assert any("intro asset missing" in m for m in logs)
+
+def test_prepend_success_returns_true(tmp_path):
+    base = _basefile(tmp_path); intro = _basefile(tmp_path, "intro.mp4", b"INTRO"); out = tmp_path / "out.mp4"
+    def fake_render(b, i, o, *, tease_text, intro_seconds, timeout): Path(o).write_bytes(b"PREPENDED")
+    # base 8s + intro 2s -> expected 10s; the (faked) probe reports exactly 10s for the output -> valid.
+    ok = prepend_intro(str(base), str(intro), str(out), tease_text="wait for it", intro_seconds=2.0,
+                       render=fake_render, probe_duration=_stub_probe({str(base): 8.0, str(out): 10.0}))
+    assert ok is True and out.read_bytes() == b"PREPENDED"
+
+def test_prepend_render_exception_failopens(tmp_path):
+    base = _basefile(tmp_path); intro = _basefile(tmp_path, "intro.mp4", b"INTRO"); out = tmp_path / "out.mp4"; logs = []
+    def boom(b, i, o, *, tease_text, intro_seconds, timeout): raise RuntimeError("moviepy audio compositing failed")
+    ok = prepend_intro(str(base), str(intro), str(out), tease_text="x", intro_seconds=2.0,
+                       render=boom, probe_duration=_stub_probe({str(base): 8.0}), log=logs.append)
+    assert ok is False and out.read_bytes() == b"BASECLIP"
+    assert any("prepend failed" in m for m in logs)
+
+def test_prepend_no_output_failopens(tmp_path):
+    base = _basefile(tmp_path); intro = _basefile(tmp_path, "intro.mp4", b"INTRO"); out = tmp_path / "out.mp4"
+    def noop(b, i, o, *, tease_text, intro_seconds, timeout): pass        # writes nothing
+    ok = prepend_intro(str(base), str(intro), str(out), tease_text="x", intro_seconds=2.0,
+                       render=noop, probe_duration=_stub_probe({str(base): 8.0, str(out): 10.0}))
+    assert ok is False and out.read_bytes() == b"BASECLIP"
+
+def test_prepend_duration_mismatch_failopens(tmp_path):
+    # The "silent/gap" failure proxy: the renderer drops the intro segment, so the output is base-length
+    # (8s) not the expected 10s — outside DURATION_TOLERANCE -> rejected, fail-open to the bare base.
+    base = _basefile(tmp_path); intro = _basefile(tmp_path, "intro.mp4", b"INTRO"); out = tmp_path / "out.mp4"; logs = []
+    def short(b, i, o, *, tease_text, intro_seconds, timeout): Path(o).write_bytes(b"TOOSHORT")
+    ok = prepend_intro(str(base), str(intro), str(out), tease_text="x", intro_seconds=2.0,
+                       render=short, probe_duration=_stub_probe({str(base): 8.0, str(out): 8.0}), log=logs.append)
+    assert ok is False and out.read_bytes() == b"BASECLIP"
+    assert any("duration" in m for m in logs)
+
+def test_prepend_unprobeable_output_failopens(tmp_path):
+    # Can't prove validity (probe returns None for the output) -> never ship a possibly-broken composite.
+    base = _basefile(tmp_path); intro = _basefile(tmp_path, "intro.mp4", b"INTRO"); out = tmp_path / "out.mp4"
+    def r(b, i, o, *, tease_text, intro_seconds, timeout): Path(o).write_bytes(b"PREPENDED")
+    ok = prepend_intro(str(base), str(intro), str(out), tease_text="x", intro_seconds=2.0,
+                       render=r, probe_duration=_stub_probe({str(base): 8.0}))   # out path -> None
+    assert ok is False and out.read_bytes() == b"BASECLIP"
+
+def test_prepend_passes_intro_tease_and_seconds_to_renderer(tmp_path):
+    base = _basefile(tmp_path); intro = _basefile(tmp_path, "intro.mp4", b"INTRO"); out = tmp_path / "out.mp4"; seen = {}
+    def r(b, i, o, *, tease_text, intro_seconds, timeout):
+        seen.update(intro=i, tease=tease_text, secs=intro_seconds, t=timeout); Path(o).write_bytes(b"X")
+    prepend_intro(str(base), str(intro), str(out), tease_text="3 incoming", intro_seconds=1.5, timeout=42.0,
+                  render=r, probe_duration=_stub_probe({str(base): 8.0, str(out): 9.5}))
+    assert seen == {"intro": str(intro), "tease": "3 incoming", "secs": 1.5, "t": 42.0}
