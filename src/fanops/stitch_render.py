@@ -67,6 +67,19 @@ def _stitch_clip_id(plan_id: str, aspect_value: str) -> str:
     the bare clip's child_id("clip", moment, aspect) (a stitch is a new clip, never an in-place swap)."""
     return child_id("stitch", plan_id, aspect_value)
 
+def _cut_in_range(params: dict, src) -> bool:
+    """A plan's cut window is renderable iff 0 <= cut_start < cut_end and (when the source duration is
+    known) cut_end does not run past the end of the source. Guards a malformed plan (or a base that got
+    shorter since approval) -> the caller errors it 'cut out of range' instead of producing a bad clip."""
+    try:
+        cs = float(params.get("cut_start")); ce = float(params.get("cut_end"))
+    except (TypeError, ValueError):
+        return False
+    if cs < 0 or ce <= cs:
+        return False
+    dur = getattr(src, "duration", None)
+    return not (dur and ce > float(dur))
+
 def _approved_impact_plans(led: Ledger):
     return [p for p in led.stitch_plans.values()
             if p.state is StitchState.approved and p.strategy_key == STRATEGY_KEY]
@@ -112,6 +125,10 @@ def render_approved_stitches(led: Ledger, cfg: Config) -> Ledger:
             p.state = StitchState.dismissed; p.error_reason = "base superseded"; continue
         if any(po.parent_id == p.clip_id and po.state in _LIVE_POST_STATES for po in led.posts.values()):
             p.state = StitchState.error; p.error_reason = "cannot supersede a live post"; continue
+        mom = led.moments.get(base.parent_id)            # base.parent_id is the moment id
+        src = led.sources.get(mom.parent_id) if mom is not None else None
+        if not _cut_in_range(p.plan_params, src):
+            p.state = StitchState.error; p.error_reason = "cut out of range"; continue
         cw = (p.plan_params["cut_start"], p.plan_params["cut_end"])
         led, clip = render_moment(led, cfg, base.parent_id, aspect=base.aspect, cut_window=cw,
                                   clip_id=_stitch_clip_id(p.id, base.aspect.value), born_state=ClipState.stitch_draft)
