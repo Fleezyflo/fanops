@@ -18,6 +18,16 @@ def test_counts_holds_failures(tmp_path):
     assert "Brand-risk holds" in md and "begging" in md
     assert "Failures" in md and "blotato 422" in md and "bad codec" in md
 
+def test_failures_include_stitch_plan_errors(tmp_path):
+    # M3: a stitch_plan in error must surface in the digest's Failures section (operator visibility,
+    # required from this milestone) — not only posts/sources/moments/clips.
+    from fanops.models import StitchPlan, StitchState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_stitch_plan(StitchPlan(id="sp1", clip_id="c1", strategy_key="impact_cut",
+                                   state=StitchState.error, error_reason="compose failed"))
+    md = render_digest(led, cfg)
+    assert "Failures" in md and "sp1" in md and "compose failed" in md
+
 def test_lists_pending_agent_steps(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     write_request(cfg, kind="moments", key="s1", payload={"source_id": "s1"})
