@@ -81,8 +81,27 @@ def _escape_text(text: str) -> str:
 # overflows the card. The ratios MUST track build_ass's hook style (fontsize + MarginL/R).
 _HOOK_EM_RATIO = 0.45
 _MAX_HOOK_LINES = 2
-_HOOK_FONTSIZE_RATIO = 0.072        # == build_ass hook_fontsize ratio
+_HOOK_FONTSIZE_RATIO = 0.072        # the CAP hook font ratio (big opener, ~138 at 1920 tall)
+_HOOK_FONTSIZE_FLOOR = 0.052        # smallest hook font ratio (~100 at 1920) so a long hook never goes tiny
 _HOOK_MARGIN_LR = 60                # == HOOK style MarginL/MarginR in build_ass
+
+def _hook_fontsize(hook: str | None, width: int, height: int) -> int:
+    """Largest hook font (<= the _HOOK_FONTSIZE_RATIO cap) that wraps `hook` to <=_MAX_HOOK_LINES lines
+    within the usable card width, floored (_HOOK_FONTSIZE_FLOOR) so a long hook never shrinks to
+    unreadable. A short hook keeps the big cap; a 5-6 word hook drops just enough to fit 2 lines -> no
+    3-line top-safe-area spill and no lost wording. PURE; build_ass AND hook_legibility_warnings size
+    from this so they always agree (the warning's ratios MUST track build_ass's hook style)."""
+    cap = max(44, int(round(height * _HOOK_FONTSIZE_RATIO)))
+    text = (hook or "").strip()
+    if not text:
+        return cap
+    floor = max(40, int(round(height * _HOOK_FONTSIZE_FLOOR)))
+    usable = max(1, width - 2 * _HOOK_MARGIN_LR)
+    # len(text) chars must fit in _MAX_HOOK_LINES lines: chars/line = usable/(em*font), so
+    # font <= lines * usable / (len * em). int() truncates DOWN (a slightly smaller font wraps more
+    # safely), then clamp to [floor, cap].
+    fit = int((_MAX_HOOK_LINES * usable) / (len(text) * _HOOK_EM_RATIO))
+    return max(floor, min(cap, fit))
 
 def hook_legibility_warnings(hook: str | None, *, width: int, height: int) -> list[str]:
     """Return legibility warnings for a burned hook, or [] if it should read fine. PURE + fail-open:
@@ -91,7 +110,7 @@ def hook_legibility_warnings(hook: str | None, *, width: int, height: int) -> li
     text = (hook or "").strip()
     if not text:
         return []
-    fontsize = max(44, int(round(height * _HOOK_FONTSIZE_RATIO)))
+    fontsize = _hook_fontsize(text, width, height)   # warn against the SAME auto-fit font build_ass burns
     usable = max(1, width - 2 * _HOOK_MARGIN_LR)
     glyph = _HOOK_EM_RATIO * fontsize
     warns: list[str] = []
@@ -205,7 +224,7 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
     # Format columns are the standard libass V4+ set; field order is load-bearing.
     cap_fontsize = max(48, int(round(height * 0.075)))   # BIG active caption, ~144 at 1920 tall
     cap_margin_v = max(10, int(round(height * 0.16)))    # sit it in the lower third, raised off the edge
-    hook_fontsize = max(44, int(round(height * 0.072)))  # BIG opener, ~138 at 1920 tall
+    hook_fontsize = _hook_fontsize(hook, width, height)  # auto-fit: big for short hooks, shrinks long ones to 2 lines
     hook_margin_v = max(10, int(round(height * 0.14)))   # sit it in the top third, off the edge
     lines += [
         "[V4+ Styles]",

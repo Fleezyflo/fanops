@@ -68,21 +68,31 @@ def _extract_postiz_id(body) -> str | None:
     return None
 
 
+def _postiz_image(u: str) -> dict:
+    # postiz_upload_media returns "id|path"; this Postiz version requires BOTH on image[] (it validates
+    # id as a string AND the path's file extension). Split them back out; defensively fall back to
+    # id-only / path-only for any legacy single-value entry.
+    if "|" in u:
+        mid, mpath = u.split("|", 1); return {"id": mid, "path": mpath}
+    return {"path": u} if u.startswith("http") else {"id": u}
+
 def build_postiz_payload(*, integration_id: str, platform: str, content: str,
                          media_urls: list[str], scheduled_time: str | None) -> dict:
-    # image[] references media ALREADY uploaded to Postiz (uploads.postiz.com path). type=schedule
-    # with the post's own date — Postiz schedules it (a past date posts ~now). __type names the
-    # platform so Postiz applies the right per-network settings.
-    images = [{"path": u} for u in (media_urls or []) if u]
+    # image[] references media ALREADY uploaded to Postiz — this version requires BOTH the upload's
+    # `id` AND its public `path`. postiz_upload_media returns them joined "id|path"; _postiz_image
+    # splits them. type=schedule with the post's own date — Postiz schedules it (a past date posts
+    # ~now). __type names the platform; post_type is REQUIRED, one of "post"/"story" (feed/reel vs story).
+    images = [_postiz_image(u) for u in (media_urls or []) if u]
     return {"type": "schedule", "date": scheduled_time, "shortLink": False, "tags": [],
             "posts": [{"integration": {"id": integration_id},
                        "value": [{"content": content, "image": images}],
-                       "settings": {"__type": platform}}]}
+                       "settings": {"__type": platform, "post_type": "post"}}]}
 
 
 def postiz_upload_media(cfg: Config, path: Path) -> str:
-    """Upload a local file to Postiz (multipart POST /public/v1/upload) -> the uploads.postiz.com
-    public path that build_postiz_payload references. 401 -> typed PostizAuthError (halt)."""
+    """Upload a local file to Postiz (multipart POST /public/v1/upload) -> "id|path": the upload's
+    media id AND its public URL, joined (this Postiz version's image[] requires BOTH). 401 -> typed
+    PostizAuthError (halt)."""
     headers = {"Authorization": _key(cfg)}
     with open(path, "rb") as fh:
         resp = requests.post(f"{_base(cfg)}{_PUBLIC}/upload", headers=headers,
@@ -92,10 +102,11 @@ def postiz_upload_media(cfg: Config, path: Path) -> str:
     if resp.status_code >= 300:
         raise RuntimeError(f"Postiz upload failed ({resp.status_code}): {(resp.text or '')[:200]}")
     body = resp.json()
-    path_url = body.get("path") if isinstance(body, dict) else None
-    if not path_url:
-        raise RuntimeError(f"Postiz upload response missing 'path'; got keys {sorted(body) if isinstance(body, dict) else type(body)}")
-    return path_url
+    media_id = body.get("id") if isinstance(body, dict) else None
+    media_path = body.get("path") if isinstance(body, dict) else None
+    if not (media_id and media_path):
+        raise RuntimeError(f"Postiz upload response missing id/path; got keys {sorted(body) if isinstance(body, dict) else type(body)}")
+    return f"{media_id}|{media_path}"
 
 
 def postiz_list_integrations(cfg: Config) -> list[PostizIntegration]:

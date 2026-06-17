@@ -19,6 +19,12 @@ _SUPERLATIVE = re.compile(r"\bhis\s+(\w+est|most)\b", re.IGNORECASE)
 _EDITING = re.compile(r"\bcuts\b", re.IGNORECASE)
 # tired filler cliches that read as generic regardless of the clip
 _CLICHES = ("hits different", "everyone replayed", "everybody replayed")
+# camera/shot-description hooks: the viewer already SEES the shot, so narrating it ('drone up', 'zoom
+# in', 'the camera pans') carries no curiosity. Narrow term list -> high precision (round-3 floor).
+_SHOT_DESC = re.compile(r"\b(drone|zoom(s|ing)?|pan(s|ning)?|aerial|dolly|b-roll|camera)\b", re.IGNORECASE)
+# NB: the no-antecedent "pronoun soup" legibility call ('she says it back') is DELIBERATELY left to the
+# prompt's COLD-VIEWER GATE + the LLM editor, not a regex here — a deterministic rule over-fires (it
+# would also kill the legible 'he names the day it changed'). Keeping this guard high-precision.
 
 # Opening-template clustering (the 'before he was X' x6 / 'wait for the Y' x6 tell): EXACT-string
 # dedup misses it because the strings differ. We key on the first two WORD tokens; once this many
@@ -46,6 +52,8 @@ def is_weak_hook(text: str | None, used: set[str] = frozenset()) -> bool:
         return True                                   # 'his hardest/coldest/most ...' generic template
     if _EDITING.search(low):
         return True                                   # hooks on the editing, not the content
+    if _SHOT_DESC.search(low):
+        return True                                   # narrates the camera/shot, not the content
     if any(c in low for c in _CLICHES):
         return True                                   # tired filler cliche
     return False

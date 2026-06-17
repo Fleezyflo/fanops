@@ -324,3 +324,27 @@ def test_hook_legibility_warns_on_overlong_hook():
 def test_hook_legibility_warns_on_unbreakable_long_word():
     warns = overlay.hook_legibility_warnings("a" * 60, width=1080, height=1920)
     assert warns, "a single word too wide to fit should warn"
+
+
+# --- round-3: auto-fit hook font (a 5-6 word hook must FIT 2 lines, not spill 3 lines off the top) ---
+def test_hook_fontsize_caps_for_short_hooks():
+    cap = int(round(1920 * overlay._HOOK_FONTSIZE_RATIO))
+    assert overlay._hook_fontsize("wait for the drop", 1080, 1920) == cap   # short -> the full big cap
+
+def test_hook_fontsize_shrinks_long_hook_and_clears_the_warning():
+    # The real round-3 case: a 6-word hook warned at the fixed font; auto-fit drops it just enough to
+    # fit 2 lines, so the font is smaller AND the legibility warning is gone.
+    h = "been through the worst, came up anyway"
+    cap = int(round(1920 * overlay._HOOK_FONTSIZE_RATIO))
+    assert overlay._hook_fontsize(h, 1080, 1920) < cap
+    assert overlay.hook_legibility_warnings(h, width=1080, height=1920) == []
+
+def test_hook_fontsize_never_below_floor():
+    floor = int(round(1920 * overlay._HOOK_FONTSIZE_FLOOR))
+    assert overlay._hook_fontsize("x" * 80, 1080, 1920) >= floor
+
+def test_build_ass_burns_a_smaller_font_for_a_long_hook():
+    long_h = "been through the worst, came up anyway"
+    f_long = _hook_style_fields(build_ass([], hook=long_h, clip_start=0.0, clip_end=6.0))
+    f_short = _hook_style_fields(build_ass([], hook="wait for it", clip_start=0.0, clip_end=6.0))
+    assert int(f_long[2]) < int(f_short[2])    # the long hook's burned Fontsize is smaller (field 2)

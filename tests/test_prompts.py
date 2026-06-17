@@ -315,3 +315,28 @@ def test_hookedit_prompt_keeps_the_same_hard_rules_and_grounding():
     assert "never about the artist" in low                            # no-hype contract (operator rule)
     assert "generic" in low and "null" in low                         # ban filler; null -> clean clip
     assert "true to" in low or "grounding" in low                     # grounded, no bait
+
+
+def test_hook_spec_demands_anchored_specific_not_abstract():
+    # Round-4 (web-verified craft): the prior spec REWARDED vagueness — its COLD-VIEWER gate taught
+    # converting a concrete specific ('the rose lands on one word') INTO a universal mood ('all that
+    # bravado, then this'). That is backwards: verified short-form craft says generic-that-fits-any-clip
+    # is the #1 failure mode. The corrected bar — ANCHOR the hook to a concrete specific of THIS clip,
+    # and apply the PORTABILITY test: if the line could sit on ANOTHER clip it is generic and rejected.
+    # A confusing line is fixed by ADDING the concrete detail, never by abstracting.
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "anchor" in low                          # build the hook around a concrete specific of THIS clip
+    assert "another clip" in low                    # the portability test: fits another clip -> reject
+    assert "all that bravado" not in low            # the concrete->abstract exemplar is GONE
+    assert "the rose lands on one word" not in low  # ...and the specific it was taught to destroy
+    assert "concrete" in low and "specific" in low  # specificity is the bar, not abstraction
+
+def test_hookedit_prompt_inherits_the_anchor_rule():
+    # The shared spec carries the anchor + portability bar into the vision editor too (same bar).
+    p = hookedit_prompt({"guidance": "", "items": [{"moment_id": "m1", "hook": "x",
+                         "transcript_excerpt": "y", "reason": "z", "language": "en"}]})
+    low = p.lower()
+    assert "anchor" in low and "another clip" in low
+    assert "all that bravado" not in low

@@ -58,3 +58,34 @@ def test_distinct_openings_are_not_clustered():
 def test_common_first_word_different_second_not_clustered():
     used = {"the bar nobody saw", "the last word lands"}               # share only "the", not 2 tokens
     assert is_weak_hook("the line he kept", used=used) is False        # second token differs -> not a cluster
+
+
+# --- round-3 (operator: "the hook writing is not good"): two NEW deterministic floors. The hooks
+# drifted CRYPTIC ('the rose lands on one word') and SHOT-DESCRIPTIVE ('drone up, crowd in'). The
+# legibility judgment stays in the prompt+editor; these two kills are the high-precision floor. ---
+@pytest.mark.parametrize("hook", [
+    "drone up, crowd in", "zoom in slow", "the camera pans out", "aerial over the stage",
+])
+def test_shot_description_hooks_are_rejected(hook):
+    # A hook that narrates the CAMERA/shot is slop: the viewer already SEES the shot, so it carries no
+    # curiosity. Narrow term list (drone/zoom/pan/aerial/camera) -> high precision, no false positives.
+    assert is_weak_hook(hook) is True
+
+# NB: the no-antecedent "pronoun soup" call ('she says it back') is intentionally NOT a deterministic
+# kill — a regex over-fires (it would also reject the legible 'he names the day it changed'). The
+# _hook_spec COLD-VIEWER GATE + the LLM editor own that legibility judgment; this floor stays precise.
+@pytest.mark.parametrize("hook", [
+    "he started by copying his idols",   # opens 'he' but the object is concrete -> MUST pass
+    "cross him, meet the beast",         # 'him' is an object, payoff is concrete
+    "loyal, until you cross him",
+    "POV: you found him first",          # the hook-spec's own pov example
+    "when you have to let go",
+    "the stage flips a switch",
+    "all that bravado, then this",       # 'this' deictic but NOT a pronoun-subject opener
+    "the coldest way to say goodbye",    # 'coldest' is not 'his -est' -> not the superlative template
+    "from rock bottom, a lane opened",
+    "been through the worst, came up anyway",
+])
+def test_cold_viewer_floors_do_not_false_positive(hook):
+    # The two new floors are narrow on purpose: real, legible hooks (incl. my round-3 batch) must pass.
+    assert is_weak_hook(hook) is False

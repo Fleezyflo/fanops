@@ -270,6 +270,18 @@ class Config:
         return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
 
     @property
+    def hook_judge(self) -> bool:
+        # Specificity critic (Phase 3 of the hook framework): with this ON, AFTER the editor finalizes
+        # each hook an INDEPENDENT LLM pass judges it against the verified retention rubric (anchored to
+        # a concrete specific of THIS clip; passes the portability test; opens a loop) and REJECTS to a
+        # clean clip whatever fails — the enforcement (teeth) the deterministic floor defers to a critic.
+        # DEFAULT OFF (opt-in, exactly like hook_editor was at introduction): proven on the corpus first,
+        # then promoted to default. Only requested/held under FANOPS_RESPONDER=llm; runs only on hooks
+        # the editor has already finalized (hook_edited). Only explicit on-words enable it.
+        v = (os.getenv("FANOPS_HOOK_JUDGE") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def variant_learning(self) -> bool:
         # Creative variation v2 (closing the learning loop): with this ON, request_captions biases
         # the next caption toward the per-account hook variant that has earned a TRUSTWORTHY win

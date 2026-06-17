@@ -107,6 +107,10 @@ class Moment(BaseModel):
                                                 # this moment's hook; latches True so it never re-edits
                                                 # (no loop). Default False -> old ledgers load + are
                                                 # eligible for one edit pass.
+    hook_judged: bool = False                   # the specificity critic (hookjudge.py) has judged this
+                                                # hook against the rubric; latches True so it never
+                                                # re-judges (no loop). Default False -> old ledgers
+                                                # load + are eligible for one judge pass.
     signal_score: float = 0.0
     hook_pattern: Optional[str] = None          # P1 provenance: which of the 6 _hook_spec patterns the
                                                 # responder/editor chose for this hook (open_loop|curiosity|
@@ -223,3 +227,17 @@ class HookEditItem(BaseModel):
 class HookEditDecision(BaseModel):
     request_id: str
     items: list[HookEditItem] = Field(default_factory=list)
+
+# Specificity critic (hookjudge.py): the INDEPENDENT LLM judge the hookcheck floor references ("a later
+# LLM critic") but that was never built. Runs AFTER the editor on each kept hook and applies the verified
+# retention rubric (anchored to a concrete specific of THIS clip; passes the portability test; opens a
+# loop). reject (keep=False) -> the hook is nulled to a clean clip (clean beats slop). One verdict per
+# moment_id; keep defaults True so the judge's silence/omission NEVER strips a hook (fail-open).
+class HookJudgeItem(BaseModel):
+    moment_id: str
+    keep: bool = True               # True = hook clears the rubric; False = reject to a clean clip
+    why: str = ""                   # one line: the deciding rubric test (unanchored / generic / no loop)
+
+class HookJudgeDecision(BaseModel):
+    request_id: str
+    items: list[HookJudgeItem] = Field(default_factory=list)

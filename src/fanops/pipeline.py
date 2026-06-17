@@ -14,6 +14,7 @@ from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments
 from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pending
+from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
 from fanops.crosspost import crosspost_clips
@@ -60,16 +61,24 @@ def _prewarm(cfg: Config, aspects: set[Fmt], log) -> None:
     # Finalize hooks on the throwaway ledger (ingest_hook_edit only READS the response + mutates the
     # ledger — no disk side effects) so a warmed render's fingerprint matches the in-lock render and the
     # commit skips ffmpeg. Mirror advance()'s render gate so we don't warm a hook the editor will rewrite.
-    hold = False
+    hold_edit = hold_judge = False
     if cfg.hook_editor:
         try:
             led = ingest_hook_edit(led, cfg)
             if cfg.responder_mode == "llm":
-                hold = hook_edit_pending(led, cfg)
+                hold_edit = hook_edit_pending(led, cfg)
         except Exception:
-            hold = False
+            hold_edit = False
+    if cfg.hook_judge:                                    # Phase 3 critic: don't warm a render of a hook
+        try:                                             # the judge may reject (fingerprint would mismatch)
+            led = ingest_hook_judge(led, cfg)
+            if cfg.responder_mode == "llm":
+                hold_judge = hook_judge_pending(led, cfg)
+        except Exception:
+            hold_judge = False
     for m in list(led.moments.values()):
-        if m.state is MomentState.decided and not (hold and not m.hook_edited):
+        if m.state is MomentState.decided and not (hold_edit and not m.hook_edited) \
+                and not (hold_judge and not m.hook_judged):
             try:
                 led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
             except Exception as e:
@@ -133,7 +142,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # the feed. Gated on cfg.hook_editor AND the llm responder (the only path that can answer the
         # gate; without it the gate would never clear and HOLD rendering forever). DEFAULT OFF -> this
         # block is skipped entirely and rendering is byte-identical to today.
-        hold_hooks = False
+        hold_hooks = hold_judge = False
         if cfg.hook_editor:
             try:
                 # ALWAYS consume an already-written answer (review HIGH): if the operator flips
@@ -149,10 +158,26 @@ def advance(cfg: Config, *, base_time: str) -> dict:
             except Exception as e:                       # fail-open: never let the editor wedge a pass
                 log("hookedit", "-", "error", err=str(e)[:120])
                 hold_hooks = False
+        # Specificity critic (Phase 3, opt-in via cfg.hook_judge): runs AFTER the editor on each finalized
+        # hook and REJECTS a generic/unanchored one to a clean clip. Same gate contract as the editor —
+        # request + HOLD only on the llm path (the only responder that can answer); ingest always applies
+        # a written verdict. Fail-open: a critic error never wedges a pass (hold_judge stays False).
+        if cfg.hook_judge:
+            try:
+                if cfg.responder_mode == "llm":
+                    led = request_hook_judge(led, cfg)   # open the critic gate (idempotent per batch set)
+                led = ingest_hook_judge(led, cfg)        # apply the critic's verdicts whenever they land
+                if cfg.responder_mode == "llm":
+                    hold_judge = hook_judge_pending(led, cfg)  # unanswered -> HOLD rendering this pass
+            except Exception as e:
+                log("hookjudge", "-", "error", err=str(e)[:120])
+                hold_judge = False
         for m in list(led.moments.values()):
             if m.state is MomentState.decided:
                 if hold_hooks and not m.hook_edited:
                     continue                             # wait for the feed editor before burning this hook
+                if hold_judge and not m.hook_judged:
+                    continue                             # wait for the critic's verdict before burning
                 try:
                     led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
                     for clip in clips:
