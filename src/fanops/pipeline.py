@@ -51,6 +51,7 @@ def _prewarm(cfg: Config, aspects: set[Fmt], log) -> None:
     except Exception as e:
         log("prewarm", "-", "warn", err=str(e)[:120]); return
     for s in list(led.sources.values()):
+        if s.origin_kind == "third_party": continue       # M1: third-party assets are INERT to clip-production
         try:
             if s.state is SourceState.catalogued:
                 led = transcribe_source(led, cfg, s.id)
@@ -115,6 +116,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
 
         # transcribe -> signals -> request moments (per source), each quarantined
         for s in list(led.sources.values()):
+            if s.origin_kind == "third_party": continue   # M1: third-party assets are INERT to clip-production
             try:
                 if s.state is SourceState.catalogued:
                     led = transcribe_source(led, cfg, s.id)
