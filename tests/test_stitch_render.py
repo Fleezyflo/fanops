@@ -398,3 +398,49 @@ def test_prewarm_intro_stamps_fp_lockfree(tmp_path, mocker):
     # the stamped fp must equal what the in-lock commit will recompute -> a following commit ADOPTS it
     render_approved_stitches(led, cfg)
     assert led.clips[cid].state is ClipState.stitch_draft and led.stitch_plans["iplan"].state is StitchState.in_use
+
+
+# ---- M6 Task 6: retry-cap (flaky matcher/compose pairs park after N failed passes) + per-format strategies
+# filter (the kill-switch freezes a disabled format's approved plans) + the disabled-format count. ----
+def test_intro_render_parks_after_retry_cap(tmp_path):
+    # no prewarmed composite -> each in-lock commit is a failed attempt (prewarm runs first every pass); after
+    # the cap the plan is PARKED (error), not retried forever. "until the clip/asset changes" = a new plan id.
+    import fanops.stitch_render as sr
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg)
+    for _ in range(sr.MAX_INTRO_RENDER_ATTEMPTS - 1):
+        render_approved_stitches(led, cfg)
+        assert led.stitch_plans["iplan"].state is StitchState.approved   # still trying, under the cap
+    render_approved_stitches(led, cfg)                                   # the capping pass
+    assert led.stitch_plans["iplan"].state is StitchState.error
+    assert "after" in (led.stitch_plans["iplan"].error_reason or "")
+
+def test_intro_render_attempts_reset_implicitly_on_adopt(tmp_path):
+    # a failed pass increments attempts; a later successful prewarm still adopts (attempts irrelevant once warm)
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg)
+    render_approved_stitches(led, cfg)                                   # 1 failed attempt
+    assert led.stitch_plans["iplan"].render_attempts == 1
+    _prewarm_intro_composite(cfg, led)
+    render_approved_stitches(led, cfg)
+    assert led.stitch_plans["iplan"].state is StitchState.in_use
+
+def test_render_approved_strategies_filter_freezes_disabled(tmp_path):
+    # per-format kill-switch: a strategy NOT in the enabled set is frozen (left approved), never rendered
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg); _prewarm_intro_composite(cfg, led)
+    render_approved_stitches(led, cfg, strategies={"impact_cut"})        # intro_tease disabled
+    assert led.stitch_plans["iplan"].state is StitchState.approved
+    assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
+
+def test_mine_strategies_filter_excludes_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
+    cfg = Config(root=tmp_path)
+    led = _seed_intro(cfg, matches=[{"asset_id": "intro1", "fit_score": 0.9, "rationale": "x", "tease_text": "w"}])
+    _write_fp(cfg, "clip_base", "basefp")
+    mine_suggestions(led, cfg, strategies={"impact_cut"})                # intro_tease excluded from this pass
+    assert led.stitch_plans == {}
+
+def test_approved_disabled_count(tmp_path):
+    from fanops.stitch_render import approved_disabled_count
+    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg)
+    assert approved_disabled_count(led, enabled={"impact_cut"}) == 1     # the intro plan's format is disabled
+    assert approved_disabled_count(led, enabled={"intro_tease"}) == 0    # enabled -> not frozen
+    assert approved_disabled_count(led, enabled=set()) == 1              # both off -> frozen

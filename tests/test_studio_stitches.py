@@ -24,6 +24,16 @@ def test_pending_stitches_lists_suggested(tmp_path):
     plans = views.pending_stitches(cfg)
     assert [p["id"] for p in plans] == ["sp1"] and plans[0]["strategy_key"] == "impact_cut"
 
+def test_pending_stitches_surfaces_intro_tease(tmp_path):
+    # M6: the Stitches panel is strategy-agnostic — an intro_tease suggestion surfaces with its rank + rationale
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_stitch_plan(StitchPlan(id="it1", clip_id="clip_1", strategy_key="intro_tease",
+                                       asset_ids=["intro1"], rank_score=0.9, rationale="stage entrance pairs"))
+    rows = views.pending_stitches(cfg)
+    assert len(rows) == 1 and rows[0]["strategy_key"] == "intro_tease"
+    assert rows[0]["rationale"] == "stage entrance pairs" and rows[0]["asset_ids"] == ["intro1"]
+
 def test_pending_stitches_fail_open_on_absent_ledger(tmp_path):
     assert views.pending_stitches(Config(root=tmp_path)) == []   # never 500
 

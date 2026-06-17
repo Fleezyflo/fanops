@@ -539,3 +539,64 @@ def test_impact_cut_killswitch_warns_and_does_not_render(tmp_path, monkeypatch, 
     assert led.stitch_plans["plan_k"].state is StitchState.approved      # not rendered, not retracted
     assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
     assert "feature OFF" in cfg.log_path.read_text()                     # the warning fired
+
+
+# ---- M6 (intro-tease): the matcher gate + producer wired into advance (gated on intro_tease + responder llm) ----
+def _seed_clean_nopeak_decided(cfg):
+    # a clean (no-hook) decided moment with NO signal peak -> the router reserves it intro_tease (when enabled)
+    src = cfg.sources / "src_i.mp4"; _put(src, b"V")
+    from fanops.models import Moment, MomentState
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_i", source_path=str(src), state=SourceState.moments_decided,
+                              sha256="i", width=1920, height=1080, duration=20.0,
+                              transcript=[{"start": 0, "end": 2, "text": "hi"}]))   # no signal_peaks -> no impact-cut
+        led.add_moment(Moment(id="mom_i", parent_id="src_i", state=MomentState.decided,
+                              start=0.0, end=18.0, reason="clean payoff"))           # hook=None -> clean
+        led.add_source(Source(id="intro_a", source_path=str(cfg.sources / "intro_a.mp4"),
+                              state=SourceState.catalogued, origin_kind="third_party"))   # a candidate intro asset
+
+def test_intro_tease_matcher_gate_requested(tmp_path, monkeypatch, mocker):
+    # router on + intro_tease on + responder llm: advance reserves the clean moment intro_tease and OPENS the
+    # matcher gate (no responder answers it here -> no plan yet, which is the benign fail-open).
+    from fanops.agentstep import pending
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1"); monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_nopeak_decided(cfg)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    led = Ledger.load(cfg)
+    from fanops.router import awaiting
+    assert led.moments["mom_i"].hook_strategy == awaiting("intro_tease")  # reserved for the matcher
+    assert pending(cfg, kind="intro_match")                               # the matcher gate was opened
+    assert not [p for p in led.stitch_plans.values() if p.strategy_key == "intro_tease"]  # no answer -> no plan
+
+def test_intro_tease_off_no_matcher_gate(tmp_path, monkeypatch, mocker):
+    # intro_tease OFF: no reservation, no matcher gate, clean_final (non-regression)
+    from fanops.agentstep import pending
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1"); monkeypatch.delenv("FANOPS_INTRO_TEASE", raising=False)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_nopeak_decided(cfg)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    led = Ledger.load(cfg)
+    from fanops.router import CLEAN_FINAL
+    assert led.moments["mom_i"].hook_strategy == CLEAN_FINAL
+    assert pending(cfg, kind="intro_match") == []
+
+def test_intro_tease_killswitch_warns(tmp_path, monkeypatch, mocker):
+    # an approved intro_tease plan with the format OFF stays approved (frozen, not rendered) + warns
+    from fanops.models import StitchPlan, StitchState, ClipState, Clip
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False); monkeypatch.delenv("FANOPS_INTRO_TEASE", raising=False)
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker)
+    with Ledger.transaction(cfg) as led:
+        led.clips["clip_i"] = Clip(id="clip_i", parent_id="m_i", path=str(cfg.clips / "clip_i.mp4"),
+                                   state=ClipState.rendered)
+        led.add_stitch_plan(StitchPlan(id="plan_i", clip_id="clip_i", strategy_key="intro_tease",
+                                       asset_ids=["intro_a"], plan_params={"intro_asset_id": "intro_a",
+                                       "tease_text": "wait", "intro_seconds": 2.0}, state=StitchState.approved))
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    led = Ledger.load(cfg)
+    assert led.stitch_plans["plan_i"].state is StitchState.approved      # frozen, not rendered
+    assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
+    assert "feature OFF" in cfg.log_path.read_text()
