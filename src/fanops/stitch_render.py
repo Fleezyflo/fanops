@@ -1,12 +1,13 @@
 # src/fanops/stitch_render.py
-"""M4 (structural-hooks): the impact-cut PRODUCER — the two ledger-side steps that turn a router
-reservation into an operator-approved, rendered impact-cut.
+"""M4/M5 (structural-hooks): the stitch PRODUCER — the ledger-side steps that turn router reservations
+into operator-approved, rendered structural hooks.
 
-  suggest_impact_cuts(led, cfg)      -> creates `suggested` StitchPlans for routed moments (in-lock safe;
-                                        renders nothing). Re-routes the moment to `stitch:impact_cut`.
-  render_approved_stitches(led, cfg) -> renders `approved` plans into `stitch_draft` clips (T4).
+  mine_suggestions(led, cfg, log)    -> M5 routine pass: collect candidates across strategies, RANK by
+                                        fit, dedupe, emit at most MAX_SUGGESTIONS_PER_PASS NEW `suggested`
+                                        plans (in-lock safe; renders nothing). Re-routes drained moments.
+  render_approved_stitches(led, cfg) -> renders `approved` plans into `stitch_draft` clips (M4).
 
-Both are gated by the caller on `cfg.impact_cut` (default OFF). suggest only mutates the ledger, so it
+Both are gated by the caller on `cfg.impact_cut` (default OFF). mining only mutates the ledger, so it
 runs inside the advance transaction; the heavy render in render_approved_stitches runs LOCK-FREE."""
 from __future__ import annotations
 import json
@@ -37,28 +38,56 @@ def _read_fingerprint(cfg: Config, clip_id: str) -> str | None:
         return None
 
 
-def suggest_impact_cuts(led: Ledger, cfg: Config) -> Ledger:
-    """For each moment the router reserved `clean_awaiting_strategy:impact_cut`, create a suggested
-    impact-cut StitchPlan for each valid bare clip (idempotent via the content-addressed id; the base
-    fingerprint is pinned for the supersede check), then re-route the moment to `stitch:impact_cut`.
-    A degenerate cut yields no plan and the moment stays reserved (re-tried next pass). Renders nothing."""
+# M5: the routine pass emits at most this many NEW suggestions per pass — an anti-spam UX bound (PRD),
+# NOT a cursor. Capped-out candidates stay reserved and are reconsidered next pass (they drain over passes).
+MAX_SUGGESTIONS_PER_PASS = 5
+
+
+def _impact_cut_candidates(led: Ledger, cfg: Config, log) -> list[tuple]:
+    """Collect (plan, moment_id) impact-cut candidates from router-reserved moments WITHOUT mutating the
+    ledger — the read-only mining step. Per-candidate fail-open: a strategy error on one clip logs + skips,
+    never aborts the pass (PRD: a poisoned pair must not wedge the loop)."""
+    out: list[tuple] = []
     for m in list(led.moments.values()):
         if (m.hook_strategy or "") != _IMPACT_AWAITING:
             continue
         src = led.sources.get(m.parent_id)
         if src is None:
             continue
-        produced = False
         for c in list(led.clips.values()):
             if c.parent_id != m.id or c.state in _NON_BASE_STATES:
                 continue
-            plan = make_stitch_plan(c, m, src, base_fp=_read_fingerprint(cfg, c.id))
-            if plan is None:
-                continue
-            led.add_stitch_plan(plan)            # idempotent: setdefault by content-addressed id (dedup re-emit)
-            produced = True
-        if produced:
-            led.moments[m.id].hook_strategy = _IMPACT_STITCHED   # the format handler acted
+            try:
+                plan = make_stitch_plan(c, m, src, base_fp=_read_fingerprint(cfg, c.id))
+            except Exception as e:                       # fail-open per candidate — the pass still completes
+                log("impact_cut", c.id, "warn", err=str(e)[:120]); continue
+            if plan is not None:
+                out.append((plan, m.id))
+    return out
+
+
+def mine_suggestions(led: Ledger, cfg: Config, log=None) -> Ledger:
+    """The routine pairing pass (M5) — the load-bearing loop. Collect candidate stitch suggestions across
+    strategies (impact_cut is the only producer today; M6 adds intro-tease), RANK by `rank_score` (desc;
+    tie -> content-addressed id, deterministic), DEDUPE against the ledger (an id already present in ANY
+    state is never re-emitted — `dismissed` stays terminal), and emit at most MAX_SUGGESTIONS_PER_PASS
+    NEW ones this pass (anti-spam). A moment is re-routed to `stitch:<strategy>` only once ALL of its
+    candidates exist in the ledger, so a capped-out aspect stays reserved and is reconsidered next pass.
+    Ledger-only mutation (safe in-lock); renders nothing."""
+    log = log or (lambda *a, **k: None)
+    candidates = _impact_cut_candidates(led, cfg, log)   # [+ future strategy producers]
+    fresh = [(p, mid) for (p, mid) in candidates if p.id not in led.stitch_plans]
+    fresh.sort(key=lambda pm: (-(pm[0].rank_score or 0.0), pm[0].id))   # best fit first, deterministic tie-break
+    for plan, _mid in fresh[:MAX_SUGGESTIONS_PER_PASS]:
+        led.add_stitch_plan(plan)                        # idempotent: setdefault by content-addressed id
+    # re-route a moment only when EVERY one of its candidate plans now exists (emitted now or earlier/dismissed),
+    # so a capped-out candidate keeps the moment reserved for next pass instead of being silently dropped
+    by_moment: dict[str, list[str]] = {}
+    for plan, mid in candidates:
+        by_moment.setdefault(mid, []).append(plan.id)
+    for mid, plan_ids in by_moment.items():
+        if all(pid in led.stitch_plans for pid in plan_ids):
+            led.moments[mid].hook_strategy = _IMPACT_STITCHED
     return led
 
 
