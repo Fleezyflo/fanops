@@ -11,13 +11,23 @@ compose"; True signals a real composed render). Runs OUTSIDE any ledger flock (a
 a long or hung render never wedges the ledger — the one safety property that keeps a heavy in-process
 MoviePy render off the autonomous lock-holding path."""
 from __future__ import annotations
-import shutil
+import hashlib, json, shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
 # Parity with clip.py / overlay.py ffmpeg bound — a produced render re-encodes, same ceiling.
 _RENDER_TIMEOUT = 600.0
+
+# M6 (intro-tease): compose had NO fingerprint (it always re-rendered). A prepend render is heavy MoviePy
+# that must run LOCK-FREE (the prewarm model), so — exactly like clip._render_fingerprint — this captures
+# everything that determines the composed bytes (base + intro asset paths, the plan params, the base
+# dimensions the prepend normalizes to) so the in-lock commit can adopt a prewarmed mp4 without re-rendering.
+def _compose_fingerprint(base_path: str, intro_path: str, params: dict, base_w: int, base_h: int) -> str:
+    payload = {"base": base_path, "intro": intro_path,
+               "params": json.dumps(params, sort_keys=True, default=str), "w": base_w, "h": base_h}
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
 
 # Cross-platform font fallback when the caller gives no font path. MoviePy 2.x TextClip wants a font
 # FILE (not a family name), so a bare "Arial Unicode MS" won't resolve — we hand it a real .ttf/.ttc.
