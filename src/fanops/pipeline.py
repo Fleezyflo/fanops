@@ -16,7 +16,7 @@ from fanops.moments import request_moments, ingest_moments
 from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pending
 from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending
 from fanops.router import route_moments
-from fanops.stitch_render import (suggest_impact_cuts, render_approved_stitches,
+from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
                                   prewarm_approved_stitches, approved_impact_cut_count)
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
@@ -212,7 +212,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # (cfg.impact_cut) + fail-open: a producer error never wedges a pass. Default OFF -> byte-identical.
         if cfg.impact_cut:
             try:
-                led = suggest_impact_cuts(led, cfg)
+                led = mine_suggestions(led, cfg, log)        # M5: ranked, top-N-capped suggestions (impact_cut today)
                 led = render_approved_stitches(led, cfg)     # normally adopts the prewarmed mp4 (ffmpeg in-lock only for a just-approved plan)
             except Exception as e:
                 log("impact_cut", "-", "error", err=str(e)[:120])
