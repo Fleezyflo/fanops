@@ -13,9 +13,9 @@ from __future__ import annotations
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import ClipState, StitchState, PostState
+from fanops.models import ClipState, StitchState, PostState, StitchPlan, stitch_plan_id
 from fanops.ids import child_id
-from fanops.router import awaiting, stitched
+from fanops.router import awaiting, stitched, CLEAN_AWAITING
 from fanops.impact_cut import make_stitch_plan, STRATEGY_KEY
 
 # A bare clip in any of these states is not a valid impact-cut base: error/retired are broken/gone, and a
@@ -23,6 +23,12 @@ from fanops.impact_cut import make_stitch_plan, STRATEGY_KEY
 _NON_BASE_STATES = (ClipState.error, ClipState.retired, ClipState.stitch_draft)
 _IMPACT_AWAITING = awaiting("impact_cut")        # "clean_awaiting_strategy:impact_cut"
 _IMPACT_STITCHED = stitched("impact_cut")        # "stitch:impact_cut"
+# M6 intro-tease: the second strategy. _INTRO_AWAITING moments carry the matcher's pairings on
+# Moment.intro_matches; the producer pairs the TOP one. INTRO_TEASE_SECONDS is the "wait for it" tease
+# length the prepend shows the intro for (the matcher picks the asset + text, not the duration in MVP).
+INTRO_STRATEGY = "intro_tease"
+_INTRO_AWAITING = awaiting("intro_tease")        # "clean_awaiting_strategy:intro_tease"
+INTRO_TEASE_SECONDS = 2.0
 # A base post in any of these states is LIVE on (or in-flight to) a platform — supersede must BLOCK and let
 # the operator decide, never silently retire a possibly-published post. A `queued` post is retired instead.
 _LIVE_POST_STATES = (PostState.submitting, PostState.submitted, PostState.published,
@@ -66,6 +72,39 @@ def _impact_cut_candidates(led: Ledger, cfg: Config, log) -> list[tuple]:
     return out
 
 
+def _intro_tease_candidates(led: Ledger, cfg: Config, log) -> list[tuple]:
+    """Collect (plan, moment_id) intro-tease candidates from router-reserved moments whose matcher pairings
+    have landed (Moment.intro_matches) WITHOUT mutating the ledger. Gated on cfg.intro_tease — a stale
+    reservation left by a since-disabled format must not produce plans. Pairs the TOP (best-fit) match per
+    moment onto each of its bare clips; rank_score = the pairing's fit_score so it ranks against impact_cut.
+    Per-candidate fail-open (a malformed match logs + skips, never aborts the pass)."""
+    if not cfg.intro_tease:
+        return []
+    out: list[tuple] = []
+    for m in list(led.moments.values()):
+        if (m.hook_strategy or "") != _INTRO_AWAITING:
+            continue
+        matches = m.intro_matches or []
+        if not matches:                                  # matcher not answered (or no usable pairing) -> benign skip
+            continue
+        top = matches[0]                                 # ingest sorted best-fit first
+        for c in list(led.clips.values()):
+            if c.parent_id != m.id or c.state in _NON_BASE_STATES:
+                continue
+            try:
+                params = {"intro_asset_id": top["asset_id"], "tease_text": top["tease_text"],
+                          "intro_seconds": INTRO_TEASE_SECONDS}
+                plan = StitchPlan(id=stitch_plan_id(c.id, [top["asset_id"]], INTRO_STRATEGY, params),
+                                  clip_id=c.id, strategy_key=INTRO_STRATEGY, asset_ids=[top["asset_id"]],
+                                  plan_params=params, state=StitchState.suggested,
+                                  base_fingerprint=_read_fingerprint(cfg, c.id),
+                                  rank_score=round(float(top["fit_score"]), 4), rationale=top.get("rationale"))
+            except Exception as e:                       # fail-open per candidate — the pass still completes
+                log("intro_tease", c.id, "warn", err=str(e)[:120]); continue
+            out.append((plan, m.id))
+    return out
+
+
 def mine_suggestions(led: Ledger, cfg: Config, log=None) -> Ledger:
     """The routine pairing pass (M5) — the load-bearing loop. Collect candidate stitch suggestions across
     strategies (impact_cut is the only producer today; M6 adds intro-tease), RANK by `rank_score` (desc;
@@ -75,7 +114,7 @@ def mine_suggestions(led: Ledger, cfg: Config, log=None) -> Ledger:
     candidates exist in the ledger, so a capped-out aspect stays reserved and is reconsidered next pass.
     Ledger-only mutation (safe in-lock); renders nothing."""
     log = log or (lambda *a, **k: None)
-    candidates = _impact_cut_candidates(led, cfg, log)   # [+ future strategy producers]
+    candidates = _impact_cut_candidates(led, cfg, log) + _intro_tease_candidates(led, cfg, log)
     fresh = [(p, mid) for (p, mid) in candidates if p.id not in led.stitch_plans]
     fresh.sort(key=lambda pm: (-(pm[0].rank_score or 0.0), pm[0].id))   # best fit first, deterministic tie-break
     for plan, _mid in fresh[:MAX_SUGGESTIONS_PER_PASS]:
@@ -87,7 +126,9 @@ def mine_suggestions(led: Ledger, cfg: Config, log=None) -> Ledger:
         by_moment.setdefault(mid, []).append(plan.id)
     for mid, plan_ids in by_moment.items():
         if all(pid in led.stitch_plans for pid in plan_ids):
-            led.moments[mid].hook_strategy = _IMPACT_STITCHED
+            cur = led.moments[mid].hook_strategy or ""        # derive the stitched key from this moment's reservation
+            if cur.startswith(CLEAN_AWAITING + ":"):          # clean_awaiting_strategy:<key> -> stitch:<key>
+                led.moments[mid].hook_strategy = stitched(cur.split(":", 1)[1])
     return led
 
 
