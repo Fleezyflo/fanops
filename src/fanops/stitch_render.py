@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import ClipState, StitchState, PostState, StitchPlan, stitch_plan_id
+from fanops.models import ClipState, StitchState, PostState, StitchPlan, stitch_plan_id, Clip
 from fanops.ids import child_id
 from fanops.router import awaiting, stitched, CLEAN_AWAITING
 from fanops.impact_cut import make_stitch_plan, STRATEGY_KEY
@@ -160,55 +160,151 @@ def approved_impact_cut_count(led: Ledger) -> int:
     return len(_approved_impact_plans(led))
 
 
+def _approved_plans(led: Ledger):
+    """Every approved-but-unrendered plan across ALL strategies (render_approved dispatches by strategy_key)."""
+    return [p for p in led.stitch_plans.values() if p.state is StitchState.approved]
+
+
+def _retire_queued_base(led: Ledger, p: StitchPlan) -> None:
+    """Retire a still-queued bare base post so the feed never doubles up once a stitch goes in_use. A LIVE
+    base post never reaches here (the supersede precheck blocks it); a `queued` one is safely retired."""
+    for po in led.posts.values():
+        if po.parent_id == p.clip_id and po.state is PostState.queued:
+            po.state = PostState.retired
+
+
+def _intro_render_target(led: Ledger, cfg: Config, p: StitchPlan):
+    """Resolve (base_clip, intro_source, stitch_cid, out_path) for an intro_tease plan, or None when the base
+    clip or the intro asset is gone (commit then errors / waits, never raises)."""
+    base = led.clips.get(p.clip_id)
+    asset_id = (p.asset_ids or [None])[0]
+    intro = led.sources.get(asset_id) if asset_id else None
+    if base is None or intro is None or not intro.source_path:
+        return None
+    cid = _stitch_clip_id(p.id, base.aspect.value)
+    return base, intro, cid, cfg.clips / f"{cid}.mp4"
+
+
+def _intro_compose_fp(led: Ledger, base: Clip, intro, params: dict) -> str:
+    """The compose fingerprint pinning a prewarmed intro composite (base + intro + params + base source dims),
+    so the lock-free prewarm and the in-lock commit agree on when to adopt — mirrors clip._render_fingerprint."""
+    from fanops.compose import _compose_fingerprint
+    mom = led.moments.get(base.parent_id)
+    src = led.sources.get(mom.parent_id) if mom else None
+    w = (src.width if src else 0) or 0; h = (src.height if src else 0) or 0
+    return _compose_fingerprint(base.path, intro.source_path, params, w, h)
+
+
 def prewarm_approved_stitches(led: Ledger, cfg: Config, log) -> None:
-    """Lock-free: render each approved impact-cut plan's mp4 + render-fingerprint sidecar so the in-lock
-    commit (render_approved_stitches) ADOPTS the warm output with no ffmpeg under the lock. Mutations to
-    this throwaway `led` are discarded; only the on-disk artifacts persist. Fail-open per plan."""
+    """Lock-free: render each approved plan's mp4 + render-fingerprint sidecar so the in-lock commit ADOPTS
+    the warm output with no heavy render under the lock. Dispatches by strategy_key (impact_cut -> ffmpeg
+    cut-window; intro_tease -> MoviePy compose-prepend). Mutations to this throwaway `led` are discarded;
+    only the on-disk artifacts persist. Fail-open per plan."""
     from fanops.clip import render_moment                # local import: clip imports are heavy; avoid at module load
-    for p in _approved_impact_plans(led):
-        base = led.clips.get(p.clip_id)
-        if base is None or base.state in _NON_BASE_STATES:
-            continue
-        try:
-            cw = (p.plan_params["cut_start"], p.plan_params["cut_end"])
-            render_moment(led, cfg, base.parent_id, aspect=base.aspect, cut_window=cw,
-                          clip_id=_stitch_clip_id(p.id, base.aspect.value), born_state=ClipState.stitch_draft)
-        except Exception as e:                            # fail-open: the commit pass renders it in-lock instead
-            log("impact_cut", p.id, "warn", err=str(e)[:120])
+    for p in _approved_plans(led):
+        if p.strategy_key == INTRO_STRATEGY:
+            _prewarm_intro(led, cfg, p, log)
+        else:
+            _prewarm_impact(led, cfg, p, render_moment, log)
+
+
+def _prewarm_impact(led: Ledger, cfg: Config, p: StitchPlan, render_moment, log) -> None:
+    base = led.clips.get(p.clip_id)
+    if base is None or base.state in _NON_BASE_STATES:
+        return
+    try:
+        cw = (p.plan_params["cut_start"], p.plan_params["cut_end"])
+        render_moment(led, cfg, base.parent_id, aspect=base.aspect, cut_window=cw,
+                      clip_id=_stitch_clip_id(p.id, base.aspect.value), born_state=ClipState.stitch_draft)
+    except Exception as e:                                # fail-open: the commit pass renders it in-lock instead
+        log("impact_cut", p.id, "warn", err=str(e)[:120])
+
+
+def _prewarm_intro(led: Ledger, cfg: Config, p: StitchPlan, log) -> None:
+    """Lock-free compose-prepend: produce the composite mp4 and stamp its compose-fp sidecar so the in-lock
+    commit adopts it (MoviePy NEVER runs under the flock — unlike impact_cut, intro_tease has no in-lock
+    fallback; an un-prewarmed plan simply waits for the next pass). Fail-open: prepend_intro already degrades
+    to a base copy on any MoviePy failure, in which case no fp is stamped and the commit keeps waiting."""
+    from fanops.compose import prepend_intro
+    target = _intro_render_target(led, cfg, p)
+    if target is None:
+        return                                            # base/intro gone -> commit errors/waits
+    base, intro, cid, out_path = target
+    if base.state in _NON_BASE_STATES:
+        return
+    fp = _intro_compose_fp(led, base, intro, p.plan_params)
+    if out_path.exists() and out_path.stat().st_size > 0 and _read_fingerprint(cfg, cid) == fp:
+        return                                            # already warm
+    try:
+        ok = prepend_intro(base.path, intro.source_path, str(out_path),
+                           tease_text=p.plan_params.get("tease_text", ""),
+                           intro_seconds=float(p.plan_params.get("intro_seconds", INTRO_TEASE_SECONDS)),
+                           log=lambda m: log("intro_tease", p.id, "warn", err=m))
+        if ok:                                            # stamp the skip fingerprint ONLY on a real composite
+            (cfg.clips / f"{cid}.render.json").write_text(json.dumps({"fp": fp}))
+    except Exception as e:                                # belt-and-braces: prepend_intro itself fails open, so rare
+        log("intro_tease", p.id, "warn", err=str(e)[:120])
 
 
 def render_approved_stitches(led: Ledger, cfg: Config) -> Ledger:
-    """In-lock commit for each approved impact-cut plan. Supersede precedence (PRD, CLOSED requirement):
-      - base clip gone               -> plan `error` "base clip missing"
-      - base fingerprint drifted     -> plan auto-`dismissed` "base superseded" (the pinned render changed)
-      - a LIVE base post exists       -> plan `error` "cannot supersede a live post" (operator decides)
-      - else render the stitch_draft clip (normally adopts the prewarmed mp4 via the fingerprint-skip — no
-        ffmpeg under the lock; a plan approved AFTER the prewarm snapshot is rendered in-lock, like a first-pass
-        bare clip), set the plan `in_use`, and RETIRE any still-queued base post (no feed double-post).
-    A failed stitch render (e.g. duration-validity) errors the plan; the bare clip already shipped upstream."""
+    """In-lock commit for each approved plan. COMMON supersede precedence (PRD, CLOSED requirement) runs first
+    for every strategy: base clip gone -> `error` "base clip missing"; base fingerprint drifted -> auto-
+    `dismissed` "base superseded"; a LIVE base post exists -> `error` "cannot supersede a live post". Then the
+    render DISPATCHES by strategy_key (impact_cut -> render_moment cut-window; intro_tease -> adopt the
+    prewarmed compose composite). A successful commit sets the plan `in_use` and RETIRES any still-queued base
+    post; a failed render errors the plan (the bare clip already shipped upstream)."""
     from fanops.clip import render_moment
-    for p in _approved_impact_plans(led):
-        base = led.clips.get(p.clip_id)
+    for p in _approved_plans(led):
+        base = _precheck(led, cfg, p)
         if base is None:
-            p.state = StitchState.error; p.error_reason = "base clip missing"; continue
-        cur_fp = _read_fingerprint(cfg, p.clip_id)
-        if p.base_fingerprint is not None and cur_fp != p.base_fingerprint:
-            p.state = StitchState.dismissed; p.error_reason = "base superseded"; continue
-        if any(po.parent_id == p.clip_id and po.state in _LIVE_POST_STATES for po in led.posts.values()):
-            p.state = StitchState.error; p.error_reason = "cannot supersede a live post"; continue
-        mom = led.moments.get(base.parent_id)            # base.parent_id is the moment id
-        if mom is None:                                  # base orphaned from its moment -> fail VISIBLE, never
-            p.state = StitchState.error; p.error_reason = "moment missing"; continue  # a KeyError that wedges the loop
-        src = led.sources.get(mom.parent_id)
-        if not _cut_in_range(p.plan_params, src):
-            p.state = StitchState.error; p.error_reason = "cut out of range"; continue
-        cw = (p.plan_params["cut_start"], p.plan_params["cut_end"])
-        led, clip = render_moment(led, cfg, base.parent_id, aspect=base.aspect, cut_window=cw,
-                                  clip_id=_stitch_clip_id(p.id, base.aspect.value), born_state=ClipState.stitch_draft)
-        if clip.state is ClipState.error:
-            p.state = StitchState.error; p.error_reason = clip.error_reason or "stitch render failed"; continue
-        p.state = StitchState.in_use
-        for po in led.posts.values():                     # retire a still-queued bare post so the feed never doubles up
-            if po.parent_id == p.clip_id and po.state is PostState.queued:
-                po.state = PostState.retired
+            continue                                      # precheck set the terminal state + reason
+        if p.strategy_key == INTRO_STRATEGY:
+            _commit_intro(led, cfg, p, base)
+        else:
+            _commit_impact(led, cfg, p, base, render_moment)
     return led
+
+
+def _precheck(led: Ledger, cfg: Config, p: StitchPlan):
+    """The strategy-agnostic supersede precedence. Returns the base Clip to render, or None when the plan was
+    terminated here (state + error_reason already set)."""
+    base = led.clips.get(p.clip_id)
+    if base is None:
+        p.state = StitchState.error; p.error_reason = "base clip missing"; return None
+    if p.base_fingerprint is not None and _read_fingerprint(cfg, p.clip_id) != p.base_fingerprint:
+        p.state = StitchState.dismissed; p.error_reason = "base superseded"; return None
+    if any(po.parent_id == p.clip_id and po.state in _LIVE_POST_STATES for po in led.posts.values()):
+        p.state = StitchState.error; p.error_reason = "cannot supersede a live post"; return None
+    return base
+
+
+def _commit_impact(led: Ledger, cfg: Config, p: StitchPlan, base: Clip, render_moment) -> None:
+    mom = led.moments.get(base.parent_id)                # base.parent_id is the moment id
+    if mom is None:                                      # base orphaned from its moment -> fail VISIBLE, never
+        p.state = StitchState.error; p.error_reason = "moment missing"; return  # a KeyError that wedges the loop
+    src = led.sources.get(mom.parent_id)
+    if not _cut_in_range(p.plan_params, src):
+        p.state = StitchState.error; p.error_reason = "cut out of range"; return
+    cw = (p.plan_params["cut_start"], p.plan_params["cut_end"])
+    _led, clip = render_moment(led, cfg, base.parent_id, aspect=base.aspect, cut_window=cw,
+                               clip_id=_stitch_clip_id(p.id, base.aspect.value), born_state=ClipState.stitch_draft)
+    if clip.state is ClipState.error:
+        p.state = StitchState.error; p.error_reason = clip.error_reason or "stitch render failed"; return
+    p.state = StitchState.in_use
+    _retire_queued_base(led, p)
+
+
+def _commit_intro(led: Ledger, cfg: Config, p: StitchPlan, base: Clip) -> None:
+    """Adopt the prewarmed compose composite (NEVER renders MoviePy in-lock). An un-prewarmed plan stays
+    `approved` and waits for the next lock-free prewarm; a missing intro asset errors the plan."""
+    target = _intro_render_target(led, cfg, p)
+    if target is None:
+        p.state = StitchState.error; p.error_reason = "intro asset missing"; return
+    _base, intro, cid, out_path = target
+    fp = _intro_compose_fp(led, base, intro, p.plan_params)
+    if out_path.exists() and out_path.stat().st_size > 0 and _read_fingerprint(cfg, cid) == fp:
+        led.clips[cid] = Clip(id=cid, parent_id=base.parent_id, state=ClipState.stitch_draft,
+                              path=str(out_path), aspect=base.aspect)
+        p.state = StitchState.in_use
+        _retire_queued_base(led, p)
+    # else: not prewarmed yet -> leave approved; next pass's lock-free prewarm produces it, a later commit adopts
