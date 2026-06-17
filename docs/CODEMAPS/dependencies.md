@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-18 | Files scanned: pyproject.toml, config.py, llm.py, post/*, .github/workflows/ci.yml | Token estimate: ~730 | CI ruff-gate corrected -->
+<!-- Generated: 2026-06-18 | Files scanned: pyproject.toml, config.py, llm.py, post/*, .github/workflows/ci.yml | Token estimate: ~745 | incl. M6 FANOPS_INTRO_TEASE -->
 # FanOps Dependencies
 
 ## External binaries (subprocess, every call hard-timeout-bounded)
@@ -50,9 +50,11 @@ Extras:
 - `FANOPS_ARTIST_NAME`, `FANOPS_BURN_SUBS`, `FANOPS_SUBTITLE_FONT`, `FANOPS_WHISPER_MODEL`,
   `FANOPS_PUBLISH_LEAD_MINUTES`, `FANOPS_RESPONDER` (manual default), `FANOPS_HOOK_EDITOR` (ON), `FANOPS_VISUAL_START` (ON).
 
-**Structural hooks (M2–M4, ALL default OFF):**
+**Structural hooks (M2–M6, ALL default OFF):**
 - `FANOPS_HOOK_ROUTER` (M2: read-only Moment hook_strategy classifier), `FANOPS_IMPACT_CUT`
-  (M4: produce + render operator-approved impact-cuts; needs the router on to reserve moments).
+  (M4: produce + render operator-approved impact-cuts; needs the router on to reserve moments),
+  `FANOPS_INTRO_TEASE` (M6: pair a clean clip with a third-party intro asset + compose-PREPEND a
+  "wait for it" tease; needs the router on + `FANOPS_RESPONDER=llm` for the LLM-vision matcher gate).
 
 **Learning family (ALL default OFF, fail-safe):**
 - `FANOPS_CREATIVE_VARIATION`, `FANOPS_VARIANT_LEARNING` (+_MIN_POSTS/_MIN_GAP),

@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-18 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, cutover.py | Token estimate: ~960 -->
+<!-- Generated: 2026-06-18 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py | Token estimate: ~985 | incl. M6 intro-tease -->
 # FanOps Data
 
 No database. ONE JSON ledger + operator-editable control files, all under the data tree.
@@ -27,8 +27,8 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log` + `stitch_plans`
   (M3 structural-hooks). Versioned: `SCHEMA_VERSION=2` + `_MIGRATIONS` (ledger.py; v1→v2 injects the
   empty `stitch_plans` map — old ledgers load clean); a NEWER on-disk version → `_NewerSchema` refuses to
-  load (exit 2) rather than silently drop fields. New OPTIONAL entity fields (Moment.hook_strategy,
-  StitchPlan.*) ride pydantic defaults — no migration. Inner dicts of variant_streaks/tag_log remain
+  load (exit 2) rather than silently drop fields. New OPTIONAL entity fields (Moment.{hook_strategy,
+  intro_matches}, StitchPlan.*) ride pydantic defaults — no migration. Inner dicts of variant_streaks/tag_log remain
   untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
@@ -36,7 +36,8 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 ```
 Source: catalogued -> transcribed -> signalled -> moments_requested -> moments_decided | error
         | retired (M1 retire_source: cascade-drop descendants, file KEPT on disk) | discovered (M1 rebuild_catalog orphan — inert until confirmed)
-Moment: decided -> clipped | retired | error    (M2: router stamps .hook_strategy on a `decided` moment, renders nothing)
+Moment: decided -> clipped | retired | error    (M2: router stamps .hook_strategy on a `decided` moment, renders nothing;
+        M6: .intro_matches holds the LLM-vision matcher's ranked intro pairings for an intro_tease-reserved moment)
 Clip:   rendered -> captions_requested -> captioned -> queued -> published -> analyzed
         | held | retired | error
         | stitch_draft (M3/M4: a stitched clip BORN here — absent from crosspost's `captioned` select AND
@@ -45,8 +46,11 @@ Post:   queued -> submitting -> submitted -> published -> analyzed
         | failed (definitely-not-posted, re-queueable) | needs_reconcile (MAY be live — poll,
         never blind re-POST) | retired (M4: a queued base post superseded by an approved stitch) | error
 StitchPlan (M3 structural-hooks): suggested -> approved -> in_use | dismissed | error
-        (suggested=an impact-cut idea; approved gates the lock-free render; in_use=rendered into a
-        stitch_draft clip; dismissed/error terminal — e.g. "base superseded" on fingerprint drift)
+        (suggested=an impact-cut/intro-tease idea; approved gates the lock-free render; in_use=rendered into a
+        stitch_draft clip; dismissed/error terminal — e.g. "base superseded" on fingerprint drift, or M6
+        "intro compose failed after N attempts" once render_attempts hits MAX_INTRO_RENDER_ATTEMPTS)
+IntroMatchDecision (M6 agent-step, intro_match.py): ranked IntroMatchItem pairings {moment_id, asset_id,
+        fit_score, rationale, tease_text} from the LLM-vision matcher; ephemeral gate, SEPARATE from the durable stitch_plan id
 ```
 
 Key fields: parent_id lineage Post→Clip→Moment→Source; `Source.origin_kind` (M1: native|third_party;

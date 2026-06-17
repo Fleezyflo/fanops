@@ -58,10 +58,14 @@ def route_moments(led: "Ledger", cfg: "Config", *, hold_hooks: bool = False, hol
     for m in led.moments.values():
         if m.state is not MomentState.decided: continue
         if (hold_hooks and not m.hook_edited) or (hold_judge and not m.hook_judged): continue
+        if (m.hook_strategy or "").startswith(CLEAN_AWAITING + ":"):  # FORWARD-ONLY: keep an existing structural
+            continue                                          # reservation — never silently demote it when a format is toggled OFF
         if m.hook:                                            # the text hook survived the critic -> no stitch
             led.moments[m.id].hook_strategy = TEXT
         elif _has_peak_in_window(led, m):                     # clean + a peak in window -> reserve impact_cut
-            led.moments[m.id].hook_strategy = awaiting("impact_cut")
-        else:                                                 # clean, nothing reservable -> ship bare
+            led.moments[m.id].hook_strategy = awaiting("impact_cut")   # deterministic high-confidence format wins
+        elif cfg.intro_tease:                                 # M6: clean, no peak -> reserve intro_tease (matcher pairs it)
+            led.moments[m.id].hook_strategy = awaiting("intro_tease")
+        else:                                                 # clean, nothing reservable / intro_tease off -> ship bare
             led.moments[m.id].hook_strategy = CLEAN_FINAL
     return led
