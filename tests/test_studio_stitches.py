@@ -89,3 +89,23 @@ def test_release_route(tmp_path):
     cfg = Config(root=tmp_path); _seed_stitch_draft(cfg)
     r = _client(cfg).post("/stitches/release", data={"ids": ["stitch_x"]})
     assert r.status_code == 200 and Ledger.load(cfg).clips["stitch_x"].state is ClipState.captioned
+
+
+# ---- M5: the routine loop's operator-facing value — rationale + rank in the approval surface ----
+def test_pending_stitches_surfaces_rationale_ordered_by_rank(tmp_path):
+    with Ledger.transaction(cfg := Config(root=tmp_path)) as led:
+        led.add_stitch_plan(StitchPlan(id="lo", clip_id="c1", strategy_key="impact_cut",
+                                       rank_score=0.3, rationale="impact peak at 4.0s (score 0.3)"))
+        led.add_stitch_plan(StitchPlan(id="hi", clip_id="c2", strategy_key="impact_cut",
+                                       rank_score=0.9, rationale="impact peak at 11.0s (score 0.9)"))
+    plans = views.pending_stitches(cfg)
+    assert [p["id"] for p in plans] == ["hi", "lo"]               # best-fit (highest rank) first
+    assert plans[0]["rationale"] == "impact peak at 11.0s (score 0.9)"
+    assert plans[0]["rank_score"] == 0.9
+
+def test_stitches_route_shows_rationale(tmp_path):
+    with Ledger.transaction(cfg := Config(root=tmp_path)) as led:
+        led.add_stitch_plan(StitchPlan(id="sp9", clip_id="c1", strategy_key="impact_cut",
+                                       rank_score=0.8, rationale="impact peak at 9.0s (score 0.8)"))
+    r = _client(cfg).get("/stitches")
+    assert r.status_code == 200 and b"impact peak at 9.0s" in r.data
