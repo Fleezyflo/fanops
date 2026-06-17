@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
-from fanops.models import (Source, Moment, Clip, Post, StitchPlan,
+from fanops.models import (Source, Moment, Clip, Post, StitchPlan, StitchState,
                            SourceState, MomentState, ClipState, PostState)
 
 
@@ -309,3 +309,15 @@ class Ledger:
                 continue                               # junk / non-source-named file -> ignore
             if f.stem not in self.sources:             # orphan on disk -> surface as discovered (inert)
                 self.sources[f.stem] = Source(id=f.stem, state=SourceState.discovered, source_path=str(f))
+
+    # ---- M3 (structural-hooks): stitch_plan ops (operator-approval spine; caller holds the transaction) ----
+    def add_stitch_plan(self, plan: StitchPlan) -> None:
+        self.stitch_plans.setdefault(plan.id, plan)    # idempotent by content-addressed id (dedup re-emit)
+    def approve_stitch_plan(self, plan_id: str) -> None:
+        p = self.stitch_plans.get(plan_id)             # in-lock re-check: ONLY a suggested plan approves, so a
+        if p is not None and p.state is StitchState.suggested:   # second/contended approval is a clean no-op
+            p.state = StitchState.approved                       # (never a second render in M4)
+    def dismiss_stitch_plan(self, plan_id: str) -> None:
+        p = self.stitch_plans.get(plan_id)             # suggested|approved -> dismissed (terminal); an in_use
+        if p is not None and p.state in (StitchState.suggested, StitchState.approved):   # plan is forward-only
+            p.state = StitchState.dismissed
