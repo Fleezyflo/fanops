@@ -436,6 +436,20 @@ def pending_stitches(cfg: Config) -> list:
         return []
 
 
+def pending_stitch_drafts(cfg: Config) -> list:
+    """Lock-free read-model for the Stitches tab (M4): rendered `stitch_draft` clips awaiting the operator's
+    RELEASE (the second gate — approved plans render into these unpostable drafts; releasing one makes it
+    crosspost-eligible). Fail-open — a torn/absent ledger yields [], never a 500 (the Studio invariant)."""
+    try:
+        led = Ledger.load(cfg)
+        return [{"id": c.id, "parent_id": c.parent_id, "aspect": c.aspect.value}
+                for c in led.clips.values() if c.state is ClipState.stitch_draft]
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("stitches", "-", "error", err=str(exc)[:160])
+        return []
+
+
 def golive_status(cfg: Config) -> GoLiveStatus:
     """Lock-free read-model for the Go-Live tab: the publish mode (dryrun/live), whether Postiz is
     configured (postiz_url is shown — it is NON-secret; key_set is a BOOL only, the key itself is never

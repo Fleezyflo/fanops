@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-17 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, cutover.py, autopilot.py | Token estimate: ~820 -->
+<!-- Generated: 2026-06-18 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, cutover.py | Token estimate: ~960 -->
 # FanOps Data
 
 No database. ONE JSON ledger + operator-editable control files, all under the data tree.
@@ -24,22 +24,29 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
   LockBusyError. `Ledger.transaction()` holds the lock across load→mutate→save.
 - Writes: tmp file + `os.replace` (atomic). Reads in Studio are lock-free (atomic replace
   guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
-- Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log`.
-  Versioned: `SCHEMA_VERSION=1` + `_MIGRATIONS` (ledger.py); a NEWER on-disk version → `_NewerSchema`
-  refuses to load (exit 2) rather than silently drop fields. Inner dicts of variant_streaks/tag_log
-  remain untyped (known gap).
+- Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log` + `stitch_plans`
+  (M3 structural-hooks). Versioned: `SCHEMA_VERSION=2` + `_MIGRATIONS` (ledger.py; v1→v2 injects the
+  empty `stitch_plans` map — old ledgers load clean); a NEWER on-disk version → `_NewerSchema` refuses to
+  load (exit 2) rather than silently drop fields. New OPTIONAL entity fields (Moment.hook_strategy,
+  StitchPlan.*) ride pydantic defaults — no migration. Inner dicts of variant_streaks/tag_log remain
+  untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
 
 ```
 Source: catalogued -> transcribed -> signalled -> moments_requested -> moments_decided | error
         | retired (M1 retire_source: cascade-drop descendants, file KEPT on disk) | discovered (M1 rebuild_catalog orphan — inert until confirmed)
-Moment: decided -> clipped | retired | error
+Moment: decided -> clipped | retired | error    (M2: router stamps .hook_strategy on a `decided` moment, renders nothing)
 Clip:   rendered -> captions_requested -> captioned -> queued -> published -> analyzed
         | held | retired | error
+        | stitch_draft (M3/M4: a stitched clip BORN here — absent from crosspost's `captioned` select AND
+          _REUSABLE_CLIP_STATES, so STRUCTURALLY unpostable; only an operator RELEASE reaches `captioned`)
 Post:   queued -> submitting -> submitted -> published -> analyzed
         | failed (definitely-not-posted, re-queueable) | needs_reconcile (MAY be live — poll,
-        never blind re-POST) | error
+        never blind re-POST) | retired (M4: a queued base post superseded by an approved stitch) | error
+StitchPlan (M3 structural-hooks): suggested -> approved -> in_use | dismissed | error
+        (suggested=an impact-cut idea; approved gates the lock-free render; in_use=rendered into a
+        stitch_draft clip; dismissed/error terminal — e.g. "base superseded" on fingerprint drift)
 ```
 
 Key fields: parent_id lineage Post→Clip→Moment→Source; `Source.origin_kind` (M1: native|third_party;
@@ -49,7 +56,12 @@ client idempotency token, stamped at birth); `Post.media_urls` ([] -> uploaded a
 `file://` variant renders uploaded on live backends); `Post.metrics[LIFT_SCORE]` (models.py
 constant — written only by track.record_metrics); `Clip.media_url` (per-clip upload cache);
 `Source.meta.amplify_count` (E1 budget vs MAX_AMPLIFY_PER_SOURCE=3); `variant_streaks[key] =
-{hook, fingerprint, streak}` (untyped dict — known gap).
+{hook, fingerprint, streak}` (untyped dict — known gap). `Moment.hook_strategy` (M2: optional router
+reason — `text`/`clean_final`/`clean_awaiting_strategy:<key>`/`stitch:<format>`; None on old ledgers);
+`StitchPlan` (M3: `id` content-addressed via `stitch_plan_id(clip_id, sorted asset_ids, strategy_key,
+plan_params)` — the durable dedup key, NOT the render fingerprint; `clip_id` base, `strategy_key`,
+`plan_params` {cut_start,cut_end} for impact-cut, `base_fingerprint` PINNED at suggest so a re-rendered
+base auto-dismisses the plan, `state`, `error_reason`).
 
 ## Control files (operator-editable; malformed -> ControlFileError, exit 2)
 

@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-17 | Files scanned: 65 src + 93 test | Token estimate: ~1340 -->
+<!-- Generated: 2026-06-18 | Files scanned: 68 src + 98 test | Token estimate: ~1500 -->
 # FanOps Architecture
 
 Single-operator local CLI (`fanops`) that turns long-form source video into scheduled
@@ -8,6 +8,7 @@ Blotato REST API, or Postiz (self-hosted). Autonomous learning features are defa
 Optional Flask-based Studio web cockpit (imported lazily; core install Flask-free).
 Optional MoviePy produced-clip compositing with template cards + overlays (imported lazily; core install MoviePy-free).
 Asset memory (M1): every Source carries `origin_kind` — native (the artist's own footage the pipeline cuts) vs third_party (outside footage handed in: remembered + held aside, INERT to clip-production until chosen).
+Structural hooks (M2–M4, all default-OFF): a read-only ROUTER classifies each clean Moment's `hook_strategy` (`text` | `clean_final` | `clean_awaiting_strategy:<key>` | `stitch:<format>`); a `stitch_plan` approval spine gates every structural hook behind a born-unpostable `stitch_draft` ClipState + two operator approvals; impact-cut is the first concrete format (deterministic cut-before-peak, "wait for it" tease).
 
 ## Pipeline (the `advance` pass, pipeline.py — short ingest tx → lock-free pre-warm → main commit tx)
 
@@ -27,6 +28,7 @@ Asset memory (M1): every Source carries `origin_kind` — native (the artist's o
 - Crash-safe publish: `submitting` persisted BEFORE the network call; ambiguous results -> `needs_reconcile`, never blind re-POST (reconcile.py polls).
 - Slow ops that must NOT hold the flock run outside transactions: yt-dlp download (`pull`), `claude -p` (responder.py), and (Phase D) the heavy subprocess stages — whisper, ffmpeg signals, ffmpeg render — which `pipeline._prewarm` runs lock-free into deterministic on-disk artifacts (transcript JSON, signals sidecar, `cid.render.json` fingerprint + mp4) BEFORE the main commit transaction re-runs them and SKIPS the warm subprocess. A multi-minute render no longer starves a concurrent Studio write / second pass.
 - Asset memory (M1): the source loop SKIPS `origin_kind == "third_party"` sources (guarded in BOTH `_prewarm` and the in-lock advance), so handed-in footage is catalogued + remembered but never transcribed/clipped/posted. Third-party intake lands in a PEER `01_thirdparty_inbox` (outside the native `cfg.inbox.rglob`, so a native pass can't reach + mislabel it).
+- Structural hooks (M2–M4, default OFF): AFTER the critic + BEFORE the render loop, `router.route_moments` annotates each clean Moment's `hook_strategy` (renders nothing). With `FANOPS_IMPACT_CUT` on, AFTER the render loop `stitch_render.suggest_impact_cuts` proposes deterministic cut-before-peak `stitch_plan`s (in-lock, ledger-only) for reserved moments + re-routes them `stitch:impact_cut`; the operator approves in Studio (gates the render). The next pass renders APPROVED plans into born-`stitch_draft` clips LOCK-FREE (`_prewarm`→`prewarm_approved_stitches`) then commits in-lock (`render_approved_stitches`) — adopting the warm mp4 via the fingerprint-skip — with supersede precedence (stale base fingerprint→auto-dismiss, queued base post→retire, live base post→block) + a forward-only kill-switch warning. A SECOND operator gate releases the reviewed `stitch_draft`→`captioned`. The bare clip always ships regardless (fail-open).
 
 ## Module map (src/fanops/)
 
@@ -38,6 +40,7 @@ Asset memory (M1): every Source carries `origin_kind` — native (the artist's o
 | Hook + hashtag quality | hookedit.py (feed-aware vision hook editor, chunked gates), keyframes.py (source-frame extraction = the editor's eyes), hookcheck.py (deterministic weak-hook guard + `normalize_hook_pattern`/`HOOK_PATTERNS`), hashtags.py (vet_hashtags ≤4 reach-vetted), text.py (em-dash sanitizer). Sourced knowledge: `.claude/skills/fanops-hook-hashtag/SKILL.md` |
 | Creative provenance (P1, for P3/P4 attribution) | one writer per field: Moment.hook_pattern (moments/hookedit ingest), Clip.first_frame_kind/cut_seconds (clip render), Post.{hook_pattern,first_frame_kind,clip_profile,cut_seconds} (crosspost). The dims a future insight/learning pass groups reach by — currently STAMPED only (no learner reads them yet) |
 | Asset memory (M1) | the `origin_kind` axis (native vs third_party) end-to-end: models.Source.origin_kind + SourceState.{discovered,retired}; ingest `_catalogue_file` spine (origin_kind/inbox threading, sha-conflict WARN, write-once); config.thirdparty_inbox (peer staging dir); pipeline source-loop inert guard; ledger.retire_source (cascade, file kept) + rebuild_catalog (disk↔ledger reconcile); studio.asset_catalog + save_thirdparty_uploads/run_ingest_thirdparty + /library tab |
+| Structural hooks (M2–M4) | router.py (read-only Moment classifier: `STRATEGY_KEYS`, `route_moments`, `awaiting`/`stitched`); models.{StitchPlan, StitchState, ClipState.stitch_draft, PostState.retired, Moment.hook_strategy} + `stitch_plan_id`; ledger stitch_plan ops (add/approve/dismiss — in-lock idempotent) + `SCHEMA_VERSION=2` migration (stitch_plans map) + reconcile preserves `clean_awaiting_strategy`; impact_cut.py (deterministic cut-before-peak planner + `make_stitch_plan`); stitch_render.py (`suggest_impact_cuts`, `prewarm_approved_stitches`/`render_approved_stitches` + supersede + kill-switch); clip.render_moment cut-window override + duration-validity; config.{hook_router, impact_cut}; studio stitches tab (approve/dismiss plans + release drafts); digest surfaces stitch_plan errors |
 | Compositing (optional [compose]) | compose.py (MoviePy produced clip layer w/ template cards, fail-open to base clip) |
 | Agent I/O | agentstep.py (request/response files), llm.py (`claude -p`, 180s cap), responder.py |
 | Schedule/post | crosspost.py (deterministic schedule), tagging.py, post/{run,media,payload,blotato_rest,blotato_mcp,postiz,dryrun,metrics}.py |
@@ -82,6 +85,10 @@ POST /candidates/approve/<eid>            (approve discover footage for ingest)
 POST /gates/answer/{moments,captions}/<key>   (answer agent gates from browser)
 POST /library/upload                      (M1: stage + catalogue a handed-in third-party asset; inert to clips)
 
+GET  /stitches                            (M3/M4: structural-hook approvals + rendered-draft releases)
+POST /stitches/{approve,dismiss}          (M3: operator-gate stitch_plans — multi-select)
+POST /stitches/release                    (M4: release a reviewed stitch_draft clip -> captioned)
+
 POST /golive/{config,refresh,map,live,dryrun}   (Milestone 5 operator-gated: Postiz integration)
 ```
 
@@ -105,6 +112,8 @@ The control surface — every input that changes what the engine outputs:
 | `tuning.json` offbrand_en/ar | caption brand gate | what HOLDS a caption as off-brand |
 | `accounts.json` personas | caption per-surface | per-account voice/angle |
 | `FANOPS_VARIANT_*` (learning/amplify/ucb/transfer) | caption bias + post-loop | hook A/B learning (default OFF, fail-safe) |
+| `FANOPS_HOOK_ROUTER` | config → pipeline | M2 (default OFF): read-only Moment `hook_strategy` classifier after the critic; renders nothing (observe-only annotation) |
+| `FANOPS_IMPACT_CUT` | config → pipeline | M4 (default OFF): produce + render operator-approved impact-cuts (cut-before-peak); needs the router on to reserve moments |
 | `FANOPS_POSTER` | config → publish | dryrun (no-op) vs postiz/blotato (real posts) |
 
 ## Learning-gate seams (the C1-sensitive area)

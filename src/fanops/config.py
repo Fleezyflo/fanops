@@ -295,6 +295,15 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def impact_cut(self) -> bool:
+        # M4 structural-hooks: the impact-cut PRODUCER (suggest plans for router-reserved moments + render
+        # operator-approved plans into stitch_draft clips). Per-format gate, DEFAULT OFF (the PRD risk-row
+        # "impact-cut family disableable"). The router (hook_router) must also be on for moments to be
+        # reserved; with this off the produce path is a no-op (no plans, no stitch renders) -> non-regression.
+        v = (os.getenv("FANOPS_IMPACT_CUT") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def variant_learning(self) -> bool:
         # Creative variation v2 (closing the learning loop): with this ON, request_captions biases
         # the next caption toward the per-account hook variant that has earned a TRUSTWORTHY win

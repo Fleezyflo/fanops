@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-14 | Files scanned: pyproject.toml, config.py, llm.py, post/*, autopilot.py, daemon.py, cutover.py | Token estimate: ~700 -->
+<!-- Generated: 2026-06-18 | Files scanned: pyproject.toml, config.py, llm.py, post/*, autopilot.py, daemon.py, cutover.py | Token estimate: ~720 -->
 # FanOps Dependencies
 
 ## External binaries (subprocess, every call hard-timeout-bounded)
@@ -48,7 +48,11 @@ Extras:
 
 **Pipeline:**
 - `FANOPS_ARTIST_NAME`, `FANOPS_BURN_SUBS`, `FANOPS_SUBTITLE_FONT`, `FANOPS_WHISPER_MODEL`,
-  `FANOPS_PUBLISH_LEAD_MINUTES`, `FANOPS_RESPONDER` (manual default).
+  `FANOPS_PUBLISH_LEAD_MINUTES`, `FANOPS_RESPONDER` (manual default), `FANOPS_HOOK_EDITOR` (ON), `FANOPS_VISUAL_START` (ON).
+
+**Structural hooks (M2–M4, ALL default OFF):**
+- `FANOPS_HOOK_ROUTER` (M2: read-only Moment hook_strategy classifier), `FANOPS_IMPACT_CUT`
+  (M4: produce + render operator-approved impact-cuts; needs the router on to reserve moments).
 
 **Learning family (ALL default OFF, fail-safe):**
 - `FANOPS_CREATIVE_VARIATION`, `FANOPS_VARIANT_LEARNING` (+_MIN_POSTS/_MIN_GAP),

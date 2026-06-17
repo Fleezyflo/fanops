@@ -24,10 +24,15 @@ STRATEGY_KEYS: tuple[str, ...] = ("impact_cut", "intro_tease", "cold_open", "ope
 TEXT = "text"                                # the on-screen text hook survived the critic — no structural hook
 CLEAN_FINAL = "clean_final"                  # clean clip, no structural strategy applies — ship bare
 CLEAN_AWAITING = "clean_awaiting_strategy"   # clean clip reserved for a strategy not yet built (GC-preserved)
+STITCH = "stitch"                            # a format handler acted on the reservation: stitch:<format> (M4)
 
 def awaiting(key: str) -> str:
     """`clean_awaiting_strategy:<key>` — reserve a clean clip for a not-yet-built strategy."""
     return f"{CLEAN_AWAITING}:{key}"
+
+def stitched(key: str) -> str:
+    """`stitch:<key>` — a format handler produced a stitch plan for this moment (M4 impact-cut on)."""
+    return f"{STITCH}:{key}"
 
 
 def _has_peak_in_window(led: "Ledger", m: "Moment") -> bool:

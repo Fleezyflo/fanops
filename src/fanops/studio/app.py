@@ -175,18 +175,26 @@ def create_app(cfg: Config) -> Flask:
 
     @app.get("/stitches")
     def stitches():
-        # M3 approval spine: structural-hook suggestions awaiting operator approval (multi-select checkbox).
-        return render_template("stitches.html", plans=views.pending_stitches(cfg), tab="stitches")
+        # M3 approval spine + M4 release: suggestions awaiting approval AND rendered drafts awaiting release.
+        return render_template("stitches.html", plans=views.pending_stitches(cfg),
+                               drafts=views.pending_stitch_drafts(cfg), tab="stitches")
+
+    def _stitches_panel(res):
+        return render_template("_stitches_panel.html", plans=views.pending_stitches(cfg),
+                               drafts=views.pending_stitch_drafts(cfg), result=res, tab="stitches")
 
     @app.post("/stitches/approve")
     def do_approve_stitches():
-        res = actions.approve_stitches(cfg, request.form.getlist("ids"))
-        return render_template("_stitches_panel.html", plans=views.pending_stitches(cfg), result=res, tab="stitches")
+        return _stitches_panel(actions.approve_stitches(cfg, request.form.getlist("ids")))
 
     @app.post("/stitches/dismiss")
     def do_dismiss_stitches():
-        res = actions.dismiss_stitches(cfg, request.form.getlist("ids"))
-        return render_template("_stitches_panel.html", plans=views.pending_stitches(cfg), result=res, tab="stitches")
+        return _stitches_panel(actions.dismiss_stitches(cfg, request.form.getlist("ids")))
+
+    @app.post("/stitches/release")
+    def do_release_stitches():
+        # M4 second gate: promote a reviewed rendered stitch_draft clip -> captioned (crosspost-eligible).
+        return _stitches_panel(actions.release_stitches(cfg, request.form.getlist("ids")))
 
     @app.get("/candidates")
     def candidates():

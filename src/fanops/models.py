@@ -36,6 +36,11 @@ class PostState(str, Enum):
     # checks GET /v2/posts/:id before resubmitting. Distinct from `failed` (definitely not posted,
     # safe to re-queue) for exactly that reason.
     needs_reconcile = "needs_reconcile"
+    # retired: a queued base post superseded by an operator-approved stitch (M4). The stitch is a NEW
+    # clip + NEW posts, so the bare post must NOT also publish (the feed would get both). publish_due
+    # only iterates `queued`, so a retired post is structurally never submitted. Distinct from `failed`
+    # (re-queueable) — retired is terminal + deliberate (the stitched version replaces it).
+    retired = "retired"
 
 
 class Platform(str, Enum):

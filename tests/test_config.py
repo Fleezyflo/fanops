@@ -56,6 +56,16 @@ def test_hook_router_opt_in(monkeypatch, tmp_path):
         monkeypatch.setenv("FANOPS_HOOK_ROUTER", on)
         assert Config(root=tmp_path).hook_router is True
 
+def test_impact_cut_default_off(monkeypatch, tmp_path):
+    # M4 structural-hooks: impact-cut producer is a per-format gate, default OFF (non-regression)
+    monkeypatch.delenv("FANOPS_IMPACT_CUT", raising=False)
+    assert Config(root=tmp_path).impact_cut is False
+
+def test_impact_cut_opt_in(monkeypatch, tmp_path):
+    for on in ("1", "true", "yes", "on"):
+        monkeypatch.setenv("FANOPS_IMPACT_CUT", on)
+        assert Config(root=tmp_path).impact_cut is True
+
 def test_dirs(tmp_path):
     c = Config(root=tmp_path)
     assert c.inbox == tmp_path / "MohFlow-FanOps" / "01_inbox"

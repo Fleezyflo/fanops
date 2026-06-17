@@ -1,40 +1,52 @@
-Codemap update — 2026-06-17
-Scan: 65 src modules (src/fanops/ + studio/), 93 test files.
+Codemap update — 2026-06-18
+Scan: 68 src modules (src/fanops/ + studio/), 98 test files.
 
-Milestone shipped since last codemap (2026-06-16): M1 — Asset Memory & Awareness
-(branch feat/structural-hooks-m1; 14 commits, strict RED→GREEN; suite 1244 unit / 16 deselected).
+Catch-up refresh: the codemaps documented through M1 but were STALE for M2 + M3 (both merged
+without a doc sync) and did not yet cover M4. This pass brings architecture.md / data.md /
+dependencies.md current through the Structural Hooks & Asset Awareness milestones M2→M4.
 
-New capability (NO new src module — threaded through existing files):
-  * models.Source.origin_kind: Literal["native","third_party"] — a THIRD axis, distinct from
-    source_origin (intake channel) and P1 creative provenance (attribution). Write-once via the
-    add_source setdefault. + SourceState.{discovered, retired}.
-  * ingest._catalogue_file: single catalogue spine; origin_kind + inbox threaded through it; on a
-    sha256-dedup hit with a different kind it logs an origin_conflict WARN and never flips a
-    remembered asset's kind (write-once).
-  * config.thirdparty_inbox = 01_thirdparty_inbox — PEER of 01_inbox, OUTSIDE the native rglob.
-  * pipeline: third_party sources SKIPPED at the source loop (BOTH _prewarm and the in-lock
-    advance) — handed-in footage is remembered but inert to clip-production (spy-proven, not a
-    0-count assertion).
-  * ledger.retire_source (cascade via reconcile_moments({}), source file KEPT) + rebuild_catalog
-    (disk↔ledger reconcile: orphan→discovered, never resurrect retired, never drop a missing-file
-    row). Tested as ledger primitives; operator write-surface deferred to a later milestone.
-  * studio: asset_catalog read-model + save_thirdparty_uploads/run_ingest_thirdparty actions +
-    /library tab (GET /library, POST /library/upload).
+Milestones now reflected (branch feat/structural-hooks-m4 on top of main@M3):
 
-Review-hardening (ecc:python-review + silent-failure-hunter; verdict WARN → PASS, 0 CRIT/HIGH):
-  * asset_catalog: whole body fail-open + structured library/error log (read-fail ≠ empty library).
-  * run_ingest_thirdparty: reports added-this-call delta (not the cumulative total); panel renders
-    an honest "Added N (M in library)" — a repeat ingest with nothing new says "Added 0".
-  5 further findings DECLINED with rationale (sha1-comment correct, dead conflict branch, peer-mutator
-  txn-comment convention, pipeline_status state-filter = YAGNI, dormant mutable-default).
+M2 — Hook-strategy router (merged PR #47):
+  * router.py (NEW): read-only Moment-level classifier `route_moments` runs AFTER the critic, BEFORE
+    the render loop. Stamps Moment.hook_strategy in {text | clean_final | clean_awaiting_strategy:<key>
+    | stitch:<format>} and RENDERS NOTHING. STRATEGY_KEYS reserves 8 families (impact_cut first).
+  * models.Moment.hook_strategy (optional; None on old ledgers — no migration).
+  * config.hook_router (FANOPS_HOOK_ROUTER, default OFF). pipeline wires it gated + fail-open.
+  * ledger.reconcile_moments PRESERVES a clean_awaiting_strategy moment from cascade-GC.
 
-Codemaps updated:
-  * architecture.md: + asset-memory intro line, + pipeline inert-guard bullet, + "Asset memory (M1)"
-    cross-cutting module-map row (mirrors the "Creative provenance (P1)" row), + /library routes.
-  * data.md: + 01_thirdparty_inbox in the data tree, + Source discovered/retired states,
-    + Source.origin_kind key field, + retire_source/rebuild_catalog note on the C1 cascade.
-  * dependencies.md: NO change (no new external binary, service, or env flag — M1 is pure-internal).
+M3 — Stitch-plan lifecycle & operator-approval spine (merged PR #48):
+  * models.{StitchPlan, StitchState, ClipState.stitch_draft} + stitch_plan_id (content-addressed dedup).
+  * ledger: SCHEMA_VERSION 1->2 + _MIGRATIONS v2 (inject empty stitch_plans map; old ledgers load clean);
+    add/approve/dismiss_stitch_plan (in-lock idempotent). stitch_draft absent from crosspost select +
+    _REUSABLE_CLIP_STATES -> structurally unpostable.
+  * studio: /stitches tab, approve/dismiss actions, pending_stitches read-model. digest surfaces
+    stitch_plan errors from this milestone on.
 
-Diff magnitude: additive, < 30% -> updated in place (no approval gate triggered).
-Staleness: none > 90 days.
-NB: the prior 2026-06-16 header undercounted at 58 src / 70 test; corrected to the actual 65 / 93.
+M4 — Impact-cut, first concrete format (THIS branch, PR #49; 12 RED->GREEN commits + 1 review-fix):
+  * impact_cut.py (NEW): pure deterministic planner — ranks signal_peaks (max score, tie->earliest t),
+    cuts IMPACT_LEAD_EPS=0.4s before the impact peak; constants IMPACT_LEAD_EPS/DURATION_TOLERANCE/
+    IMPACT_MIN_DURATION; make_stitch_plan builds the suggested plan (base fingerprint pinned).
+  * clip.render_moment: additive cut_window/clip_id/born_state override + post-render DURATION-validity
+    check (not size). Default path byte-identical (is_stitch guards every branch).
+  * stitch_render.py (NEW): suggest_impact_cuts (in-lock, ledger-only) + prewarm_approved_stitches
+    (LOCK-FREE heavy ffmpeg) + render_approved_stitches (in-lock adopt via fingerprint-skip) with
+    supersede precedence (base missing->error, fingerprint drift->auto-dismiss, live base post->block,
+    queued base post->retire) + approved_impact_cut_count (forward-only kill-switch warning).
+  * models.PostState.retired (enum-additive, no migration; publish_due only iterates `queued`).
+  * config.impact_cut (FANOPS_IMPACT_CUT, default OFF). pipeline wires suggest+render-approved gated;
+    _prewarm warms approved stitches lock-free.
+  * studio: release_stitches action + pending_stitch_drafts read-model + POST /stitches/release +
+    "Rendered drafts — release to publish" panel section (the SECOND operator gate: stitch_draft->captioned,
+    inheriting the base clip's captions).
+
+New dependencies detected: none (no new external binary/service/Python dep — all additive in-process).
+
+Architecture changes: 1 new Studio GET + 3 new POST routes (/stitches, /stitches/{approve,dismiss,release});
+2 new env flags (FANOPS_HOOK_ROUTER, FANOPS_IMPACT_CUT); ledger schema v1->v2.
+
+Review: ecc:python-review on the M4 diff — 0 CRITICAL, 1 HIGH (absent-moment KeyError that wedged
+render_approved_stitches -> fixed: errors the plan "moment missing" + continues; regression test added),
+2 LOW lying comments fixed. Full unit suite 1314 passed / 16 deselected; ruff clean.
+
+Staleness: none > 90 days. Change vs prior codemaps is additive (well under 30%) — updated in place.
