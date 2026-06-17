@@ -213,8 +213,12 @@ class Ledger:
 
     # ---- reconcile (FIX F08/F32): upsert keep-set, cascade-delete the rest for this source ----
     def reconcile_moments(self, source_id: str, keep: dict[str, Moment]) -> None:
+        from fanops.router import CLEAN_AWAITING       # local import: router has no ledger dep (avoid a cycle)
         existing = {m.id for m in self.moments_of(source_id)}
         for mid in existing - set(keep):
+            mom = self.moments.get(mid)                # M2: a clean clip reserved for a not-yet-built strategy
+            if mom is not None and (mom.hook_strategy or "").startswith(CLEAN_AWAITING):
+                continue                               # is GC-preserved (its future strategy must still find it)
             self._delete_moment_cascade(mid)
         for mid, m in keep.items():
             prior = self.moments.get(mid)
