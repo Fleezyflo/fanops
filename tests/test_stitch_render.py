@@ -238,3 +238,4 @@ def test_mine_per_candidate_fail_open(tmp_path, mocker):
     mocker.patch("fanops.stitch_render.make_stitch_plan", side_effect=boom)
     mine_suggestions(led, cfg)                                       # must NOT raise
     assert len(led.stitch_plans) == 1                                # clip1 still emitted; clip0 skipped
+    assert led.moments["m0"].hook_strategy == awaiting("impact_cut")  # failed moment stays reserved (retries next pass)
