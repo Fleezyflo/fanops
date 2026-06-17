@@ -159,6 +159,20 @@ def create_app(cfg: Config) -> Flask:
         return _run_panel(actions.run_prepare(cfg, request.form.get("base_time") or None,
                                               confirmed=bool(request.form.get("confirm"))))
 
+    @app.get("/library")
+    def library():
+        # M1 asset memory: every Source the system remembers, split native vs third-party.
+        return render_template("library.html", catalog=views.asset_catalog(cfg), tab="library")
+
+    @app.post("/library/upload")
+    def do_thirdparty_upload():
+        # Validate + land third-party assets (peer staging dir), then catalogue them INERT — only if the
+        # save succeeded (a fully-rejected upload surfaces the save error, never a misleading "0 added").
+        res = actions.save_thirdparty_uploads(cfg, request.files.getlist("files"))
+        if res.ok:
+            res = actions.run_ingest_thirdparty(cfg)
+        return render_template("_library_panel.html", catalog=views.asset_catalog(cfg), result=res, tab="library")
+
     @app.get("/candidates")
     def candidates():
         # Track C: approve discover footage in the browser (replaces the Finder drag into approved/).
