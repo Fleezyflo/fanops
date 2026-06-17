@@ -178,3 +178,12 @@ def test_render_approved_cut_beyond_source_duration_errors(tmp_path, mocker):
     render_approved_stitches(led, cfg)
     p = led.stitch_plans["plan1"]
     assert p.state is StitchState.error and "out of range" in (p.error_reason or "")
+
+def test_render_approved_moment_missing_errors_not_raises(tmp_path, mocker):
+    # robustness: a base clip orphaned from its moment errors the plan VISIBLY (never a KeyError that
+    # aborts the loop and leaves the plan stuck approved with no reason)
+    cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
+    del led.moments["m1"]                                  # orphan the base clip from its moment
+    render_approved_stitches(led, cfg)                     # must not raise
+    p = led.stitch_plans["plan1"]
+    assert p.state is StitchState.error and "moment missing" in (p.error_reason or "")

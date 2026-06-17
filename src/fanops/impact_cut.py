@@ -31,7 +31,7 @@ STRATEGY_KEY = "impact_cut"
 def _impact_peak_t(src: "Source", lo: float, hi: float) -> Optional[float]:
     """The time of the strongest peak inside [lo, hi] (max score, tie -> earliest t), or None if the
     window holds no usable peak. A peak with a non-numeric t or score is skipped (semi-trusted sidecar)."""
-    best: Optional[tuple[float, float]] = None     # (score, -t-ranked-as-earliest) chosen below
+    best: Optional[tuple[float, float]] = None     # (score, t) — higher score wins; on a tie the earlier t wins
     best_t: Optional[float] = None
     for p in src.signal_peaks or []:
         try: t = float(p.get("t")); score = float(p.get("score"))

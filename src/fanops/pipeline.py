@@ -213,7 +213,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         if cfg.impact_cut:
             try:
                 led = suggest_impact_cuts(led, cfg)
-                led = render_approved_stitches(led, cfg)     # adopts the lock-free prewarmed mp4 (no ffmpeg here)
+                led = render_approved_stitches(led, cfg)     # normally adopts the prewarmed mp4 (ffmpeg in-lock only for a just-approved plan)
             except Exception as e:
                 log("impact_cut", "-", "error", err=str(e)[:120])
         else:

@@ -112,8 +112,9 @@ def render_approved_stitches(led: Ledger, cfg: Config) -> Ledger:
       - base clip gone               -> plan `error` "base clip missing"
       - base fingerprint drifted     -> plan auto-`dismissed` "base superseded" (the pinned render changed)
       - a LIVE base post exists       -> plan `error` "cannot supersede a live post" (operator decides)
-      - else render the stitch_draft clip (adopts the prewarmed mp4 via the fingerprint-skip — no ffmpeg
-        under the lock), set the plan `in_use`, and RETIRE any still-queued base post (no feed double-post).
+      - else render the stitch_draft clip (normally adopts the prewarmed mp4 via the fingerprint-skip — no
+        ffmpeg under the lock; a plan approved AFTER the prewarm snapshot is rendered in-lock, like a first-pass
+        bare clip), set the plan `in_use`, and RETIRE any still-queued base post (no feed double-post).
     A failed stitch render (e.g. duration-validity) errors the plan; the bare clip already shipped upstream."""
     from fanops.clip import render_moment
     for p in _approved_impact_plans(led):
@@ -126,7 +127,9 @@ def render_approved_stitches(led: Ledger, cfg: Config) -> Ledger:
         if any(po.parent_id == p.clip_id and po.state in _LIVE_POST_STATES for po in led.posts.values()):
             p.state = StitchState.error; p.error_reason = "cannot supersede a live post"; continue
         mom = led.moments.get(base.parent_id)            # base.parent_id is the moment id
-        src = led.sources.get(mom.parent_id) if mom is not None else None
+        if mom is None:                                  # base orphaned from its moment -> fail VISIBLE, never
+            p.state = StitchState.error; p.error_reason = "moment missing"; continue  # a KeyError that wedges the loop
+        src = led.sources.get(mom.parent_id)
         if not _cut_in_range(p.plan_params, src):
             p.state = StitchState.error; p.error_reason = "cut out of range"; continue
         cw = (p.plan_params["cut_start"], p.plan_params["cut_end"])
