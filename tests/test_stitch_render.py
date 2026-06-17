@@ -8,8 +8,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, Post, MomentState, SourceState, ClipState,
                            StitchState, StitchPlan, PostState, Platform, Fmt)
 from fanops.router import awaiting, CLEAN_FINAL
-from fanops.stitch_render import (mine_suggestions, render_approved_stitches, approved_impact_cut_count,
-                                  MAX_SUGGESTIONS_PER_PASS)
+from fanops.stitch_render import mine_suggestions, render_approved_stitches, approved_impact_cut_count
 
 
 def _seed(cfg, *, peaks, hook_strategy, clip_state=ClipState.rendered):
