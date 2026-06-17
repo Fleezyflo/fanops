@@ -8,7 +8,8 @@ from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, Post, MomentState, SourceState, ClipState,
                            StitchState, StitchPlan, PostState, Platform, Fmt)
 from fanops.router import awaiting, CLEAN_FINAL
-from fanops.stitch_render import suggest_impact_cuts, render_approved_stitches, approved_impact_cut_count
+from fanops.stitch_render import (mine_suggestions, render_approved_stitches, approved_impact_cut_count,
+                                  MAX_SUGGESTIONS_PER_PASS)
 
 
 def _seed(cfg, *, peaks, hook_strategy, clip_state=ClipState.rendered):
@@ -30,7 +31,7 @@ def test_suggest_creates_plan_and_reroutes(tmp_path):
     cfg = Config(root=tmp_path)
     led = _seed(cfg, peaks=[{"t": 12.0, "score": 0.9}], hook_strategy=awaiting("impact_cut"))
     _write_fp(cfg, "clip_base", "basefp")
-    suggest_impact_cuts(led, cfg)
+    mine_suggestions(led, cfg)
     plans = list(led.stitch_plans.values())
     assert len(plans) == 1
     p = plans[0]
@@ -43,34 +44,34 @@ def test_suggest_is_idempotent(tmp_path):
     cfg = Config(root=tmp_path)
     led = _seed(cfg, peaks=[{"t": 12.0, "score": 0.9}], hook_strategy=awaiting("impact_cut"))
     _write_fp(cfg, "clip_base", "basefp")
-    suggest_impact_cuts(led, cfg)
+    mine_suggestions(led, cfg)
     led.moments["m1"].hook_strategy = awaiting("impact_cut")          # force a re-scan of the same moment
-    suggest_impact_cuts(led, cfg)
+    mine_suggestions(led, cfg)
     assert len(led.stitch_plans) == 1                                # content-addressed dedup, no duplicate
 
 def test_suggest_does_not_reemit_dismissed(tmp_path):
     cfg = Config(root=tmp_path)
     led = _seed(cfg, peaks=[{"t": 12.0, "score": 0.9}], hook_strategy=awaiting("impact_cut"))
     _write_fp(cfg, "clip_base", "basefp")
-    suggest_impact_cuts(led, cfg)
+    mine_suggestions(led, cfg)
     pid = next(iter(led.stitch_plans))
     led.dismiss_stitch_plan(pid)
     led.moments["m1"].hook_strategy = awaiting("impact_cut")          # re-open the moment
-    suggest_impact_cuts(led, cfg)
+    mine_suggestions(led, cfg)
     assert led.stitch_plans[pid].state is StitchState.dismissed       # terminal — never resurrected
 
 def test_suggest_skips_non_routed_moment(tmp_path):
     cfg = Config(root=tmp_path)
     led = _seed(cfg, peaks=[{"t": 12.0, "score": 0.9}], hook_strategy=CLEAN_FINAL)
     _write_fp(cfg, "clip_base", "basefp")
-    suggest_impact_cuts(led, cfg)
+    mine_suggestions(led, cfg)
     assert led.stitch_plans == {}
 
 def test_suggest_no_plan_when_cut_degenerate(tmp_path):
     cfg = Config(root=tmp_path)
     led = _seed(cfg, peaks=[{"t": 2.0, "score": 0.9}], hook_strategy=awaiting("impact_cut"))  # cut too short
     _write_fp(cfg, "clip_base", "basefp")
-    suggest_impact_cuts(led, cfg)
+    mine_suggestions(led, cfg)
     assert led.stitch_plans == {}
     assert led.moments["m1"].hook_strategy == awaiting("impact_cut")  # NOT re-routed (nothing produced)
 
@@ -80,7 +81,7 @@ def test_suggest_ignores_stitch_draft_base(tmp_path):
     led = _seed(cfg, peaks=[{"t": 12.0, "score": 0.9}], hook_strategy=awaiting("impact_cut"),
                 clip_state=ClipState.stitch_draft)
     _write_fp(cfg, "clip_base", "basefp")
-    suggest_impact_cuts(led, cfg)
+    mine_suggestions(led, cfg)
     assert led.stitch_plans == {}
 
 
@@ -187,3 +188,53 @@ def test_render_approved_moment_missing_errors_not_raises(tmp_path, mocker):
     render_approved_stitches(led, cfg)                     # must not raise
     p = led.stitch_plans["plan1"]
     assert p.state is StitchState.error and "moment missing" in (p.error_reason or "")
+
+
+# ---- M5 Task 2: the generic routine pass — rank + per-pass top-N cap + per-candidate fail-open ----
+def _seed_n_routed(cfg, scores):
+    # N clean moments each routed clean_awaiting:impact_cut, each with its own base clip + a peak whose
+    # score is scores[i] (so ranking is observable). Source duration 20s, window [0,18], peak at t=12.
+    led = Ledger.load(cfg)
+    for i, sc in enumerate(scores):
+        sid, mid, cid = f"s{i}", f"m{i}", f"clip{i}"
+        led.add_source(Source(id=sid, source_path=str(cfg.sources / f"{sid}.mp4"), state=SourceState.signalled,
+                              signal_peaks=[{"t": 12.0, "score": sc}], width=1920, height=1080, duration=20.0))
+        led.add_moment(Moment(id=mid, parent_id=sid, state=MomentState.clipped, start=0.0, end=18.0,
+                              reason="r", hook_strategy=awaiting("impact_cut")))
+        led.clips[cid] = Clip(id=cid, parent_id=mid, path=str(cfg.clips / f"{cid}.mp4"), state=ClipState.rendered)
+        _write_fp(cfg, cid, f"fp{i}")
+    return led
+
+def test_mine_caps_new_suggestions_per_pass(tmp_path, mocker):
+    mocker.patch("fanops.stitch_render.MAX_SUGGESTIONS_PER_PASS", 2)
+    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, [0.9, 0.8, 0.7, 0.6])   # 4 candidates, cap 2
+    mine_suggestions(led, cfg)
+    assert len(led.stitch_plans) == 2                                # only the cap is emitted this pass
+    # the capped-out moments stay reserved (clean_awaiting) so they retry next pass — not lost
+    reserved = [m for m in led.moments.values() if (m.hook_strategy or "") == awaiting("impact_cut")]
+    assert len(reserved) == 2
+
+def test_mine_emits_highest_ranked_first(tmp_path, mocker):
+    mocker.patch("fanops.stitch_render.MAX_SUGGESTIONS_PER_PASS", 2)
+    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, [0.2, 0.95, 0.5, 0.9])   # top two = 0.95, 0.9
+    mine_suggestions(led, cfg)
+    emitted_scores = sorted((p.rank_score for p in led.stitch_plans.values()), reverse=True)
+    assert emitted_scores == [0.95, 0.9]                             # the cap keeps the BEST-fit suggestions
+
+def test_mine_drains_across_passes(tmp_path, mocker):
+    mocker.patch("fanops.stitch_render.MAX_SUGGESTIONS_PER_PASS", 2)
+    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, [0.9, 0.8, 0.7, 0.6])
+    mine_suggestions(led, cfg); mine_suggestions(led, cfg)           # two passes drain all 4
+    assert len(led.stitch_plans) == 4
+
+def test_mine_per_candidate_fail_open(tmp_path, mocker):
+    # a strategy error on ONE candidate logs + skips; the rest of the pass still completes
+    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, [0.9, 0.8])
+    import fanops.stitch_render as sr
+    real = sr.make_stitch_plan
+    def boom(clip, m, src, *, base_fp):
+        if clip.id == "clip0": raise RuntimeError("strategy blew up")
+        return real(clip, m, src, base_fp=base_fp)
+    mocker.patch("fanops.stitch_render.make_stitch_plan", side_effect=boom)
+    mine_suggestions(led, cfg)                                       # must NOT raise
+    assert len(led.stitch_plans) == 1                                # clip1 still emitted; clip0 skipped
