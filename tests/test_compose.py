@@ -65,6 +65,29 @@ def test_timeout_is_passed_to_renderer(tmp_path):
 
 
 @pytest.mark.integration
+def test_real_moviepy_prepend_intro_continuous_audio(tmp_path):
+    # The REAL MoviePy 2.x compose-PREPEND: a 2s intro before a 6s base (with a tone "music bed") must yield
+    # an 8s composite whose AUDIO spans the FULL duration — the PRD's continuous-bed requirement (no silent
+    # opener, no tail gap). Skipped unless moviepy + ffmpeg/ffprobe are present (CI e2e installs .[compose]).
+    pytest.importorskip("moviepy")
+    import shutil
+    if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
+        pytest.skip("ffmpeg + ffprobe required for the real prepend render")
+    base = tmp_path / "base.mp4"; intro = tmp_path / "intro.mp4"; out = tmp_path / "out.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=blue:s=180x320:d=6",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-pix_fmt", "yuv420p",
+                    "-shortest", str(base)], capture_output=True, check=True)
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=red:s=720x1280:d=3",
+                    "-pix_fmt", "yuv420p", str(intro)], capture_output=True, check=True)
+    ok = prepend_intro(str(base), str(intro), str(out), tease_text="wait for it", intro_seconds=2.0)
+    assert ok is True and out.exists()
+    a = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0",
+                        "-show_entries", "stream=duration", "-of", "csv=p=0", str(out)],
+                       capture_output=True, text=True)
+    assert float(a.stdout.strip()) >= 7.5          # the music bed spans the full ~8s composite (continuous, no gap)
+
+
+@pytest.mark.integration
 def test_real_moviepy_compose_produces_longer_clip(tmp_path):
     # The REAL MoviePy 2.x render: intro card + titled base clip + outro card, crossfaded. Skipped
     # unless moviepy + ffmpeg are present (CI e2e installs .[compose]); verifies the v2 API end-to-end.
