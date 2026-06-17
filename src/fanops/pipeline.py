@@ -16,6 +16,7 @@ from fanops.moments import request_moments, ingest_moments
 from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pending
 from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending
 from fanops.router import route_moments
+from fanops.stitch_render import suggest_impact_cuts
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
 from fanops.crosspost import crosspost_clips
@@ -199,6 +200,15 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                     led.moments[m.id].state = MomentState.error
                     led.moments[m.id].error_reason = f"{type(e).__name__}: {e}"
                     log("clip", m.id, "error", err=str(e)[:120])
+        # M4 structural-hooks: after the bare clips render, propose impact-cuts for router-reserved moments
+        # (suggested StitchPlans the operator approves in Studio). Ledger-only mutation, so it's safe in-lock;
+        # renders nothing here (the approved-plan RENDER is lock-free, in the prewarm pass). Opt-in
+        # (cfg.impact_cut) + fail-open: a producer error never wedges a pass. Default OFF -> byte-identical.
+        if cfg.impact_cut:
+            try:
+                led = suggest_impact_cuts(led, cfg)
+            except Exception as e:
+                log("impact_cut", "-", "error", err=str(e)[:120])
 
         # ingest captions -> crosspost -> publish due
         for c in list(led.clips.values()):

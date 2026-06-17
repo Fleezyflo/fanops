@@ -483,3 +483,39 @@ def test_router_off_no_annotation_clip_still_renders(tmp_path, monkeypatch, mock
     led = Ledger.load(cfg)
     assert led.moments["mom_r"].hook_strategy is None                  # observe-only; OFF = no delta
     assert any(c.parent_id == "mom_r" for c in led.clips.values())     # clip still renders
+
+
+# ---- M4 (structural-hooks): impact-cut SUGGEST wired after the render loop (gated, fail-open) ----
+def _seed_wide_clean_decided(cfg):
+    # a clean (no-hook) decided moment wide enough for a real impact-cut: peak at t=12 inside [0,18] ->
+    # cut [0, 11.6], span 11.6s >= IMPACT_MIN_DURATION
+    src = cfg.sources / "src_w.mp4"; _put(src, b"V")
+    from fanops.models import Moment, MomentState
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_w", source_path=str(src), state=SourceState.moments_decided,
+                              sha256="w", width=1920, height=1080, duration=20.0,
+                              signal_peaks=[{"t": 12.0, "score": 0.9}],
+                              transcript=[{"start": 0, "end": 2, "text": "hi"}]))
+        led.add_moment(Moment(id="mom_w", parent_id="src_w", state=MomentState.decided,
+                              start=0.0, end=18.0, reason="punchline"))   # hook=None -> clean
+
+def test_impact_cut_on_suggests_plan_and_reroutes(tmp_path, monkeypatch, mocker):
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1"); monkeypatch.setenv("FANOPS_IMPACT_CUT", "1")
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_wide_clean_decided(cfg)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    led = Ledger.load(cfg)
+    plans = [p for p in led.stitch_plans.values() if p.strategy_key == "impact_cut"]
+    assert len(plans) >= 1 and plans[0].state.value == "suggested"
+    assert led.moments["mom_w"].hook_strategy == "stitch:impact_cut"
+
+def test_impact_cut_off_no_plans(tmp_path, monkeypatch, mocker):
+    # router on (so the moment is reserved) but the producer OFF -> no plans, no re-route (non-regression)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1"); monkeypatch.delenv("FANOPS_IMPACT_CUT", raising=False)
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_wide_clean_decided(cfg)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    led = Ledger.load(cfg)
+    assert led.stitch_plans == {}
+    from fanops.router import awaiting
+    assert led.moments["mom_w"].hook_strategy == awaiting("impact_cut")  # reserved, not produced
