@@ -400,3 +400,54 @@ def test_hook_editor_off_renders_immediately_no_gate(tmp_path, monkeypatch, mock
     _answer_moments_with_hook(cfg, "the word he repeated twice")
     s = advance(cfg, base_time="2026-07-01T18:00:00Z")
     assert s["clips"] >= 1 and s["awaiting"]["hookedit"] == 0       # no hold, no gate
+
+
+# ---- M1 (structural-hooks): third-party sources are INERT to clip-production ----
+def test_third_party_skipped_in_both_loops_native_still_processed(tmp_path, monkeypatch, mocker):
+    # The guard skips a third_party source as the FIRST line of BOTH _prewarm and the in-lock loop, so
+    # transcribe_source is NEVER called for it (asserting "0 clips" alone is hollow — the gate blocks
+    # clips regardless). A native source IS still processed (transcribe IS called for it).
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    cfg = Config(root=tmp_path); _accts_one(cfg)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_native", source_path=str(cfg.sources / "n.mp4"),
+                              state=SourceState.catalogued, sha256="n"))
+        led.add_source(Source(id="src_tp", source_path=str(cfg.sources / "t.mp4"),
+                              origin_kind="third_party", state=SourceState.catalogued, sha256="t"))
+    spy = mocker.patch("fanops.pipeline.transcribe_source", side_effect=lambda led, cfg, sid: led)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    sids = [c.args[2] for c in spy.call_args_list]
+    assert "src_native" in sids and "src_tp" not in sids
+
+def test_discovered_source_is_inert(tmp_path, monkeypatch, mocker):
+    # a rebuild orphan (SourceState.discovered) matches no processing state -> never transcribed,
+    # stays discovered (Task 5's rebuild relies on this inertness).
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    cfg = Config(root=tmp_path); _accts_one(cfg)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_disc", source_path=str(cfg.sources / "d.mp4"),
+                              state=SourceState.discovered, sha256="d"))
+    spy = mocker.patch("fanops.pipeline.transcribe_source", side_effect=lambda led, cfg, sid: led)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    assert spy.call_count == 0 and Ledger.load(cfg).sources["src_disc"].state is SourceState.discovered
+
+def test_native_renders_clip_while_third_party_inert(tmp_path, monkeypatch, mocker):
+    # non-regression: with a third_party source present, a native moment STILL renders to a clip, and
+    # the third_party source produces no moment/clip and stays catalogued (never enters the pipeline).
+    from fanops.models import Moment, MomentState
+    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    cfg = Config(root=tmp_path); _accts_one(cfg)
+    src = cfg.sources / "src_n.mp4"; _put(src, b"V"); _ff(mocker)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_n", source_path=str(src), state=SourceState.moments_decided,
+                              sha256="n", width=1920, height=1080, duration=20.0,
+                              transcript=[{"start": 0, "end": 2, "text": "hi"}]))
+        led.add_moment(Moment(id="mom_n", parent_id="src_n", state=MomentState.decided,
+                              start=14.0, end=18.0, reason="punchline"))
+        led.add_source(Source(id="src_tp", source_path=str(cfg.sources / "tp.mp4"),
+                              origin_kind="third_party", state=SourceState.catalogued, sha256="t"))
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    led = Ledger.load(cfg)
+    assert any(c.parent_id == "mom_n" for c in led.clips.values())     # native moment rendered
+    assert led.sources["src_tp"].state is SourceState.catalogued       # third-party untouched
+    assert all(m.parent_id != "src_tp" for m in led.moments.values())  # no moment from third-party
