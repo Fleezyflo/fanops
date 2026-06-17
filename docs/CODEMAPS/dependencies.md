@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-18 | Files scanned: pyproject.toml, config.py, llm.py, post/*, autopilot.py, daemon.py, cutover.py | Token estimate: ~720 -->
+<!-- Generated: 2026-06-18 | Files scanned: pyproject.toml, config.py, llm.py, post/*, .github/workflows/ci.yml | Token estimate: ~730 | CI ruff-gate corrected -->
 # FanOps Dependencies
 
 ## External binaries (subprocess, every call hard-timeout-bounded)
@@ -67,6 +67,8 @@ Extras:
 
 ## CI (.github/workflows/ci.yml)
 
-Two jobs: `unit (fast, no toolchain)` = `pytest -m "not integration"` · `real-tooling E2E
-(must run, not skip)` = integration suite with real ffmpeg/whisper/espeak, `FANOPS_REQUIRE_E2E=1`
-(a skip FAILS). No ruff step in CI yet (local pre-push hook runs the full suite).
+Two jobs: `unit (fast, no toolchain)` runs **`ruff check .` (whole repo, a GATE — pyflakes F +
+pycodestyle E house ruleset) THEN `pytest -m "not integration"`** with a coverage report (report-only,
+no `--cov-fail-under`) · `real-tooling E2E (must run, not skip)` = integration suite with real
+ffmpeg/whisper/espeak, `FANOPS_REQUIRE_E2E=1` (a skip FAILS). ALWAYS run `ruff check .` whole-repo before
+pushing — a per-file ruff pass misses unused-import (F401) regressions the CI gate catches.

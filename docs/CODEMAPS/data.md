@@ -61,7 +61,8 @@ reason — `text`/`clean_final`/`clean_awaiting_strategy:<key>`/`stitch:<format>
 `StitchPlan` (M3: `id` content-addressed via `stitch_plan_id(clip_id, sorted asset_ids, strategy_key,
 plan_params)` — the durable dedup key, NOT the render fingerprint; `clip_id` base, `strategy_key`,
 `plan_params` {cut_start,cut_end} for impact-cut, `base_fingerprint` PINNED at suggest so a re-rendered
-base auto-dismisses the plan, `state`, `error_reason`).
+base auto-dismisses the plan, `state`, `error_reason`; M5 adds `rank_score` (fit the routine loop ranks
+by) + `rationale` (operator-facing WHY) — both optional, ride defaults).
 
 ## Control files (operator-editable; malformed -> ControlFileError, exit 2)
 
