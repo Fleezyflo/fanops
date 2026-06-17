@@ -11,6 +11,10 @@ def test_source_defaults_catalogued():
     s = Source(id="src_1", source_path="/s/x.mp4")
     assert s.state is SourceState.catalogued and s.transcript is None
 
+def test_moment_hook_strategy_defaults_none():
+    m = Moment(id="m1", parent_id="src_1", start=0.0, end=10.0, reason="x")
+    assert m.hook_strategy is None                # M2: router annotation; old ledgers load (no migration)
+
 def test_unit_parent_chain():
     s = Source(id="src_1", source_path="/s/x.mp4")
     m = Moment(id="mom_1", parent_id=s.id, start=1.0, end=8.0,
