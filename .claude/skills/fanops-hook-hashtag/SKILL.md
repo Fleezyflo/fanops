@@ -23,14 +23,12 @@ grounded in what actually works, with proof.
 #hiphop #hiphopmusic #rap #rapper #bars #undergroundhiphop #newmusic #arabicmusic #arabtiktok #arabicmusiclovers #fyp #foryou #viral #reels
 ```
 
-<!-- DRIFT-GUARD:patterns — the 6 canonical retention patterns; each must appear in prompts._hook_spec -->
+<!-- DRIFT-GUARD:patterns — the 4 proven psychological TRIGGERS a hook fires; each must appear in prompts._hook_spec -->
 ```text
-open loop
 curiosity gap
-comment
-contrarian
-pov
-proof
+pattern interrupt
+self-relevance
+emotional arousal
 ```
 
 ## Operator hard rules (override any generic advice below)
@@ -58,41 +56,43 @@ proof
   static text-only intro; rapid zoom beats a static shot ~2.5× in muted playback. [vexub]
 - A hook should land in **~10–14 words / under 3s**. [vexub], [Terra Market Group]
 
-### The pattern library (use these; adapt the slot to the clip)
+### The craft: 4 proven TRIGGERS + force multipliers
 
-Every pattern is a watch-mechanic. The `{slots}` are filled from the clip's actual
-content so the loop is true. Hooks are ≤6 words, in the clip's own language.
+A hook works by firing at least one of four psychological **triggers** in the first ~2s; the
+strongest **stack** two or three. (These are the DRIFT-GUARD:patterns, mirrored in `_hook_spec`.)
 
-| # | Pattern | Mechanic | Template | Music-clip example |
-|---|---|---|---|---|
-| 1 | **Open loop / payoff tease** | watch-to-end | `wait for the {payoff}` | "wait for the last line" · "it switches at the end" |
-| 2 | **Curiosity gap** | intrigue, unresolved | `the {thing} nobody {verb}` · `you're not ready for {x}` | "the part nobody clipped" · "you're not ready for the drop" |
-| 3 | **Comment / opinion bait** | engagement → reach | `is this his {superlative}?` · `rate this {1-10}` | "is this the hardest verse?" · "rate this beat 1-10" |
-| 4 | **Contrarian / bold claim** | pattern interrupt | `everyone slept on {x}` · `this shouldn't be {status}` | "everyone slept on this" · "this shouldn't be unsigned" |
-| 5 | **POV / relatable** | self-relevance | `POV: {viewer scenario}` | "POV: you found him first" · "when the beat finally drops" |
-| 6 | **Proof-first / stakes** | credibility, concrete | `{number/constraint}, {result}` | "one take, no autotune" · "0 budget, all bars" |
+| Trigger | The cognitive event | Music-clip example |
+|---|---|---|
+| **Curiosity gap** / open loop | "wait — what?" (the brain must close the gap) | "the part you'll replay" · "wait for what he admits" |
+| **Pattern interrupt** / contrarian | "that's not what I expected" | "maybe your favorite artist copied too" · "nobody this good should be this unknown" |
+| **Self-relevance** / identity | "that's me / that's for me" (2026's highest-scoring) | "this one's for who you can't get over" · "you ever felt that?" |
+| **Emotional arousal** | "I *feel* that" (awe, longing, betrayal, devotion) | "you don't expect a rapper to make you pray" |
 
-Sources for the formulas: [vexub] (Contrarian Claim, Mistake Warning, List Tease as
-the top-3 cross-niche 2026 hooks; curiosity-gap mechanics), [OpusClip] (Bold
-Statement / Question / Pattern-Interrupt / Proof-First and the ≥65% 3-s benchmark),
-[Terra Market Group] (7 formulas for 70%+ retention), [go-viral.app] (first-3-seconds).
+**Force multipliers** (these separate a hook that hits from one that dies):
+- **Specific — about the VIEWER, not the clip.** Name the viewer's feeling/identity so they
+  recognise themselves in <2s. A *universal shared feeling* is fine; *vague* is not. Do not
+  describe the clip's plot.
+- **Zero throat-clearing** — open ON the trigger.
+- **Raw + spoken** — how a real person talks, not polished copy.
+- **Stack two triggers** when the clip allows.
+
+Sources: [OpusClip] (34,635-clip study: Identity Call / Contrarian / Open Loop / Confession score
+highest; ≥65% 3-s benchmark), [vexub] (curiosity-gap + pattern-interrupt mechanics), [Terra Market
+Group] (retention formulas), [go-viral.app] (first-3-seconds). Success is **proven + measurable**,
+not taste — the viewer-POV meter + the learning loop pick winners from real data.
 
 ### Banned in hooks (these are why the old output was garbage)
 
-- **Third-person scene-narration** — recounting what happens to the artist instead of
-  addressing the viewer ("he stopped answering for a reason", "the promise he made
-  himself", "front row last song", "she ran a minute he made it"). The frame is the
-  scroller's attention, never a recap. DEFAULT to **second person** ("you", "POV: you…",
-  "wait for…"); a third-person line is allowed ONLY when it opens a loop the viewer
-  urgently wants resolved.
-- **Artist praise / hype** of any kind ("his hardest bar", "GOAT", "🐐").
-- **Lyric paraphrase** — restating what's being said instead of teasing it. The
-  on-screen text must NOT caption the audio.
-- **Generic filler that fits any clip** ("his coldest opener", "the bar everyone replayed").
-- **Hooking on the editing** ("watch how this cuts").
+- **Third-person scene-narration** — recapping what happens to the artist ("he stopped answering
+  for a reason", "front row last song", "started in a bedroom copying his brother"). It fires NO
+  trigger. The frame is the viewer, never a recap.
+- **Artist praise / hype** ("his hardest bar", "GOAT", "🐐").
+- **Lyric paraphrase** — restating the bar they can already hear; NOT a caption, NOT a quote.
+- **Generic filler that names no feeling and fits any clip** ("his coldest opener").
+- **Hooking on the editing** ("watch how this cuts", "drone up").
 - **Bait** the clip doesn't pay off.
 
-A clip with no honest retention hook is better **clean** (hook = null) than slop.
+A clip with no honest hook is better **clean** (hook = null) than slop.
 
 ---
 
