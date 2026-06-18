@@ -308,7 +308,7 @@ class PostedRow:
 def posted_library(led: Ledger, cfg: Config) -> list[PostedRow]:
     """The Posted library (post-approval-lifecycle): ALL-time shipped posts (published/analyzed), newest
     first, with the live URL + lift score. NOT a dead archive — each row also offers 'Post again' (a fresh
-    awaiting_approval repost of the same clip). Unscheduled/unparseable times sort last. Lock-free read."""
+    awaiting_approval repost of the same clip). Unscheduled/naive/unparseable times sort last. Lock-free read."""
     posts = [p for p in led.posts.values() if p.state in (PostState.published, PostState.analyzed)]
     def _key(p):
         if not p.scheduled_time: return (0, "")

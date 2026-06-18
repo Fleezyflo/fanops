@@ -68,6 +68,30 @@ def test_repost_twice_makes_two_distinct_posts(tmp_path):
     assert a != b and a != "p1" and b != "p1"
 
 
+def test_repost_after_reject_stays_distinct(tmp_path):
+    # the real path: operator rejects the first repost draft, then requests another. The epoch counter
+    # has no state filter, so a rejected repost still counts -> ids stay unique and monotonic.
+    cfg = Config(root=tmp_path); _seed_published(cfg, pid="p1")
+    a = actions.repost_post(cfg, "p1").detail["post_id"]
+    actions.reject_posts(cfg, [a])
+    b = actions.repost_post(cfg, "p1").detail["post_id"]
+    assert a != b and b != "p1"
+    led = Ledger.load(cfg)
+    assert led.posts[a].state is PostState.rejected and led.posts[b].state is PostState.awaiting_approval
+
+
+def test_repost_carries_variation_axis(tmp_path):
+    # P2 attribution: a repost must carry the source's variation_axis (else the learning audit loses it).
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c/clip_1.mp4", state=ClipState.published))
+        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="ig_1",
+                          platform=Platform.instagram, caption="c", state=PostState.published,
+                          scheduled_time="2026-06-01T00:00:00Z", variation_axis="caption_angle"))
+    new_id = actions.repost_post(cfg, "p1").detail["post_id"]
+    assert Ledger.load(cfg).posts[new_id].variation_axis == "caption_angle"
+
+
 def test_repost_unknown_post_errors(tmp_path):
     cfg = Config(root=tmp_path)
     r = actions.repost_post(cfg, "nope")

@@ -510,7 +510,8 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
                               submission_id=f"fanops_{_hash('idemp', new_id)}",
                               hook_pattern=src.hook_pattern, first_frame_kind=src.first_frame_kind,
                               cut_seconds=src.cut_seconds, clip_profile=src.clip_profile,
-                              variant_key=src.variant_key, variant_hook=src.variant_hook))
+                              variant_key=src.variant_key, variant_hook=src.variant_hook,
+                              variation_axis=src.variation_axis))   # carry P2 axis so a repost's attribution isn't lost
     except Exception as exc:
         return ActionResult(ok=False, error=f"repost failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": new_id, "source_id": post_id})
