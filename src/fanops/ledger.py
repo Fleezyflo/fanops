@@ -205,6 +205,28 @@ class Ledger:
     def set_clip_state(self, uid: str, st: ClipState) -> None: self.clips[uid] = self.clips[uid].model_copy(update={"state": st})
     def set_post_state(self, uid: str, st: PostState) -> None: self.posts[uid] = self.posts[uid].model_copy(update={"state": st})
 
+    # ---- post-approval gate (caller holds the transaction; in-lock guard => contended/wrong-state is a clean no-op) ----
+    def approve_post(self, uid: str, *, now_iso: str) -> None:
+        from fanops.timeutil import parse_iso
+        p = self.posts.get(uid)
+        if p is None or p.state is not PostState.awaiting_approval: return   # only an unapproved post promotes
+        # bump a stale (<=now / missing / unparseable) stagger-time to now so approval never machine-guns a backlog
+        # onto a live backend; a still-future schedule is the operator's intent and is preserved. now_iso is INJECTED
+        # (no clock in the ledger) so the transition is deterministic in tests.
+        keep = False
+        if p.scheduled_time:
+            try: keep = parse_iso(p.scheduled_time) > parse_iso(now_iso)
+            except (ValueError, TypeError): keep = False                    # malformed -> treat as stale, bump to now
+        self.posts[uid] = p.model_copy(update={"state": PostState.queued, "scheduled_time": p.scheduled_time if keep else now_iso})
+    def reject_post(self, uid: str) -> None:
+        p = self.posts.get(uid)
+        if p is not None and p.state is PostState.awaiting_approval:        # only discard an unapproved post
+            self.posts[uid] = p.model_copy(update={"state": PostState.rejected})
+    def unapprove_post(self, uid: str) -> None:
+        p = self.posts.get(uid)
+        if p is not None and p.state is PostState.queued:                   # send an approved-but-unsent post back to review
+            self.posts[uid] = p.model_copy(update={"state": PostState.awaiting_approval})
+
     # ---- queries ----
     def already_seen(self, *, sha256: str | None = None) -> bool:
         return any(s.sha256 == sha256 for s in self.sources.values()) if sha256 else False

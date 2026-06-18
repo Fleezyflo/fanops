@@ -493,6 +493,41 @@ def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
     return ActionResult(ok=True, detail={"clip_id": clip_id, "state": ClipState.captions_requested.value})
 
 
+def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None) -> ActionResult:
+    """Post-approval gate (multi-select, the Review-tab batch): awaiting_approval -> queued for each
+    selected post in ONE transaction, idempotent (a non-awaiting post is a no-op). One `now` stamp for
+    the whole batch so approve_post's stale-schedule bump is consistent. Never a 500."""
+    sel = [i for i in (ids or []) if i]
+    now_iso = iso_z(_now(now))
+    try:
+        with Ledger.transaction(cfg) as led:
+            for pid in sel: led.approve_post(pid, now_iso=now_iso)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"approved": len(sel)})
+
+def reject_posts(cfg: Config, ids: Sequence[str]) -> ActionResult:
+    """Operator discard (multi-select): awaiting_approval -> rejected (terminal) for each selected post
+    in ONE transaction, idempotent. Never a 500."""
+    sel = [i for i in (ids or []) if i]
+    try:
+        with Ledger.transaction(cfg) as led:
+            for pid in sel: led.reject_post(pid)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"reject failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"rejected": len(sel)})
+
+def unapprove_post(cfg: Config, post_id: str) -> ActionResult:
+    """Send an approved-but-unsent post back to Review (the Schedule-tab 'send back' control): queued ->
+    awaiting_approval. Idempotent; a non-queued post is a clean no-op. Tight transaction, no network."""
+    try:
+        with Ledger.transaction(cfg) as led:
+            if post_id not in led.posts: return ActionResult(ok=False, error=f"no such post: {post_id}")
+            led.unapprove_post(post_id)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"unapprove failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"post_id": post_id})
+
 def approve_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
     """M3 operator approval (multi-select): suggested -> approved for each selected stitch_plan in ONE
     transaction, idempotent (a non-suggested plan is a no-op). Never a 500."""

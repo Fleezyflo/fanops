@@ -107,11 +107,12 @@ def test_publish_due_ignores_awaiting_approval(tmp_path):
 
 
 def test_publish_due_fires_approved_queued(tmp_path):
-    # Control: once approved (queued) and due, the same post DOES publish (dryrun -> submitted).
+    # Control: once approved (queued) and due, the same post DOES publish. publish_due upgrades the
+    # dryrun poster's `submitted` to `published` in the same pass (run.py), so the terminal state is published.
     from fanops.post.run import publish_due
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c1", parent_id="m1", path=str(cfg.clips / "c1.mp4"), state=ClipState.queued))
         led.add_post(_post(state=PostState.queued, when=_PAST))
     publish_due(Ledger.load(cfg), cfg, now=iso_z(_NOW))
-    assert Ledger.load(cfg).posts["p1"].state is PostState.submitted
+    assert Ledger.load(cfg).posts["p1"].state is PostState.published

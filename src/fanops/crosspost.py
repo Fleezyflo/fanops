@@ -134,7 +134,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 media_path = vpath
                 variant_hook = hook_v
             led.add_post(Post(
-                id=pid, parent_id=target_clip.id, state=PostState.queued,
+                # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator
+                # approves it in the Review tab. publish_due/publish_now iterate only `queued`, so a fresh
+                # post is structurally unpublishable until Ledger.approve_post promotes it.
+                id=pid, parent_id=target_clip.id, state=PostState.awaiting_approval,
                 account=surf.account, account_id=surf.account_id, platform=surf.platform,
                 caption=caption, hashtags=cap.get("hashtags", []), aspect=aspect,
                 scheduled_time=sched,
