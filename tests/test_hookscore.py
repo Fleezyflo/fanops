@@ -74,3 +74,11 @@ def test_hook_quality_pov_rate_when_no_hooks(tmp_path):
     _decided(led, "s1", "m1", None)
     q = hook_quality(led)
     assert q["with_hook"] == 0 and q["viewer_pov_rate"] == 1.0   # no hooks shipped -> vacuously full POV (no div/0)
+
+def test_log_hook_quality_returns_digest_and_is_read_only(tmp_path):
+    from fanops.hookscore import log_hook_quality
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.moments_decided, duration=20.0))
+    _decided(led, "s1", "m1", "you ever build something alone")
+    q = log_hook_quality(led, cfg)
+    assert q == hook_quality(led)        # delegates to the pure scoreboard; logging is the only side effect

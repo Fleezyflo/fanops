@@ -12,6 +12,7 @@ with NO second-person/viewer address and no question — it recounts the clip to
 addresses the scroller, so it is NOT narration regardless of any third-person pronoun elsewhere."""
 from __future__ import annotations
 import re
+from fanops.models import MomentState
 
 # the scroller is addressed: 2nd person, POV, an invitation, or a question
 _VIEWER = re.compile(r"\b(you|your|youre|u|ur|pov|imagine)\b|'(re|ll)\b|\?", re.IGNORECASE)
@@ -31,3 +32,27 @@ def narration_signature(text: str | None) -> bool:
     if _VIEWER.search(low) or _IMPERATIVE_OPEN.search(low):
         return False                                  # addresses the viewer -> not narration
     return bool(_THIRD_PERSON.search(low))            # third-person subject + no viewer address -> recap
+
+def hook_quality(led) -> dict:
+    """Read-only hook scoreboard (Task 9) over the decided moments — no LLM, no network, no ledger
+    write/flock. Reports `viewer_pov_rate` from narration_signature, INDEPENDENT of the critic's verdict:
+    a hook the critic KEPT still counts against the rate if it reads as third-person narration, so a
+    loosened/biased critic cannot inflate the number (that is the whole point of a separate meter).
+    `repaired` = shipped hooks that took at least one critic->editor repair round. viewer_pov_rate is
+    1.0 when no hook shipped (vacuously full POV, and no division by zero)."""
+    decided = [m for m in led.moments.values() if m.state is MomentState.decided]
+    with_hook = [m for m in decided if m.hook]
+    repaired = [m for m in with_hook if m.hook_rounds > 0]
+    narrated = [m for m in with_hook if narration_signature(m.hook)]
+    pov = 1.0 - (len(narrated) / len(with_hook)) if with_hook else 1.0
+    return {"decided": len(decided), "with_hook": len(with_hook),
+            "null": len(decided) - len(with_hook), "repaired": len(repaired),
+            "viewer_pov_rate": pov}
+
+def log_hook_quality(led, cfg) -> dict:
+    """Emit ONE digest line of hook_quality(led) via the standard logger and return the dict. Read-only
+    (delegates to hook_quality); a thin surface a pass can call without taking the ledger lock."""
+    from fanops.log import get_logger
+    q = hook_quality(led)
+    get_logger(cfg)("hookscore", "feed", "hook_quality", **q)
+    return q

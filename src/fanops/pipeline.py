@@ -15,6 +15,7 @@ from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments
 from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pending
 from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending
+from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
                                   prewarm_approved_stitches, approved_disabled_count)
@@ -190,6 +191,12 @@ def advance(cfg: Config, *, base_time: str) -> dict:
             except Exception as e:
                 log("hookjudge", "-", "error", err=str(e)[:120])
                 hold_judge = False
+        # Task 9 scoreboard: one read-only digest line of hook quality (null/repaired/viewer_pov_rate)
+        # when a hook subsystem is on. The viewer-POV rate is critic-INDEPENDENT (narration_signature),
+        # so a loosened critic can't inflate it. Read-only + fail-open — never wedges a pass.
+        if cfg.hook_editor or cfg.hook_judge:
+            try: log_hook_quality(led, cfg)
+            except Exception as e: log("hookscore", "-", "error", err=str(e)[:120])
         # M2 structural-hooks router (opt-in, observe-only): classify each FINAL decided hook into a
         # hook_strategy reason BEFORE the render loop. Renders nothing; a router error never wedges the
         # pass (fail-open, like the editor/critic blocks above). Default OFF -> byte-identical to today.
