@@ -2,31 +2,8 @@
 {% extends "base.html" %}
 {% block title %}Review{% endblock %}
 {% block body %}
-  <h2>Review</h2>
-  {% set prepared = cards | selectattr('bucket','equalto','prepared') | list %}
-  {% if prepared %}
-    <div class="meta">{{ prepared|length }} clip(s) waiting — <a class="button" href="{{ url_for('run_panel') }}">Prepare all</a> to write captions and finish them.</div>
-  {% endif %}
-  {% set buckets = {'editable':'Upcoming','prepared':'Ready to prepare','held':'Held for review','recent':'Recently shipped'} %}
-  {% for key, label in buckets.items() %}
-    {% set group = cards | selectattr('bucket','equalto',key) | list %}
-    {% if group %}
-      <h3>{{ label }} ({{ group|length }})</h3>
-      <div class="clip-grid">
-        {% for card in group %}{% include "_card.html" %}{% endfor %}
-      </div>
-    {% endif %}
-  {% endfor %}
-  {% if page and page.total > page.items|length %}
-    <div class="grid-more meta">
-      Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
-      {% if page.next_offset is not none %}
-        <a class="button" href="{{ url_for('review', offset=page.next_offset) }}">Show more</a>
-      {% endif %}
-      {% if page.offset > 0 %}
-        <a class="button" href="{{ url_for('review') }}">Back to start</a>
-      {% endif %}
-    </div>
-  {% endif %}
-  {% if not cards %}<div class="empty">No footage yet — add videos in the Make tab to begin.</div>{% endif %}
+  <h2>Review &amp; approve</h2>
+  <p class="muted">Produced posts wait here for your approval. <strong>Nothing publishes until you approve it.</strong>
+    Approve sends a post to the Schedule; reject discards it.</p>
+  {% include "_review_body.html" %}
 {% endblock %}

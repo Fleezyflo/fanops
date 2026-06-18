@@ -56,13 +56,13 @@ def test_review_buckets_editable_recent_held(tmp_path):
     # held clip (never crossposted)
     led.add_clip(Clip(id="clip_held", parent_id="mom_1", path="/clips/h.mp4", aspect=Fmt.r9x16,
                       state=ClipState.held, held=True, held_reason="brand risk: foo"))
-    # editable post (far-future queued)
+    # awaiting_approval post (the approve worklist) — editable, never imminent (gated, can't ship)
     led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="EDIT ME", hashtags=["#x"],
-                      state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=3))))
-    # imminent post (queued but ~1 min out) -> shown, not editable
-    led.add_post(Post(id="p_imm", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="SHIPPING", state=PostState.queued,
+                      state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=3))))
+    # an already-approved (queued) post has LEFT Review for the Schedule -> must NOT appear in editable
+    led.add_post(Post(id="p_appr", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="APPROVED", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(minutes=1))))
     # recent published post (within 24h)
     led.add_post(Post(id="p_recent", parent_id="clip_1", account="@a", account_id="1",
@@ -74,11 +74,11 @@ def test_review_buckets_editable_recent_held(tmp_path):
         by_bucket.setdefault(c.bucket, []).append(c)
     # held bucket present with reason
     assert any(c.held and c.held_reason == "brand risk: foo" for c in by_bucket.get("held", []))
-    # editable card carries clip_1 with both queued surfaces; only the far-future one is editable
+    # editable card carries clip_1 with the awaiting surface (editable); the approved one is absent
     ed = [c for c in by_bucket.get("editable", []) if c.clip_id == "clip_1"][0]
     sp = {s.post_id: s for s in ed.surfaces}
+    assert "p_appr" not in sp                          # approved -> Schedule, not Review
     assert sp["p_edit"].editable is True and sp["p_edit"].imminent is False
-    assert sp["p_imm"].editable is False and sp["p_imm"].imminent is True
     assert ed.source_name == "show.mp4" and ed.moment_window == "0–7" and ed.reason == "big drop"
     assert sp["p_edit"].media_url == "/media/p_edit" and sp["p_edit"].persona == "hype"
     # recent bucket holds the published post, read-only
@@ -93,7 +93,7 @@ def test_review_buckets_variant_media_url_is_post_scoped(tmp_path):
                           "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.add_post(Post(id="p_v", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="v", state=PostState.queued,
+                      platform=Platform.instagram, caption="v", state=PostState.awaiting_approval,
                       media_urls=["file:///clips/clip_1_variant.mp4"],
                       scheduled_time=_z(NOW + timedelta(hours=3))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
@@ -113,7 +113,7 @@ def test_review_buckets_surfaces_postless_clips_as_prepared(tmp_path):
     led.add_clip(Clip(id="clip_retired", parent_id="mom_1", path="/r.mp4", aspect=Fmt.r9x16, state=ClipState.retired))
     led.add_clip(Clip(id="clip_posted", parent_id="mom_1", path="/p.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="clip_posted", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=3))))
+                      caption="x", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=3))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
     by_bucket = {}
     for c in cards: by_bucket.setdefault(c.bucket, []).append(c)

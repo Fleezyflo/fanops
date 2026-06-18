@@ -179,13 +179,17 @@ def _lineage_for_clip(led: Ledger, clip):
     return source_name, label, moment_window, reason, language, excerpt
 
 def _surface(post, *, persona, now: datetime) -> SurfacePost:
-    imm = _imminent(post.scheduled_time, now)
     state = post.state.value
+    # an awaiting_approval post is GATED — it cannot ship until approved, so it is never "imminent"
+    # (no false "shipping now" badge) and is always editable (edit/regenerate/reschedule before approving).
+    awaiting = post.state is PostState.awaiting_approval
+    imm = False if awaiting else _imminent(post.scheduled_time, now)
+    editable = awaiting or (state == PostState.queued.value and not imm)
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=post.caption, hashtags=list(post.hashtags or []),
         scheduled_time=post.scheduled_time, media_url=f"/media/{post.id}",
-        state=state, imminent=imm, editable=(state == PostState.queued.value and not imm))
+        state=state, imminent=imm, editable=editable)
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime) -> ReviewCard:
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
@@ -198,16 +202,17 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         surfaces=surfaces, bucket=bucket, clip_state=clip.state.value)
 
 def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime) -> list[ReviewCard]:
-    """Three buckets (spec §6): editable (queued posts grouped by clip), recent (published/analyzed
-    within RECENT_WINDOW_HOURS), held (clips with held=True, no posts). A clip may appear in both
-    editable and recent (different posts)."""
+    """Three buckets (spec §6): editable (awaiting_approval posts grouped by clip — the approve worklist),
+    recent (published/analyzed within RECENT_WINDOW_HOURS), held (clips with held=True, no posts). A clip
+    may appear in both editable and recent (different posts). Approved (`queued`) posts have left Review for
+    the Schedule bucket — they are NOT shown here (post-approval-lifecycle)."""
     personas = _personas(accounts)
     cards: list[ReviewCard] = []
     queued_by_clip: dict[str, list] = {}
     recent_by_clip: dict[str, list] = {}
     recent_cutoff = now - timedelta(hours=RECENT_WINDOW_HOURS)
     for p in led.posts.values():
-        if p.state is PostState.queued:
+        if p.state is PostState.awaiting_approval:
             queued_by_clip.setdefault(p.parent_id, []).append(p)
         elif p.state in (PostState.published, PostState.analyzed):
             keep = True

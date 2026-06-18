@@ -73,10 +73,12 @@ def test_publish_now_route(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
 
-def test_review_renders_publish_now_button(tmp_path, monkeypatch):
+def test_review_shows_approval_not_publish_now(tmp_path, monkeypatch):
+    # post-approval-lifecycle: Review is the APPROVE worklist. Publish-now moved to the Schedule (it is
+    # queued-only, and Review shows awaiting_approval posts). Review must offer Approve, never Publish now.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     from fanops.studio.app import create_app
-    cfg = Config(root=tmp_path); _seed(cfg)
+    cfg = Config(root=tmp_path); _seed(cfg, state=PostState.awaiting_approval)
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().get("/review")
-    assert r.status_code == 200 and b"Publish now" in r.data
+    assert r.status_code == 200 and b"Approve selected" in r.data and b"Publish now" not in r.data

@@ -22,6 +22,7 @@
     {% for s in card.surfaces %}
       <div class="surface">
         <div class="surface-head">
+          {% if card.bucket == 'editable' %}<label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}" aria-label="select {{ s.account }} {{ s.platform }} for approval"></label>{% endif %}
           <span class="surface-name">{{ s.account }} <span class="muted">{{ s.platform }}</span></span>
           {% if s.imminent %}<span class="badge {{ 'shipped' if s.state != 'queued' else '' }}">{{ 'shipped' if s.state != 'queued' else 'shipping now' }}</span>{% endif %}
         </div>

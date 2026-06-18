@@ -55,11 +55,9 @@ def test_publish_now_rejects_awaiting_approval(tmp_path):
 
 # ---- checkpoint 2: Review approval UI (views + routes) ----
 import json
-from datetime import timedelta
 from fanops.models import Clip, ClipState, Source, Moment, MomentState, Fmt
 from fanops.accounts import Accounts
 from fanops.studio import views
-from fanops.timeutil import iso_z
 
 
 def _client(cfg):
@@ -127,3 +125,10 @@ def test_post_unapprove_route_sends_back_to_review(tmp_path):
     cfg = Config(root=tmp_path); _seed_review(cfg, state=PostState.queued, pid="p1")
     r = _client(cfg).post("/posts/unapprove/p1")
     assert r.status_code == 200 and Ledger.load(cfg).posts["p1"].state is PostState.awaiting_approval
+
+
+def test_awaiting_post_is_editable_before_approval(tmp_path):
+    # the operator edits/reschedules BEFORE approving — the editable guard must accept awaiting_approval.
+    cfg = Config(root=tmp_path); _seed_review(cfg, pid="p1", when=_FUTURE)
+    r = actions.reschedule_post(cfg, "p1", "2099-06-06T12:00:00Z", now=_NOW)
+    assert r.ok and Ledger.load(cfg).posts["p1"].scheduled_time == "2099-06-06T12:00:00Z"
