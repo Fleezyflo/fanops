@@ -127,9 +127,8 @@ def create_app(cfg: Config) -> Flask:
     @app.post("/posts/unapprove/<post_id>")
     def do_unapprove_post(post_id):
         # send an approved-but-unsent post back to Review (the Schedule 'send back' control). Re-render the
-        # Review worklist so the returned post is visible there again.
-        actions.unapprove_post(cfg, post_id)
-        return _review_panel()
+        # Review worklist so the returned post is visible there again; surface any error (unknown post, etc.).
+        return _review_panel(actions.unapprove_post(cfg, post_id))
 
     @app.get("/schedule")
     def schedule():

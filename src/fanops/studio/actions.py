@@ -478,7 +478,10 @@ def snooze_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) ->
             return ActionResult(ok=False, error=f"no such clip: {clip_id}")
         count = 0
         for p in led.posts.values():
-            if p.parent_id == clip_id and p.state is PostState.queued and not _imminent(p.scheduled_time, now):
+            # bump both approved (queued) and pre-approval (awaiting_approval) posts — Review shows the
+            # latter, so a Review-card snooze must actually move something (not a silent 0-count no-op).
+            if (p.parent_id == clip_id and p.state in (PostState.queued, PostState.awaiting_approval)
+                    and not _imminent(p.scheduled_time, now)):
                 p.scheduled_time = z
                 count += 1
     return ActionResult(ok=True, detail={"clip_id": clip_id, "count": count, "scheduled_time": z})

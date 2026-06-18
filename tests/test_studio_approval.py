@@ -132,3 +132,18 @@ def test_awaiting_post_is_editable_before_approval(tmp_path):
     cfg = Config(root=tmp_path); _seed_review(cfg, pid="p1", when=_FUTURE)
     r = actions.reschedule_post(cfg, "p1", "2099-06-06T12:00:00Z", now=_NOW)
     assert r.ok and Ledger.load(cfg).posts["p1"].scheduled_time == "2099-06-06T12:00:00Z"
+
+
+def test_unapprove_unknown_post_surfaces_error(tmp_path):
+    cfg = Config(root=tmp_path)
+    r = _client(cfg).post("/posts/unapprove/nope")
+    assert r.status_code == 200 and b"no such post" in r.data   # error banner, not a silent clean re-render
+
+
+def test_snooze_moves_awaiting_post(tmp_path):
+    # Review shows awaiting posts, and the Snooze button fires per clip — it must actually move them
+    # (not a silent 0-count no-op now that the editable bucket is awaiting_approval).
+    cfg = Config(root=tmp_path); _seed_review(cfg, pid="p1", when=_FUTURE)
+    r = actions.snooze_clip(cfg, "clip_1", now=_NOW)
+    assert r.ok and r.detail["count"] == 1
+    assert Ledger.load(cfg).posts["p1"].scheduled_time != _FUTURE

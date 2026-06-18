@@ -5,7 +5,7 @@
 <div id="review-body">
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }} post(s) — now in the Schedule.{% else %}Rejected {{ result.detail.rejected }} post(s).{% endif %}{% else %}{{ result.error }}{% endif %}
+      {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }} post(s) — now in the Schedule.{% elif result.detail.rejected is defined %}Rejected {{ result.detail.rejected }} post(s).{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
   {% set prepared = cards | selectattr('bucket','equalto','prepared') | list %}
