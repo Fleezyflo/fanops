@@ -191,3 +191,30 @@ def test_ingest_noop_when_disabled(tmp_path, monkeypatch):
     led = ingest_hook_edit(led, cfg)                            # disabled -> never touches hooks
     assert led.moments["m1"].hook == "before he was Moh Flow"
     assert hook_edit_pending(led, cfg) is False
+
+# ---- Task 8: editor consumes the critic's reject reason on a repair pass ----
+
+def test_editor_payload_carries_critic_feedback_and_clears_after_ingest(tmp_path, monkeypatch):
+    # A re-opened moment (hook_rounds=1, hook_feedback set) carries the critic's reason into the editor
+    # payload so the editor fixes EXACTLY that; the feedback is cleared once the editor applies a rewrite.
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _src(led, cfg, "s1")
+    led.add_moment(Moment(id="m1", parent_id="s1", state=MomentState.decided, start=0.0, end=18.0,
+                          reason="origin", transcript_excerpt="built it all", hook="rejected generic hook",
+                          signal_score=0.5, hook_rounds=1, hook_feedback="re-aim at the viewer"))
+    led = request_hook_edit(led, cfg)
+    key = pending(cfg, kind="hookedit")[0]
+    payload = json.loads((cfg.agent_io / "requests" / f"hookedit__{key}.request.json").read_text())
+    assert payload["items"][0]["critic_feedback"] == "re-aim at the viewer"   # carried to the editor
+    _answer([HookEditItem(moment_id="m1", hook="you ever build something alone")])
+    led = ingest_hook_edit(led, cfg)
+    assert led.moments["m1"].hook == "you ever build something alone"
+    assert led.moments["m1"].hook_feedback is None                            # cleared after applying
+
+def test_hookedit_prompt_instructs_repair_on_critic_feedback():
+    # Assert the INSTRUCTION text, not the data echo — `critic_feedback` would appear in serialized items
+    # regardless, so the meaningful signal is the directive phrase. Use a feedback-less item to be sure.
+    from fanops.prompts import hookedit_prompt
+    p = hookedit_prompt({"guidance": "", "items": [{"moment_id": "m1", "hook": "x"}]}).lower()
+    assert "critic_feedback" in p and "fix exactly that" in p   # repair directive present without any data echo
