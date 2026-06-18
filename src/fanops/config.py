@@ -165,6 +165,16 @@ class Config:
         return os.getenv("FANOPS_RESPONDER") or "manual"
 
     @property
+    def llm_model(self) -> str:
+        # V2 M1/F1: pin the creative brain. `claude -p` ran with NO --model, so output quality drifted
+        # with whatever the operator's CLI defaulted to (unpinned = unreproducible). Default "opus" = the
+        # judgment tier for the moment/caption/hook calls; the `claude` CLI resolves the alias to latest-
+        # of-tier. Pin a FULL model id (e.g. "claude-opus-4-...") for bit-stable repro; "sonnet" trades
+        # judgment for cost/latency. Mirrors clip_profile's validate-or-default shape.
+        v = os.getenv("FANOPS_LLM_MODEL")
+        return v.strip() if v and v.strip() else "opus"
+
+    @property
     def artist_name(self) -> str:
         # Operator override for the artist DISPLAY NAME used as the YouTube title fallback when a
         # post has no explicit title (audit h). Default "Moh Flow" — unchanged from the old
