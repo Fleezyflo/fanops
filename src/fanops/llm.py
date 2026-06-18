@@ -54,9 +54,9 @@ def _rate_limit_status(returncode: int, stdout: str) -> int | None:
     status = env.get("api_error_status") if isinstance(env, dict) else None
     return status if status in _RATELIMIT_STATUSES else None
 
-def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
-                images: list[str] | None = None) -> dict:
-    """Call `claude -p` with a JSON schema; return the model's schema-valid object.
+def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
+                     images: list[str] | None = None, model: str | None = None) -> tuple[dict, str | None]:
+    """Call `claude -p` with a JSON schema; return (schema-valid object, model-that-answered).
     Prefers the envelope's `structured_output`; falls back to json.loads(`result`).
     Raises ToolchainMissingError if `claude` is absent, RuntimeError on nonzero exit or
     unparseable output. The CALLER (the responder) validates against the pydantic model and
@@ -65,8 +65,11 @@ def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
     `--strict-mcp-config` + `--allowedTools ""` keep it a clean, no-tool, no-MCP generator.
     `images`: when given (the vision-grounded hook editor), the Read tool is granted and the frame
     paths are named in the prompt so the model READS and SEES them before deciding (proven in the
-    Task 0a spike). Read is the ONLY tool granted — still no write/exec/MCP — and the default
-    (images=None) path is byte-identical to before (pure no-tool generator)."""
+    Task 0a spike). Read is the ONLY tool granted — still no write/exec/MCP — and the no-image path
+    is byte-identical to before (pure no-tool generator).
+    `model` (V2 M1/F1): pin `claude -p --model` so the creative brain is REPRODUCIBLE — an unpinned
+    call drifts with whatever the CLI defaults to. The returned model prefers the envelope's reported
+    `model` (the true audit trail) and FALLS BACK to the pinned value when the envelope omits it."""
     if images:
         prompt = ("FIRST read these image frames with the Read tool, then answer using what you SEE:\n"
                   + "\n".join(images) + "\n\n" + prompt)
@@ -75,11 +78,13 @@ def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
     # --input-format text), NOT as an argv positional. argv was world-visible via `ps`/`/proc/<pid>/
     # cmdline` (transcript + brand guidance leaked to any local process) and a very large transcript
     # could hit ARG_MAX -> E2BIG, surfaced misleadingly as "claude not found". STDIN has neither limit.
+    # --model (when pinned) is appended LAST so it never lands between --allowedTools and its value
+    # (the argv-order the tests assert on — audit H).
     cmd = ["claude", "-p",
            "--output-format", "json",
            "--json-schema", json.dumps(schema),
            "--allowedTools", allowed,
-           "--strict-mcp-config"]
+           "--strict-mcp-config"] + (["--model", model] if model else [])
     # Rate-limit backoff (mirrors the publishers' jittered exponential retry — blotato_rest.py:131):
     # a 429/503/529 is rejected pre-processing and SAFE to retry. Without this a usage spike turned
     # the whole autonomous run into a silent no-op (one log line per gate). A timeout / hard nonzero
@@ -112,13 +117,22 @@ def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
         raise RuntimeError(f"claude -p output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
     if not isinstance(env, dict):
         raise RuntimeError(f"claude -p output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
+    rep = env.get("model")                                   # the model that actually answered, if reported
+    resolved = rep if isinstance(rep, str) and rep.strip() else model   # else fall back to the pinned value
     so = env.get("structured_output")
     if isinstance(so, dict):
-        return so
+        return so, resolved
     result = env.get("result")
     if isinstance(result, str):
         try:
-            return json.loads(result)
+            return json.loads(result), resolved
         except Exception as e:
             raise RuntimeError(f"claude -p `result` was not JSON: {result[:300]}") from e
     raise RuntimeError(f"claude -p envelope had no structured_output or JSON result: {(r.stdout or '')[:300]}")
+
+def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
+                images: list[str] | None = None, model: str | None = None) -> dict:
+    """Bare-dict contract preserved for every caller that doesn't need provenance — including
+    studio/actions.py, which binds `model = claude_json` and calls it expecting a dict (audit C2:
+    a tuple-return there would TypeError). The model-aware path is claude_json_meta."""
+    return claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model)[0]
