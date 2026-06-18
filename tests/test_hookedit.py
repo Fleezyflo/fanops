@@ -142,10 +142,11 @@ def test_ingest_nulls_still_weak_or_still_duplicate_rewrite(tmp_path, monkeypatc
     monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
     cfg = Config(root=tmp_path); led = _seed_feed(cfg)
     led = request_hook_edit(led, cfg)
-    # editor returns a STILL-duplicate pair + a STILL-generic one -> the deterministic guard nulls them
+    # v2: the deterministic guard is MECHANICAL only — it nulls a rewrite that is STILL a cross-feed
+    # duplicate (it no longer nulls quality slop like 'his coldest opener'; the critic owns that now).
     _answer(cfg, [HookEditItem(moment_id="m1", hook="same hook"),
                   HookEditItem(moment_id="m2", hook="same hook"),           # cross-feed dup -> 2nd nulled
-                  HookEditItem(moment_id="m3", hook="his coldest opener")])  # superlative slop -> nulled
+                  HookEditItem(moment_id="m3", hook="same hook")])          # 3rd exact dup -> nulled too
     led = ingest_hook_edit(led, cfg)
     assert led.moments["m1"].hook == "same hook"
     assert led.moments["m2"].hook is None

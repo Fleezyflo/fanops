@@ -1,7 +1,7 @@
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Clip, Post, SourceState, Platform, MomentDecision, MomentPick
+from fanops.models import Source, Clip, Post, Moment, MomentState, SourceState, Platform, MomentDecision, MomentPick
 from fanops.agentstep import response_path, request_path, latest_request_id
 from fanops.moments import request_moments, ingest_moments, validate_pick, _drop_overlaps
 
@@ -174,20 +174,22 @@ def test_moment_prefers_llm_retention_hook_over_transcript(tmp_path):
     assert moms[0].hook == "wait for the beat switch"       # the LLM retention hook, not...
     assert moms[0].hook != derive_hook(excerpt)             # ...the transcript first-clause
 
-def test_ingest_rejects_weak_hook_to_clean_clip(tmp_path):
-    # The deterministic guard (hookcheck.is_weak_hook): a generic-superlative hook the model emitted
-    # ('his hardest bar') is rejected to a CLEAN clip (hook=None), never burned on screen. A concrete
-    # hook in the same shape is kept untouched.
+def test_ingest_rejects_mechanical_dup_hook_to_clean_clip(tmp_path):
+    # v2: the deterministic MECHANICAL floor (hookcheck.is_weak_hook) still applies through ingest — a
+    # hook that EXACTLY duplicates another clip's hook is rejected to a CLEAN clip (never burned twice).
+    # (Quality slop like 'his hardest bar' is NO LONGER rejected here — that's the reasoning critic's call.)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led.add_moment(Moment(id="m_other", parent_id="src_other", state=MomentState.decided,
+                          start=0.0, end=5.0, reason="x", hook="wait for the drop"))   # a prior clip used this
     led = request_moments(led, cfg, "src_1")
     rid = latest_request_id(cfg, "moments", "src_1")
     response_path(cfg, "moments", "src_1").write_text(MomentDecision(
         source_id="src_1", request_id=rid,
         picks=[MomentPick(start=14.0, end=18.5, reason="punchline", transcript_excerpt="x",
-                          signal_score=0.6, hook="his hardest bar")]
+                          signal_score=0.6, hook="wait for the drop")]   # exact cross-clip duplicate
     ).model_dump_json())
     led = ingest_moments(led, cfg, "src_1")
-    assert led.moments_of("src_1")[0].hook is None          # weak slop -> clean clip, not burned
+    assert led.moments_of("src_1")[0].hook is None          # exact dup -> clean clip, not burned twice
 
 def test_ingest_all_invalid_marks_source_error(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
