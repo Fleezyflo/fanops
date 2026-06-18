@@ -161,6 +161,19 @@ def create_app(cfg: Config) -> Flask:
         view = views.lift_rows(led, cfg, Accounts.load(cfg))
         return render_template("lift.html", view=view, tab="lift")
 
+    def _posted_panel(result=None, *, full=False):
+        rows = views.posted_library(Ledger.load(cfg), cfg)
+        return render_template("posted.html" if full else "_posted_panel.html", rows=rows, result=result, tab="posted")
+
+    @app.get("/posted")
+    def posted():
+        return _posted_panel(full=True)
+
+    @app.post("/posts/repost/<post_id>")
+    def do_repost_post(post_id):
+        # 'Post again': spawn a fresh awaiting_approval repost from a shipped post; re-render the library.
+        return _posted_panel(actions.repost_post(cfg, post_id))
+
     @app.get("/run")
     def run_panel():
         # The pipeline DRIVER: ingest/pull/advance from the browser so the operator never needs the

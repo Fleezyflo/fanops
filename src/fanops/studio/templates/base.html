@@ -20,6 +20,7 @@
       <a href="{{ url_for('review') }}" class="{{ 'active' if tab=='review' else '' }}">Review</a>
       <a href="{{ url_for('publish_panel') }}" class="{{ 'active' if tab=='publish' else '' }}">Publish</a>
       <a href="{{ url_for('lift') }}" class="{{ 'active' if tab=='lift' else '' }}">Results</a>
+      <a href="{{ url_for('posted') }}" class="{{ 'active' if tab=='posted' else '' }}">Posted</a>
     </nav>
     <details class="nav-more"{{ ' open' if tab in advanced else '' }}>
       <summary class="{{ 'active' if tab in advanced else '' }}">Advanced</summary>

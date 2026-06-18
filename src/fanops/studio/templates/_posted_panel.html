@@ -1,0 +1,28 @@
+{# src/fanops/studio/templates/_posted_panel.html — the Posted library (htmx-swapped). Shipped posts are
+   immutable history; each row offers 'Post again' — a fresh awaiting_approval repost of the same clip that
+   re-enters the approval gate. Not a dead archive: it doubles as the reuse surface. #}
+<div id="posted-body">
+  {% if result %}
+    <div class="result {{ 'ok' if result.ok else 'err' }}">
+      {% if result.ok %}Reposted — a fresh copy is waiting in Review for your approval.{% else %}{{ result.error }}{% endif %}
+    </div>
+  {% endif %}
+  {% if rows %}
+  <table>
+    <tr><th>Time</th><th>Account</th><th>Lift</th><th>Link</th><th><span class="vh">Reuse</span></th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.scheduled_time or '—' }}</td>
+      <td>{{ r.account }} <span class="muted">{{ r.platform }}</span></td>
+      <td>{{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }}</td>
+      <td>{% if r.public_url %}<a href="{{ r.public_url }}" target="_blank" rel="noopener">{{ r.public_url }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td>
+        <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id) }}" hx-target="#posted-body" hx-swap="outerHTML">
+          <button type="submit">Post again</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<div class="empty">Nothing posted yet. Approved posts that ship will appear here with their results.</div>{% endif %}
+</div>

@@ -1,0 +1,9 @@
+{# src/fanops/studio/templates/posted.html — the Posted library (proof + reuse) #}
+{% extends "base.html" %}
+{% block title %}Posted{% endblock %}
+{% block body %}
+  <h2>Posted</h2>
+  <p class="muted">Everything that has shipped, with its live link and lift. Past posts are history — to run a
+    winner again, <strong>Post again</strong> creates a fresh copy that re-enters Review for approval.</p>
+  {% include "_posted_panel.html" %}
+{% endblock %}
