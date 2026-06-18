@@ -108,6 +108,28 @@ def create_app(cfg: Config) -> Flask:
         return render_template("review.html", cards=page.items, page=page, tab="review",
                                backend=cfg.poster_backend)
 
+    def _review_panel(result=None):
+        led = Ledger.load(cfg); accounts = Accounts.load(cfg)
+        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
+        page = views.paginate(cards, _offset_arg())
+        return render_template("_review_body.html", cards=page.items, page=page, result=result,
+                               tab="review", backend=cfg.poster_backend)
+
+    @app.post("/posts/approve")
+    def do_approve_posts():
+        # the human gate (multi-select): awaiting_approval -> queued; approved posts leave Review for the Schedule.
+        return _review_panel(actions.approve_posts(cfg, request.form.getlist("ids")))
+
+    @app.post("/posts/reject")
+    def do_reject_posts():
+        return _review_panel(actions.reject_posts(cfg, request.form.getlist("ids")))
+
+    @app.post("/posts/unapprove/<post_id>")
+    def do_unapprove_post(post_id):
+        # send an approved-but-unsent post back to Review (the Schedule 'send back' control). Re-render the
+        # Review worklist so the returned post is visible there again; surface any error (unknown post, etc.).
+        return _review_panel(actions.unapprove_post(cfg, post_id))
+
     @app.get("/schedule")
     def schedule():
         led = Ledger.load(cfg)

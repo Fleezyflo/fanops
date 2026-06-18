@@ -54,7 +54,7 @@ def _posters(html: str):
 # ---- (1) poster attribute ----
 def test_review_videos_all_have_nonempty_poster(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n_clips=3)
+    cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n_clips=3, state=PostState.awaiting_approval)
     html = _client(cfg).get("/review").data.decode()
     vids, posters = _videos(html), _posters(html)
     assert vids, "expected video elements on /review"
@@ -77,7 +77,7 @@ def test_publish_videos_all_have_nonempty_poster(tmp_path, monkeypatch):
 def test_review_grid_capped_with_visible_count(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); _accounts(cfg)
-    _seed(cfg, n_clips=views.GRID_PAGE_SIZE + 5)
+    _seed(cfg, n_clips=views.GRID_PAGE_SIZE + 5, state=PostState.awaiting_approval)
     html = _client(cfg).get("/review").data.decode()
     cards = html.count('class="card clip-card"')
     assert cards <= views.GRID_PAGE_SIZE, "the grid must be capped to a page"
@@ -100,7 +100,7 @@ def test_review_show_more_offset_returns_remainder(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); _accounts(cfg)
     total = views.GRID_PAGE_SIZE + 6
-    _seed(cfg, n_clips=total)
+    _seed(cfg, n_clips=total, state=PostState.awaiting_approval)
     html = _client(cfg).get(f"/review?offset={views.GRID_PAGE_SIZE}").data.decode()
     cards = html.count('class="card clip-card"')
     assert cards == total - views.GRID_PAGE_SIZE       # the remainder shows on the next page

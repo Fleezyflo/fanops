@@ -1,0 +1,43 @@
+{# src/fanops/studio/templates/_review_body.html — the swappable Review worklist. The approve/reject bar
+   uses hx-include (NOT a wrapping <form>) because the cards already contain their own edit/snooze/reschedule
+   forms, and nested forms are invalid HTML. Checkboxes (name="ids") live in the editable cards; the bar
+   buttons gather the checked ones scoped to #review-body. Re-rendered standalone by /posts/approve|reject. #}
+<div id="review-body">
+  {% if result %}
+    <div class="result {{ 'ok' if result.ok else 'err' }}">
+      {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }} post(s) — now in the Schedule.{% elif result.detail.rejected is defined %}Rejected {{ result.detail.rejected }} post(s).{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
+    </div>
+  {% endif %}
+  {% set prepared = cards | selectattr('bucket','equalto','prepared') | list %}
+  {% if prepared %}
+    <div class="meta">{{ prepared|length }} clip(s) waiting — <a class="button" href="{{ url_for('run_panel') }}">Prepare all</a> to write captions and finish them.</div>
+  {% endif %}
+  {% set buckets = {'editable':'Awaiting approval','prepared':'Ready to prepare','held':'Held for review','recent':'Recently shipped'} %}
+  {% for key, label in buckets.items() %}
+    {% set group = cards | selectattr('bucket','equalto',key) | list %}
+    {% if group %}
+      <h3>{{ label }} ({{ group|length }})</h3>
+      {% if key == 'editable' %}
+        <div class="approve-bar meta">Tick the posts you want live, then approve — they move to the Schedule. Reject discards.
+          <button type="button" class="primary" hx-post="{{ url_for('do_approve_posts') }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Approve selected</button>
+          <button type="button" hx-post="{{ url_for('do_reject_posts') }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
+        </div>
+      {% endif %}
+      <div class="clip-grid">
+        {% for card in group %}{% include "_card.html" %}{% endfor %}
+      </div>
+    {% endif %}
+  {% endfor %}
+  {% if page and page.total > page.items|length %}
+    <div class="grid-more meta">
+      Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
+      {% if page.next_offset is not none %}
+        <a class="button" href="{{ url_for('review', offset=page.next_offset) }}">Show more</a>
+      {% endif %}
+      {% if page.offset > 0 %}
+        <a class="button" href="{{ url_for('review') }}">Back to start</a>
+      {% endif %}
+    </div>
+  {% endif %}
+  {% if not cards %}<div class="empty">No footage yet — add videos in the Make tab to begin.</div>{% endif %}
+</div>

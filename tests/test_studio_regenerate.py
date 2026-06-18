@@ -15,14 +15,14 @@ NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 FUTURE = "2099-01-01T00:00:00Z"
 def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-def _seed(cfg, caption="OLD", lang="en"):
+def _seed(cfg, caption="OLD", lang="en", state=PostState.queued):
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language=lang))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", transcript_excerpt="the beat drops here", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption=caption, state=PostState.queued,
+                      platform=Platform.instagram, caption=caption, state=state,
                       scheduled_time=FUTURE))
     led.save(); return led
 
@@ -133,8 +133,9 @@ def test_regenerate_route_unknown_post_shows_clean_error(tmp_path):
     assert r.status_code == 200 and b"no such post" in r.data
 
 def test_review_card_renders_regenerate_button(tmp_path):
+    # Review shows awaiting_approval posts (the approve worklist); the edit/regenerate controls work pre-approval.
     from fanops.studio.app import create_app
-    cfg = Config(root=tmp_path); _seed(cfg)
+    cfg = Config(root=tmp_path); _seed(cfg, state=PostState.awaiting_approval)
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().get("/review")
     assert r.status_code == 200 and b"Regenerate" in r.data
