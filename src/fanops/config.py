@@ -279,11 +279,12 @@ class Config:
         # each hook an INDEPENDENT LLM pass judges it against the verified retention rubric (anchored to
         # a concrete specific of THIS clip; passes the portability test; opens a loop) and REJECTS to a
         # clean clip whatever fails — the enforcement (teeth) the deterministic floor defers to a critic.
-        # DEFAULT OFF (opt-in, exactly like hook_editor was at introduction): proven on the corpus first,
-        # then promoted to default. Only requested/held under FANOPS_RESPONDER=llm; runs only on hooks
-        # the editor has already finalized (hook_edited). Only explicit on-words enable it.
+        # The critic stays STRICT (reject when unsure); the author<->critic repair loop absorbs the
+        # null-rate cost, so it no longer needs to be opt-in. DEFAULT ON (v2; mirrors hook_editor):
+        # only requested/held under FANOPS_RESPONDER=llm; runs only on hooks the editor has finalized
+        # (hook_edited). Only explicit off-words disable it.
         v = (os.getenv("FANOPS_HOOK_JUDGE") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
 
     @property
     def hook_router(self) -> bool:

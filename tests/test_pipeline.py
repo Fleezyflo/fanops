@@ -345,6 +345,7 @@ def test_hook_editor_holds_then_rewrites_across_the_feed(tmp_path, monkeypatch, 
     # hookedit gate and HOLDS clip rendering until it's answered, then renders with the REWRITTEN hook.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "off")     # isolate the EDITOR; the critic (default ON v2) has its own tests
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
     from fanops.models import HookEditDecision, HookEditItem
@@ -372,6 +373,7 @@ def test_hook_editor_consumes_answer_even_after_responder_flipped_to_manual(tmp_
     # FANOPS_RESPONDER->manual mid-session, never orphaned + never rendered with the un-edited hook.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
+    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "off")     # isolate the EDITOR; the critic (default ON v2) has its own tests
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
     from fanops.models import HookEditDecision, HookEditItem
