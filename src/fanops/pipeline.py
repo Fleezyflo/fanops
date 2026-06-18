@@ -14,7 +14,7 @@ from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments
 from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pending
-from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending
+from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending, in_repair
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
@@ -211,6 +211,8 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                     continue                             # wait for the feed editor before burning this hook
                 if hold_judge and not m.hook_judged:
                     continue                             # wait for the critic's verdict before burning
+                if in_repair(m):
+                    continue                             # critic rejected; awaiting re-edit+re-judge — don't burn the rejected hook
                 try:
                     led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
                     for clip in clips:

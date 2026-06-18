@@ -18,6 +18,7 @@ from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.keyframes import extract_keyframes
 from fanops.hookscore import narration_signature
 from fanops.control import load_guidance
+from fanops.log import get_logger
 
 def _frames(led: Ledger, cfg: Config, m: Moment) -> list[str]:
     """A few source frames in the moment's window — the critic's eyes (mirrors hookedit._frames). The
@@ -92,6 +93,14 @@ def request_hook_judge(led: Ledger, cfg: Config) -> Ledger:
         write_request(cfg, kind="hookjudge", key=key, payload=payload)
     return led
 
+def in_repair(m: Moment) -> bool:
+    """True while a moment is mid-repair: the critic rejected it (hook_rounds > 0) and it has NOT been
+    re-finalized (hook_judged False). The pipeline must HOLD rendering — burning the rejected hook now
+    would defeat the repair, and neither hold_hooks (computed before the reject re-opened it) nor
+    hold_judge (the re-opened moment drops out of _judgeable) covers this single pass. A capped-null or a
+    kept hook latches hook_judged=True, so it is NOT in repair and renders normally (clean or final)."""
+    return m.hook_rounds > 0 and not m.hook_judged
+
 def hook_judge_pending(led: Ledger, cfg: Config) -> bool:
     """True when the critic is ON, there is a judgeable batch, and its gate is not yet answered — the
     signal for the pipeline to HOLD clip rendering (don't burn a hook the critic may reject)."""
@@ -137,7 +146,8 @@ def ingest_hook_judge(led: Ledger, cfg: Config) -> Ledger:
                         mo.hook_edited = False
                         mo.hook_judged = False
                         reopened = True
-                    except Exception:                    # any failure -> fall to the safe null path
+                    except Exception as exc:             # any failure -> fall to the safe null path (+ breadcrumb)
+                        get_logger(cfg)("hookjudge", m.id, "reopen_error", err=str(exc)[:120])
                         reopened = False
                 if reopened:
                     continue                             # editor + critic will run again; do NOT finalize
