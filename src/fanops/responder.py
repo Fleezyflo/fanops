@@ -6,14 +6,16 @@ prompt + the exact pydantic JSON schema, validates the output, and writes the re
 is QUARANTINED (one bad gate logs + stays pending, never halts the others — mirrors advance()'s
 per-unit quarantine). get_responder() picks by FANOPS_RESPONDER and returns a WORKING llm responder."""
 from __future__ import annotations
+import hashlib
 import json
 from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
 from fanops.models import MomentDecision, CaptionSet, HookEditDecision, HookJudgeDecision
 from fanops.agentstep import pending, request_path, response_path, latest_request_id
-from fanops.llm import claude_json, LlmTimeoutError
+from fanops.llm import claude_json_meta, LlmTimeoutError
 from fanops.prompts import moment_prompt, caption_prompt, hookedit_prompt, hookjudge_prompt
+from fanops.control import guidance_sha
 from fanops.log import get_logger
 
 # hookedit (feed-aware hook editor) + hookjudge (specificity critic) ride the same gate contract: when
@@ -30,23 +32,38 @@ class ManualResponder:
     def answer_pending(self, cfg: Config) -> int:
         return 0                                    # a human (or external cron) writes responses
 
-def _default_claude_model(kind: str, payload: dict) -> dict:
-    """The production model: hand claude -p the committed prompt + the gate's JSON schema. For the
-    hookedit AND hookjudge gates, also hand it the clip frames (collected from the payload items) as
-    images so the editor/critic SEES each clip and grounds its rewrite/verdict in the footage;
-    moments/captions stay text-only."""
+def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None, log=None) -> dict:
+    """The production model: hand claude -p the committed prompt + the gate's JSON schema, PINNED to
+    cfg.llm_model (V2 M1/F1 — an unpinned `claude -p` drifts with whatever the CLI defaults to). For
+    the hookedit AND hookjudge gates, also hand it the clip frames (collected from the payload items)
+    as images so the editor/critic SEES each clip and grounds its rewrite/verdict in the footage;
+    moments/captions stay text-only. When cfg is given, emit ONE provenance line per call (the model
+    that ANSWERED, the prompt fingerprint, and the brief fingerprint) so every creative output is
+    traceable to the exact model + brief that produced it (M1/F10). cfg=None (the legacy test path)
+    keeps the old behavior: no pin, no provenance."""
     schema = _SCHEMA[kind].model_json_schema()
     images = None
     if kind in ("hookedit", "hookjudge"):
         images = [f for it in payload.get("items", []) for f in (it.get("frames") or [])] or None
-    return claude_json(_PROMPT[kind](payload), schema, images=images)
+    prompt = _PROMPT[kind](payload)
+    out, answered = claude_json_meta(prompt, schema, images=images,
+                                     model=(cfg.llm_model if cfg else None))
+    if cfg is not None:
+        emit = log or get_logger(cfg)
+        uid = str(payload.get("source_id") or payload.get("clip_id") or kind)
+        emit("llm", uid, "call", model=answered or cfg.llm_model,
+             prompt_sha=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
+             brief_sha=guidance_sha(cfg))
+    return out
 
 class LlmResponder:
     """model(kind, request_payload_dict) -> response_dict. Defaults to `claude -p`; injectable for
     tests so no network/subprocess is needed."""
     def __init__(self, cfg: Config, model: Optional[Callable[[str, dict], dict]] = None):
         self.cfg = cfg
-        self._model = model or _default_claude_model
+        # the default model binds cfg so it pins cfg.llm_model + emits the provenance line; an injected
+        # test model keeps the bare (kind, payload) -> dict contract.
+        self._model = model or (lambda kind, payload: _default_claude_model(kind, payload, cfg=cfg))
 
     def answer_pending(self, cfg: Config) -> int:
         log = get_logger(cfg)

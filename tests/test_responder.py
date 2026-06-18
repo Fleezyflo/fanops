@@ -55,10 +55,10 @@ def test_get_responder_llm_is_usable_without_explicit_model(tmp_path, monkeypatc
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)
     _seed_moment_request(cfg)
-    # stub the claude -p call at the seam used by the production default model: return one valid pick
-    mocker.patch("fanops.responder.claude_json",
-                 return_value={"picks": [{"start": 1.0, "end": 4.0, "reason": "bar",
-                                          "transcript_excerpt": "x", "signal_score": 0.0}]})
+    # stub the claude -p call at the seam used by the production default model: (one valid pick, model)
+    mocker.patch("fanops.responder.claude_json_meta",
+                 return_value=({"picks": [{"start": 1.0, "end": 4.0, "reason": "bar",
+                                           "transcript_excerpt": "x", "signal_score": 0.0}]}, "opus"))
     from fanops.responder import get_responder
     r = get_responder(cfg)
     n = r.answer_pending(cfg)
