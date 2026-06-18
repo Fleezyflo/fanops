@@ -3,8 +3,6 @@
 # from the same clip (re-enters the approval gate). Honors fan-accounts-repost-freely (NOT a supersede).
 import pytest
 pytest.importorskip("flask")
-import json
-from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Clip, ClipState, LIFT_SCORE

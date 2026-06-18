@@ -19,6 +19,7 @@ from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ingest import MEDIA_EXT
 from fanops.ledger import Ledger
 from fanops.models import CaptionSet, ClipState, MomentDecision, Post, PostState
+from fanops.ids import child_id, surface_key, _hash
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
 
@@ -486,6 +487,33 @@ def snooze_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) ->
                 count += 1
     return ActionResult(ok=True, detail={"clip_id": clip_id, "count": count, "scheduled_time": z})
 
+
+def repost_post(cfg: Config, post_id: str) -> ActionResult:
+    """'Post again' (post-approval-lifecycle): spawn a NEW awaiting_approval post from the SAME clip+surface
+    as a shipped post, re-entering the approval gate. The source post stays immutable history. Honors
+    fan-accounts-repost-freely — reposting is allowed; this is NOT a supersede. The new id is content-
+    addressed with a repost epoch (count of existing posts for this clip+surface) so it never collides with
+    the original or a prior repost, and `add_post`'s setdefault therefore does not silently drop it. The
+    operator schedules it on approval (scheduled_time=None). One transaction, never a 500."""
+    try:
+        with Ledger.transaction(cfg) as led:
+            src = led.posts.get(post_id)
+            if src is None: return ActionResult(ok=False, error=f"no such post: {post_id}")
+            skey = surface_key(src.account, src.platform.value)
+            epoch = sum(1 for p in led.posts.values()                       # originals + prior reposts for this surface
+                        if p.parent_id == src.parent_id and p.account == src.account and p.platform is src.platform)
+            new_id = child_id("post", src.parent_id, f"{skey}#r{epoch}")
+            led.add_post(Post(id=new_id, parent_id=src.parent_id, state=PostState.awaiting_approval,
+                              account=src.account, account_id=src.account_id, platform=src.platform,
+                              caption=src.caption, hashtags=list(src.hashtags or []), aspect=src.aspect,
+                              media_urls=list(src.media_urls or []), scheduled_time=None,
+                              submission_id=f"fanops_{_hash('idemp', new_id)}",
+                              hook_pattern=src.hook_pattern, first_frame_kind=src.first_frame_kind,
+                              cut_seconds=src.cut_seconds, clip_profile=src.clip_profile,
+                              variant_key=src.variant_key, variant_hook=src.variant_hook))
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"repost failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"post_id": new_id, "source_id": post_id})
 
 def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None) -> ActionResult:
     """Routine re-spread of the APPROVED bucket: re-stagger every queued (approved) post onto a fresh

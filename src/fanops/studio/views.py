@@ -293,6 +293,35 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRo
     return rows
 
 
+@dataclass
+class PostedRow:
+    post_id: str
+    clip_id: str
+    account: str
+    platform: str
+    caption: str
+    public_url: Optional[str]
+    scheduled_time: Optional[str]
+    lift_score: Optional[float]
+
+
+def posted_library(led: Ledger, cfg: Config) -> list[PostedRow]:
+    """The Posted library (post-approval-lifecycle): ALL-time shipped posts (published/analyzed), newest
+    first, with the live URL + lift score. NOT a dead archive — each row also offers 'Post again' (a fresh
+    awaiting_approval repost of the same clip). Unscheduled/unparseable times sort last. Lock-free read."""
+    posts = [p for p in led.posts.values() if p.state in (PostState.published, PostState.analyzed)]
+    def _key(p):
+        if not p.scheduled_time: return (0, "")
+        try:
+            dt = parse_iso(p.scheduled_time)
+            return (1, dt.isoformat()) if dt.tzinfo is not None else (0, "")
+        except (ValueError, TypeError): return (0, "")
+    posts.sort(key=_key, reverse=True)              # reverse: latest aware time first; unscheduled (key[0]=0) last
+    return [PostedRow(post_id=p.id, clip_id=p.parent_id, account=p.account, platform=p.platform.value,
+                      caption=p.caption, public_url=p.public_url, scheduled_time=p.scheduled_time,
+                      lift_score=p.metrics.get(LIFT_SCORE)) for p in posts]
+
+
 def _loop_state(led: Ledger, cfg: Config, accounts: Optional[Accounts], post,
                 cache: Optional[dict] = None) -> str:
     """Per-surface learning-loop annotation, reusing the digest's fail-open gate computation.
