@@ -46,13 +46,21 @@ def _editable(led: Ledger) -> list[Moment]:
                   key=lambda m: m.id)
 
 def _batches(items: list[Moment]) -> list[list[Moment]]:
-    return [items[i:i + _MAX_EDIT_BATCH] for i in range(0, len(items), _MAX_EDIT_BATCH)]
+    # Task 7: partition by repair ROUND before chunking (mirrors hookjudge._batches) — a batch must NEVER
+    # mix rounds, else a re-opened round-1 moment shares a gate with a round-0 moment and the partly
+    # answered gate strands one of them. Group by hook_rounds, then chunk each group to _MAX_EDIT_BATCH.
+    out: list[list[Moment]] = []
+    for r in sorted({m.hook_rounds for m in items}):
+        grp = [m for m in items if m.hook_rounds == r]
+        out += [grp[i:i + _MAX_EDIT_BATCH] for i in range(0, len(grp), _MAX_EDIT_BATCH)]
+    return out
 
 def _digest(batch: list[Moment]) -> str:
-    # Stable, order-independent key for ONE batch: the SET of its moment ids. Reseeds (new gate) when
-    # that batch's set changes; identical across request->ingest within a pass (the responder writes
-    # only the response file, never the ledger, so the set + hooks are unchanged between the two).
-    return _hash("hookedit", *sorted(m.id for m in batch))
+    # Round-keyed (mirrors hookjudge._digest): a re-opened (round-incremented) moment yields a FRESH gate,
+    # not the answered round-0 one — so the repair edit is a new request, not a stale latched answer.
+    # Identical across request->ingest within a pass (the responder writes only the response, not the
+    # ledger, so the set + rounds are unchanged). A batch never mixes rounds (see _batches).
+    return _hash("hookedit", *sorted(f"{m.id}:{m.hook_rounds}" for m in batch))
 
 def request_hook_edit(led: Ledger, cfg: Config) -> Ledger:
     """Write the single feed-level hookedit gate carrying every editable hook + its grounding context

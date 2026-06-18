@@ -124,6 +124,14 @@ class Moment(BaseModel):
                                                 # hook against the rubric; latches True so it never
                                                 # re-judges (no loop). Default False -> old ledgers
                                                 # load + are eligible for one judge pass.
+    hook_rounds: int = 0                        # Task 7 repair loop: how many critic->editor REPAIR
+                                                # rounds this hook has had. A reject under the cap
+                                                # (_MAX_REPAIR) re-opens (rounds+=1, hook_edited/judged
+                                                # reset); at the cap a reject nulls. Default 0 -> old
+                                                # ledgers load + start with the full repair budget.
+    hook_feedback: Optional[str] = None         # Task 7/8: the critic's reject reason carried to the
+                                                # editor for ONE repair pass; cleared after the editor
+                                                # applies it. None = no pending repair (old ledgers load).
     signal_score: float = 0.0
     hook_pattern: Optional[str] = None          # P1 provenance: which of the 6 _hook_spec patterns the
                                                 # responder/editor chose for this hook (open_loop|curiosity|

@@ -108,14 +108,17 @@ def test_pending_true_until_answered(tmp_path, monkeypatch):
     assert hook_judge_pending(led, cfg) is False
 
 def test_ingest_rejects_generic_to_clean_keeps_anchored(tmp_path, monkeypatch):
+    # A reject is terminal (null) only at the repair cap; a round-0 reject RE-OPENS instead (see
+    # test_repair_reopens_on_first_reject). Seed m2 at the cap so this proves reject->clean + keep->kept.
     monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
     cfg = Config(root=tmp_path); led = _seed(cfg)
+    led.moments["m2"].hook_rounds = 1                                     # already used its one repair
     led = request_hook_judge(led, cfg)
     _answer(cfg, [HookJudgeItem(moment_id="m1", keep=True, why="anchored to this clip"),
                   HookJudgeItem(moment_id="m2", keep=False, why="generic, fits any clip")])
     led = ingest_hook_judge(led, cfg)
     assert led.moments["m1"].hook == "they built the whole thing alone"  # passed -> kept
-    assert led.moments["m2"].hook is None                                # rejected -> clean clip
+    assert led.moments["m2"].hook is None                                # rejected at cap -> clean clip
     assert led.moments["m2"].hook_pattern is None                        # pattern cleared with the hook
     assert led.moments["m1"].hook_judged and led.moments["m2"].hook_judged
 
@@ -244,7 +247,7 @@ def test_repair_full_cycle(tmp_path, monkeypatch):
     led = request_hook_edit(led, cfg); e1 = pending(cfg, kind="hookedit")[0]
     assert e1 != e0                                             # round-1 edit gate is a NEW key
     _answer_edit([HookEditItem(moment_id="m1", hook="you ever build something alone")]); led = ingest_hook_edit(led, cfg)
-    assert led.moments["m1"].hook == "you ever build something alone" and led.moments["m1"].hook_feedback is None
+    assert led.moments["m1"].hook == "you ever build something alone"   # repaired hook applied (Task 8 clears feedback)
 
     # round 1 critic: fresh judge gate, KEEP -> hook survives, finalized
     led = request_hook_judge(led, cfg); j1 = _answer_judge([HookJudgeItem(moment_id="m1", keep=True)]); led = ingest_hook_judge(led, cfg)
