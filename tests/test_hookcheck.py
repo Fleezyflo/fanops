@@ -20,6 +20,18 @@ def test_known_weak_hooks_are_rejected(hook):
 def test_empty_hook_is_weak(hook):
     assert is_weak_hook(hook) is True
 
+@pytest.mark.parametrize("hook", [
+    "his hardest bar", "his coldest opener",        # superlative template — now the CRITIC's call, not a regex
+    "watch how he cuts",                             # hooking on the editing
+    "drone up, crowd in", "zoom in slow",            # shot description
+    "the bar everyone replayed", "the intro hits different",   # cliche
+])
+def test_is_weak_hook_mechanical_only(hook):
+    # v2: the SEMANTIC slop-regexes (_SUPERLATIVE/_EDITING/_SHOT_DESC/_CLICHES) are deleted — quality is
+    # the reasoning critic's job. is_weak_hook is now a MECHANICAL floor only (empty / exact-dup /
+    # opening-template cluster), so these formerly regex-rejected hooks PASS the floor (critic judges them).
+    assert is_weak_hook(hook) is False
+
 # --- strong concrete hooks the guard MUST keep (verbatim strong examples) ---
 @pytest.mark.parametrize("hook", [
     "before he was Moh Flow",
