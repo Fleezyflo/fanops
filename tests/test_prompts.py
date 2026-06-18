@@ -24,45 +24,47 @@ def test_moment_prompt_demands_retention_hook_not_a_transcript_quote():
     assert "not a caption" in low and "not a quote" in low      # forbids transcribing the audio
     assert "signal peaks" in low                                # leans on transcription-independent signal
 
-def test_moment_prompt_hook_encodes_retention_pattern_framework():
-    # The hook is a RETENTION mechanic, NOT artist hype (operator correction): the muted/first-seconds
-    # reasoning, the curiosity-loop mechanism, an explicit PATTERN menu the model picks from, and the
-    # specific+must-pay-off guardrail — framed about the VIEWER'S attention, never about the artist.
+def test_moment_prompt_hook_teaches_the_four_triggers():
+    # v2 (craft): the hook is a RETENTION mechanic that fires proven psychological TRIGGERS, taught
+    # explicitly — replacing the old 6 inert self-declared labels. Muted/first-seconds framing + the
+    # four triggers a hook can fire, framed about the VIEWER, never the artist.
     p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
                        "language": "en", "guidance": "BRAND: confident."})
     low = p.lower()
     assert "muted" in low                       # ~70% watch sound-off -> on-screen text carries the hook
-    assert "curiosity loop" in low              # the mechanism: open a loop THIS clip pays off
     assert "retention" in low                   # the hook's stated job
-    assert "pattern" in low                     # a deliberate menu to choose from, not one canned style
-    assert "wait for" in low and "claim" in low # at least the open-loop + contrarian-claim patterns named
-    assert "never about the artist" in low      # the no-hype contract: it's about the viewer, not praise
-    assert "specific" in low                    # must be specific to THIS moment, not a generic line
+    assert "curiosity gap" in low or "open loop" in low   # trigger 1
+    assert "pattern interrupt" in low           # trigger 2
+    assert "self-relevance" in low              # trigger 3 (2026's highest-scoring)
+    assert "emotional arousal" in low           # trigger 4
+    assert "viewer" in low                      # framed about the viewer, never the artist
+    assert "specific" in low                    # specificity multiplier
 
-def test_moment_prompt_hook_bans_generic_demands_concrete_and_selects():
-    # Round-2 refinement, diagnosed from real weak output: the model fell back on generic-superlative
-    # filler ('his hardest bar', 'the bar everyone replayed'), overused wait-for-it, and hooked on the
-    # scene-cuts. The fix: require a CONCRETE specific, BAN generic filler, generate-and-select among
-    # several candidates, and never hook on the editing. These separate the strong real hooks from slop.
+def test_moment_prompt_hook_teaches_multipliers_and_bans_slop():
+    # The force multipliers that separate a hook that hits from one that dies (viewer-specificity, zero
+    # throat-clearing, stack-two) + the bans (generic filler, hooking on the editing, artist hype).
     p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
                        "language": "en", "guidance": ""})
     low = p.lower()
-    assert "concrete" in low                      # must name a concrete specific, not an abstraction
-    assert "generic" in low                        # explicitly bans generic superlative filler
-    assert "candidate" in low                      # draft several, output the strongest (not first-draft)
-    assert "editing" in low or "scene-cut" in low  # never hook on the cuts instead of the content
+    assert "throat" in low                        # zero throat-clearing
+    assert "stack" in low                          # stack two triggers
+    assert "generic" in low                        # bans generic filler
+    assert "editing" in low or "scene-cut" in low  # never hook on the cuts
+    assert "hype" in low or "praise" in low        # no artist hype
 
-def test_moment_prompt_hook_demands_viewer_pov_not_third_person_narration():
-    # Operator feedback on a real run (2026-06-18): hooks narrated the scene/artist in THIRD PERSON
-    # ('he stopped answering for a reason', 'the promise he made himself', 'front row last song')
-    # instead of addressing the VIEWER. The spec must (a) make viewer/second-person the DEFAULT frame,
-    # (b) explicitly reject third-person scene-narration, and (c) stop shipping a canned example line
-    # the model lifts verbatim ('the part nobody clipped' was line-for-line copied out of the prompt).
+def test_moment_prompt_hook_bans_narration_and_embeds_fewshot_priors():
+    # v2: third-person scene-narration is named + banned (the diagnosed regression); the proven patterns
+    # are named; and the evidence-based few-shot exemplars are present so the model learns the craft by
+    # demonstration (validated downstream by the meter + learning loop, not by anyone's taste).
     p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
-                       "language": "en", "guidance": ""}).lower()
-    assert "second person" in p or "second-person" in p   # the default frame is the viewer ('you')
-    assert "narrat" in p                                   # third-person scene-narration is named + rejected
-    assert "the part nobody clipped" not in p             # no canned line for the model to copy verbatim
+                       "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "narrat" in low                                 # third-person scene-narration named + banned
+    assert "viewer" in low
+    assert "the part nobody clipped" not in low            # no canned copyable line
+    assert "contrarian" in low and "confession" in low and "identity" in low   # proven patterns named
+    assert "maybe your favorite artist copied too" in low  # real few-shot prior (contrarian + identity)
+    assert "the line you'll send to one person" in low     # real few-shot prior (open loop + self-relevance)
 
 def test_moment_prompt_treats_target_as_a_floor_and_forbids_zero_on_content():
     # Real-run diagnosis (2026-06-18): sum_targets=52 but sum_actual=42 — the model NEVER exceeded
