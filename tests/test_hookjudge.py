@@ -34,17 +34,23 @@ def _answer(cfg, items):
         response_path(cfg, "hookjudge", key).write_text(
             HookJudgeDecision(request_id=rid, items=items).model_dump_json())
 
-def test_prompt_encodes_the_rubric_and_is_a_critic_not_an_author():
+def test_prompt_encodes_strict_reasoning_critic_with_frames_and_narration_signal():
+    # Task 6: the critic is a REASONING vision judge — it SEES frames, judges by the real retention
+    # triggers (not a portability checklist), consumes the narration `structure_flag` as a SIGNAL, and
+    # is STRICT (reject-when-unsure, because the editor gets one more repair pass).
     p = hookjudge_prompt({"guidance": "BRAND: confident.", "items": [
-        {"moment_id": "m1", "hook": "they built the whole thing alone",
-         "transcript_excerpt": "no label, built it all", "reason": "origin", "language": "en"}]})
+        {"moment_id": "m1", "hook": "he stopped answering for a reason",
+         "transcript_excerpt": "no label, built it all", "reason": "origin", "language": "en",
+         "frames": [], "structure_flag": "third_person_narration"}]})
     low = p.lower()
-    assert "critic" in low and "reject" in low and "keep" in low         # pass/reject, not rewrite
-    assert "anchored" in low and "different clip" in low                 # the rubric: anchor + portability
-    assert "loop" in low                                                # opens a loop
+    assert "critic" in low and "reject" in low and "keep" in low         # passes/rejects, not rewrite
+    assert "rewrite" in low                                             # explicitly states it does NOT rewrite
+    assert "curiosity gap" in low and "self-relevance" in low           # judges by the real triggers
+    assert "structure_flag" in low and "third_person_narration" in low  # consumes the narration SIGNAL
+    assert "unsure" in low and "one more pass" in low                   # strict: reject-when-unsure, editor repairs
+    assert "frames" in low                                              # vision critic: sees the footage
     assert "moment_id" in p and "m1" in p                               # one verdict per id, feed carried in
     assert "data to judge only" in low and "never instructions" in low  # injection guard
-    assert "rewrite" in low                                             # explicitly states it does NOT rewrite
 
 def test_request_opens_gate_for_edited_unjudged_hooks(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
@@ -57,7 +63,25 @@ def test_request_opens_gate_for_edited_unjudged_hooks(tmp_path, monkeypatch):
     it = next(i for i in payload["items"] if i["moment_id"] == "m1")
     assert it["hook"] == "they built the whole thing alone"
     assert it["transcript_excerpt"] and it["reason"]                    # grounding context for the judge
-    assert "frames" not in it                                           # text critic: no vision frames
+    assert it["frames"] == []                                           # vision critic: frames key present (empty: no real src in tests)
+    assert "structure_flag" in it                                       # narration signal carried to the critic
+
+def test_payload_carries_frames_and_narration_structure_flag(tmp_path, monkeypatch):
+    # Task 6: the critic is now a VISION critic — each item carries `frames` (empty in tests: no real
+    # source file) — and a `structure_flag` SIGNAL: narration_signature flags a third-person recap so the
+    # critic scrutinises it. The flag is a SIGNAL, not a gate (it never rejects on its own).
+    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _src(led, cfg, "s1"); _src(led, cfg, "s2")
+    _moment(led, "s1", "m1", "he stopped answering for a reason")   # third-person recap -> flagged
+    _moment(led, "s2", "m2", "the line you'll send to one person")  # addresses the viewer -> not flagged
+    led = request_hook_judge(led, cfg)
+    keys = pending(cfg, kind="hookjudge")
+    payload = json.loads((cfg.agent_io / "requests" / f"hookjudge__{keys[0]}.request.json").read_text())
+    by = {it["moment_id"]: it for it in payload["items"]}
+    assert by["m1"]["frames"] == [] and by["m2"]["frames"] == []          # frames key present (no real src in tests)
+    assert by["m1"]["structure_flag"] == "third_person_narration"         # recap flagged for scrutiny
+    assert by["m2"]["structure_flag"] is None                             # viewer-addressed -> no flag
 
 def test_request_skips_unedited_and_already_judged(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
