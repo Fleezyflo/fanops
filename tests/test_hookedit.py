@@ -207,7 +207,7 @@ def test_editor_payload_carries_critic_feedback_and_clears_after_ingest(tmp_path
     key = pending(cfg, kind="hookedit")[0]
     payload = json.loads((cfg.agent_io / "requests" / f"hookedit__{key}.request.json").read_text())
     assert payload["items"][0]["critic_feedback"] == "re-aim at the viewer"   # carried to the editor
-    _answer([HookEditItem(moment_id="m1", hook="you ever build something alone")])
+    _answer(cfg, [HookEditItem(moment_id="m1", hook="you ever build something alone")])
     led = ingest_hook_edit(led, cfg)
     assert led.moments["m1"].hook == "you ever build something alone"
     assert led.moments["m1"].hook_feedback is None                            # cleared after applying

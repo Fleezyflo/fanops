@@ -83,7 +83,8 @@ def request_hook_edit(led: Ledger, cfg: Config) -> Ledger:
                    "items": [{"moment_id": m.id, "hook": m.hook, "hook_pattern": m.hook_pattern,
                               "transcript_excerpt": m.transcript_excerpt, "reason": m.reason,
                               "language": led.sources[m.parent_id].language if m.parent_id in led.sources else None,
-                              "signal_score": m.signal_score, "frames": _frames(led, cfg, m)} for m in batch]}
+                              "signal_score": m.signal_score, "frames": _frames(led, cfg, m),
+                              "critic_feedback": m.hook_feedback} for m in batch]}
         write_request(cfg, kind="hookedit", key=key, payload=payload)
     return led
 
@@ -144,4 +145,5 @@ def ingest_hook_edit(led: Ledger, cfg: Config) -> Ledger:
             led.moments[m.id].hook = new
             led.moments[m.id].hook_pattern = pattern
             led.moments[m.id].hook_edited = True
+            led.moments[m.id].hook_feedback = None       # Task 8: repair consumed — clear the critic's note
     return led
