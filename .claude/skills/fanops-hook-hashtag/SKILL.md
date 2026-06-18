@@ -79,6 +79,12 @@ Statement / Question / Pattern-Interrupt / Proof-First and the ≥65% 3-s benchm
 
 ### Banned in hooks (these are why the old output was garbage)
 
+- **Third-person scene-narration** — recounting what happens to the artist instead of
+  addressing the viewer ("he stopped answering for a reason", "the promise he made
+  himself", "front row last song", "she ran a minute he made it"). The frame is the
+  scroller's attention, never a recap. DEFAULT to **second person** ("you", "POV: you…",
+  "wait for…"); a third-person line is allowed ONLY when it opens a loop the viewer
+  urgently wants resolved.
 - **Artist praise / hype** of any kind ("his hardest bar", "GOAT", "🐐").
 - **Lyric paraphrase** — restating what's being said instead of teasing it. The
   on-screen text must NOT caption the audio.
