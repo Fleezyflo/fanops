@@ -18,8 +18,8 @@ from fanops.log import get_logger
 
 # hookedit (feed-aware hook editor) + hookjudge (specificity critic) ride the same gate contract: when
 # no request of that kind is pending the inner loop is empty, so registering them is inert unless
-# cfg.hook_editor is on. hookjudge is TEXT-ONLY (no frames) — _default_claude_model attaches images
-# only for the hookedit kind, so the critic call carries no vision payload.
+# cfg.hook_editor is on. BOTH are vision calls (Task 6) — _default_claude_model attaches each item's
+# frames as images for hookedit AND hookjudge, so the critic SEES the footage it judges.
 _SCHEMA = {"moments": MomentDecision, "captions": CaptionSet, "hookedit": HookEditDecision,
            "hookjudge": HookJudgeDecision}
 _PROMPT = {"moments": moment_prompt, "captions": caption_prompt, "hookedit": hookedit_prompt,
@@ -32,11 +32,12 @@ class ManualResponder:
 
 def _default_claude_model(kind: str, payload: dict) -> dict:
     """The production model: hand claude -p the committed prompt + the gate's JSON schema. For the
-    hookedit gate, also hand it the clip frames (collected from the payload items) as images so the
-    editor SEES each clip and grounds its rewrite in the footage; moments/captions stay text-only."""
+    hookedit AND hookjudge gates, also hand it the clip frames (collected from the payload items) as
+    images so the editor/critic SEES each clip and grounds its rewrite/verdict in the footage;
+    moments/captions stay text-only."""
     schema = _SCHEMA[kind].model_json_schema()
     images = None
-    if kind == "hookedit":
+    if kind in ("hookedit", "hookjudge"):
         images = [f for it in payload.get("items", []) for f in (it.get("frames") or [])] or None
     return claude_json(_PROMPT[kind](payload), schema, images=images)
 

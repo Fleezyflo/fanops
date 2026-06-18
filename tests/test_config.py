@@ -46,6 +46,17 @@ def test_hook_editor_explicit_on(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
     assert Config(root=tmp_path).hook_editor is True
 
+def test_hook_judge_defaults_on_when_unset(monkeypatch, tmp_path):
+    # v2: the STRICT critic is the teeth and must be ON by default — the repair loop absorbs the
+    # null-rate cost, so the critic no longer needs to be opt-in. Only explicit off-words disable it.
+    monkeypatch.delenv("FANOPS_HOOK_JUDGE", raising=False)
+    assert Config(root=tmp_path).hook_judge is True
+
+def test_hook_judge_explicit_off_disables(monkeypatch, tmp_path):
+    for off in ("0", "false", "no", "off"):
+        monkeypatch.setenv("FANOPS_HOOK_JUDGE", off)
+        assert Config(root=tmp_path).hook_judge is False
+
 def test_hook_router_default_off(monkeypatch, tmp_path):
     # M2 structural-hooks router: opt-in, default OFF (observe-only annotation when on; non-regression)
     monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False)

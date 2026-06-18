@@ -48,11 +48,12 @@ def normalize_variation_axis(value) -> str | None:
     return key if key in VARIATION_AXES else None
 
 def coherent_variation(hook, rationale, *, siblings=frozenset()) -> bool:
-    """T2 coherence gate: a variant earns its extra post ONLY when it is distinct, on-brand AND
-    explained — (a) a non-empty hook that (b) clears the deterministic slop/template/cross-feed-dup
-    floor against its siblings (is_weak_hook), and (c) carries a non-empty rationale. Else dropped:
-    clean beats noise. Pure. NB this proves distinct+on-brand+EXPLAINED, NOT reach-relevant — the
-    empirical justification only arrives with P3/P4."""
+    """T2 coherence gate: a variant earns its extra post ONLY when it is distinct AND explained —
+    (a) a non-empty hook that (b) clears the MECHANICAL floor against its siblings (is_weak_hook:
+    empty / exact-dup / opening-template cluster), and (c) carries a non-empty rationale. Else dropped:
+    clean beats noise. Pure. NB v2: is_weak_hook no longer judges QUALITY (superlative/hype/narration) —
+    that moved to the reasoning critic, which does NOT run on per-surface caption siblings, so a
+    quality-weak caption variant can now post; accepted trade (rare; the caption prompt discourages hype)."""
     if not (rationale and str(rationale).strip()):
         return False
     if not (hook and str(hook).strip()):

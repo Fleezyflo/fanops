@@ -18,7 +18,11 @@ import pytest
 # Vars the repo .env can leak that change publish/auth behavior — neutralized per test so a live .env
 # never poisons a unit test. (POSTIZ_URL/POSTIZ_API_KEY ride along so a leaked URL can't 'configure'
 # a backend the test didn't ask for.)
-_LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL")
+# FANOPS_HOOK_JUDGE rides along: it DEFAULTS ON (v2), so a dev's repo .env carrying =off would
+# silently flip the critic OFF for every test that doesn't set it explicitly (the inverse of the
+# FANOPS_POSTER leak). Stripping it makes each test see the CODE default; opt-out tests set it via
+# monkeypatch and get clean teardown.
+_LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_HOOK_JUDGE")
 
 
 @pytest.fixture(autouse=True)

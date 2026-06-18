@@ -9,8 +9,9 @@ from fanops.prompts import _hook_spec
 
 _SKILL = Path(__file__).resolve().parents[1] / ".claude" / "skills" / "fanops-hook-hashtag" / "SKILL.md"
 
-# the 6 canonical retention patterns, named in _hook_spec; the doc must not drop or rename one.
-_PATTERNS = ["open loop", "curiosity gap", "comment", "contrarian", "pov", "proof"]
+# v2 (craft): the 4 psychological TRIGGERS every hook fires, named in _hook_spec; the doc must not
+# drop or rename one. These replace the old 6 inert self-declared labels.
+_PATTERNS = ["curiosity gap", "pattern interrupt", "self-relevance", "emotional arousal"]
 
 
 def _guard_block(name: str) -> str:

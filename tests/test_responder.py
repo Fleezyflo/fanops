@@ -192,6 +192,16 @@ def test_hookedit_model_passes_frames_as_images_for_vision(mocker):
     _default_claude_model("hookedit", payload)
     assert spy.call_args.kwargs.get("images") == ["/t/a.jpg", "/t/b.jpg", "/t/c.jpg"]
 
+def test_hookjudge_model_passes_frames_as_images_for_vision(mocker):
+    # Task 6: the critic is now ALSO a vision call — the hookjudge gate hands the clip's frames to
+    # claude_json as images so the judge SEES the footage, mirroring hookedit. moments/captions stay text.
+    from fanops.responder import _default_claude_model
+    spy = mocker.patch("fanops.responder.claude_json", return_value={"items": []})
+    payload = {"items": [{"moment_id": "m1", "hook": "x", "frames": ["/t/a.jpg", "/t/b.jpg"]},
+                         {"moment_id": "m2", "hook": "y", "frames": ["/t/c.jpg"]}]}
+    _default_claude_model("hookjudge", payload)
+    assert spy.call_args.kwargs.get("images") == ["/t/a.jpg", "/t/b.jpg", "/t/c.jpg"]
+
 def test_moments_model_passes_no_images(mocker):
     from fanops.responder import _default_claude_model
     spy = mocker.patch("fanops.responder.claude_json", return_value={"picks": []})

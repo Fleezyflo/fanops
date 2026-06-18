@@ -59,8 +59,17 @@ def test_gate_drops_rationale_less_variant():
     assert coherent_variation("the part nobody clipped", "", siblings=set()) is False
     assert coherent_variation("the part nobody clipped", None, siblings=set()) is False
 
-def test_gate_drops_weak_hook_variant():
-    assert coherent_variation("his hardest bar", "contrarian take", siblings=set()) is False  # superlative slop
+def test_gate_drops_template_cluster_variant():
+    # v2: the floor is MECHANICAL only — it still drops a variant that clusters on an opening template
+    # already used by siblings (the 'reads like a bot' tell).
+    sibs = {"wait for the beat drop", "wait for the last line"}     # a 'wait for' cluster
+    assert coherent_variation("wait for the hometown line", "open loop", siblings=sibs) is False
+
+def test_gate_allows_formerly_semantic_slop_now_critic_owns_it():
+    # v2 scope (accepted trade): the semantic backstop moved to the reasoning critic, which does NOT
+    # run on per-surface caption siblings — so coherent_variation no longer drops 'his hardest bar'
+    # (mechanical floor only). Documented in caption.coherent_variation; locked here so it's intentional.
+    assert coherent_variation("his hardest bar", "contrarian take", siblings=set()) is True
 
 def test_gate_drops_near_duplicate_of_a_sibling():
     assert coherent_variation("wait for the drop", "open loop", siblings={"wait for the drop"}) is False

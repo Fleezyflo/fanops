@@ -40,11 +40,14 @@ def test_ingest_moments_persists_hook_pattern(tmp_path, mocker):
     assert m.hook_pattern == "open_loop"
 
 def test_ingest_moments_pattern_none_when_hook_rejected(tmp_path, mocker):
-    # a slop hook (generic superlative template) is nulled by hookcheck -> pattern must be None too
+    # v2: a MECHANICALLY-rejected hook (exact cross-clip duplicate) is nulled by hookcheck -> its
+    # pattern must be None too (quality slop is no longer rejected here; the critic owns that).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="s1", source_path=str(cfg.sources / "s1.mp4"), duration=120.0))
+    led.add_moment(Moment(id="m_other", parent_id="s_other", state=MomentState.decided,
+                          start=0, end=5, reason="r", hook="wait for the drop"))   # a prior clip used this
     dec = MomentDecision(source_id="s1", request_id="r1", picks=[
-        MomentPick(start=10, end=28, reason="r", hook="his hardest bar", hook_pattern="contrarian")])
+        MomentPick(start=10, end=28, reason="r", hook="wait for the drop", hook_pattern="contrarian")])
     mocker.patch("fanops.moments.read_response", return_value=dec)
     led = ingest_moments(led, cfg, "s1")
     m = [m for m in led.moments.values() if m.parent_id == "s1"][0]
