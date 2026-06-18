@@ -52,6 +52,26 @@ def test_approve_post_bumps_stale_schedule_to_now(tmp_path):
     assert p.state is PostState.queued and p.scheduled_time == now_iso
 
 
+def test_approve_post_none_schedule_set_to_now(tmp_path):
+    # a post with no schedule (None) is due immediately on approval -> stamp now, never leave it unscheduled.
+    cfg = Config(root=tmp_path)
+    now_iso = iso_z(_NOW)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(_post(when=None))
+        led.approve_post("p1", now_iso=now_iso)
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.queued and p.scheduled_time == now_iso
+
+
+def test_approve_post_naive_future_schedule_preserved(tmp_path):
+    # a hand-edited tz-naive FUTURE time must NOT be silently zeroed to now (read as UTC, preserved).
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(_post(when="2099-01-01T00:00:00"))   # naive (no Z)
+        led.approve_post("p1", now_iso=iso_z(_NOW))
+    assert Ledger.load(cfg).posts["p1"].scheduled_time == "2099-01-01T00:00:00"
+
+
 def test_approve_post_wrong_state_is_noop(tmp_path):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:

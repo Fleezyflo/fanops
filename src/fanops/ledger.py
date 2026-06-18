@@ -207,16 +207,21 @@ class Ledger:
 
     # ---- post-approval gate (caller holds the transaction; in-lock guard => contended/wrong-state is a clean no-op) ----
     def approve_post(self, uid: str, *, now_iso: str) -> None:
+        from datetime import timezone
         from fanops.timeutil import parse_iso
         p = self.posts.get(uid)
         if p is None or p.state is not PostState.awaiting_approval: return   # only an unapproved post promotes
         # bump a stale (<=now / missing / unparseable) stagger-time to now so approval never machine-guns a backlog
         # onto a live backend; a still-future schedule is the operator's intent and is preserved. now_iso is INJECTED
-        # (no clock in the ledger) so the transition is deterministic in tests.
+        # (no clock in the ledger) so the transition is deterministic in tests. A tz-naive on-disk time (hand-edit)
+        # is read AS UTC — consistent with iso_z — so a legit far-future naive schedule is NOT silently zeroed.
         keep = False
         if p.scheduled_time:
-            try: keep = parse_iso(p.scheduled_time) > parse_iso(now_iso)
-            except (ValueError, TypeError): keep = False                    # malformed -> treat as stale, bump to now
+            try:
+                sched = parse_iso(p.scheduled_time)
+                if sched.tzinfo is None: sched = sched.replace(tzinfo=timezone.utc)
+                keep = sched > parse_iso(now_iso)
+            except (ValueError, TypeError): keep = False                    # truly malformed -> treat as stale, bump to now
         self.posts[uid] = p.model_copy(update={"state": PostState.queued, "scheduled_time": p.scheduled_time if keep else now_iso})
     def reject_post(self, uid: str) -> None:
         p = self.posts.get(uid)

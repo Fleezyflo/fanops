@@ -37,7 +37,12 @@ def _gates_blocked_note(s) -> str | None:
 def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
     print(f"sources={len(led.sources)} moments={len(led.moments)} clips={len(led.clips)} "
-          f"posts={len(led.posts)} published={len(led.posts_in_state(PostState.published))} "
+          f"posts={len(led.posts)} "
+          # post-approval gate: posts waiting on the operator's review (headless operators see them here,
+          # not only in the Studio). rejected = operator-discarded.
+          f"awaiting_approval={len(led.posts_in_state(PostState.awaiting_approval))} "
+          f"published={len(led.posts_in_state(PostState.published))} "
+          f"rejected={len(led.posts_in_state(PostState.rejected))} "
           f"failed={len(led.posts_in_state(PostState.failed))} "
           # AUDIT C1: parked-for-reconcile posts (may be live) are actionable — surface here
           # so the operator sees them without opening the digest.
