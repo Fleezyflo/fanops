@@ -16,10 +16,10 @@ def _src(led, cfg, sid, dur=20.0):
                           state=SourceState.moments_decided, duration=dur, language="en",
                           meta={"transcribed": True}))
 
-def _moment(led, sid, mid, hook, *, edited=True, judged=False, excerpt="they slept on me", reason="punchline"):
+def _moment(led, sid, mid, hook, *, edited=True, judged=False, rounds=0, excerpt="they slept on me", reason="punchline"):
     led.add_moment(Moment(id=mid, parent_id=sid, state=MomentState.decided, start=0.0, end=18.0,
                           reason=reason, transcript_excerpt=excerpt, hook=hook, signal_score=0.5,
-                          hook_edited=edited, hook_judged=judged, hook_pattern="proof"))
+                          hook_edited=edited, hook_judged=judged, hook_rounds=rounds, hook_pattern="proof"))
 
 def _seed(cfg):
     led = Ledger.load(cfg)
@@ -157,3 +157,97 @@ def test_ingest_noop_when_disabled(tmp_path, monkeypatch):
     led = ingest_hook_judge(led, cfg)
     assert led.moments["m1"].hook == "they built the whole thing alone"
     assert hook_judge_pending(led, cfg) is False
+
+# ---- Task 7: author<->critic repair loop (one bounded round) ----
+
+def test_repair_reopens_on_first_reject(tmp_path, monkeypatch):
+    # An explicit reject at round 0 RE-OPENS the moment for ONE editor repair pass — it is NOT nulled;
+    # its hook is kept (the editor will rewrite it), the critic's reason becomes feedback, the round
+    # counter advances, and hook_edited/hook_judged reset so editor + critic both run again.
+    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
+    cfg = Config(root=tmp_path); led = _seed(cfg)
+    led = request_hook_judge(led, cfg)
+    _answer(cfg, [HookJudgeItem(moment_id="m1", keep=True),
+                  HookJudgeItem(moment_id="m2", keep=False, why="generic, re-aim at the viewer")])
+    led = ingest_hook_judge(led, cfg)
+    m2 = led.moments["m2"]
+    assert m2.hook == "when you have to let go"                  # NOT nulled — re-opened for repair
+    assert m2.hook_rounds == 1
+    assert m2.hook_feedback == "generic, re-aim at the viewer"
+    assert m2.hook_edited is False and m2.hook_judged is False   # editor + critic both run again
+    m1 = led.moments["m1"]
+    assert m1.hook_judged is True and m1.hook_feedback is None   # kept -> finalized, feedback cleared
+
+def test_repair_nulls_at_cap(tmp_path, monkeypatch):
+    # At the repair cap (hook_rounds == _MAX_REPAIR), a second reject is terminal: null to a clean clip
+    # so it renders clean (NOT re-opened, NOT held forever).
+    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _src(led, cfg, "s1")
+    _moment(led, "s1", "m1", "still generic after repair", rounds=1)   # already used its one repair
+    led = request_hook_judge(led, cfg)
+    _answer(cfg, [HookJudgeItem(moment_id="m1", keep=False, why="still generic")])
+    led = ingest_hook_judge(led, cfg)
+    m1 = led.moments["m1"]
+    assert m1.hook is None and m1.hook_pattern is None          # capped -> clean clip
+    assert m1.hook_judged is True                               # finalized (renders clean)
+    assert m1.hook_rounds == 1                                  # not advanced past the cap
+
+def test_repair_batch_partitions_by_round(tmp_path, monkeypatch):
+    # CRITICAL: a round-0 and a round-1 moment must land in SEPARATE gates. A batch that mixed rounds
+    # would answer only partly and STRAND the round-0 clip (never renders).
+    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _src(led, cfg, "s1"); _src(led, cfg, "s2")
+    _moment(led, "s1", "m1", "fresh round zero hook", rounds=0)
+    _moment(led, "s2", "m2", "repaired round one hook", rounds=1)
+    led = request_hook_judge(led, cfg)
+    keys = pending(cfg, kind="hookjudge")
+    assert len(keys) == 2                                        # one gate per round, not one merged
+    sets = []
+    for k in keys:
+        payload = json.loads((cfg.agent_io / "requests" / f"hookjudge__{k}.request.json").read_text())
+        sets.append({it["moment_id"] for it in payload["items"]})
+    assert {"m1"} in sets and {"m2"} in sets                    # neither round shares a gate
+
+def test_repair_full_cycle(tmp_path, monkeypatch):
+    # Full author<->critic repair: edit -> reject -> re-open -> round-1 edit -> keep. The hook survives
+    # as the round-1 rewrite, and the round-0 gates are NOT reused (round-keyed digests mint fresh gates).
+    from fanops.hookedit import request_hook_edit, ingest_hook_edit
+    from fanops.models import HookEditDecision, HookEditItem
+    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1"); monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _src(led, cfg, "s1")
+    led.add_moment(Moment(id="m1", parent_id="s1", state=MomentState.decided, start=0.0, end=18.0,
+                          reason="origin", transcript_excerpt="built it all", hook="generic seed hook",
+                          signal_score=0.5))
+
+    def _answer_edit(items):
+        k = pending(cfg, kind="hookedit")[0]
+        rid = latest_request_id(cfg, "hookedit", k)
+        response_path(cfg, "hookedit", k).write_text(HookEditDecision(request_id=rid, items=items).model_dump_json())
+        return k
+
+    def _answer_judge(items):
+        k = pending(cfg, kind="hookjudge")[0]
+        rid = latest_request_id(cfg, "hookjudge", k)
+        response_path(cfg, "hookjudge", k).write_text(HookJudgeDecision(request_id=rid, items=items).model_dump_json())
+        return k
+
+    # round 0: editor sets a hook, critic REJECTS -> re-open (not null)
+    led = request_hook_edit(led, cfg); e0 = _answer_edit([HookEditItem(moment_id="m1", hook="round zero hook")]); led = ingest_hook_edit(led, cfg)
+    led = request_hook_judge(led, cfg); j0 = _answer_judge([HookJudgeItem(moment_id="m1", keep=False, why="re-aim at the viewer")]); led = ingest_hook_judge(led, cfg)
+    assert led.moments["m1"].hook == "round zero hook" and led.moments["m1"].hook_rounds == 1
+    assert led.moments["m1"].hook_feedback == "re-aim at the viewer"
+
+    # round 1 edit: a FRESH gate (round-keyed digest), repaired hook applied, feedback cleared
+    led = request_hook_edit(led, cfg); e1 = pending(cfg, kind="hookedit")[0]
+    assert e1 != e0                                             # round-1 edit gate is a NEW key
+    _answer_edit([HookEditItem(moment_id="m1", hook="you ever build something alone")]); led = ingest_hook_edit(led, cfg)
+    assert led.moments["m1"].hook == "you ever build something alone" and led.moments["m1"].hook_feedback is None
+
+    # round 1 critic: fresh judge gate, KEEP -> hook survives, finalized
+    led = request_hook_judge(led, cfg); j1 = _answer_judge([HookJudgeItem(moment_id="m1", keep=True)]); led = ingest_hook_judge(led, cfg)
+    assert j1 != j0                                             # round-1 judge gate is a NEW key, not round-0
+    assert led.moments["m1"].hook == "you ever build something alone"
+    assert led.moments["m1"].hook_judged is True and led.moments["m1"].hook_rounds == 1
