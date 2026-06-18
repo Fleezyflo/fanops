@@ -70,6 +70,24 @@ def cmd_track(cfg: Config, window: str) -> int:
     print(f"tracked; analyzed={analyzed}")
     return 0
 
+def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
+    # E1 post-loop learning pass, extracted from cmd_run for testability AND to close the same
+    # lost-update window cmd_track closes (ECC-review fix #1): the metrics FETCH (up to ~30s network)
+    # runs OUTSIDE the ledger lock; only classify/amplify/retire run inside a tight transaction.
+    # Holding the flock across the network call serialized any concurrent advance/ingest behind it.
+    # Snapshot the published submission_ids FIRST (postiz reads per-post analytics, so the client
+    # must know which ids to fetch; the Blotato client ignores them and fetches the bulk list).
+    # Raises on a fetch/apply hiccup; the caller logs+swallows so the unattended run stays exit 0.
+    led0 = Ledger.load(cfg)
+    sub_ids = [p.submission_id for p in led0.posts.values()
+               if p.submission_id and p.state is PostState.published]
+    rows = list(_default_list_posts(cfg, submission_ids=sub_ids)(window))   # network, NO lock held
+    with Ledger.transaction(cfg) as led:
+        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
+        r = classify_outcomes(led)
+        led = amplify(led, cfg, r["winners"])
+        led = retire(led, r["losers"])
+
 def cmd_reconcile(cfg: Config) -> int:
     # AUDIT H4: resolve posts stranded in submitting/needs_reconcile by polling GET /v2/posts/:id.
     # Needs a key (dryrun has no live status source) — skip cleanly if absent, like track.
@@ -618,11 +636,7 @@ def _dispatch(cfg: Config, args) -> int:
         # hiccup is logged and swallowed so it can NEVER crash the unattended run (exit stays 0).
         if cfg.is_live_backend:
             try:
-                with Ledger.transaction(cfg) as led:
-                    led = pull_metrics(led, cfg)
-                    r = classify_outcomes(led)
-                    led = amplify(led, cfg, r["winners"])
-                    led = retire(led, r["losers"])
+                _learn_pass(cfg)
             except Exception as e:
                 # Include the exception TYPE so a swallowed AuthError (a real auth failure that must be
                 # actioned) is distinguishable in run.log from a transient 5xx — not all one level.

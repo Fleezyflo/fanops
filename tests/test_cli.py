@@ -344,6 +344,8 @@ def test_run_learning_pass_entered_with_live_backend_and_key(tmp_path, monkeypat
     monkeypatch.setenv("FANOPS_POSTER", "rest")              # live backend
     monkeypatch.setenv("BLOTATO_API_KEY", "k-test")          # key present
     import fanops.cli as cli
+    # ECC fix #1: the learn pass now FETCHES (two-phase) before pull_metrics — stub the fetch so no network
+    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
     spy = mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
     mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
     mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
@@ -366,6 +368,7 @@ def test_run_learning_pass_entered_with_postiz_backend_and_key(tmp_path, monkeyp
     monkeypatch.setenv("POSTIZ_API_KEY", "pk-test")          # postiz key present
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # NO blotato key — postiz is live on its own key
     import fanops.cli as cli
+    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])   # ECC fix #1: stub two-phase fetch
     spy = mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
     mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
     mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)

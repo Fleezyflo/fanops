@@ -93,6 +93,11 @@ def parse_interval(raw: str) -> int:
     (the ThrottleInterval floor) rather than a silent clamp, so a typo'd cadence fails loudly."""
     raw = raw.strip().lower()
     units = {"s": 1, "m": 60, "h": 3600}
+    # ECC fix #15: guard the numeric part so ""/"m"/"h" fail with a clean format message, not a raw
+    # `int(): invalid literal` traceback leaking to the operator.
+    digits = raw[:-1] if (raw and raw[-1] in units) else raw
+    if not digits.isdigit():
+        raise ValueError(f"invalid interval {raw!r} — use '10m', '90s', '2h', or bare seconds")
     secs = int(raw[:-1]) * units[raw[-1]] if raw and raw[-1] in units else int(raw)
     if secs < _MIN_INTERVAL:
         raise ValueError(f"interval must be >= {_MIN_INTERVAL}s (launchd ThrottleInterval floor), got {raw!r}")
@@ -195,7 +200,11 @@ def tail_logs(cfg: Config, n: int = 40) -> str:
     p = cfg.log_path
     if not p.exists():
         return "no logs yet"
-    return "\n".join(p.read_text().splitlines()[-n:])
+    # ECC fix #15: bounded memory — a long-running daemon's run.log can grow large; read the last n
+    # lines via a deque instead of loading the whole file into memory to slice it.
+    from collections import deque
+    with p.open() as fh:
+        return "\n".join(deque(fh, maxlen=n)).rstrip("\n")
 
 
 # ── internals ────────────────────────────────────────────────────────────────────────────────

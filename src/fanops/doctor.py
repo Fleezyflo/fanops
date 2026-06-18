@@ -45,6 +45,9 @@ def doctor_report(cfg: Config) -> dict:
         problems = [str(e)[:160]]
     checks.append(_check("accounts.json valid (every active channel mapped to an id)", not problems,
                          "; ".join(problems) + " — add accounts + map each channel in the Studio Go-Live tab"))
+    # ECC fix #14: read cutover state ONCE here and reuse in BOTH the postiz branch and the notes
+    # block below (it was read twice per doctor_report — two cutover.json reads on every call).
+    lv = learning_validated(cfg)
     # 4. poster + key consistency (human step 3) — mirrors cli._check_preflight
     if cfg.poster_backend in {"rest", "mcp"}:
         checks.append(_check(f"BLOTATO_API_KEY set (FANOPS_POSTER={cfg.poster_backend})",
@@ -57,8 +60,7 @@ def doctor_report(cfg: Config) -> dict:
                              "Settings > Developers > Public API) — the free, non-Blotato publisher"))
         # Postiz-learning readiness (booleans only, never the key): the loop only acts once the key is set,
         # every active channel is mapped, AND cutover confirmed the lift fields. Hint names the FIRST gap.
-        lv = learning_validated(cfg)                     # one disk read, reused below (review: was called twice)
-        ready = cfg.postiz_api_key is not None and not problems and lv
+        ready = cfg.postiz_api_key is not None and not problems and lv   # lv hoisted above (ECC fix #14)
         if cfg.postiz_api_key is None: hint = "Connect Postiz (Go-Live > 1 · Connect Postiz)"
         elif problems:                hint = "map every channel (Go-Live > 3 · Map each channel to Postiz)"
         elif not lv:                  hint = "run the Studio Validate learning step (Go-Live > 5 · Validate learning)"
@@ -68,7 +70,7 @@ def doctor_report(cfg: Config) -> dict:
     notes: list[str] = []
     notes.append(f"poster backend: {cfg.poster_backend}"
                  + (" (dryrun — writes payloads, posts nothing)" if cfg.poster_backend == "dryrun" else " (LIVE)"))
-    if learning_validated(cfg):
+    if lv:                                               # ECC fix #14: reuse the single read above
         notes.append("learning loop: validation-confirmed (lift fields reconciled by cutover) — amplify/bandit may be enabled")
     else:
         notes.append("learning loop: NOT validation-confirmed — variant-amplify stays inert even if enabled; "

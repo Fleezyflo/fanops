@@ -5,10 +5,10 @@ operator reviews 00_review/ in Finder and moves keepers into 00_review/approved/
 copies the approved originals into 01_inbox/ for the existing pipeline. Rejects never enter the
 pipeline (no wasted clip/claude cost)."""
 from __future__ import annotations
-import json, os, shutil, subprocess
+import json, logging, os, shutil, subprocess
 from pathlib import Path
 from fanops.config import Config
-from fanops.errors import ControlFileError
+from fanops.errors import ControlFileError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.ingest import scan_local, probe_dimensions, sha256_of
 
@@ -40,6 +40,11 @@ def candidate_meta(path: Path) -> dict:
     try:
         pw, ph, pdur = probe_dimensions(path)
         w, h, dur = (pw or None), (ph or None), (pdur or None)
+    except ToolchainMissingError:
+        # ECC fix #7: ffprobe ABSENT was swallowed silently — discovery then succeeded with null
+        # dims while ingest later failed LOUDLY on the same missing tool (confusing asymmetry).
+        # Leave one breadcrumb so the operator sees the cause; still fail-soft (list it anyway).
+        logging.getLogger("fanops.discover").warning("ffprobe absent; dimensions unavailable for %s", path)
     except Exception:
         pass                                   # fail-soft: list it anyway, dims/duration unknown
     return {"bytes": st.st_size, "mtime": st.st_mtime, "width": w, "height": h, "duration": dur}
@@ -119,9 +124,9 @@ def intake(cfg: Config) -> dict:
         info = manifest.get(eid)
         sp = info.get("source_path") if info else None    # key-less entry (hand-edit/drift) -> missing, not KeyError
         src = Path(sp) if sp else None
-        if src is None or not src.exists():
+        if src is None or not src.exists() or src.is_symlink():
             missing += 1
-            continue                              # stale/unknown entry — report, don't crash
+            continue                              # stale/unknown/symlinked entry — report, don't copy a link target out of bounds (ECC fix #9)
         dest = cfg.inbox / src.name
         if not dest.exists():
             shutil.copy2(src, dest)

@@ -17,6 +17,19 @@ def test_sha256_stable(tmp_path):
     f = tmp_path / "a.bin"; f.write_bytes(b"hi")
     assert sha256_of(f) == sha256_of(f)
 
+def test_ingest_drops_skips_symlinks(tmp_path, mocker):
+    # ECC fix #9: a symlink in the inbox must NOT be dereferenced + ingested (it could point to a
+    # file outside the data boundary). It is skipped BEFORE any ffprobe/copy, so this never touches
+    # the toolchain — a spy on has_video_stream proves the symlink short-circuited earlier.
+    cfg = Config(root=tmp_path)
+    outside = tmp_path / "outside" / "secret.mp4"; _put(outside, b"OUTSIDE")
+    cfg.inbox.mkdir(parents=True, exist_ok=True)
+    (cfg.inbox / "link.mp4").symlink_to(outside)
+    spy = mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    led = ingest_drops(Ledger.load(cfg), cfg)
+    assert len(led.sources) == 0, "a symlinked inbox entry was ingested — links must be skipped"
+    spy.assert_not_called()                    # skipped before the video-stream probe
+
 def test_ingest_raises_clean_toolchain_error_when_ffprobe_absent(tmp_path, mocker):
     # ffprobe off PATH -> subprocess.run raises FileNotFoundError before the process starts.
     # ingest_drops runs OUTSIDE the pipeline's per-unit quarantine, so without a guard this

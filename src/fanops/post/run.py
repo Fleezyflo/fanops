@@ -59,9 +59,12 @@ def _submit_one(led: Ledger, cfg: Config, poster: Poster, post: Post, _save: Cal
     except Exception as exc:
         if _is_fatal_auth_error(exc):
             raise                                      # bad key/401: halt, don't burn the queue
-        # per-post failure (e.g. media upload 5xx): mark THIS post failed, keep going (FIX F54)
-        post.state = PostState.failed
-        post.error_reason = f"publish failed: {str(exc)[:200]}"
+        # per-post failure (e.g. media upload 5xx): mark THIS post failed, keep going (FIX F54).
+        # ECC fix #17 (defensive): if poster.publish already parked the post as needs_reconcile
+        # (ambiguous-live), do NOT downgrade it to failed here — failed is re-queueable => double-post.
+        if post.state is not PostState.needs_reconcile:
+            post.state = PostState.failed
+            post.error_reason = f"publish failed: {str(exc)[:200]}"
     _save()                                            # persist the post's terminal/failed state
     return led
 

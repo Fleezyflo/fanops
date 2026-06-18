@@ -31,6 +31,21 @@ def test_list_posts_non_2xx_raises(tmp_path, monkeypatch, mocker):
     with pytest.raises(RuntimeError, match="500"):
         BlotatoMetricsClient(cfg).list_posts()
 
+class _RBadJson:
+    # a 200 whose body is NOT JSON (HTML error page from a misconfigured proxy)
+    def __init__(s, c, text): s.status_code = c; s.text = text
+    def json(s): raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+def test_list_posts_non_json_200_raises_clean_runtimeerror(tmp_path, monkeypatch, mocker):
+    # ECC-review fix #4: a 200-with-HTML made resp.json() raise a raw JSONDecodeError that aborted
+    # the WHOLE metrics pass (losing every post's metrics). It must become a diagnosable RuntimeError.
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_RBadJson(200, "<html>502 Bad Gateway</html>"))
+    with pytest.raises(RuntimeError, match="non-JSON"):
+        BlotatoMetricsClient(cfg).list_posts()
+
 def test_list_posts_401_is_typed_auth_with_redacted_body(tmp_path, monkeypatch, mocker):
     # Audit follow-up: the df85662 401-redaction missed the two metrics clients. A 401 here must
     # (a) raise BlotatoAuthError (so reconcile's halt-on-auth guard fires + track halts cleanly),

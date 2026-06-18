@@ -26,6 +26,16 @@ def _raise_for_auth(resp) -> None:
     if resp.status_code == 401:
         raise BlotatoAuthError("Blotato 401 unauthorized — check BLOTATO_API_KEY (response body withheld)")
 
+def _json_or_raise(resp, label: str):
+    # ECC fix #4: a 200 with a non-JSON body (HTML error page from a misconfigured proxy) made
+    # resp.json() raise a raw JSONDecodeError that propagated out of pull_metrics and aborted the
+    # WHOLE pass — every post lost its metrics. Convert it to a diagnosable RuntimeError the callers
+    # already handle as a per-step failure. requests' JSONDecodeError subclasses ValueError.
+    try:
+        return resp.json()
+    except ValueError:
+        raise RuntimeError(f"{label}: non-JSON {resp.status_code} response: {(resp.text or '')[:200]}")
+
 class BlotatoMetricsClient:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -40,7 +50,7 @@ class BlotatoMetricsClient:
         _raise_for_auth(resp)
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"blotato metrics {resp.status_code}: {resp.text[:200]}")
-        data = resp.json()
+        data = _json_or_raise(resp, "blotato metrics")
         if isinstance(data, list):
             return data
         return data.get("items", [])
@@ -63,7 +73,7 @@ class BlotatoStatusClient:
         _raise_for_auth(resp)
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"blotato status {resp.status_code}: {resp.text[:200]}")
-        return resp.json()
+        return _json_or_raise(resp, "blotato status")
 
 
 # ---- Postiz metrics (M2) — the FREE backend's read client. Postiz analytics is PER-POST
@@ -124,7 +134,7 @@ class PostizMetricsClient:
             raise PostizAuthError("Postiz 401 on analytics — check POSTIZ_API_KEY (response body withheld)")
         if resp.status_code >= 300:
             raise RuntimeError(f"postiz analytics {resp.status_code}: {(resp.text or '')[:200]}")
-        arr = resp.json()
+        arr = _json_or_raise(resp, "postiz analytics")
         labels = [str(it.get("label", "")) for it in arr if isinstance(it, dict)] if isinstance(arr, list) else []
         return _map_analytics(arr), labels
 

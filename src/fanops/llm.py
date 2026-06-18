@@ -71,7 +71,11 @@ def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
         prompt = ("FIRST read these image frames with the Read tool, then answer using what you SEE:\n"
                   + "\n".join(images) + "\n\n" + prompt)
     allowed = "Read" if images else ""
-    cmd = ["claude", "-p", prompt,
+    # ECC fix #11: pass the prompt on STDIN (the documented `… | claude -p` headless form, default
+    # --input-format text), NOT as an argv positional. argv was world-visible via `ps`/`/proc/<pid>/
+    # cmdline` (transcript + brand guidance leaked to any local process) and a very large transcript
+    # could hit ARG_MAX -> E2BIG, surfaced misleadingly as "claude not found". STDIN has neither limit.
+    cmd = ["claude", "-p",
            "--output-format", "json",
            "--json-schema", json.dumps(schema),
            "--allowedTools", allowed,
@@ -83,7 +87,7 @@ def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
     delay = _RL_BASE_DELAY
     for attempt in range(_MAX_RL_RETRIES + 1):
         try:
-            r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+            r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout, input=prompt)
         except (FileNotFoundError, OSError) as e:
             raise ToolchainMissingError(
                 f"claude not found on PATH — install Claude Code to run the autonomous responder "

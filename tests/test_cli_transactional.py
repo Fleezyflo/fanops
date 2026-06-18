@@ -92,6 +92,24 @@ def test_cmd_track_network_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
         "the metrics fetch held the ledger lock — network must be OUTSIDE the transaction"
 
 
+def test_learn_pass_fetch_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
+    # ECC-review fix #1: the `run` post-loop learning pass fetched metrics (up to ~30s network)
+    # INSIDE Ledger.transaction, holding the flock across the call and serializing any concurrent
+    # advance/ingest behind it. The fetch must run OUTSIDE the lock (mirroring cmd_track).
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    seen = {}
+
+    def fetching(window):
+        seen["lock_free_during_fetch"] = _lock_is_free(cfg)   # must be True: lock not held
+        return []
+
+    mocker.patch("fanops.cli._default_list_posts", return_value=fetching)
+    cli._learn_pass(cfg)
+    assert seen.get("lock_free_during_fetch") is True, \
+        "the learn-pass metrics fetch held the ledger lock — network must be OUTSIDE the transaction"
+
+
 def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

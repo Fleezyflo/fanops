@@ -197,10 +197,13 @@ class Ledger:
     def add_post(self, p: Post) -> None: self.posts.setdefault(p.id, p)
 
     # ---- typed state setters (FIX F65 — no cross-unit scan) ----
-    def set_source_state(self, uid: str, st: SourceState) -> None: self.sources[uid].state = st
-    def set_moment_state(self, uid: str, st: MomentState) -> None: self.moments[uid].state = st
-    def set_clip_state(self, uid: str, st: ClipState) -> None: self.clips[uid].state = st
-    def set_post_state(self, uid: str, st: PostState) -> None: self.posts[uid].state = st
+    # ECC fix #10: immutable update (model_copy + dict reassignment) instead of in-place `.state =`.
+    # Aligns with the project's immutable-data rule and is safe if a model is ever frozen; the dict
+    # reassignment makes the new object the one every later reader (and serialization) sees.
+    def set_source_state(self, uid: str, st: SourceState) -> None: self.sources[uid] = self.sources[uid].model_copy(update={"state": st})
+    def set_moment_state(self, uid: str, st: MomentState) -> None: self.moments[uid] = self.moments[uid].model_copy(update={"state": st})
+    def set_clip_state(self, uid: str, st: ClipState) -> None: self.clips[uid] = self.clips[uid].model_copy(update={"state": st})
+    def set_post_state(self, uid: str, st: PostState) -> None: self.posts[uid] = self.posts[uid].model_copy(update={"state": st})
 
     # ---- queries ----
     def already_seen(self, *, sha256: str | None = None) -> bool:
@@ -268,14 +271,14 @@ class Ledger:
         if survived:
             # keep the moment but suppress it from future rendering/crossposting
             if moment_id in self.moments:
-                self.moments[moment_id].state = MomentState.retired
+                self.moments[moment_id] = self.moments[moment_id].model_copy(update={"state": MomentState.retired})  # ECC fix #10
         else:
             self.moments.pop(moment_id, None)
 
     # ---- retire (FIX F55 — now observable) ----
     def retire_clip(self, clip_id: str) -> None:
         if clip_id in self.clips:
-            self.clips[clip_id].state = ClipState.retired
+            self.clips[clip_id] = self.clips[clip_id].model_copy(update={"state": ClipState.retired})  # ECC fix #10
     def is_retired_clip(self, clip_id: str) -> bool:
         c = self.clips.get(clip_id)
         return bool(c and c.state is ClipState.retired)
@@ -291,7 +294,7 @@ class Ledger:
         # rebuild_catalog will not re-add it (its retired row remains, blocking resurrection).
         self.reconcile_moments(source_id, {})
         if source_id in self.sources:
-            self.sources[source_id].state = SourceState.retired
+            self.sources[source_id] = self.sources[source_id].model_copy(update={"state": SourceState.retired})  # ECC fix #10
     def is_retired_source(self, source_id: str) -> bool:
         s = self.sources.get(source_id)
         return bool(s and s.state is SourceState.retired)
@@ -316,8 +319,8 @@ class Ledger:
     def approve_stitch_plan(self, plan_id: str) -> None:
         p = self.stitch_plans.get(plan_id)             # in-lock re-check: ONLY a suggested plan approves, so a
         if p is not None and p.state is StitchState.suggested:   # second/contended approval is a clean no-op
-            p.state = StitchState.approved                       # (never a second render in M4)
+            self.stitch_plans[plan_id] = p.model_copy(update={"state": StitchState.approved})  # ECC fix #10 (never a second render in M4)
     def dismiss_stitch_plan(self, plan_id: str) -> None:
         p = self.stitch_plans.get(plan_id)             # suggested|approved -> dismissed (terminal); an in_use
         if p is not None and p.state in (StitchState.suggested, StitchState.approved):   # plan is forward-only
-            p.state = StitchState.dismissed
+            self.stitch_plans[plan_id] = p.model_copy(update={"state": StitchState.dismissed})  # ECC fix #10
