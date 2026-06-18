@@ -117,7 +117,10 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
                  inbox: Path | None = None) -> Ledger:
     cfg.sources.mkdir(parents=True, exist_ok=True)
     for f in sorted((inbox or cfg.inbox).rglob("*")):     # inbox= lets third-party scan its own staging dir
-        if not f.is_file() or f.name == ".gitkeep" or f.suffix.lower() not in MEDIA_EXT:
+        # ECC fix #9: skip symlinks BEFORE any probe/copy. f.is_file() follows links, and the copy2
+        # below would dereference a symlink and ingest a file from OUTSIDE the inbox (a zip-extracted
+        # or hand-placed link escaping the data boundary). Content-addressing can't undo that.
+        if f.is_symlink() or not f.is_file() or f.name == ".gitkeep" or f.suffix.lower() not in MEDIA_EXT:
             continue
         if is_excluded(f.name):
             continue
@@ -164,6 +167,8 @@ def scan_local(roots: list[Path]) -> list[str]:
     out: list[str] = []
     for root in roots:
         for f in Path(root).rglob("*"):
+            if f.is_symlink():     # ECC fix #9: don't surface links that escape the scanned root
+                continue
             if f.is_file() and f.suffix.lower() in MEDIA_EXT and not is_excluded(f.name):
                 out.append(str(f))
     return sorted(out)

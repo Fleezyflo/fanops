@@ -294,7 +294,14 @@ def _loop_state(led: Ledger, cfg: Config, accounts: Optional[Accounts], post,
     try:
         from fanops.digest import gate_state
         return gate_state(led, cfg, post.account, post.platform, cache, accounts=accounts)
-    except Exception:
+    except Exception as exc:
+        # ECC fix #5: was a SILENT fail-open — a broken gate_state (refactor/schema drift) looked
+        # identical to "no data yet". Log ONE breadcrumb per request (dedup via the per-request cache)
+        # so the operator can tell a real break from genuine emptiness, without per-post spam.
+        if cache is None or not cache.get("_loop_state_logged"):
+            from fanops.log import get_logger
+            get_logger(cfg)("lift", "-", "loop_state_error", err=str(exc)[:160])
+            if cache is not None: cache["_loop_state_logged"] = True
         return "gathering data"
 
 def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> LiftView:
@@ -338,7 +345,9 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
                     loop_state="amplify candidate", amplify_state=str(c.get("evidence", ""))))
             if not amplify_rows:
                 amplify_empty_reason = "No sustained amplification streaks yet."
-        except Exception:
+        except Exception as exc:
+            from fanops.log import get_logger     # ECC fix #5: log the real cause, not just "unavailable"
+            get_logger(cfg)("lift", "-", "amplify_error", err=str(exc)[:160])
             amplify_empty_reason = "Amplify state unavailable (fail-open)."
     return LiftView(variant_rows=variant_rows, variant_empty_reason=variant_empty_reason,
                     amplify_present=amplify_present, amplify_rows=amplify_rows,
@@ -472,11 +481,15 @@ def golive_status(cfg: Config) -> GoLiveStatus:
                                     integration_id=a.integrations.get(p.value) or a.account_id or "")
                       for p in a.platforms])
             for a in Accounts.load(cfg).active()]
-    except Exception:
+    except Exception as exc:
+        from fanops.log import get_logger             # ECC fix #5: a disk/parse error was invisible
+        get_logger(cfg)("golive", "-", "accounts_error", err=str(exc)[:160])
         accts = []                                   # malformed accounts.json — doctor's readiness check below names it
     try:
         report = doctor_report(cfg)
-    except Exception:                                # invariant: the Go-Live tab must never 500 (ecc:python-review)
+    except Exception as exc:                          # invariant: the Go-Live tab must never 500 (ecc:python-review)
+        from fanops.log import get_logger             # ECC fix #5: log why readiness is unavailable
+        get_logger(cfg)("golive", "-", "doctor_error", err=str(exc)[:160])
         report = {"checks": [], "notes": ["readiness check unavailable"]}
     from fanops.validation_gate import learning_validated
     return GoLiveStatus(

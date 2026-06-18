@@ -177,6 +177,19 @@ def test_subtitles_vf_escapes_colon_in_path():
     assert "\\:" in vf                          # the ':' is escaped, never left bare
 
 
+def test_subtitles_vf_escapes_single_quote_in_path():
+    # ECC-review fix #2: a single quote in the path closed the wrapping single-quote prematurely,
+    # making ffmpeg reject the filter graph (silent on-screen-text loss via fail-open). The path
+    # must be embedded with the ffmpeg "'\\''" sequence so the value parses as the literal path.
+    vf = subtitles_vf("/clips/it's a clip.ass")
+    assert vf.startswith("subtitles='") and vf.endswith("'")
+    # No BARE single quote may remain inside the wrapped value (every embedded ' must be the
+    # close-quote/escaped-quote/reopen sequence "'\\''"). Strip the outer wrapping quotes, then
+    # assert no lone "'" survives that isn't part of that 4-char sequence.
+    assert "'\\''" in vf                                  # the embedded quote is ffmpeg-escaped
+    assert "it'" not in vf.replace("'\\''", "")           # no unescaped quote leaks through
+
+
 def test_ffmpeg_has_textfilter_is_cached(monkeypatch):
     calls = {"n": 0}
 
@@ -252,6 +265,9 @@ def test_burn_hook_only_builds_hook_ass_and_cmd(tmp_path, mocker):
     captured = {}
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
+        # the .ass exists DURING the ffmpeg run; capture its content here (ECC fix #8 unlinks it after)
+        ass = list(tmp_path.glob("*.ass"))
+        captured["ass_text"] = ass[0].read_text() if ass else ""
         Path(cmd[-1]).write_bytes(b"VARIANT")
         class R: returncode = 0; stderr = ""
         return R()
@@ -261,9 +277,10 @@ def test_burn_hook_only_builds_hook_ass_and_cmd(tmp_path, mocker):
     vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
     assert "subtitles=" in vf                      # the hook is burned via an ass
     assert captured["cmd"][-1] == str(out)         # output is last (matches fake_run + clip.py convention)
-    # a .ass containing the hook text was written next to the output
-    ass = list(tmp_path.glob("*.ass"))
-    assert ass and "WATCH THIS" in ass[0].read_text()
+    # the hook text reached the .ass (read during the run)
+    assert "WATCH THIS" in captured["ass_text"]
+    # ECC fix #8: the intermediate .ass is cleaned up — no orphan left beside the output
+    assert list(tmp_path.glob("*.ass")) == []
 
 def test_burn_hook_only_failopen_when_no_textfilter(tmp_path, mocker):
     import fanops.overlay as overlay

@@ -145,8 +145,13 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
         if voc != src.source_path:
             target = out_dir / f"{Path(src.source_path).stem}.mp3"
+            # ECC fix #3: on a move failure (e.g. cross-device) fall back to the SOURCE path, NOT the
+            # vocals path. The vocals stem ("vocals") made whisper write vocals.json, which the
+            # per-source cache lookup ({source_stem}.json) never finds -> re-transcribe every run +
+            # clobbered shared vocals.json. Source-stem fallback keeps the cache deterministic (we
+            # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
             try: Path(voc).replace(target); audio = str(target)
-            except OSError: audio = voc
+            except OSError: audio = src.source_path
     # Engine: prefer faster-whisper large-v3 (FANOPS_ASR_MODEL, default large-v3) — the proven music
     # winner; fail open to the legacy `whisper` CLI (FANOPS_WHISPER_MODEL turbo) when the [asr] extra
     # is absent. Both write JSON named by the INPUT stem, so the parse below is engine-agnostic.

@@ -15,6 +15,7 @@ result so repeated clip renders don't re-spawn ffmpeg; it never raises if ffmpeg
 """
 from __future__ import annotations
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -283,6 +284,7 @@ def subtitles_vf(ass_path) -> str:
     (so we don't double-escape what we add), then ':' then ',' and wrap in single quotes."""
     p = str(ass_path)
     p = p.replace("\\", "\\\\")     # backslash first
+    p = p.replace("'", "'\\''")     # ECC fix #2: embed a literal ' via close-quote/esc-quote/reopen
     p = p.replace(":", "\\:")       # colon is the filter option separator
     p = p.replace(",", "\\,")       # comma separates chained filters
     return f"subtitles='{p}'"
@@ -329,14 +331,21 @@ def burn_hook_only(base_clip_path: str, out_path: str, hook: str, *,
     ass_text = build_ass([], hook=hook, clip_start=0.0, clip_end=2.5, width=width, height=height, font=font)
     ass_path = str(Path(out_path).with_suffix(".ass"))
     write_ass(ass_text, ass_path)
-    cmd = ["ffmpeg", "-y", "-i", base_clip_path, "-vf", subtitles_vf(ass_path),
-           "-c:v", "libx264", "-c:a", "copy", "-movflags", "+faststart", out_path]
+    # ECC fix #8: the intermediate .ass is a render artifact, not an output — unlink it in a finally
+    # so a failed/hung ffmpeg doesn't leave an orphan beside every per-account variant (unbounded
+    # accumulation on high-volume runs). Best-effort: a missing/locked file never masks the result.
     try:
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        shutil.copyfile(base_clip_path, out_path)        # ffmpeg vanished or hung: fail-open
-        return False
-    if r.returncode != 0 or not Path(out_path).exists():
-        shutil.copyfile(base_clip_path, out_path)
-        return False
-    return True
+        cmd = ["ffmpeg", "-y", "-i", base_clip_path, "-vf", subtitles_vf(ass_path),
+               "-c:v", "libx264", "-c:a", "copy", "-movflags", "+faststart", out_path]
+        try:
+            r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            shutil.copyfile(base_clip_path, out_path)    # ffmpeg vanished or hung: fail-open
+            return False
+        if r.returncode != 0 or not Path(out_path).exists():
+            shutil.copyfile(base_clip_path, out_path)
+            return False
+        return True
+    finally:
+        try: os.unlink(ass_path)
+        except OSError: pass

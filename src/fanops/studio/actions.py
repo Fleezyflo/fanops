@@ -220,7 +220,7 @@ def run_pull(cfg: Config, url: str) -> ActionResult:
 
 
 def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = True,
-                 allowed_ext: set[str] = _VIDEO_EXT, dest_dir: Optional[Path] = None) -> ActionResult:
+                 allowed_ext: Optional[set[str]] = None, dest_dir: Optional[Path] = None) -> ActionResult:
     """Stream operator-uploaded raw video into cfg.inbox so `run_ingest` catalogues it — the browser
     replacement for a Finder drag. Each file is validated (video ext, traversal-safe name), streamed to
     a `.uploadpart` temp in the inbox, then os.replace'd into place (so a half-upload never appears to
@@ -228,6 +228,7 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
     inbox-bound resolve are the path-safety gates; Flask's MAX_CONTENT_LENGTH (set in create_app) refuses
     an oversize body BEFORE this runs. Never 500s — every fallible step yields a skip reason. ok is True
     iff at least one file landed (all-rejected is a failure, not a green no-op)."""
+    if allowed_ext is None: allowed_ext = _VIDEO_EXT   # ECC fix #12: no shared mutable default (module set)
     files = [f for f in (files or []) if getattr(f, "filename", "")]   # drop empty (no-file-chosen) parts
     if not files:
         return ActionResult(ok=False, error="no files selected — choose a video to upload")

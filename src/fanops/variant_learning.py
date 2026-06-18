@@ -34,7 +34,10 @@ def best_hooks(led, cfg, account: str, platform: Platform) -> list[str]:
     by_hook = _collect_lifts(led, account, platform)
     if not by_hook:
         return []
-    ranked = sorted(by_hook.items(), key=lambda kv: mean(kv[1]), reverse=True)
+    # ECC fix #13: secondary key on the hook string makes the tie-break CONTENT-addressed (the
+    # docstring's determinism claim held only while dict load-order happened to be stable). Sort by
+    # descending mean lift, then ascending hook — independent of ledger insertion/serialization order.
+    ranked = sorted(by_hook.items(), key=lambda kv: (-mean(kv[1]), kv[0]))
     leader_hook, leader_lifts = ranked[0]
     if len(leader_lifts) < min_posts:
         return []

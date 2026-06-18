@@ -37,7 +37,8 @@ def test_claude_json_with_images_allows_read_and_references_paths(mocker):
     assert out == {"x": 5}
     cmd = run.call_args[0][0]
     i = cmd.index("--allowedTools"); assert cmd[i + 1] == "Read"          # vision needs the Read tool
-    prompt = cmd[cmd.index("-p") + 1]
+    # ECC fix #11: the prompt now rides STDIN (input=), not argv — assert against the kwarg
+    prompt = run.call_args.kwargs["input"]
     assert "/tmp/a.jpg" in prompt and "/tmp/b.jpg" in prompt              # told which frames to read
 
 def test_claude_json_without_images_stays_pure_generator(mocker):

@@ -177,20 +177,20 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
         except Exception:
             logger.warning("variant-amplify digest section degraded (fail-open)", exc_info=True)
 
-    awaiting = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +
-                [f"- captions: {k}" for k in pending(cfg, kind="captions")])
-    if awaiting:
+    # ECC fix #16: compute the pending-gate lists ONCE (was 4 pending() filesystem scans producing
+    # two byte-identical sections). Both sections below reuse this single read.
+    gates = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +
+             [f"- captions: {k}" for k in pending(cfg, kind="captions")])
+    if gates:
         out.append("\n## Awaiting agent (request written, no response yet)\n"
-                   + "\n".join(awaiting) + "\n")
+                   + "\n".join(gates) + "\n")
 
     # E3: an explicit "Pending agent gates" section (the word 'pending' is the searchable signal a
     # monitor/operator greps for) — same per-kind list as Awaiting, gated on the same pending keys
     # so an empty ledger renders neither. These are the gates a responder has NOT yet cleared.
-    pend = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +
-            [f"- captions: {k}" for k in pending(cfg, kind="captions")])
-    if pend:
+    if gates:
         out.append("\n## Pending agent gates (responder has not cleared)\n"
-                   + "\n".join(pend) + "\n")
+                   + "\n".join(gates) + "\n")
     return "".join(out)
 
 def write_digest(led: Ledger, cfg: Config) -> None:

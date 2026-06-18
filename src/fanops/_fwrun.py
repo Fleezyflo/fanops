@@ -25,7 +25,7 @@ def _certifi_env() -> None:
         import certifi
         os.environ.setdefault("SSL_CERT_FILE", certifi.where())
         os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-    except Exception: pass
+    except ImportError: pass    # ECC fix #6: certifi optional — only its absence is expected; don't mask other faults
 
 
 def _load_model(model: str):

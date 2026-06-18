@@ -208,6 +208,10 @@ class PostizPoster:
             if resp.status_code == 429:
                 time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
             break                                            # other 4xx -> fail
-        post.state = PostState.failed
-        post.error_reason = f"postiz {getattr(last, 'status_code', '?')}: {getattr(last, 'text', '')[:200]}"
+        # ECC fix #17 (defensive): never downgrade an ambiguous-live post to `failed` (failed is
+        # re-queueable -> double-post risk). Today the 5xx branch returns before here, but guard it
+        # so a future edit to the retry/return flow can't strand a needs_reconcile post as failed.
+        if post.state is not PostState.needs_reconcile:
+            post.state = PostState.failed
+            post.error_reason = f"postiz {getattr(last, 'status_code', '?')}: {getattr(last, 'text', '')[:200]}"
         return led
