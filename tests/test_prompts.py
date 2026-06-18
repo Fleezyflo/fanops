@@ -52,6 +52,29 @@ def test_moment_prompt_hook_bans_generic_demands_concrete_and_selects():
     assert "candidate" in low                      # draft several, output the strongest (not first-draft)
     assert "editing" in low or "scene-cut" in low  # never hook on the cuts instead of the content
 
+def test_moment_prompt_hook_demands_viewer_pov_not_third_person_narration():
+    # Operator feedback on a real run (2026-06-18): hooks narrated the scene/artist in THIRD PERSON
+    # ('he stopped answering for a reason', 'the promise he made himself', 'front row last song')
+    # instead of addressing the VIEWER. The spec must (a) make viewer/second-person the DEFAULT frame,
+    # (b) explicitly reject third-person scene-narration, and (c) stop shipping a canned example line
+    # the model lifts verbatim ('the part nobody clipped' was line-for-line copied out of the prompt).
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""}).lower()
+    assert "second person" in p or "second-person" in p   # the default frame is the viewer ('you')
+    assert "narrat" in p                                   # third-person scene-narration is named + rejected
+    assert "the part nobody clipped" not in p             # no canned line for the model to copy verbatim
+
+def test_moment_prompt_treats_target_as_a_floor_and_forbids_zero_on_content():
+    # Real-run diagnosis (2026-06-18): sum_targets=52 but sum_actual=42 — the model NEVER exceeded
+    # target and undershot 9 sources (2 of them, 18s & 27s WITH content, returned ZERO). Root cause:
+    # the prompt's soft 'return fewer ONLY if...' + 'empty list is valid' permission. The fix frames
+    # the target as a FLOOR for substantive sources and forbids an empty list unless the footage is
+    # genuinely dead (no usable spoken/musical content) — without forcing 2-6s fragments.
+    p = moment_prompt({"duration": 42.0, "transcript": [{"start": 1.0, "end": 3.0, "text": "x"}],
+                       "signal_peaks": [], "language": "en", "guidance": ""}).lower()
+    assert "dead footage" in p                    # the ONLY justification for an empty list
+    assert "do not undershoot" in p or "do not under-shoot" in p   # target is a floor, not a ceiling-with-escape
+
 def test_moment_prompt_targets_12_to_22_seconds():
     # The clip-length fix: 12-22s windows (loosened from 15-20 so more moments qualify), not 3-4s.
     p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
