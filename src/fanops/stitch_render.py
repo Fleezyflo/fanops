@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import ClipState, StitchState, PostState, StitchPlan, stitch_plan_id, Clip
+from fanops.models import ClipState, StitchState, StitchPlan, stitch_plan_id, Clip
 from fanops.ids import child_id
 from fanops.router import awaiting, stitched, CLEAN_AWAITING
 from fanops.impact_cut import make_stitch_plan, STRATEGY_KEY
@@ -33,10 +33,6 @@ INTRO_TEASE_SECONDS = 2.0
 # intro asset) is PARKED after this many failed in-lock commit passes — bounded, not retried forever. The
 # prewarm runs once per advance before the commit, so each commit-with-no-warm-composite = one failed attempt.
 MAX_INTRO_RENDER_ATTEMPTS = 3
-# A base post in any of these states is LIVE on (or in-flight to) a platform — supersede must BLOCK and let
-# the operator decide, never silently retire a possibly-published post. A `queued` post is retired instead.
-_LIVE_POST_STATES = (PostState.submitting, PostState.submitted, PostState.published,
-                     PostState.needs_reconcile, PostState.analyzed)
 
 
 def _read_fingerprint(cfg: Config, clip_id: str) -> str | None:
@@ -188,14 +184,6 @@ def approved_disabled_count(led: Ledger, *, enabled) -> int:
                if p.state is StitchState.approved and p.strategy_key not in enabled)
 
 
-def _retire_queued_base(led: Ledger, p: StitchPlan) -> None:
-    """Retire a still-queued bare base post so the feed never doubles up once a stitch goes in_use. A LIVE
-    base post never reaches here (the supersede precheck blocks it); a `queued` one is safely retired."""
-    for po in led.posts.values():
-        if po.parent_id == p.clip_id and po.state is PostState.queued:
-            po.state = PostState.retired
-
-
 def _intro_render_target(led: Ledger, cfg: Config, p: StitchPlan):
     """Resolve (base_clip, intro_source, stitch_cid, out_path) for an intro_tease plan, or None when the base
     clip or the intro asset is gone (commit then errors / waits, never raises)."""
@@ -289,15 +277,17 @@ def render_approved_stitches(led: Ledger, cfg: Config, strategies=None) -> Ledge
 
 
 def _precheck(led: Ledger, cfg: Config, p: StitchPlan):
-    """The strategy-agnostic supersede precedence. Returns the base Clip to render, or None when the plan was
-    terminated here (state + error_reason already set)."""
+    """Strategy-agnostic correctness guards before render. Returns the base Clip to render, or None when the
+    plan was terminated here (state + error_reason already set). A stitch is an ADDITIVE post — it never
+    supersedes or retires the base; the bare clip and the stitch each ship (FAN-account reuse, NOT an
+    artist-profile one-version-per-moment feed), so an already-published base does NOT block its stitch."""
     base = led.clips.get(p.clip_id)
     if base is None:
         p.state = StitchState.error; p.error_reason = "base clip missing"; return None
     if p.base_fingerprint is not None and _read_fingerprint(cfg, p.clip_id) != p.base_fingerprint:
-        p.state = StitchState.dismissed; p.error_reason = "base superseded"; return None
-    if any(po.parent_id == p.clip_id and po.state in _LIVE_POST_STATES for po in led.posts.values()):
-        p.state = StitchState.error; p.error_reason = "cannot supersede a live post"; return None
+        # stale-plan guard (correctness, NOT feed policy): the base clip was re-rendered since the cut was
+        # planned, so the pinned window may no longer be valid -> drop this plan, a fresh one re-mines.
+        p.state = StitchState.dismissed; p.error_reason = "base re-rendered since planned"; return None
     return base
 
 
@@ -313,8 +303,7 @@ def _commit_impact(led: Ledger, cfg: Config, p: StitchPlan, base: Clip, render_m
                                clip_id=_stitch_clip_id(p.id, base.aspect.value), born_state=ClipState.stitch_draft)
     if clip.state is ClipState.error:
         p.state = StitchState.error; p.error_reason = clip.error_reason or "stitch render failed"; return
-    p.state = StitchState.in_use
-    _retire_queued_base(led, p)
+    p.state = StitchState.in_use                          # additive: the bare base post is left to ship too
 
 
 def _commit_intro(led: Ledger, cfg: Config, p: StitchPlan, base: Clip) -> None:
@@ -328,8 +317,7 @@ def _commit_intro(led: Ledger, cfg: Config, p: StitchPlan, base: Clip) -> None:
     if out_path.exists() and out_path.stat().st_size > 0 and _read_fingerprint(cfg, cid) == fp:
         led.clips[cid] = Clip(id=cid, parent_id=base.parent_id, state=ClipState.stitch_draft,
                               path=str(out_path), aspect=base.aspect)
-        p.state = StitchState.in_use
-        _retire_queued_base(led, p)
+        p.state = StitchState.in_use                      # additive: the bare base post is left to ship too
         return
     # not warm: the prewarm ran first this pass and produced no valid composite -> a FAILED attempt. Bound the
     # retries (flaky matcher pair / unrenderable intro asset) — park at the cap instead of looping forever.
