@@ -60,3 +60,22 @@ def test_unreadable_never_crashes(tmp_path, caplog, monkeypatch):
         out = load_guidance(cfg)                               # must not raise
     assert out == ""
     assert any("context.md" in r.getMessage() for r in caplog.records)
+
+
+def test_guidance_sha_absent_when_no_brief(tmp_path):
+    # V2 M1/F10: a short fingerprint of the brand brief AS INJECTED, for the provenance trail. No
+    # usable brief -> "absent" (mirrors load_guidance's fail-open "" contract).
+    from fanops.control import guidance_sha
+    cfg = _cfg(tmp_path)                                       # no context.md
+    assert guidance_sha(cfg) == "absent"
+
+
+def test_guidance_sha_is_stable_12char_and_tracks_content(tmp_path):
+    from fanops.control import guidance_sha
+    cfg = _cfg(tmp_path)
+    cfg.context_path.write_text("BRAND: confident, bilingual.")
+    h = guidance_sha(cfg)
+    assert h != "absent" and len(h) == 12                      # short + present
+    assert guidance_sha(cfg) == h                              # deterministic for the same brief
+    cfg.context_path.write_text("BRAND: different voice.")
+    assert guidance_sha(cfg) != h                              # a brief edit -> a new fingerprint
