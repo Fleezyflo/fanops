@@ -106,6 +106,18 @@ def test_ingest_keeps_hook_on_judge_omission(tmp_path, monkeypatch):
     assert led.moments["m2"].hook == "when you have to let go"           # kept (no explicit reject)
     assert led.moments["m2"].hook_judged
 
+def test_critic_active_and_fail_open_by_default(tmp_path, monkeypatch):
+    # v2: hook_judge DEFAULT ON — with the env UNSET the critic still opens its gate and applies
+    # verdicts. Fail-open survives the flip: an omitted verdict KEEPS the hook (never strips on silence).
+    monkeypatch.delenv("FANOPS_HOOK_JUDGE", raising=False)
+    cfg = Config(root=tmp_path); led = _seed(cfg)
+    led = request_hook_judge(led, cfg)
+    assert list(pending(cfg, kind="hookjudge"))                          # gate opened despite unset env
+    _answer(cfg, [HookJudgeItem(moment_id="m1", keep=True)])             # m2 omitted
+    led = ingest_hook_judge(led, cfg)
+    assert led.moments["m2"].hook == "when you have to let go"           # kept (fail-open)
+    assert led.moments["m1"].hook_judged and led.moments["m2"].hook_judged
+
 def test_ingest_noop_when_response_absent(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
     cfg = Config(root=tmp_path); led = _seed(cfg)
