@@ -9,16 +9,30 @@ subsystem as the editor): it runs AFTER the editor on each kept hook. Fail-open:
 verdict, or any verdict that is not an EXPLICIT reject, KEEPS the editor's hook — the judge never
 strips a hook on its own silence or failure."""
 from __future__ import annotations
+import os
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Moment, MomentState, HookJudgeDecision
 from fanops.ids import _hash
 from fanops.agentstep import write_request, read_response, latest_request_id
+from fanops.keyframes import extract_keyframes
+from fanops.hookscore import narration_signature
 from fanops.control import load_guidance
 
-# Text-only critic (no frames — the editor already did the vision truth-check), so a gate can carry
-# more hooks per call than the vision editor. Still chunked so a huge feed stays a sane prompt size.
-_MAX_JUDGE_BATCH = 12
+def _frames(led: Ledger, cfg: Config, m: Moment) -> list[str]:
+    """A few source frames in the moment's window — the critic's eyes (mirrors hookedit._frames). The
+    judge SEES the footage so it can reject a hook that is untrue to what is shown. Fail-open: no real
+    source file (tests / not-yet-downloaded) → [] → the critic degrades to text-only, never spawns
+    ffmpeg on a path that isn't there."""
+    src = led.sources.get(m.parent_id)
+    if not (src and src.source_path and os.path.exists(src.source_path)):
+        return []
+    return extract_keyframes(src.source_path, m.start, m.end, count=3,
+                             out_dir=cfg.agent_io / "keyframes" / m.id)
+
+# A VISION critic now (Task 6): it sends a few FRAMES per item, so — like the editor — the judgeable
+# set is CHUNKED into gates of at most this many moments to keep image counts per claude call sane.
+_MAX_JUDGE_BATCH = 8
 
 def _judgeable(led: Ledger) -> list[Moment]:
     """Decided moments whose hook the editor has finalized (hook_edited) but the critic has not yet
@@ -38,9 +52,11 @@ def _digest(batch: list[Moment]) -> str:
 
 def request_hook_judge(led: Ledger, cfg: Config) -> Ledger:
     """Open the critic gate over every judgeable hook (chunked), carrying each hook + its grounding
-    context (excerpt/reason/language/pattern/signal) so the judge can test anchoring + portability. No
-    frames: the editor already grounded against the footage; the critic judges specificity from text.
-    No-op when the subsystem is off or nothing is judgeable (the gate never appears without real work)."""
+    context (excerpt/reason/language/pattern/signal), the clip's FRAMES (the judge SEES the footage so it
+    can reject a hook untrue to what is shown), and a narration `structure_flag` — narration_signature
+    flags a third-person recap with no viewer address as 'third_person_narration' so the critic
+    scrutinises it (a SIGNAL, never a gate; it rejects nothing on its own). No-op when the subsystem is
+    off or nothing is judgeable (the gate never appears without real work)."""
     if not cfg.hook_judge:
         return led
     items = _judgeable(led)
@@ -57,7 +73,9 @@ def request_hook_judge(led: Ledger, cfg: Config) -> Ledger:
                    "items": [{"moment_id": m.id, "hook": m.hook, "hook_pattern": m.hook_pattern,
                               "transcript_excerpt": m.transcript_excerpt, "reason": m.reason,
                               "language": led.sources[m.parent_id].language if m.parent_id in led.sources else None,
-                              "signal_score": m.signal_score} for m in batch]}
+                              "signal_score": m.signal_score, "frames": _frames(led, cfg, m),
+                              "structure_flag": "third_person_narration" if narration_signature(m.hook) else None}
+                             for m in batch]}
         write_request(cfg, kind="hookjudge", key=key, payload=payload)
     return led
 
