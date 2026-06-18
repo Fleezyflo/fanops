@@ -7,6 +7,7 @@ the fix: load_guidance is fail-OPEN but LOUD (missing/empty/oversize each log a 
 to a bounded/empty string; an autonomous run never crashes on a bad brief). The hard "you actually
 need a brief" signal lives in doctor (a preflight), not here. Mirrors config.tuning()'s contract."""
 from __future__ import annotations
+import hashlib
 import logging
 from fanops.config import Config
 
@@ -42,3 +43,13 @@ def load_guidance(cfg: Config) -> str:
         logger.warning("brand brief %s exceeds %d bytes — truncating the injected guidance",
                        p, _MAX_GUIDANCE_BYTES)
     return text
+
+def guidance_sha(cfg: Config) -> str:
+    """A 12-char fingerprint of the brand brief AS INJECTED (the load_guidance result, so it matches
+    the bytes the model actually saw — including the 32 KiB truncation). "absent" when there is no
+    usable brief (mirrors load_guidance's fail-open ""). V2 M1/F10: feeds the per-call provenance line
+    so every clip/caption traces to the EXACT brief version that steered it (the #1 output lever)."""
+    text = load_guidance(cfg)
+    if not text:
+        return "absent"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
