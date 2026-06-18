@@ -1,0 +1,48 @@
+{# src/fanops/studio/templates/_schedule_panel.html — the APPROVED-posts bucket cockpit (htmx-swapped
+   in place). Each approved (queued) row shows the Postiz integration it will hit, and offers Move
+   (reschedule), Publish now (ship immediately), and Send back (un-approve -> Review). 'Reschedule all'
+   re-spreads the whole bucket onto a fresh cadence. Per-row forms are independent siblings (no nesting). #}
+<div id="schedule-body">
+  {% if result %}
+    <div class="result {{ 'ok' if result.ok else 'err' }}">
+      {% if result.ok %}{% if result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s) onto a fresh cadence.{% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time }}.{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
+    </div>
+  {% endif %}
+  {% set approved = rows | selectattr('editable') | list %}
+  {% if approved %}
+    <form class="respread" hx-post="{{ url_for('do_reschedule_bucket') }}" hx-target="#schedule-body" hx-swap="outerHTML">
+      <button type="submit">Reschedule all</button> <span class="muted">— re-spread the {{ approved|length }} approved post(s) from now</span>
+    </form>
+  {% endif %}
+  {% if rows %}
+  <table>
+    <tr><th>Time</th><th>Account</th><th>Integration</th><th>State</th><th><span class="vh">Actions</span></th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.scheduled_time or 'unscheduled' }}{% if r.imminent %} <span class="badge {{ 'shipped' if r.state != 'queued' else '' }}">{{ 'shipped' if r.state != 'queued' else 'now' }}</span>{% endif %}</td>
+      <td>{{ r.account }} <span class="muted">{{ r.platform }}</span></td>
+      <td class="muted">{{ r.integration_id or '—' }}</td>
+      <td>{{ r.state }}</td>
+      <td>
+        {% if r.editable %}
+        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+          <input type="text" name="new_time" value="{{ r.scheduled_time }}" aria-label="New time for {{ r.account }} {{ r.platform }}">
+          <button type="submit">Move</button>
+        </form>
+        <form hx-post="{{ url_for('do_publish_now', post_id=r.post_id) }}" hx-target="#res-s-{{ r.post_id }}" hx-swap="innerHTML">
+          {% if backend is defined and backend != 'dryrun' %}
+            <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> publish to the REAL account ({{ backend }})</label>
+          {% endif %}
+          <button type="submit" class="primary">Publish now</button>
+        </form>
+        <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+          <button type="submit">Send back to Review</button>
+        </form>
+        <span id="res-s-{{ r.post_id }}"></span>
+        {% else %}<span class="ro">—</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<div class="empty">No approved or recent posts. Approve posts in the Review tab to schedule them.</div>{% endif %}
+</div>

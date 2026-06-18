@@ -487,6 +487,25 @@ def snooze_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) ->
     return ActionResult(ok=True, detail={"clip_id": clip_id, "count": count, "scheduled_time": z})
 
 
+def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None) -> ActionResult:
+    """Routine re-spread of the APPROVED bucket: re-stagger every queued (approved) post onto a fresh
+    cadence starting from `now`, reusing crosspost's proven deterministic stagger (surface_time). Skips
+    imminent posts (about to fire — don't disturb them) and never touches awaiting/published/etc. One
+    transaction, idempotent-by-`now`, never a 500. The Schedule-tab 'reschedule all' control."""
+    from fanops.crosspost import surface_time
+    now = _now(now); date_str = now.date().isoformat()
+    due: list = []
+    try:
+        with Ledger.transaction(cfg) as led:
+            due = [p for p in led.posts.values() if p.state is PostState.queued and not _imminent(p.scheduled_time, now)]
+            due.sort(key=lambda p: (p.scheduled_time or "", p.account, p.platform.value, p.id))  # stable order in
+            for i, p in enumerate(due):
+                p.scheduled_time = surface_time(now, p.account, p.platform.value, date_str, i,
+                                                clip_id=p.parent_id, lead_minutes=cfg.publish_lead_minutes)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"reschedule failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"rescheduled": len(due)})
+
 def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
     """Clear a brand-risk hold from the browser — the UI twin of `fanops unhold`. Reuses the canonical
     transition (cli.py unhold): held->captions_requested so the next advance re-runs the caption gate.

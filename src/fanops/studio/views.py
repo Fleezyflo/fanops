@@ -88,6 +88,8 @@ class ScheduleRow:
     state: str
     imminent: bool
     editable: bool
+    integration_id: str = ""        # the Postiz channel this post will hit (post.account_id) — surfaced so
+                                    # the operator sees WHICH integration each approved post publishes to.
 
 
 @dataclass
@@ -275,7 +277,7 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRo
         rows.append(ScheduleRow(
             post_id=p.id, scheduled_time=p.scheduled_time, account=p.account,
             platform=p.platform.value, clip_id=p.parent_id, state=state, imminent=imm,
-            editable=(state == PostState.queued.value and not imm)))
+            editable=(state == PostState.queued.value and not imm), integration_id=p.account_id))
 
     def _key(r: ScheduleRow):
         if not r.scheduled_time:
