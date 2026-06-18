@@ -5,7 +5,7 @@
 <div id="schedule-body">
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}{% if result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s) onto a fresh cadence.{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
+      {% if result.ok %}{% if result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s) onto a fresh cadence.{% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time }}.{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
   {% set approved = rows | selectattr('editable') | list %}
@@ -25,7 +25,7 @@
       <td>{{ r.state }}</td>
       <td>
         {% if r.editable %}
-        <form hx-post="{{ url_for('do_reschedule', post_id=r.post_id) }}" hx-target="#res-s-{{ r.post_id }}" hx-swap="innerHTML">
+        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <input type="text" name="new_time" value="{{ r.scheduled_time }}" aria-label="New time for {{ r.account }} {{ r.platform }}">
           <button type="submit">Move</button>
         </form>

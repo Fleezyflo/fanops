@@ -149,6 +149,12 @@ def create_app(cfg: Config) -> Flask:
         # send an approved post back to Review from the Schedule cockpit; re-render the bucket.
         return _schedule_panel(actions.unapprove_post(cfg, post_id))
 
+    @app.post("/schedule/move/<post_id>")
+    def do_schedule_move(post_id):
+        # reschedule from the Schedule cockpit and re-render the WHOLE bucket so the row's time is fresh
+        # (the shared /reschedule route returns only an inline result, leaving the time input stale).
+        return _schedule_panel(actions.reschedule_post(cfg, post_id, request.form.get("new_time", "")))
+
     @app.get("/lift")
     def lift():
         led = Ledger.load(cfg)

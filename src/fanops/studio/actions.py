@@ -494,6 +494,7 @@ def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None) -> ActionR
     transaction, idempotent-by-`now`, never a 500. The Schedule-tab 'reschedule all' control."""
     from fanops.crosspost import surface_time
     now = _now(now); date_str = now.date().isoformat()
+    due: list = []
     try:
         with Ledger.transaction(cfg) as led:
             due = [p for p in led.posts.values() if p.state is PostState.queued and not _imminent(p.scheduled_time, now)]
