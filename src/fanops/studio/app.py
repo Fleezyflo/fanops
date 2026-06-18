@@ -130,11 +130,24 @@ def create_app(cfg: Config) -> Flask:
         # Review worklist so the returned post is visible there again; surface any error (unknown post, etc.).
         return _review_panel(actions.unapprove_post(cfg, post_id))
 
+    def _schedule_panel(result=None, *, full=False):
+        rows = views.schedule_rows(Ledger.load(cfg), cfg, now=datetime.now(timezone.utc))
+        tmpl = "schedule.html" if full else "_schedule_panel.html"
+        return render_template(tmpl, rows=rows, result=result, tab="schedule", backend=cfg.poster_backend)
+
     @app.get("/schedule")
     def schedule():
-        led = Ledger.load(cfg)
-        rows = views.schedule_rows(led, cfg, now=datetime.now(timezone.utc))
-        return render_template("schedule.html", rows=rows, tab="schedule")
+        return _schedule_panel(full=True)
+
+    @app.post("/schedule/respread")
+    def do_reschedule_bucket():
+        # routine re-spread of the approved bucket onto a fresh cadence from now.
+        return _schedule_panel(actions.reschedule_bucket(cfg))
+
+    @app.post("/schedule/unapprove/<post_id>")
+    def do_schedule_unapprove(post_id):
+        # send an approved post back to Review from the Schedule cockpit; re-render the bucket.
+        return _schedule_panel(actions.unapprove_post(cfg, post_id))
 
     @app.get("/lift")
     def lift():

@@ -1,28 +1,9 @@
-{# src/fanops/studio/templates/schedule.html #}
+{# src/fanops/studio/templates/schedule.html — the approved-posts bucket cockpit #}
 {% extends "base.html" %}
 {% block title %}Schedule{% endblock %}
 {% block body %}
   <h2>Schedule</h2>
-  <p class="muted">When each post goes out. Move an upcoming one to a new time.</p>
-  {% if rows %}
-  <table>
-    <tr><th>Time</th><th>Account</th><th>State</th><th><span class="vh">Actions</span></th></tr>
-    {% for r in rows %}
-    <tr>
-      <td>{{ r.scheduled_time or 'unscheduled' }}{% if r.imminent %} <span class="badge {{ 'shipped' if r.state != 'queued' else '' }}">{{ 'shipped' if r.state != 'queued' else 'now' }}</span>{% endif %}</td>
-      <td>{{ r.account }} <span class="muted">{{ r.platform }}</span></td>
-      <td>{{ r.state }}</td>
-      <td>
-        {% if r.editable %}
-        <form hx-post="{{ url_for('do_reschedule', post_id=r.post_id) }}" hx-target="#res-s-{{ r.post_id }}" hx-swap="innerHTML">
-          <input type="text" name="new_time" value="{{ r.scheduled_time }}" aria-label="New time for {{ r.account }} {{ r.platform }}">
-          <button type="submit">Move</button>
-        </form>
-        <span id="res-s-{{ r.post_id }}"></span>
-        {% else %}<span class="ro">—</span>{% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}<div class="empty">No queued or recent posts.</div>{% endif %}
+  <p class="muted">The approved bucket: when each post goes out and which Postiz integration it hits. Move one,
+    ship it now, send it back to Review, or re-spread the whole bucket.</p>
+  {% include "_schedule_panel.html" %}
 {% endblock %}

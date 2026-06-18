@@ -20,7 +20,7 @@ def _client(cfg):
 def _z(dt): from fanops.timeutil import iso_z; return iso_z(dt)
 
 def _seed(cfg, *, pid="p1", state=PostState.queued, account_id="ig_integ_1", when=None):
-    when = when or _z(_NOW + timedelta(hours=5))
+    when = when or "2099-06-06T12:00:00Z"   # far future so the row is editable under the route's real wall-clock now
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "shared", "platforms": ["instagram"], "status": "active",
