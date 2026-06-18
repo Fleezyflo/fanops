@@ -125,4 +125,10 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
         {"surface": "@mohflow.edits/instagram", "caption": "no warning. just impact."},
         {"surface": "@mohflow.edits/tiktok", "caption": "wait for it."}]).model_dump_json())
     s = advance(cfg, base_time="2020-01-01T00:00:00Z")
-    assert s["posts"] == 2 and s["published"] == 2
+    # post-approval gate: the 2 posts are born awaiting_approval -> an unattended advance publishes none.
+    assert s["posts"] == 2 and s["published"] == 0
+    # operator approves both, then the next pass publishes them in dryrun.
+    with Ledger.transaction(cfg) as led:
+        for pid in list(led.posts): led.approve_post(pid, now_iso="2020-01-01T00:00:00Z")
+    s = advance(cfg, base_time="2020-01-01T00:00:00Z")
+    assert s["published"] == 2

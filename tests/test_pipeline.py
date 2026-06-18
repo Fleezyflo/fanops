@@ -73,7 +73,16 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
         CaptionItem(surface="@a/tiktok", caption="wait for it.")]).model_dump_json())
 
     s = advance(cfg, base_time="2020-01-01T00:00:00Z")   # base in the PAST so posts are due
-    assert s["posts"] == 2 and s["published"] == 2
+    # Post-approval gate: crosspost creates the 2 posts but they are BORN awaiting_approval, so an
+    # unattended advance publishes NONE of them (the whole point of the gate).
+    assert s["posts"] == 2 and s["published"] == 0
+    assert len(list(cfg.scheduled.glob("*.json"))) == 0
+
+    # the operator approves both posts (the human gate) -> queued; the next pass publishes them.
+    with Ledger.transaction(cfg) as led:
+        for pid in list(led.posts): led.approve_post(pid, now_iso="2020-01-01T00:00:00Z")
+    s = advance(cfg, base_time="2020-01-01T00:00:00Z")
+    assert s["published"] == 2
     # AUDIT C1: needs_reconcile is an actionable parked state (ambiguous publish — may be live).
     # It must be visible in the advance() summary the unattended operator sees, not only the
     # digest. The dryrun backend never produces it, so the count is 0, but the KEY must exist.

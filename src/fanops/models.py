@@ -28,8 +28,18 @@ class ClipState(str, Enum):
                                     # operator approval transitions it to captioned. Reusing `held` is forbidden.
 
 class PostState(str, Enum):
+    # awaiting_approval: a crossposted post is BORN here (post-approval-lifecycle). It is NOT publishable
+    # — publish_due/publish_now iterate only `queued`, so an unapproved post is structurally never
+    # submitted (even on a live backend). The operator promotes it to `queued` via Ledger.approve_post
+    # (the human gate, mirroring the M3/M4 stitch approve/release spine). `queued` thus means
+    # "approved + scheduled", not merely "created".
+    awaiting_approval = "awaiting_approval"
     queued = "queued"; submitting = "submitting"; submitted = "submitted"
     published = "published"; analyzed = "analyzed"; failed = "failed"; error = "error"
+    # rejected: the operator discarded an awaiting_approval post (Ledger.reject_post). Terminal, never
+    # fires, kept as a record. Distinct from `retired` (a queued base post superseded by a stitch) and
+    # from `failed` (a publish attempt that didn't land, re-queueable).
+    rejected = "rejected"
     # needs_reconcile: an ambiguous publish failure (5xx / network timeout AFTER the request body
     # was sent) — the post MAY already be live on the platform. Blotato has no idempotency key
     # (AUDIT C1), so it must NOT be blindly re-POSTed (double-publish risk). A human/poll step
