@@ -217,7 +217,7 @@ def _card_day(led: Ledger, card: ReviewCard) -> str:
     ca = src.created_at if src is not None else None
     if not ca: return "undated"
     try: return parse_iso(ca).date().isoformat()
-    except (ValueError, TypeError): return "undated"
+    except (ValueError, TypeError, AttributeError): return "undated"
 
 def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime) -> list[ReviewCard]:
     """Three buckets (spec §6): editable (awaiting_approval posts grouped by clip — the approve worklist),

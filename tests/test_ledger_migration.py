@@ -108,7 +108,7 @@ def test_migration_naive_scheduled_time_uses_stamp_not_local_guess(tmp_path):
     ca = led.posts["p_naive"].created_at
     assert ca and parse_iso(ca).tzinfo is not None
     # the naive 2026-04-15 was NOT adopted as the day; the stamp is "now" (not that date)
-    assert parse_iso(ca).date().isoformat() != "2026-04-15" or True   # tolerant: stamp could coincide in theory; key is no crash
+    assert parse_iso(ca).date().isoformat() != "2026-04-15"   # the naive on-disk date was NOT adopted as the stamp day
 
 
 def test_migration_null_and_integer_scheduled_time_no_crash(tmp_path):

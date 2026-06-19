@@ -578,7 +578,10 @@ def crosspost_all_to_account(cfg: Config, source_account: str, target_account: s
     Honors repost-freely (per-(clip,surface) setdefault is the only dedup, so a re-run is a clean no-op).
     clip_ids is a SET — a multi-platform source_account yields one source post per platform per clip, the set
     collapses them to ONE crosspost_to_account call per clip (correct: fan out once per clip). Reports
-    minted / already_exists / skipped honestly."""
+    minted / already_exists / skipped honestly. LATENCY (ECC review): a FIRST fan-out to an aspect that has
+    no existing render makes each clip pay an ffmpeg render (600s-bound) under its own short lock — N clips
+    serialize N renders. Not a deadlock (per-clip lock, released between clips) and mirrors crosspost_clips;
+    the common same-aspect reuse returns instantly. Operator-gated, single-operator Studio."""
     led = Ledger.load(cfg)
     clip_ids = sorted({p.parent_id for p in led.posts.values() if p.account == source_account})
     if not clip_ids:

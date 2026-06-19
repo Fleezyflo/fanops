@@ -15,6 +15,7 @@ from fanops.models import Post, PostState
 from fanops.post import get_poster, get_media_uploader, Poster
 from fanops.post.media import ensure_clip_media
 from fanops.timeutil import parse_iso as _parse, iso_z
+from fanops.log import get_logger
 
 def _now(now: str | None) -> datetime:
     return _parse(now) if now else datetime.now(timezone.utc)
@@ -24,7 +25,6 @@ def _archive_published(cfg: Config, post: Post) -> None:
     (the dir existed but nothing wrote it). FAIL-OPEN: any write/mkdir error is logged and swallowed — the
     archive is a convenience artifact, NEVER a publish blocker (a full disk must not strand a live post). Day =
     post.published_at, else created_at, else scheduled_time, else now (content-lifecycle Phase 3)."""
-    from fanops.log import get_logger
     try:
         day = None
         for ts in (post.published_at, post.created_at, post.scheduled_time):
@@ -83,7 +83,6 @@ def _submit_one(led: Ledger, cfg: Config, poster: Poster, post: Post, _save: Cal
         if post.state is PostState.submitted:
             post.state = PostState.published
             post.published_at = iso_z(datetime.now(timezone.utc))   # content-lifecycle: TRUE publish time (Posted-archive day-anchor)
-            _archive_published(cfg, post)                           # content-lifecycle Phase 3: fail-open day-bucketed record
     except Exception as exc:
         if _is_fatal_auth_error(exc):
             raise                                      # bad key/401: halt, don't burn the queue
@@ -93,6 +92,12 @@ def _submit_one(led: Ledger, cfg: Config, poster: Poster, post: Post, _save: Cal
         if post.state is not PostState.needs_reconcile:
             post.state = PostState.failed
             post.error_reason = f"publish failed: {str(exc)[:200]}"
+    # content-lifecycle Phase 3: fail-open day-bucketed record. OUTSIDE the try on purpose (ECC review) —
+    # _archive_published is double-guarded and cannot leak, but placing it here makes the guarantee
+    # structural: an archive write can NEVER be caught by the per-post except above and downgrade an
+    # already-published post to failed (a re-queueable double-post). Fires only on a confirmed publish.
+    if post.state is PostState.published:
+        _archive_published(cfg, post)
     _save()                                            # persist the post's terminal/failed state
     return led
 

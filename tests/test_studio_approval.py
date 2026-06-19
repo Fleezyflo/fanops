@@ -121,6 +121,31 @@ def test_get_review_renders_ingest_day_header(tmp_path):
     html = _client(cfg).get("/review").data
     assert b'class="day-head">2026-06-03' in html
 
+def test_review_day_header_re_emits_across_pagination_boundary(tmp_path):
+    # content-lifecycle Phase 3 (H8): the editable bucket is day-sorted and the running day-header is emitted
+    # per RENDER (ns.day resets each page), so a day SPANNING the 24-card page boundary re-emits its header on
+    # page 2. The riskiest Phase-3 surface — previously verified only by code-reading; this locks it live.
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    n_a = views.GRID_PAGE_SIZE + 4                      # day A: 24 cards fill page 1, 4 spill to page 2 (it spans)
+    with Ledger.transaction(cfg) as led:
+        for day, sid, n in (("2026-06-10T08:00:00Z", "A", n_a), ("2026-06-03T08:00:00Z", "B", 4)):
+            led.add_source(Source(id=f"src_{sid}", source_path=f"/v/{sid}.mp4", language="en", created_at=day))
+            led.add_moment(Moment(id=f"mom_{sid}", parent_id=f"src_{sid}", content_token="0-7", start=0, end=7,
+                                  reason="drop", transcript_excerpt="go", state=MomentState.clipped))
+            for i in range(n):
+                cid = f"clip_{sid}_{i}"
+                led.add_clip(Clip(id=cid, parent_id=f"mom_{sid}", path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+                led.add_post(Post(id=f"p_{sid}_{i}", parent_id=cid, account="@a", account_id="1",
+                                  platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE))
+    p1 = _client(cfg).get("/review").data
+    p2 = _client(cfg).get(f"/review?offset={views.GRID_PAGE_SIZE}").data
+    assert b'class="day-head">2026-06-10' in p1          # day A (newest) heads page 1
+    assert b'class="day-head">2026-06-10' in p2          # day A SPANS the boundary -> its header RE-EMITS on page 2
+    assert b'class="day-head">2026-06-03' in p2          # day B begins on page 2, below day A's spill
+
 
 def test_post_approve_route_promotes_and_drops_from_review(tmp_path):
     cfg = Config(root=tmp_path); _seed_review(cfg, pid="p1")
