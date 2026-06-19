@@ -5,7 +5,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
 from fanops.errors import ToolchainMissingError
-from fanops.signals import parse_silences, parse_scene_changes, detect_signals
+from fanops.signals import parse_silences, parse_scene_changes, detect_signals, apply_energy
 
 SILENCE_STDERR = """
 [silencedetect @ 0x] silence_start: 2.5
@@ -18,6 +18,24 @@ SCENE_STDERR = """
 [scdet @ 0x] lavfi.scd.score: 12.345, lavfi.scd.time: 1.20
 [scdet @ 0x] lavfi.scd.score: 28.900, lavfi.scd.time: 6.80
 """
+# astats energy pass (Theme 1): a quiet window early, a LOUD window at ~4s and ~10s (the speech onsets).
+ENERGY_STDOUT = """
+frame:0   pts_time:0.000000
+lavfi.astats.Overall.RMS_level=-42.0
+frame:1   pts_time:4.000000
+lavfi.astats.Overall.RMS_level=-6.500000
+frame:2   pts_time:10.000000
+lavfi.astats.Overall.RMS_level=-8.000000
+"""
+
+
+def _energy_fake_run(cmd, **kw):
+    joined = " ".join(cmd)
+    class R:
+        returncode = 0
+        stdout = ENERGY_STDOUT if "astats" in joined else ""
+        stderr = "" if "astats" in joined else (SILENCE_STDERR if "silencedetect" in joined else SCENE_STDERR)
+    return R()
 
 def test_parse_silences():
     s = parse_silences(SILENCE_STDERR)
@@ -59,10 +77,10 @@ def test_detect_signals_adopts_sidecar_and_skips_ffmpeg(tmp_path, mocker):
                           state=SourceState.transcribed, meta={"transcribed": True}))
     sc = cfg.agent_io / "signals"; sc.mkdir(parents=True, exist_ok=True)
     (sc / "src_1.json").write_text(json.dumps(
-        {"peaks": [{"t": 4.0, "kind": "speech_resume", "score": 0.5}], "duration": 12.0}))
+        {"v": 2, "peaks": [{"t": 4.0, "kind": "speech_resume", "score": 0.5}], "duration": 12.0}))
     spy = mocker.patch("fanops.signals.subprocess.run")
     led = detect_signals(led, cfg, "src_1")
-    spy.assert_not_called()                                  # warm sidecar reused — no ffmpeg
+    spy.assert_not_called()                                  # warm v2 sidecar reused — no ffmpeg
     s = led.sources["src_1"]
     assert s.state is SourceState.signalled and s.duration == 12.0
     assert s.signal_peaks[0]["kind"] == "speech_resume"
@@ -86,6 +104,67 @@ def test_detect_signals_writes_sidecar_for_the_commit_pass(tmp_path, mocker):
     assert sidecar.exists(), "expected a written signals sidecar"
     d = json.loads(sidecar.read_text())
     assert d["duration"] == 12.0 and any(p["kind"] == "scene_cut" for p in d["peaks"])
+
+def test_apply_energy_sets_speech_score_from_nearest_rms_and_normalizes_scene():
+    # THE commensurability fix (M2): in energy mode speech peaks score on loudness and scene scores are
+    # normalized to [0,1], so a loud audio peak can finally out-rank a mid scene cut in the SAME field.
+    peaks = [{"t": 4.0, "kind": "speech_resume", "score": 0.5},
+             {"t": 1.2, "kind": "scene_cut", "score": 30.0}]
+    windows = [{"t": 0.0, "rms": -42.0}, {"t": 4.0, "rms": -6.5}]
+    out = apply_energy(peaks, windows)
+    sp = next(p for p in out if p["kind"] == "speech_resume")
+    sc = next(p for p in out if p["kind"] == "scene_cut")
+    assert sp["score"] > 0.9 and sp["energy"] > 0.9           # loud onset at -6.5 dB
+    assert sc["score"] == 0.3                                  # 30/100 normalized into [0,1]
+    assert sp["score"] > sc["score"]                          # loud audio peak now outranks the scene cut
+
+def test_apply_energy_legacy_unchanged_when_no_windows():
+    # No energy windows (pass empty / failed) -> peaks are byte-equal to today (speech 0.5, scene raw).
+    peaks = [{"t": 4.0, "kind": "speech_resume", "score": 0.5},
+             {"t": 1.2, "kind": "scene_cut", "score": 30.0}]
+    assert apply_energy(peaks, []) == peaks
+
+def test_detect_signals_scores_speech_peaks_from_energy(tmp_path, mocker):
+    # End-to-end wiring: with the astats pass returning loud windows at the speech onsets, the
+    # speech_resume peaks no longer carry the constant 0.5 — they carry a real energy-derived score.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.transcribed, meta={"transcribed": True}))
+    mocker.patch("fanops.signals.subprocess.run", side_effect=_energy_fake_run)
+    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    led = detect_signals(led, cfg, "src_1")
+    sp = [p for p in led.sources["src_1"].signal_peaks if p["kind"] == "speech_resume"]
+    assert sp and all(p["score"] != 0.5 for p in sp)          # energy replaced the constant
+    assert any(p.get("energy", 0) > 0.9 for p in sp)          # the loud onset window carried through
+
+def test_detect_signals_v1_sidecar_not_adopted_recomputes(tmp_path, mocker):
+    # C2/H2 cache trap: a pre-energy sidecar (no "v", or v<2) MUST NOT be adopted — else every
+    # already-ingested source serves score=0.5 forever after Theme 1 ships. A stale sidecar is a cache
+    # miss: detect_signals recomputes (runs ffmpeg) and overwrites with a v2 payload.
+    import json
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.transcribed, meta={"transcribed": True}))
+    sc = cfg.agent_io / "signals"; sc.mkdir(parents=True, exist_ok=True)
+    (sc / "src_1.json").write_text(json.dumps(                # legacy v1-shaped sidecar (no version)
+        {"peaks": [{"t": 4.0, "kind": "speech_resume", "score": 0.5}], "duration": 12.0}))
+    spy = mocker.patch("fanops.signals.subprocess.run", side_effect=_energy_fake_run)
+    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    detect_signals(led, cfg, "src_1")
+    spy.assert_called()                                       # stale sidecar rejected -> ffmpeg ran
+    d = json.loads((sc / "src_1.json").read_text())
+    assert d["v"] == 2                                        # rewritten with the schema version
+
+def test_detect_signals_writes_versioned_sidecar(tmp_path, mocker):
+    import json
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.transcribed, meta={"transcribed": True}))
+    mocker.patch("fanops.signals.subprocess.run", side_effect=_energy_fake_run)
+    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    detect_signals(led, cfg, "src_1")
+    d = json.loads((cfg.agent_io / "signals" / "src_1.json").read_text())
+    assert d["v"] == 2 and "peaks" in d
 
 def test_detect_signals_raises_toolchain_error_when_ffmpeg_absent(tmp_path, mocker):
     # ffmpeg off PATH -> subprocess.run raises FileNotFoundError before the process starts
