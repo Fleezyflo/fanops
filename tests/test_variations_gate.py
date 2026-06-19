@@ -61,9 +61,10 @@ def test_gate_drops_rationale_less_variant():
 
 def test_gate_drops_template_cluster_variant():
     # v2: the floor is MECHANICAL only — it still drops a variant that clusters on an opening template
-    # already used by siblings (the 'reads like a bot' tell).
-    sibs = {"wait for the beat drop", "wait for the last line"}     # a 'wait for' cluster
-    assert coherent_variation("wait for the hometown line", "open loop", siblings=sibs) is False
+    # already used by siblings (the 'reads like a bot' tell). v2.1 tune: the cluster threshold is 3
+    # siblings sharing the first THREE words (was 2/2 — it over-fired on good distinct openers).
+    sibs = {"wait for the beat drop", "wait for the last line", "wait for the hometown bar"}  # a 'wait for the' cluster
+    assert coherent_variation("wait for the final verse", "open loop", siblings=sibs) is False
 
 def test_gate_allows_formerly_semantic_slop_now_critic_owns_it():
     # v2 scope (accepted trade): the semantic backstop moved to the reasoning critic, which does NOT

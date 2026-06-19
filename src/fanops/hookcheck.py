@@ -14,13 +14,15 @@ from __future__ import annotations
 import re
 
 # Opening-template clustering (the 'before he was X' x6 / 'wait for the Y' x6 tell): EXACT-string
-# dedup misses it because the strings differ. We key on the first two WORD tokens; once this many
-# accepted hooks already share that opening, the next one reads like a bot and is rejected. Two
-# tokens (not one) keeps precision high — many hooks may legitimately start 'the', few share 'the bar'.
-# KEPT in v2: this is mechanical feed-HYGIENE (deterministic anti-repetition), not a quality judgment,
-# and it is the ONLY code enforcing opening diversity (the editor's diversity mandate is prompt-prose).
-_TEMPLATE_PREFIX_TOKENS = 2
-_TEMPLATE_CLUSTER_MAX = 2                             # the (MAX+1)th hook sharing the opening is rejected
+# dedup misses it because the strings differ. We key on the first three WORD tokens; once this many
+# accepted hooks already share that opening, the next one reads like a bot and is rejected.
+# v2.1 TUNE (forensic: 6/51 corpus hooks were blanked exactly here): 2 tokens / max 2 OVER-fired — it
+# nuked good distinct hooks that merely shared a 2-word opener ('you ever win…' killed because 'you ever'
+# was already taken twice). THREE tokens / max 3 keeps real ×6 templates caught (they share 3+ opening
+# words and recur >>3) while letting 'you ever X' diverge on the 3rd word. This is mechanical feed-
+# HYGIENE (deterministic anti-repetition), not a quality judgment — the reasoning critic owns quality.
+_TEMPLATE_PREFIX_TOKENS = 3
+_TEMPLATE_CLUSTER_MAX = 3                             # the (MAX+1)th hook sharing the 3-word opening is rejected
 
 def _prefix_key(text: str) -> tuple:
     return tuple(re.findall(r"\w+", text.lower())[:_TEMPLATE_PREFIX_TOKENS])
@@ -37,7 +39,7 @@ def is_weak_hook(text: str | None, used: set[str] = frozenset()) -> bool:
         return True                                   # duplicate of another clip's hook
     key = _prefix_key(low)
     if key and sum(1 for u in used if _prefix_key(u) == key) >= _TEMPLATE_CLUSTER_MAX:
-        return True                                   # >=2 accepted hooks share this opening -> a template cluster
+        return True                                   # >=3 accepted hooks share this opening -> a template cluster
     return False
 
 
