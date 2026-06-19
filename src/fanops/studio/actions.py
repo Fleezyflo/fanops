@@ -517,6 +517,84 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
         return ActionResult(ok=False, error=f"repost failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": new_id, "source_id": post_id})
 
+def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platform: str, *,
+                         now: Optional[datetime] = None) -> ActionResult:
+    """Cross-account reuse (content-lifecycle Phase 4): mint a fresh awaiting_approval post of an EXISTING clip
+    on a NEW (target_account, platform) surface — how a later-onboarded account gets posts for clips that
+    already left ClipState.captioned. Honors fan-accounts-repost-freely: NO supersede/dedup beyond the per-
+    (clip,surface) content-addressed setdefault; NO one-version-per-moment guard. Does NOT reset clip state and
+    does NOT re-run moments. Aspect-correct (renders/reuses the target aspect via _clip_for_aspect) and
+    duration-capped (PLATFORM_MAX_SECONDS, mirroring crosspost_clips). Caption: the clip's per-surface caption
+    if present, else an EMPTY caption + empty hashtags (the operator edits in Review before approving — a
+    deliberate softening of the seed-tag fallback, which lives upstream in the caption pipeline, not at mint).
+    created_at is wall-clock birth (NOT part of the pid). Enters the standard approval gate, scheduled_time=None.
+    One transaction, never a 500."""
+    from fanops.accounts import Accounts
+    from fanops.models import Platform, PLATFORM_ASPECT, PLATFORM_MAX_SECONDS, Fmt
+    from fanops.crosspost import _clip_for_aspect
+    now = _now(now)
+    try: plat = Platform(platform)
+    except ValueError: return ActionResult(ok=False, error=f"unknown platform: {platform!r}")
+    try: accts = Accounts.load(cfg)
+    except Exception as exc: return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
+    surf = next((s for s in accts.surfaces() if s.account == target_account and s.platform is plat), None)
+    if surf is None:
+        return ActionResult(ok=False, error=f"no active surface {target_account}/{platform} — onboard it in Go Live first")
+    skey = surface_key(surf.account, surf.platform.value)
+    try:
+        with Ledger.transaction(cfg) as led:
+            clip = led.clips.get(clip_id)
+            if clip is None: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
+            if clip.held or led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id):
+                return ActionResult(ok=False, error=f"clip {clip_id} is held/retired — not eligible for cross-post")
+            m = led.moments.get(clip.parent_id)
+            clip_dur = (m.end - m.start) if m is not None else None
+            max_secs = PLATFORM_MAX_SECONDS.get(plat)
+            if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
+                return ActionResult(ok=False, error=f"clip duration {clip_dur:.0f}s exceeds {platform} cap {max_secs}s")
+            aspect = PLATFORM_ASPECT.get(plat, Fmt.r9x16)
+            target_clip = _clip_for_aspect(led, cfg, clip.parent_id, aspect)   # the RIGHT-aspect render (H7)
+            pid = child_id("post", target_clip.id, skey)
+            if pid in led.posts:                                               # honest report (H9)
+                return ActionResult(ok=True, detail={"post_id": pid, "clip_id": clip_id, "already_exists": True,
+                                                     "surface": f"{surf.account}/{surf.platform.value}"})
+            cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
+            caption = cap["caption"] if isinstance(cap, dict) and cap.get("caption") else ""
+            hashtags = list(cap.get("hashtags", [])) if isinstance(cap, dict) else []
+            led.add_post(Post(id=pid, parent_id=target_clip.id, state=PostState.awaiting_approval,
+                              account=surf.account, account_id=surf.account_id, platform=surf.platform,
+                              caption=caption, hashtags=hashtags, aspect=aspect, scheduled_time=None,
+                              created_at=iso_z(now), submission_id=f"fanops_{_hash('idemp', pid)}",
+                              clip_profile=cfg.clip_profile))
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"cross-post failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"post_id": pid, "clip_id": clip_id, "already_exists": False,
+                                         "surface": f"{surf.account}/{surf.platform.value}"})
+
+def crosspost_all_to_account(cfg: Config, source_account: str, target_account: str, platform: str, *,
+                             now: Optional[datetime] = None) -> ActionResult:
+    """Bulk cross-account backfill (content-lifecycle Phase 4): mint an awaiting_approval post on
+    (target_account, platform) for EVERY clip already posted to source_account. Each enters the approval gate.
+    Honors repost-freely (per-(clip,surface) setdefault is the only dedup, so a re-run is a clean no-op).
+    clip_ids is a SET — a multi-platform source_account yields one source post per platform per clip, the set
+    collapses them to ONE crosspost_to_account call per clip (correct: fan out once per clip). Reports
+    minted / already_exists / skipped honestly."""
+    led = Ledger.load(cfg)
+    clip_ids = sorted({p.parent_id for p in led.posts.values() if p.account == source_account})
+    if not clip_ids:
+        return ActionResult(ok=False, error=f"no clips posted to {source_account} — nothing to backfill")
+    minted, existed, skipped = [], [], []
+    for cid in clip_ids:
+        r = crosspost_to_account(cfg, cid, target_account, platform, now=now)
+        if not r.ok: skipped.append(cid)
+        elif r.detail and r.detail.get("already_exists"): existed.append(cid)
+        else: minted.append(cid)
+    if not minted and not existed:
+        return ActionResult(ok=False, error=f"nothing minted ({len(skipped)} skipped) — held/retired or bad surface",
+                            detail={"minted": 0, "already_exists": 0, "skipped": len(skipped)})
+    return ActionResult(ok=True, detail={"minted": len(minted), "already_exists": len(existed),
+                                         "skipped": len(skipped), "target": f"{target_account}/{platform}"})
+
 def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None) -> ActionResult:
     """Routine re-spread of the APPROVED bucket: re-stagger every queued (approved) post onto a fresh
     cadence starting from `now`, reusing crosspost's proven deterministic stagger (surface_time). Skips

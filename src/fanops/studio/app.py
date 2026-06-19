@@ -185,8 +185,9 @@ def create_app(cfg: Config) -> Flask:
     def _posted_panel(result=None, *, full=False):
         rows = views.posted_library(Ledger.load(cfg), cfg)
         groups = views.group_posted_by_day(rows)          # content-lifecycle Phase 3: publish-day buckets
+        accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
         return render_template("posted.html" if full else "_posted_panel.html", rows=rows, groups=groups,
-                               result=result, tab="posted")
+                               accounts=accounts, result=result, tab="posted")
 
     @app.get("/posted")
     def posted():
@@ -196,6 +197,19 @@ def create_app(cfg: Config) -> Flask:
     def do_repost_post(post_id):
         # 'Post again': spawn a fresh awaiting_approval repost from a shipped post; re-render the library.
         return _posted_panel(actions.repost_post(cfg, post_id))
+
+    @app.post("/posts/crosspost/<clip_id>")
+    def do_crosspost_to_account(clip_id):
+        # content-lifecycle Phase 4: mint an awaiting_approval post of this clip on another account/platform.
+        return _posted_panel(actions.crosspost_to_account(
+            cfg, clip_id, request.form.get("target_account", ""), request.form.get("platform", "")))
+
+    @app.post("/posts/crosspost-all")
+    def do_crosspost_all():
+        # content-lifecycle Phase 4: bulk-backfill every clip posted to source_account onto target/platform.
+        return _posted_panel(actions.crosspost_all_to_account(
+            cfg, request.form.get("source_account", ""), request.form.get("target_account", ""),
+            request.form.get("platform", "")))
 
     @app.get("/run")
     def run_panel():

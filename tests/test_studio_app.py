@@ -224,3 +224,40 @@ def test_publish_now_success_does_not_leak_raw_dict_repr(tmp_path):
     assert r.status_code == 200
     assert b"post_id" not in r.data and b"&#39;" not in r.data  # no leaked dict repr (key or escaped quote)
     assert b"\xe2\x9c\x93" in r.data                            # ✓ success, human-readable
+
+
+# ---- content-lifecycle Phase 4: cross-account reuse routes ----
+def _seed_xacct_route(cfg):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        c = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued)
+        c.meta_captions = {"@b/instagram": {"caption": "reuse", "hashtags": []}}
+        led.add_clip(c)
+        led.add_post(Post(id="p_a", parent_id="clip_1", account="@a", account_id="ig_a",
+                          platform=Platform.instagram, caption="on A", state=PostState.published,
+                          scheduled_time="2026-06-01T00:00:00Z"))
+
+def test_crosspost_route_mints_on_target(tmp_path):
+    cfg = Config(root=tmp_path); _seed_xacct_route(cfg)
+    r = _client(cfg).post("/posts/crosspost/clip_1", data={"target_account": "@b", "platform": "instagram"})
+    assert r.status_code == 200
+    awaiting = [p for p in Ledger.load(cfg).posts.values() if p.state is PostState.awaiting_approval and p.account == "@b"]
+    assert len(awaiting) == 1
+
+def test_crosspost_route_bad_target_is_banner_not_500(tmp_path):
+    cfg = Config(root=tmp_path); _seed_xacct_route(cfg)
+    r = _client(cfg).post("/posts/crosspost/clip_1", data={"target_account": "@nope", "platform": "instagram"})
+    assert r.status_code == 200                                # fail-open: a result banner, never a 500
+    assert b"no active surface" in r.data
+
+def test_crosspost_all_route_bulk(tmp_path):
+    cfg = Config(root=tmp_path); _seed_xacct_route(cfg)
+    r = _client(cfg).post("/posts/crosspost-all", data={"source_account": "@a", "target_account": "@b", "platform": "instagram"})
+    assert r.status_code == 200
+    awaiting = [p for p in Ledger.load(cfg).posts.values() if p.state is PostState.awaiting_approval and p.account == "@b"]
+    assert len(awaiting) == 1

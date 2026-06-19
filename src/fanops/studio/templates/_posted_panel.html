@@ -4,8 +4,21 @@
 <div id="posted-body">
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}Reposted — a fresh copy is waiting in Review for your approval.{% else %}{{ result.error }}{% endif %}
+      {% if result.ok %}{% if result.detail and result.detail.minted is defined %}Cross-posted: {{ result.detail.minted }} minted, {{ result.detail.already_exists }} already scheduled, {{ result.detail.skipped }} skipped — new copies wait in Review.{% elif result.detail and result.detail.already_exists is defined %}{% if result.detail.already_exists %}Already scheduled to {{ result.detail.surface }} — see Review/Schedule.{% else %}Cross-posted to {{ result.detail.surface }} — waiting in Review for approval.{% endif %}{% else %}Reposted — a fresh copy is waiting in Review for your approval.{% endif %}{% else %}{{ result.error }}{% endif %}
     </div>
+  {% endif %}
+  {# content-lifecycle Phase 4: bulk cross-account backfill — send everything from one account also to another. #}
+  {% if accounts and accounts|length > 1 %}
+  <form class="crosspost-all" hx-post="{{ url_for('do_crosspost_all') }}" hx-target="#posted-body" hx-swap="outerHTML">
+    <label>Send all of
+      <select name="source_account" aria-label="Source account">{% for a in accounts %}<option value="{{ a.handle }}">{{ a.handle }}</option>{% endfor %}</select>
+      also to
+      <select name="target_account" aria-label="Target account">{% for a in accounts %}<option value="{{ a.handle }}">{{ a.handle }}</option>{% endfor %}</select>
+      on
+      <select name="platform" aria-label="Target platform">{% for a in accounts %}{% for p in a.platforms %}<option value="{{ p.value }}">{{ p.value }}</option>{% endfor %}{% endfor %}</select>
+    </label>
+    <button type="submit">Backfill</button>
+  </form>
   {% endif %}
   {% if rows %}
   {# content-lifecycle Phase 3: grouped by PUBLISH day (published_at, scheduled_time fallback), newest first,
@@ -24,6 +37,14 @@
         <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id) }}" hx-target="#posted-body" hx-swap="outerHTML">
           <button type="submit">Post again</button>
         </form>
+        {% if accounts %}
+        {# content-lifecycle Phase 4: reuse this clip on ANOTHER account/platform (a fresh awaiting_approval post). #}
+        <form class="crosspost-one" hx-post="{{ url_for('do_crosspost_to_account', clip_id=r.clip_id) }}" hx-target="#posted-body" hx-swap="outerHTML">
+          <select name="target_account" aria-label="Target account">{% for a in accounts %}<option value="{{ a.handle }}">{{ a.handle }}</option>{% endfor %}</select>
+          <select name="platform" aria-label="Target platform">{% for a in accounts %}{% for p in a.platforms %}<option value="{{ p.value }}">{{ p.value }}</option>{% endfor %}{% endfor %}</select>
+          <button type="submit">Post to another account</button>
+        </form>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}

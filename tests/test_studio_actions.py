@@ -168,3 +168,134 @@ def test_publish_now_non_auth_error_yields_ok_false_not_raise(tmp_path, monkeypa
     assert res.ok is False                                    # surfaced cleanly, not a raise (500)
     assert "publish failed" in (res.error or "")
     assert "boom" in (res.error or "")
+
+
+# ---- content-lifecycle Phase 4: cross-account reuse (crosspost_to_account / crosspost_all_to_account) ----
+def _seed_xacct(cfg, *, accounts=None, ig_caption=True, window=(0.0, 7.0), aspects=(Fmt.r9x16,)):
+    # source + moment + clip(s); accounts.json with the given accounts; an optional IG caption on the clip.
+    import json
+    accounts = accounts or [{"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                              start=window[0], end=window[1], reason="r", state=MomentState.clipped))
+        for i, asp in enumerate(aspects):
+            clip = Clip(id=f"clip_{i}", parent_id="mom_1", path=f"/c{i}.mp4", aspect=asp, state=ClipState.queued)
+            if ig_caption and asp is Fmt.r9x16:
+                clip.meta_captions = {"@b/instagram": {"caption": "reuse me", "hashtags": ["#x"]}}
+            led.add_clip(clip)
+
+def test_crosspost_to_account_mints_awaiting(tmp_path):
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path); _seed_xacct(cfg)
+    r = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
+    assert r.ok and r.detail["already_exists"] is False
+    led = Ledger.load(cfg)
+    p = led.posts[r.detail["post_id"]]
+    assert p.state is PostState.awaiting_approval and p.scheduled_time is None
+    assert p.account == "@b" and p.account_id == "ig_b" and p.created_at
+    assert led.clips["clip_0"].state is ClipState.queued          # clip state UNCHANGED (no pipeline re-open)
+
+def test_crosspost_to_account_no_collision_and_already_exists(tmp_path):
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path)
+    _seed_xacct(cfg, accounts=[
+        {"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@c", "account_id": "ig_c", "platforms": ["instagram"], "status": "active"}])
+    id_b = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW).detail["post_id"]
+    id_c = crosspost_to_account(cfg, "clip_0", "@c", "instagram", now=NOW).detail["post_id"]
+    assert id_b != id_c                                          # distinct surface -> distinct content-addressed id
+    n_before = len(Ledger.load(cfg).posts)
+    r2 = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)   # re-mint to B
+    assert r2.ok and r2.detail["already_exists"] is True and r2.detail["post_id"] == id_b
+    assert len(Ledger.load(cfg).posts) == n_before              # no duplicate (setdefault + honest report)
+
+def test_crosspost_to_account_repost_freely(tmp_path):
+    # a clip already posted to @a can ALSO post to @b — no "already posted to N accounts" guard, no supersede.
+    from fanops.studio.actions import crosspost_to_account
+    import json
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        c = Clip(id="clip_0", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued)
+        c.meta_captions = {"@b/instagram": {"caption": "x", "hashtags": []}}
+        led.add_clip(c)
+        led.add_post(Post(id="p_a", parent_id="clip_0", account="@a", account_id="ig_a",
+                          platform=Platform.instagram, caption="on A", state=PostState.published))
+    r = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
+    assert r.ok and r.detail["already_exists"] is False         # the A post does NOT block fanning to B
+    assert Ledger.load(cfg).posts["p_a"].state is PostState.published   # A untouched (no supersede)
+
+def test_crosspost_to_account_caption_fallback(tmp_path):
+    # no per-surface caption -> EMPTY caption + empty hashtags (operator edits in Review), NOT a skip.
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path); _seed_xacct(cfg, ig_caption=False)
+    r = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
+    assert r.ok and r.detail["already_exists"] is False
+    p = Ledger.load(cfg).posts[r.detail["post_id"]]
+    assert p.caption == "" and p.hashtags == []                 # minted with an empty caption, not dropped
+
+def test_crosspost_to_account_rejects_over_cap(tmp_path):
+    # a clip whose moment window exceeds the platform cap (IG 90s) -> clean ok=False, no post minted.
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path); _seed_xacct(cfg, window=(0.0, 120.0))   # 120s > IG 90s
+    r = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
+    assert not r.ok and "exceeds" in (r.error or "")
+    assert not Ledger.load(cfg).posts                           # nothing minted
+
+def test_crosspost_to_account_aspect_correct(tmp_path):
+    # cross-post to YouTube (16:9) when both a 9:16 and a 16:9 render exist -> the minted post binds the
+    # 16:9 clip + aspect (via _clip_for_aspect), NOT the 9:16 input. No render needed (16:9 reusable).
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path)
+    _seed_xacct(cfg, accounts=[{"handle": "@b", "account_id": "yt_b", "platforms": ["youtube"], "status": "active"}],
+                ig_caption=False, window=(0.0, 30.0), aspects=(Fmt.r9x16, Fmt.r16x9))
+    r = crosspost_to_account(cfg, "clip_0", "@b", "youtube", now=NOW)   # clip_0 is the 9:16; YT wants 16:9
+    assert r.ok
+    p = Ledger.load(cfg).posts[r.detail["post_id"]]
+    assert p.aspect is Fmt.r16x9 and p.parent_id == "clip_1"    # bound the 16:9 render, not the 9:16 input
+
+def test_crosspost_to_account_rejects_unknown_surface_platform_and_held(tmp_path):
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path); _seed_xacct(cfg)
+    # unknown platform string
+    assert not crosspost_to_account(cfg, "clip_0", "@b", "myspace", now=NOW).ok
+    # unknown (account, platform) surface
+    r = crosspost_to_account(cfg, "clip_0", "@nope", "instagram", now=NOW)
+    assert not r.ok and "no active surface" in (r.error or "")
+    # missing clip
+    assert not crosspost_to_account(cfg, "clip_missing", "@b", "instagram", now=NOW).ok
+    # held clip
+    with Ledger.transaction(cfg) as led:
+        led.clips["clip_0"] = led.clips["clip_0"].model_copy(update={"held": True})
+    assert not crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW).ok
+
+def test_crosspost_all_to_account_bulk(tmp_path):
+    # three clips posted to A -> three minted on B; a re-run reports already_exists; empty source -> failure.
+    from fanops.studio.actions import crosspost_all_to_account
+    import json
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4"))
+        for i in range(3):                                       # 3 distinct moments -> 3 distinct target clips
+            led.add_moment(Moment(id=f"mom_{i}", parent_id="src_1", content_token=f"{i}", start=i, end=i + 5, reason="r", state=MomentState.clipped))
+            c = Clip(id=f"clip_{i}", parent_id=f"mom_{i}", path=f"/c{i}.mp4", aspect=Fmt.r9x16, state=ClipState.queued)
+            c.meta_captions = {"@b/instagram": {"caption": f"c{i}", "hashtags": []}}
+            led.add_clip(c)
+            led.add_post(Post(id=f"p_a{i}", parent_id=f"clip_{i}", account="@a", account_id="ig_a",
+                              platform=Platform.instagram, caption="on A", state=PostState.published))
+    r = crosspost_all_to_account(cfg, "@a", "@b", "instagram", now=NOW)
+    assert r.ok and r.detail["minted"] == 3 and r.detail["already_exists"] == 0
+    r2 = crosspost_all_to_account(cfg, "@a", "@b", "instagram", now=NOW)   # idempotent
+    assert r2.ok and r2.detail["minted"] == 0 and r2.detail["already_exists"] == 3
+    r3 = crosspost_all_to_account(cfg, "@nobody", "@b", "instagram", now=NOW)
+    assert not r3.ok                                            # empty source -> clean failure
