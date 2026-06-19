@@ -202,19 +202,22 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
       • the TRANSCRIPT captions — OPT-IN via burn_subs (default OFF). Showing what the audio says is
         redundant (the viewer hears it) and only as good as the auto-transcription; useful for
         talking-head content, wrong for music — so it ships only when the operator asks.
-    Returns None when there's nothing to burn, or (logged once) when ffmpeg lacks the text filter."""
+    Returns (vf_fragment_or_None, hook_burn_failed). hook_burn_failed is True when on-screen text WAS
+    wanted (a hook, or opted-in transcript) but could NOT be burned — ffmpeg lacks the text filter, or
+    build_ass yielded empty — so render_moment flags the clip (F9) instead of shipping a fine-looking
+    clip that silently lost its text. False when there was nothing to burn (clean clip) or it burned."""
     m = led.moments[moment_id]
     src = led.sources[m.parent_id]
     hook = None if cfg.creative_variation else ((m.hook or "").strip() or None)  # per-surface hook owns it under variation; blank -> None
     segments = (src.transcript or []) if cfg.burn_subs else []   # transcript is opt-in
     if not hook and not segments:                        # no hook, no opted-in transcript -> clean clip
-        return None
+        return None, False                               # nothing wanted -> not a failure
     if not overlay.ffmpeg_has_textfilter():
         # Text was asked for but the toolchain can't burn it. Don't block the clip — log once and
         # render plain. (One line per clip; ffmpeg_has_textfilter caches, so the probe runs once.)
         get_logger(cfg)("clip", cid, "subs_skipped",
                         reason="ffmpeg lacks the text filter — rendering without subtitles/hook")
-        return None
+        return None, True                                # WANTED but the toolchain can't burn it -> F9 flag
     tw, th = _TARGETS[aspect.value]
     if hook:                                             # P1 T2: fail-open legibility guard — warn once, never block
         warns = overlay.hook_legibility_warnings(hook, width=tw, height=th)
@@ -223,10 +226,10 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
     ass_text = overlay.build_ass(segments, hook=hook, clip_start=clip_start, clip_end=clip_end,
                                  width=tw, height=th, font=cfg.subtitle_font)
     if not ass_text or not ass_text.strip():
-        return None
+        return None, True                                # WANTED but produced no burnable text -> F9 flag
     ass_path = cfg.clips / f"{cid}.ass"
     overlay.write_ass(ass_text, ass_path)
-    return overlay.subtitles_vf(ass_path)
+    return overlay.subtitles_vf(ass_path), False
 
 # Phase D: the clip's content-address (child_id of moment+aspect) does NOT include the burned hook or
 # the cut window, so an mp4 on disk is NOT proof it matches the INTENDED render — a changed hook would
@@ -289,7 +292,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
             cs, first_frame_kind = pick_visual_start(src.source_path, cs, ce,
                                                      scene_peaks=src.signal_peaks, out_dir=cfg.clips)
     cut_seconds = round(ce - cs, 3)                            # P1 provenance (observational; length not varied)
-    extra_vf = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
+    extra_vf, hook_burn_failed = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
     # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
     # render (a pre-warm pass produced it), adopt it and SKIP ffmpeg — record the clip + advance the
     # moment. A changed hook/window yields a different fingerprint -> re-render (no stale clip reuse).
@@ -301,7 +304,8 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         # An fp-match means a prior render of THIS exact window already passed (the fp is stamped only
         # after a successful render + a passing duration check for stitches), so adopt it without re-probing.
         clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
-                    first_frame_kind=first_frame_kind, cut_seconds=cut_seconds)
+                    first_frame_kind=first_frame_kind, cut_seconds=cut_seconds,
+                    hook_burn_failed=hook_burn_failed)
         led.clips[cid] = clip
         if not is_stitch:                                     # a stitch never advances the moment (the bare clip owns it)
             led.set_moment_state(moment_id, MomentState.clipped)
@@ -352,7 +356,8 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
             led.clips[cid] = clip
             return led, clip
     clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
-                first_frame_kind=first_frame_kind, cut_seconds=cut_seconds)
+                first_frame_kind=first_frame_kind, cut_seconds=cut_seconds,
+                hook_burn_failed=hook_burn_failed)
     # Overwrite any prior clip at this content-addressed id (e.g. a previous error-state
     # render) so a re-render self-heals; setdefault would pin the stale clip. id is unique
     # per (moment, aspect), so the latest successful render is authoritative.

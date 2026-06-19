@@ -31,6 +31,21 @@ def test_tuning_passes_clean_overrides_unchanged(tmp_path):
     t = cfg.tuning()
     assert t["offbrand_en"] == ["\\bpls\\b"] and t["lift_weights"] == {"saves": 5}
 
+def test_llm_model_defaults_to_opus(monkeypatch, tmp_path):
+    # V2 M1/F1: the creative brain (claude -p) was UNPINNED — output quality drifted with the CLI
+    # default. Pin it via config. Default "opus" = the judgment tier for the creative calls; an alias
+    # the `claude` CLI resolves to latest-of-tier (operator pins a full id for bit-stable repro).
+    monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
+    assert Config(root=tmp_path).llm_model == "opus"
+
+def test_llm_model_env_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_LLM_MODEL", "sonnet")
+    assert Config(root=tmp_path).llm_model == "sonnet"
+
+def test_llm_model_blank_falls_back_to_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_LLM_MODEL", "   ")            # whitespace-only -> default (mirror clip_profile)
+    assert Config(root=tmp_path).llm_model == "opus"
+
 def test_hook_editor_defaults_on(monkeypatch, tmp_path):
     # Phase C2: the feed-aware hook editor closes the weakest link (template clustering); it must be
     # ON by default, not gated on the operator remembering a flag. It is fail-open + idempotent.

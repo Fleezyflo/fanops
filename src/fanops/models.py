@@ -13,6 +13,9 @@ from fanops.ids import content_id
 class SourceState(str, Enum):
     catalogued = "catalogued"; transcribed = "transcribed"; signalled = "signalled"
     moments_requested = "moments_requested"; moments_decided = "moments_decided"
+    moments_empty = "moments_empty"   # V2 M1/F8: the model returned [] (nothing worth posting) — VISIBLE
+                                      # + re-runnable (retry-source), NOT a silent moments_decided. Non-
+                                      # terminal: a prior good moment set is preserved (no cascade-delete).
     retired = "retired"; discovered = "discovered"   # M1: removed-but-kept / rebuild-orphan (inert until confirmed)
     error = "error"
 
@@ -172,6 +175,10 @@ class Clip(BaseModel):
     media_url: Optional[str] = None             # FIX F44 — cached Blotato URL, uploaded once
     meta_captions: dict = Field(default_factory=dict)   # surface -> {caption, hashtags}
     error_reason: Optional[str] = None
+    hook_burn_failed: bool = False              # V2 M1/F9: a hook was WANTED but couldn't burn (ffmpeg
+                                                # lacks the text filter, or build_ass yielded empty) — the
+                                                # clip still rendered fail-open but lost its hook. Surfaced
+                                                # in the run summary so the silent drop is never invisible.
 
 class Post(BaseModel):
     id: str

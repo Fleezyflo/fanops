@@ -70,6 +70,7 @@ class Config:
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
+        self.learn_doctor_path = self.control / "learn_doctor.json"   # F2 read-only learning field-shape verdict; M4 gates on it
         self.log_path = self.reports / "run.log"
 
     def tuning(self) -> dict:
@@ -163,6 +164,16 @@ class Config:
     @property
     def responder_mode(self) -> str:
         return os.getenv("FANOPS_RESPONDER") or "manual"
+
+    @property
+    def llm_model(self) -> str:
+        # V2 M1/F1: pin the creative brain. `claude -p` ran with NO --model, so output quality drifted
+        # with whatever the operator's CLI defaulted to (unpinned = unreproducible). Default "opus" = the
+        # judgment tier for the moment/caption/hook calls; the `claude` CLI resolves the alias to latest-
+        # of-tier. Pin a FULL model id (e.g. "claude-opus-4-...") for bit-stable repro; "sonnet" trades
+        # judgment for cost/latency. Mirrors clip_profile's validate-or-default shape.
+        v = os.getenv("FANOPS_LLM_MODEL")
+        return v.strip() if v and v.strip() else "opus"
 
     @property
     def artist_name(self) -> str:

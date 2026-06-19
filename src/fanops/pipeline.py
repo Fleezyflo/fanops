@@ -321,6 +321,9 @@ def advance(cfg: Config, *, base_time: str) -> dict:
             # unattended operator sees it in `fanops run`/`advance` output, not only the digest.
             "needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
             "holds": sum(1 for c in led.clips.values() if c.held),
+            # V2 M1/F9: clips that rendered but silently lost their on-screen hook (couldn't burn) —
+            # surfaced here so the unattended operator sees the drop, not only in run.log.
+            "hook_burn_failed": sum(1 for c in led.clips.values() if c.hook_burn_failed),
             "errors": sum(1 for s in led.sources.values() if s.state is SourceState.error),
             "awaiting": {"moments": len(pending(cfg, kind="moments")),
                          "captions": len(pending(cfg, kind="captions")),

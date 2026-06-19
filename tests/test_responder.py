@@ -55,10 +55,10 @@ def test_get_responder_llm_is_usable_without_explicit_model(tmp_path, monkeypatc
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)
     _seed_moment_request(cfg)
-    # stub the claude -p call at the seam used by the production default model: return one valid pick
-    mocker.patch("fanops.responder.claude_json",
-                 return_value={"picks": [{"start": 1.0, "end": 4.0, "reason": "bar",
-                                          "transcript_excerpt": "x", "signal_score": 0.0}]})
+    # stub the claude -p call at the seam used by the production default model: (one valid pick, model)
+    mocker.patch("fanops.responder.claude_json_meta",
+                 return_value=({"picks": [{"start": 1.0, "end": 4.0, "reason": "bar",
+                                           "transcript_excerpt": "x", "signal_score": 0.0}]}, "opus"))
     from fanops.responder import get_responder
     r = get_responder(cfg)
     n = r.answer_pending(cfg)
@@ -186,7 +186,7 @@ def test_hookedit_model_passes_frames_as_images_for_vision(mocker):
     # The production model for a hookedit gate must hand the clip's frames to claude_json as images
     # (Read tool) so the editor SEES each clip; moments/captions stay pure text generators.
     from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json", return_value={"items": []})
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"items": []}, None))
     payload = {"items": [{"moment_id": "m1", "hook": "x", "frames": ["/t/a.jpg", "/t/b.jpg"]},
                          {"moment_id": "m2", "hook": "y", "frames": ["/t/c.jpg"]}]}
     _default_claude_model("hookedit", payload)
@@ -196,7 +196,7 @@ def test_hookjudge_model_passes_frames_as_images_for_vision(mocker):
     # Task 6: the critic is now ALSO a vision call — the hookjudge gate hands the clip's frames to
     # claude_json as images so the judge SEES the footage, mirroring hookedit. moments/captions stay text.
     from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json", return_value={"items": []})
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"items": []}, None))
     payload = {"items": [{"moment_id": "m1", "hook": "x", "frames": ["/t/a.jpg", "/t/b.jpg"]},
                          {"moment_id": "m2", "hook": "y", "frames": ["/t/c.jpg"]}]}
     _default_claude_model("hookjudge", payload)
@@ -204,9 +204,40 @@ def test_hookjudge_model_passes_frames_as_images_for_vision(mocker):
 
 def test_moments_model_passes_no_images(mocker):
     from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json", return_value={"picks": []})
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
     _default_claude_model("moments", {"source_id": "s", "duration": 10.0})
     assert not spy.call_args.kwargs.get("images")        # text-only path unchanged
+
+def test_default_model_pins_llm_model_and_logs_provenance(mocker, tmp_path):
+    # V2 M1/F1+F10: the production responder PINS cfg.llm_model on the claude call AND emits one
+    # provenance line per creative call (the model that answered + the prompt + brief fingerprints) so
+    # every clip/caption is traceable to the EXACT model+brief that produced it.
+    cfg = Config(root=tmp_path)
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.context_path.write_text("BRAND: confident")
+    from fanops.responder import _default_claude_model
+    meta = mocker.patch("fanops.responder.claude_json_meta",
+                        return_value=({"picks": []}, "claude-opus-4-x"))   # the model that answered
+    logfn = mocker.Mock()
+    out = _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
+    assert out == {"picks": []}
+    assert meta.call_args.kwargs["model"] == "opus"                        # pinned cfg.llm_model
+    prov = next(c for c in logfn.call_args_list if c.args[2] == "call")     # the provenance line
+    assert prov.args[0] == "llm"
+    assert prov.kwargs["model"] == "claude-opus-4-x"                        # the answering model surfaced
+    assert len(prov.kwargs["prompt_sha"]) == 12                            # prompt fingerprint
+    assert prov.kwargs["brief_sha"] != "absent"                            # brief fingerprint present
+
+def test_default_model_provenance_falls_back_to_pinned_when_envelope_lacks_model(mocker, tmp_path):
+    # Audit C2/H: when the envelope reports no model, the provenance line records the PINNED value
+    # (never empty), and "absent" brief_sha when there's no brief.
+    cfg = Config(root=tmp_path)
+    from fanops.responder import _default_claude_model
+    mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
+    logfn = mocker.Mock()
+    _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
+    prov = next(c for c in logfn.call_args_list if c.args[2] == "call")
+    assert prov.kwargs["model"] == "opus" and prov.kwargs["brief_sha"] == "absent"
 
 def test_llm_responder_answers_hookedit_gate(tmp_path, monkeypatch):
     # The feed-aware hook editor rides the same gate contract: a pending hookedit request is answered
