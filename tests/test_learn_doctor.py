@@ -113,6 +113,30 @@ def test_report_is_read_only_no_ledger_mutation(tmp_path):
     assert led.posts["p1"].metrics == {}                       # no metrics written
 
 
+def test_cmd_propagates_a_real_code_bug(tmp_path, monkeypatch):
+    # The catch-all must NOT mask genuine bugs as "analytics fetch failed". A KeyError/TypeError from
+    # inside the report logic is a code defect and must surface as a traceback, not a silent exit 0.
+    import pytest
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "sk-x")
+    cfg, led = _led_with_shipped(tmp_path); led.save()
+    def boom(w): raise KeyError("a real bug, not a network failure")
+    with pytest.raises(KeyError):
+        cmd_learn_doctor(cfg, list_posts=boom)
+
+
+def test_cmd_swallows_a_transport_failure(tmp_path, monkeypatch, capsys):
+    # A documented transport failure (the Postiz client raises RuntimeError on a 5xx/non-JSON body, or
+    # requests raises) is transient — swallow it, print retry guidance, exit 0 (never crash a pipeline).
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "sk-x")
+    cfg, led = _led_with_shipped(tmp_path); led.save()
+    def neterr(w): raise RuntimeError("postiz analytics 503: upstream down")
+    rc = cmd_learn_doctor(cfg, list_posts=neterr)
+    assert rc == 0
+    assert "fetch failed" in capsys.readouterr().out.lower()
+
+
 def test_load_verdict_absent_returns_empty(tmp_path):
     cfg = Config(root=tmp_path)
     assert load_verdict(cfg) == {}                             # no file yet -> empty, never crashes
