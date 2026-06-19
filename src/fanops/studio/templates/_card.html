@@ -42,6 +42,15 @@
       </div>
     {% endfor %}
 
+    {% if card.bucket == 'editable' and card.hook_removed and card.surfaces %}
+      {# removed-hook choice (slice 2): one click to ship WITH the restored hook burned in, or clean as-is. #}
+      <div class="hook-choice meta">
+        <span class="muted">Hook was auto-removed. Approve with it burned in, or ship clean.</span>
+        <button type="button" class="primary" hx-post="{{ url_for('do_approve_with_hook', clip_id=card.clip_id) }}" hx-target="#review-body" hx-swap="outerHTML">Approve with hook ✎</button>
+        <button type="button" hx-post="{{ url_for('do_approve_as_is', clip_id=card.clip_id) }}" hx-target="#review-body" hx-swap="outerHTML">Approve as-is (no hook)</button>
+      </div>
+    {% endif %}
+
     {% if card.bucket == 'editable' and card.surfaces %}
       <form class="snooze" hx-post="{{ url_for('do_snooze', clip_id=card.clip_id) }}" hx-target="#card-{{ card.clip_id }}" hx-swap="afterend">
         <button type="submit">Snooze</button>
