@@ -72,6 +72,28 @@ def test_make_stitch_plan_sets_rank_and_rationale():
     assert "10.0" in plan.rationale and "0.9" in plan.rationale   # human-readable WHY (peak time + score)
     assert "impact" in plan.rationale.lower()
 
+def test_make_stitch_plan_rationale_names_audio_energy_signal():
+    # Theme 1 (T1.3): when the winning peak is an energy-scored speech_resume, the operator-facing
+    # rationale must say AUDIO-ENERGY (not the generic "impact peak"), so the reviewer can see the
+    # cut now tracks a real loudness drop, not a visual cut.
+    clip = Clip(id="c1", parent_id="m1", state=ClipState.rendered, path="/x/c.mp4", duration=18.0)
+    src = _s([{"t": 5.0, "kind": "scene_cut", "score": 0.3},
+              {"t": 10.0, "kind": "speech_resume", "score": 0.95, "energy": 0.95}])
+    plan = make_stitch_plan(clip, _m(0.0, 18.0), src, base_fp="fp")
+    assert "audio-energy" in plan.rationale.lower()
+    assert "10.0" in plan.rationale                       # the winning peak time
+    assert plan.rank_score == 0.95                        # ranks on the energy-derived score
+
+def test_make_stitch_plan_rationale_keeps_impact_wording_for_scene_peak():
+    # A scene-cut winner (no energy field) keeps the existing "impact peak ... (score ...)" wording —
+    # no behavior change on the non-energy path.
+    clip = Clip(id="c1", parent_id="m1", state=ClipState.rendered, path="/x/c.mp4", duration=18.0)
+    src = _s([{"t": 10.0, "kind": "scene_cut", "score": 0.42}])
+    plan = make_stitch_plan(clip, _m(0.0, 18.0), src, base_fp="fp")
+    low = plan.rationale.lower()
+    assert "impact peak" in low and "audio-energy" not in low
+    assert "0.42" in plan.rationale
+
 def test_make_stitch_plan_rationale_is_none_safe_default():
     # a plain StitchPlan (no rationale supplied) still constructs (optional field, rides default — no migration)
     p = StitchPlan(id="x", clip_id="c", strategy_key="impact_cut")
