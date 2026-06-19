@@ -27,7 +27,7 @@ _TEMPLATE_CLUSTER_MAX = 3                             # the (MAX+1)th hook shari
 def _prefix_key(text: str) -> tuple:
     return tuple(re.findall(r"\w+", text.lower())[:_TEMPLATE_PREFIX_TOKENS])
 
-def is_weak_hook(text: str | None, used: set[str] = frozenset(), *, cluster_scope=None) -> bool:
+def is_weak_hook(text: str | None, used: set[str] = frozenset(), *, cluster_scope: set[str] | None = None) -> bool:
     """True if `text` is a hook to REJECT on MECHANICAL grounds only (empty / exact-dup / opening
     cluster). `used` is the FEED-WIDE set of hooks already taken (a case/space-insensitive exact repeat
     is rejected anywhere — burning the same line twice reads like a bot). `cluster_scope` is the
