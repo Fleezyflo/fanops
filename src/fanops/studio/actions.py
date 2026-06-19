@@ -507,6 +507,7 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
                               account=src.account, account_id=src.account_id, platform=src.platform,
                               caption=src.caption, hashtags=list(src.hashtags or []), aspect=src.aspect,
                               media_urls=list(src.media_urls or []), scheduled_time=None,
+                              created_at=iso_z(_now(None)),   # content-lifecycle: fresh birth day (aware)
                               submission_id=f"fanops_{_hash('idemp', new_id)}",
                               hook_pattern=src.hook_pattern, first_frame_kind=src.first_frame_kind,
                               cut_seconds=src.cut_seconds, clip_profile=src.clip_profile,

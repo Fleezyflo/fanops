@@ -13,7 +13,7 @@ from fanops.ledger import Ledger
 from fanops.models import Post, PostState
 from fanops.post import get_poster, get_media_uploader, Poster
 from fanops.post.media import ensure_clip_media
-from fanops.timeutil import parse_iso as _parse
+from fanops.timeutil import parse_iso as _parse, iso_z
 
 def _now(now: str | None) -> datetime:
     return _parse(now) if now else datetime.now(timezone.utc)
@@ -56,6 +56,7 @@ def _submit_one(led: Ledger, cfg: Config, poster: Poster, post: Post, _save: Cal
         led = poster.publish(led, post.id)
         if post.state is PostState.submitted:
             post.state = PostState.published
+            post.published_at = iso_z(datetime.now(timezone.utc))   # content-lifecycle: TRUE publish time (Posted-archive day-anchor)
     except Exception as exc:
         if _is_fatal_auth_error(exc):
             raise                                      # bad key/401: halt, don't burn the queue

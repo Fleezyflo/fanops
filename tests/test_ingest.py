@@ -151,6 +151,19 @@ def test_dedupe_by_content_not_path(tmp_path, mocker):
     led = ingest_drops(led, cfg)
     assert len(led.sources) == 1
 
+def test_catalogue_stamps_created_at(tmp_path, mocker):
+    # content-lifecycle Phase 2: a freshly catalogued Source carries a parseable ISO-Z created_at (ingest day).
+    from fanops.timeutil import parse_iso
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    led = ingest_drops(Ledger.load(cfg), cfg)
+    s = next(iter(led.sources.values()))
+    assert s.created_at and parse_iso(s.created_at).tzinfo is not None     # aware (no naive-tz shift)
+    first = s.created_at
+    led = ingest_drops(led, cfg)                                           # re-ingest same bytes -> setdefault no-op
+    assert next(iter(led.sources.values())).created_at == first           # write-once at first catalogue
+
 def test_skips_audio_only_drop(tmp_path, mocker):
     # An audio-only file (no video stream) is NOT catalogued: the clip pipeline reframes via
     # ffmpeg -vf, which is silently ignored on audio-only input and would emit a videoless

@@ -30,6 +30,22 @@ def test_publishes_only_due_posts(tmp_path, monkeypatch):
     assert led.posts["due"].state is PostState.published
     assert led.posts["future"].state is PostState.queued       # held back (FIX F12)
 
+def test_publish_stamps_published_at(tmp_path, monkeypatch):
+    # content-lifecycle Phase 2: the submitted->published transition stamps a TRUE publish time (aware).
+    # approve_post must NOT touch it (published_at is immutable after the stamp).
+    from fanops.timeutil import parse_iso, iso_z
+    from datetime import datetime, timezone
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)  # dryrun
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="pp", cid="c_pp", when="2020-01-01T00:00:00Z")
+    led = publish_due(led, cfg, now="2026-06-02T18:00:00Z")
+    p = led.posts["pp"]
+    assert p.state is PostState.published
+    assert p.published_at and parse_iso(p.published_at).tzinfo is not None
+    before = p.published_at
+    led.approve_post("pp", now_iso=iso_z(datetime.now(timezone.utc)))   # a no-op on a non-awaiting post
+    assert led.posts["pp"].published_at == before                       # untouched by approve
+
 def test_publish_uploads_media_once_and_advances(tmp_path, monkeypatch, mocker):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

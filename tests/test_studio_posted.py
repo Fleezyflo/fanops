@@ -48,6 +48,14 @@ def test_posted_library_newest_first(tmp_path):
 
 
 # ---- repost_post reuse ----
+def test_repost_stamps_created_at(tmp_path):
+    # content-lifecycle Phase 2: a repost is a fresh birth -> carries a wall-clock AWARE created_at.
+    from fanops.timeutil import parse_iso
+    cfg = Config(root=tmp_path); _seed_published(cfg, pid="p1")
+    new_id = actions.repost_post(cfg, "p1").detail["post_id"]
+    np = Ledger.load(cfg).posts[new_id]
+    assert np.created_at and parse_iso(np.created_at).tzinfo is not None
+
 def test_repost_creates_fresh_awaiting_post_distinct_id(tmp_path):
     cfg = Config(root=tmp_path); _seed_published(cfg, pid="p1")
     r = actions.repost_post(cfg, "p1")

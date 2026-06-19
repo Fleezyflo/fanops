@@ -114,6 +114,10 @@ class Source(BaseModel):
     signal_peaks: Optional[list[dict]] = None
     error_reason: Optional[str] = None
     meta: dict = Field(default_factory=dict)
+    created_at: Optional[str] = None            # content-lifecycle: ISO-8601 UTC ingest day, set at
+                                                # _catalogue_file / rebuild discovered. None on old ledgers ->
+                                                # migration v2->v3 backfill (file mtime, else stamp). The Review
+                                                # day-anchor ("clips I dropped in").
 
 class Moment(BaseModel):
     id: str
@@ -205,6 +209,14 @@ class Post(BaseModel):
     clip_profile: Optional[str] = None      # song | talk — the per-video-type group ("hook for which video type")
     cut_seconds: Optional[float] = None     # rendered clip length (observational; length not varied)
     variation_axis: Optional[str] = None    # P2 (one writer = crosspost): the cheap-text axis this variant moved
+    created_at: Optional[str] = None    # content-lifecycle: ISO-8601 UTC BIRTH day (wall-clock), set at crosspost
+                                        # add_post / repost / crosspost_to_account. NOT part of the content-
+                                        # addressed pid. None on old ledgers -> migration backfill (scheduled_time
+                                        # else stamp).
+    published_at: Optional[str] = None  # content-lifecycle: ISO-8601 UTC TRUE publish time, stamped at the
+                                        # run.py published transition. The Posted-archive day-anchor ("what shipped
+                                        # Tuesday") — scheduled_time is INTENT day, not publish day. None until
+                                        # published; old/in-flight rows fall back to scheduled_time in the grouper.
 
 
 # ---- M3 (structural-hooks): the stitch_plan entity — the operator-approval spine ----

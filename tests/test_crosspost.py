@@ -103,6 +103,16 @@ def test_crosspost_fans_out_with_right_aspect_and_account_id(tmp_path, mocker):
     # staggered
     assert by_plat[Platform.instagram].scheduled_time != by_plat[Platform.youtube].scheduled_time
 
+def test_crosspost_stamps_created_at(tmp_path, mocker):
+    # content-lifecycle Phase 2: a born post carries a wall-clock AWARE created_at (the birth-day anchor).
+    from fanops.timeutil import parse_iso
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "98432", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _captioned(led, cfg, mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    p = next(iter(led.posts.values()))
+    assert p.created_at and parse_iso(p.created_at).tzinfo is not None
+
 def test_crosspost_one_handle_two_platforms_distinct_per_platform_ids(tmp_path, mocker):
     # M1: a SINGLE multi-platform handle whose channels are different Postiz integrations -> each
     # platform's Post carries its OWN integration id, not one shared id (the mis-routing fix). No

@@ -5,7 +5,7 @@ in ITS platform's aspect, rendering on demand (FIX F20). The resolved NUMERIC ac
 stored (FIX F06). decide_tag is invoked (FIX F31). Held/retired clips are skipped (FIX F55)."""
 from __future__ import annotations
 import hashlib, random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fanops import overlay
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -140,7 +140,7 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 id=pid, parent_id=target_clip.id, state=PostState.awaiting_approval,
                 account=surf.account, account_id=surf.account_id, platform=surf.platform,
                 caption=caption, hashtags=cap.get("hashtags", []), aspect=aspect,
-                scheduled_time=sched,
+                scheduled_time=sched, created_at=iso_z(datetime.now(timezone.utc)),   # wall-clock BIRTH (NOT in the pid)
                 media_urls=[f"file://{media_path}"] if cfg.creative_variation and hook_v else [],
                 # AUDIT H1: stamp a stable, content-addressed CLIENT idempotency token at birth so
                 # an ambiguous publish is ALWAYS pollable (a real Blotato id overwrites it in

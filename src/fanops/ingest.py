@@ -5,6 +5,7 @@ Exclude PII/legal/financial by name — necessary but NOT sufficient (FIX F46): 
 misnamed slips through; a human still reviews held/odd clips before posting."""
 from __future__ import annotations
 import hashlib, re, shutil, subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from fanops.config import Config
@@ -12,6 +13,7 @@ from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.models import Source, SourceState
 from fanops.ids import make_id
+from fanops.timeutil import iso_z
 from fanops.errors import ToolchainMissingError, DownloadError
 
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi",
@@ -109,7 +111,7 @@ def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str,
     w, h, dur = probe_dimensions(dest)
     led.add_source(Source(id=sid, state=SourceState.catalogued, source_path=str(dest),
                           source_origin=origin, origin_kind=origin_kind, sha256=digest, width=w, height=h,
-                          duration=dur or None,
+                          duration=dur or None, created_at=iso_z(datetime.now(timezone.utc)),  # ingest-day anchor (aware)
                           meta={"bytes": f.stat().st_size}))   # AUDIT: no original_name (PII)
 
 def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",

@@ -244,3 +244,17 @@ def test_rebuild_idempotent_and_keeps_missing_file_sources(tmp_path):
     assert set(led.sources) == first
     assert led.sources["src_111111111111"].state is SourceState.catalogued   # missing-file source NOT dropped
     assert led.sources["src_aabbccddeeff"].state is SourceState.discovered
+
+def test_rebuild_discovered_has_created_at(tmp_path):
+    # content-lifecycle Phase 2 (H4): a discovered orphan carries created_at == its file's mtime DAY, so it
+    # isn't silently "undated" in the Phase-3 day-bucketing. Parseable + aware.
+    import os, time
+    from fanops.timeutil import parse_iso
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    cfg.sources.mkdir(parents=True, exist_ok=True)
+    f = cfg.sources / "src_ffeeddccbbaa.mp4"; f.write_bytes(b"V")
+    mtime = time.mktime((2026, 2, 14, 12, 0, 0, 0, 0, -1)); os.utime(f, (mtime, mtime))
+    led.rebuild_catalog(cfg)
+    s = led.sources["src_ffeeddccbbaa"]
+    assert s.created_at and parse_iso(s.created_at).tzinfo is not None
+    assert parse_iso(s.created_at).date().isoformat() == "2026-02-14"

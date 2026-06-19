@@ -129,3 +129,23 @@ def test_source_origin_kind_rejects_unknown_value():
 def test_source_state_has_retired_and_discovered():
     # retired = removed (never deleted); discovered = a rebuild orphan, inert until an operator confirms
     assert SourceState.retired.value == "retired" and SourceState.discovered.value == "discovered"
+
+# ---- content-lifecycle Phase 2: created_at (Source+Post) + published_at (Post) day-anchor ----
+def test_source_post_created_at_default_none():
+    # Optional[str]=None so an OLD-shape ledger row (no created_at/published_at) loads unchanged.
+    s = Source(id="src_1", source_path="/s/x.mp4")
+    assert s.created_at is None
+    p = Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x")
+    assert p.created_at is None and p.published_at is None
+    # old-shape dicts (no new keys) validate
+    s2 = Source.model_validate({"id": "src_2", "source_path": "/s/y.mp4"})
+    p2 = Post.model_validate({"id": "p2", "parent_id": "c", "account": "@a", "account_id": "1",
+                              "platform": "tiktok", "caption": "x"})
+    assert s2.created_at is None and p2.created_at is None and p2.published_at is None
+
+def test_source_post_created_at_round_trip():
+    s = Source(id="src_1", source_path="/s/x.mp4", created_at="2026-06-19T10:00:00Z")
+    p = Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+             caption="x", created_at="2026-06-19T11:00:00Z", published_at="2026-06-19T12:00:00Z")
+    assert s.created_at == "2026-06-19T10:00:00Z"
+    assert p.created_at == "2026-06-19T11:00:00Z" and p.published_at == "2026-06-19T12:00:00Z"

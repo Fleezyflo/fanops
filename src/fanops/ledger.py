@@ -4,6 +4,7 @@ Writes are ATOMIC (temp file + os.replace) under a file lock so the 're-run adva
 model cannot corrupt or lose updates. Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
 import fcntl, json, os, re, time
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
@@ -19,11 +20,47 @@ _DEFAULT_LOCK_TIMEOUT = 30.0
 # ledger (no schema_version key) reads as v0; v0->v1 is the no-op baseline stamp (the shape was
 # already stable). The point is forward safety: a future field change becomes a migration step, not
 # a silent field-drop (pydantic extra="ignore") or a load crash.
-SCHEMA_VERSION = 2
+def _migrate_v3_created_at(raw: dict) -> dict:
+    """v2->v3 backfill (content-lifecycle): stamp created_at on Source + Post rows lacking it. Source <- file
+    mtime (true ingest day) when source_path exists, else a single migration-time stamp; Post <- scheduled_time
+    when tz-aware parseable, else the stamp. Pure on the RAW dict (runs before unit construction); NEVER raises
+    (any OSError/parse/type error -> the stamp). Idempotent: an existing created_at is kept. Does NOT touch
+    published_at (a pre-existing published row has no true publish time; the grouper falls back to
+    scheduled_time)."""
+    from fanops.timeutil import iso_z, parse_iso       # local: cycle-safe (timeutil imports only stdlib)
+    stamp = iso_z(datetime.now(timezone.utc))
+    out = dict(raw)
+    srcs = dict(out.get("sources", {}))
+    for sid, s in list(srcs.items()):
+        if not isinstance(s, dict) or s.get("created_at"): continue
+        ts = stamp; sp = s.get("source_path")
+        if sp and isinstance(sp, str):
+            try: ts = iso_z(datetime.fromtimestamp(os.path.getmtime(sp), tz=timezone.utc))
+            except (OSError, ValueError, OverflowError, TypeError): ts = stamp
+        srcs[sid] = {**s, "created_at": ts}
+    out["sources"] = srcs
+    posts = dict(out.get("posts", {}))
+    for pid, p in list(posts.items()):
+        if not isinstance(p, dict) or p.get("created_at"): continue
+        ts = stamp; st = p.get("scheduled_time")
+        if st and isinstance(st, str):
+            try:
+                dt = parse_iso(st)
+                ts = iso_z(dt) if dt.tzinfo is not None else stamp   # naive on-disk time -> stamp, never a local guess
+            except (ValueError, TypeError, AttributeError): ts = stamp
+        posts[pid] = {**p, "created_at": ts}
+    out["posts"] = posts
+    return out
+
+
+SCHEMA_VERSION = 3
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
+# v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
+# scheduled_time, else a single migration-time stamp). Additive + idempotent. published_at is NOT backfilled.
 _MIGRATIONS = {1: lambda raw: raw,
-               2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})}}
+               2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})},
+               3: _migrate_v3_created_at}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
@@ -338,14 +375,19 @@ class Ledger:
         # with no ledger row) is surfaced as a `discovered` source — INERT to clip-production until an
         # operator confirms it; a `retired` source is never resurrected; a ledger source whose file is
         # missing is never dropped. Idempotent. Iterates the DIR (not self.sources) -> no mutate-in-iter.
+        # WIPE-SAFETY INVARIANT (content-lifecycle Phase 1): ADDS orphans only — NEVER retires a missing-file
+        # source (retire_source is the explicit operator path). A future "warn on missing file" must LOG, never
+        # retire. Locked by test_rebuild_idempotent_and_keeps_missing_file_sources.
         from fanops.ingest import MEDIA_EXT            # local import: ingest imports ledger (avoid a cycle)
+        from fanops.timeutil import iso_z              # local: keep the timeutil dep cycle-safe
         if not cfg.sources.exists():
             return
         for f in sorted(cfg.sources.iterdir()):
             if not f.is_file() or f.suffix.lower() not in MEDIA_EXT or not _SID_RE.match(f.stem):
                 continue                               # junk / non-source-named file -> ignore
             if f.stem not in self.sources:             # orphan on disk -> surface as discovered (inert)
-                self.sources[f.stem] = Source(id=f.stem, state=SourceState.discovered, source_path=str(f))
+                self.sources[f.stem] = Source(id=f.stem, state=SourceState.discovered, source_path=str(f),
+                                              created_at=iso_z(datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)))
 
     # ---- M3 (structural-hooks): stitch_plan ops (operator-approval spine; caller holds the transaction) ----
     def add_stitch_plan(self, plan: StitchPlan) -> None:
