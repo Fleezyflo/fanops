@@ -124,6 +124,21 @@ def test_status_surfaces_moments_empty(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and "moments_empty=1" in out
 
+def test_retry_source_re_runs_a_moments_empty_source(tmp_path, monkeypatch):
+    # V2 M1/F8 + audit H7 (guard): a moments_empty source (model produced nothing) MUST stay
+    # re-runnable. retry-source resets it to catalogued so the next run re-transcribes + re-requests.
+    # This locks the behavior: if a state-guard is ever added to retry-source, moments_empty must not
+    # become silently stranded.
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/x.mp4", state=SourceState.moments_empty))
+    led.save()
+    assert main(["retry-source", "s1"]) == 0
+    assert Ledger.load(cfg).sources["s1"].state is SourceState.catalogued
+
 def test_main_has_track_adjust_gc(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # these subcommands must exist (FIX F04) — they no-op cleanly on an empty ledger
