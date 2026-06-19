@@ -92,10 +92,15 @@ def cmd_learn_doctor(cfg: Config, *, list_posts=None) -> int:
     if cfg.poster_backend != "postiz" or not cfg.postiz_api_key:
         print("learning doctor needs a postiz backend + key — set FANOPS_POSTER=postiz and POSTIZ_API_KEY.")
         return 0
+    import requests
+    from fanops.errors import PostizAuthError
     led = Ledger.load(cfg)                                # lock-free read; the doctor never mutates it
     try:
         report = field_shape_report(led, cfg, list_posts=list_posts)
-    except Exception as e:                                # auth/transport failure is diagnostic, not fatal; key never echoed
+    # Swallow ONLY documented transport failures (the Postiz client raises PostizAuthError on 401 and
+    # RuntimeError on a 5xx/non-JSON body; requests/OSError on transport) — these are transient/diagnostic.
+    # A genuine code bug (TypeError/KeyError/ImportError) is NOT caught here and surfaces as a traceback.
+    except (PostizAuthError, RuntimeError, requests.RequestException, OSError) as e:  # key never echoed (class name only)
         print(f"learning doctor: analytics fetch failed ({type(e).__name__}) — retry when Postiz analytics are reachable.")
         return 0
     print(f"published posts sampled: {report['posts_sampled']}")
