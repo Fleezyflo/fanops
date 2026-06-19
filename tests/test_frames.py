@@ -1,7 +1,7 @@
 """Pure frame-strength scoring for P1's first-frame picker. No ffmpeg, no pixels: the score is
 parsed from ffmpeg `signalstats` text (luma YAVG + contrast YMAX-YMIN) and ranked. The subprocess
 that produces the text lives in clip.py (the mocked seam); these functions stay pure + unit-testable."""
-from fanops.frames import parse_signalstats, frame_strength, pick_strongest
+from fanops.frames import parse_signalstats, parse_sharpness, frame_strength, pick_strongest
 
 
 def _stats_block(yavg, ymin, ymax):
@@ -33,6 +33,38 @@ def test_frame_strength_scores_a_good_frame():
 
 def test_frame_strength_prefers_more_contrast():
     assert frame_strength(luma=120.0, contrast=120.0) > frame_strength(luma=120.0, contrast=60.0)
+
+# ---- Theme 3: sharpness term (a relative edge-energy proxy) discriminates blur the contrast floor passes ----
+
+def test_frame_strength_none_sharpness_is_contrast_byte_identical():
+    # No sharpness supplied -> the score is EXACTLY today's contrast (the contrast-only path is untouched).
+    assert frame_strength(luma=120.0, contrast=60.0) == 60.0
+    assert frame_strength(luma=120.0, contrast=60.0, sharpness=None) == 60.0
+
+def test_frame_strength_sharpness_demotes_blurry_high_contrast():
+    # A busy-but-SOFT frame (high contrast, low edge energy) must score BELOW a crisp frame with less
+    # contrast — the whole point of adding sharpness (contrast alone ranks the blurry one first).
+    blurry = frame_strength(luma=120.0, contrast=100.0, sharpness=2.0)
+    crisp = frame_strength(luma=120.0, contrast=60.0, sharpness=20.0)
+    assert crisp > blurry
+
+def test_frame_strength_sharpness_still_honors_brightness_and_flat_floors():
+    assert frame_strength(luma=6.0, contrast=100.0, sharpness=50.0) is None    # near-black still rejected
+    assert frame_strength(luma=250.0, contrast=100.0, sharpness=50.0) is None  # blown still rejected
+    assert frame_strength(luma=120.0, contrast=10.0, sharpness=50.0) is None   # flat still rejected (sharp ≠ busy)
+
+def test_parse_sharpness_reads_edge_energy_yavg():
+    # sharpness proxy = YAVG of a Laplacian-convolved gray frame (mean edge energy). Higher = sharper.
+    assert parse_sharpness(_stats_block(33.7, 0, 200)) == 33.7
+    assert parse_sharpness("no stats") is None
+
+def test_pick_strongest_uses_sharpness_to_break_blur():
+    # Among floor-passing candidates, the crisp frame wins even though another is busier but soft.
+    cands = [
+        {"t": 10.0, "luma": 120.0, "contrast": 100.0, "sharpness": 2.0, "scene": 0.0},   # busy but soft
+        {"t": 10.5, "luma": 120.0, "contrast": 60.0, "sharpness": 25.0, "scene": 0.0},   # crisp
+    ]
+    assert pick_strongest(cands)["t"] == 10.5
 
 def test_pick_strongest_picks_highest_contrast_survivor():
     cands = [
