@@ -317,6 +317,19 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def hook_critic_advisory(self) -> bool:
+        # M2 / finding #3 (de-veto): the specificity critic is ADVISORY BY DEFAULT — at the repair cap a
+        # reject KEEPS the raw hook (+ pattern) and LOGS the critic's dissent instead of nulling to a clean
+        # clip. This realizes the operator's standing "don't veto anything, surface the raw output" position
+        # WITHOUT gutting the critic: it still RUNS, still does its one repair pass, still meters, still logs
+        # — it just no longer DELETES a raw hook on a subjective call. The MECHANICAL is_weak_hook floor
+        # (empty / exact-dup / template-cluster) is unaffected — that is hygiene, not taste. DEFAULT ON;
+        # set FANOPS_HOOK_CRITIC_ADVISORY=0 to restore the hard terminal veto (opt-OUT shape, mirrors
+        # hook_judge); FANOPS_HOOK_JUDGE=0 still drops the critic entirely.
+        v = (os.getenv("FANOPS_HOOK_CRITIC_ADVISORY") or "").strip().lower()
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON; only explicit off-words restore the veto
+
+    @property
     def impact_cut(self) -> bool:
         # M4 structural-hooks: the impact-cut PRODUCER (suggest plans for router-reserved moments + render
         # operator-approved plans into stitch_draft clips). Per-format gate, DEFAULT OFF (the PRD risk-row

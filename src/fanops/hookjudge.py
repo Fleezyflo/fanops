@@ -129,6 +129,7 @@ def ingest_hook_judge(led: Ledger, cfg: Config) -> Ledger:
     is wrapped so any failure falls through to the safe null path, never a half-mutated render-old state."""
     if not cfg.hook_judge:
         return led
+    advisory = cfg.hook_critic_advisory               # M2: read once -> this pass enforces or advises
     for batch in _batches(_judgeable(led)):
         dec = read_response(cfg, "hookjudge", _digest(batch), HookJudgeDecision)
         if dec is None:
@@ -151,9 +152,13 @@ def ingest_hook_judge(led: Ledger, cfg: Config) -> Ledger:
                         reopened = False
                 if reopened:
                     continue                             # editor + critic will run again; do NOT finalize
-                mo.hook = None                           # cap reached (or re-open failed) -> clean clip
-                mo.hook_pattern = None
-                mo.hook_feedback = None
+                if advisory:                             # M2: critic is advisory -> KEEP the raw hook + pattern,
+                    mo.hook_feedback = None              # clear the unread carrier (the trace is the log line below)
+                    get_logger(cfg)("hookjudge", m.id, "advisory_keep", why=(it.why or "")[:120])
+                else:
+                    mo.hook = None                       # enforce: cap reached (or re-open failed) -> clean clip
+                    mo.hook_pattern = None
+                    mo.hook_feedback = None
             elif it is not None:                         # explicit keep -> finalize, clear any feedback
                 mo.hook_feedback = None
             mo.hook_judged = True

@@ -377,3 +377,14 @@ def test_aware_reframe_flag_default_off_and_env_on(tmp_path, monkeypatch):
     assert Config(root=tmp_path).aware_reframe is True
     monkeypatch.setenv("FANOPS_AWARE_REFRAME", "off")
     assert Config(root=tmp_path).aware_reframe is False
+
+def test_hook_critic_advisory_default_on_and_opt_out(tmp_path, monkeypatch):
+    # M2 / finding #3 (de-veto): advisory is DEFAULT ON — the critic no longer DELETES a raw hook on a
+    # subjective call (it still runs+repairs+meters+logs). Opt-OUT shape (mirrors hook_judge): only an
+    # explicit off-word restores the hard terminal veto.
+    monkeypatch.delenv("FANOPS_HOOK_CRITIC_ADVISORY", raising=False)
+    assert Config(root=tmp_path).hook_critic_advisory is True            # DEFAULT ON (raw output, no veto)
+    monkeypatch.setenv("FANOPS_HOOK_CRITIC_ADVISORY", "0")
+    assert Config(root=tmp_path).hook_critic_advisory is False           # explicit opt-out -> restore the veto
+    monkeypatch.setenv("FANOPS_HOOK_CRITIC_ADVISORY", "on")
+    assert Config(root=tmp_path).hook_critic_advisory is True
