@@ -263,3 +263,66 @@ def test_crosspost_all_route_bulk(tmp_path):
     assert r.status_code == 200
     awaiting = [p for p in Ledger.load(cfg).posts.values() if p.state is PostState.awaiting_approval and p.account == "@b"]
     assert len(awaiting) == 1
+
+def test_review_renders_removed_hook_badge(tmp_path):
+    # slice 1: a moment whose hook was stripped surfaces a "hook removed" badge + the text in /review,
+    # so the operator SEES the hook that was killed (the clip itself still ran clean).
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped, hook_removed="made it and lost everything"))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+    r = _client(cfg).get("/review")
+    assert r.status_code == 200
+    assert b"hook removed" in r.data and b"made it and lost everything" in r.data
+
+
+def _seed_removed_hook(cfg):
+    # slice 2: a clip whose moment hook was stripped, with one awaiting post — the removed-hook choice setup.
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped, hook_removed="made it and lost everything"))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+
+
+def test_review_renders_both_hook_choice_buttons(tmp_path):
+    # slice 2: the removed-hook card offers BOTH one-click choices.
+    cfg = Config(root=tmp_path); _seed_removed_hook(cfg)
+    r = _client(cfg).get("/review")
+    assert r.status_code == 200
+    assert b"Approve with hook" in r.data and b"Approve as-is" in r.data
+
+
+def test_approve_with_hook_route_restores_and_approves(tmp_path, mocker):
+    cfg = Config(root=tmp_path); _seed_removed_hook(cfg)
+    def _fake(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
+        c = next(c for c in led.clips.values() if c.parent_id == moment_id and c.aspect is aspect)
+        new = c.model_copy(update={"state": ClipState.rendered, "meta_captions": {}})
+        led.clips[c.id] = new; return led, new
+    mocker.patch("fanops.clip.render_moment", side_effect=_fake)
+    r = _client(cfg).post("/posts/approve-with-hook/clip_1")
+    assert r.status_code == 200 and b"hook restored" in r.data
+    led = Ledger.load(cfg)
+    assert led.moments["mom_1"].hook == "made it and lost everything" and led.moments["mom_1"].hook_removed is None
+    assert led.posts["p1"].state is PostState.queued
+
+
+def test_approve_as_is_route_approves_clean(tmp_path):
+    cfg = Config(root=tmp_path); _seed_removed_hook(cfg)
+    r = _client(cfg).post("/posts/approve-as-is/clip_1")
+    assert r.status_code == 200 and b"Approved 1 post" in r.data
+    led = Ledger.load(cfg)
+    assert led.posts["p1"].state is PostState.queued
+    assert led.moments["mom_1"].hook is None                 # shipped clean — not restored

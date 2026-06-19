@@ -79,6 +79,9 @@ class ReviewCard:
     day: Optional[str] = None            # content-lifecycle Phase 3: the ingest day (YYYY-MM-DD via source.
                                          # created_at) this card buckets under; only set on editable cards (the
                                          # day-sorted approve worklist). None elsewhere. 'undated' = broken lineage.
+    hook_removed: Optional[str] = None   # Moment.hook_removed: the model's hook is_weak_hook stripped. Present ->
+                                         # the clip is clean but a good hook was killed; Review badges it + offers
+                                         # "approve with hook". None -> nothing was stripped.
 
 
 @dataclass
@@ -202,11 +205,13 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
     surfaces = [_surface(p, persona=personas.get(p.account), now=now)
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
+    mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed (clip -> moment)
     return ReviewCard(
         clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name, label=label,
         moment_window=window, reason=reason, language=language, subtitles_burned=cfg.burn_subs,
         held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
-        surfaces=surfaces, bucket=bucket, clip_state=clip.state.value)
+        surfaces=surfaces, bucket=bucket, clip_state=clip.state.value,
+        hook_removed=(mom.hook_removed if mom is not None else None))
 
 def _card_day(led: Ledger, card: ReviewCard) -> str:
     """The ingest day (YYYY-MM-DD) a Review card buckets under: clip -> moment -> source.created_at.

@@ -681,6 +681,86 @@ def unapprove_post(cfg: Config, post_id: str) -> ActionResult:
         return ActionResult(ok=False, error=f"unapprove failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": post_id})
 
+def _warm_hooked_render(cfg: Config, moment_id: str, aspect, hook: str) -> None:
+    """Lock-free pre-render of the HOOKED clip (mirror _warm_target_aspect, but FORCE the burn): set the
+    restored hook on a THROWAWAY Ledger.load snapshot's moment and call render_moment, which writes cid.mp4
+    + its fingerprint sidecar with the hook burned and NO flock held. The in-lock render_moment in
+    approve_with_hook then hits the fingerprint-skip and adopts it WITHOUT running ffmpeg under the lock —
+    _clip_for_aspect would have REUSED the old clean render, so the warm must drive render_moment directly.
+    FAIL-OPEN: any error just means the in-lock path renders (bounded 600s); the snapshot is discarded."""
+    from fanops.clip import render_moment
+    try:
+        snap = Ledger.load(cfg)
+        mom = snap.moments.get(moment_id)
+        if mom is None: return
+        snap.moments[moment_id] = mom.model_copy(update={"hook": hook, "hook_removed": None})
+        render_moment(snap, cfg, moment_id, aspect=aspect)
+    except Exception: pass
+
+def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """The 'restore the auto-removed hook, then approve' half of the removed-hook choice (the operator's
+    core ask, slice 2). RESTORES moment.hook from moment.hook_removed, RE-RENDERS the clip so the hook BURNS
+    into the mp4 (lock-free pre-warm -> in-lock fingerprint-skip; mirrors crosspost's #4 warm), PRESERVES the
+    clip's captioned state + per-surface captions across the re-render, then approves EVERY awaiting_approval
+    post of the clip. A render failure rolls the whole thing back (atomic) and surfaces the error — the
+    operator asked for the hook, so we never silently ship clean. No awaiting posts -> a clean no-op that
+    does NOT touch a possibly-shipped render. One transaction for the commit; the heavy ffmpeg ran outside it."""
+    from fanops.clip import render_moment
+    if cfg.creative_variation:
+        return ActionResult(ok=False, error="creative variation is ON — per-surface hooks own the on-screen "
+                            "burn, so the moment hook can't be restored this way (turn off FANOPS_CREATIVE_VARIATION).")
+    now_iso = iso_z(_now(now))
+    snap = Ledger.load(cfg)                               # lock-free: resolve the removed hook + PRE-WARM the render
+    c0 = snap.clips.get(clip_id)
+    if c0 is None: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
+    m0 = snap.moments.get(c0.parent_id)
+    removed = (m0.hook_removed if m0 is not None else None)
+    if removed: _warm_hooked_render(cfg, c0.parent_id, c0.aspect, removed)   # ffmpeg OUTSIDE the flock
+    approved = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            clip = led.clips.get(clip_id)
+            if clip is None: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
+            ids = [p.id for p in led.posts.values()
+                   if p.parent_id == clip_id and p.state is PostState.awaiting_approval]
+            mom = led.moments.get(clip.parent_id)
+            restored = (mom.hook_removed if mom is not None else None)
+            if ids and restored:                          # only re-render when there's actually a post to ship with it
+                led.moments[clip.parent_id] = mom.model_copy(update={"hook": restored, "hook_removed": None})
+                orig = led.clips[clip_id]
+                led, rc = render_moment(led, cfg, clip.parent_id, aspect=clip.aspect)   # fp-skip adopts the warm mp4
+                if rc.state is ClipState.error:
+                    raise RuntimeError(rc.error_reason or "clip re-render failed")
+                if rc.hook_burn_failed:                        # CRITICAL (ecc review): a SUCCESSFUL render that
+                    # couldn't burn the hook (ffmpeg lacks the text filter, or the hook made no burnable text)
+                    # would ship the post CLEAN. The operator asked for the hook -> roll back, never silent-clean.
+                    raise RuntimeError("hook burn failed — ffmpeg can't render on-screen text (no libass), "
+                                       "or the hook produced nothing burnable; not shipping clean")
+                led.clips[clip_id] = led.clips[clip_id].model_copy(
+                    update={"state": orig.state, "meta_captions": orig.meta_captions})   # keep captioned state + captions
+            for pid in ids: led.approve_post(pid, now_iso=now_iso)
+            approved = len(ids)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"approve-with-hook failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"approved": approved, "clip_id": clip_id, "hook": bool(removed)})
+
+def approve_as_is(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """The 'ship it clean' half of the removed-hook choice: one-click approve EVERY awaiting_approval post of
+    a clip WITHOUT restoring the auto-removed hook. Scoped to one clip so the operator clicks once instead of
+    ticking each surface; mirrors approve_posts otherwise. hook_removed stays on the moment as a record (the
+    choice re-applies to any future repost). One transaction, idempotent, never a 500."""
+    now_iso = iso_z(_now(now))
+    approved = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            ids = [p.id for p in led.posts.values()
+                   if p.parent_id == clip_id and p.state is PostState.awaiting_approval]
+            for pid in ids: led.approve_post(pid, now_iso=now_iso)
+            approved = len(ids)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"approved": approved, "clip_id": clip_id, "hook": False})
+
 def approve_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
     """M3 operator approval (multi-select): suggested -> approved for each selected stitch_plan in ONE
     transaction, idempotent (a non-suggested plan is a no-op). Never a 500."""

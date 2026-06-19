@@ -151,6 +151,18 @@ def create_app(cfg: Config) -> Flask:
         # Review worklist so the returned post is visible there again; surface any error (unknown post, etc.).
         return _review_panel(actions.unapprove_post(cfg, post_id))
 
+    @app.post("/posts/approve-with-hook/<clip_id>")
+    def do_approve_with_hook(clip_id):
+        # removed-hook choice (slice 2): restore the auto-stripped hook, re-render so it burns, then approve
+        # every awaiting post of this clip in ONE click. Re-render the Review worklist so the card leaves it.
+        return _review_panel(actions.approve_with_hook(cfg, clip_id))
+
+    @app.post("/posts/approve-as-is/<clip_id>")
+    def do_approve_as_is(clip_id):
+        # removed-hook choice (slice 2): ship the clip CLEAN — approve every awaiting post without restoring
+        # the hook. One click per card; mirrors do_approve_with_hook's panel re-render.
+        return _review_panel(actions.approve_as_is(cfg, clip_id))
+
     def _schedule_panel(result=None, *, full=False):
         rows = views.schedule_rows(Ledger.load(cfg), cfg, now=datetime.now(timezone.utc))
         tmpl = "schedule.html" if full else "_schedule_panel.html"
