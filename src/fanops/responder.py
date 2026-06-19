@@ -47,6 +47,8 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
     images = None
     if kind in ("hookedit", "hookjudge"):
         images = [f for it in payload.get("items", []) for f in (it.get("frames") or [])] or None
+    elif kind == "moments":
+        images = payload.get("frames") or None            # Phase 1: the author SEES the source stills (top-level frames)
     prompt = _PROMPT[kind](payload)
     out, answered = claude_json_meta(prompt, schema, images=images,
                                      model=(cfg.llm_model_for(kind) if cfg else None))

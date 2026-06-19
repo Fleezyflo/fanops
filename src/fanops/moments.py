@@ -12,8 +12,24 @@ from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook, normalize_hook_pattern
+from fanops.keyframes import extract_keyframes
 from fanops.log import get_logger
 from fanops.control import load_guidance
+import os
+
+# Phase 1: how many SOURCE stills the vision author gets. Sampled evenly across the whole source (the
+# clip isn't rendered yet at the moments gate, so frames come from the source span, not a clip window).
+# Bounded so the opus+vision call stays under the claude -p ceiling (mirrors hookedit's image budget).
+_AUTHOR_FRAME_COUNT = 6
+
+def _source_frames(cfg: Config, src) -> list[str]:
+    """A few stills sampled across the whole SOURCE — the author's EYES when it picks moments + writes
+    hooks. Fail-open exactly like hookedit._frames: no real source file (tests / not-yet-downloaded) or
+    an unprobed/zero duration -> [] -> text-only author, never spawns ffmpeg on a path that isn't there."""
+    if not (src.source_path and os.path.exists(src.source_path) and (src.duration or 0) > 0):
+        return []
+    return extract_keyframes(src.source_path, 0.0, src.duration, count=_AUTHOR_FRAME_COUNT,
+                             out_dir=cfg.agent_io / "keyframes" / src.id)
 
 def _token(pick: MomentPick) -> str:
     return f"{pick.start:.2f}-{pick.end:.2f}"
@@ -59,7 +75,8 @@ def request_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                             signal_peaks=src.signal_peaks or [],
                             language=src.language,
                             guidance=load_guidance(cfg),
-                            clip_profile=cfg.clip_profile).model_dump()   # band reaches the model's picks
+                            clip_profile=cfg.clip_profile,
+                            frames=_source_frames(cfg, src)).model_dump()   # band + the author's eyes reach the picks
     payload.pop("request_id", None)
     write_request(cfg, kind="moments", key=source_id, payload=payload)
     led.set_source_state(source_id, SourceState.moments_requested)

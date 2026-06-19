@@ -56,9 +56,10 @@ _STAGE = {
 PosterBackend = Literal["dryrun", "postiz", "rest", "mcp"]
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "rest", "mcp"})
 
-# Per-gate model tier (llm_model_for): MECHANICAL gates default to sonnet (fast), CREATIVE hook gates
-# to opus (the on-screen retention hook is the watch-through driver). FANOPS_LLM_MODEL overrides all.
-_GATE_MODEL_DEFAULTS = {"moments": "sonnet", "captions": "sonnet", "hookedit": "opus", "hookjudge": "opus"}
+# Per-gate model tier (llm_model_for): the `moments` gate is the CREATIVE VISION hook AUTHOR (Phase 1 —
+# it SEES source frames and writes the on-screen retention hook, the watch-through driver) -> opus.
+# `captions` (hashtags only) stays MECHANICAL -> sonnet. FANOPS_LLM_MODEL overrides all.
+_GATE_MODEL_DEFAULTS = {"moments": "opus", "captions": "sonnet", "hookedit": "opus", "hookjudge": "opus"}
 
 class Config:
     def __init__(self, root: Path | str | None = None):

@@ -230,7 +230,7 @@ def test_default_model_pins_llm_model_and_logs_provenance(mocker, tmp_path):
     logfn = mocker.Mock()
     out = _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
     assert out == {"picks": []}
-    assert meta.call_args.kwargs["model"] == "sonnet"                      # per-gate pin: moments -> sonnet
+    assert meta.call_args.kwargs["model"] == "opus"                        # per-gate pin: moments -> opus (vision author)
     prov = next(c for c in logfn.call_args_list if c.args[2] == "call")     # the provenance line
     assert prov.args[0] == "llm"
     assert prov.kwargs["model"] == "claude-opus-4-x"                        # the answering model surfaced
@@ -246,7 +246,7 @@ def test_default_model_provenance_falls_back_to_pinned_when_envelope_lacks_model
     logfn = mocker.Mock()
     _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
     prov = next(c for c in logfn.call_args_list if c.args[2] == "call")
-    assert prov.kwargs["model"] == "sonnet" and prov.kwargs["brief_sha"] == "absent"   # moments -> sonnet
+    assert prov.kwargs["model"] == "opus" and prov.kwargs["brief_sha"] == "absent"   # moments -> opus
 
 def test_llm_responder_answers_hookedit_gate(tmp_path, monkeypatch):
     # The feed-aware hook editor rides the same gate contract: a pending hookedit request is answered

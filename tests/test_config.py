@@ -53,7 +53,7 @@ def test_llm_model_global_override_forces_all_gates(monkeypatch, tmp_path):
 def test_llm_model_blank_override_falls_back_to_per_gate(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_LLM_MODEL", "   ")               # whitespace-only -> per-gate defaults
     c = Config(root=tmp_path)
-    assert c.llm_model_for("moments") == "sonnet" and c.llm_model_for("hookedit") == "opus"
+    assert c.llm_model_for("moments") == "opus" and c.llm_model_for("captions") == "sonnet"
 
 def test_hook_editor_defaults_on(monkeypatch, tmp_path):
     # Phase C2: the feed-aware hook editor closes the weakest link (template clustering); it must be
