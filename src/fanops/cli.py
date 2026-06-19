@@ -361,6 +361,9 @@ def main(argv: list[str] | None = None) -> int:
     p_cmet.add_argument("submission_id")
     p_clift = cut_sub.add_parser("lift", help="step 4: compute one real lift_score from the captured row")
     p_clift.add_argument("submission_id")
+    p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
+    learn_sub = p_learn.add_subparsers(dest="learn_cmd", required=True)
+    learn_sub.add_parser("doctor", help="read-only: does live Postiz analytics carry the reach signal lift_score needs?")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
     dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
@@ -532,6 +535,11 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
+    if args.cmd == "learn":
+        if args.learn_cmd == "doctor":
+            from fanops.learn_doctor import cmd_learn_doctor   # lazy: keeps requests/postiz off the core path
+            return cmd_learn_doctor(cfg)
+        return 2
     if args.cmd == "doctor":   return cmd_doctor(cfg)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)

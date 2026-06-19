@@ -15,6 +15,13 @@ def test_main_status(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert main(["status"]) == 0
 
+def test_main_learn_doctor_dispatches_read_only(tmp_path, monkeypatch, capsys):
+    # `fanops learn doctor` wires to the read-only field-shape verdict; on a default (dryrun) backend
+    # it prints guidance and exits 0 without touching the network.
+    monkeypatch.chdir(tmp_path)
+    assert main(["learn", "doctor"]) == 0
+    assert "postiz" in capsys.readouterr().out.lower()
+
 def test_advance_exits_cleanly_when_ffprobe_absent(tmp_path, monkeypatch, capsys):
     # ffprobe missing at ingest (ingest_drops runs OUTSIDE the pipeline quarantine) must NOT crash
     # `fanops advance` with a raw traceback. It surfaces as a typed ToolchainMissingError ->

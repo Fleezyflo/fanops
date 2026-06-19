@@ -70,6 +70,7 @@ class Config:
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
+        self.learn_doctor_path = self.control / "learn_doctor.json"   # F2 read-only learning field-shape verdict; M4 gates on it
         self.log_path = self.reports / "run.log"
 
     def tuning(self) -> dict:
