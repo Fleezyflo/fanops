@@ -254,6 +254,16 @@ class Config:
         return v in {"1", "true", "yes", "on"}
 
     @property
+    def aware_reframe(self) -> bool:
+        # Theme 2 (pipeline-quality): bias a VERTICAL height-crop toward the upper third so a subject's
+        # head isn't cut by ffmpeg's default centre crop (clip.reframe_filter). OPT-IN/DEFAULT OFF —
+        # evidence-gated: the artist's content is predominantly vertical (routes to the non-cropping
+        # scale path), so this ships dark until an operator sees the decapitation and enables it. Only
+        # the explicit on-words enable it; off -> today's centered reframe, byte-identical. Mirrors burn_subs.
+        v = (os.getenv("FANOPS_AWARE_REFRAME") or "").strip().lower()
+        return v in {"1", "true", "yes", "on"}
+
+    @property
     def subtitle_font(self) -> str:
         # Operator override for the .ass subtitle font. Default "Arial Unicode MS" — an
         # Arabic-capable face so RTL captions render; change it (FANOPS_SUBTITLE_FONT) if the

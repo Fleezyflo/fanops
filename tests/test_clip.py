@@ -27,6 +27,66 @@ def test_reframe_filter_handles_vertical_source():
     assert "crop" in wide or "scale" in wide
     assert "crop=ih*9/16" not in tall or "1080:1920" in tall  # no impossible crop on tall src
 
+# ---- Theme 2: upper-third crop bias (aware reframe), default-OFF, byte-identical when off ----
+
+def test_reframe_filter_top_bias_off_is_byte_identical():
+    # Default (top_bias=False) must equal today's reframe across every aspect + source shape.
+    for aspect in ("9:16", "1:1", "16:9"):
+        for w, h in ((1080, 1920), (1920, 1080), (1080, 1080), (0, 0)):
+            assert reframe_filter(aspect, w, h, top_bias=True) is not None  # callable with the new kw
+            assert reframe_filter(aspect, w, h, top_bias=False) == reframe_filter(aspect, w, h)
+
+def test_reframe_filter_top_bias_lifts_a_vertical_height_crop():
+    # A vertical source -> 1:1 target crops HEIGHT; the centered crop cuts the top (heads). top_bias
+    # offsets the crop window UP (keeps headroom) — an explicit y offset, not the ffmpeg-default centre.
+    centered = reframe_filter("1:1", 1080, 1920)
+    biased = reframe_filter("1:1", 1080, 1920, top_bias=True)
+    assert biased != centered
+    assert ":0:" in biased and "/4" in biased            # upper-biased crop x=0, y=(leftover)/4
+    assert biased.startswith("crop=iw:iw*1080/1080")
+
+def test_reframe_filter_top_bias_noop_on_scale_only_and_width_crop():
+    # 9:16->9:16 is scale-only (no crop); a wide source -> tall target crops WIDTH (full height kept).
+    # Neither decapitates vertically, so top_bias leaves both byte-identical.
+    assert reframe_filter("9:16", 1080, 1920, top_bias=True) == reframe_filter("9:16", 1080, 1920)
+    assert reframe_filter("9:16", 1920, 1080, top_bias=True) == reframe_filter("9:16", 1920, 1080)
+
+def test_ffmpeg_clip_cmd_threads_top_bias():
+    cmd = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 1.5, 8.0, "1:1", src_w=1080, src_h=1920, top_bias=True)
+    assert reframe_filter("1:1", 1080, 1920, top_bias=True) in _vf_of(cmd)
+    # default (no top_bias) stays exactly today's centered reframe
+    plain = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 1.5, 8.0, "1:1", src_w=1080, src_h=1920)
+    assert _vf_of(plain) == reframe_filter("1:1", 1080, 1920)
+
+def test_render_fingerprint_includes_top_bias():
+    # Toggling aware-reframe on an already-rendered clip MUST bust the Phase D warm-skip (a different
+    # crop is different bytes) — so the fingerprint depends on the bias.
+    from fanops.clip import _render_fingerprint
+    base = _render_fingerprint("/s.mp4", 0.0, 10.0, "1:1", 1080, 1920, "")
+    biased = _render_fingerprint("/s.mp4", 0.0, 10.0, "1:1", 1080, 1920, "", top_bias=True)
+    assert base != biased
+    assert _render_fingerprint("/s.mp4", 0.0, 10.0, "1:1", 1080, 1920, "", top_bias=False) == base  # off == today
+
+def test_render_moment_applies_top_bias_when_enabled(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")          # isolate from the frame probe
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1080, height=1920, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=10, end=28, reason="r", state=MomentState.decided))
+    captured = {}
+    def run(cmd, **kw):
+        if not str(cmd[-1]).startswith("-"):
+            captured["cmd"] = cmd; out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r1x1)
+    vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
+    assert ":0:" in vf and "/4" in vf                      # the biased crop reached ffmpeg
+
 def test_render_moment_creates_clip_with_aspect(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),

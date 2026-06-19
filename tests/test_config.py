@@ -367,3 +367,13 @@ def test_publish_lead_minutes_negative_clamps_to_zero(monkeypatch):
     from fanops.config import Config
     monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", "-30")
     assert Config().publish_lead_minutes == 0
+
+def test_aware_reframe_flag_default_off_and_env_on(tmp_path, monkeypatch):
+    # Theme 2: the upper-third crop bias is OPT-IN (mirrors burn_subs). Default OFF -> today's
+    # centered reframe; only the explicit on-words enable it.
+    monkeypatch.delenv("FANOPS_AWARE_REFRAME", raising=False)
+    assert Config(root=tmp_path).aware_reframe is False
+    monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")
+    assert Config(root=tmp_path).aware_reframe is True
+    monkeypatch.setenv("FANOPS_AWARE_REFRAME", "off")
+    assert Config(root=tmp_path).aware_reframe is False

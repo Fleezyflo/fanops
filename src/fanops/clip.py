@@ -188,8 +188,12 @@ def pick_visual_start(src_path: str, start: float, end: float, *, scene_peaks, o
         pass                                                # write failure just re-probes next time
     return new_start, kind
 
-def reframe_filter(aspect: str, src_w: int, src_h: int) -> str:
-    """Pick a safe ffmpeg -vf for the target aspect given the source dimensions."""
+def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = False) -> str:
+    """Pick a safe ffmpeg -vf for the target aspect given the source dimensions. With `top_bias`
+    (Theme 2, opt-in) a VERTICAL height-crop offsets its window UP — keeping headroom so a subject in
+    the upper third isn't decapitated by ffmpeg's default centre crop. top_bias affects ONLY the
+    height-crop branch (a scale-only or width-crop reframe keeps full height, so there is nothing to
+    decapitate); every other path — and top_bias=False — is byte-identical to today."""
     tw, th = _TARGETS[aspect]
     if not src_w or not src_h:
         # unknown source: scale to fit + pad to exact target (never an impossible crop)
@@ -200,19 +204,23 @@ def reframe_filter(aspect: str, src_w: int, src_h: int) -> str:
     if abs(src_ar - tgt_ar) < 0.01:
         return f"scale={tw}:{th},setsar=1"
     if src_ar > tgt_ar:
-        # source wider than target -> crop width
+        # source wider than target -> crop width (full height kept -> no vertical decapitation)
         return f"crop=ih*{tw}/{th}:ih,scale={tw}:{th},setsar=1"
-    # source taller/narrower than target -> crop height
+    # source taller/narrower than target -> crop height. top_bias lifts the window to the upper
+    # quarter of the leftover (vs ffmpeg's default centre) so heads survive; else centre (today).
+    if top_bias:
+        return f"crop=iw:iw*{th}/{tw}:0:(ih-iw*{th}/{tw})/4,scale={tw}:{th},setsar=1"
     return f"crop=iw:iw*{th}/{tw},scale={tw}:{th},setsar=1"
 
 def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
-                    *, src_w: int = 0, src_h: int = 0, extra_vf: str | None = None) -> list[str]:
+                    *, src_w: int = 0, src_h: int = 0, extra_vf: str | None = None,
+                    top_bias: bool = False) -> list[str]:
     # -ss before -i (fast seek) makes output-position -to a DURATION measured from the seek
     # point, so it must be (end - start), not the absolute end. Verified on ffmpeg 8.0.1:
     # `-ss 1.5 -to 6.5` yields a 6.5s clip; passing 8.0 here would yield 8.0s (the F39 bug).
     # extra_vf (e.g. the burned-subtitles `subtitles=...` token) is chained AFTER the reframe
     # with a comma so it operates on the already-reframed frame; default None == old behavior.
-    vf = reframe_filter(aspect, src_w, src_h)
+    vf = reframe_filter(aspect, src_w, src_h, top_bias=top_bias)
     if extra_vf:
         vf = f"{vf},{extra_vf}"
     return ["ffmpeg", "-y", "-ss", str(start), "-i", src, "-to", str(end - start),
@@ -266,9 +274,11 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
 # lock-free pre-warm and the in-lock commit agree on when an existing mp4 may be reused. This is what
 # lets the heavy ffmpeg run OUTSIDE the ledger lock and the commit pass skip it.
 def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
-                        src_w: int, src_h: int, ass_text: str) -> str:
+                        src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False) -> str:
     payload = {"src": src_path, "cs": round(cs, 3), "ce": round(ce, 3), "aspect": aspect_value,
                "w": src_w, "h": src_h, "ass": ass_text}
+    if top_bias:                                          # additive: absent key -> byte-identical fp to today
+        payload["top_bias"] = True
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
 
@@ -326,7 +336,8 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     # moment. A changed hook/window yields a different fingerprint -> re-render (no stale clip reuse).
     ass_path = cfg.clips / f"{cid}.ass"
     ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
-    fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0, ass_text)
+    fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0,
+                             ass_text, top_bias=cfg.aware_reframe)
     fp_path = cfg.clips / f"{cid}.render.json"
     if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
         # An fp-match means a prior render of THIS exact window already passed (the fp is stamped only
@@ -339,7 +350,8 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
             led.set_moment_state(moment_id, MomentState.clipped)
         return led, clip
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
-                          src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf)
+                          src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
+                          top_bias=cfg.aware_reframe)
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
