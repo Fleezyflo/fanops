@@ -33,7 +33,9 @@ def _frames(led: Ledger, cfg: Config, m: Moment) -> list[str]:
 
 # A VISION critic now (Task 6): it sends a few FRAMES per item, so — like the editor — the judgeable
 # set is CHUNKED into gates of at most this many moments to keep image counts per claude call sane.
-_MAX_JUDGE_BATCH = 8
+# 4 (not 8) for the same reason as _MAX_EDIT_BATCH: 8 x 3 = 24 images on OPUS exceeded the 300s
+# `claude -p` ceiling on a 46-clip corpus -> timeout -> blocked. 12 images/call stays well under it.
+_MAX_JUDGE_BATCH = 4
 # Task 7: one bounded author<->critic repair round. A reject while hook_rounds < this re-opens the hook
 # for ONE editor pass; a reject at the cap nulls to a clean clip. 1 = at most one repair (clean beats slop).
 _MAX_REPAIR = 1

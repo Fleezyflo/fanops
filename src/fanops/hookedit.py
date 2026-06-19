@@ -34,7 +34,11 @@ def _frames(led: Ledger, cfg: Config, m: Moment) -> list[str]:
 # into a single claude call (46 clips x 3 = ~138 images). So the editable set is CHUNKED into gates
 # of at most this many moments — sane image counts per call, while ingest's cross-batch `used` dedup
 # still enforces feed-wide distinctness.
-_MAX_EDIT_BATCH = 8
+# 8 was too big in practice: 8 x 3 = 24 images on OPUS regularly ran 2-4 min and a 46-clip corpus had
+# batches exceed the 300s `claude -p` ceiling -> timeout -> retry -> render BLOCKED (the run never made
+# a clip). 4 (12 images/call) keeps each opus+vision call comfortably under the timeout; the cross-batch
+# dedup still gives feed-wide hook distinctness, so smaller batches cost throughput, not quality.
+_MAX_EDIT_BATCH = 4
 
 def _editable(led: Ledger) -> list[Moment]:
     """Decided moments that HAVE a hook and have not yet been edited — what this pass owns. A None
