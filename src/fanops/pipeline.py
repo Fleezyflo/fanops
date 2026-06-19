@@ -3,6 +3,8 @@ chain as far as it can and PAUSES at each agent gate (moments, captions). EVERY 
 call is wrapped so one bad source/moment/clip goes to `error` and is skipped — it never wedges
 the whole pass (FIX F03). Returns counts + awaiting{moments,captions}."""
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.errors import AuthError
@@ -49,6 +51,114 @@ def _parse(ts):
         return None
 
 def _prewarm(cfg: Config, aspects: set[Fmt], log) -> None:
+    """Pre-warm dispatcher (parallel-source pipeline). DEFAULT OFF -> the EXACT existing sequential
+    body below (byte-identical; the pool is never constructed). With FANOPS_CONCURRENT_SOURCES on,
+    the slow per-source subprocess stages run in a bounded thread pool instead — see _prewarm_concurrent.
+    Either path leaves the SAME on-disk artifacts warm; the main transaction in advance() (the single
+    serial reduce / one writer) re-runs the stages in-lock and skips on the warm artifacts exactly as
+    today, so the committed ledger state is identical regardless of this flag."""
+    if cfg.concurrent_sources:
+        _prewarm_concurrent(cfg, aspects, log); return
+    _prewarm_sequential(cfg, aspects, log)
+
+@dataclass(frozen=True)
+class SourceResult:
+    """The PURE result of a worker's per-source produce pass — a source id + an optional error reason.
+    A worker NEVER mutates a shared ledger / calls save / opens a transaction; it loads its own private
+    throwaway snapshot, runs the slow stages (writing only deterministic on-disk artifacts), and returns
+    one of these. The main transaction (the only writer) re-derives the real state in-lock."""
+    source_id: str
+    error_reason: str | None = None
+
+def _produce_source(cfg: Config, source_id: str, aspects: set[Fmt], *,
+                    hold_edit: bool, hold_judge: bool, log) -> SourceResult:
+    """Worker body for ONE source: load a PRIVATE throwaway Ledger.load(cfg) snapshot, run the slow
+    subprocess chain (transcribe -> detect_signals) on this source, finalize hooks on the private
+    ledger (ledger-only, no disk side effects), then render THIS source's decided moments — warming the
+    exact same on-disk artifacts (transcript JSON, signals sidecar, clip mp4 + fingerprint) the
+    sequential _prewarm warms today. Mirrors _prewarm's per-unit fail-open quarantine but RETURNS a
+    SourceResult instead of mutating in place. NEVER calls led.save()/_save_unlocked/Ledger.transaction
+    — the private in-memory ledger is discarded; only the artifacts + the result survive. The feed-wide
+    hold_edit/hold_judge are computed ONCE serially in _prewarm_concurrent and passed in, so every
+    worker's render-gate decision is identical to the sequential path (determinism)."""
+    err: str | None = None
+    try:
+        led = Ledger.load(cfg)
+    except Exception as e:
+        log("prewarm", source_id, "warn", err=str(e)[:120]); return SourceResult(source_id, str(e)[:120])
+    s = led.sources.get(source_id)
+    if s is None or s.origin_kind == "third_party":
+        return SourceResult(source_id, None)              # gone / inert — nothing to warm
+    try:
+        if s.state is SourceState.catalogued:
+            led = transcribe_source(led, cfg, source_id)
+        if led.sources[source_id].state is SourceState.transcribed:
+            led = detect_signals(led, cfg, source_id)
+    except Exception as e:                                # fail-open: the commit pass retries in-lock
+        log("prewarm", source_id, "warn", err=str(e)[:120]); err = f"{type(e).__name__}: {e}"
+    # Finalize hooks on the PRIVATE ledger (ingest_hook_edit/judge only READ the response + mutate the
+    # ledger — no disk side effects) so a warmed render's fingerprint matches the in-lock render. Mirror
+    # _prewarm's render gate; hold_edit/hold_judge are the feed-wide decision passed in by the caller.
+    if cfg.hook_editor:
+        try: led = ingest_hook_edit(led, cfg)
+        except Exception as e: log("prewarm", source_id, "warn", err=f"hook edit ingest failed: {str(e)[:120]}")
+    if cfg.hook_judge:
+        try: led = ingest_hook_judge(led, cfg)
+        except Exception as e: log("prewarm", source_id, "warn", err=f"hook judge ingest failed: {str(e)[:120]}")
+    for m in list(led.moments.values()):
+        if m.parent_id != source_id: continue             # render only THIS source's moments (disjoint paths)
+        if m.state is MomentState.decided and not (hold_edit and not m.hook_edited) \
+                and not (hold_judge and not m.hook_judged):
+            try:
+                led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
+            except Exception as e:
+                log("prewarm", m.id, "warn", err=str(e)[:120])
+    return SourceResult(source_id, err)
+
+def _prewarm_concurrent(cfg: Config, aspects: set[Fmt], log) -> None:
+    """Parallel map phase (parallel-source pipeline): warm each source's slow subprocess artifacts in a
+    bounded ThreadPoolExecutor instead of one-source-at-a-time, so a long video no longer head-of-line
+    blocks the queue. The pool produces ONLY artifacts + pure SourceResults — NO worker touches the
+    ledger (the one-writer rule). The throwaway ledger here is loaded ONLY to snapshot the eligible
+    source ids and compute the feed-wide hook holds serially (decided-moment hook state is from prior
+    committed passes; this pass's transcribe/signals don't alter it, so the holds match the sequential
+    path). The stitch prewarm tail stays serial. The single main transaction in advance() is the reduce
+    (the only writer) and is UNCHANGED — it re-runs the stages in-lock and skips on the warm artifacts."""
+    try:
+        led = Ledger.load(cfg)
+    except Exception as e:
+        log("prewarm", "-", "warn", err=str(e)[:120]); return
+    ids = [s.id for s in led.sources.values() if s.origin_kind != "third_party"]   # M1: third-party assets are INERT
+    # Feed-wide render holds (same as _prewarm_sequential): don't warm a render of a hook the editor will
+    # rewrite / the judge may reject (the fingerprint would mismatch the in-lock render). Computed ONCE
+    # here and passed to every worker so the render-gate decision is identical across the pool.
+    hold_edit = hold_judge = False
+    if cfg.hook_editor:
+        try:
+            led = ingest_hook_edit(led, cfg)
+            if cfg.responder_mode == "llm": hold_edit = hook_edit_pending(led, cfg)
+        except Exception:
+            hold_edit = False
+    if cfg.hook_judge:
+        try:
+            led = ingest_hook_judge(led, cfg)
+            if cfg.responder_mode == "llm": hold_judge = hook_judge_pending(led, cfg)
+        except Exception:
+            hold_judge = False
+    if ids:
+        with ThreadPoolExecutor(max_workers=cfg.concurrent_workers) as ex:   # bound = rate-limit guardrail, not correctness
+            futs = [ex.submit(_produce_source, cfg, sid, aspects,
+                              hold_edit=hold_edit, hold_judge=hold_judge, log=log) for sid in ids]
+            for fut in as_completed(futs):
+                fut.result()                              # surface a worker crash here (each worker already fail-open)
+    # M4/M6 structural-hooks stitch prewarm stays SERIAL (independent of the per-source map; warms
+    # operator-APPROVED stitch renders lock-free), mirroring _prewarm_sequential's tail.
+    strategies = _enabled_strategies(cfg)
+    if strategies:
+        try: prewarm_approved_stitches(led, cfg, log, strategies=strategies)   # the mutated coordinator led (matches _prewarm_sequential)
+        except Exception as e: log("prewarm", "-", "warn", err=str(e)[:120])
+
+def _prewarm_sequential(cfg: Config, aspects: set[Fmt], log) -> None:
     """Phase D: run ONLY the slow subprocess stages (whisper / ffmpeg signals / ffmpeg render) with NO
     ledger lock held, against a THROWAWAY ledger, so they populate their deterministic on-disk artifacts
     (transcript JSON, signals sidecar, clip mp4 + render fingerprint). The authoritative transaction in

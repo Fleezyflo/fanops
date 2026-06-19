@@ -27,8 +27,14 @@ import pytest
 # session makes refresh_store fire a REAL ig_hashtag_search over the network (60s timeout, flaky/CI-
 # breaking). Stripping them makes every test see the OFF default; the trend tests set them + inject a
 # mock `get` explicitly.
+# FANOPS_CONCURRENT_SOURCES/FANOPS_CONCURRENT_WORKERS ride along (parallel-source pipeline): the
+# concurrency flag DEFAULTS OFF (the byte-identical contract), so an operator's repo .env carrying
+# =1 leaking into the session would silently flip every test onto the pooled path (and the worker
+# count along with it). Stripping them makes each test see the OFF default; the concurrent tests
+# set them explicitly via monkeypatch and get clean teardown.
 _LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_HOOK_JUDGE",
-              "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL")
+              "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL",
+              "FANOPS_CONCURRENT_SOURCES", "FANOPS_CONCURRENT_WORKERS")
 
 
 @pytest.fixture(autouse=True)
