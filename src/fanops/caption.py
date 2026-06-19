@@ -251,6 +251,10 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         tags = vet_hashtags(item.hashtags or _tags_in(item.caption), plat,
                             src.language if src else None, store=load_store(cfg))   # M4: live store when present
         clip.meta_captions[item.surface] = {"caption": " ".join(tags), "hashtags": tags,
+                                            # finding #3: keep the model's RAW tag picks (verbatim, before
+                                            # the vet filter) so Studio can show picked-vs-vetted, not just
+                                            # the survivors. Display-only; the posted line is still `tags`.
+                                            "hashtags_raw": [str(h) for h in (item.hashtags or [])],
                                             "hook": sanitize_generated_text(item.hook, max_words=7),
                                             # P2: carry the variant's declared axis (normalized) + rationale
                                             "axis": normalize_variation_axis(item.axis),

@@ -76,3 +76,50 @@ def test_vet_hashtags_store_aware_and_byte_identical_without_store():
     out = vet_hashtags(["#mytrend", "#garbageword"], Platform.instagram, "en", store=["#mytrend", "#second"])
     assert "#mytrend" in out and "#garbageword" not in out
     assert len(out) <= 4
+
+
+# --- M4 live trend half: refresh_store blends Meta Graph trend sampling on top of own-reach ----------
+class _Resp:
+    def __init__(self, status=200, body=None): self.status_code = status; self._body = body
+    def json(self):
+        if self._body is None: raise ValueError("no json")
+        return self._body
+
+def _trend_router(score_by_id):
+    def get(url, params=None, timeout=None):
+        if "ig_hashtag_search" in url:
+            return _Resp(200, {"data": [{"id": "id-" + (params or {}).get("q", "")}]})
+        if "top_media" in url:
+            return _Resp(200, {"data": [{"like_count": score_by_id, "comments_count": 0}]})
+        return _Resp(404, None)
+    return get
+
+def test_refresh_store_trends_off_by_default_skips_meta(tmp_path, monkeypatch):
+    # FANOPS_HASHTAG_TRENDS unset -> own-reach only; meta_graph.sample_trends never called.
+    monkeypatch.delenv("FANOPS_HASHTAG_TRENDS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _analyzed_post(led, "p1", ["#owned"], 5000); _pass_doctor(cfg)
+    called = {"n": 0}
+    import fanops.meta_graph as mg
+    monkeypatch.setattr(mg, "sample_trends", lambda *a, **k: called.__setitem__("n", called["n"] + 1) or {})
+    out = refresh_store(led, cfg)
+    assert out["written"] is True and called["n"] == 0          # default OFF -> no Meta calls
+
+def test_refresh_store_blends_trending_tag_when_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_HASHTAG_TRENDS", "1")
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _analyzed_post(led, "p1", ["#owned"], 5000); _pass_doctor(cfg)
+    out = refresh_store(led, cfg, get=_trend_router(900))
+    store = json.loads(cfg.hashtags_path.read_text())["tags"]
+    assert store[0] == "#owned"                                 # own reach stays PRIMARY
+    assert out.get("trend_sampled", 0) >= 1                     # at least one tag trend-sampled
+
+def test_refresh_store_trends_fail_open_without_token(tmp_path, monkeypatch):
+    # flag on but NO token -> own-reach only, still written (never blocks on missing creds).
+    monkeypatch.setenv("FANOPS_HASHTAG_TRENDS", "1")
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _analyzed_post(led, "p1", ["#owned"], 5000); _pass_doctor(cfg)
+    out = refresh_store(led, cfg, get=_trend_router(900))
+    assert out["written"] is True and out.get("trend_sampled", 0) == 0

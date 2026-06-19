@@ -70,6 +70,7 @@ class Config:
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
         self.hashtags_path = self.control / "hashtags.json"  # M4 dynamic reach-ranked tag store; absent -> frozen pools
+        self.hashtag_budget_path = self.control / "hashtag_budget.json"  # M4 Meta Graph 30/7-day search budget counter
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
         self.log_path = self.reports / "run.log"
 
@@ -146,6 +147,35 @@ class Config:
         # PUBLISHES and now feeds the learning loop via its post analytics (PostizMetricsClient).
         v = os.getenv("POSTIZ_API_KEY")
         return v.strip() if v and v.strip() else None
+
+    @property
+    def meta_graph_token(self) -> str | None:
+        # Meta Graph API access token (IG Business) for the M4 hashtag TREND sampling. WRITE-ONLY —
+        # never logged/echoed (mirrors postiz_api_key); meta_graph sends it as the access_token param.
+        # Absent -> trend sampling fails open to own-reach-only ranking. Used ONLY by `hashtags refresh`,
+        # never on the publish path.
+        v = os.getenv("META_GRAPH_TOKEN")
+        return v.strip() if v and v.strip() else None
+
+    @property
+    def meta_ig_user_id(self) -> str | None:
+        # The IG Business account id that ig_hashtag_search requires as `user_id`. Absent -> no trends.
+        v = os.getenv("META_IG_USER_ID")
+        return v.strip() if v and v.strip() else None
+
+    @property
+    def meta_graph_url(self) -> str:
+        # Meta Graph base (overridable for tests/self-host). Default the current stable Graph version.
+        v = (os.getenv("META_GRAPH_URL") or "").strip()
+        return (v or "https://graph.facebook.com/v21.0").rstrip("/")
+
+    @property
+    def hashtag_trends(self) -> bool:
+        # M4 opt-in: sample LIVE Meta Graph hashtag trends during `hashtags refresh`. DEFAULT OFF —
+        # own-reach ranking needs no token; trends need a wired Meta app + the 30/7-day budget. Only the
+        # explicit on-words enable it; off -> own-reach-only refresh, today's behavior. Mirrors burn_subs.
+        v = (os.getenv("FANOPS_HASHTAG_TRENDS") or "").strip().lower()
+        return v in {"1", "true", "yes", "on"}
 
     @property
     def is_live_backend(self) -> bool:
