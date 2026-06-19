@@ -42,15 +42,23 @@ def test_duplicate_against_used_is_rejected():
     assert is_weak_hook("wait for the punch in", used=used) is False   # a different, fresh hook passes
 
 def test_opening_template_cluster_is_rejected():
-    # The "before he was Moh Flow x6" failure: distinct STRINGS that share an opening TEMPLATE read
-    # like a bot. Once >=2 accepted hooks share the first two words, the next one is rejected. This is
-    # the no-LLM floor that closes feed-clustering for EVERY config (not just hook-editor-on).
-    used = {"wait for the beat drop", "wait for the last line"}        # 2 already share "wait for"
-    assert is_weak_hook("wait for the hometown line", used=used) is True   # the 3rd -> cluster, rejected
+    # The "before he was Moh Flow x6" failure: distinct STRINGS that share an opening TEMPLATE read like
+    # a bot. v2.1 tune: a cluster needs >=3 accepted hooks sharing the first THREE words before the next
+    # is rejected (was 2 words / 2 hooks — too aggressive: it nuked good distinct hooks that merely shared
+    # a 2-word opener). This is the no-LLM floor that closes feed-clustering for EVERY config.
+    used = {"wait for the beat drop", "wait for the last line", "wait for the hometown bar"}  # 3 share "wait for the"
+    assert is_weak_hook("wait for the final verse", used=used) is True   # the 4th on the same 3-word opener -> cluster
 
-def test_second_shared_opening_still_allowed():
-    used = {"wait for the beat drop"}                                  # only one so far
-    assert is_weak_hook("wait for the last line", used=used) is False  # the 2nd is fine; not yet a cluster
+def test_shared_two_words_distinct_third_word_survives():
+    # The real over-strip this tune fixes (forensic: 6/51 corpus hooks were blanked exactly here). 'you
+    # ever X' hooks share only the first TWO words but diverge on the third — distinct, good hooks that the
+    # old 2-token rule wrongly clustered to blank. They MUST pass the floor now.
+    used = {"you ever felt lost and alive", "you ever just figured it out", "you ever know your moment"}
+    assert is_weak_hook("you ever win and still lose", used=used) is False
+
+def test_third_shared_opening_still_allowed():
+    used = {"wait for the beat drop", "wait for the last line"}        # only two share "wait for the"
+    assert is_weak_hook("wait for the hometown bar", used=used) is False  # the 3rd is fine; not yet a cluster (need >=3 priors)
 
 def test_distinct_openings_are_not_clustered():
     used = {"wait for the beat drop", "wait for the last line"}        # a "wait for" cluster exists
