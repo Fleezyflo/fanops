@@ -27,19 +27,24 @@ _TEMPLATE_CLUSTER_MAX = 3                             # the (MAX+1)th hook shari
 def _prefix_key(text: str) -> tuple:
     return tuple(re.findall(r"\w+", text.lower())[:_TEMPLATE_PREFIX_TOKENS])
 
-def is_weak_hook(text: str | None, used: set[str] = frozenset()) -> bool:
+def is_weak_hook(text: str | None, used: set[str] = frozenset(), *, cluster_scope=None) -> bool:
     """True if `text` is a hook to REJECT on MECHANICAL grounds only (empty / exact-dup / opening
-    cluster). `used` is the set of hooks already taken this run; a case/space-insensitive repeat OR an
-    opening-template cluster is rejected to kill cross-feed repetition (the 'reads like a bot' tell).
+    cluster). `used` is the FEED-WIDE set of hooks already taken (a case/space-insensitive exact repeat
+    is rejected anywhere — burning the same line twice reads like a bot). `cluster_scope` is the
+    opening-template scope: the caller's CURRENT decision batch (one source's picks / one edit run), so a
+    'before he was X' x6 lazy batch is caught while the same opener recurring across DIFFERENT videos is
+    NOT — feed-wide opener MONOTONY is a quality/diversity concern the prompt + critic own, not this
+    mechanical floor. cluster_scope=None defaults to `used` (byte-identical to the single-set callers).
     Hook QUALITY (generic, narration, hype) is judged by the reasoning critic, not here."""
     if not text or not text.strip():
         return True                                   # nothing to show
     low = text.strip().lower()
     if low in {u.strip().lower() for u in used}:
-        return True                                   # duplicate of another clip's hook
+        return True                                   # exact duplicate of another clip's hook (feed-wide)
+    scope = used if cluster_scope is None else cluster_scope   # default: today's behavior; callers narrow to one batch
     key = _prefix_key(low)
-    if key and sum(1 for u in used if _prefix_key(u) == key) >= _TEMPLATE_CLUSTER_MAX:
-        return True                                   # >=3 accepted hooks share this opening -> a template cluster
+    if key and sum(1 for u in scope if _prefix_key(u) == key) >= _TEMPLATE_CLUSTER_MAX:
+        return True                                   # >=3 hooks in this DECISION share the opening -> a template cluster
     return False
 
 
