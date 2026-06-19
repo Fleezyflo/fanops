@@ -36,8 +36,11 @@ def _gates_blocked_note(s) -> str | None:
 
 def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
+    from fanops.models import SourceState        # local read (mirrors cmd_reconcile's local import)
     print(f"sources={len(led.sources)} moments={len(led.moments)} clips={len(led.clips)} "
           f"posts={len(led.posts)} "
+          # V2 M1/F8: sources the model produced ZERO picks for — actionable (retry-source), never silent.
+          f"moments_empty={len(led.sources_in_state(SourceState.moments_empty))} "
           # post-approval gate: posts waiting on the operator's review (headless operators see them here,
           # not only in the Studio). rejected = operator-discarded.
           f"awaiting_approval={len(led.posts_in_state(PostState.awaiting_approval))} "
