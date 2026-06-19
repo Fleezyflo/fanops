@@ -46,6 +46,20 @@ def test_ingest_captions_clean_advances_and_stores(tmp_path):
     mc = led.clips["clip_1"].meta_captions["@a/instagram"]
     assert len(mc["hashtags"]) <= 4 and all(t.startswith("#") for t in mc["hashtags"])   # vetted, capped
 
+def test_ingest_captions_records_raw_model_hashtags(tmp_path):
+    # finding #3 (surface the RAW output): the model's own tag picks are kept beside the vetted line so
+    # Studio can show picked-vs-vetted — even a non-vetted word the vet filter drops must be visible.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="no warning. just impact.",
+                    hashtags=["#mohflow", "#somerandomword"])]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    mc = led.clips["clip_1"].meta_captions["@a/instagram"]
+    assert mc["hashtags_raw"] == ["#mohflow", "#somerandomword"]   # raw picks preserved verbatim
+    assert "#somerandomword" not in mc["hashtags"]                 # but the vetted line still drops it
+
 def test_ingest_captions_missing_surface_holds_not_default(tmp_path):
     # FIX F74: a response missing a requested surface must HOLD, not silently post a default.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)

@@ -364,6 +364,9 @@ def main(argv: list[str] | None = None) -> int:
     p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
     learn_sub = p_learn.add_subparsers(dest="learn_cmd", required=True)
     learn_sub.add_parser("doctor", help="read-only: does live Postiz analytics carry the reach signal lift_score needs?")
+    p_hash = sub.add_parser("hashtags", help="dynamic reach-ranked hashtag store (own-post reach, doctor-gated)")
+    hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
+    hash_sub.add_parser("refresh", help="recompute 00_control/hashtags.json from analyzed posts' reach (needs learn-doctor PASS)")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
     dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
@@ -539,6 +542,11 @@ def _dispatch(cfg: Config, args) -> int:
         if args.learn_cmd == "doctor":
             from fanops.learn_doctor import cmd_learn_doctor   # lazy: keeps requests/postiz off the core path
             return cmd_learn_doctor(cfg)
+        return 2
+    if args.cmd == "hashtags":
+        if args.hashtags_cmd == "refresh":
+            from fanops.fanops_hashtags import cmd_hashtags_refresh   # lazy: keeps it off the hot path
+            return cmd_hashtags_refresh(cfg)
         return 2
     if args.cmd == "doctor":   return cmd_doctor(cfg)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)

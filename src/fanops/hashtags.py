@@ -8,6 +8,7 @@ fanops-hook-hashtag skill (.claude/skills/fanops-hook-hashtag/SKILL.md); these c
 seeded from it. Re-verify counts before trusting them as current — this is a class ranking,
 not a live API."""
 from __future__ import annotations
+import json
 from fanops.models import Platform
 
 # Reach-ranked pools (June 2026 research; counts in the skill). Lower index = higher reach.
@@ -24,10 +25,28 @@ _RANK = {t: i for i, t in enumerate(_MEGA + _RELEVANCE + _ARABIC + ["#fyp", "#re
 # The membership set: a tag the model returns survives only if it is one of these.
 VETTED = set(_MEGA) | set(_RELEVANCE) | set(_ARABIC) | {t for v in _DISCOVERY.values() for t in v}
 
-def vetted_menu() -> list[str]:
+def load_store(cfg) -> list[str] | None:
+    """M4: the dynamic reach-ranked tag store (00_control/hashtags.json `{"tags": [...]}`), normalized.
+    Absent / corrupt / empty -> None so every caller falls back to the frozen pools (fail-open, like
+    tuning.json). Never raises. The store is WRITTEN by fanops_hashtags.refresh_store (own-reach,
+    doctor-gated); this is the read side the caption path consumes."""
+    p = cfg.hashtags_path
+    if not p.exists():
+        return None
+    try:
+        d = json.loads(p.read_text())
+        tags = d.get("tags") if isinstance(d, dict) else None
+        out = [_norm(t) for t in tags if isinstance(t, str)] if isinstance(tags, list) else []
+        return [t for t in out if t] or None
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return None                                  # corrupt store -> frozen pools, never crash a run
+
+def vetted_menu(store: list[str] | None = None) -> list[str]:
     """The vetted tags as one flat, reach-ordered, de-duplicated list — the MENU the caption prompt
-    tells the model to pick from. The code still hard-caps + filters via vet_hashtags, so this is a
-    guide, not the enforcement."""
+    tells the model to pick from. With a live `store` (M4) it IS the menu; else the frozen pools. The
+    code still hard-caps + filters via vet_hashtags, so this is a guide, not the enforcement."""
+    if store:
+        return list(store)
     seen: set[str] = set(); out: list[str] = []
     for t in _MEGA + _RELEVANCE + _ARABIC + _DISCOVERY[Platform.tiktok] + _DISCOVERY[Platform.instagram]:
         if t not in seen: seen.add(t); out.append(t)
@@ -49,18 +68,22 @@ def _composition(platform: Platform, language: str | None) -> list[str]:
     return _MEGA[:1] + _RELEVANCE[:1] + lang_slot + disc[:1] + _MEGA[1:] + _RELEVANCE[1:] + disc[1:]
 
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
-                 max_tags: int = 4) -> list[str]:
+                 max_tags: int = 4, *, store: list[str] | None = None) -> list[str]:
     """Return at most `max_tags` reach-vetted hashtags. Keeps the model's VETTED tags (reach-ordered),
     then backfills the balanced default until full. Drops every non-vetted word, dedupes case/'#'
-    variants, hard-caps the count. Deterministic; never empty (the default always fills)."""
+    variants, hard-caps the count. Deterministic; never empty (the default always fills). With a live
+    `store` (M4), the store IS the vetted set + reach order (data-driven); store tags backfill first,
+    the frozen composition is the last-resort fill. store=None -> today's frozen behavior, byte-identical."""
+    vetted = set(store) if store else VETTED
+    rank = {t: i for i, t in enumerate(store)} if store else _RANK
     seen: set[str] = set()
     kept: list[str] = []
     for t in (tags or []):                          # honour the model's choices, but ONLY vetted ones
         h = _norm(t)
-        if h in VETTED and h not in seen:
+        if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
-    kept.sort(key=lambda h: _RANK.get(h, 999))      # reach order (mega before niche)
-    for h in _composition(platform, language):      # backfill a balanced, vetted default
+    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (own-reach store, or the frozen rank)
+    for h in (store or []) + _composition(platform, language):   # store first, then the balanced default
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)

@@ -726,3 +726,10 @@ def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, m
     assert rc == 0                                            # learn hiccup is swallowed (run stays 0)
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "BlotatoAuthError" in log                         # the type name is in the breadcrumb
+
+def test_main_hashtags_refresh_skips_without_doctor_pass(tmp_path, monkeypatch, capsys):
+    # M4: `fanops hashtags refresh` is doctor-gated — with no learn-doctor PASS it writes nothing and
+    # exits 0 cleanly (reach is unreliable until the analytics label reconciles).
+    monkeypatch.chdir(tmp_path)
+    assert main(["hashtags", "refresh"]) == 0
+    assert "skipped" in capsys.readouterr().out.lower()

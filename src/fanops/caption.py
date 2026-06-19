@@ -27,7 +27,7 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.text import sanitize_generated_text
-from fanops.hashtags import vet_hashtags
+from fanops.hashtags import vet_hashtags, load_store
 from fanops.control import load_guidance
 from fanops.hookcheck import is_weak_hook
 
@@ -249,8 +249,12 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         # (5-15 random words) becomes <=4 proven tags. The posted caption IS that vetted tag line.
         plat = _platform_of(item.surface)
         tags = vet_hashtags(item.hashtags or _tags_in(item.caption), plat,
-                            src.language if src else None)
+                            src.language if src else None, store=load_store(cfg))   # M4: live store when present
         clip.meta_captions[item.surface] = {"caption": " ".join(tags), "hashtags": tags,
+                                            # finding #3: keep the model's RAW tag picks (verbatim, before
+                                            # the vet filter) so Studio can show picked-vs-vetted, not just
+                                            # the survivors. Display-only; the posted line is still `tags`.
+                                            "hashtags_raw": [str(h) for h in (item.hashtags or [])],
                                             "hook": sanitize_generated_text(item.hook, max_words=7),
                                             # P2: carry the variant's declared axis (normalized) + rationale
                                             "axis": normalize_variation_axis(item.axis),
