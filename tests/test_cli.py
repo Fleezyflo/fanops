@@ -733,7 +733,7 @@ def test_gc_surfaces_oserror_not_silent(tmp_path, monkeypatch, capsys, mocker):
                       state=ClipState.analyzed))
     led.save()
     mocker.patch("os.remove", side_effect=OSError(13, "Permission denied"))
-    rc = main(["gc", "--keep-days", "0"])
+    rc = main(["gc", "--keep-days", "1"])                    # keep-days 0 is now refused (wipe-safety); 1 still sweeps the epoch-mtime file
     assert rc == 0                                            # gc still completes
     err = capsys.readouterr().err
     assert "gc:" in err and "old_clip.mp4" in err            # the failed removal is surfaced, not silent

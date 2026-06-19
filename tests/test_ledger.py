@@ -1,7 +1,7 @@
 # tests/test_ledger.py
 import json
 from fanops.config import Config
-from fanops.models import Source, Moment, Clip, Post, SourceState, ClipState, Platform
+from fanops.models import Source, Moment, Clip, Post, PostState, SourceState, ClipState, Platform
 from fanops.ledger import Ledger
 
 def test_empty(tmp_path):
@@ -46,8 +46,10 @@ def test_reconcile_moments_upserts_and_deletes_cascade(tmp_path):
     led.add_moment(Moment(id="m_a", parent_id="s", content_token="A", start=0, end=2, reason="a"))
     led.add_moment(Moment(id="m_b", parent_id="s", content_token="B", start=3, end=5, reason="b"))
     led.add_clip(Clip(id="c_a", parent_id="m_a", path="/c"))
+    # a REJECTED post (a deletable state — NOT a protected awaiting/queued/retired worklist) so the
+    # cascade still deletes A's lineage; protected-state survival is covered in test_ledger_cascade_protect.
     led.add_post(Post(id="p_a", parent_id="c_a", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x"))
+                      platform=Platform.instagram, caption="x", state=PostState.rejected))
     # new decision keeps B, drops A, adds C
     keep = {"m_b": Moment(id="m_b", parent_id="s", content_token="B", start=3, end=5, reason="b2"),
             "m_c": Moment(id="m_c", parent_id="s", content_token="C", start=6, end=8, reason="c")}

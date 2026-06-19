@@ -235,6 +235,11 @@ def cmd_gc(cfg: Config, keep_days: int) -> int:
     # FIX F83: reclaim disk — drop the .mp4 files of retired/analyzed clips older than keep_days
     # (the ledger record + the post's cached media_url persist; the local file is dead weight
     # post-upload). Transcript JSONs are tiny and intentionally left.
+    # WIPE-SAFETY (content-lifecycle Phase 1): refuse keep_days < 1 — keep_days=0 sets cutoff=now and sweeps
+    # EVERY retired/analyzed .mp4 regardless of age (a one-keystroke wipe of reusable renders, needed for
+    # cross-account reuse); negative is nonsense. Clean exit 2; gc stays MANUAL (no auto-cron).
+    if keep_days < 1:
+        print(f"gc: refusing --keep-days {keep_days} (min 1) — would delete reusable render files", file=sys.stderr); return 2
     import os, time
     led = Ledger.load(cfg)
     removed = 0

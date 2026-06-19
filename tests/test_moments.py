@@ -1,7 +1,7 @@
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Clip, Post, Moment, MomentState, SourceState, Platform, MomentDecision, MomentPick
+from fanops.models import Source, Clip, Post, Moment, MomentState, SourceState, Platform, MomentDecision, MomentPick, PostState
 from fanops.agentstep import response_path, request_path, latest_request_id
 from fanops.moments import request_moments, ingest_moments, validate_pick, _drop_overlaps
 
@@ -123,8 +123,10 @@ def test_amplify_style_reingest_reconciles_not_noop(tmp_path):
     # hang a clip+post off moment A so we can prove cascade-delete
     a = next(m for m in led.moments_of("src_1") if m.content_token == "0.00-2.00")
     led.add_clip(Clip(id="c_a", parent_id=a.id, path="/c"))
+    # a REJECTED post (deletable — not a protected awaiting/queued/retired worklist) so A's lineage still
+    # cascade-deletes; protected-state survival is covered in test_ledger_cascade_protect.
     led.add_post(Post(id="p_a", parent_id="c_a", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x"))
+                      platform=Platform.instagram, caption="x", state=PostState.rejected))
     # now a fresh request + a NEW decision dropping A, keeping B (updated), adding C
     led = request_moments(led, cfg, "src_1")
     rid2 = latest_request_id(cfg, "moments", "src_1")

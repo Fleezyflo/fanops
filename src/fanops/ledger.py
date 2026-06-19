@@ -277,21 +277,28 @@ class Ledger:
     # publish), so deleting its ledger record would orphan a possibly-live post — preserve + retire.
     _LIVE_POST_STATES = (PostState.published, PostState.analyzed, PostState.submitted,
                          PostState.submitting, PostState.needs_reconcile)
+    # Cascade-protection superset (content-lifecycle Phase 1). _LIVE_POST_STATES is referenced ONLY here in
+    # _delete_moment_cascade (grep-verified: no reconcile/track/learning reader) — the separate tuple is for
+    # EXPLICITNESS + an independent pin test, NOT because an external caller depends on the narrow set. A
+    # re-decided source's cascade must NEVER silently delete the operator's awaiting_approval (un-reviewed) /
+    # queued (approved, not-yet-shipped) / retired (M4 stitch-superseded base) posts — deliberate human/stitch
+    # records. PRESERVE-and-RETIRE exactly like a live post, at BOTH checks below (post-loop AND clip-drop).
+    _PROTECTED_POST_STATES = _LIVE_POST_STATES + (PostState.awaiting_approval, PostState.queued, PostState.retired)
 
     def _delete_moment_cascade(self, moment_id: str) -> None:
         survived = False
         for c in self.clips_of(moment_id):
             clip_live = c.state in self._LIVE_CLIP_STATES
             for p in self.posts_of(c.id):
-                if clip_live or p.state in self._LIVE_POST_STATES:
-                    survived = True                      # preserve live posts (the performance record)
+                if clip_live or p.state in self._PROTECTED_POST_STATES:
+                    survived = True                      # preserve live + operator/stitch-worklist posts
                 else:
                     self.posts.pop(p.id, None)
             if clip_live:
                 survived = True                          # preserve the live clip + its file
             else:
-                # only drop the clip if no live post hangs off it
-                if not any(p.state in self._LIVE_POST_STATES for p in self.posts_of(c.id)):
+                # only drop the clip if no live / worklist post hangs off it (else the post is orphaned)
+                if not any(p.state in self._PROTECTED_POST_STATES for p in self.posts_of(c.id)):
                     self.clips.pop(c.id, None)
                 else:
                     survived = True
