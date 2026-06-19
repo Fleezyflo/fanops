@@ -115,11 +115,15 @@ def ingest_hook_edit(led: Ledger, cfg: Config) -> Ledger:
     if not items:
         return led
     edit_ids = {m.id for m in items}
-    # cross-feed dedup spans ALL batches: seed `used` from hooks on moments OUTSIDE this edit set
-    # (already-edited / prior passes), then accumulate each kept hook as we walk the batches, so two
-    # clips anywhere in the feed can't land the same hook.
+    # cross-feed EXACT dedup spans ALL batches: seed `used` from hooks on moments OUTSIDE this edit set
+    # (already-edited / prior passes), then accumulate each kept hook as we walk the batches, so two clips
+    # anywhere in the feed can't land the same line. The opening-template CLUSTER check is scoped to THIS
+    # edit RUN only (`cluster_used`, seeded empty): a lazy editor templating across this run's batches is
+    # one decision, but the same opener recurring across DIFFERENT prior passes/videos is not — feed-wide
+    # opener diversity is the prompt/critic's job, not this floor (else it over-strips at scale).
     used = {(m.hook or "").strip().lower() for m in led.moments.values()
             if m.hook and m.id not in edit_ids}
+    cluster_used: set[str] = set()                       # opening-cluster scope: this edit run's accepted hooks only
     for batch in _batches(items):
         dec = read_response(cfg, "hookedit", _digest(batch), HookEditDecision)
         if dec is None:
@@ -135,9 +139,9 @@ def ingest_hook_edit(led: Ledger, cfg: Config) -> Ledger:
             new = None
             if candidate:
                 h = sanitize_generated_text(candidate.strip())
-                if h and not is_weak_hook(h, used):
+                if h and not is_weak_hook(h, used, cluster_scope=cluster_used):
                     new = h
-                    used.add(h.lower())
+                    used.add(h.lower()); cluster_used.add(h.lower())   # feed-wide dup set + this-run cluster set
             # P1: track the pattern with the surviving hook — an editor rewrite carries its declared
             # pattern (else keep the old one); a kept original keeps its pattern; a nulled hook -> None.
             if new is None:

@@ -261,3 +261,41 @@ def test_ingest_preserves_stripped_hook_for_operator_review(tmp_path):
     m = led.moments_of("src_1")[0]
     assert m.hook is None                                    # stripped (duplicate) -> clean clip, unchanged
     assert m.hook_removed == "made it and lost everything"   # PRESERVED for Review (the new behavior)
+
+
+def _seed_cross_source_openers(led):
+    # 3 surviving hooks on ANOTHER source, all sharing the 3-word opener "wait for the" (a feed-wide cluster).
+    led.add_source(Source(id="src_other", source_path="/o.mp4", duration=120.0, state=SourceState.moments_decided))
+    for i, h in enumerate(["wait for the beat drop", "wait for the last line", "wait for the hometown bar"]):
+        led.add_moment(Moment(id=f"m_other_{i}", parent_id="src_other", content_token=f"{i}.00-5.00",
+                              start=i, end=i + 5, reason="r", state=MomentState.decided, hook=h))
+
+
+def test_cross_source_shared_opener_survives(tmp_path):
+    # The per-source scope fix: a hook sharing a 3-word opener with hooks on OTHER sources must NOT be
+    # blanked — opening-template clustering is a within-ONE-decision "reads like a bot" tell, not feed-wide
+    # opener coincidence. (Forensic: this is the over-strip the (3,3) threshold tune only postpones.)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=120.0)
+    _seed_cross_source_openers(led)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=0.0, end=14.0, reason="r", hook="wait for the final verse")])
+    m = led.moments_of("src_1")[0]
+    assert m.hook == "wait for the final verse"              # SURVIVES — feed-wide openers don't cluster it
+    assert m.hook_removed is None
+
+
+def test_within_source_template_cluster_still_strips_surplus(tmp_path):
+    # The floor STILL fires when ONE decision goes templated: 4 picks all opening "wait for the X" -> the
+    # 4th (>= max sharing the 3-word opener within THIS source) is stripped, preserved on hook_removed.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=120.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [
+        MomentPick(start=0.0, end=14.0, reason="r", hook="wait for the beat drop"),
+        MomentPick(start=20.0, end=34.0, reason="r", hook="wait for the last line"),
+        MomentPick(start=40.0, end=54.0, reason="r", hook="wait for the hometown bar"),
+        MomentPick(start=60.0, end=74.0, reason="r", hook="wait for the final verse")])
+    hooks = sorted((m.start, m.hook, m.hook_removed) for m in led.moments_of("src_1"))
+    assert [h[1] for h in hooks] == ["wait for the beat drop", "wait for the last line",
+                                     "wait for the hometown bar", None]      # 4th stripped within-source
+    assert hooks[3][2] == "wait for the final verse"                         # preserved for Review

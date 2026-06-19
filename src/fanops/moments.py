@@ -83,10 +83,14 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     deduped = _drop_overlaps(valid)                 # drop near-duplicate windows (keep first)
     if len(deduped) < len(valid):                   # don't silently suppress picks — surface the count
         get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
-    # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks so a repeat is rejected (the
-    # 'reads like a bot' tell), then add each kept hook as we go.
+    # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks so an EXACT repeat is rejected (the
+    # 'reads like a bot' tell), then add each kept hook as we go. The opening-template CLUSTER check is
+    # scoped to THIS source's accepted hooks only (`cluster_used`, seeded empty): a 'before he was X' x6
+    # lazy batch is a single-decision tell, whereas the same opener recurring across DIFFERENT videos is
+    # not — feed-wide opener diversity is the prompt/critic's job, not this floor (else it over-strips at scale).
     used = {(m.hook or "").strip().lower() for m in led.moments.values()
             if m.hook and m.parent_id != source_id}
+    cluster_used: set[str] = set()                  # opening-cluster scope: this decision's accepted hooks only
     for pick in deduped:
         token = _token(pick)
         mid = child_id("moment", source_id, token)
@@ -97,11 +101,11 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         h = (pick.hook or "").strip()
         hook = sanitize_generated_text(h) if h else None
         hook_removed = None
-        if hook and is_weak_hook(hook, used):
+        if hook and is_weak_hook(hook, used, cluster_scope=cluster_used):
             hook_removed = hook         # PRESERVE the stripped hook (dup/template) — the operator restores it in Review
             hook = None                 # ...the clip still renders CLEAN by default (today's behavior unchanged)
         if hook:
-            used.add(hook.lower())
+            used.add(hook.lower()); cluster_used.add(hook.lower())   # feed-wide dup set + this-decision cluster set
         # P1: persist the chosen pattern (normalized) only when the hook survives; a nulled hook has no
         # pattern (P3/P4 group on this, so it must track the actual on-screen hook, not a rejected one).
         pattern = normalize_hook_pattern(pick.hook_pattern) if hook else None
