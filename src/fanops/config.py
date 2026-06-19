@@ -296,6 +296,17 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def hook_critic_advisory(self) -> bool:
+        # M2 (de-veto): make the specificity critic ADVISORY — at the repair cap a reject KEEPS the raw
+        # hook (the critic's dissent is logged, not enforced) instead of nulling to a clean clip. Serves
+        # finding #3 (surface the raw output + the critic's context) as an opt-in middle mode the binary
+        # hook_judge on/off does not offer. OPT-IN/DEFAULT OFF (mirrors hook_router/burn_subs — NOT the
+        # opt-OUT shape of the adjacent hook_judge/hook_editor: a wrong copy would silently neuter the
+        # critic for every deployment). Off -> today's veto. The mechanical is_weak_hook floor is unaffected.
+        v = (os.getenv("FANOPS_HOOK_CRITIC_ADVISORY") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def impact_cut(self) -> bool:
         # M4 structural-hooks: the impact-cut PRODUCER (suggest plans for router-reserved moments + render
         # operator-approved plans into stitch_draft clips). Per-format gate, DEFAULT OFF (the PRD risk-row
