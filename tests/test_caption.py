@@ -60,8 +60,12 @@ def test_ingest_captions_records_raw_model_hashtags(tmp_path):
     assert mc["hashtags_raw"] == ["#mohflow", "#somerandomword"]   # raw picks preserved verbatim
     assert "#somerandomword" not in mc["hashtags"]                 # but the vetted line still drops it
 
-def test_ingest_captions_missing_surface_holds_not_default(tmp_path):
-    # FIX F74: a response missing a requested surface must HOLD, not silently post a default.
+def test_ingest_captions_missing_surface_falls_back_to_seed_not_held(tmp_path):
+    # CHANGED from the old F74 hold: for hashtags-ONLY fan captions, a response missing a requested
+    # surface (commonly a model SOFT-REFUSAL on edgy lyrics -> items:[]) must NOT permanently bury the
+    # clip. Synthesize the reach-vetted SEED tags + NO hook for the missing surface and let the clip
+    # through to the operator's Review queue (logged). The approval gate is the real review, so this is
+    # not an unreviewed default reaching publish (F74's actual concern).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram), ("@a", Platform.tiktok)])
     rid = latest_request_id(cfg, "captions", "clip_1")
@@ -69,8 +73,24 @@ def test_ingest_captions_missing_surface_holds_not_default(tmp_path):
         CaptionItem(surface="@a/instagram", caption="only IG was answered")]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     c = led.clips["clip_1"]
-    assert c.held is True and "missing caption" in (c.held_reason or "")
-    assert c.state is ClipState.held
+    assert c.held is False and c.state is ClipState.captioned         # NOT buried
+    fb = c.meta_captions["@a/tiktok"]                                 # the missing surface got a fallback
+    assert fb["hook"] is None and fb.get("fallback") is True
+    assert 1 <= len(fb["hashtags"]) <= 4 and all(t.startswith("#") for t in fb["hashtags"])
+
+def test_ingest_captions_empty_items_falls_back_all_surfaces(tmp_path):
+    # The exact production failure: the model soft-refuses an edgy clip and returns items:[]. EVERY
+    # requested surface must get a seed-tag fallback and the clip must reach Review, not vanish held
+    # (83% of music clips were being lost to this silent hold).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(
+        CaptionSet(request_id=rid, items=[]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    c = led.clips["clip_1"]
+    assert c.held is False and c.state is ClipState.captioned
+    assert c.meta_captions["@a/instagram"]["hashtags"] and c.meta_captions["@a/instagram"]["hook"] is None
 
 def test_ingest_captions_offbrand_holds(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)

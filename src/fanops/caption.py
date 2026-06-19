@@ -28,6 +28,7 @@ from fanops.variant_learning import ucb_rank
 from fanops.variant_transfer import transferred_hooks
 from fanops.text import sanitize_generated_text
 from fanops.hashtags import vet_hashtags, load_store
+from fanops.log import get_logger
 from fanops.control import load_guidance
 from fanops.hookcheck import is_weak_hook
 
@@ -261,8 +262,20 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
                                             "rationale": (item.rationale or "").strip() or None}
     answered = {item.surface for item in cs.items}
     missing = requested - answered
-    if missing and held_reason is None:
-        held_reason = f"missing caption for surfaces: {sorted(missing)}"
+    # SEED-TAG FALLBACK (was: hold). The caption is hashtags-ONLY, and the model frequently returns NO
+    # item for a surface — most often a SOFT REFUSAL on a clip's edgy/explicit lyrics (it sends
+    # items:[] even though the output is just genre tags that never reproduce the words). The old
+    # behavior held the clip on this "missing caption", which silently buried ~83% of a rap catalogue.
+    # Instead synthesize the reach-vetted SEED tags + NO hook (clean clip) for each missing surface and
+    # let the clip through to the operator's Review queue, logged. This is NOT F74's "silent default to
+    # publish": the post is born awaiting_approval, so a human still reviews it before anything ships.
+    for surface in sorted(missing):
+        plat = _platform_of(surface)
+        tags = vet_hashtags(None, plat, src.language if src else None, store=load_store(cfg))
+        clip.meta_captions[surface] = {"caption": " ".join(tags), "hashtags": tags,
+                                       "hashtags_raw": [], "hook": None, "axis": None,
+                                       "rationale": None, "fallback": True}
+        get_logger(cfg)("captions", clip_id, "caption_fallback_seed", surface=surface)
     if held_reason:
         clip.held = True
         clip.held_reason = held_reason
