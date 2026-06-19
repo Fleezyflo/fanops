@@ -22,7 +22,13 @@ import pytest
 # silently flip the critic OFF for every test that doesn't set it explicitly (the inverse of the
 # FANOPS_POSTER leak). Stripping it makes each test see the CODE default; opt-out tests set it via
 # monkeypatch and get clean teardown.
-_LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_HOOK_JUDGE")
+# META_GRAPH_TOKEN/META_IG_USER_ID/FANOPS_HASHTAG_TRENDS/META_GRAPH_URL ride along (M4): once the
+# operator wires live trends into the repo .env, a token + FANOPS_HASHTAG_TRENDS=1 leaking into the
+# session makes refresh_store fire a REAL ig_hashtag_search over the network (60s timeout, flaky/CI-
+# breaking). Stripping them makes every test see the OFF default; the trend tests set them + inject a
+# mock `get` explicitly.
+_LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_HOOK_JUDGE",
+              "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL")
 
 
 @pytest.fixture(autouse=True)
