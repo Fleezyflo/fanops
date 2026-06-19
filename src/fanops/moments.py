@@ -23,9 +23,13 @@ import os
 _AUTHOR_FRAME_COUNT = 6
 
 def _source_frames(cfg: Config, src) -> list[str]:
-    """A few stills sampled across the whole SOURCE — the author's EYES when it picks moments + writes
-    hooks. Fail-open exactly like hookedit._frames: no real source file (tests / not-yet-downloaded) or
-    an unprobed/zero duration -> [] -> text-only author, never spawns ffmpeg on a path that isn't there."""
+    """A few stills sampled EVENLY across the whole SOURCE — the author's eyes for the source's visual
+    vibe (who/where/lighting), grounding hook TONE. HONEST LIMITATION (ecc review, do not overclaim): this
+    is a whole-source SURVEY, not the picked window — in one call the author picks a sub-window AND writes
+    its hook, so a still from the exact picked window may not be attached. The window-accurate fix is a
+    two-pass pick->frame->hook (deferred follow-up). Fail-open exactly like hookedit._frames: no real source
+    file (tests / not-yet-downloaded) or an unprobed/zero duration -> [] -> text-only author, never spawns
+    ffmpeg on a path that isn't there."""
     if not (src.source_path and os.path.exists(src.source_path) and (src.duration or 0) > 0):
         return []
     return extract_keyframes(src.source_path, 0.0, src.duration, count=_AUTHOR_FRAME_COUNT,
