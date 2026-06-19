@@ -34,14 +34,26 @@ def parse_signalstats(text: str) -> tuple[float, float] | None:
         return None
     return float(ya.group(1)), float(yx.group(1)) - float(yi.group(1))
 
-def frame_strength(*, luma: float, contrast: float) -> float | None:
+def parse_sharpness(text: str) -> float | None:
+    """A RELATIVE sharpness proxy = the YAVG (mean luma) of a Laplacian-convolved gray frame, i.e. the
+    mean edge energy — higher means crisper. None if YAVG is absent. For IN-CLIP ranking only; it is
+    NOT an absolute focus score (mean-of-Laplacian, not OpenCV variance-of-Laplacian — see clip.py)."""
+    ya = _YAVG.search(text)
+    return float(ya.group(1)) if ya else None
+
+def frame_strength(*, luma: float, contrast: float, sharpness: float | None = None) -> float | None:
     """Score one candidate frame, or None if it fails a degeneracy floor (near-black / blown / flat).
-    Strength is the spatial contrast (a busier frame stops a scroll better); brightness only gates."""
+    Without `sharpness` the strength is EXACTLY the spatial contrast (today's contrast-only path, byte
+    for byte). With it, a busy-but-SOFT frame (high contrast, low edge energy) is demoted below a crisp
+    one via the geometric mean of contrast and edge energy — so a flat-but-sharp frame can't win either
+    (both terms must be high). brightness only gates; sharpness only re-ranks floor-passing frames."""
     if luma < _MIN_LUMA or luma > _MAX_LUMA:
         return None
     if contrast < _MIN_CONTRAST:
         return None
-    return contrast
+    if sharpness is None:
+        return contrast
+    return round((contrast * max(sharpness, 0.0)) ** 0.5, 4)
 
 def pick_strongest(candidates: list[dict]) -> dict | None:
     """Pick the strongest candidate frame, or None if none clears the floors. Each candidate is
@@ -49,7 +61,7 @@ def pick_strongest(candidates: list[dict]) -> dict | None:
     real visual cut), then prefer the EARLIEST t (the least disruptive shift of the cut start). PURE."""
     scored = []
     for c in candidates:
-        s = frame_strength(luma=c.get("luma", 0.0), contrast=c.get("contrast", 0.0))
+        s = frame_strength(luma=c.get("luma", 0.0), contrast=c.get("contrast", 0.0), sharpness=c.get("sharpness"))
         if s is not None:
             scored.append((s, c.get("scene", 0.0), c))
     if not scored:

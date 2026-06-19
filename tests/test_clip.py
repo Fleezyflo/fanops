@@ -503,6 +503,71 @@ def _run_render_with_probe(captured, *, strong_at=None):
         return R2()
     return run
 
+# ---- Theme 3: sharpness probe + versioned vstart sidecar (C2/H2 stale-cache trap) ----
+
+def _vstart_key(src_path, start, end):
+    import hashlib
+    return hashlib.sha256(f"{src_path}|{round(start, 3)}|{round(end, 3)}".encode()).hexdigest()[:16]
+
+def test_probe_frame_strength_returns_sharpness(mocker):
+    # The probe now also derives a sharpness proxy from a SECOND Laplacian-convolution pass (its YAVG).
+    from fanops.clip import _probe_frame_strength
+    def run(cmd, **kw):
+        j = " ".join(str(x) for x in cmd)
+        class R:
+            returncode = 0; stderr = ""
+            stdout = ("lavfi.signalstats.YAVG=40\n" if "convolution" in j else
+                      "lavfi.signalstats.YMIN=16\nlavfi.signalstats.YAVG=120\nlavfi.signalstats.YMAX=210\n")
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    assert _probe_frame_strength("/x.mp4", 5.0) == (120.0, 210.0 - 16.0, 40.0)   # luma, contrast, sharpness
+
+def test_probe_frame_strength_sharpness_is_fail_open(mocker):
+    # If the Laplacian pass dies, sharpness degrades to None (contrast-only downstream) — never raises.
+    from fanops.clip import _probe_frame_strength
+    def run(cmd, **kw):
+        j = " ".join(str(x) for x in cmd)
+        if "convolution" in j:
+            raise OSError("laplacian pass failed")
+        class R:
+            returncode = 0; stderr = ""
+            stdout = "lavfi.signalstats.YMIN=16\nlavfi.signalstats.YAVG=120\nlavfi.signalstats.YMAX=210\n"
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    assert _probe_frame_strength("/x.mp4", 5.0) == (120.0, 194.0, None)
+
+def test_pick_visual_start_rejects_stale_unversioned_sidecar(tmp_path, mocker):
+    # C2/H2: a pre-Theme-3 vstart sidecar (no "v") must NOT be adopted — else the source serves the
+    # old, sharpness-blind decision forever. Stale -> cache miss -> re-probe + rewrite versioned.
+    import json
+    from fanops.clip import pick_visual_start
+    out = tmp_path / "clips"; out.mkdir()
+    src = f"{tmp_path}/s.mp4"; start, end = 10.0, 12.0
+    key = _vstart_key(src, start, end)
+    (out / f"vstart_{key}.json").write_text(json.dumps({"start": 99.0, "kind": "visual"}))   # stale, no "v"
+    def run(cmd, **kw):                                   # weak stats everywhere -> no move from start
+        class R:
+            returncode = 0; stderr = ""
+            stdout = "lavfi.signalstats.YMIN=0\nlavfi.signalstats.YAVG=3\nlavfi.signalstats.YMAX=5\n"
+        return R()
+    spy = mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    new_start, kind = pick_visual_start(src, start, end, scene_peaks=[], out_dir=out)
+    spy.assert_called()                                  # stale sidecar rejected -> probed
+    assert new_start != 99.0                             # the bogus cached start was ignored
+    assert json.loads((out / f"vstart_{key}.json").read_text())["v"] == 2   # rewritten versioned
+
+def test_pick_visual_start_adopts_versioned_sidecar(tmp_path, mocker):
+    import json
+    from fanops.clip import pick_visual_start
+    out = tmp_path / "clips"; out.mkdir()
+    src = f"{tmp_path}/s.mp4"; start, end = 10.0, 12.0
+    key = _vstart_key(src, start, end)
+    (out / f"vstart_{key}.json").write_text(json.dumps({"v": 2, "start": 11.0, "kind": "visual"}))
+    spy = mocker.patch("fanops.clip.subprocess.run")
+    new_start, kind = pick_visual_start(src, start, end, scene_peaks=[], out_dir=out)
+    spy.assert_not_called()                              # v2 adopted -> no ffmpeg
+    assert new_start == 11.0 and kind == "visual"
+
 def test_render_moment_visual_start_moves_cut_and_stamps_provenance(tmp_path, mocker, monkeypatch):
     monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)      # default ON
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
