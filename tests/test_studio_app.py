@@ -263,3 +263,21 @@ def test_crosspost_all_route_bulk(tmp_path):
     assert r.status_code == 200
     awaiting = [p for p in Ledger.load(cfg).posts.values() if p.state is PostState.awaiting_approval and p.account == "@b"]
     assert len(awaiting) == 1
+
+def test_review_renders_removed_hook_badge(tmp_path):
+    # slice 1: a moment whose hook was stripped surfaces a "hook removed" badge + the text in /review,
+    # so the operator SEES the hook that was killed (the clip itself still ran clean).
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped, hook_removed="made it and lost everything"))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+    r = _client(cfg).get("/review")
+    assert r.status_code == 200
+    assert b"hook removed" in r.data and b"made it and lost everything" in r.data

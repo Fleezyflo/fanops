@@ -96,8 +96,10 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         # burning slop or the unreliable transcript on screen is exactly what the operator rejected.
         h = (pick.hook or "").strip()
         hook = sanitize_generated_text(h) if h else None
+        hook_removed = None
         if hook and is_weak_hook(hook, used):
-            hook = None
+            hook_removed = hook         # PRESERVE the stripped hook (dup/template) — the operator restores it in Review
+            hook = None                 # ...the clip still renders CLEAN by default (today's behavior unchanged)
         if hook:
             used.add(hook.lower())
         # P1: persist the chosen pattern (normalized) only when the hook survives; a nulled hook has no
@@ -107,6 +109,7 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                            content_token=token, start=pick.start, end=pick.end,
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
                            transcript_excerpt=pick.transcript_excerpt, hook=hook,
+                           hook_removed=hook_removed,                      # preserved-for-review (None unless stripped)
                            hook_pattern=pattern, signal_score=pick.signal_score)
     if not keep:
         if dec.picks:

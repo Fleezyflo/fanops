@@ -245,3 +245,19 @@ def test_validate_pick_rejects_nan_defense_in_depth():
     # Build via model_construct to bypass the field validator, proving validate_pick guards too.
     p = MomentPick.model_construct(start=math.nan, end=math.nan, reason="r")
     assert validate_pick(p, duration=120.0) is not None
+
+def test_ingest_preserves_stripped_hook_for_operator_review(tmp_path):
+    # A hook the model WROTE but is_weak_hook strips (here a cross-clip duplicate) must NOT be discarded —
+    # it is preserved on Moment.hook_removed so Review can show it + let the operator restore it (the 29%
+    # blank rate is mostly GOOD hooks killed by the opening-template/dup guard, not dead footage).
+    from fanops.models import SourceState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led.add_source(Source(id="src_other", source_path="/o.mp4", duration=30.0, state=SourceState.moments_decided))
+    led.add_moment(Moment(id="m_other", parent_id="src_other", content_token="0.00-5.00", start=0, end=5,
+                          reason="r", state=MomentState.decided, hook="made it and lost everything"))
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=0.0, end=14.0, reason="r", hook="made it and lost everything")])
+    m = led.moments_of("src_1")[0]
+    assert m.hook is None                                    # stripped (duplicate) -> clean clip, unchanged
+    assert m.hook_removed == "made it and lost everything"   # PRESERVED for Review (the new behavior)

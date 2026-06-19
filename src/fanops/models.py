@@ -133,6 +133,12 @@ class Moment(BaseModel):
     hook: Optional[str] = None                  # punchy top-third line for the clip; deterministic
                                                 # first-clause default (overlay.derive_hook), an LLM
                                                 # may overwrite. Optional/None -> old ledgers load fine.
+    hook_removed: Optional[str] = None          # the model's hook that is_weak_hook STRIPPED (dup/opening-
+                                                # template cluster) instead of discarding it. Preserved so
+                                                # Studio Review can show "hook removed" + let the operator
+                                                # restore it (the 29% blank rate is mostly good hooks the
+                                                # mechanical guard killed, not dead footage). None = nothing
+                                                # was stripped (old ledgers load fine).
     hook_edited: bool = False                   # the feed-aware hook editor (hookedit.py) has run on
                                                 # this moment's hook; latches True so it never re-edits
                                                 # (no loop). Default False -> old ledgers load + are

@@ -11,6 +11,12 @@
     <div class="clip-title">{{ card.label }}</div>
     <div class="meta clip-reason">{{ card.reason }}</div>
 
+    {% if card.hook_removed %}
+      <div class="meta hook-removed" title="the model wrote this hook but it was auto-removed (duplicate or shared-opening template); this clip is running CLEAN. Restore it from the surface below.">
+        <span aria-hidden="true">✎</span> hook removed — <span class="hook-removed-text">{{ card.hook_removed }}</span>
+      </div>
+    {% endif %}
+
     {% if card.bucket == 'held' %}
       <div class="meta">{{ card.held_reason or 'held for review' }}</div>
       <form hx-post="{{ url_for('do_unhold', clip_id=card.clip_id) }}" hx-target="#card-{{ card.clip_id }}" hx-swap="outerHTML">

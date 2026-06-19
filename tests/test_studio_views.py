@@ -368,3 +368,16 @@ def test_posted_library_row_carries_published_at(tmp_path):
                       published_at="2026-06-05T10:00:00Z"))
     rows = posted_library(led, cfg)
     assert rows[0].published_at == "2026-06-05T10:00:00Z"
+
+def test_review_card_surfaces_removed_hook(tmp_path):
+    # A clip whose moment had its hook STRIPPED (is_weak_hook dup/template) surfaces the removed hook on the
+    # card, so Review can badge it + let the operator restore it. The clip still rendered clean.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.moments["mom_1"].hook_removed = "made it and lost everything"   # what the guard stripped
+    led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+    ed = [c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
+          if c.bucket == "editable" and c.clip_id == "clip_1"][0]
+    assert ed.hook_removed == "made it and lost everything"
