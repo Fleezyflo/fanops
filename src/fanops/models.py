@@ -13,6 +13,9 @@ from fanops.ids import content_id
 class SourceState(str, Enum):
     catalogued = "catalogued"; transcribed = "transcribed"; signalled = "signalled"
     moments_requested = "moments_requested"; moments_decided = "moments_decided"
+    moments_empty = "moments_empty"   # V2 M1/F8: the model returned [] (nothing worth posting) — VISIBLE
+                                      # + re-runnable (retry-source), NOT a silent moments_decided. Non-
+                                      # terminal: a prior good moment set is preserved (no cascade-delete).
     retired = "retired"; discovered = "discovered"   # M1: removed-but-kept / rebuild-orphan (inert until confirmed)
     error = "error"
 

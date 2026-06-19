@@ -118,9 +118,11 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
             # the model returned [] (nothing worth posting): VISIBLE but NON-terminal. Log loudly so
             # 'most content wasn't generated' is never silent, but DON'T reconcile (that would
             # cascade-delete a prior good moment set) and DON'T error (the prompt blesses empty as
-            # valid — erroring would wrongly need a manual retry-source).
+            # valid). V2 M1/F8: land the DISTINCT moments_empty state, not a look-alike moments_decided
+            # — so `fanops status` can surface it and `retry-source` can re-request (no consumer gates
+            # clipping on source state; the preserved prior moment renders off MomentState.decided).
             get_logger(cfg)("source", source_id, "zero_moments", warn=True)
-            led.set_source_state(source_id, SourceState.moments_decided)
+            led.set_source_state(source_id, SourceState.moments_empty)
         return led
     led.reconcile_moments(source_id, keep)          # upsert + cascade-delete dropped lineages
     led.set_source_state(source_id, SourceState.moments_decided)
