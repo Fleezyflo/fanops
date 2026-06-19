@@ -67,3 +67,20 @@ def test_distinct_openings_are_not_clustered():
 def test_common_first_word_different_second_not_clustered():
     used = {"the bar nobody saw", "the last word lands"}               # share only "the", not 2 tokens
     assert is_weak_hook("the line he kept", used=used) is False        # second token differs -> not a cluster
+
+def test_cluster_scope_overrides_dup_scope():
+    # The per-source scope fix: the cluster check is evaluated against `cluster_scope`, NOT the feed-wide
+    # `used` dup set. A 3-word opener shared by hooks ACROSS the feed (in `used`) must NOT cluster when
+    # this decision's scope is empty — only repetition WITHIN the caller's batch reads like a bot.
+    feed = {"wait for the beat drop", "wait for the last line", "wait for the hometown bar"}  # 3 share it, feed-wide
+    assert is_weak_hook("wait for the final verse", feed, cluster_scope=set()) is False  # empty scope -> no cluster
+    assert is_weak_hook("wait for the final verse", feed, cluster_scope=feed) is True     # in-scope >=3 -> cluster
+
+def test_cluster_scope_defaults_to_used():
+    # byte-identical default: cluster_scope omitted -> the cluster check uses `used` exactly as before.
+    used = {"wait for the beat drop", "wait for the last line", "wait for the hometown bar"}
+    assert is_weak_hook("wait for the final verse", used=used) is True   # default path unchanged
+
+def test_dup_check_stays_feed_wide_regardless_of_cluster_scope():
+    # the EXACT-duplicate guard must remain feed-wide even when cluster_scope is narrowed to empty.
+    assert is_weak_hook("the exact same line", {"the exact same line"}, cluster_scope=set()) is True
