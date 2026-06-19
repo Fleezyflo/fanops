@@ -558,3 +558,30 @@ class Config:
         except ValueError:
             return 0
         return v if v >= 0 else 0
+
+    @property
+    def concurrent_sources(self) -> bool:
+        # Parallel per-source pipeline (map-parallel / reduce-serial): with this ON, the lock-free
+        # pre-warm pass warms each source's slow subprocess artifacts (whisper / ffmpeg signals /
+        # ffmpeg render) in a bounded thread pool instead of one-source-at-a-time, so a single long
+        # video no longer head-of-line-blocks the whole queue. The same flag fans out the responder's
+        # claude -p gate loop. DEFAULT OFF (opt-in) — the byte-identical contract: off -> the EXACT
+        # existing sequential path, no pool constructed. Only the explicit on-words enable it; unset,
+        # empty, or anything else stays OFF. Mirrors burn_subs. (One writer rule guards correctness,
+        # not the flag: workers are pure, the single main transaction is the only ledger writer.)
+        v = (os.getenv("FANOPS_CONCURRENT_SOURCES") or "").strip().lower()
+        return v in {"1", "true", "yes", "on"}
+
+    @property
+    def concurrent_workers(self) -> int:
+        # Pool size for concurrent_sources (the source map AND the responder fan-out). DEFAULT 4 — the
+        # proven safe concurrent-opus ceiling (hookedit._MAX_EDIT_BATCH), a rate-limit guardrail that
+        # caps simultaneous claude -p / whisper / ffmpeg children, NOT a correctness device. CLAMPED
+        # >= 1: a pool of 0 would never run a worker and HANG, and a hang is a deadlock-guard violation
+        # (the variant_ucb_c clamp precedent). A non-int env falls back to the default rather than
+        # crashing an autonomous run.
+        try:
+            v = int(os.getenv("FANOPS_CONCURRENT_WORKERS", "4"))
+        except ValueError:
+            return 4
+        return v if v >= 1 else 1

@@ -417,3 +417,32 @@ def test_gc_keep_days_config(monkeypatch, tmp_path):
     for bad in ("0", "-1", "garbage", ""):
         monkeypatch.setenv("FANOPS_GC_KEEP_DAYS", bad)
         assert Config(root=tmp_path).gc_keep_days == 30                  # 0/negative/non-int -> clamp to default
+
+def test_concurrent_sources_default_off_and_opt_in(tmp_path, monkeypatch):
+    # Parallel per-source pipeline is OPT-IN (mirrors burn_subs): default OFF -> the byte-identical
+    # sequential path; only the explicit on-words enable it. Anything else stays OFF.
+    monkeypatch.delenv("FANOPS_CONCURRENT_SOURCES", raising=False)
+    assert Config(root=tmp_path).concurrent_sources is False
+    for on in ("1", "true", "yes", "on"):
+        monkeypatch.setenv("FANOPS_CONCURRENT_SOURCES", on)
+        assert Config(root=tmp_path).concurrent_sources is True
+    monkeypatch.setenv("FANOPS_CONCURRENT_SOURCES", "off")
+    assert Config(root=tmp_path).concurrent_sources is False
+    monkeypatch.setenv("FANOPS_CONCURRENT_SOURCES", "")
+    assert Config(root=tmp_path).concurrent_sources is False
+
+def test_concurrent_workers_default_and_clamp(tmp_path, monkeypatch):
+    # Pool size: default 4; a bad int falls back to 4; clamped >= 1 (a pool of 0 would hang — a
+    # deadlock-guard violation). Mirrors the publish_lead_minutes / variant_ucb_c clamp shape.
+    monkeypatch.delenv("FANOPS_CONCURRENT_WORKERS", raising=False)
+    assert Config(root=tmp_path).concurrent_workers == 4                 # default
+    monkeypatch.setenv("FANOPS_CONCURRENT_WORKERS", "8")
+    assert Config(root=tmp_path).concurrent_workers == 8                 # honored
+    monkeypatch.setenv("FANOPS_CONCURRENT_WORKERS", "1")
+    assert Config(root=tmp_path).concurrent_workers == 1                 # minimum
+    monkeypatch.setenv("FANOPS_CONCURRENT_WORKERS", "0")
+    assert Config(root=tmp_path).concurrent_workers == 1                 # clamped up from 0 (no hang)
+    monkeypatch.setenv("FANOPS_CONCURRENT_WORKERS", "-3")
+    assert Config(root=tmp_path).concurrent_workers == 1                 # clamped up from negative
+    monkeypatch.setenv("FANOPS_CONCURRENT_WORKERS", "notanint")
+    assert Config(root=tmp_path).concurrent_workers == 4                 # bad int -> default
