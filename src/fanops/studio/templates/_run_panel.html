@@ -4,11 +4,7 @@
   <p class="muted">Add a video, then let the system cut clips and write captions. They land in
     <strong>Review</strong>.</p>
 
-  <div class="status">
-    <span>Clips ready<strong>{{ status.clips }}</strong></span>
-    <span>Published<strong>{{ status.published }}</strong></span>
-    <span>Mode<strong>{{ status.backend }}</strong></span>
-  </div>
+  {% include "_run_status.html" %}
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">

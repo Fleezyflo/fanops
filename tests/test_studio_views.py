@@ -258,3 +258,29 @@ def test_golive_status_reports_learning_validated(tmp_path):
     assert golive_status(cfg).learning_validated is False     # no cutover.json yet
     cutover._save_state(cfg, {"metrics_confirmed": True})
     assert golive_status(cfg).learning_validated is True
+
+
+def test_review_counts_tallies_buckets(tmp_path):
+    # The Review live-poller's single source of truth: bucket tallies built from the SAME cards the
+    # worklist renders. awaiting=editable (approve worklist), prepared=post-less clips, held=brand-risk;
+    # 'recent' (shipped) is NOT a waiting count and is excluded.
+    from fanops.studio.views import review_counts
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)                       # clip_1 queued, no posts -> prepared
+    led.add_clip(Clip(id="clip_held", parent_id="mom_1", path="/h.mp4", aspect=Fmt.r9x16,
+                      state=ClipState.held, held=True, held_reason="brand risk"))
+    led.add_clip(Clip(id="clip_edit", parent_id="mom_1", path="/e.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+    led.add_post(Post(id="p_edit", parent_id="clip_edit", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="EDIT", state=PostState.awaiting_approval,
+                      scheduled_time=_z(NOW + timedelta(hours=3))))
+    led.add_post(Post(id="p_recent", parent_id="clip_edit", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="SHIPPED", state=PostState.published,
+                      scheduled_time=_z(NOW - timedelta(hours=2))))
+    cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
+    counts = review_counts(cards)
+    assert counts == {"awaiting": 1, "prepared": 1, "held": 1}  # recent excluded
+
+def test_review_counts_empty_is_all_zero(tmp_path):
+    from fanops.studio.views import review_counts
+    assert review_counts([]) == {"awaiting": 0, "prepared": 0, "held": 0}

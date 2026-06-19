@@ -1,0 +1,16 @@
+{# src/fanops/studio/templates/_review_live.html — the Review tab's live auto-refresh strip. It polls
+   ITSELF every 5s (hx-swap=outerHTML re-arms the timer each tick) and NEVER swaps the worklist body, so
+   ticked checkboxes / in-progress edits in #review-body are never clobbered. `shown` is read live from
+   the body's data-awaiting each poll (hx-vals js), so the 'load them' button — the ONLY thing that
+   refreshes the worklist — appears only when new awaiting posts have landed, and clears once loaded. #}
+<div id="review-live" class="review-live" hx-get="{{ url_for('review_live') }}" hx-trigger="every 5s"
+     hx-swap="outerHTML"
+     hx-vals='js:{shown: (document.querySelector("#review-body") && document.querySelector("#review-body").dataset.awaiting) || 0}'>
+  <span class="live-dot" aria-hidden="true"></span>
+  <span class="muted">Live · Awaiting <strong>{{ counts.awaiting }}</strong> · Ready to prepare
+    <strong>{{ counts.prepared }}</strong> · Held <strong>{{ counts.held }}</strong></span>
+  {% if counts.awaiting > shown %}
+    <button type="button" class="primary" hx-get="{{ url_for('review_panel_refresh') }}"
+            hx-target="#review-body" hx-swap="outerHTML">🔔 {{ counts.awaiting - shown }} new — load them</button>
+  {% endif %}
+</div>

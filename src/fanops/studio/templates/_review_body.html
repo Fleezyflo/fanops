@@ -2,7 +2,7 @@
    uses hx-include (NOT a wrapping <form>) because the cards already contain their own edit/snooze/reschedule
    forms, and nested forms are invalid HTML. Checkboxes (name="ids") live in the editable cards; the bar
    buttons gather the checked ones scoped to #review-body. Re-rendered standalone by /posts/approve|reject. #}
-<div id="review-body">
+<div id="review-body" data-awaiting="{{ awaiting_total|default(0) }}">
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
       {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }} post(s) — now in the Schedule.{% elif result.detail.rejected is defined %}Rejected {{ result.detail.rejected }} post(s).{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}

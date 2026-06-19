@@ -262,3 +262,13 @@ form + form { margin-top:var(--s-2); }
   .status > span { flex:1 1 6rem; }
 }
 @media (min-width:1440px) { main { max-width:1280px; } }
+
+/* Live auto-refresh strip (Review tab) — self-polling counts + a non-destructive 'load them' button.
+   Compositor-friendly only: the dot pulses on opacity (no layout-bound animation). */
+.review-live { display:flex; align-items:center; gap:var(--s-3); flex-wrap:wrap;
+  padding:var(--s-2) var(--s-3); margin:0 0 var(--s-3); border:1px solid var(--line);
+  border-radius:var(--r-md); background:var(--surface-1); }
+.review-live .live-dot { width:8px; height:8px; border-radius:var(--r-pill); background:var(--ok);
+  box-shadow:0 0 0 3px oklch(76% 0.16 152 / .18); animation:live-pulse 2s var(--ease) infinite; }
+@keyframes live-pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
+@media (prefers-reduced-motion: reduce) { .review-live .live-dot { animation:none; } }
