@@ -12,7 +12,8 @@
       <tr>
         <td>{{ r.variant_hook }}</td>
         <td>{{ r.account }}/{{ r.platform }}</td>
-        <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> {{ '%.1f'|format(r.lift_score) }}</td>
+        <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> {{ '%.1f'|format(r.lift_score) }}
+            {% if r.lift_degraded %}<span class="badge degraded" title="Partial objective — a primary metric was not returned by the backend, so this lift is reach/shares-weighted, not the full saves/retention objective.">DEGRADED{% if r.lift_missing %} · missing {{ r.lift_missing|join(', ') }}{% endif %}</span>{% endif %}</td>
         <td class="ro">{{ r.loop_state }}</td>
       </tr>
       {% endfor %}

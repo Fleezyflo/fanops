@@ -147,6 +147,15 @@ class Config:
         return v.strip() if v and v.strip() else None
 
     @property
+    def require_full_objective(self) -> bool:
+        # T4 opt-in: refuse to AMPLIFY a winner whose lift is DEGRADED (a primary weighted metric was
+        # absent from its row -> the lift scalar is a partial objective). DEFAULT OFF (learning stays
+        # conservative + the 3-window streak is already a proxy); only explicit on-words enable. Purely
+        # gates variant_amplify; never recalibrates _W. Mirrors burn_subs.
+        v = (os.getenv("FANOPS_REQUIRE_FULL_OBJECTIVE") or "").strip().lower()
+        return v in {"1", "true", "yes", "on"}
+
+    @property
     def is_live_backend(self) -> bool:
         # THE "live backend + key" guard, one home (stage-6 audit): it was duplicated verbatim at
         # three call sites (reconcile + both learning passes); drift in any copy would silently

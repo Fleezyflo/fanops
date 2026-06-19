@@ -352,3 +352,12 @@ def test_publish_lead_minutes_negative_clamps_to_zero(monkeypatch):
     from fanops.config import Config
     monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", "-30")
     assert Config().publish_lead_minutes == 0
+
+def test_require_full_objective_default_off_and_opt_in(monkeypatch, tmp_path):
+    # T4 opt-in: block amplify on a DEGRADED-lift winner (a partial objective). Default OFF (learning
+    # stays conservative); only explicit on-words enable. Mirrors burn_subs.
+    monkeypatch.delenv("FANOPS_REQUIRE_FULL_OBJECTIVE", raising=False)
+    assert Config(root=tmp_path).require_full_objective is False
+    for on in ("1", "true", "yes", "on"):
+        monkeypatch.setenv("FANOPS_REQUIRE_FULL_OBJECTIVE", on)
+        assert Config(root=tmp_path).require_full_objective is True
