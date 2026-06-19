@@ -11,6 +11,36 @@ def test_gates_blocked_note_flags_remaining_gates():
     assert _gates_blocked_note({"awaiting": {"moments": 0, "captions": 0}}) is None   # converged -> quiet
     assert _gates_blocked_note(None) is None                                          # no status -> quiet
 
+def test_gates_blocked_note_flags_hook_gates():
+    # The hook editor + judge gates BLOCK rendering exactly like moments/captions; a run loop that ends
+    # with one open has NOT converged (nothing rendered) and must get the SAME loud signal. Regression
+    # for the moments/captions-only note that read a hookedit-stuck run as silently "done".
+    from fanops.cli import _gates_blocked_note
+    assert _gates_blocked_note({"awaiting": {"moments": 0, "captions": 0, "hookedit": 1}}) is not None
+    assert "BLOCKED" in _gates_blocked_note({"awaiting": {"moments": 0, "captions": 0, "hookjudge": 2}})
+    assert _gates_blocked_note({"awaiting": {"moments": 0, "captions": 0, "hookedit": 0, "hookjudge": 0}}) is None
+
+def test_run_loop_iterates_until_hook_gates_clear(tmp_path, monkeypatch, mocker):
+    # The hook editor/judge gates block rendering; the loop must keep answering+advancing while EITHER
+    # is awaiting. The break used to test only moments+captions, so a DEFAULT-ON hook editor made the
+    # loop exit right after moments — before a single clip rendered (the autonomous run produced nothing).
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    import fanops.cli as cli
+    mocker.patch.object(cli, "get_responder")          # responder is a no-op stub (we drive advance's awaiting)
+    summaries = [
+        {"awaiting": {"moments": 0, "captions": 0, "hookedit": 1, "hookjudge": 0}},   # editor gate open
+        {"awaiting": {"moments": 0, "captions": 0, "hookedit": 0, "hookjudge": 1}},   # judge gate open
+        {"awaiting": {"moments": 0, "captions": 0, "hookedit": 0, "hookjudge": 0}},   # converged
+    ]
+    adv = mocker.patch.object(cli, "advance", side_effect=summaries)
+    rc = cli.main(["run"])
+    assert rc == 0
+    assert adv.call_count == 3              # did NOT break early at the hookedit/hookjudge steps
+
 def test_main_status(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert main(["status"]) == 0

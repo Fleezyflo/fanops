@@ -325,9 +325,13 @@ def advance(cfg: Config, *, base_time: str) -> dict:
             # surfaced here so the unattended operator sees the drop, not only in run.log.
             "hook_burn_failed": sum(1 for c in led.clips.values() if c.hook_burn_failed),
             "errors": sum(1 for s in led.sources.values() if s.state is SourceState.error),
+            # ALL four agent-gate kinds the responder answers (responder._SCHEMA): the hook editor AND
+            # judge gates BLOCK rendering, so `fanops run` must see them to know it has NOT converged.
+            # Omitting hookjudge let the run loop declare done while the critic gate was still open.
             "awaiting": {"moments": len(pending(cfg, kind="moments")),
                          "captions": len(pending(cfg, kind="captions")),
-                         "hookedit": len(pending(cfg, kind="hookedit"))},
+                         "hookedit": len(pending(cfg, kind="hookedit")),
+                         "hookjudge": len(pending(cfg, kind="hookjudge"))},
         }
     # digest is read-only reporting: build it from the just-committed ledger, OUTSIDE the lock, so
     # the slow markdown render never extends the lock-held window (it would block an overlapping
