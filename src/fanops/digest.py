@@ -143,8 +143,13 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
         rows = sorted(variant_posts, key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True)
         gate_cache: dict[tuple[str, str], str] = {}     # one best_hooks call per surface per render
         lines = [f"- `{p.variant_hook or p.variant_key}` ({p.account}/{p.platform.value}): "
-                 f"lift {p.metrics.get(LIFT_SCORE, 0.0)} "
-                 f"— {gate_state(led, cfg, p.account, p.platform, gate_cache, accounts)}"
+                 f"lift {p.metrics.get(LIFT_SCORE, 0.0)}"
+                 # T4: surface the honest-lift marker — a degraded score (a primary metric absent from the
+                 # row) is partial, so flag it inline + name the missing keys instead of letting the operator
+                 # trust a reach/shares-dominated scalar as a full-objective number.
+                 + (f" [DEGRADED: missing {', '.join(p.metrics.get('lift_missing_keys') or [])}]"
+                    if p.metrics.get("lift_degraded") else "")
+                 + f" — {gate_state(led, cfg, p.account, p.platform, gate_cache, accounts)}"
                  for p in rows]
         out.append("\n## Lift by variant (which creative is winning)\n" + "\n".join(lines) + "\n")
 
