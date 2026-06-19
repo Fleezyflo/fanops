@@ -358,6 +358,9 @@ def main(argv: list[str] | None = None) -> int:
     p_cmet.add_argument("submission_id")
     p_clift = cut_sub.add_parser("lift", help="step 4: compute one real lift_score from the captured row")
     p_clift.add_argument("submission_id")
+    p_hash = sub.add_parser("hashtags", help="dynamic reach-ranked hashtag store (own-post reach, doctor-gated)")
+    hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
+    hash_sub.add_parser("refresh", help="recompute 00_control/hashtags.json from analyzed posts' reach (needs learn-doctor PASS)")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
     dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
@@ -529,6 +532,11 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
+    if args.cmd == "hashtags":
+        if args.hashtags_cmd == "refresh":
+            from fanops.fanops_hashtags import cmd_hashtags_refresh   # lazy: keeps it off the hot path
+            return cmd_hashtags_refresh(cfg)
+        return 2
     if args.cmd == "doctor":   return cmd_doctor(cfg)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)

@@ -69,6 +69,7 @@ class Config:
         self.accounts_path = self.control / "accounts.json"
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
+        self.hashtags_path = self.control / "hashtags.json"  # M4 dynamic reach-ranked tag store; absent -> frozen pools
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
         self.log_path = self.reports / "run.log"
 

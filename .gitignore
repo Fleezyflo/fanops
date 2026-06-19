@@ -21,6 +21,10 @@ MohFlow-FanOps/00_control/ledger.json
 MohFlow-FanOps/00_control/ledger.lock
 MohFlow-FanOps/00_control/ledger_digest.md
 MohFlow-FanOps/00_control/run.log
+# ledger snapshots/backups the operator writes around live runs (same PII as ledger.json) — never commit
+MohFlow-FanOps/00_control/ledger.json.bak*
+MohFlow-FanOps/00_control/ledger.json.pre*
+MohFlow-FanOps/00_control/hashtag_budget.json
 
 # python / venv
 __pycache__/
@@ -45,6 +49,7 @@ coverage.json
 
 # browser-QA / playwright scratch (screenshots, traces) — regenerated, never committed
 .playwright-mcp/
+.ui_audit/
 /*.png
 
 # git worktrees (isolated dev workspaces) — never tracked
