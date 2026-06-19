@@ -110,6 +110,20 @@ def test_status_surfaces_needs_reconcile(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and "needs_reconcile=1" in out
 
+def test_status_surfaces_moments_empty(tmp_path, monkeypatch, capsys):
+    # V2 M1/F8: a source the model produced ZERO picks for is actionable (re-runnable via
+    # retry-source). `fanops status` surfaces the count so under-production is never silent.
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/x.mp4", state=SourceState.moments_empty))
+    led.save()
+    rc = main(["status"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "moments_empty=1" in out
+
 def test_main_has_track_adjust_gc(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # these subcommands must exist (FIX F04) — they no-op cleanly on an empty ledger
