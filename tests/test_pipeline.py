@@ -89,6 +89,19 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
     assert s["needs_reconcile"] == 0
     assert len(list(cfg.scheduled.glob("*.json"))) == 2
 
+def test_advance_summary_counts_hook_burn_failed(tmp_path):
+    # V2 M1/F9: a clip that silently lost its hook (couldn't burn) is COUNTED in the advance() summary
+    # the unattended operator sees — not buried only in run.log. dryrun seeds none, so plant one.
+    from fanops.models import Source, Moment, Clip, MomentState, SourceState
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/x.mp4", state=SourceState.moments_decided))
+        led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        led.clips["c1"] = Clip(id="c1", parent_id="m1", path="/c1.mp4", hook_burn_failed=True)
+    s = advance(cfg, base_time="2020-01-01T00:00:00Z")
+    assert s["hook_burn_failed"] == 1
+
 def test_signals_toolchain_absent_is_quarantined_not_a_crash(tmp_path, monkeypatch, mocker):
     # ffmpeg absent during the signals pass raises a typed ToolchainMissingError, but detect_signals
     # runs INSIDE advance()'s per-source quarantine, so the source goes to SourceState.error and the
