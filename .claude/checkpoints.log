@@ -1,1 +1,6 @@
 2026-06-13-14:56 | finalisation | df03ed4
+2026-06-18-13:42 | hook-system-pre-dissect | 362cd36 | main; PRs #51-54 merged; 1373 tests; ruff clean; NEXT: dissect hook system
+2026-06-19-02:41 | post-approval-lifecycle-complete | d351d70 | suite 1433 pass, ruff clean, PRs #56-#59 merged
+2026-06-19-02:54 | v2-plans-audited (5 artifacts in .claude/PRPs/plans/, gitignored, on-disk; M2 FLAWED per audit) | d351d70
+2026-06-19-04:20 | v2-m1-F1+F8+F9 (model-pin+provenance, moments_empty, hook_burn_failed; suite 1450, ruff clean; F2+F10 remain) | f6c0f80
+2026-06-19-04:37 | audit-prp-fortified | e17e0a2
