@@ -116,6 +116,19 @@ def test_sample_trends_stops_at_budget(tmp_path, monkeypatch):
     out = meta_graph.sample_trends(cfg, ["#x", "#y", "#z"], get=get, now=now)
     assert len(out) == 1                                          # only one slot left -> one sampled
 
+def test_sample_trends_requeries_expired_tag(tmp_path, monkeypatch):
+    # A tag last queried >7 days ago is OUTSIDE the budget window -> it must be re-queryable (not skipped
+    # as if recent). Regression for the unwindowed `already` set.
+    cfg = _cfg(tmp_path, monkeypatch)
+    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
+    old = (now - timedelta(days=10)).isoformat()
+    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtag_budget_path.write_text(json.dumps({"queries": [{"tag": "#old", "ts": old}]}))
+    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
+                   "top_media": _Resp(200, {"data": [{"like_count": 12}]})})
+    out = meta_graph.sample_trends(cfg, ["#old"], get=get, now=now)
+    assert out == {"#old": 12.0}                                 # expired -> re-sampled, not skipped
+
 def test_token_never_logged(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)

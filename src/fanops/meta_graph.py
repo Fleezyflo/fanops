@@ -144,7 +144,19 @@ def sample_trends(cfg: Config, candidates: list[str], *, get=None, now: datetime
     if remaining is None:
         log("hashtags", "trends", "budget_unreadable", note="refusing trend queries (fail-closed)")
         return {}
-    already = {e.get("tag") for e in (_read_queries(cfg) or []) if isinstance(e, dict)}
+    cutoff = now - timedelta(days=_BUDGET_WINDOW_DAYS)
+    already: set[str] = set()                       # tags queried WITHIN the window only (an expired one is re-queryable)
+    for e in (_read_queries(cfg) or []):
+        if not isinstance(e, dict):
+            continue
+        try:
+            ts = datetime.fromisoformat(e["ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts >= cutoff and isinstance(e.get("tag"), str):
+            already.add(e["tag"])
     scores: dict[str, float] = {}
     deferred = 0
     for tag in candidates:
