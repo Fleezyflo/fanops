@@ -137,6 +137,8 @@ def moment_prompt(payload: dict) -> str:
         "  - `reason` is REQUIRED: one sentence on WHY this moment hits (punchline, beat drop, "
         "quotable bar). Never use em-dashes (—) or en-dashes (–); use a comma or period.\n"
         "  - `hook` is REQUIRED: the ON-SCREEN TEXT shown in the clip's first ~2 seconds.\n"
+        "  - FRAMES: a few stills sampled across the source may be ATTACHED as images — SEE them and write "
+        "each hook true to what is actually ON SCREEN, not only the transcript.\n"
         + _hook_spec(6) +
         "  - `hook_pattern` is OPTIONAL — a post-hoc analytics label, NOT a quality gate and NOT the "
         "driver of the hook (the craft above is). If you set a `hook` you MAY tag it with the closest of "

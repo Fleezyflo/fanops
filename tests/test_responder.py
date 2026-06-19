@@ -202,11 +202,20 @@ def test_hookjudge_model_passes_frames_as_images_for_vision(mocker):
     _default_claude_model("hookjudge", payload)
     assert spy.call_args.kwargs.get("images") == ["/t/a.jpg", "/t/b.jpg", "/t/c.jpg"]
 
-def test_moments_model_passes_no_images(mocker):
+def test_moments_model_passes_frames_as_images_for_vision(mocker):
+    # Phase 1: the AUTHOR is now a vision call — the moments gate hands its sampled source frames to
+    # claude as images so the hook is written SEEING the footage (mirrors hookedit/hookjudge). The
+    # moments payload carries frames at the TOP level (not per-item like the editor's feed).
     from fanops.responder import _default_claude_model
     spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
-    _default_claude_model("moments", {"source_id": "s", "duration": 10.0})
-    assert not spy.call_args.kwargs.get("images")        # text-only path unchanged
+    _default_claude_model("moments", {"source_id": "s", "duration": 10.0, "frames": ["/k/a.jpg", "/k/b.jpg"]})
+    assert spy.call_args.kwargs.get("images") == ["/k/a.jpg", "/k/b.jpg"]
+
+def test_moments_model_without_frames_stays_text_only(mocker):
+    from fanops.responder import _default_claude_model
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
+    _default_claude_model("moments", {"source_id": "s", "duration": 10.0})   # no frames -> fail-open text-only
+    assert not spy.call_args.kwargs.get("images")
 
 def test_default_model_pins_llm_model_and_logs_provenance(mocker, tmp_path):
     # V2 M1/F1+F10: the production responder PINS cfg.llm_model on the claude call AND emits one
@@ -221,7 +230,7 @@ def test_default_model_pins_llm_model_and_logs_provenance(mocker, tmp_path):
     logfn = mocker.Mock()
     out = _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
     assert out == {"picks": []}
-    assert meta.call_args.kwargs["model"] == "sonnet"                      # per-gate pin: moments -> sonnet
+    assert meta.call_args.kwargs["model"] == "opus"                        # per-gate pin: moments -> opus (vision author)
     prov = next(c for c in logfn.call_args_list if c.args[2] == "call")     # the provenance line
     assert prov.args[0] == "llm"
     assert prov.kwargs["model"] == "claude-opus-4-x"                        # the answering model surfaced
@@ -237,7 +246,7 @@ def test_default_model_provenance_falls_back_to_pinned_when_envelope_lacks_model
     logfn = mocker.Mock()
     _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
     prov = next(c for c in logfn.call_args_list if c.args[2] == "call")
-    assert prov.kwargs["model"] == "sonnet" and prov.kwargs["brief_sha"] == "absent"   # moments -> sonnet
+    assert prov.kwargs["model"] == "opus" and prov.kwargs["brief_sha"] == "absent"   # moments -> opus
 
 def test_llm_responder_answers_hookedit_gate(tmp_path, monkeypatch):
     # The feed-aware hook editor rides the same gate contract: a pending hookedit request is answered

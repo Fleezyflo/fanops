@@ -422,3 +422,10 @@ def test_brief_fence_renders_none_provided_when_guidance_empty():
     assert "<brand_brief>" in p
     seg = p[p.index("<brand_brief>"):p.index("</brand_brief>")]
     assert "(none provided)" in seg
+
+
+def test_moment_prompt_mentions_attached_frames():
+    # Phase 1: the author is told source stills may be attached, so it writes hooks true to the FOOTAGE
+    # (not just the transcript). Minimal plumbing note; the full hook-spec rewrite is a later plan.
+    p = moment_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "clip_profile": "talk"})
+    assert "frame" in p.lower()

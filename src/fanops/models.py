@@ -264,6 +264,7 @@ class MomentRequest(BaseModel):
     language: Optional[str] = None
     guidance: str = ""
     clip_profile: str = "talk"      # content-type band selector (bands.band_for); "talk" -> today's behavior
+    frames: list[str] = Field(default_factory=list)   # Phase 1: source stills the vision author SEES while picking + hooking (fail-open [] when no source)
 
 class MomentPick(BaseModel):
     start: float

@@ -32,12 +32,12 @@ def test_tuning_passes_clean_overrides_unchanged(tmp_path):
     assert t["offbrand_en"] == ["\\bpls\\b"] and t["lift_weights"] == {"saves": 5}
 
 def test_llm_model_per_gate_defaults(monkeypatch, tmp_path):
-    # V2 M1/F1 PIN stays; the TIER is now PER-GATE. MECHANICAL gates (moment windows, hashtag captions)
-    # -> sonnet (fast; blanket-opus made a 28-source run ~40min of sequential calls). CREATIVE hook
-    # gates (hookedit/hookjudge — they author/critique the on-screen retention hook) -> opus.
+    # V2 M1/F1 PIN stays; the TIER is now PER-GATE. The `moments` gate is now the CREATIVE VISION hook
+    # AUTHOR (it sees source frames + writes the on-screen retention hook) -> opus. `captions` (hashtags
+    # only) stays mechanical -> sonnet. hookedit/hookjudge stay opus until they are deleted (Phase 2).
     monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
     c = Config(root=tmp_path)
-    assert c.llm_model_for("moments") == "sonnet"
+    assert c.llm_model_for("moments") == "opus"                 # Phase 1: vision hook author
     assert c.llm_model_for("captions") == "sonnet"
     assert c.llm_model_for("hookedit") == "opus"
     assert c.llm_model_for("hookjudge") == "opus"
@@ -53,7 +53,7 @@ def test_llm_model_global_override_forces_all_gates(monkeypatch, tmp_path):
 def test_llm_model_blank_override_falls_back_to_per_gate(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_LLM_MODEL", "   ")               # whitespace-only -> per-gate defaults
     c = Config(root=tmp_path)
-    assert c.llm_model_for("moments") == "sonnet" and c.llm_model_for("hookedit") == "opus"
+    assert c.llm_model_for("moments") == "opus" and c.llm_model_for("captions") == "sonnet"
 
 def test_hook_editor_defaults_on(monkeypatch, tmp_path):
     # Phase C2: the feed-aware hook editor closes the weakest link (template clustering); it must be
