@@ -517,6 +517,18 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
         return ActionResult(ok=False, error=f"repost failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": new_id, "source_id": post_id})
 
+def _warm_target_aspect(cfg: Config, moment_id: str, aspect) -> None:
+    # #4 lock-free pre-render (mirror pipeline._prewarm): _clip_for_aspect on a THROWAWAY Ledger.load snapshot
+    # reuses an existing render OR runs render_moment, which writes cid.mp4 + its fingerprint sidecar with NO
+    # flock held. The in-transaction _clip_for_aspect below then hits the fingerprint-skip and mints
+    # microseconds-fast instead of running ffmpeg (600s-bound) UNDER the lock — N bulk clips no longer
+    # serialize N renders behind the write lock. FAIL-OPEN: any error here just means the in-lock path renders
+    # as today (never a crash); the snapshot state is discarded — only the on-disk mp4+fp persist, and the
+    # transaction re-resolves authoritatively.
+    from fanops.crosspost import _clip_for_aspect
+    try: _clip_for_aspect(Ledger.load(cfg), cfg, moment_id, aspect)
+    except Exception: pass
+
 def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platform: str, *,
                          now: Optional[datetime] = None) -> ActionResult:
     """Cross-account reuse (content-lifecycle Phase 4): mint a fresh awaiting_approval post of an EXISTING clip
@@ -541,6 +553,9 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
     if surf is None:
         return ActionResult(ok=False, error=f"no active surface {target_account}/{platform} — onboard it in Go Live first")
     skey = surface_key(surf.account, surf.platform.value)
+    aspect = PLATFORM_ASPECT.get(plat, Fmt.r9x16)
+    pre = Ledger.load(cfg).clips.get(clip_id)                                  # #4: lock-free read of the moment id...
+    if pre is not None: _warm_target_aspect(cfg, pre.parent_id, aspect)        # ...so the target aspect renders OUTSIDE the flock
     try:
         with Ledger.transaction(cfg) as led:
             clip = led.clips.get(clip_id)
@@ -552,12 +567,13 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
             max_secs = PLATFORM_MAX_SECONDS.get(plat)
             if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
                 return ActionResult(ok=False, error=f"clip duration {clip_dur:.0f}s exceeds {platform} cap {max_secs}s")
-            aspect = PLATFORM_ASPECT.get(plat, Fmt.r9x16)
-            target_clip = _clip_for_aspect(led, cfg, clip.parent_id, aspect)   # the RIGHT-aspect render (H7)
+            target_clip = _clip_for_aspect(led, cfg, clip.parent_id, aspect)   # the RIGHT-aspect render (H7); warm -> fingerprint-skip
             pid = child_id("post", target_clip.id, skey)
             if pid in led.posts:                                               # honest report (H9)
                 return ActionResult(ok=True, detail={"post_id": pid, "clip_id": clip_id, "already_exists": True,
                                                      "surface": f"{surf.account}/{surf.platform.value}"})
+            if not (target_clip.path and os.path.exists(target_clip.path)):    # #10: a gc-swept render -> refuse at mint,
+                return ActionResult(ok=False, error=f"clip {clip_id} render missing on disk — re-run the clip before cross-posting")  # not silently at publish
             cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
             caption = cap["caption"] if isinstance(cap, dict) and cap.get("caption") else ""
             hashtags = list(cap.get("hashtags", [])) if isinstance(cap, dict) else []

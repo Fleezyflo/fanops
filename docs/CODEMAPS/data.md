@@ -14,7 +14,7 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 03_clips/     rendered clips + per-account variant renders + composed clips (Studio serves ONLY inside this tree)
 04_agent_io/  agentstep request/response JSONs (moments/captions)
 05_scheduled/ dryrun poster payloads (<post_id>.json, written by post/dryrun.py; swept by `gc` older than FANOPS_GC_KEEP_DAYS)
-06_published/ content-lifecycle: day-bucketed <YYYY-MM-DD>/<post_id>.json record of every shipped post (fail-open archive via post/run._archive_published; `gc` NEVER touches it)
+06_published/ content-lifecycle: day-bucketed <YYYY-MM-DD>/<post_id>.json record of every shipped post (fail-open archive via post/run._archive_published; `gc` NEVER touches it). WRITE-ONLY BY DESIGN (#5 resolved): a human-browsable on-disk audit trail — the Studio Posted tab reads the LEDGER, not these files. Having no in-app consumer is deliberate, not a gap; surfacing it in the UI is a future product call, not a wiring bug.
 07_reports/   run.log (TAB columns: ts\tstage\tunit\toutcome\textra)
 .env          (env vars: FANOPS_POSTER, POSTIZ_URL, POSTIZ_API_KEY, FANOPS_RESPONDER, etc.)
 ```

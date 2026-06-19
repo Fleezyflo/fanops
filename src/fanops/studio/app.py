@@ -506,4 +506,14 @@ def create_app(cfg: Config) -> Flask:
         mb = (app.config["MAX_CONTENT_LENGTH"] or 0) // (1024 * 1024)
         return _run_panel(actions.ActionResult(ok=False, error=f"file too large — the upload cap is {mb} MB"))
 
+    from fanops.errors import ControlFileError
+    @app.errorhandler(ControlFileError)
+    def _control_file_error(e):
+        # A malformed accounts.json/ledger.json raised ControlFileError from an unguarded Accounts.load/
+        # Ledger.load in a route. Without this, EVERY tab 500s on one corrupt file (a PROVEN live failure).
+        # Render a degraded, operator-actionable page at HTTP 200 — same htmx-swap-safe status as _too_large
+        # (htmx 2.x drops non-2xx, so a 500 panel would vanish on a POST). The template is STANDALONE: it must
+        # not touch ledger/accounts context, since loading that is what failed.
+        return render_template("error.html", message=str(e)), 200
+
     return app

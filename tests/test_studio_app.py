@@ -235,7 +235,9 @@ def _seed_xacct_route(cfg):
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path="/s.mp4"))
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
-        c = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued)
+        cfg.clips.mkdir(parents=True, exist_ok=True)
+        cpath = cfg.clips / "c.mp4"; cpath.write_bytes(b"\x00")          # real render file — #10 guard checks existence
+        c = Clip(id="clip_1", parent_id="mom_1", path=str(cpath), aspect=Fmt.r9x16, state=ClipState.queued)
         c.meta_captions = {"@b/instagram": {"caption": "reuse", "hashtags": []}}
         led.add_clip(c)
         led.add_post(Post(id="p_a", parent_id="clip_1", account="@a", account_id="ig_a",

@@ -177,12 +177,14 @@ def _seed_xacct(cfg, *, accounts=None, ig_caption=True, window=(0.0, 7.0), aspec
     accounts = accounts or [{"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
                               start=window[0], end=window[1], reason="r", state=MomentState.clipped))
         for i, asp in enumerate(aspects):
-            clip = Clip(id=f"clip_{i}", parent_id="mom_1", path=f"/c{i}.mp4", aspect=asp, state=ClipState.queued)
+            cpath = cfg.clips / f"c{i}.mp4"; cpath.write_bytes(b"\x00")   # real render file — #10 guard checks existence
+            clip = Clip(id=f"clip_{i}", parent_id="mom_1", path=str(cpath), aspect=asp, state=ClipState.queued)
             if ig_caption and asp is Fmt.r9x16:
                 clip.meta_captions = {"@b/instagram": {"caption": "reuse me", "hashtags": ["#x"]}}
             led.add_clip(clip)
@@ -223,7 +225,9 @@ def test_crosspost_to_account_repost_freely(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path="/s.mp4"))
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
-        c = Clip(id="clip_0", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued)
+        cfg.clips.mkdir(parents=True, exist_ok=True)
+        cpath = cfg.clips / "c.mp4"; cpath.write_bytes(b"\x00")          # real render file — #10 guard checks existence
+        c = Clip(id="clip_0", parent_id="mom_1", path=str(cpath), aspect=Fmt.r9x16, state=ClipState.queued)
         c.meta_captions = {"@b/instagram": {"caption": "x", "hashtags": []}}
         led.add_clip(c)
         led.add_post(Post(id="p_a", parent_id="clip_0", account="@a", account_id="ig_a",
@@ -284,11 +288,13 @@ def test_crosspost_all_to_account_bulk(tmp_path):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]}))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path="/s.mp4"))
         for i in range(3):                                       # 3 distinct moments -> 3 distinct target clips
             led.add_moment(Moment(id=f"mom_{i}", parent_id="src_1", content_token=f"{i}", start=i, end=i + 5, reason="r", state=MomentState.clipped))
-            c = Clip(id=f"clip_{i}", parent_id=f"mom_{i}", path=f"/c{i}.mp4", aspect=Fmt.r9x16, state=ClipState.queued)
+            cpath = cfg.clips / f"c{i}.mp4"; cpath.write_bytes(b"\x00")   # real render file — #10 guard checks existence
+            c = Clip(id=f"clip_{i}", parent_id=f"mom_{i}", path=str(cpath), aspect=Fmt.r9x16, state=ClipState.queued)
             c.meta_captions = {"@b/instagram": {"caption": f"c{i}", "hashtags": []}}
             led.add_clip(c)
             led.add_post(Post(id=f"p_a{i}", parent_id=f"clip_{i}", account="@a", account_id="ig_a",
@@ -299,3 +305,60 @@ def test_crosspost_all_to_account_bulk(tmp_path):
     assert r2.ok and r2.detail["minted"] == 0 and r2.detail["already_exists"] == 3
     r3 = crosspost_all_to_account(cfg, "@nobody", "@b", "instagram", now=NOW)
     assert not r3.ok                                            # empty source -> clean failure
+
+
+def test_crosspost_refuses_when_render_file_missing(tmp_path):
+    # #10: a reused clip whose .mp4 was gc-swept (retired/analyzed sweep) still passes the STATE check,
+    # so without a guard a post is minted on a missing file and fails only later AT PUBLISH. Refuse at mint.
+    import os
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path); _seed_xacct(cfg)
+    os.remove(Ledger.load(cfg).clips["clip_0"].path)            # simulate the gc sweep (#10 trigger)
+    r = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
+    assert not r.ok and "render missing" in (r.error or "")
+    assert not Ledger.load(cfg).posts                          # nothing minted (would have died at publish)
+
+
+def test_crosspost_all_skips_missing_render_files(tmp_path):
+    # #10 bulk: a missing render counts as a clean skip, never a mint. minted==0, skipped>0, ok False.
+    import json
+    from fanops.studio.actions import crosspost_all_to_account
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]}))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4"))
+        for i in range(2):
+            led.add_moment(Moment(id=f"mom_{i}", parent_id="src_1", content_token=f"{i}", start=i, end=i + 5, reason="r", state=MomentState.clipped))
+            led.add_clip(Clip(id=f"clip_{i}", parent_id=f"mom_{i}", path=str(cfg.clips / f"gone_{i}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))   # path never written
+            led.add_post(Post(id=f"p_a{i}", parent_id=f"clip_{i}", account="@a", account_id="ig_a", platform=Platform.instagram, caption="A", state=PostState.published))
+    r = crosspost_all_to_account(cfg, "@a", "@b", "instagram", now=NOW)
+    assert not r.ok and r.detail["minted"] == 0 and r.detail["skipped"] == 2
+
+
+def test_crosspost_common_path_never_renders(tmp_path, monkeypatch):
+    # #6: when a present same-aspect render exists, crosspost must NOT invoke ffmpeg at all (neither in the
+    # warm nor under the lock). Monkeypatch render_moment to BLOW UP if called -> a green mint proves it.
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path); _seed_xacct(cfg)              # clip_0 9:16 file present; IG wants 9:16 -> reuse
+    def _boom(*a, **k): raise AssertionError("render_moment called on the common reuse path")
+    monkeypatch.setattr("fanops.crosspost.render_moment", _boom)
+    r = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
+    assert r.ok and r.detail["already_exists"] is False
+
+
+def test_crosspost_warms_target_aspect_before_opening_the_lock(tmp_path, monkeypatch):
+    # #4: the target-aspect render is resolved on a lock-free snapshot BEFORE Ledger.transaction opens, so a
+    # first fan-out never runs ffmpeg (600s) under the flock. Assert the warm precedes the lock.
+    from fanops.studio import actions as A
+    cfg = Config(root=tmp_path); _seed_xacct(cfg)
+    order = []
+    real_warm, real_txn = A._warm_target_aspect, Ledger.transaction
+    def spy_warm(*a, **k): order.append("warm"); return real_warm(*a, **k)
+    def spy_txn(c): order.append("txn"); return real_txn(c)
+    monkeypatch.setattr(A, "_warm_target_aspect", spy_warm)
+    monkeypatch.setattr(Ledger, "transaction", spy_txn)
+    r = A.crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
+    assert r.ok and order[:2] == ["warm", "txn"], order        # warm ran lock-free BEFORE the transaction

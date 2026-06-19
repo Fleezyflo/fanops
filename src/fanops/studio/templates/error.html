@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- #3 fail-open: STANDALONE page (does NOT extend base.html — base may need ledger/accounts context,
+     which is exactly what failed). Rendered by the global ControlFileError errorhandler at HTTP 200. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FanOps — control file unreadable</title>
+  <style>
+    body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 40rem; margin: 4rem auto;
+           padding: 0 1.5rem; color: #1a1a1a; background: #fafafa; }
+    h1 { font-size: 1.4rem; margin-bottom: .5rem; }
+    code { background: #eee; padding: .1rem .35rem; border-radius: 3px; }
+    .msg { background: #fff3f3; border: 1px solid #f3c0c0; border-radius: 6px; padding: .75rem 1rem;
+           margin: 1rem 0; color: #8a1f1f; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <h1>Control file unreadable</h1>
+  <div class="msg">{{ message }}</div>
+  <p>A file under <code>00_control/</code> could not be parsed, so the cockpit can't load. Fix the file
+     (it must be valid JSON) and reload this page — nothing was changed.</p>
+</body>
+</html>
