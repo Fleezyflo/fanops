@@ -299,3 +299,24 @@ def test_within_source_template_cluster_still_strips_surplus(tmp_path):
     assert [h[1] for h in hooks] == ["wait for the beat drop", "wait for the last line",
                                      "wait for the hometown bar", None]      # 4th stripped within-source
     assert hooks[3][2] == "wait for the final verse"                         # preserved for Review
+
+
+def test_request_moments_attaches_source_frames(tmp_path, mocker):
+    # Phase 1 (give the author the footage): request_moments samples a few SOURCE stills into the
+    # payload so the model writes hooks SEEING the footage, not blind. Frames come from the source span
+    # (the clip is not rendered yet at the moments gate).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
+    (cfg.sources / "src_1.mp4").write_bytes(b"\x00")              # the source path must exist for extraction
+    mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/a.jpg", "/k/b.jpg"])
+    led = request_moments(led, cfg, "src_1")
+    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    assert payload["frames"] == ["/k/a.jpg", "/k/b.jpg"]
+
+
+def test_request_moments_frames_empty_when_source_absent(tmp_path):
+    # fail-open: no real source file on disk -> no ffmpeg -> frames [] -> text-only author, never a crash.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)   # source_path NOT written
+    led = request_moments(led, cfg, "src_1")
+    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    assert payload["frames"] == []

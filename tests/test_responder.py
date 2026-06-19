@@ -202,11 +202,20 @@ def test_hookjudge_model_passes_frames_as_images_for_vision(mocker):
     _default_claude_model("hookjudge", payload)
     assert spy.call_args.kwargs.get("images") == ["/t/a.jpg", "/t/b.jpg", "/t/c.jpg"]
 
-def test_moments_model_passes_no_images(mocker):
+def test_moments_model_passes_frames_as_images_for_vision(mocker):
+    # Phase 1: the AUTHOR is now a vision call — the moments gate hands its sampled source frames to
+    # claude as images so the hook is written SEEING the footage (mirrors hookedit/hookjudge). The
+    # moments payload carries frames at the TOP level (not per-item like the editor's feed).
     from fanops.responder import _default_claude_model
     spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
-    _default_claude_model("moments", {"source_id": "s", "duration": 10.0})
-    assert not spy.call_args.kwargs.get("images")        # text-only path unchanged
+    _default_claude_model("moments", {"source_id": "s", "duration": 10.0, "frames": ["/k/a.jpg", "/k/b.jpg"]})
+    assert spy.call_args.kwargs.get("images") == ["/k/a.jpg", "/k/b.jpg"]
+
+def test_moments_model_without_frames_stays_text_only(mocker):
+    from fanops.responder import _default_claude_model
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
+    _default_claude_model("moments", {"source_id": "s", "duration": 10.0})   # no frames -> fail-open text-only
+    assert not spy.call_args.kwargs.get("images")
 
 def test_default_model_pins_llm_model_and_logs_provenance(mocker, tmp_path):
     # V2 M1/F1+F10: the production responder PINS cfg.llm_model on the claude call AND emits one
