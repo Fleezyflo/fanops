@@ -175,6 +175,10 @@ class Clip(BaseModel):
     media_url: Optional[str] = None             # FIX F44 — cached Blotato URL, uploaded once
     meta_captions: dict = Field(default_factory=dict)   # surface -> {caption, hashtags}
     error_reason: Optional[str] = None
+    hook_burn_failed: bool = False              # V2 M1/F9: a hook was WANTED but couldn't burn (ffmpeg
+                                                # lacks the text filter, or build_ass yielded empty) — the
+                                                # clip still rendered fail-open but lost its hook. Surfaced
+                                                # in the run summary so the silent drop is never invisible.
 
 class Post(BaseModel):
     id: str
