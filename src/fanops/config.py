@@ -297,14 +297,16 @@ class Config:
 
     @property
     def hook_critic_advisory(self) -> bool:
-        # M2 (de-veto): make the specificity critic ADVISORY — at the repair cap a reject KEEPS the raw
-        # hook (the critic's dissent is logged, not enforced) instead of nulling to a clean clip. Serves
-        # finding #3 (surface the raw output + the critic's context) as an opt-in middle mode the binary
-        # hook_judge on/off does not offer. OPT-IN/DEFAULT OFF (mirrors hook_router/burn_subs — NOT the
-        # opt-OUT shape of the adjacent hook_judge/hook_editor: a wrong copy would silently neuter the
-        # critic for every deployment). Off -> today's veto. The mechanical is_weak_hook floor is unaffected.
+        # M2 / finding #3 (de-veto): the specificity critic is ADVISORY BY DEFAULT — at the repair cap a
+        # reject KEEPS the raw hook (+ pattern) and LOGS the critic's dissent instead of nulling to a clean
+        # clip. This realizes the operator's standing "don't veto anything, surface the raw output" position
+        # WITHOUT gutting the critic: it still RUNS, still does its one repair pass, still meters, still logs
+        # — it just no longer DELETES a raw hook on a subjective call. The MECHANICAL is_weak_hook floor
+        # (empty / exact-dup / template-cluster) is unaffected — that is hygiene, not taste. DEFAULT ON;
+        # set FANOPS_HOOK_CRITIC_ADVISORY=0 to restore the hard terminal veto (opt-OUT shape, mirrors
+        # hook_judge); FANOPS_HOOK_JUDGE=0 still drops the critic entirely.
         v = (os.getenv("FANOPS_HOOK_CRITIC_ADVISORY") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON; only explicit off-words restore the veto
 
     @property
     def impact_cut(self) -> bool:
