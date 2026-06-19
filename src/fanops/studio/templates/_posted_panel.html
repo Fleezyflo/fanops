@@ -8,11 +8,15 @@
     </div>
   {% endif %}
   {% if rows %}
+  {# content-lifecycle Phase 3: grouped by PUBLISH day (published_at, scheduled_time fallback), newest first,
+     'undated' last. groups = views.group_posted_by_day(rows); each is (day, rows). #}
+  {% for day, day_rows in (groups if groups else [('', rows)]) %}
+  {% if day %}<h3 class="day-head">{{ day }}</h3>{% endif %}
   <table>
     <tr><th>Time</th><th>Account</th><th>Lift</th><th>Link</th><th><span class="vh">Reuse</span></th></tr>
-    {% for r in rows %}
+    {% for r in day_rows %}
     <tr>
-      <td>{{ r.scheduled_time or '—' }}</td>
+      <td>{{ r.published_at or r.scheduled_time or '—' }}</td>
       <td>{{ r.account }} <span class="muted">{{ r.platform }}</span></td>
       <td>{{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }}</td>
       <td>{% if r.public_url %}<a href="{{ r.public_url }}" target="_blank" rel="noopener">{{ r.public_url }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
@@ -24,5 +28,6 @@
     </tr>
     {% endfor %}
   </table>
+  {% endfor %}
   {% else %}<div class="empty">Nothing posted yet. Approved posts that ship will appear here with their results.</div>{% endif %}
 </div>

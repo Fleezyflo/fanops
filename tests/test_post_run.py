@@ -46,6 +46,51 @@ def test_publish_stamps_published_at(tmp_path, monkeypatch):
     led.approve_post("pp", now_iso=iso_z(datetime.now(timezone.utc)))   # a no-op on a non-awaiting post
     assert led.posts["pp"].published_at == before                       # untouched by approve
 
+def test_publish_writes_06_published_archive(tmp_path, monkeypatch):
+    # content-lifecycle Phase 3: a published post writes 06_published/<day>/<id>.json with expected fields;
+    # the day == the post's published_at day.
+    import json
+    from fanops.timeutil import parse_iso
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)  # dryrun
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="pa", cid="c_pa", when="2020-01-01T00:00:00Z")
+    led = publish_due(led, cfg, now="2026-06-02T18:00:00Z")
+    day = parse_iso(led.posts["pa"].published_at).date().isoformat()
+    rec_path = cfg.published / day / "pa.json"
+    assert rec_path.exists()
+    rec = json.loads(rec_path.read_text())
+    assert rec["post_id"] == "pa" and rec["clip_id"] == "c_pa" and rec["published_at"]
+
+def test_archive_fail_open_write(tmp_path, monkeypatch, mocker):
+    # A write_text failure on the archive record must NOT strand the live post: it still reaches published
+    # (archive swallowed). Scope to 06_published only so the ledger's own atomic write is unaffected.
+    import pathlib
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="pw", cid="c_pw", when="2020-01-01T00:00:00Z")
+    real_write = pathlib.Path.write_text
+    def fake_write(self, *a, **k):
+        if "06_published" in str(self): raise OSError("disk full")
+        return real_write(self, *a, **k)
+    mocker.patch("pathlib.Path.write_text", fake_write)
+    led = publish_due(led, cfg, now="2026-06-02T18:00:00Z")
+    assert led.posts["pw"].state is PostState.published      # archive failure did NOT flip it to failed
+
+def test_archive_fail_open_mkdir(tmp_path, monkeypatch, mocker):
+    # A mkdir PermissionError on the published dir must also be swallowed — the post still publishes.
+    # Scope the failure to 06_published only (a blanket Path.mkdir mock would also break the ledger save).
+    import pathlib
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="pm", cid="c_pm", when="2020-01-01T00:00:00Z")
+    real_mkdir = pathlib.Path.mkdir
+    def fake_mkdir(self, *a, **k):
+        if "06_published" in str(self): raise PermissionError("nope")
+        return real_mkdir(self, *a, **k)
+    mocker.patch("pathlib.Path.mkdir", fake_mkdir)
+    led = publish_due(led, cfg, now="2026-06-02T18:00:00Z")
+    assert led.posts["pm"].state is PostState.published
+
 def test_publish_uploads_media_once_and_advances(tmp_path, monkeypatch, mocker):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

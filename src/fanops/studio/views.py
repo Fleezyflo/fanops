@@ -76,6 +76,9 @@ class ReviewCard:
     surfaces: list[SurfacePost]
     bucket: str
     clip_state: Optional[str] = None     # the clip's own state — shown on a post-less 'prepared' card
+    day: Optional[str] = None            # content-lifecycle Phase 3: the ingest day (YYYY-MM-DD via source.
+                                         # created_at) this card buckets under; only set on editable cards (the
+                                         # day-sorted approve worklist). None elsewhere. 'undated' = broken lineage.
 
 
 @dataclass
@@ -205,6 +208,17 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
         surfaces=surfaces, bucket=bucket, clip_state=clip.state.value)
 
+def _card_day(led: Ledger, card: ReviewCard) -> str:
+    """The ingest day (YYYY-MM-DD) a Review card buckets under: clip -> moment -> source.created_at.
+    'undated' when the lineage is broken or the source predates the day-anchor. Pure (content-lifecycle Phase 3)."""
+    clip = led.clips.get(card.clip_id)
+    mom = led.moments.get(clip.parent_id) if clip is not None else None
+    src = led.sources.get(mom.parent_id) if mom is not None else None
+    ca = src.created_at if src is not None else None
+    if not ca: return "undated"
+    try: return parse_iso(ca).date().isoformat()
+    except (ValueError, TypeError): return "undated"
+
 def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime) -> list[ReviewCard]:
     """Three buckets (spec §6): editable (awaiting_approval posts grouped by clip — the approve worklist),
     recent (published/analyzed within RECENT_WINDOW_HOURS), held (clips with held=True, no posts). A clip
@@ -228,10 +242,16 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
                     keep = True   # unparseable but shipped -> still show it
             if keep:
                 recent_by_clip.setdefault(p.parent_id, []).append(p)
+    editable_cards: list[ReviewCard] = []
     for clip_id, posts in queued_by_clip.items():
         clip = led.clips.get(clip_id)
         if clip is not None and not clip.held:        # a held clip belongs ONLY in the held bucket
-            cards.append(_card(led, clip, posts, "editable", cfg, personas, now))
+            editable_cards.append(_card(led, clip, posts, "editable", cfg, personas, now))
+    # editable cards: day-sorted (newest ingest day first, 'undated' last) so _review_body.html can emit a
+    # running day-header across the paginated slice WITHOUT touching pagination (content-lifecycle Phase 3 H8).
+    for c in editable_cards: c.day = _card_day(led, c)
+    editable_cards.sort(key=lambda c: (c.day != "undated", c.day), reverse=True)   # undated (False) sorts last under reverse
+    cards.extend(editable_cards)
     for clip_id, posts in recent_by_clip.items():
         clip = led.clips.get(clip_id)
         if clip is not None and not clip.held:        # (same rule for the recent/shipped bucket)
@@ -315,6 +335,8 @@ class PostedRow:
     public_url: Optional[str]
     scheduled_time: Optional[str]
     lift_score: Optional[float]
+    published_at: Optional[str] = None   # content-lifecycle Phase 3: the TRUE publish time; group_posted_by_day
+                                         # keys on this (falls back to scheduled_time for pre-v3/in-flight rows).
 
 
 def posted_library(led: Ledger, cfg: Config) -> list[PostedRow]:
@@ -331,7 +353,25 @@ def posted_library(led: Ledger, cfg: Config) -> list[PostedRow]:
     posts.sort(key=_key, reverse=True)              # reverse: latest aware time first; unscheduled (key[0]=0) last
     return [PostedRow(post_id=p.id, clip_id=p.parent_id, account=p.account, platform=p.platform.value,
                       caption=p.caption, public_url=p.public_url, scheduled_time=p.scheduled_time,
-                      lift_score=p.metrics.get(LIFT_SCORE)) for p in posts]
+                      lift_score=p.metrics.get(LIFT_SCORE), published_at=p.published_at) for p in posts]
+
+
+def group_posted_by_day(rows: list) -> list:
+    """Group Posted rows by PUBLISH day (published_at — the TRUE shipped day; falls back to scheduled_time for
+    pre-v3/in-flight rows), newest day first, 'undated' last. Pure; preserves within-day order (content-
+    lifecycle Phase 3). A naive/None/unparseable time -> 'undated' (never a local-tz guess)."""
+    def _day(r) -> str:
+        ts = getattr(r, "published_at", None) or r.scheduled_time
+        if not ts: return "undated"
+        try:
+            dt = parse_iso(ts)
+            return dt.date().isoformat() if dt.tzinfo is not None else "undated"
+        except (ValueError, TypeError): return "undated"
+    by_day: dict[str, list] = {}
+    for r in rows: by_day.setdefault(_day(r), []).append(r)
+    days = sorted((d for d in by_day if d != "undated"), reverse=True)
+    if "undated" in by_day: days.append("undated")
+    return [(d, by_day[d]) for d in days]
 
 
 def _loop_state(led: Ledger, cfg: Config, accounts: Optional[Accounts], post,

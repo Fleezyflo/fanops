@@ -284,3 +284,87 @@ def test_review_counts_tallies_buckets(tmp_path):
 def test_review_counts_empty_is_all_zero(tmp_path):
     from fanops.studio.views import review_counts
     assert review_counts([]) == {"awaiting": 0, "prepared": 0, "held": 0}
+
+
+# ---- content-lifecycle Phase 3: day-bucketed Review (ingest day) + Posted (publish day) ----
+def _lineage_day(led, *, sid, mid, cid, day):
+    # a source with a fixed ingest day + a captioned clip ready for an awaiting post
+    led.add_source(Source(id=sid, source_path=f"/v/{sid}.mp4", language="en",
+                          created_at=(day + "T08:00:00Z") if day else None))
+    led.add_moment(Moment(id=mid, parent_id=sid, content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    led.add_clip(Clip(id=cid, parent_id=mid, path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+
+def test_group_review_editable_sorted_by_day(tmp_path):
+    # editable cards from two ingest days come back day-sorted (newest first), card.day set; undated last.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _lineage_day(led, sid="src_old", mid="m_old", cid="c_old", day="2026-06-01")
+    _lineage_day(led, sid="src_new", mid="m_new", cid="c_new", day="2026-06-05")
+    _lineage_day(led, sid="src_undated", mid="m_un", cid="c_un", day=None)
+    for cid in ("c_old", "c_new", "c_un"):
+        led.add_post(Post(id=f"p_{cid}", parent_id=cid, account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval,
+                          scheduled_time=_z(NOW + timedelta(hours=3))))
+    cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
+    editable = [c for c in cards if c.bucket == "editable"]
+    days = [c.day for c in editable]
+    assert days == ["2026-06-05", "2026-06-01", "undated"]      # newest day first, undated last
+
+def test_review_body_poller_count_unchanged(tmp_path):
+    # H8 safety: the day-sort must NOT change the awaiting count (review_counts reads count, not order).
+    from fanops.studio.views import review_counts
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _lineage_day(led, sid="src_a", mid="m_a", cid="c_a", day="2026-06-01")
+    _lineage_day(led, sid="src_b", mid="m_b", cid="c_b", day="2026-06-05")
+    for cid in ("c_a", "c_b"):
+        led.add_post(Post(id=f"p_{cid}", parent_id=cid, account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval,
+                          scheduled_time=_z(NOW + timedelta(hours=3))))
+    cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
+    assert review_counts(cards)["awaiting"] == 2                # both editable, sort didn't drop one
+
+def test_group_posted_by_day_publish_day(tmp_path):
+    from fanops.studio.views import group_posted_by_day, PostedRow
+    rows = [PostedRow(post_id="p1", clip_id="c", account="@a", platform="instagram", caption="x",
+                      public_url=None, scheduled_time="2026-06-01T00:00:00Z", lift_score=None,
+                      published_at="2026-06-05T10:00:00Z"),
+            PostedRow(post_id="p2", clip_id="c", account="@a", platform="instagram", caption="y",
+                      public_url=None, scheduled_time="2026-06-05T00:00:00Z", lift_score=None,
+                      published_at="2026-06-05T20:00:00Z"),
+            # no published_at -> falls back to scheduled_time day
+            PostedRow(post_id="p3", clip_id="c", account="@a", platform="instagram", caption="z",
+                      public_url=None, scheduled_time="2026-06-02T00:00:00Z", lift_score=None,
+                      published_at=None),
+            # neither aware time -> undated, sorts last
+            PostedRow(post_id="p4", clip_id="c", account="@a", platform="instagram", caption="w",
+                      public_url=None, scheduled_time=None, lift_score=None, published_at=None)]
+    groups = group_posted_by_day(rows)
+    days = [d for d, _ in groups]
+    assert days == ["2026-06-05", "2026-06-02", "undated"]      # publish day groups, undated last
+    by_day = dict(groups)
+    assert [r.post_id for r in by_day["2026-06-05"]] == ["p1", "p2"]   # within-day order preserved
+    assert [r.post_id for r in by_day["2026-06-02"]] == ["p3"]         # scheduled_time fallback
+    assert [r.post_id for r in by_day["undated"]] == ["p4"]
+
+def test_group_posted_by_day_naive_is_undated(tmp_path):
+    from fanops.studio.views import group_posted_by_day, PostedRow
+    rows = [PostedRow(post_id="pn", clip_id="c", account="@a", platform="instagram", caption="x",
+                      public_url=None, scheduled_time="2026-06-05T00:00:00", lift_score=None,
+                      published_at=None)]   # NAIVE scheduled_time -> undated (no local-tz guess)
+    groups = group_posted_by_day(rows)
+    assert [d for d, _ in groups] == ["undated"]
+
+def test_posted_library_row_carries_published_at(tmp_path):
+    # PostedRow must expose published_at so the grouper keys on the TRUE publish day.
+    from fanops.studio.views import posted_library
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c.mp4", state=ClipState.published))
+    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.published, scheduled_time="2026-06-01T00:00:00Z",
+                      published_at="2026-06-05T10:00:00Z"))
+    rows = posted_library(led, cfg)
+    assert rows[0].published_at == "2026-06-05T10:00:00Z"

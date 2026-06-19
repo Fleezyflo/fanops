@@ -406,3 +406,14 @@ def test_require_full_objective_default_off_and_opt_in(monkeypatch, tmp_path):
     for on in ("1", "true", "yes", "on"):
         monkeypatch.setenv("FANOPS_REQUIRE_FULL_OBJECTIVE", on)
         assert Config(root=tmp_path).require_full_objective is True
+
+def test_gc_keep_days_config(monkeypatch, tmp_path):
+    # content-lifecycle Phase 3: FANOPS_GC_KEEP_DAYS sets the gc retention window; DEFAULT 30; clamped >= 1;
+    # non-int -> default. Mirrors publish_lead_minutes.
+    monkeypatch.delenv("FANOPS_GC_KEEP_DAYS", raising=False)
+    assert Config(root=tmp_path).gc_keep_days == 30                      # default
+    monkeypatch.setenv("FANOPS_GC_KEEP_DAYS", "90")
+    assert Config(root=tmp_path).gc_keep_days == 90
+    for bad in ("0", "-1", "garbage", ""):
+        monkeypatch.setenv("FANOPS_GC_KEEP_DAYS", bad)
+        assert Config(root=tmp_path).gc_keep_days == 30                  # 0/negative/non-int -> clamp to default

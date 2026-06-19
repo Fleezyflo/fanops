@@ -4,6 +4,7 @@ network call, so a crash mid-submit cannot lose the fact and cause a duplicate l
 resume (FIX F11). Media is ensured ONCE PER CLIP (FIX F44). Failed submit -> PostState.failed
 (retryable), never analyzed (FIX F22). Held/retired clips never reach here (crosspost skips)."""
 from __future__ import annotations
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -17,6 +18,31 @@ from fanops.timeutil import parse_iso as _parse, iso_z
 
 def _now(now: str | None) -> datetime:
     return _parse(now) if now else datetime.now(timezone.utc)
+
+def _archive_published(cfg: Config, post: Post) -> None:
+    """Day-bucketed, human-browsable record of a just-published post -> 06_published/<YYYY-MM-DD>/<post_id>.json
+    (the dir existed but nothing wrote it). FAIL-OPEN: any write/mkdir error is logged and swallowed — the
+    archive is a convenience artifact, NEVER a publish blocker (a full disk must not strand a live post). Day =
+    post.published_at, else created_at, else scheduled_time, else now (content-lifecycle Phase 3)."""
+    from fanops.log import get_logger
+    try:
+        day = None
+        for ts in (post.published_at, post.created_at, post.scheduled_time):
+            if ts:
+                try:
+                    dt = _parse(ts)
+                    if dt.tzinfo is not None: day = dt.date().isoformat(); break
+                except (ValueError, TypeError): pass
+        if day is None: day = datetime.now(timezone.utc).date().isoformat()
+        d = cfg.published / day; d.mkdir(parents=True, exist_ok=True)
+        rec = {"post_id": post.id, "clip_id": post.parent_id, "account": post.account,
+               "platform": post.platform.value, "caption": post.caption, "hashtags": list(post.hashtags or []),
+               "public_url": post.public_url, "scheduled_time": post.scheduled_time,
+               "created_at": post.created_at, "published_at": post.published_at}
+        (d / f"{post.id}.json").write_text(json.dumps(rec, indent=2, ensure_ascii=False))
+    except Exception as exc:
+        try: get_logger(cfg)("publish", post.id, "archive_error", err=str(exc)[:160])
+        except Exception: pass
 
 def _is_fatal_auth_error(exc: Exception) -> bool:
     """Auth/config errors mean EVERY post will fail — halt the run instead of marking one post
@@ -57,6 +83,7 @@ def _submit_one(led: Ledger, cfg: Config, poster: Poster, post: Post, _save: Cal
         if post.state is PostState.submitted:
             post.state = PostState.published
             post.published_at = iso_z(datetime.now(timezone.utc))   # content-lifecycle: TRUE publish time (Posted-archive day-anchor)
+            _archive_published(cfg, post)                           # content-lifecycle Phase 3: fail-open day-bucketed record
     except Exception as exc:
         if _is_fatal_auth_error(exc):
             raise                                      # bad key/401: halt, don't burn the queue

@@ -112,6 +112,17 @@ def test_get_posted_shows_post_and_repost_button(tmp_path):
     html = _client(cfg).get("/posted").data
     assert b"https://insta/reel/x" in html and b"Post again" in html
 
+def test_posted_route_renders_publish_day_header(tmp_path):
+    # content-lifecycle Phase 3: the Posted panel groups by PUBLISH day (published_at) with a day header.
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c/clip_1.mp4", state=ClipState.published))
+        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="ig_1",
+                          platform=Platform.instagram, caption="x", state=PostState.published,
+                          scheduled_time="2026-06-01T00:00:00Z", published_at="2026-06-05T10:00:00Z"))
+    html = _client(cfg).get("/posted").data
+    assert b"2026-06-05" in html                                   # the publish-day header, not the schedule day
+
 def test_nav_has_posted_link(tmp_path):
     cfg = Config(root=tmp_path)
     html = _client(cfg).get("/review").data

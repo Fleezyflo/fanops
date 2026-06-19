@@ -105,6 +105,22 @@ def test_get_review_renders_checkbox_and_approve_button(tmp_path):
     assert b'name="ids"' in html and b'value="p1"' in html
     assert b"Approve selected" in html and b"Reject selected" in html
 
+def test_get_review_renders_ingest_day_header(tmp_path):
+    # content-lifecycle Phase 3: the editable bucket emits a running ingest-day header (source.created_at).
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en", created_at="2026-06-03T08:00:00Z"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="drop", transcript_excerpt="go", state=MomentState.clipped))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE))
+    html = _client(cfg).get("/review").data
+    assert b'class="day-head">2026-06-03' in html
+
 
 def test_post_approve_route_promotes_and_drops_from_review(tmp_path):
     cfg = Config(root=tmp_path); _seed_review(cfg, pid="p1")

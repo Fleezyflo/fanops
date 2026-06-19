@@ -534,6 +534,18 @@ class Config:
             return 2
 
     @property
+    def gc_keep_days(self) -> int:
+        # Declarative MANUAL-gc retention window (content-lifecycle Phase 3). DEFAULT 30 (today's literal —
+        # unchanged when unset). CLAMPED >= 1 (the cmd_gc keep_days<1 reject precedent): a 0/negative window
+        # would sweep all reusable renders. Non-int env -> default. NB: a clip whose media_url is still None
+        # (cross-account is its FIRST fan-out, Phase 4) needs its .mp4 at publish — set this conservatively.
+        try:
+            v = int(os.getenv("FANOPS_GC_KEEP_DAYS", "30"))
+        except ValueError:
+            return 30
+        return v if v >= 1 else 30
+
+    @property
     def publish_lead_minutes(self) -> int:
         # The editorial window (spec §4): a CONSTANT offset added to every post's deterministic
         # scheduled_time at CROSSPOST time, so a freshly-queued post sits in `queued` for ~lead

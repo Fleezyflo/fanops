@@ -184,7 +184,9 @@ def create_app(cfg: Config) -> Flask:
 
     def _posted_panel(result=None, *, full=False):
         rows = views.posted_library(Ledger.load(cfg), cfg)
-        return render_template("posted.html" if full else "_posted_panel.html", rows=rows, result=result, tab="posted")
+        groups = views.group_posted_by_day(rows)          # content-lifecycle Phase 3: publish-day buckets
+        return render_template("posted.html" if full else "_posted_panel.html", rows=rows, groups=groups,
+                               result=result, tab="posted")
 
     @app.get("/posted")
     def posted():

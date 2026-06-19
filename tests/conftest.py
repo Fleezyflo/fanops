@@ -28,7 +28,8 @@ import pytest
 # breaking). Stripping them makes every test see the OFF default; the trend tests set them + inject a
 # mock `get` explicitly.
 _LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_HOOK_JUDGE",
-              "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL")
+              "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL",
+              "FANOPS_GC_KEEP_DAYS")   # content-lifecycle Phase 3: a repo .env value must not leak into the gc-window tests
 
 
 @pytest.fixture(autouse=True)

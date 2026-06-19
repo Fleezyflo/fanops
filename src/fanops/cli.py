@@ -253,7 +253,18 @@ def cmd_gc(cfg: Config, keep_days: int) -> int:
                 # Surface a failed removal (perms / read-only mount / disk issue) instead of hiding
                 # it — a silent pass could mask a disk filling up. gc still completes (other clips).
                 print(f"gc: could not remove {c.path}: {exc}", file=sys.stderr)
-    print(f"gc removed {removed} clip files older than {keep_days}d")
+    # content-lifecycle Phase 3: fold the 05_scheduled/ dryrun-payload cleanup into gc. These would-send JSON
+    # records accumulate unbounded every dryrun pass; drop the ones older than cutoff. NEVER 06_published/ (the
+    # durable archive) and no subdir recursion — only top-level *.json. Fail-open per file.
+    sched_removed = 0
+    if cfg.scheduled.exists():
+        for f in cfg.scheduled.glob("*.json"):
+            try:
+                if os.path.getmtime(str(f)) < cutoff:
+                    f.unlink(); sched_removed += 1
+            except OSError as exc:
+                print(f"gc: could not remove {f}: {exc}", file=sys.stderr)
+    print(f"gc removed {removed} clip files + {sched_removed} scheduled payloads older than {keep_days}d")
     return 0
 
 def cmd_daemon(cfg: Config, args) -> int:
@@ -341,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     p_trk = sub.add_parser("track"); p_trk.add_argument("--window", default="30d")
     p_adj = sub.add_parser("adjust"); p_adj.add_argument("--winner-pct", type=float, default=0.3)
     p_adj.add_argument("--retire-pct", type=float, default=0.2); p_adj.add_argument("--lift-floor", type=float, default=20.0)
-    p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=30)
+    p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=None)   # None -> cfg.gc_keep_days
     sub.add_parser("amplify-variants")     # variant-gated amplification (v3); inert unless flag on
     p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
     p_res.add_argument("status", choices=["published", "failed"]); p_res.add_argument("--url", default=None)
@@ -561,7 +572,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
-    if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days)
+    if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days if args.keep_days is not None else cfg.gc_keep_days)
     if args.cmd == "compose":  return cmd_compose(cfg, args)
     if args.cmd == "resolve":
         # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve

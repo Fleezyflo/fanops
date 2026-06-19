@@ -23,9 +23,21 @@
           <button type="button" hx-post="{{ url_for('do_reject_posts') }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
         </div>
       {% endif %}
+      {% if key == 'editable' %}
+        {# content-lifecycle Phase 3: running ingest-day header on the already-day-sorted editable bucket.
+           A day spanning the paginated 'Show more' boundary simply re-emits its header on the next page. #}
+        {% set ns = namespace(day=None) %}
+        <div class="clip-grid">
+          {% for card in group %}
+            {% if card.day != ns.day %}<h4 class="day-head">{{ card.day or 'undated' }}</h4>{% set ns.day = card.day %}{% endif %}
+            {% include "_card.html" %}
+          {% endfor %}
+        </div>
+      {% else %}
       <div class="clip-grid">
         {% for card in group %}{% include "_card.html" %}{% endfor %}
       </div>
+      {% endif %}
     {% endif %}
   {% endfor %}
   {% if page and page.total > page.items|length %}
