@@ -83,6 +83,9 @@ _VSTART_MAX_SHIFT_S = 1.5
 _VSTART_CANDIDATES = 5
 _VSTART_PROBE_TIMEOUT = 30.0
 _VSTART_MIN_MOVE_S = 0.05
+# vstart sidecar schema version (C2/H2): Theme 3 added sharpness to the pick, so the cached DECISION
+# can change. A pre-sharpness sidecar (no/lower `v`) is a cache miss -> re-probe, never served stale.
+_VSTART_V = 2
 _SCENE_NEAR_S = 0.3          # a scene-cut peak within this of a candidate counts as "on a cut" (tiebreak)
 
 def _vstart_candidate_times(start: float, end: float) -> list[float]:
@@ -101,8 +104,27 @@ def _signalstats_cmd(src: str, t: float) -> list[str]:
     return ["ffmpeg", "-hide_banner", "-loglevel", "info", "-ss", f"{t:.3f}", "-i", src,
             "-frames:v", "1", "-vf", "signalstats,metadata=print", "-f", "null", "-"]
 
+def _sharpness_cmd(src: str, t: float) -> list[str]:
+    # Theme 3: a SECOND tiny pass for a relative sharpness proxy — the discrete Laplacian convolution
+    # (`0 -1 0 / -1 4 -1 / 0 -1 0`) on a gray frame, then signalstats YAVG = mean edge energy. ffmpeg-only
+    # (zero new dep). NB this is mean-of-Laplacian (relative, in-clip ranking), NOT variance-of-Laplacian.
+    return ["ffmpeg", "-hide_banner", "-loglevel", "info", "-ss", f"{t:.3f}", "-i", src,
+            "-frames:v", "1", "-vf", "format=gray,convolution=0 -1 0 -1 4 -1 0 -1 0,signalstats,metadata=print",
+            "-f", "null", "-"]
+
+def _probe_frame_sharpness(src: str, t: float):
+    """Run the Laplacian sharpness probe for ONE time and return the edge-energy proxy or None. FAIL-OPEN
+    (any ffmpeg/parse failure -> None): sharpness is an ENHANCEMENT, so it degrades to contrast-only."""
+    try:
+        r = subprocess.run(_sharpness_cmd(src, t), check=False, capture_output=True, text=True,
+                           timeout=_VSTART_PROBE_TIMEOUT)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    return frames.parse_sharpness((getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or ""))
+
 def _probe_frame_strength(src: str, t: float):
-    """Run the signalstats probe for ONE candidate time and return (luma, contrast) or None. Fail-open
+    """Probe ONE candidate time -> (luma, contrast, sharpness) or None. luma/contrast from signalstats;
+    sharpness from a second Laplacian pass (fail-open to None -> contrast-only ranking). Fail-open
     (ffmpeg absent/hung/error -> None) exactly like keyframes.extract_keyframes — never raises."""
     try:
         r = subprocess.run(_signalstats_cmd(src, t), check=False, capture_output=True, text=True,
@@ -111,7 +133,10 @@ def _probe_frame_strength(src: str, t: float):
         return None
     # getattr-defensive: the probe is fail-open, so a result missing stdout/stderr -> no stats -> None
     # (a real capture_output run always has both as strings; this also tolerates minimal test fakes).
-    return frames.parse_signalstats((getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or ""))
+    lc = frames.parse_signalstats((getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or ""))
+    if lc is None:
+        return None
+    return lc[0], lc[1], _probe_frame_sharpness(src, t)      # sharpness fail-open -> None (contrast-only)
 
 def _scene_score_near(scene_peaks, t: float) -> float:
     # signal_peaks is loaded from an unvalidated JSON sidecar, so a non-numeric t/score must not raise
@@ -140,14 +165,17 @@ def pick_visual_start(src_path: str, start: float, end: float, *, scene_peaks, o
     if sidecar.exists():
         try:
             d = json.loads(sidecar.read_text())
+            if d.get("v") != _VSTART_V:                    # C2/H2: stale (pre-sharpness) sidecar -> cache miss, re-probe
+                raise KeyError("stale sidecar version")
             return float(d["start"]), str(d["kind"])      # cached -> no re-probe (commit stays lock-cheap)
         except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
-            pass                                            # corrupt sidecar -> fall through to a real probe
+            pass                                            # corrupt/stale sidecar -> fall through to a real probe
     cands = []
     for t in _vstart_candidate_times(start, end):
         ls = _probe_frame_strength(src_path, t)
         if ls is not None:
-            cands.append({"t": t, "luma": ls[0], "contrast": ls[1], "scene": _scene_score_near(scene_peaks, t)})
+            cands.append({"t": t, "luma": ls[0], "contrast": ls[1], "sharpness": ls[2],
+                          "scene": _scene_score_near(scene_peaks, t)})
     win = frames.pick_strongest(cands)
     if win is not None and abs(win["t"] - start) > _VSTART_MIN_MOVE_S:
         new_start, kind = float(win["t"]), "visual"
@@ -155,7 +183,7 @@ def pick_visual_start(src_path: str, start: float, end: float, *, scene_peaks, o
         new_start, kind = start, "transcript"
     try:
         out.mkdir(parents=True, exist_ok=True)
-        sidecar.write_text(json.dumps({"start": new_start, "kind": kind}))
+        sidecar.write_text(json.dumps({"v": _VSTART_V, "start": new_start, "kind": kind}))
     except OSError:
         pass                                                # write failure just re-probes next time
     return new_start, kind
