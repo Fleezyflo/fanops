@@ -28,17 +28,18 @@ IMPACT_MIN_DURATION = 3.0
 STRATEGY_KEY = "impact_cut"
 
 
-def _impact_peak(src: "Source", lo: float, hi: float) -> Optional[tuple[float, float]]:
-    """The strongest peak inside [lo, hi] as (t, score) — max score, tie -> earliest t — or None if the
-    window holds no usable peak. A peak with a non-numeric t or score is skipped (semi-trusted sidecar)."""
-    best: Optional[tuple[float, float]] = None     # (t, score) of the current best
+def _impact_peak(src: "Source", lo: float, hi: float) -> Optional[tuple[float, float, dict]]:
+    """The strongest peak inside [lo, hi] as (t, score, peak) — max score, tie -> earliest t — or None
+    if the window holds no usable peak. The peak dict rides along so the rationale can name the signal
+    source (audio-energy vs scene). A non-numeric t or score is skipped (semi-trusted sidecar)."""
+    best: Optional[tuple[float, float, dict]] = None     # (t, score, peak) of the current best
     for p in src.signal_peaks or []:
         try: t = float(p.get("t")); score = float(p.get("score"))
         except (TypeError, ValueError): continue
         if not (lo <= t <= hi): continue
         # rank: higher score wins; on a tie the earlier t wins (deterministic)
         if best is None or score > best[1] or (score == best[1] and t < best[0]):
-            best = (t, score)
+            best = (t, score, p)
     return best
 
 
@@ -70,9 +71,15 @@ def make_stitch_plan(clip: "Clip", m: "Moment", src: "Source", *, base_fp: Optio
     if params is None:
         return None
     peak = _impact_peak(src, m.start, m.end)       # non-None here (plan_impact_cut returned params)
-    peak_t, score = peak
-    rationale = (f"impact peak at {round(peak_t, 1)}s (score {round(score, 2)}) "
-                 f"-> cut {IMPACT_LEAD_EPS}s before it")
+    peak_t, score, pdict = peak
+    # Name the signal source: an energy-scored speech_resume peak reads as AUDIO-ENERGY (it tracks a
+    # real loudness drop); a scene_cut (or a legacy, no-energy peak) keeps the generic impact wording.
+    if pdict.get("kind") == "speech_resume" and "energy" in pdict:
+        rationale = (f"audio-energy peak at {round(peak_t, 1)}s (strength {round(score, 2)}) "
+                     f"-> cut {IMPACT_LEAD_EPS}s before it")
+    else:
+        rationale = (f"impact peak at {round(peak_t, 1)}s (score {round(score, 2)}) "
+                     f"-> cut {IMPACT_LEAD_EPS}s before it")
     return StitchPlan(id=stitch_plan_id(clip.id, [], STRATEGY_KEY, params), clip_id=clip.id,
                       strategy_key=STRATEGY_KEY, asset_ids=[], plan_params=params,
                       state=StitchState.suggested, base_fingerprint=base_fp,
