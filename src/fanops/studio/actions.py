@@ -731,6 +731,11 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
                 led, rc = render_moment(led, cfg, clip.parent_id, aspect=clip.aspect)   # fp-skip adopts the warm mp4
                 if rc.state is ClipState.error:
                     raise RuntimeError(rc.error_reason or "clip re-render failed")
+                if rc.hook_burn_failed:                        # CRITICAL (ecc review): a SUCCESSFUL render that
+                    # couldn't burn the hook (ffmpeg lacks the text filter, or the hook made no burnable text)
+                    # would ship the post CLEAN. The operator asked for the hook -> roll back, never silent-clean.
+                    raise RuntimeError("hook burn failed — ffmpeg can't render on-screen text (no libass), "
+                                       "or the hook produced nothing burnable; not shipping clean")
                 led.clips[clip_id] = led.clips[clip_id].model_copy(
                     update={"state": orig.state, "meta_captions": orig.meta_captions})   # keep captioned state + captions
             for pid in ids: led.approve_post(pid, now_iso=now_iso)

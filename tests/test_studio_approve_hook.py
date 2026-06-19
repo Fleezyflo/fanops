@@ -78,6 +78,28 @@ def test_approve_with_hook_render_failure_rolls_back(tmp_path, mocker):
     assert led.posts["p_1"].state is PostState.awaiting_approval  # NOT approved
 
 
+def _fake_render_burnfail(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
+    # render SUCCEEDS (state rendered) but the hook could NOT be burned (ffmpeg lacks the text filter) —
+    # render_moment flags hook_burn_failed=True, NOT ClipState.error. The clean clip masquerades as fine.
+    c = next(c for c in led.clips.values() if c.parent_id == moment_id and c.aspect is aspect)
+    new = c.model_copy(update={"state": ClipState.rendered, "meta_captions": {}, "hook_burn_failed": True})
+    led.clips[c.id] = new
+    return led, new
+
+
+def test_approve_with_hook_burn_failed_rolls_back(tmp_path, mocker):
+    # CRITICAL (ecc review): a render that succeeds but COULDN'T burn the hook must NOT silently ship clean —
+    # the operator asked for the hook, so a burn failure rolls back exactly like a render error.
+    cfg = Config(root=tmp_path); _seed(cfg)
+    mocker.patch("fanops.clip.render_moment", side_effect=_fake_render_burnfail)
+    res = approve_with_hook(cfg, "clip_1", now=NOW)
+    assert res.ok is False and "burn" in res.error.lower()
+    led = Ledger.load(cfg)
+    assert led.moments["mom_1"].hook is None                    # rolled back
+    assert led.moments["mom_1"].hook_removed == REMOVED         # rolled back
+    assert led.posts["p_1"].state is PostState.awaiting_approval  # NOT approved clean
+
+
 def test_approve_with_hook_no_removed_hook_just_approves(tmp_path, mocker):
     cfg = Config(root=tmp_path); _seed(cfg, hook_removed=None)
     r = mocker.patch("fanops.clip.render_moment", side_effect=_fake_render)
