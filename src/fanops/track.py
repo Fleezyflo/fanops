@@ -16,7 +16,20 @@ from fanops.models import LIFT_SCORE, PostState
 # full key set — a metric absent from it contributes 0), so tuning the optimization target is a
 # config edit, not a deploy. Absent override -> these defaults stand.
 _W = {"saves": 4.0, "shares": 4.0, "retention": 3.0, "reach": 0.001, "likes": 0.05}
+# T4 (honest lift): a weight at/above this is a PRIMARY signal (saves/shares/retention). When a primary
+# key is ABSENT from a metrics row — e.g. Postiz cannot deliver saves/retention — the lift_score is a
+# PARTIAL objective; record_metrics stamps lift_degraded so the operator sees it instead of trusting a
+# reach/shares-dominated scalar. reach (0.001) / likes (0.05) are low-weight proxies, never "missing".
+_HIGH_WEIGHT = 1.0
 ListPosts = Callable[[str], list[dict]]
+
+def _missing_high_weight(metrics: dict, weights: Optional[dict]) -> list[str]:
+    """The ACTIVE high-weight keys absent from this row (sorted). Judged against the ACTIVE weight map
+    (a tuning override REPLACES _W), so 'degraded' tracks whatever objective is configured. NEVER
+    recalibrates _W — purely observational (audit H3)."""
+    w = _W if weights is None else weights
+    return sorted(k for k, wt in w.items()
+                  if isinstance(wt, (int, float)) and not isinstance(wt, bool) and wt >= _HIGH_WEIGHT and k not in metrics)
 
 def lift_score(metrics: dict, weights: Optional[dict] = None) -> float:
     # weights=None -> the in-code DEFAULT _W (existing callers/tests unchanged). A tuning.json
@@ -41,6 +54,14 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     # latest-snapshot-wins is correct (a merge could retain a metric Blotato later dropped).
     # weights is the resolved override (or None -> default _W) threaded from pull_metrics.
     post.metrics = {**metrics, LIFT_SCORE: lift_score(metrics, weights)}
+    # T4: ADDITIVE honest-lift marker (NOT a scoring change — lift_score is untouched). When a primary
+    # weighted metric is absent from the row, the objective is partial; surface it so the operator does
+    # not trust a degraded lift as a full one. Marker keys are not weights, so a later lift_score ignores
+    # them. Absent any missing primary key -> no marker -> byte-identical to today.
+    missing = _missing_high_weight(metrics, weights)
+    if missing:
+        post.metrics["lift_degraded"] = True
+        post.metrics["lift_missing_keys"] = missing
     post.state = PostState.analyzed
     return led
 

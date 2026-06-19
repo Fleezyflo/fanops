@@ -153,6 +153,21 @@ def test_all_gates_met_returns_candidate(tmp_path):
     assert c["post_id"] in {p.id for p in led.posts.values() if p.variant_hook == "WIN"}
 
 
+def test_require_full_objective_excludes_degraded_winner(tmp_path, monkeypatch):
+    # T4 opt-in gate: when the winner's lift is DEGRADED (a primary metric absent -> a partial objective),
+    # require_full_objective refuses to amplify it. Default OFF -> today's behavior (degraded still amplifies).
+    cfg = Config(root=tmp_path)
+    led = _led(cfg, _winset(8, "WIN", 90.0))
+    _seed_lineage(led)
+    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    win = next(p for p in led.posts.values() if p.variant_hook == "WIN")
+    win.metrics["lift_degraded"] = True                        # one winning post scored on a partial objective
+    monkeypatch.delenv("FANOPS_REQUIRE_FULL_OBJECTIVE", raising=False)
+    assert len(amplify_candidates(led, cfg)) == 1              # default OFF -> unchanged
+    monkeypatch.setenv("FANOPS_REQUIRE_FULL_OBJECTIVE", "1")
+    assert amplify_candidates(led, cfg) == []                  # ON -> refuse to amplify on a degraded objective
+
+
 def test_source_at_amplify_budget_skipped(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))

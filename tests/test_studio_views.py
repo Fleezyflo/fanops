@@ -222,6 +222,23 @@ def test_lift_ranks_variants_by_lift_score(tmp_path):
     assert view.variant_rows[0].lift_score == 90.0
     assert isinstance(view.variant_rows[0].loop_state, str) and view.variant_rows[0].loop_state
 
+def test_lift_row_carries_degraded_marker(tmp_path):
+    # T4: a degraded lift (a primary metric absent from the row) must surface in the Studio lift view,
+    # not just the digest — the operator should see the score is partial before trusting it.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="p_deg", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      variant_key="vk", variant_hook="HYPE",
+                      metrics={"lift_score": 50.0, "lift_degraded": True, "lift_missing_keys": ["saves", "retention"]}))
+    led.add_post(Post(id="p_ok", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="y", state=PostState.analyzed,
+                      variant_key="vk2", variant_hook="CALM", metrics={"lift_score": 40.0}))
+    rows = {r.variant_hook: r for r in lift_rows(led, cfg, Accounts.load(cfg)).variant_rows}
+    assert rows["HYPE"].lift_degraded is True and "saves" in (rows["HYPE"].lift_missing or [])
+    assert rows["CALM"].lift_degraded is False        # a full-objective row is not flagged
+
 def test_lift_amplify_section_present_when_flag_on(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)

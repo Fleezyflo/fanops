@@ -126,6 +126,8 @@ class LiftRow:
     lift_score: float
     loop_state: str
     amplify_state: Optional[str] = None
+    lift_degraded: bool = False             # T4: the lift scalar is partial (a primary metric was absent from the row)
+    lift_missing: Optional[list] = None     # which primary keys were missing (e.g. ["saves", "retention"])
 
 
 @dataclass
@@ -362,7 +364,9 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
             variant_rows.append(LiftRow(
                 variant_hook=p.variant_hook or p.variant_key, account=p.account,
                 platform=p.platform.value, lift_score=float(p.metrics.get(LIFT_SCORE, 0.0)),
-                loop_state=_loop_state(led, cfg, accounts, p, gate_cache)))
+                loop_state=_loop_state(led, cfg, accounts, p, gate_cache),
+                lift_degraded=bool(p.metrics.get("lift_degraded")),
+                lift_missing=p.metrics.get("lift_missing_keys") or None))
 
     amplify_present = cfg.variant_amplify
     amplify_rows: list[LiftRow] = []

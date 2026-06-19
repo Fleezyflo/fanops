@@ -126,6 +126,11 @@ def amplify_candidates(led, cfg) -> list[dict]:
                  and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
         if len(lifts) < cfg.variant_amplify_min_posts:
             continue
+        if cfg.require_full_objective and any(
+                p.metrics.get("lift_degraded") for p in led.posts.values()
+                if p.account == account and p.platform is platform and p.variant_hook == hook
+                and p.state is PostState.analyzed and LIFT_SCORE in p.metrics):
+            continue                                             # T4: a degraded (partial-objective) winner is not amplified
         # runner-up mean among OTHER hooks on this surface (best_hooks already guaranteed >= 2 hooks).
         others: dict[str, list[float]] = {}
         for p in led.posts.values():

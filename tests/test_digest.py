@@ -129,6 +129,21 @@ def test_digest_shows_lift_by_variant(tmp_path):
     # ALSO fails this — only a real descending-by-lift sort satisfies it.
     assert out.index("HOOK A") < out.index("HOOK B")
 
+def test_digest_flags_lift_degraded_variant(tmp_path):
+    # T4: a degraded lift (a high-weight metric was absent from the row) must be VISIBLE next to the
+    # number in the "Lift by variant" decision surface — never a write-only field the operator can't see.
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, Platform, PostState
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.analyzed, variant_key="vk_a", variant_hook="HOOK A",
+                      metrics={"lift_score": 80.0, "lift_degraded": True, "lift_missing_keys": ["retention", "saves"]}))
+    out = render_digest(led, cfg)
+    assert "DEGRADED" in out                          # the partial-objective signal is surfaced
+    assert "retention" in out and "saves" in out      # names which primary metrics were missing
+
 def test_digest_no_variant_section_when_none(tmp_path):
     from fanops.config import Config
     from fanops.ledger import Ledger
