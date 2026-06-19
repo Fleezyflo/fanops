@@ -104,16 +104,37 @@ def create_app(cfg: Config) -> Flask:
         led = Ledger.load(cfg)
         accounts = Accounts.load(cfg)
         cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
+        counts = views.review_counts(cards)              # the live strip's initial counts (no banner: shown==awaiting)
         page = views.paginate(cards, _offset_arg())
         return render_template("review.html", cards=page.items, page=page, tab="review",
-                               backend=cfg.poster_backend)
+                               backend=cfg.poster_backend, counts=counts, shown=counts["awaiting"],
+                               awaiting_total=counts["awaiting"])
 
     def _review_panel(result=None):
         led = Ledger.load(cfg); accounts = Accounts.load(cfg)
         cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
+        awaiting_total = views.review_counts(cards)["awaiting"]    # keep #review-body's data-awaiting fresh after every mutation
         page = views.paginate(cards, _offset_arg())
         return render_template("_review_body.html", cards=page.items, page=page, result=result,
-                               tab="review", backend=cfg.poster_backend)
+                               tab="review", backend=cfg.poster_backend, awaiting_total=awaiting_total)
+
+    @app.get("/review/live")
+    def review_live():
+        # The Review tab's self-polling strip: live bucket counts + a 'load them' button when new
+        # awaiting posts exceed what the worklist currently shows (?shown, read live from the body's
+        # data-awaiting). A garbage/negative ?shown -> 0 (never a 500); the banner is gated on '>'.
+        led = Ledger.load(cfg); accounts = Accounts.load(cfg)
+        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
+        counts = views.review_counts(cards)
+        try:
+            shown = max(0, int(request.args.get("shown", 0)))
+        except (TypeError, ValueError):
+            shown = 0
+        return render_template("_review_live.html", counts=counts, shown=shown)
+
+    @app.get("/review/refresh")
+    def review_panel_refresh():
+        return _review_panel()                           # GET, no mutation — the 'load them' button pulls a fresh worklist
 
     @app.post("/posts/approve")
     def do_approve_posts():
@@ -179,6 +200,12 @@ def create_app(cfg: Config) -> Flask:
         # The pipeline DRIVER: ingest/pull/advance from the browser so the operator never needs the
         # terminal. Read-only status; the actions below go through the same lock-safe paths as the CLI.
         return render_template("run.html", status=views.pipeline_status(cfg), tab="run")
+
+    @app.get("/run/status")
+    def run_status():
+        # The Make tab's self-polling status counts — so a background run's progress shows live without
+        # the operator clicking anything (swaps only #run-status, never the upload/add-link forms).
+        return render_template("_run_status.html", status=views.pipeline_status(cfg))
 
     def _run_panel(result):
         # Re-render the panel partial with FRESH status after an action (htmx swaps #run-panel), so the

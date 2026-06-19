@@ -245,6 +245,16 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     return cards
 
 
+def review_counts(cards: list[ReviewCard]) -> dict:
+    """Bucket tallies for the Review tab's live auto-poller, computed from the SAME cards the worklist
+    renders (no extra ledger read, no logic drift). awaiting=approve-worklist size (editable cards),
+    prepared=post-less produced clips, held=brand-risk holds. 'recent' (already shipped) is not a
+    waiting count and is excluded. Pure — trivially testable, single source of truth for the strip."""
+    from collections import Counter
+    c = Counter(card.bucket for card in cards)
+    return {"awaiting": c.get("editable", 0), "prepared": c.get("prepared", 0), "held": c.get("held", 0)}
+
+
 def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: datetime) -> Optional[SurfacePost]:
     """The single-surface read-model for ONE post — used by the Regenerate route to re-render just
     that surface's editable caption field after the model rewrites it. None if the post is gone."""
