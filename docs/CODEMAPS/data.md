@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-18 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py | Token estimate: ~985 | incl. M6 intro-tease -->
+<!-- Generated: 2026-06-19 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle (SCHEMA_VERSION=3, born-awaiting_approval, day-bucket archive) -->
 # FanOps Data
 
 No database. ONE JSON ledger + operator-editable control files, all under the data tree.
@@ -13,7 +13,8 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 02_sources/   content-addressed source copies (src_<sha>.mp4; both native + third-party land here)
 03_clips/     rendered clips + per-account variant renders + composed clips (Studio serves ONLY inside this tree)
 04_agent_io/  agentstep request/response JSONs (moments/captions)
-05_scheduled/ 06_published/  (reserved)
+05_scheduled/ dryrun poster payloads (<post_id>.json, written by post/dryrun.py; swept by `gc` older than FANOPS_GC_KEEP_DAYS)
+06_published/ content-lifecycle: day-bucketed <YYYY-MM-DD>/<post_id>.json record of every shipped post (fail-open archive via post/run._archive_published; `gc` NEVER touches it)
 07_reports/   run.log (TAB columns: ts\tstage\tunit\toutcome\textra)
 .env          (env vars: FANOPS_POSTER, POSTIZ_URL, POSTIZ_API_KEY, FANOPS_RESPONDER, etc.)
 ```
@@ -25,11 +26,13 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 - Writes: tmp file + `os.replace` (atomic). Reads in Studio are lock-free (atomic replace
   guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log` + `stitch_plans`
-  (M3 structural-hooks). Versioned: `SCHEMA_VERSION=2` + `_MIGRATIONS` (ledger.py; v1→v2 injects the
-  empty `stitch_plans` map — old ledgers load clean); a NEWER on-disk version → `_NewerSchema` refuses to
-  load (exit 2) rather than silently drop fields. New OPTIONAL entity fields (Moment.{hook_strategy,
-  intro_matches}, StitchPlan.*) ride pydantic defaults — no migration. Inner dicts of variant_streaks/tag_log remain
-  untyped (known gap).
+  (M3 structural-hooks). Versioned: `SCHEMA_VERSION=3` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the
+  empty `stitch_plans` map; v2→v3 `_migrate_v3_created_at` backfills `created_at` — Source from file mtime, Post
+  from a tz-aware `scheduled_time` else the migration stamp; idempotent, never raises, does NOT backfill
+  `published_at` — old ledgers load clean, proven on the real 51-post ledger); a NEWER on-disk version →
+  `_NewerSchema` refuses to load (exit 2) rather than silently drop fields. New OPTIONAL entity fields
+  (Moment.{hook_strategy, intro_matches}, StitchPlan.*, Source.created_at, Post.{created_at,published_at}) ride
+  pydantic defaults. Inner dicts of variant_streaks/tag_log remain untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
 
@@ -42,9 +45,12 @@ Clip:   rendered -> captions_requested -> captioned -> queued -> published -> an
         | held | retired | error
         | stitch_draft (M3/M4: a stitched clip BORN here — absent from crosspost's `captioned` select AND
           _REUSABLE_CLIP_STATES, so STRUCTURALLY unpostable; only an operator RELEASE reaches `captioned`)
-Post:   queued -> submitting -> submitted -> published -> analyzed
-        | failed (definitely-not-posted, re-queueable) | needs_reconcile (MAY be live — poll,
-        never blind re-POST) | retired (M4: a queued base post superseded by an approved stitch) | error
+Post:   awaiting_approval (BORN here at crosspost — the human approval gate; publish_due/publish_now iterate
+        ONLY `queued`, so NOTHING ships until an operator approves) -> queued (approved + scheduled) ->
+        submitting -> submitted -> published -> analyzed
+        | rejected (operator discard of an awaiting_approval post — terminal) | failed (definitely-not-posted,
+        re-queueable) | needs_reconcile (MAY be live — poll, never blind re-POST)
+        | retired (M4 stitch supersede / cross-account base) | error
 StitchPlan (M3 structural-hooks): suggested -> approved -> in_use | dismissed | error
         (suggested=an impact-cut/intro-tease idea; approved gates the lock-free render; in_use=rendered into a
         stitch_draft clip; dismissed/error terminal — e.g. "base superseded" on fingerprint drift, or M6
@@ -56,7 +62,10 @@ IntroMatchDecision (M6 agent-step, intro_match.py): ranked IntroMatchItem pairin
 Key fields: parent_id lineage Post→Clip→Moment→Source; `Source.origin_kind` (M1: native|third_party;
 write-once via add_source setdefault — the axis that gates clip-production, third_party is inert);
 `Post.submission_id` (content-addressed
-client idempotency token, stamped at birth); `Post.media_urls` ([] -> uploaded at publish;
+client idempotency token, stamped at birth); `Source.created_at`/`Post.created_at` (content-lifecycle: ISO-8601
+UTC birth/ingest day, stamped at catalogue/crosspost — the day-bucket anchor for Review/Posted); `Post.published_at`
+(content-lifecycle: TRUE publish time, stamped at the submitted→published transition in post/run._submit_one — the
+Posted-archive day anchor; absent until shipped); `Post.media_urls` ([] -> uploaded at publish;
 `file://` variant renders uploaded on live backends); `Post.metrics[LIFT_SCORE]` (models.py
 constant — written only by track.record_metrics); `Clip.media_url` (per-clip upload cache);
 `Source.meta.amplify_count` (E1 budget vs MAX_AMPLIFY_PER_SOURCE=3); `variant_streaks[key] =
@@ -83,8 +92,11 @@ by) + `rationale` (operator-facing WHY) — both optional, ride defaults).
 
 ## Cascade-safety invariant (C1)
 
-`ledger._delete_moment_cascade` preserves LIVE descendants (`_LIVE_CLIP_STATES` /
-`_LIVE_POST_STATES`); a re-decided source retires the old moment instead of deleting when a
-live post/clip survives. Retired moments are never resurrected. M1 `retire_source` rides this same
-cascade (reconcile with an EMPTY keep-set), so retiring a source preserves + retires any live
-descendant rather than orphaning a live post; `rebuild_catalog` never resurrects a retired source.
+`ledger._delete_moment_cascade` preserves descendants in `_PROTECTED_POST_STATES`
+(`_LIVE_POST_STATES` + awaiting_approval + queued + retired — content-lifecycle wipe-safety: a
+re-ingest/reconcile can NEVER drop an awaiting-approval or approved post the operator is mid-review on)
+and `_LIVE_CLIP_STATES`; the guard fires at BOTH the post-loop check and the clip-drop `any(...)`. A
+re-decided source retires the old moment instead of deleting when a protected post/clip survives. Retired
+moments are never resurrected. M1 `retire_source` rides this same cascade (reconcile with an EMPTY keep-set),
+so retiring a source preserves + retires any protected descendant rather than orphaning it; `rebuild_catalog`
+never resurrects a retired source.

@@ -1,52 +1,35 @@
-Codemap update — 2026-06-18
-Scan: 68 src modules (src/fanops/ + studio/), 98 test files.
+Codemap update — 2026-06-19
+Prior scan: 2026-06-18 (commit 5a00541, M6 intro-tease baseline).
+Branch: feat/content-lifecycle. Files: 74 src .py (was 69) · 113 test .py (was 100).
+Change vs prior: ~12% of codemap text (surgical, < 30% threshold → updated in place).
 
-Catch-up refresh: the codemaps documented through M1 but were STALE for M2 + M3 (both merged
-without a doc sync) and did not yet cover M4. This pass brings architecture.md / data.md /
-dependencies.md current through the Structural Hooks & Asset Awareness milestones M2→M4.
+ARCHITECTURE CHANGES SINCE LAST SCAN
+- Post lifecycle now BORN `awaiting_approval` (human approval gate) — was documented as starting at
+  `queued`. publish_due/publish_now iterate ONLY `queued`; nothing ships unattended. New `rejected`
+  terminal state. (post-approval-lifecycle PRs #56-#59 + content-lifecycle, this session.)
+- Ledger SCHEMA_VERSION 2 -> 3; new v2->v3 migration `_migrate_v3_created_at` (backfills Source/Post
+  created_at; idempotent, never raises; proven on the real 51-post ledger).
+- New model fields: Source.created_at, Post.created_at, Post.published_at (all Optional, default None).
+- `_PROTECTED_POST_STATES` wipe-guard added to the reconcile cascade (awaiting/queued/retired + live
+  states survive a re-ingest/reconcile — the operator's 51 awaiting clips can't be wiped).
+- 06_published/ NOW ACTIVE: day-bucketed <YYYY-MM-DD>/<post_id>.json archive (post/run._archive_published,
+  fail-open). 05_scheduled/ written by post/dryrun.py, swept by `gc`. (Both were labelled "reserved".)
+- Cross-account onboarding: studio/actions.{crosspost_to_account, crosspost_all_to_account} + repost_post.
+- `gc` retention window now declarative via config.gc_keep_days / FANOPS_GC_KEEP_DAYS (default 30, >=1).
 
-Milestones now reflected (branch feat/structural-hooks-m4 on top of main@M3):
+NEW ROUTES (were absent from the codemap)
+  /posts/{approve,reject} · /posts/unapprove/<id>            (Review approval lifecycle)
+  /schedule/respread · /schedule/{move,unapprove}/<id>       (Schedule cockpit)
+  /posted · /posts/repost/<id> · /posts/crosspost/<clip_id> · /posts/crosspost-all   (Posted + cross-account)
+  /review/{live,refresh} · /run/{upload,status} · /clip-thumb/<clip_id>
+  /golive/{account/add,validate}
 
-M2 — Hook-strategy router (merged PR #47):
-  * router.py (NEW): read-only Moment-level classifier `route_moments` runs AFTER the critic, BEFORE
-    the render loop. Stamps Moment.hook_strategy in {text | clean_final | clean_awaiting_strategy:<key>
-    | stitch:<format>} and RENDERS NOTHING. STRATEGY_KEYS reserves 8 families (impact_cut first).
-  * models.Moment.hook_strategy (optional; None on old ledgers — no migration).
-  * config.hook_router (FANOPS_HOOK_ROUTER, default OFF). pipeline wires it gated + fail-open.
-  * ledger.reconcile_moments PRESERVES a clean_awaiting_strategy moment from cascade-GC.
+NEW DEPENDENCIES / ENV
+- FANOPS_GC_KEEP_DAYS (content-lifecycle). No new external services or Python deps.
 
-M3 — Stitch-plan lifecycle & operator-approval spine (merged PR #48):
-  * models.{StitchPlan, StitchState, ClipState.stitch_draft} + stitch_plan_id (content-addressed dedup).
-  * ledger: SCHEMA_VERSION 1->2 + _MIGRATIONS v2 (inject empty stitch_plans map; old ledgers load clean);
-    add/approve/dismiss_stitch_plan (in-lock idempotent). stitch_draft absent from crosspost select +
-    _REUSABLE_CLIP_STATES -> structurally unpostable.
-  * studio: /stitches tab, approve/dismiss actions, pending_stitches read-model. digest surfaces
-    stitch_plan errors from this milestone on.
+STALENESS NOTE
+- The codemap had drifted by the ENTIRE post-approval-lifecycle (#56-#59) despite a 2026-06-18 stamp —
+  the route table and Post lifecycle were a full feature-set behind. Run update-codemaps as part of each
+  merge-to-main, not only at finalization checkpoints. No doc is > 90 days stale.
 
-M4 — Impact-cut, first concrete format (THIS branch, PR #49; 12 RED->GREEN commits + 1 review-fix):
-  * impact_cut.py (NEW): pure deterministic planner — ranks signal_peaks (max score, tie->earliest t),
-    cuts IMPACT_LEAD_EPS=0.4s before the impact peak; constants IMPACT_LEAD_EPS/DURATION_TOLERANCE/
-    IMPACT_MIN_DURATION; make_stitch_plan builds the suggested plan (base fingerprint pinned).
-  * clip.render_moment: additive cut_window/clip_id/born_state override + post-render DURATION-validity
-    check (not size). Default path byte-identical (is_stitch guards every branch).
-  * stitch_render.py (NEW): suggest_impact_cuts (in-lock, ledger-only) + prewarm_approved_stitches
-    (LOCK-FREE heavy ffmpeg) + render_approved_stitches (in-lock adopt via fingerprint-skip) with
-    supersede precedence (base missing->error, fingerprint drift->auto-dismiss, live base post->block,
-    queued base post->retire) + approved_impact_cut_count (forward-only kill-switch warning).
-  * models.PostState.retired (enum-additive, no migration; publish_due only iterates `queued`).
-  * config.impact_cut (FANOPS_IMPACT_CUT, default OFF). pipeline wires suggest+render-approved gated;
-    _prewarm warms approved stitches lock-free.
-  * studio: release_stitches action + pending_stitch_drafts read-model + POST /stitches/release +
-    "Rendered drafts — release to publish" panel section (the SECOND operator gate: stitch_draft->captioned,
-    inheriting the base clip's captions).
-
-New dependencies detected: none (no new external binary/service/Python dep — all additive in-process).
-
-Architecture changes: 1 new Studio GET + 3 new POST routes (/stitches, /stitches/{approve,dismiss,release});
-2 new env flags (FANOPS_HOOK_ROUTER, FANOPS_IMPACT_CUT); ledger schema v1->v2.
-
-Review: ecc:python-review on the M4 diff — 0 CRITICAL, 1 HIGH (absent-moment KeyError that wedged
-render_approved_stitches -> fixed: errors the plan "moment missing" + continues; regression test added),
-2 LOW lying comments fixed. Full unit suite 1314 passed / 16 deselected; ruff clean.
-
-Staleness: none > 90 days. Change vs prior codemaps is additive (well under 30%) — updated in place.
+OPEN ITEMS captured for the next ECC plan -> .claude/PRPs/codemap-sync-findings.notes.md

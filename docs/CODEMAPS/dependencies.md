@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-18 | Files scanned: pyproject.toml, config.py, llm.py, post/*, .github/workflows/ci.yml | Token estimate: ~745 | incl. M6 FANOPS_INTRO_TEASE -->
+<!-- Generated: 2026-06-19 | Files scanned: pyproject.toml, config.py, llm.py, post/*, .github/workflows/ci.yml | Token estimate: ~770 | incl. M6 FANOPS_INTRO_TEASE + content-lifecycle FANOPS_GC_KEEP_DAYS -->
 # FanOps Dependencies
 
 ## External binaries (subprocess, every call hard-timeout-bounded)
@@ -49,6 +49,7 @@ Extras:
 **Pipeline:**
 - `FANOPS_ARTIST_NAME`, `FANOPS_BURN_SUBS`, `FANOPS_SUBTITLE_FONT`, `FANOPS_WHISPER_MODEL`,
   `FANOPS_PUBLISH_LEAD_MINUTES`, `FANOPS_RESPONDER` (manual default), `FANOPS_HOOK_EDITOR` (ON), `FANOPS_VISUAL_START` (ON).
+- `FANOPS_GC_KEEP_DAYS` (content-lifecycle: manual-`gc` retention window, default 30, clamped ≥1; sweeps retired/analyzed renders + 05_scheduled payloads, never 06_published).
 
 **Structural hooks (M2–M6, ALL default OFF):**
 - `FANOPS_HOOK_ROUTER` (M2: read-only Moment hook_strategy classifier), `FANOPS_IMPACT_CUT`

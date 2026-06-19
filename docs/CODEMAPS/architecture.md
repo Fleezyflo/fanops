@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-18 | Files scanned: 69 src + 100 test | Token estimate: ~1560 | incl. M6 intro-tease -->
+<!-- Generated: 2026-06-19 | Files scanned: 74 src + 113 test | Token estimate: ~1700 | incl. M6 intro-tease + content-lifecycle (born-awaiting_approval gate, day-bucket archive, cross-account) -->
 # FanOps Architecture
 
 Single-operator local CLI (`fanops`) that turns long-form source video into scheduled
@@ -8,6 +8,7 @@ Blotato REST API, or Postiz (self-hosted). Autonomous learning features are defa
 Optional Flask-based Studio web cockpit (imported lazily; core install Flask-free).
 Optional MoviePy produced-clip compositing with template cards + overlays (imported lazily; core install MoviePy-free).
 Asset memory (M1): every Source carries `origin_kind` — native (the artist's own footage the pipeline cuts) vs third_party (outside footage handed in: remembered + held aside, INERT to clip-production until chosen).
+Content lifecycle: every Post is BORN `awaiting_approval` (the human approval gate — `publish_due`/`publish_now` iterate ONLY `queued`, so nothing ships unattended even on a live backend); the operator approves in Studio Review → `queued`, then publish stamps `published_at` and writes a day-bucketed `06_published/<day>/` archive. Re-ingest/reconcile can NEVER wipe an awaiting/approved/retired post (`_PROTECTED_POST_STATES`). A shipped post can be reposted (fresh awaiting_approval clone) or cross-posted onto another onboarded account (`crosspost_to_account`, repost-freely).
 Structural hooks (M2–M6, all default-OFF): a read-only ROUTER classifies each clean Moment's `hook_strategy` (`text` | `clean_final` | `clean_awaiting_strategy:<key>` | `stitch:<format>`); a `stitch_plan` approval spine gates every structural hook behind a born-unpostable `stitch_draft` ClipState + two operator approvals. Two concrete formats: **impact-cut** (M4, deterministic cut-before-peak "wait for it" tease) and **intro-tease** (M6, an LLM-vision matcher pairs a clean clip with a third-party intro asset, then a compose-PREPEND lays the tease over a continuous music bed). `mine_suggestions` (M5) is the generic ranked/capped routine pass both formats feed; render-approved dispatches by `strategy_key`. Each format has its own env gate; a disabled format's reservations + approved plans FREEZE (forward-only kill-switch, never silently demoted).
 
 ## Pipeline (the `advance` pass, pipeline.py — short ingest tx → lock-free pre-warm → main commit tx)
@@ -19,8 +20,9 @@ Structural hooks (M2–M6, all default-OFF): a read-only ROUTER classifies each 
   ──[hookedit: feed-aware, VISION-grounded RETENTION-hook editor; opt-in FANOPS_HOOK_EDITOR]──> Moment(hook_edited)
   ──clip(ffmpeg render per aspect; band→snap→strongest-FRAME start [P1, FANOPS_VISUAL_START]; burns the on-screen RETENTION hook top-center)──> Clip(rendered)
   ──caption(agent + brand gate; hashtags VETTED to ≤4 from a reach-ranked set)──> captioned
-  ──crosspost(schedule per account×platform surface; stamps creative provenance onto the Post)──> Post(queued)
-  ──publish_due(post/run.py)──> submitting -> submitted -> published
+  ──crosspost(schedule per account×platform surface; stamps creative provenance + created_at)──> Post(awaiting_approval)
+  ──[operator APPROVES in Studio Review — the human gate; publish iterates ONLY queued, nothing ships unattended]──> Post(queued)
+  ──publish_due/publish_now(post/run.py)──> submitting -> submitted -> published (+published_at, +06_published/<day> archive)
   ──track(pull Blotato metrics)──> analyzed ──adjust──> amplify/retire
 ```
 
@@ -40,11 +42,12 @@ Structural hooks (M2–M6, all default-OFF): a read-only ROUTER classifies each 
 | Hook + hashtag quality | hookedit.py (feed-aware vision hook editor, chunked gates), keyframes.py (source-frame extraction = the editor's eyes), hookcheck.py (deterministic weak-hook guard + `normalize_hook_pattern`/`HOOK_PATTERNS`), hashtags.py (vet_hashtags ≤4 reach-vetted), text.py (em-dash sanitizer). Sourced knowledge: `.claude/skills/fanops-hook-hashtag/SKILL.md` |
 | Creative provenance (P1, for P3/P4 attribution) | one writer per field: Moment.hook_pattern (moments/hookedit ingest), Clip.first_frame_kind/cut_seconds (clip render), Post.{hook_pattern,first_frame_kind,clip_profile,cut_seconds} (crosspost). The dims a future insight/learning pass groups reach by — currently STAMPED only (no learner reads them yet) |
 | Asset memory (M1) | the `origin_kind` axis (native vs third_party) end-to-end: models.Source.origin_kind + SourceState.{discovered,retired}; ingest `_catalogue_file` spine (origin_kind/inbox threading, sha-conflict WARN, write-once); config.thirdparty_inbox (peer staging dir); pipeline source-loop inert guard; ledger.retire_source (cascade, file kept) + rebuild_catalog (disk↔ledger reconcile); studio.asset_catalog + save_thirdparty_uploads/run_ingest_thirdparty + /library tab |
-| Structural hooks (M2–M6) | router.py (read-only Moment classifier: `STRATEGY_KEYS`, `route_moments`, `awaiting`/`stitched`; M6 reserves intro_tease for clean-no-peak + forward-only reservation guard); models.{StitchPlan(+rank_score/rationale/render_attempts), StitchState, ClipState.stitch_draft, PostState.retired, Moment.{hook_strategy, intro_matches}, IntroMatchItem/Decision} + `stitch_plan_id`; ledger stitch_plan ops (add/approve/dismiss — in-lock idempotent) + `SCHEMA_VERSION=2` migration + reconcile preserves `clean_awaiting_strategy`; impact_cut.py (deterministic cut-before-peak planner); **intro_match.py (M6 LLM-vision matcher gate — request/ingest/pending mirroring hookedit; ephemeral per-(moment,candidate-set,version) key; fail-open)**; compose.py (M6 `_compose_fingerprint` + `prepend_intro` compose-PREPEND with continuous looped music bed, fail-open, lock-free); stitch_render.py (`mine_suggestions` ranked/capped/deduped pass over BOTH producers `_impact_cut_candidates`+`_intro_tease_candidates`; `prewarm`/`render_approved_stitches` dispatch by strategy_key + common supersede precheck + per-format `strategies` filter + `approved_disabled_count` kill-switch + `MAX_INTRO_RENDER_ATTEMPTS` retry-cap); clip.render_moment cut-window override + duration-validity; config.{hook_router, impact_cut, intro_tease}; pipeline `_enabled_strategies` gate + matcher wiring; studio stitches tab (strategy-agnostic: approve/dismiss ordered by rank + release drafts); digest surfaces stitch_plan errors |
+| Structural hooks (M2–M6) | router.py (read-only Moment classifier: `STRATEGY_KEYS`, `route_moments`, `awaiting`/`stitched`; M6 reserves intro_tease for clean-no-peak + forward-only reservation guard); models.{StitchPlan(+rank_score/rationale/render_attempts), StitchState, ClipState.stitch_draft, PostState.retired, Moment.{hook_strategy, intro_matches}, IntroMatchItem/Decision} + `stitch_plan_id`; ledger stitch_plan ops (add/approve/dismiss — in-lock idempotent) + the v1→v2 stitch_plans migration step (now part of the v3 hop-chain) + reconcile preserves `clean_awaiting_strategy`; impact_cut.py (deterministic cut-before-peak planner); **intro_match.py (M6 LLM-vision matcher gate — request/ingest/pending mirroring hookedit; ephemeral per-(moment,candidate-set,version) key; fail-open)**; compose.py (M6 `_compose_fingerprint` + `prepend_intro` compose-PREPEND with continuous looped music bed, fail-open, lock-free); stitch_render.py (`mine_suggestions` ranked/capped/deduped pass over BOTH producers `_impact_cut_candidates`+`_intro_tease_candidates`; `prewarm`/`render_approved_stitches` dispatch by strategy_key + common supersede precheck + per-format `strategies` filter + `approved_disabled_count` kill-switch + `MAX_INTRO_RENDER_ATTEMPTS` retry-cap); clip.render_moment cut-window override + duration-validity; config.{hook_router, impact_cut, intro_tease}; pipeline `_enabled_strategies` gate + matcher wiring; studio stitches tab (strategy-agnostic: approve/dismiss ordered by rank + release drafts); digest surfaces stitch_plan errors |
 | Compositing (optional [compose]) | compose.py (MoviePy produced clip layer w/ template cards, fail-open to base clip) |
 | Agent I/O | agentstep.py (request/response files), llm.py (`claude -p`, 180s cap), responder.py |
 | Schedule/post | crosspost.py (deterministic schedule), tagging.py, post/{run,media,payload,blotato_rest,blotato_mcp,postiz,dryrun,metrics}.py |
-| Publishing | post/run.py (_submit_one, publish_due, publish_post — the Publish-now engine) |
+| Publishing | post/run.py (_submit_one, publish_due, publish_post — the Publish-now engine; `_archive_published` day-bucketed 06_published record, fail-open) |
+| Content lifecycle | born-awaiting_approval gate (crosspost + Ledger.approve_post/reject_post/unapprove); `_PROTECTED_POST_STATES` wipe-guard (ledger reconcile cascade); created_at/published_at stamps (models); day-bucketed Review + Posted (studio/views.{review_buckets day-sort, posted_library, group_posted_by_day}); cross-account onboard (studio/actions.{crosspost_to_account, crosspost_all_to_account}, repost_post); `gc` retention (cli + config.gc_keep_days, sweeps 05_scheduled); v2→v3 created_at migration (ledger._migrate_v3_created_at) |
 | Learn (default OFF) | track.py (writes LIFT_SCORE), adjust.py (classify/amplify/retire), variant_learning.py (best_hooks/ucb_rank), variant_amplify.py, variant_transfer.py |
 | State/infra | ledger.py (flock+atomic JSON), models.py (pydantic units + LIFT_SCORE), accounts.py (+ atomic write_account_id), ids.py (SHA1 content-addressing), timeutil.py (single parse site), log.py (TAB-column run.log), errors.py, digest.py (+public gate_state), validation_gate.py |
 | Autonomous ops | autopilot.py (one-cmd: enable llm responder + launchd daemon), daemon.py (launchd supervisor around `run`), doctor.py (readiness pre-flight checks), cutover.py (Blotato: auth/post/metrics/lift prover) |
@@ -54,7 +57,8 @@ Structural hooks (M2–M6, all default-OFF): a read-only ROUTER classifies each 
 
 **Core pipeline:** `run` (cron entrypoint: respond+advance loop + learning passes) · `advance` · `status` ·
 `ingest` · `pull <http(s) url>` · `discover` / `intake` · `respond` · `digest` · `track` ·
-`adjust` · `amplify-variants` · `reconcile` · `gc`.
+`adjust` · `amplify-variants` · `reconcile` · `gc` (retention sweep: retired/analyzed renders + 05_scheduled
+payloads older than FANOPS_GC_KEEP_DAYS [default 30]; refuses keep_days<1; never touches 06_published).
 
 **Recovery:** `resolve` / `unhold` / `retry-source` / `retry-metrics`.
 
@@ -71,25 +75,30 @@ Typed-error catch ladder -> one clean stderr line + exit 1/2, never a traceback.
 
 ```
 GET  /                  -> redirect /review
-GET  /review|/schedule|/lift|/run|/candidates|/publish|/gates|/golive|/library   (lock-free Ledger.load per request)
-GET  /media/<post_id>, /clips/<clip_id>, /review-thumb/<eid>   (send_file, bounded INSIDE cfg.base)
+Tabs (GET, lock-free Ledger.load per request):
+  /review /review/live /review/refresh   (approval worklist + live auto-poll)   /schedule (approved bucket)   /lift
+  /posted (all-time shipped library, day-bucketed)   /run /run/status   /library (M1 third-party)
+  /stitches (M3/M4)   /candidates (discover)   /publish (produced-clip grid)   /gates   /golive
+GET  /media/<post_id> /clips/<clip_id> /clip-thumb/<clip_id> /review-thumb/<eid>   (send_file, bounded INSIDE cfg.base)
 
-POST /run/{ingest,pull,advance,prepare}   (pipeline entry from browser; htmx returns _run_panel)
+Approval lifecycle (post-approval-lifecycle + content-lifecycle):
+POST /posts/{approve,reject} · /posts/unapprove/<post_id>   (Review: promote awaiting→queued / discard / send back)
+POST /schedule/{respread} · /schedule/move/<post_id> · /schedule/unapprove/<post_id>   (Schedule cockpit)
+POST /posts/repost/<post_id>              (Posted: fresh awaiting_approval clone of a shipped clip)
+POST /posts/crosspost/<clip_id> · /posts/crosspost-all   (Phase 4: onboard a shipped clip onto another account — repost-freely)
+
+Pipeline + edit:
+POST /run/{ingest,pull,upload,advance,prepare}   (pipeline entry from browser; htmx returns _run_panel)
 POST /publish/posted/<post_id>            (mark published manually)
-POST /publish/now/<post_id>               (Milestone 5: ship one reviewed post immediately)
-POST /reschedule/<post_id>, /caption/<post_id>   (edit existing post)
-POST /regenerate/<post_id>                (Milestone 3: re-run caption model)
-POST /snooze/<clip_id>                    (hold a clip from publishing)
+POST /publish/now/<post_id>               (ship one queued post immediately)
+POST /reschedule/<post_id> · /caption/<post_id> · /regenerate/<post_id>   (edit a post; regenerate re-runs the caption model)
+POST /snooze/<clip_id> · /unhold/<clip_id>   (hold / unhold a clip)
 
 POST /candidates/approve/<eid>            (approve discover footage for ingest)
-POST /gates/answer/{moments,captions}/<key>   (answer agent gates from browser)
+POST /gates/answer/<kind>/<key>           (answer moment/caption agent gates from browser)
 POST /library/upload                      (M1: stage + catalogue a handed-in third-party asset; inert to clips)
-
-GET  /stitches                            (M3/M4: structural-hook approvals + rendered-draft releases)
-POST /stitches/{approve,dismiss}          (M3: operator-gate stitch_plans — multi-select)
-POST /stitches/release                    (M4: release a reviewed stitch_draft clip -> captioned)
-
-POST /golive/{config,refresh,map,live,dryrun}   (Milestone 5 operator-gated: Postiz integration)
+POST /stitches/{approve,dismiss,release}  (M3/M4: operator-gate stitch_plans + release a rendered stitch_draft -> captioned)
+POST /golive/{config,account/add,refresh,map,live,dryrun,validate}   (operator-gated Postiz onboarding + learning-cutover probe)
 ```
 
 All POST routes return ActionResult (ok + detail/error) wrapped in _result.html (htmx swap).
