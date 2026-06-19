@@ -196,6 +196,55 @@ def test_repair_nulls_at_cap(tmp_path, monkeypatch):
     assert m1.hook_judged is True                               # finalized (renders clean)
     assert m1.hook_rounds == 1                                  # not advanced past the cap
 
+def test_advisory_keeps_rejected_hook_at_cap(tmp_path, monkeypatch):
+    # M2 advisory-critic mode: at the repair cap a reject KEEPS the raw hook (+ pattern) and finalizes
+    # it instead of nulling — the critic's veto becomes ADVISORY. The dissent is surfaced via a log
+    # line (hook_feedback is an unread field, so it is CLEARED, not retained as an invisible trace).
+    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
+    monkeypatch.setenv("FANOPS_HOOK_CRITIC_ADVISORY", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _src(led, cfg, "s1")
+    _moment(led, "s1", "m1", "still generic after repair", rounds=1)   # at the cap
+    led = request_hook_judge(led, cfg)
+    _answer(cfg, [HookJudgeItem(moment_id="m1", keep=False, why="still generic")])
+    led = ingest_hook_judge(led, cfg)
+    m1 = led.moments["m1"]
+    assert m1.hook == "still generic after repair"     # raw hook KEPT (advisory, not vetoed)
+    assert m1.hook_pattern == "proof"                  # pattern retained -> indistinguishable from a kept hook
+    assert m1.hook_feedback is None                    # cleared (unread field; the trace lives in the log)
+    assert m1.hook_judged is True                      # finalized -> renders, never held forever
+    assert m1.hook_rounds == 1
+    assert "advisory_keep" in cfg.log_path.read_text()  # the observable dissent trace (closes M4f)
+
+def test_advisory_off_still_nulls_at_cap(tmp_path, monkeypatch):
+    # DEFAULT (flag unset): the cap-reject still NULLS — byte-identical to today's behavior.
+    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
+    monkeypatch.delenv("FANOPS_HOOK_CRITIC_ADVISORY", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _src(led, cfg, "s1")
+    _moment(led, "s1", "m1", "still generic after repair", rounds=1)
+    led = request_hook_judge(led, cfg)
+    _answer(cfg, [HookJudgeItem(moment_id="m1", keep=False, why="still generic")])
+    led = ingest_hook_judge(led, cfg)
+    m1 = led.moments["m1"]
+    assert m1.hook is None and m1.hook_pattern is None  # default -> today's clean clip
+    assert m1.hook_judged is True
+
+def test_advisory_still_reopens_on_first_reject(tmp_path, monkeypatch):
+    # Advisory changes ONLY the terminal fallback. A round-0 reject still RE-OPENS for the one editor
+    # repair pass — advisory is not "never critique", it is "don't VETO after the repair attempt".
+    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")
+    monkeypatch.setenv("FANOPS_HOOK_CRITIC_ADVISORY", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _src(led, cfg, "s1")
+    _moment(led, "s1", "m1", "when you have to let go", rounds=0)       # virgin -> reject re-opens
+    led = request_hook_judge(led, cfg)
+    _answer(cfg, [HookJudgeItem(moment_id="m1", keep=False, why="generic")])
+    led = ingest_hook_judge(led, cfg)
+    m1 = led.moments["m1"]
+    assert m1.hook == "when you have to let go"          # NOT nulled, NOT yet final -> re-opened
+    assert m1.hook_rounds == 1 and m1.hook_edited is False and m1.hook_judged is False
+
 def test_repair_batch_partitions_by_round(tmp_path, monkeypatch):
     # CRITICAL: a round-0 and a round-1 moment must land in SEPARATE gates. A batch that mixed rounds
     # would answer only partly and STRAND the round-0 clip (never renders).

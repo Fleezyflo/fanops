@@ -352,3 +352,13 @@ def test_publish_lead_minutes_negative_clamps_to_zero(monkeypatch):
     from fanops.config import Config
     monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", "-30")
     assert Config().publish_lead_minutes == 0
+
+def test_hook_critic_advisory_default_off_and_opt_in(tmp_path, monkeypatch):
+    # M2 advisory-critic: OPT-IN (mirrors burn_subs), NOT the opt-out shape of the adjacent hook_judge —
+    # a wrong copy would silently flip advisory ON for every deployment.
+    monkeypatch.delenv("FANOPS_HOOK_CRITIC_ADVISORY", raising=False)
+    assert Config(root=tmp_path).hook_critic_advisory is False
+    monkeypatch.setenv("FANOPS_HOOK_CRITIC_ADVISORY", "1")
+    assert Config(root=tmp_path).hook_critic_advisory is True
+    monkeypatch.setenv("FANOPS_HOOK_CRITIC_ADVISORY", "off")
+    assert Config(root=tmp_path).hook_critic_advisory is False
