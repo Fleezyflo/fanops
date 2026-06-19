@@ -216,6 +216,44 @@ def test_render_burns_hook_even_without_transcript(tmp_path, mocker, monkeypatch
     ass = list(cfg.clips.glob("*.ass"))
     assert ass and "wait for the drop" in ass[0].read_text(encoding="utf-8")   # ...carrying the hook text
 
+def test_hook_burn_failed_true_when_textfilter_absent_with_hook(tmp_path, mocker, monkeypatch):
+    # V2 M1/F9: a hook was WANTED but ffmpeg can't burn it -> the clip still renders (fail-open) but
+    # records hook_burn_failed=True so the silent drop is VISIBLE (vs a clip that looks fine but lost
+    # its hook). The flag is set on the persisted Clip (render_moment's own Clip object).
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"), width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.decided, hook="wait for the drop"))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered and clip.hook_burn_failed is True
+
+def test_hook_burn_failed_false_for_clean_clip(tmp_path, mocker, monkeypatch):
+    # No hook + subs off -> nothing to burn -> NOT a failure (a clean clip is intentional, not a drop).
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"), width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.decided, hook=None))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered and clip.hook_burn_failed is False
+
+def test_hook_burn_failed_true_when_ass_empty_despite_hook(tmp_path, mocker, monkeypatch):
+    # The SECOND silent-drop branch (audit M1f): textfilter exists + a hook is present, but build_ass
+    # yields empty -> the hook is dropped with no signal. F9 flags this case too, not just toolchain-absent.
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    monkeypatch.setattr(overlay, "build_ass", lambda *a, **k: "")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"), width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.decided, hook="wait for the drop"))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered and clip.hook_burn_failed is True
+
 def test_render_clean_when_no_hook_and_subs_off(tmp_path, mocker, monkeypatch):
     # No hook AND transcript captions not opted in -> a CLEAN clip: no "subtitles=" in -vf, no .ass.
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)        # default OFF
