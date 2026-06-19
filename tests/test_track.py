@@ -43,6 +43,44 @@ def test_record_advances_published_to_analyzed(tmp_path):
     assert led.posts["p1"].metrics["saves"] == 20 and "lift_score" in led.posts["p1"].metrics
     assert led.posts["p1"].state is PostState.analyzed
 
+# ---- T4: honest-lift marker — flag when the lift_score is computed without a high-weight metric ----
+
+def _pub(led, pid="p1"):
+    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.published))
+
+def test_record_marks_lift_degraded_when_high_weight_metric_absent(tmp_path):
+    # A Postiz-shaped row (no saves/retention — Postiz can't deliver them) -> the lift_score is
+    # partial: stamp lift_degraded + name the missing high-weight keys so the objective is HONEST.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"reach": 50000, "shares": 30, "likes": 200})
+    m = led.posts["p1"].metrics
+    assert m["lift_degraded"] is True
+    assert m["lift_missing_keys"] == ["retention", "saves"]   # the high-weight _W keys absent from the row
+    assert "lift_score" in m                                  # still scored (on the present metrics)
+
+def test_record_not_degraded_on_full_metric_set(tmp_path):
+    # A full row (every high-weight _W key present) is NOT degraded -> no marker -> today's behavior.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"saves": 20, "shares": 12, "retention": 0.7, "reach": 1000, "likes": 5})
+    m = led.posts["p1"].metrics
+    assert "lift_degraded" not in m and "lift_missing_keys" not in m
+
+def test_lift_degraded_is_relative_to_the_active_weight_map(tmp_path):
+    # Degraded is judged against the ACTIVE weights (a tuning override REPLACES _W). With weights whose
+    # only high-weight key IS present, the lift is complete -> not degraded.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"reach": 9000}, weights={"reach": 4.0})
+    assert "lift_degraded" not in led.posts["p1"].metrics
+
+def test_lift_degraded_marker_does_not_corrupt_a_later_lift_score(tmp_path):
+    # The marker keys are NOT weights, so a re-pull's lift_score ignores them (no double-count / crash).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"shares": 10})            # degraded (saves/retention absent)
+    degraded_score = led.posts["p1"].metrics["lift_score"]
+    assert degraded_score == lift_score({"shares": 10})        # marker did not change the score
+    assert led.posts["p1"].metrics["lift_degraded"] is True
+
 def test_pull_matches_by_submission_id_and_skips_failed(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1",
