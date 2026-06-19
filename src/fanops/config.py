@@ -56,6 +56,10 @@ _STAGE = {
 PosterBackend = Literal["dryrun", "postiz", "rest", "mcp"]
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "rest", "mcp"})
 
+# Per-gate model tier (llm_model_for): MECHANICAL gates default to sonnet (fast), CREATIVE hook gates
+# to opus (the on-screen retention hook is the watch-through driver). FANOPS_LLM_MODEL overrides all.
+_GATE_MODEL_DEFAULTS = {"moments": "sonnet", "captions": "sonnet", "hookedit": "opus", "hookjudge": "opus"}
+
 class Config:
     def __init__(self, root: Path | str | None = None):
         self.root = Path(root) if root else Path.cwd()
@@ -205,15 +209,18 @@ class Config:
     def responder_mode(self) -> str:
         return os.getenv("FANOPS_RESPONDER") or "manual"
 
-    @property
-    def llm_model(self) -> str:
-        # V2 M1/F1: pin the creative brain. `claude -p` ran with NO --model, so output quality drifted
-        # with whatever the operator's CLI defaulted to (unpinned = unreproducible). Default "opus" = the
-        # judgment tier for the moment/caption/hook calls; the `claude` CLI resolves the alias to latest-
-        # of-tier. Pin a FULL model id (e.g. "claude-opus-4-...") for bit-stable repro; "sonnet" trades
-        # judgment for cost/latency. Mirrors clip_profile's validate-or-default shape.
-        v = os.getenv("FANOPS_LLM_MODEL")
-        return v.strip() if v and v.strip() else "opus"
+    def llm_model_for(self, kind: str) -> str:
+        # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
+        # But the tier is now PER-GATE, not one blanket "opus": the MECHANICAL gates — moment-window picks
+        # and hashtags-only captions — run on `sonnet` (fast + plenty for the task; blanket-opus made a
+        # 28-source run ~40min of SEQUENTIAL calls). The CREATIVE quality gates — `hookedit`/`hookjudge`,
+        # which author and critique the on-screen RETENTION hook (the watch-through driver) — stay on
+        # `opus`. FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
+        # like "claude-opus-4-..." for bit-stable repro). Validate-or-default shape (mirrors clip_profile).
+        g = os.getenv("FANOPS_LLM_MODEL")
+        if g and g.strip():
+            return g.strip()
+        return _GATE_MODEL_DEFAULTS.get(kind, "sonnet")
 
     @property
     def artist_name(self) -> str:

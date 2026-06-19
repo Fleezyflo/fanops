@@ -34,7 +34,8 @@ class ManualResponder:
 
 def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None, log=None) -> dict:
     """The production model: hand claude -p the committed prompt + the gate's JSON schema, PINNED to
-    cfg.llm_model (V2 M1/F1 — an unpinned `claude -p` drifts with whatever the CLI defaults to). For
+    cfg.llm_model_for(kind) (V2 M1/F1 — an unpinned `claude -p` drifts with the CLI default; the tier is
+    PER-GATE — sonnet for mechanical moment/caption gates, opus for the creative hook gates). For
     the hookedit AND hookjudge gates, also hand it the clip frames (collected from the payload items)
     as images so the editor/critic SEES each clip and grounds its rewrite/verdict in the footage;
     moments/captions stay text-only. When cfg is given, emit ONE provenance line per call (the model
@@ -47,11 +48,11 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
         images = [f for it in payload.get("items", []) for f in (it.get("frames") or [])] or None
     prompt = _PROMPT[kind](payload)
     out, answered = claude_json_meta(prompt, schema, images=images,
-                                     model=(cfg.llm_model if cfg else None))
+                                     model=(cfg.llm_model_for(kind) if cfg else None))
     if cfg is not None:
         emit = log or get_logger(cfg)
         uid = str(payload.get("source_id") or payload.get("clip_id") or kind)
-        emit("llm", uid, "call", model=answered or cfg.llm_model,
+        emit("llm", uid, "call", model=answered or cfg.llm_model_for(kind),
              prompt_sha=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
              brief_sha=guidance_sha(cfg))
     return out
