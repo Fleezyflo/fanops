@@ -39,16 +39,17 @@ def test_ingest_overlapping_picks_deduped(tmp_path):
     assert len(led.moments_of("src_1")) == 2          # the near-dupe middle pick dropped
 
 def test_ingest_empty_picks_visible_not_silent_cascade(tmp_path):
-    # The model returns [] -> source ends moments_decided (re-runnable), and a PRIOR moment is
-    # PRESERVED (no cascade-delete on an empty re-pick — the silent-drop fix).
+    # V2 M1/F8: the model returns [] -> source ends moments_empty (VISIBLE + re-runnable), NOT the
+    # look-alike moments_decided that hid 'nothing was produced'. A PRIOR moment is PRESERVED (no
+    # cascade-delete on an empty re-pick — the silent-drop fix).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [_mp(10, 28, "first")])
     assert len(led.moments_of("src_1")) == 1
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [])
-    assert led.sources["src_1"].state is SourceState.moments_decided   # not error
-    assert len(led.moments_of("src_1")) == 1                            # prior moment preserved
+    assert led.sources["src_1"].state is SourceState.moments_empty       # visible, non-terminal (not error, not decided)
+    assert len(led.moments_of("src_1")) == 1                             # prior moment preserved
 
 def test_ingest_sanitizes_em_dash_in_reason_and_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
