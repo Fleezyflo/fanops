@@ -182,6 +182,24 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
         except Exception:
             logger.warning("variant-amplify digest section degraded (fail-open)", exc_info=True)
 
+    # P3 surface (#7): for each stamped creative dim, once P4 is UNLOCKED for it (cutover-confirmed plumbing
+    # AND enough attributed signal — validation_gate.p4_unlocked, per dim), surface aggregate_by_dim's REACH-
+    # FIRST rollup. READ-ONLY observability, NOT an actuator — it never biases generation (the P4 ranker is a
+    # separate default-OFF feature). Gated per dim so a thin/unconfirmed dim stays hidden; the whole section is
+    # absent when nothing qualifies (byte-identical to today's digest). Fail-open like the v3 block above.
+    try:
+        from fanops.validation_gate import p4_unlocked
+        dlines = []
+        for dim in ("hook_pattern", "first_frame_kind", "clip_profile"):
+            if not p4_unlocked(led, cfg, dim): continue
+            for value, row in sorted(aggregate_by_dim(led, dim).items(),
+                                     key=lambda kv: kv[1]["reach_mean"], reverse=True):
+                dlines.append(f"- {dim} `{value}`: reach mean {row['reach_mean']} (n={row['n']}, sum {row['reach_sum']})")
+        if dlines:
+            out.append("\n## Reach by creative dim (P3 — what's earning reach)\n" + "\n".join(dlines) + "\n")
+    except Exception:
+        logger.warning("P3 reach-by-dim digest section degraded (fail-open)", exc_info=True)
+
     # ECC fix #16: compute the pending-gate lists ONCE (was 4 pending() filesystem scans producing
     # two byte-identical sections). Both sections below reuse this single read.
     gates = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +

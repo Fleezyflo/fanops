@@ -96,3 +96,25 @@ def test_p4_unlocked_false_when_validated_but_thin(tmp_path):
     cfg.cutover_path.write_text(json.dumps({"metrics_confirmed": True}))
     _seed_n(led, "ol", 8, dim_value_kw={"hook_pattern": "open_loop"})  # only 1 value -> thin
     assert p4_unlocked(led, cfg, "hook_pattern") is False
+
+def test_digest_surfaces_reach_by_dim_when_p4_unlocked(tmp_path):
+    # #7: once plumbing is confirmed AND a dim has enough attributed signal, render_digest surfaces the
+    # already-built+tested aggregate_by_dim output as a read-only "Reach by creative dim" section.
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _seed_n(led, "ol", 8, dim_value_kw={"hook_pattern": "open_loop"})
+    _seed_n(led, "cu", 8, dim_value_kw={"hook_pattern": "curiosity"})
+    cfg.cutover_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.cutover_path.write_text(json.dumps({"metrics_confirmed": True}))
+    out = render_digest(led, cfg)
+    assert "Reach by creative dim" in out
+    assert "open_loop" in out and "curiosity" in out
+
+def test_digest_hides_reach_by_dim_when_gated(tmp_path):
+    # #7: gated per dim — no confirmed plumbing (no cutover.json) -> section absent (byte-identical to today).
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _seed_n(led, "ol", 8, dim_value_kw={"hook_pattern": "open_loop"})
+    _seed_n(led, "cu", 8, dim_value_kw={"hook_pattern": "curiosity"})
+    out = render_digest(led, cfg)                                   # no cutover.json -> not validated -> hidden
+    assert "Reach by creative dim" not in out
