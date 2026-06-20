@@ -15,6 +15,7 @@ from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
 from fanops.log import get_logger
 from fanops.control import load_guidance
+from fanops.moment_hook_learning import proven_hook_styles
 import os
 
 # Phase 1: how many SOURCE stills the vision author gets. Sampled evenly across the whole source (the
@@ -71,7 +72,7 @@ def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
         return f"too short ({pick.end - pick.start:.2f}s)"
     return None
 
-def request_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
+def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     src = led.sources[source_id]
     payload = MomentRequest(source_id=source_id, request_id="",   # filled by write_request
                             duration=src.duration or 0.0,
@@ -82,6 +83,13 @@ def request_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                             clip_profile=cfg.clip_profile,
                             frames=_source_frames(cfg, src)).model_dump()   # band + the author's eyes reach the picks
     payload.pop("request_id", None)
+    # P4(c): carry the cross-surface union of gated winning hook STYLES up to the moment author (the SAME
+    # signal caption already uses). Optional payload KEY (mirrors caption's learned_hooks), NOT a model
+    # field, so the request SHAPE is unchanged. proven_hook_styles returns [] when the flag is off /
+    # accounts is None / on any scorer error (fail-open) -> no key -> byte-identical to today.
+    styles = proven_hook_styles(led, cfg, accounts)
+    if styles:
+        payload["learned_hooks"] = styles
     write_request(cfg, kind="moments", key=source_id, payload=payload)
     led.set_source_state(source_id, SourceState.moments_requested)
     return led

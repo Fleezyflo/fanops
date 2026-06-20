@@ -14,7 +14,7 @@ from fanops.agentstep import write_request
 MAX_AMPLIFY_PER_SOURCE = 3
 
 def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float = 0.2,
-                      lift_floor: float = 20.0) -> dict:
+                      lift_floor: float = 20.0, per_surface: bool = False) -> dict:
     # Rank ANALYZED posts that carry a real lift_score (failed posts have none — FIX F22).
     analyzed = [p for p in led.posts.values()
                 if p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
@@ -22,13 +22,26 @@ def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float
         return {"winners": [], "losers": []}
     ranked = sorted(analyzed, key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True)
     n = len(ranked)
-    win_cut = max(1, round(n * winner_pct))
-    winners = [p.id for p in ranked[:win_cut]]
-    # Conservative retirement: only the bottom retire_pct AND below an absolute lift_floor.
-    # (Decoupled from winners; a clip that clears the floor is never retired just for being
-    # bottom-ranked relative to a hit — avoids draining an artist's catalogue every pass.)
-    # A winner is NEVER also a loser (stage-6 audit): with operator-raised pcts summing past 1 the
-    # slices overlapped — one post amplified AND retired in the same pass.
+    # WINNERS. Default (per_surface=False): the global top winner_pct — byte-identical to today. P4(a)
+    # (per_surface=True): rank WITHIN each (account, platform) surface so a small account's best can win
+    # on its OWN pool instead of being crowded out by a big account; UNION the per-bucket winners. Bucket
+    # order is sorted for determinism (R6). The LOSER side below stays GLOBAL in both modes (D1) — only
+    # the win_set guard differs, so per_surface never re-scopes (buckets) retirement, it only PROTECTS the
+    # per-surface winners from being retired (a small account's best is never amplified AND retired at once).
+    if per_surface:
+        buckets: dict[tuple, list] = {}
+        for p in analyzed:
+            buckets.setdefault((p.account, p.platform.value), []).append(p)
+        winners: list[str] = []
+        for key in sorted(buckets):
+            rb = sorted(buckets[key], key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True)
+            winners.extend(p.id for p in rb[:max(1, round(len(rb) * winner_pct))])
+    else:
+        winners = [p.id for p in ranked[:max(1, round(n * winner_pct))]]
+    # Conservative retirement: only the bottom retire_pct AND below an absolute lift_floor — GLOBAL in
+    # both modes (no per-surface loser bucketing, D1). A winner (whichever mode's set) is NEVER also a
+    # loser (stage-6 audit): with operator-raised pcts summing past 1 the slices overlapped — one post
+    # amplified AND retired in the same pass; the win_set guard prevents that for the ACTIVE winners.
     lose_n = round(n * retire_pct)
     bottom = ranked[n - lose_n:] if lose_n > 0 else []
     win_set = set(winners)
