@@ -16,8 +16,10 @@ from fanops.ledger import Ledger
 from fanops.models import Platform, PostState, LIFT_SCORE
 from fanops.discover import make_thumbnail        # reuse the cheap one-frame ffmpeg extractor for clip posters
 from fanops.studio import views, actions, golive
+from fanops.hashtags import TAG_LEANS            # the add-account lean picker options (no drift from the engine)
 
 _ALL_PLATFORMS = [p.value for p in Platform]    # the add-account form's platform checkboxes (no enum drift)
+_TAG_LEANS = sorted(TAG_LEANS)                  # add-account lean picker options (sourced from the engine)
 _MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024      # 2 GiB upload cap — a long raw clip fits; an abusive body is refused (DoS)
 
 _HERE = Path(__file__).resolve().parent
@@ -529,13 +531,13 @@ def create_app(cfg: Config) -> Flask:
         # Milestone 5 (operator-gated): turn FanOps from dryrun into real Postiz publishing entirely in
         # the browser — add accounts, map each channel to its integration, see readiness, flip dryrun<->live.
         return render_template("golive.html", status=views.golive_status(cfg), result=None,
-                               all_platforms=_ALL_PLATFORMS, tab="golive")
+                               all_platforms=_ALL_PLATFORMS, tag_leans=_TAG_LEANS, tab="golive")
 
     def _golive_panel(result):
         # Re-render the panel with FRESH golive_status after an action (htmx swaps #golive-panel), so the
         # mode banner + readiness checks update in place — mirrors _run_panel.
         return render_template("_golive_panel.html", status=views.golive_status(cfg), result=result,
-                               all_platforms=_ALL_PLATFORMS, tab="golive")
+                               all_platforms=_ALL_PLATFORMS, tag_leans=_TAG_LEANS, tab="golive")
 
     @app.post("/golive/config")
     def do_golive_config():
@@ -547,7 +549,21 @@ def create_app(cfg: Config) -> Flask:
         # active/postiz account appended to accounts.json (no JSON hand-edit), ready to map below.
         return _golive_panel(golive.add_account(cfg, request.form.get("handle", ""),
                                                 request.form.getlist("platform"),
-                                                request.form.get("persona", "")))
+                                                request.form.get("persona", ""),
+                                                request.form.get("tag_lean", "")))
+
+    @app.post("/golive/account/lean")
+    def do_golive_account_lean():
+        # Set/clear an account's tag_lean (persona differentiation) — blank clears; re-render the panel.
+        return _golive_panel(golive.set_account_lean(cfg, request.form.get("handle", ""),
+                                                      request.form.get("tag_lean", "")))
+
+    @app.post("/golive/hooks")
+    def do_golive_hooks():
+        # Toggle per-account on-screen hooks (FANOPS_CREATIVE_VARIATION). Explicit "1"==on (NOT bool(str) —
+        # bool("0") is True; the off button sends value=""/anything-not-1). Works in dryrun or live (changes
+        # per-account render, not whether posts publish).
+        return _golive_panel(golive.set_per_account_hooks(cfg, request.form.get("on") == "1"))
 
     @app.post("/golive/account/remove")
     def do_golive_account_remove():

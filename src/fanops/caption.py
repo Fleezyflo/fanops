@@ -181,16 +181,19 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     src = led.sources.get(moment.parent_id)
     learned = _learned_hooks(led, cfg, surfaces)
     transferred = _transferred_hooks(led, cfg, accounts, surfaces)
-    # Per-surface persona (the UI-set fan voice). Carried into the payload so caption_prompt writes
-    # in that voice. Absent registry or a None persona -> no `persona` key (byte-identical to before).
+    # Per-surface persona (the UI-set fan voice) + tag_lean (the persona-differentiation tag knob). Both
+    # ride the payload so they survive to ingest (which reads the request back). Absent registry / None
+    # value -> no key (byte-identical to before). The lean steers vet_hashtags at ingest, NOT the prompt.
     personas = {a.handle: a.persona for a in accounts.accounts} if accounts is not None else {}
+    leans = {a.handle: a.tag_lean for a in accounts.accounts} if accounts is not None else {}
     payload = {
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
         "language": src.language if src else None,
         "guidance": load_guidance(cfg),
         "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value,
-                      **({"persona": pv} if (pv := personas.get(acct)) else {})}
+                      **({"persona": pv} if (pv := personas.get(acct)) else {}),
+                      **({"tag_lean": lv} if (lv := leans.get(acct)) else {})}
                      for acct, plat in surfaces],
         # variation v2: only present when a surface crossed the trust gate -> OFF/below-gate keeps
         # the payload byte-identical to pre-v2 (caption_prompt renders this block when present).
@@ -213,6 +216,8 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     # what surfaces did we ask for? (the request is the source of truth for completeness)
     req = json.loads(request_path(cfg, "captions", clip_id).read_text())
     requested = {s["surface"] for s in req.get("surfaces", [])}
+    # persona differentiation: the per-surface tag_lean the request carried (None when absent) -> vet_hashtags.
+    surface_lean = {s["surface"]: s.get("tag_lean") for s in req.get("surfaces", [])}
     # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
     # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
     # logic so a typo'd-but-present caption is not mislabelled "missing".
@@ -250,7 +255,8 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         # (5-15 random words) becomes <=4 proven tags. The posted caption IS that vetted tag line.
         plat = _platform_of(item.surface)
         tags = vet_hashtags(item.hashtags or _tags_in(item.caption), plat,
-                            src.language if src else None, store=load_store(cfg))   # M4: live store when present
+                            src.language if src else None, store=load_store(cfg),   # M4: live store when present
+                            lean=surface_lean.get(item.surface))                    # persona diff: per-account lean
         clip.meta_captions[item.surface] = {"caption": " ".join(tags), "hashtags": tags,
                                             # finding #3: keep the model's RAW tag picks (verbatim, before
                                             # the vet filter) so Studio can show picked-vs-vetted, not just
@@ -271,7 +277,8 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     # publish": the post is born awaiting_approval, so a human still reviews it before anything ships.
     for surface in sorted(missing):
         plat = _platform_of(surface)
-        tags = vet_hashtags(None, plat, src.language if src else None, store=load_store(cfg))
+        tags = vet_hashtags(None, plat, src.language if src else None, store=load_store(cfg),
+                            lean=surface_lean.get(surface))    # seed-fallback still honors the account's lean
         clip.meta_captions[surface] = {"caption": " ".join(tags), "hashtags": tags,
                                        "hashtags_raw": [], "hook": None, "axis": None,
                                        "rationale": None, "fallback": True}

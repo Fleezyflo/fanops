@@ -22,7 +22,8 @@ from typing import Optional
 from fanops import cutover
 from fanops.config import Config
 from fanops.accounts import (Accounts, write_integration, add_account as _accounts_add_account,
-                             set_status as _accounts_set_status, remove_account as _accounts_remove_account)
+                             set_status as _accounts_set_status, remove_account as _accounts_remove_account,
+                             set_tag_lean as _accounts_set_tag_lean)
 from fanops.autopilot import set_env_var
 from fanops.errors import CutoverError, PostizAuthError
 from fanops.post import postiz
@@ -89,11 +90,12 @@ def refresh_integrations(cfg: Config) -> ActionResult:
     return ActionResult(ok=True, detail={"integrations": integrations})
 
 
-def add_account(cfg: Config, handle: str, platforms: list, persona: str = "") -> ActionResult:
+def add_account(cfg: Config, handle: str, platforms: list, persona: str = "", tag_lean: str = "") -> ActionResult:
     """Onboard a NEW account ENTIRELY in the Go-Live tab (no accounts.json hand-edit): validate a
     non-blank handle + at least one platform, then append it (status active, access postiz) so it shows
-    up in the channel-mapping list immediately. Duplicate handle / unknown platform / blank input ->
-    a clean one-line error, never a 500. account_id stays empty — each channel is mapped per-platform next."""
+    up in the channel-mapping list immediately. An optional tag_lean (tasteful|underground|bold) steers
+    its hashtag picks. Duplicate handle / unknown platform / bad lean / blank input -> a clean one-line
+    error, never a 500. account_id stays empty — each channel is mapped per-platform next."""
     handle = (handle or "").strip()
     platforms = [p for p in (platforms or []) if (p or "").strip()]
     if not handle:
@@ -101,12 +103,41 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "") ->
     if not platforms:
         return ActionResult(ok=False, error=f"pick at least one platform for {handle}")
     try:
-        _accounts_add_account(cfg, handle, platforms, persona=(persona or "").strip())
-    except ValueError as exc:                            # duplicate handle / unknown platform / blank
+        _accounts_add_account(cfg, handle, platforms, persona=(persona or "").strip(),
+                              tag_lean=(tag_lean or "").strip())
+    except ValueError as exc:                            # duplicate handle / unknown platform / bad lean / blank
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not add {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"added": handle, "platforms": platforms})
+
+
+def set_account_lean(cfg: Config, handle: str, lean: str) -> ActionResult:
+    """Set or clear ONE account's tag_lean from the Go-Live tab (persona differentiation) — a blank lean
+    clears it. Unknown handle / bad lean -> a clean one-line error, never a 500."""
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=False, error="no account selected")
+    try:
+        _accounts_set_tag_lean(cfg, handle, (lean or "").strip())
+    except ValueError as exc:                            # unknown lean value
+        return ActionResult(ok=False, error=str(exc))
+    except KeyError:
+        return ActionResult(ok=False, error=f"no such account: {handle}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not set lean for {handle}: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"handle": handle, "tag_lean": (lean or "").strip().lower() or None})
+
+
+def set_per_account_hooks(cfg: Config, on: bool) -> ActionResult:
+    """Toggle per-account on-screen hooks (FANOPS_CREATIVE_VARIATION) from the Go-Live tab — the gate that
+    burns each account's OWN persona-flavored on-screen hook (default OFF = the shared moment hook on every
+    surface). Dual-written so it takes effect immediately AND persists. Works in dryrun OR live (it changes
+    how clips render per account, not whether they publish). A durable-write failure -> clean error."""
+    err = _dual_write(cfg, "FANOPS_CREATIVE_VARIATION", "1" if on else "0")
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"per_account_hooks": bool(on)})
 
 
 def map_account(cfg: Config, handle: str, platform: str, integration_id: str) -> ActionResult:

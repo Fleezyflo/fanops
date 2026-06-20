@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from fanops.config import Config
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform
+from fanops.hashtags import TAG_LEANS                 # the valid per-account tag_lean names (persona diff)
 
 class AccountStatus(str, Enum):
     planned = "planned"; warming = "warming"; active = "active"; retired = "retired"
@@ -24,6 +25,9 @@ class Account(BaseModel):
     status: AccountStatus = AccountStatus.planned
     access: str = "blotato"                # METHOD, never a credential
     persona: Optional[str] = None
+    tag_lean: Optional[str] = None         # persona TAG knob: tasteful|underground|bold (None -> no lean).
+                                           # Additive (empty on legacy rows). An unknown value reloads fine
+                                           # and is inert (vet_hashtags treats it as no-lean) — fail-open.
     # Per-platform poster ids keyed by Platform.value (e.g. {"instagram": "ig_1", "tiktok": "tk_9"}).
     # A handle's Instagram and TikTok are DIFFERENT Postiz integrations, so each (handle, platform) must
     # resolve to its OWN id. ADDITIVE: empty on a legacy account, which then resolves via account_id —
@@ -145,13 +149,14 @@ def write_integration(cfg: Config, handle: str, platform: str, integration_id: s
 
 
 def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
-                status: str = "active", access: str = "postiz") -> str:
+                status: str = "active", access: str = "postiz", tag_lean: str = "") -> str:
     """Onboard a BRAND-NEW account into accounts.json atomically — so the Go-Live tab adds an account
     WITHOUT the operator hand-editing JSON. Validates at this control-file boundary: a non-blank handle,
-    and every platform a known Platform value (never write an account that won't reload). Rejects a
-    duplicate handle. New accounts default to status=active (so they appear in the mapping list at once)
-    and access=postiz; account_id stays empty — the per-platform ids are set afterward via
-    write_integration / the mapping UI. Returns the handle; raises ValueError on bad input."""
+    every platform a known Platform value, and (when given) a known tag_lean (never write an account that
+    won't reload or carries a bogus lean). Rejects a duplicate handle. New accounts default to status=active
+    (so they appear in the mapping list at once) and access=postiz; account_id stays empty — the per-platform
+    ids are set afterward via write_integration / the mapping UI. Returns the handle; raises ValueError on bad
+    input."""
     handle = (handle or "").strip()
     if not handle:
         raise ValueError("handle is required")
@@ -160,13 +165,16 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
     bad = [x for x in plats if x not in valid]
     if bad:
         raise ValueError(f"unknown platform(s): {', '.join(map(str, bad))}")
+    lean = (tag_lean or "").strip().lower()
+    if lean and lean not in TAG_LEANS:
+        raise ValueError(f"unknown tag_lean: {tag_lean!r}")
     p = cfg.accounts_path
     raw, accounts = _load_raw_accounts(p)
     if any(isinstance(a, dict) and a.get("handle") == handle for a in accounts):
         raise ValueError(f"duplicate handle {handle} (already exists)")
     accounts.append({"handle": handle, "account_id": "", "platforms": plats,
                      "status": str(status), "access": str(access),
-                     "persona": persona or "", "integrations": {}})
+                     "persona": persona or "", "tag_lean": lean or None, "integrations": {}})
     _write_accounts_atomic(p, raw)
     return handle
 
@@ -185,6 +193,27 @@ def set_status(cfg: Config, handle: str, status: str) -> str:
     for a in accounts:                                           # scan ALL rows (no break): a hand-edited file with
         if isinstance(a, dict) and a.get("handle") == handle:    # duplicate handles must not leave a 2nd copy active —
             a["status"] = str(status); found = True              # mirrors remove_account dropping every match
+    if not found:
+        raise KeyError(handle)
+    _write_accounts_atomic(p, raw)
+    return handle
+
+
+def set_tag_lean(cfg: Config, handle: str, lean: str) -> str:
+    """Set or clear ONE account's tag_lean atomically (the Go-Live persona-differentiation control). A blank
+    lean CLEARS it (-> None). Validates a non-blank lean at the control-file boundary (must be a known
+    TAG_LEANS value — never write a lean that vet_hashtags would ignore as a typo); preserves every sibling,
+    unknown field, and the account's own other fields; scans ALL rows (dup-handle safety, mirrors set_status).
+    Unknown handle -> KeyError."""
+    lean = (lean or "").strip().lower()
+    if lean and lean not in TAG_LEANS:
+        raise ValueError(f"unknown tag_lean: {lean!r}")
+    p = cfg.accounts_path
+    raw, accounts = _load_raw_accounts(p)
+    found = False
+    for a in accounts:
+        if isinstance(a, dict) and a.get("handle") == handle:
+            a["tag_lean"] = lean or None; found = True
     if not found:
         raise KeyError(handle)
     _write_accounts_atomic(p, raw)

@@ -17,7 +17,7 @@ from fanops.studio import golive
 # restoration (pytest only tracks a delitem when the key was present), so the production dual-write
 # (os.environ[...]=...) would otherwise leak FANOPS_POSTER/POSTIZ_* into later tests — e.g. flipping
 # test_studio_run's dryrun assertions to postiz. Restore-to-baseline after every test fixes it at the source.
-_ENV_KEYS = ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY")
+_ENV_KEYS = ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_CREATIVE_VARIATION")
 _ENV_BASELINE = {k: os.environ.get(k) for k in _ENV_KEYS}
 
 @pytest.fixture(autouse=True)
@@ -29,7 +29,7 @@ def _restore_golive_env():
 
 def _clean(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    for k in ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY"):
+    for k in ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_CREATIVE_VARIATION"):
         monkeypatch.delenv(k, raising=False)             # clean start + registers the key for teardown-restore
     return Config(root=tmp_path)
 
@@ -513,3 +513,68 @@ def test_golive_panel_renders_remove_and_demote_controls(tmp_path, monkeypatch):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     r = _client(cfg).get("/golive")
     assert r.status_code == 200 and b"/golive/account/remove" in r.data and b"/golive/account/demote" in r.data
+
+
+# ---- persona differentiation: tag_lean + per-account on-screen-hooks toggle ----
+def test_add_account_with_tag_lean(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    res = golive.add_account(cfg, "@a", ["instagram"], persona="craft", tag_lean="tasteful")
+    assert res.ok is True
+    from fanops.accounts import Accounts
+    assert Accounts.load(cfg).accounts[0].tag_lean == "tasteful"
+
+def test_add_account_rejects_bad_lean(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    res = golive.add_account(cfg, "@a", ["instagram"], tag_lean="spicy")
+    assert res.ok is False and "tag_lean" in res.error.lower()
+    assert not cfg.accounts_path.exists()                # bad lean -> no write
+
+def test_set_account_lean_sets_and_clears(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    assert golive.set_account_lean(cfg, "@a", "bold").ok is True
+    from fanops.accounts import Accounts
+    assert Accounts.load(cfg).accounts[0].tag_lean == "bold"
+    assert golive.set_account_lean(cfg, "@a", "").ok is True            # blank clears
+    assert Accounts.load(cfg).accounts[0].tag_lean is None
+
+def test_set_account_lean_unknown_handle_clean_error(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    res = golive.set_account_lean(cfg, "@nope", "bold")
+    assert res.ok is False and "no such account" in res.error.lower()
+
+def test_set_account_lean_rejects_bad_lean(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    res = golive.set_account_lean(cfg, "@a", "spicy")
+    assert res.ok is False and "tag_lean" in res.error.lower()
+
+def test_set_per_account_hooks_dual_writes_both_directions(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    assert golive.set_per_account_hooks(cfg, True).ok is True
+    assert "FANOPS_CREATIVE_VARIATION=1" in (tmp_path / ".env").read_text()   # durable
+    assert cfg.creative_variation is True                                     # in-process (reads os.environ live)
+    assert golive.set_per_account_hooks(cfg, False).ok is True
+    assert cfg.creative_variation is False                                    # flipped back off
+
+def test_golive_status_carries_lean_and_hooks_state(tmp_path, monkeypatch):
+    from fanops.studio import views
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "tag_lean": "underground"}])
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    st = views.golive_status(cfg)
+    assert st.accounts[0].tag_lean == "underground" and st.creative_variation is True
+
+def test_post_golive_account_lean_route(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    r = _client(cfg).post("/golive/account/lean", data={"handle": "@a", "tag_lean": "bold"})
+    assert r.status_code == 200
+    from fanops.accounts import Accounts
+    assert Accounts.load(cfg).accounts[0].tag_lean == "bold"
+
+def test_post_golive_hooks_route_turns_on(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    r = _client(cfg).post("/golive/hooks", data={"on": "1"})
+    assert r.status_code == 200 and cfg.creative_variation is True
