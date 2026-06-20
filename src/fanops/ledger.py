@@ -53,14 +53,39 @@ def _migrate_v3_created_at(raw: dict) -> dict:
     return out
 
 
-SCHEMA_VERSION = 3
+def _migrate_v4_metrics_series(raw: dict) -> dict:
+    """v3->v4 (P3): back-fill a single 'legacy'-tagged metrics_series row for every Post that already
+    carries metrics but has no series yet, so a pre-P3 analyzed post keeps its one data point as the
+    series' first entry. Pure on the RAW dict (runs before unit construction); NEVER raises (a non-dict
+    post row is skipped, mirroring _migrate_v3_created_at); idempotent (a post with a non-empty
+    metrics_series is untouched). A post with empty/absent metrics gets no row (the model default [] —
+    we never fabricate a point from nothing). 'legacy' is deliberately NOT a CADENCE_OFFSETS member, so
+    it never blocks a real future poll (due_offset only consults cadence offsets) and stays
+    distinguishable downstream. Does NOT touch Post.metrics (the LATEST snapshot) — purely additive."""
+    from fanops.timeutil import iso_z                   # local: cycle-safe (timeutil imports only stdlib)
+    stamp = iso_z(datetime.now(timezone.utc))
+    out = dict(raw)
+    posts = dict(out.get("posts", {}))
+    for pid, p in list(posts.items()):
+        if not isinstance(p, dict) or p.get("metrics_series"): continue   # torn row / already migrated
+        metrics = p.get("metrics")
+        if isinstance(metrics, dict) and metrics:
+            posts[pid] = {**p, "metrics_series": [{**metrics, "offset": "legacy", "captured_at": stamp}]}
+    out["posts"] = posts
+    return out
+
+
+SCHEMA_VERSION = 4
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
 # v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
 # scheduled_time, else a single migration-time stamp). Additive + idempotent. published_at is NOT backfilled.
+# v3 -> v4 (P3): back-fill a single 'legacy' metrics_series row for posts that already carry metrics.
+# Additive + idempotent + never-raising. The ledger is NEVER wiped — every migration is copy-on-write.
 _MIGRATIONS = {1: lambda raw: raw,
                2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})},
-               3: _migrate_v3_created_at}
+               3: _migrate_v3_created_at,
+               4: _migrate_v4_metrics_series}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk

@@ -186,6 +186,11 @@ class Post(BaseModel):
     public_url: Optional[str] = None
     error_reason: Optional[str] = None
     metrics: dict = Field(default_factory=dict)
+    # P3 append-only metrics time-series: one sparse row per captured cadence offset, each a superset of
+    # a `metrics` snapshot + {"offset","captured_at"} provenance. `metrics` above stays EXACTLY the LATEST
+    # snapshot (byte-identical back-compat: every existing reader stays on it). An old ledger row lacking
+    # this key defaults to [] (Pydantic default_factory; independent of extra="ignore").
+    metrics_series: list[dict] = Field(default_factory=list)
     variant_key: Optional[str] = None   # creative-variation attribution: deterministic per-(account,platform,clip) key
     variant_hook: Optional[str] = None  # the burned-in hook text this account's variant used (observe-only)
     # P1 attribution key (one writer = crosspost): the creative dims P3 aggregates reach by and P4 ranks.

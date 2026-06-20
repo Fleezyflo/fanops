@@ -66,19 +66,27 @@ def cmd_track(cfg: Config, window: str) -> int:
     # Snapshot the published submission_ids FIRST (postiz reads per-post analytics, so the client must
     # know which ids to fetch; the Blotato client ignores them and fetches the bulk list).
     led0 = Ledger.load(cfg)
+    # P3: poll PUBLISHED OR ANALYZED posts (an analyzed post stays re-pollable so its metrics_series
+    # accumulates later cadence offsets through the year; due_offset returns None once it's complete).
     sub_ids = [p.submission_id for p in led0.posts.values()
-               if p.submission_id and p.state is PostState.published]
+               if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
     try:
         rows = list(_default_list_posts(cfg, submission_ids=sub_ids)(window))   # network, NO lock held
     except RuntimeError as e:
         print(f"track skipped: {e}"); return 0
     with Ledger.transaction(cfg) as led:
-        # apply the pre-fetched rows: pull_metrics matches them to still-published posts in THIS
+        # apply the pre-fetched rows: pull_metrics matches them to still-pollable posts in THIS
         # (re-loaded) ledger, so a post that changed between fetch and apply is simply not matched.
+        before = {pid: len(p.metrics_series) for pid, p in led.posts.items()}   # P3: series rows BEFORE
         led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
         analyzed = len(led.posts_in_state(PostState.analyzed))
+        added = deg = 0                                                          # P3: this-pass tally
+        for pid, p in led.posts.items():
+            new_rows = p.metrics_series[before.get(pid, 0):]                     # the rows appended THIS pass
+            added += len(new_rows)
+            deg += sum(1 for r in new_rows if r.get("lift_degraded"))
     write_digest(Ledger.load(cfg), cfg)              # digest read OUTSIDE the lock
-    print(f"tracked; analyzed={analyzed}")
+    print(f"tracked; analyzed={analyzed} series_rows+={added} degraded={deg}")
     return 0
 
 def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
@@ -90,8 +98,8 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
     # must know which ids to fetch; the Blotato client ignores them and fetches the bulk list).
     # Raises on a fetch/apply hiccup; the caller logs+swallows so the unattended run stays exit 0.
     led0 = Ledger.load(cfg)
-    sub_ids = [p.submission_id for p in led0.posts.values()
-               if p.submission_id and p.state is PostState.published]
+    sub_ids = [p.submission_id for p in led0.posts.values()   # P3: published OR analyzed (re-pollable)
+               if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
     rows = list(_default_list_posts(cfg, submission_ids=sub_ids)(window))   # network, NO lock held
     with Ledger.transaction(cfg) as led:
         led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
