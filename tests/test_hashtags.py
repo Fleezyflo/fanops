@@ -107,3 +107,10 @@ def test_arabic_floor_survives_even_when_model_fills_all_slots():
 def test_arabic_floor_noop_when_model_already_has_arabic_tag():
     out = vet_hashtags(["#arabicmusic", "#viral", "#hiphop", "#rap"], Platform.tiktok, "ar", lean="bold")
     assert out.count("#arabicmusic") == 1 and len(out) == 4   # no double-add, no displacement
+
+
+def test_arabic_floor_survives_when_model_returns_arabic_past_the_cap():
+    # the audit residual: model returns 5+ tags incl. #arabicmusic; under a bold lean it sorts PAST the
+    # cap and the old floor check (vs `seen`) skipped -> dropped. The fix promotes it into the window.
+    out = vet_hashtags(["#viral", "#hiphop", "#rap", "#rapper", "#arabicmusic"], Platform.tiktok, "ar", lean="bold")
+    assert len(out) == 4 and any("arab" in t for t in out)

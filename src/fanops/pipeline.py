@@ -158,7 +158,8 @@ def _prewarm_sequential(cfg: Config, aspects: set[Fmt], log) -> None:
     # keeping the transcode OUT of the ledger lock (PRD: "approval gates the render, which runs lock-free").
     strategies = _enabled_strategies(cfg)
     if strategies:
-        prewarm_approved_stitches(led, cfg, log, strategies=strategies)
+        try: prewarm_approved_stitches(led, cfg, log, strategies=strategies)   # fail-open per unit (mirror the concurrent path); a prewarm/[compose]-ImportError must NOT crash advance()
+        except Exception as e: log("prewarm", "-", "warn", err=str(e)[:120])
 
 def advance(cfg: Config, *, base_time: str) -> dict:
     accts = Accounts.load(cfg)
@@ -232,6 +233,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                 try:
                     led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
                     for clip in clips:
+                        if clip.state is not ClipState.rendered: continue   # a failed-aspect clip (ClipState.error) must not be laundered into a phantom captioned post with a dangling mp4
                         led = request_captions(led, cfg, clip.id,
                                                [(s.account, s.platform) for s in accts.surfaces()],
                                                accounts=accts)

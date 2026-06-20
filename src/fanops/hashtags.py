@@ -102,9 +102,10 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     # Arabic floor under a lean: GUARANTEE one region tag survives the cap even when the model already filled
     # all max_tags slots (a flavor lean must not strip AR reach). Reserve the LAST slot for it (lean tags keep
     # the lead). No lean -> lang_floor empty -> floor None -> skipped -> byte-identical.
-    floor = next((h for h in lang_floor if h not in seen), None)
-    if floor and not any(h in set(_ARABIC) for h in kept[:max_tags]):
-        kept = kept[:max_tags - 1]; seen = set(kept); kept.append(floor); seen.add(floor)
+    arabic = set(_ARABIC)
+    if lang_floor and not any(h in arabic for h in kept[:max_tags]):     # detect against the CAP WINDOW, not `seen` (the model's own AR tag may be in seen but sorted PAST the cap)
+        promote = next((h for h in kept if h in arabic), lang_floor[0])  # promote the model's own AR tag, else the floor default
+        kept = kept[:max_tags - 1] + [promote]; seen = set(kept)
     for h in pool + (store or []) + _composition(platform, language):   # lean, store, then balanced default
         if len(kept) >= max_tags: break
         if h not in seen:

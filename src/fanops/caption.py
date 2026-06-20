@@ -289,5 +289,6 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         clip.state = ClipState.held                      # FIX: explicit held state, not 'rendered'
         return led
     clip.held = False
+    clip.held_reason = None                              # a clean re-ingest must not keep a prior hold's reason (held=False -> held_reason=None)
     led.set_clip_state(clip_id, ClipState.captioned)
     return led
