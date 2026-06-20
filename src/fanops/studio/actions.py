@@ -21,7 +21,7 @@ from fanops.ledger import Ledger
 from fanops.models import CaptionSet, ClipState, MomentDecision, Post, PostState
 from fanops.ids import child_id, surface_key, _hash
 from fanops.timeutil import parse_iso, iso_z
-from fanops.studio.views import _imminent
+from fanops.studio.views import _imminent, suggest_time
 
 SNOOZE_DAYS = 365
 _GATE_MODELS = {"moments": MomentDecision, "captions": CaptionSet}
@@ -669,10 +669,13 @@ def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = 
     selected post in ONE transaction, idempotent (a non-awaiting post is a no-op). One `now` stamp for
     the whole batch so approve_post's stale-schedule bump is consistent. Never a 500."""
     sel = [i for i in (ids or []) if i]
-    now_iso = iso_z(_now(now))
+    now = _now(now); now_iso = iso_z(now)
     try:
         with Ledger.transaction(cfg) as led:
-            for pid in sel: led.approve_post(pid, now_iso=now_iso)
+            for pid in sel:                                  # P1: untimed/stale post -> a strictly-future suggestion (not now)
+                post = led.posts.get(pid)
+                sugg = suggest_time(cfg, post, now=now) if post is not None else None
+                led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"approved": len(sel)})
@@ -727,7 +730,7 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
     if cfg.creative_variation:
         return ActionResult(ok=False, error="creative variation is ON — per-surface hooks own the on-screen "
                             "burn, so the moment hook can't be restored this way (turn off FANOPS_CREATIVE_VARIATION).")
-    now_iso = iso_z(_now(now))
+    now = _now(now); now_iso = iso_z(now)
     snap = Ledger.load(cfg)                               # lock-free: resolve the removed hook + PRE-WARM the render
     c0 = snap.clips.get(clip_id)
     if c0 is None: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
@@ -756,7 +759,10 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
                                        "or the hook produced nothing burnable; not shipping clean")
                 led.clips[clip_id] = led.clips[clip_id].model_copy(
                     update={"state": orig.state, "meta_captions": orig.meta_captions})   # keep captioned state + captions
-            for pid in ids: led.approve_post(pid, now_iso=now_iso)
+            for pid in ids:                                  # P1: untimed/stale post -> a strictly-future suggestion (not now)
+                post = led.posts.get(pid)
+                sugg = suggest_time(cfg, post, now=now) if post is not None else None
+                led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
             approved = len(ids)
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve-with-hook failed: {str(exc)[:160]}")
@@ -767,13 +773,16 @@ def approve_as_is(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) 
     a clip WITHOUT restoring the auto-removed hook. Scoped to one clip so the operator clicks once instead of
     ticking each surface; mirrors approve_posts otherwise. hook_removed stays on the moment as a record (the
     choice re-applies to any future repost). One transaction, idempotent, never a 500."""
-    now_iso = iso_z(_now(now))
+    now = _now(now); now_iso = iso_z(now)
     approved = 0
     try:
         with Ledger.transaction(cfg) as led:
             ids = [p.id for p in led.posts.values()
                    if p.parent_id == clip_id and p.state is PostState.awaiting_approval]
-            for pid in ids: led.approve_post(pid, now_iso=now_iso)
+            for pid in ids:                                  # P1: untimed/stale post -> a strictly-future suggestion (not now)
+                post = led.posts.get(pid)
+                sugg = suggest_time(cfg, post, now=now) if post is not None else None
+                led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
             approved = len(ids)
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")

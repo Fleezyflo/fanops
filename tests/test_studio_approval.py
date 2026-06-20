@@ -188,3 +188,45 @@ def test_snooze_moves_awaiting_post(tmp_path):
     r = actions.snooze_clip(cfg, "clip_1", now=_NOW)
     assert r.ok and r.detail["count"] == 1
     assert Ledger.load(cfg).posts["p1"].scheduled_time != _FUTURE
+
+
+# ---- P1: approve actions pass a per-post strictly-future suggestion (no silent publish-now) ----
+def _approval_now():
+    # NOW must be AFTER surface_time's anchor base so the suggestion is genuinely future relative to it; we
+    # pass now=NOW into approve, and the suggestion is computed from that same now -> always strictly future.
+    return datetime(2026, 6, 20, 12, 0, 0, tzinfo=timezone.utc)
+
+def test_approve_posts_untimed_gets_suggestion_not_now(tmp_path):
+    from fanops.timeutil import iso_z, parse_iso
+    from datetime import timedelta
+    cfg = Config(root=tmp_path); now = _approval_now(); now_iso = iso_z(now)
+    _seed_review(cfg, pid="p_untimed", when=None)               # born with NO time
+    far = iso_z(now + timedelta(hours=9))
+    with Ledger.transaction(cfg) as led:                        # a sibling with a still-future operator time
+        led.add_post(Post(id="p_future", parent_id="clip_1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=far))
+    r = actions.approve_posts(cfg, ["p_untimed", "p_future"], now=now)
+    assert r.ok
+    led = Ledger.load(cfg)
+    pu = led.posts["p_untimed"]
+    assert pu.state is PostState.queued and pu.scheduled_time is not None
+    assert parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso   # a strictly-future suggestion, not now
+    assert led.posts["p_future"].scheduled_time == far          # operator's future time preserved across the batch
+
+def test_approve_with_hook_untimed_gets_suggestion_not_now(tmp_path):
+    from fanops.timeutil import iso_z, parse_iso
+    cfg = Config(root=tmp_path); now = _approval_now(); now_iso = iso_z(now)
+    _seed_review(cfg, pid="p_untimed", when=None)               # clip has NO hook_removed -> clean approve path
+    r = actions.approve_with_hook(cfg, "clip_1", now=now)
+    assert r.ok
+    pu = Ledger.load(cfg).posts["p_untimed"]
+    assert pu.state is PostState.queued and parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso
+
+def test_approve_as_is_untimed_gets_suggestion_not_now(tmp_path):
+    from fanops.timeutil import iso_z, parse_iso
+    cfg = Config(root=tmp_path); now = _approval_now(); now_iso = iso_z(now)
+    _seed_review(cfg, pid="p_untimed", when=None)
+    r = actions.approve_as_is(cfg, "clip_1", now=now)
+    assert r.ok
+    pu = Ledger.load(cfg).posts["p_untimed"]
+    assert pu.state is PostState.queued and parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso
