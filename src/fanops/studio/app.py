@@ -549,6 +549,16 @@ def create_app(cfg: Config) -> Flask:
                                                 request.form.getlist("platform"),
                                                 request.form.get("persona", "")))
 
+    @app.post("/golive/account/remove")
+    def do_golive_account_remove():
+        # Remove an account from the UI (no JSON hand-edit) — clears a placeholder like @TBD-1; re-render the panel.
+        return _golive_panel(golive.remove_account(cfg, request.form.get("handle", "")))
+
+    @app.post("/golive/account/demote")
+    def do_golive_account_demote():
+        # Demote an account to `planned` — it leaves the active publishing fan-out but keeps its row/history.
+        return _golive_panel(golive.demote_account(cfg, request.form.get("handle", "")))
+
     @app.post("/golive/refresh")
     def do_golive_refresh():
         return _golive_panel(golive.refresh_integrations(cfg))

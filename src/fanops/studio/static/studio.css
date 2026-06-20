@@ -176,6 +176,11 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .account-chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.6rem 0 1rem; }
 .account-chips .button.active { background:var(--accent-dim); border-color:var(--accent); color:var(--ink); }
 
+/* ── Go-Live: per-account manage (demote / remove) ──────────────────────── */
+.account-manage { margin-top:1rem; border-top:1px solid var(--line); padding-top:.6rem; }
+.account-row { display:flex; align-items:center; gap:.5rem; margin:.35rem 0; }
+.account-row form { margin:0; }
+
 /* ── Run/Make tab: instrument cluster + actions ─────────────────────────── */
 .status { display:flex; flex-wrap:wrap; gap:.6rem; margin:var(--s-4) 0; padding:0; align-items:stretch; }
 .status > span { display:inline-flex; flex-direction:column; gap:.15rem; padding:.7rem 1rem; background:var(--surface-2);

@@ -169,3 +169,38 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
                      "persona": persona or "", "integrations": {}})
     _write_accounts_atomic(p, raw)
     return handle
+
+
+def set_status(cfg: Config, handle: str, status: str) -> str:
+    """Change ONE account's status atomically (the Go-Live DEMOTE control — e.g. an active placeholder ->
+    planned, so it leaves active() and the publishing fan-out without losing its row). Validates status at
+    the control-file boundary (must be an AccountStatus value — never write a status that won't reload);
+    preserves every sibling, unknown field, and the account's own other fields. Unknown handle -> KeyError."""
+    status = getattr(status, "value", status)                    # accept an AccountStatus enum or its value
+    if status not in {s.value for s in AccountStatus}:
+        raise ValueError(f"unknown status: {status!r}")
+    p = cfg.accounts_path
+    raw, accounts = _load_raw_accounts(p)
+    for a in accounts:
+        if isinstance(a, dict) and a.get("handle") == handle:
+            a["status"] = str(status)
+            break
+    else:
+        raise KeyError(handle)
+    _write_accounts_atomic(p, raw)
+    return handle
+
+
+def remove_account(cfg: Config, handle: str) -> str:
+    """Remove ONE account from accounts.json atomically (the Go-Live REMOVE control — clears a placeholder
+    like @TBD-1 that the UI couldn't delete before, only hand-editing JSON could). Drops only the matching
+    dict; preserves every sibling + unknown field; an empty registry stays valid. Unknown handle -> KeyError
+    (caller -> clean ActionResult)."""
+    p = cfg.accounts_path
+    raw, accounts = _load_raw_accounts(p)
+    kept = [a for a in accounts if not (isinstance(a, dict) and a.get("handle") == handle)]
+    if len(kept) == len(accounts):
+        raise KeyError(handle)
+    raw["accounts"] = kept
+    _write_accounts_atomic(p, raw)
+    return handle
