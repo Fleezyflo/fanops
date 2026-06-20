@@ -247,3 +247,48 @@ def test_check_auth_false_on_network_error(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.postiz.requests.get", side_effect=_rq.exceptions.ConnectionError("dropped"))
     assert postiz_check_auth(cfg) is False
+
+
+# ---- P2 Task 1: _postiz_permalink — the single URL chokepoint, fail-safe None ----
+# Postiz's public API returns NO social permalink and NO dashboard URL on any response (GET
+# /public/v1/posts → {id, publishDate, state, integration, content}, Context7-verified), and Postiz
+# documents no stable public per-post page path. So the helper ships returning None — a guessed
+# 404-ing link is worse than None. These lock that contract; flipping the helper to a verified
+# dashboard route later is a one-line change behind these same tests.
+def test_postiz_permalink_none_for_empty_or_none(tmp_path, monkeypatch):
+    from fanops.post.postiz import _postiz_permalink
+    cfg = _cfg(tmp_path, monkeypatch)
+    assert _postiz_permalink(cfg, "") is None
+    assert _postiz_permalink(cfg, None) is None
+
+def test_postiz_permalink_none_for_real_id_until_route_verified(tmp_path, monkeypatch):
+    # A recognizable id STILL yields None: the API exposes no permalink and the per-post dashboard
+    # route is unverified against the operator's Postiz version. None is correct; a 404-ing link is worse.
+    from fanops.post.postiz import _postiz_permalink
+    cfg = _cfg(tmp_path, monkeypatch)
+    assert _postiz_permalink(cfg, "post_abc") is None
+
+
+# ---- P2 Task 2: capture public_url on the SUBMITTED branch only, via the helper chokepoint ----
+def test_publish_2xx_captures_public_url_via_permalink_helper(tmp_path, monkeypatch, mocker):
+    # The submitted branch routes public_url through _postiz_permalink. Today the helper returns None
+    # (no URL in the API), so to prove the WIRING (not a coincidental None==None) we stub the helper to
+    # a sentinel and assert it lands on the post. When the route is later verified this lights up free.
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_1"}))
+    mocker.patch("fanops.post.postiz._postiz_permalink", return_value="https://dash.example/p/postiz_1")
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert led.posts["p1"].state is PostState.submitted
+    assert led.posts["p1"].submission_id == "postiz_1"
+    assert led.posts["p1"].public_url == "https://dash.example/p/postiz_1"
+
+def test_publish_unconfirmed_branches_never_capture_public_url(tmp_path, monkeypatch, mocker):
+    # 2xx-no-id / 5xx / network ⇒ needs_reconcile and public_url stays None EVEN IF the helper would
+    # return a link — no confirmed id ⇒ no URL. Stub the helper to a sentinel to prove the branch
+    # genuinely never assigns it (not that the helper happened to return None).
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    mocker.patch("fanops.post.postiz._postiz_permalink", return_value="https://dash.example/should-not-appear")
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(200, {"ok": True}))   # 2xx, no id
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert led.posts["p1"].state is PostState.needs_reconcile
+    assert led.posts["p1"].public_url is None

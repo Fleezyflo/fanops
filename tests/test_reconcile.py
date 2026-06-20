@@ -230,3 +230,55 @@ def test_reconcile_halts_on_fatal_auth_error(tmp_path):
         raise BlotatoAuthError("blotato status 401: bad key")
     with pytest.raises(BlotatoAuthError):
         reconcile_posts(led, cfg, get_status=get_status)
+
+
+# ---- P2 Task 4: backend dispatch in _default_get_status + widened AuthError halt ----
+class _R:
+    def __init__(s, c, b): s.status_code = c; s._b = b; s.text = str(b)
+    def json(s): return s._b
+
+def _postiz_env(monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+
+def test_default_get_status_dispatches_blotato_for_rest(tmp_path, monkeypatch):
+    # rest/mcp + key ⇒ the Blotato status client (unchanged). Bound-method check is robust.
+    from fanops.reconcile import _default_get_status
+    from fanops.post.metrics import BlotatoStatusClient
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "bk")
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    cfg = Config(root=tmp_path)
+    poll = _default_get_status(cfg)
+    assert poll.__self__.__class__ is BlotatoStatusClient
+
+def test_default_get_status_postiz_resolves_end_to_end_with_date_window(tmp_path, monkeypatch, mocker):
+    # postiz + key: a parked Postiz post resolves end-to-end through the UNCHANGED reconcile_posts via
+    # the Postiz list read (proves dispatch without closure introspection), AND the closure passes the
+    # post's own scheduled_time as the `date` window so a future/2099 post is FOUND, not "unknown".
+    _postiz_env(monkeypatch)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "pp", PostState.needs_reconcile, sub="postiz_99")
+    led.posts["pp"].scheduled_time = "2099-01-01T00:00:00Z"
+    page = {"posts": [{"id": "postiz_99", "state": "PUBLISHED", "publishDate": "2099-01-01T00:00:00.000Z"}]}
+    captured = {}
+    def fake_get(url, **kw):
+        captured["params"] = kw.get("params"); return _R(200, page)
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
+    led = reconcile_posts(led, cfg)                # NO injected get_status → exercises _default_get_status(postiz)
+    assert led.posts["pp"].state is PostState.published
+    assert (captured["params"] or {}).get("date") == "2099-01-01"   # date derived from the post's scheduled_time
+
+def test_reconcile_halts_on_postiz_auth_error(tmp_path):
+    # The widened auth-halt catch (BlotatoAuthError → the shared AuthError base): a Postiz 401 in the
+    # status poll must ALSO halt the pass (not grind a bogus error onto every parked post). Before the
+    # widen, PostizAuthError (a sibling of BlotatoAuthError, not a subclass) slipped to the per-post
+    # contain branch and never propagated.
+    from fanops.errors import PostizAuthError
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "p", PostState.needs_reconcile, sub="sub_x")
+    def get_status(sid):
+        raise PostizAuthError("Postiz 401 — bad key (body withheld)")
+    with pytest.raises(PostizAuthError):
+        reconcile_posts(led, cfg, get_status=get_status)
