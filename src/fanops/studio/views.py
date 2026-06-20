@@ -45,6 +45,15 @@ def paginate(rows: list, offset: int, *, page_size: int = GRID_PAGE_SIZE) -> "Gr
 PREPARABLE_STATES = (ClipState.rendered, ClipState.captions_requested, ClipState.captioned, ClipState.queued)
 
 
+def accounts_in(rows) -> list[str]:
+    """Distinct, sorted account handles present in a built read-model list — the per-surface chip UNIVERSE,
+    derived from the POSTS in that list (never Accounts.active(), so a retired account's history stays
+    filterable). Dual-shape (P5 R4): dataclass rows expose `.account`; publish_queue returns plain dicts
+    with `r["account"]`. Review CARDS are not rows (a card has a list of `surfaces`, no scalar account) — do
+    NOT pass cards here; collect their surface accounts with `{s.account for c in cards for s in c.surfaces}`."""
+    return sorted({(r["account"] if isinstance(r, dict) else r.account) for r in rows})
+
+
 @dataclass
 class SurfacePost:
     post_id: str
@@ -138,6 +147,11 @@ class LiftRow:
     amplify_state: Optional[str] = None
     lift_degraded: bool = False             # T4: the lift scalar is partial (a primary metric was absent from the row)
     lift_missing: Optional[list] = None     # which primary keys were missing (e.g. ["saves", "retention"])
+    scheduled_time: Optional[str] = None    # P5: P1's operator-set time, shown as the Results 'When' column
+    saves: Optional[float] = None           # P5: the raw whitelisted metric breakdown (track._W keys) from
+    shares: Optional[float] = None          # post.metrics (LATEST snapshot — NOT metrics_series). Absent -> None.
+    retention: Optional[float] = None
+    reach: Optional[float] = None
 
 
 @dataclass
@@ -247,11 +261,18 @@ def _card_day(led: Ledger, card: ReviewCard) -> str:
     try: return parse_iso(ca).date().isoformat()
     except (ValueError, TypeError, AttributeError): return "undated"
 
-def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime) -> list[ReviewCard]:
+def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime,
+                   account: Optional[str] = None) -> list[ReviewCard]:
     """Three buckets (spec §6): editable (awaiting_approval posts grouped by clip — the approve worklist),
     recent (published/analyzed within RECENT_WINDOW_HOURS), held (clips with held=True, no posts). A clip
     may appear in both editable and recent (different posts). Approved (`queued`) posts have left Review for
-    the Schedule bucket — they are NOT shown here (post-approval-lifecycle)."""
+    the Schedule bucket — they are NOT shown here (post-approval-lifecycle).
+
+    P5: when `account` is set, keep a card iff ANY of its surfaces is on that account (filter on
+    SurfacePost.account — a fan-out card is one card with N surfaces, so it survives if any surface matches).
+    The filter runs AFTER the cards list + sort are built, so it cannot perturb order or review_counts; a
+    post-less card (prepared/held, surfaces == []) has no surface on any account -> excluded under any
+    non-None filter, present under None (byte-identical default)."""
     personas = _personas(accounts)
     cards: list[ReviewCard] = []
     queued_by_clip: dict[str, list] = {}
@@ -290,6 +311,8 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
             cards.append(_card(led, clip, [], "held", cfg, personas, now))
         elif clip.id not in clips_with_posts and clip.state in PREPARABLE_STATES:
             cards.append(_card(led, clip, [], "prepared", cfg, personas, now))
+    if account is not None:        # P5: keep a card iff a SURFACE matches (post-less cards have none -> dropped)
+        cards = [c for c in cards if any(s.account == account for s in c.surfaces)]
     return cards
 
 
@@ -313,9 +336,12 @@ def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: date
     return _surface(p, persona=_personas(accounts).get(p.account), now=now, cfg=cfg)
 
 
-def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRow]:
+def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
+                  account: Optional[str] = None) -> list[ScheduleRow]:
     """Queued posts (the editable timeline) plus recent published/analyzed posts (read-only past),
-    sorted chronologically by scheduled_time. Rows with no/naive/unparseable time sort last."""
+    sorted chronologically by scheduled_time. Rows with no/naive/unparseable time sort last. P5: an optional
+    `account` filters AFTER the time-sort (the None default stays byte-identical); the per-account display
+    GROUPING is a separate pure step (group_schedule_by_account) so the read-model order never changes."""
     recent_cutoff = now - timedelta(hours=RECENT_WINDOW_HOURS)
     rows: list[ScheduleRow] = []
     for p in led.posts.values():
@@ -353,7 +379,18 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRo
         except (ValueError, TypeError):
             return (1, r.scheduled_time)
     rows.sort(key=_key)
+    if account is not None:        # P5: per-account filter, applied after the canonical time-sort
+        rows = [r for r in rows if r.account == account]
     return rows
+
+
+def group_schedule_by_account(rows: list) -> list:
+    """Group already-time-sorted ScheduleRows by account for a running per-account header (P5, decision 2:
+    Schedule is a per-post <table>, so a header sits cleanly above its rows). Pure; account-sorted headers,
+    within-account TIME order preserved (the input arrives time-sorted). Mirrors group_posted_by_day."""
+    by_acct: dict[str, list] = {}
+    for r in rows: by_acct.setdefault(r.account, []).append(r)
+    return [(a, by_acct[a]) for a in sorted(by_acct)]
 
 
 @dataclass
@@ -368,13 +405,21 @@ class PostedRow:
     lift_score: Optional[float]
     published_at: Optional[str] = None   # content-lifecycle Phase 3: the TRUE publish time; group_posted_by_day
                                          # keys on this (falls back to scheduled_time for pre-v3/in-flight rows).
+    saves: Optional[float] = None        # P5: the raw whitelisted metric breakdown (track._W keys) for this
+    shares: Optional[float] = None       # account's curve, read from post.metrics (the LATEST snapshot — NOT
+    retention: Optional[float] = None    # metrics_series, which is P3's concern). Absent key -> None -> "—".
+    reach: Optional[float] = None
 
 
-def posted_library(led: Ledger, cfg: Config) -> list[PostedRow]:
+def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None) -> list[PostedRow]:
     """The Posted library (post-approval-lifecycle): ALL-time shipped posts (published/analyzed), newest
     first, with the live URL + lift score. NOT a dead archive — each row also offers 'Post again' (a fresh
-    awaiting_approval repost of the same clip). Unscheduled/naive/unparseable times sort last. Lock-free read."""
+    awaiting_approval repost of the same clip). Unscheduled/naive/unparseable times sort last. Lock-free read.
+    P5: an optional `account` filters the posts BEFORE rows/day-grouping are built (so the count + day buckets
+    reflect the filtered set); each row carries the raw saves/shares/retention/reach breakdown from p.metrics."""
     posts = [p for p in led.posts.values() if p.state in (PostState.published, PostState.analyzed)]
+    if account is not None:
+        posts = [p for p in posts if p.account == account]
     def _key(p):
         if not p.scheduled_time: return (0, "")
         try:
@@ -384,7 +429,9 @@ def posted_library(led: Ledger, cfg: Config) -> list[PostedRow]:
     posts.sort(key=_key, reverse=True)              # reverse: latest aware time first; unscheduled (key[0]=0) last
     return [PostedRow(post_id=p.id, clip_id=p.parent_id, account=p.account, platform=p.platform.value,
                       caption=p.caption, public_url=p.public_url, scheduled_time=p.scheduled_time,
-                      lift_score=p.metrics.get(LIFT_SCORE), published_at=p.published_at) for p in posts]
+                      lift_score=p.metrics.get(LIFT_SCORE), published_at=p.published_at,
+                      saves=p.metrics.get("saves"), shares=p.metrics.get("shares"),
+                      retention=p.metrics.get("retention"), reach=p.metrics.get("reach")) for p in posts]
 
 
 def group_posted_by_day(rows: list) -> list:
@@ -423,16 +470,21 @@ def _loop_state(led: Ledger, cfg: Config, accounts: Optional[Accounts], post,
             if cache is not None: cache["_loop_state_logged"] = True
         return "gathering data"
 
-def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> LiftView:
+def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None, *,
+             account: Optional[str] = None) -> LiftView:
     """Per-variant lift (spec §8): analyzed posts carrying a variant_key + lift_score, ranked desc.
     Honest, reason-bearing empty states per sub-view; amplify section mirrors digest's
-    `if cfg.variant_amplify:` gate (absent, not blank, when off)."""
-    variant_posts = [p for p in led.posts.values()
+    `if cfg.variant_amplify:` gate (absent, not blank, when off). P5: an optional `account` scopes the post
+    universe (variant_posts AND the any_analyzed empty-reason probe) BEFORE the empty branch, so a
+    filtered-to-empty view still gets an honest reason (R6); the amplify candidates are filtered by their
+    resolved post's account too. Each variant row carries P1's scheduled_time + the P3 metric breakdown."""
+    posts_view = [p for p in led.posts.values() if account is None or p.account == account]
+    variant_posts = [p for p in posts_view
                      if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
     variant_rows: list[LiftRow] = []
     variant_empty_reason: Optional[str] = None
     if not variant_posts:
-        any_analyzed = any(p.state is PostState.analyzed for p in led.posts.values())
+        any_analyzed = any(p.state is PostState.analyzed for p in posts_view)
         if not any_analyzed:
             variant_empty_reason = ("No results yet — connect Postiz (Go Live) so posts come back "
                                     "with analytics. (Needs a POSTIZ_API_KEY, or a Blotato backend.)")
@@ -447,7 +499,10 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
                 platform=p.platform.value, lift_score=float(p.metrics.get(LIFT_SCORE, 0.0)),
                 loop_state=_loop_state(led, cfg, accounts, p, gate_cache),
                 lift_degraded=bool(p.metrics.get("lift_degraded")),
-                lift_missing=p.metrics.get("lift_missing_keys") or None))
+                lift_missing=p.metrics.get("lift_missing_keys") or None,
+                scheduled_time=p.scheduled_time, saves=p.metrics.get("saves"),
+                shares=p.metrics.get("shares"), retention=p.metrics.get("retention"),
+                reach=p.metrics.get("reach")))
 
     amplify_present = cfg.variant_amplify
     amplify_rows: list[LiftRow] = []
@@ -458,12 +513,13 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None) -> 
             cands = amplify_candidates(led, cfg)
             for c in cands:
                 p = led.posts.get(c.get("post_id"))
-                if p is None:
+                if p is None or (account is not None and p.account != account):    # P5: drop off-account candidates
                     continue
                 amplify_rows.append(LiftRow(
                     variant_hook=c.get("winning_hook"), account=p.account,
                     platform=p.platform.value, lift_score=float(p.metrics.get(LIFT_SCORE, 0.0)),
-                    loop_state="amplify candidate", amplify_state=str(c.get("evidence", ""))))
+                    loop_state="amplify candidate", amplify_state=str(c.get("evidence", "")),
+                    scheduled_time=p.scheduled_time))     # When column for parity; breakdown out of scope (has evidence)
             if not amplify_rows:
                 amplify_empty_reason = "No sustained amplification streaks yet."
         except Exception as exc:
@@ -492,11 +548,13 @@ def review_candidates(cfg: Config) -> list[dict]:
 # submitting/submitted are in-flight on a live backend, not a manual worklist item.
 _MANUAL_QUEUE = {PostState.queued, PostState.needs_reconcile, PostState.failed, PostState.error}
 
-def publish_queue(cfg: Config, *, now: Optional[datetime] = None) -> list[dict]:
+def publish_queue(cfg: Config, *, now: Optional[datetime] = None,
+                  account: Optional[str] = None) -> list[dict]:
     """Track B (manual / zero-dependency publishing): the worklist of `queued` posts the operator
     posts BY HAND. Each row carries the surface, caption, and the post id (Studio serves the clip at
     /media/<post_id>, marks it posted at /publish/posted/<post_id>). `due` = scheduled_time has
-    passed. Due-first, then by schedule. Lock-free read; mutation is actions.mark_published."""
+    passed. Due-first, then by schedule. Lock-free read; mutation is actions.mark_published. P5: an
+    optional `account` filters the dict rows after the due-first sort (None default unchanged)."""
     now = now or datetime.now(timezone.utc)
     led = Ledger.load(cfg)
     rows = []
@@ -515,6 +573,8 @@ def publish_queue(cfg: Config, *, now: Optional[datetime] = None) -> list[dict]:
     # due-first; within a bucket by schedule. "9999" sentinel (not "") so a None/unscheduled post
     # sorts LAST, not as if it were the most urgent (ecc:python-review).
     rows.sort(key=lambda r: (not r["due"], r["scheduled_time"] or "9999"))
+    if account is not None:        # P5: per-account filter on the dict rows
+        rows = [r for r in rows if r["account"] == account]
     return rows
 
 

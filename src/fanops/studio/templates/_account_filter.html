@@ -1,0 +1,15 @@
+{# src/fanops/studio/templates/_account_filter.html — the per-account filter chip row (P5). "All" is ALWAYS
+   first (so an unknown-account filter is always recoverable); one chip per distinct account present in THIS
+   surface's list (the universe is derived from the list's POSTS, never accounts.json), each with a live
+   count. A chip is a plain GET link — re-request the page filtered, the simplest correct thing; htmx is not
+   needed. The active chip carries .active + aria-current="page". Rendered only when >1 account is present
+   (with a single account there is nothing to filter). Reused by all five surfaces via chip_accounts /
+   chip_counts / chip_route / active. #}
+{% if chip_accounts and chip_accounts|length > 1 %}
+<nav class="account-chips" aria-label="Filter by account">
+  <a class="button{{ ' active' if not active else '' }}"{% if not active %} aria-current="page"{% endif %} href="{{ url_for(chip_route) }}">All ({{ chip_total }})</a>
+  {% for h in chip_accounts %}
+  <a class="button{{ ' active' if active == h else '' }}"{% if active == h %} aria-current="page"{% endif %} href="{{ url_for(chip_route, account=h) }}">{{ h }} ({{ chip_counts.get(h, 0) }})</a>
+  {% endfor %}
+</nav>
+{% endif %}

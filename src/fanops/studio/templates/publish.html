@@ -5,6 +5,7 @@
   <h2>Publish</h2>
   <p class="muted">Post each clip yourself and mark it done — or
     <a href="{{ url_for('golive_view') }}">connect Postiz</a> to publish automatically.</p>
+  {% include "_account_filter.html" %}
   <div class="clip-grid">
   {% for r in rows %}
     <div class="card clip-card" id="pub-{{ r.post_id }}">
@@ -40,12 +41,12 @@
     <div class="grid-more meta">
       Showing {{ page.offset + 1 }}–{{ page.offset + rows|length }} of {{ page.total }}.
       {% if page.next_offset is not none %}
-        <a class="button" href="{{ url_for('publish_panel', offset=page.next_offset) }}">Show more</a>
+        <a class="button" href="{{ url_for('publish_panel', offset=page.next_offset, account=active) }}">Show more</a>
       {% endif %}
       {% if page.offset > 0 %}
-        <a class="button" href="{{ url_for('publish_panel') }}">Back to start</a>
+        <a class="button" href="{{ url_for('publish_panel', account=active) }}">Back to start</a>
       {% endif %}
     </div>
   {% endif %}
-  {% if not rows %}<div class="empty">Nothing queued to post. Prepare clips in the Make tab first.</div>{% endif %}
+  {% if not rows %}{% if active %}<div class="empty">Nothing queued for {{ active }} — <a href="{{ url_for('publish_panel') }}">clear the filter</a> to see all accounts.</div>{% else %}<div class="empty">Nothing queued to post. Prepare clips in the Make tab first.</div>{% endif %}{% endif %}
 {% endblock %}
