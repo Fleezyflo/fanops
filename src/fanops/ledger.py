@@ -128,6 +128,22 @@ def _file_lock(lock_path: Path, timeout: float | None = None):
         os.close(fd)
 
 
+def _fallback_iso(suggested_iso: str | None, now_iso: str) -> str:
+    """approve_post's no-future-operator-time fallback. None (legacy/CLI caller) -> now_iso EXACTLY
+    (back-compat). A supplied suggestion that parses STRICTLY future -> use it. A supplied-but-degenerate
+    suggestion (<= now, e.g. surface_time's seed%50==0 && jitter==0) -> now_iso + 1s, so the system-chosen
+    fallback NEVER equals/precedes now and re-opens the publish-now hole. Unparseable -> now_iso."""
+    if suggested_iso is None: return now_iso
+    from datetime import timezone, timedelta
+    from fanops.timeutil import parse_iso, iso_z
+    try:
+        n = parse_iso(now_iso); s = parse_iso(suggested_iso)
+        if n.tzinfo is None: n = n.replace(tzinfo=timezone.utc)
+        if s.tzinfo is None: s = s.replace(tzinfo=timezone.utc)
+        return suggested_iso if s > n else iso_z(n + timedelta(seconds=1))
+    except (ValueError, TypeError): return now_iso
+
+
 class Ledger:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -243,7 +259,7 @@ class Ledger:
     def set_post_state(self, uid: str, st: PostState) -> None: self.posts[uid] = self.posts[uid].model_copy(update={"state": st})
 
     # ---- post-approval gate (caller holds the transaction; in-lock guard => contended/wrong-state is a clean no-op) ----
-    def approve_post(self, uid: str, *, now_iso: str) -> None:
+    def approve_post(self, uid: str, *, now_iso: str, suggested_iso: str | None = None) -> None:
         from datetime import timezone
         from fanops.timeutil import parse_iso
         p = self.posts.get(uid)
@@ -259,7 +275,7 @@ class Ledger:
                 if sched.tzinfo is None: sched = sched.replace(tzinfo=timezone.utc)
                 keep = sched > parse_iso(now_iso)
             except (ValueError, TypeError): keep = False                    # truly malformed -> treat as stale, bump to now
-        self.posts[uid] = p.model_copy(update={"state": PostState.queued, "scheduled_time": p.scheduled_time if keep else now_iso})
+        self.posts[uid] = p.model_copy(update={"state": PostState.queued, "scheduled_time": p.scheduled_time if keep else _fallback_iso(suggested_iso, now_iso)})
     def reject_post(self, uid: str) -> None:
         p = self.posts.get(uid)
         if p is not None and p.state is PostState.awaiting_approval:        # only discard an unapproved post

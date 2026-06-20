@@ -258,3 +258,55 @@ def test_rebuild_discovered_has_created_at(tmp_path):
     s = led.sources["src_ffeeddccbbaa"]
     assert s.created_at and parse_iso(s.created_at).tzinfo is not None
     assert parse_iso(s.created_at).date().isoformat() == "2026-02-14"
+
+
+# ---- P1: approve_post strictly-future fallback + optional suggestion (per-account operator scheduling) ----
+def _awaiting(led, pid="p", sched=None):
+    from fanops.models import Post, PostState, Platform
+    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.awaiting_approval, scheduled_time=sched))
+    return pid
+
+def test_approve_post_none_time_uses_suggestion_not_now(tmp_path):
+    from fanops.models import PostState
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timedelta, timezone
+    led = Ledger.load(Config(root=tmp_path)); _awaiting(led, sched=None)
+    now = datetime(2026, 6, 20, 12, 0, 0, tzinfo=timezone.utc); now_iso = iso_z(now); future = iso_z(now + timedelta(hours=2))
+    led.approve_post("p", now_iso=now_iso, suggested_iso=future)
+    assert led.posts["p"].state is PostState.queued
+    assert led.posts["p"].scheduled_time == future            # the suggestion, NOT now (no silent publish-now)
+
+def test_approve_post_keeps_future_operator_time(tmp_path):
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 6, 20, 12, 0, 0, tzinfo=timezone.utc); now_iso = iso_z(now)
+    far = iso_z(now + timedelta(hours=5)); sugg = iso_z(now + timedelta(hours=2))
+    led = Ledger.load(Config(root=tmp_path)); _awaiting(led, sched=far)
+    led.approve_post("p", now_iso=now_iso, suggested_iso=sugg)
+    assert led.posts["p"].scheduled_time == far               # operator's future intent preserved, suggestion ignored
+
+def test_approve_post_stale_past_time_uses_suggestion(tmp_path):
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 6, 20, 12, 0, 0, tzinfo=timezone.utc); now_iso = iso_z(now)
+    past = iso_z(now - timedelta(hours=2)); sugg = iso_z(now + timedelta(hours=2))
+    led = Ledger.load(Config(root=tmp_path)); _awaiting(led, sched=past)
+    led.approve_post("p", now_iso=now_iso, suggested_iso=sugg)
+    assert led.posts["p"].scheduled_time == sugg              # stale past -> the suggestion, not now
+
+def test_approve_post_suggestion_equal_now_is_pushed_future(tmp_path):
+    from fanops.timeutil import iso_z, parse_iso
+    from datetime import datetime, timezone
+    now = datetime(2026, 6, 20, 12, 0, 0, tzinfo=timezone.utc); now_iso = iso_z(now)
+    led = Ledger.load(Config(root=tmp_path)); _awaiting(led, sched=None)
+    led.approve_post("p", now_iso=now_iso, suggested_iso=now_iso)   # degenerate supplier (seed%50==0 && jitter==0)
+    assert parse_iso(led.posts["p"].scheduled_time) > parse_iso(now_iso)   # ledger guard: result is never == now
+
+def test_approve_post_no_suggestion_falls_back_to_now(tmp_path):
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timezone
+    now = datetime(2026, 6, 20, 12, 0, 0, tzinfo=timezone.utc); now_iso = iso_z(now)
+    led = Ledger.load(Config(root=tmp_path)); _awaiting(led, sched=None)
+    led.approve_post("p", now_iso=now_iso)                    # legacy/CLI caller: no suggestion
+    assert led.posts["p"].scheduled_time == now_iso          # exact back-compat (now_iso fallback)
