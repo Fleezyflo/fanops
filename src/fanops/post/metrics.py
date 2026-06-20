@@ -8,6 +8,7 @@ here (a future reader of a list row's URL must use postUrl). Which METRICS field
 remains an INTEGRATION CHECKPOINT: if saves/shares/retention are unavailable, redesign lift_score
 (Task 21) on the available fields."""
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote
 import requests
@@ -87,11 +88,6 @@ class BlotatoStatusClient:
 # present-but-unweighted candidate until the operator weights it via tuning.json — intended.
 _POSTIZ_LABEL_MAP = {"likes": "likes", "shares": "shares", "comments": "comments", "impressions": "reach"}
 
-def _window_days(window: str) -> int:
-    # "30d"->30, "7d"->7; bad/empty -> default 7 (validate-or-default posture; never crash a run).
-    try: return int(str(window).strip().rstrip("dD") or 0) or 7
-    except (TypeError, ValueError): return 7
-
 def _latest_total(series) -> Optional[float]:
     # collapse a label's time-series [{total:str,date:str},...] to its latest `total`, coerced to num.
     # No datable point -> None (drop the label), NOT a positional series[-1] guess: the Postiz array's
@@ -139,10 +135,15 @@ class PostizMetricsClient:
         return _map_analytics(arr), labels
 
     def list_posts(self, window: str = "30d") -> list[dict]:
-        # window like "30d" -> the analytics `date` lookback days (default 7 if unparseable).
+        # Postiz /analytics/post/{id} `date` is a Unix-MS TIMESTAMP (Context7-verified vs the public docs),
+        # NOT a day count: we send NOW (ms-epoch) to retrieve the latest totals (_latest_total then collapses
+        # the returned series to its newest point). INTEGRATION CHECKPOINT: whether `date=now` returns data
+        # (vs the post's own publishDate-in-ms as the anchor) needs a live verify on a real published post —
+        # but either conforms to the documented type, unlike the old day-count (7/30) which queried ~1970.
+        # `window` is kept for the shared list_posts signature but is NOT a Postiz query param (single date).
         # submission_ids=None -> [] (nothing to fetch; never crashes cmd_track/cutover callers).
         if not self.submission_ids: return []
-        date = _window_days(window); rows = []
+        date = int(datetime.now(timezone.utc).timestamp() * 1000); rows = []
         for sid in self.submission_ids:
             try:
                 metrics, labels = self._fetch_one(sid, date)
