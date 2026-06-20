@@ -289,17 +289,16 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         except Exception as e:
             log("crosspost", "-", "error", err=str(e)[:120])
         # Reconcile last pass's stranded posts BEFORE publishing this pass (AUDIT H4): resolve any
-        # submitting/needs_reconcile post that has a submission_id via GET /v2/posts/:id. This is the
-        # BLOTATO reconciler (BlotatoStatusClient) — gated on is_live_backend AND an explicit Blotato
-        # backend check: M2 made is_live_backend True for postiz too, but postiz has NO status API, so
-        # the reconciler must run ONLY for rest/mcp+key. The postiz backend has no automated status
-        # reconciler yet: its needs_reconcile posts are NOT silent (surfaced in `fanops status` + the
-        # digest) and are cleared by the backend-agnostic `fanops resolve <post_id> published|failed`
-        # recovery verb, exactly as id-less Blotato posts already are. (dryrun never produces these.)
+        # submitting/needs_reconcile post that has a submission_id. The reconciler is backend-agnostic
+        # (reconcile.py dispatches per backend): Blotato (rest/mcp) over GET /v2/posts/:id; Postiz (P2)
+        # over the date-windowed GET /public/v1/posts `state` field. Gated on is_live_backend (key
+        # present) AND a known-live backend — dryrun never produces these and key-less postiz is not
+        # live. Each daemon fire thus publishes due posts AND heals parked ones. `fanops resolve` stays
+        # the manual escape hatch (e.g. a Postiz post genuinely absent from its page -> 'unknown', parked).
         reconcilable = (led.posts_in_state(PostState.submitting)
                         + led.posts_in_state(PostState.submitted)
                         + led.posts_in_state(PostState.needs_reconcile))
-        if reconcilable and cfg.is_live_backend and cfg.poster_backend in ("rest", "mcp"):
+        if reconcilable and cfg.is_live_backend and cfg.poster_backend in ("rest", "mcp", "postiz"):
             try:
                 led = reconcile_posts(led, cfg)
             except Exception as e:                       # status API hiccup must not wedge the pass

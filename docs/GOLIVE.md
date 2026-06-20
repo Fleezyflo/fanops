@@ -73,6 +73,13 @@ answers its own moment/caption gates) **and** installs the supervising launchd d
 survives logout, restarts on crash). It is dryrun-safe — it only publishes once you've gone live above.
 The pieces by hand: `fanops daemon install --interval 10m` / `fanops daemon status` / `fanops daemon stop`.
 
+That launchd loop is **the** autonomous publish+reconcile trigger: each fire's `fanops run` publishes
+every `queued` post whose operator-set time is now due **and** heals parked posts — for Postiz too, now
+(P2): the reconciler reads each post's live `state` from `GET /public/v1/posts` (date-windowed to the
+post's own publish time) and promotes it to `published` or `failed`. Postiz exposes no permalink, so a
+reconciled Postiz post keeps a blank live URL until you set it via `fanops resolve <id> published --url`.
+Without the daemon installed, a due post fires only on a manual `fanops run` / Studio **Publish now**.
+
 ## Path B — Manual (free, zero service)
 
 No external service at all. FanOps produces the clips + captions; you post them by hand. No metrics,

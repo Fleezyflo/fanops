@@ -329,14 +329,34 @@ def _needs_reconcile_post():
     return Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                caption="x", state=PostState.needs_reconcile, submission_id="sub_x")
 
-def test_advance_postiz_does_not_call_blotato_reconciler(tmp_path, monkeypatch, mocker):
-    # After is_live_backend went backend-aware, a postiz+key deployment is "live" — but Postiz has NO
-    # status API, so advance must NOT route its needs_reconcile posts into the Blotato status client.
+def test_advance_postiz_now_reconciles_its_parked_posts(tmp_path, monkeypatch, mocker):
+    # P2 INVERTS the old M2 behavior: Postiz GAINED a status-reconcile path (PostizStatusClient over the
+    # date-windowed GET /public/v1/posts), so a postiz+key deployment's needs_reconcile posts ARE now
+    # healed inside advance — each daemon fire publishes due posts AND heals parked ones. Gated on
+    # is_live_backend (key present), so dryrun and key-less postiz stay shut (below).
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); led.add_post(_needs_reconcile_post()); led.save()
-    spy = mocker.patch("fanops.pipeline.reconcile_posts")
-    advance(cfg, base_time="2026-06-02T18:00:00Z")             # must not crash; reconcile not invoked for postiz
+    spy = mocker.patch("fanops.pipeline.reconcile_posts", side_effect=lambda _led, _cfg: _led)
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
+    spy.assert_called_once()
+
+def test_postiz_without_key_is_not_live_backend(tmp_path, monkeypatch):
+    # The reconcile gate is `is_live_backend AND poster_backend in (...)`. Widening the tuple to add
+    # postiz does NOT loosen the key requirement: postiz WITHOUT a key is not a live backend, so the
+    # gate (and all publishing) stays shut. Proven at the config layer — advance() itself, called
+    # without the CLI preflight, HALTS in publish_due on the missing key (F52), a separate guard.
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    assert Config(root=tmp_path).is_live_backend is False
+
+def test_advance_dryrun_never_reconciles(tmp_path, monkeypatch, mocker):
+    # dryrun is neither a live backend nor in the reconcile allow-list — the gate stays shut end-to-end
+    # (DryRunPoster needs no key, so advance completes; reconcile_posts is never invoked).
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); led.add_post(_needs_reconcile_post()); led.save()
+    spy = mocker.patch("fanops.pipeline.reconcile_posts", side_effect=lambda _led, _cfg: _led)
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
     spy.assert_not_called()
 
 def test_advance_rest_backend_still_calls_reconciler(tmp_path, monkeypatch, mocker):

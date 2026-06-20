@@ -146,6 +146,42 @@ def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch, mocker):
     assert again.posts["p"].public_url == "https://x/p"
 
 
+def test_cmd_reconcile_postiz_date_windows_each_post(tmp_path, monkeypatch, mocker):
+    # P2 review fix: the explicit `fanops reconcile` verb must carry the date window for Postiz too.
+    # _default_get_status(cfg, snapshot) lets the Postiz poll read each post's own scheduled_time and
+    # pass it as the GET /public/v1/posts `date` — else a future/old post is permanently off the
+    # default ~week page and never reconciles. Run the REAL Postiz dispatch (no _default_get_status
+    # mock); capture the params the client sends.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="postiz_9",
+                      scheduled_time="2099-01-01T00:00:00Z")); led.save()
+    seen = {}
+    class _Resp:
+        status_code = 200; text = "{}"
+        def json(self): return {"posts": [{"id": "postiz_9", "state": "PUBLISHED"}]}
+    def fake_get(url, **kw):
+        seen["params"] = kw.get("params"); return _Resp()
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
+    assert main_ok(["reconcile"])
+    assert (seen.get("params") or {}).get("date") == "2099-01-01"      # date-windowed by the post's own time
+    assert Ledger.load(cfg).posts["p"].state is PostState.published
+
+def test_cmd_reconcile_postiz_without_key_skips_cleanly(tmp_path, monkeypatch, capsys):
+    # P2 review fix: postiz WITHOUT a key must SKIP (return 0), not raise/exit. _default_get_status
+    # builds PostizStatusClient -> _key raises PostizAuthError (an AuthError, NOT a RuntimeError), so
+    # the widened `except (RuntimeError, AuthError)` is what keeps reconcile a clean no-op (like track).
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    assert cli.cmd_reconcile(cfg) == 0
+    assert "reconcile skipped" in capsys.readouterr().out
+
+
 def main_ok(argv) -> bool:
     rc = cli.main(argv)
     return rc == 0

@@ -18,11 +18,18 @@ Resolution:
   status 'published'        -> PostState.published (+ public_url) so track can later measure it
   status 'failed'           -> PostState.failed (definitely not live -> safe to re-queue)
   'in-progress'/'scheduled' -> leave as-is (not yet resolved; a later pass retries)
-"""
+
+Backend-agnostic by design (P2). The poll is dispatched per backend in _default_get_status: Blotato
+(rest/mcp) over GET /v2/posts/{id}; Postiz over the DATE-WINDOWED GET /public/v1/posts `state` field
+(PostizStatusClient). The {status, publicUrl} dict and the state machine here are identical for both —
+only honesty boundary differs: Postiz exposes NO permalink on any response, so a reconciled Postiz post
+keeps public_url=None (the operator sets the real social URL via `fanops resolve <id> published --url`).
+A FATAL auth failure from EITHER backend (the shared AuthError base) halts the pass; a single poll error
+is contained per-post (parked, never guessed failed). dryrun never reaches here (gated upstream)."""
 from __future__ import annotations
 from typing import Callable, Optional
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError
+from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.models import PostState
@@ -32,13 +39,27 @@ _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reco
 GetStatus = Callable[[str], dict]
 
 
-def _default_get_status(cfg: Config) -> GetStatus:
+def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
+    # Backend dispatch (P2). Blotato (rest/mcp) polls GET /v2/posts/{id} — a true per-post status
+    # endpoint with a publicUrl. Postiz has NEITHER: its only status signal is the `state` field on a
+    # row of the DATE-WINDOWED GET /public/v1/posts, and no response carries a permalink. So the Postiz
+    # poll wraps PostizStatusClient in a closure that looks the parked post up in `led` to pass its own
+    # scheduled_time as the date window (a future/old/2099 post is otherwise PERMANENTLY off the default
+    # ~week page). The closure keeps the GetStatus seam Callable[[str], dict] unchanged — `cmd_reconcile`
+    # and the 30+ existing reconcile tests are untouched.
+    if cfg.poster_backend == "postiz":
+        from fanops.post.metrics import PostizStatusClient
+        client = PostizStatusClient(cfg)
+        def poll(sid: str) -> dict:
+            post = next((p for p in led.posts.values() if p.submission_id == sid), None) if led else None
+            return client.get_status(sid, publish_date=post.scheduled_time if post else None)
+        return poll
     from fanops.post.metrics import BlotatoStatusClient
     return BlotatoStatusClient(cfg).get_status
 
 
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None) -> Ledger:
-    poll = get_status or _default_get_status(cfg)
+    poll = get_status or _default_get_status(cfg, led)
     log = get_logger(cfg)
     for post in [p for p in led.posts.values() if p.state in _RECONCILABLE]:
         if not post.submission_id:
@@ -53,8 +74,10 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         # (order-dependent availability bug). Contain it to THIS post instead.
         try:
             info = poll(post.submission_id) or {}
-        except BlotatoAuthError:
-            raise                          # bad key/401: EVERY poll will fail -> halt, don't grind
+        except AuthError:
+            raise                          # bad key/401 (Blotato OR Postiz): EVERY poll will fail ->
+                                           # halt, don't grind. Widened from BlotatoAuthError to the
+                                           # shared AuthError base (P2) so a Postiz 401 also halts.
                                            # the ledger recording a bogus error on every parked post
         except Exception as exc:
             # A single poll failure (e.g. a 404 on a not-yet-real fanops_ token) is NOT evidence the
@@ -71,7 +94,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             log("reconcile", post.id, "published")
         elif status == "failed":
             post.state = PostState.failed
-            post.error_reason = f"reconciled: blotato reports failed ({info.get('errorMessage', 'no detail')})"
+            post.error_reason = f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"
             log("reconcile", post.id, "failed")
         else:
             # in-progress / scheduled / unknown -> leave parked; a later reconcile pass will retry.

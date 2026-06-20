@@ -68,6 +68,21 @@ def _extract_postiz_id(body) -> str | None:
     return None
 
 
+def _postiz_permalink(cfg: Config, post_id: str | None) -> str | None:
+    """The single chokepoint for "what PUBLIC URL do we record for a published Postiz post" (P2) —
+    ships returning None, ALWAYS, today. Postiz's public API exposes NO social permalink and NO
+    dashboard URL on any response (GET /public/v1/posts -> {id, publishDate, state, integration,
+    content}, Context7-verified), and Postiz documents no stable public per-post page path. A *guessed*
+    dashboard link (e.g. {POSTIZ_URL}/.../{post_id}) would 404 on the operator's self-hosted calendar
+    UI — worse than None. So this stays None until/unless the route is VERIFIED against the operator's
+    Postiz version (integration checkpoint); flipping it on is then a one-line change that BOTH the
+    publish 2xx branch and the reconcile read pick up. NOT the IG/TikTok permalink. The true social URL
+    stays operator-settable via `fanops resolve <id> published --url <url>` / Studio mark-published."""
+    if not post_id:                                  # no confirmed id -> never a link
+        return None
+    return None                                      # route unverified -> None (build the URL here once verified)
+
+
 def _postiz_image(u: str) -> dict:
     # postiz_upload_media returns "id|path"; this Postiz version requires BOTH on image[] (it validates
     # id as a string AND the path's file extension). Split them back out; defensively fall back to
@@ -197,6 +212,10 @@ class PostizPoster:
                     return led
                 post.state = PostState.submitted
                 post.submission_id = sid
+                # P2: record a public URL ONLY on the confirmed-submitted branch (no confirmed id ->
+                # no link). _postiz_permalink is None today (no URL in the API); `or post.public_url`
+                # keeps any operator-set link and makes this a no-op until the route is verified.
+                post.public_url = _postiz_permalink(self.cfg, sid) or post.public_url
                 return led
             if resp.status_code == 401:
                 raise PostizAuthError("Postiz 401 unauthorized — check POSTIZ_API_KEY (response body withheld)")

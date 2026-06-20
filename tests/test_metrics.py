@@ -183,3 +183,77 @@ def test_postiz_list_posts_one_failing_sid_does_not_lose_the_others(tmp_path, mo
     assert "BAD" not in by_sid or not by_sid["BAD"]["metrics"]  # failing sid skipped/empty, not fatal
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "BAD" in log                                       # breadcrumb for the failed fetch
+
+
+# ---- P2 Task 3: PostizStatusClient.get_status — the date-windowed reconcile read ----
+# Postiz has NO per-post status endpoint; the ONLY status signal is the `state` field on a row of
+# GET /public/v1/posts (Context7-verified: {posts:[{id, publishDate, state, integration, content}]}).
+# That list endpoint is DATE-WINDOWED (display day/week/month + date, default ~week), so a future /
+# old / 2099-probe post is PERMANENTLY absent from the default page unless the query carries a `date`
+# covering its publishDate. get_status maps the state into the SAME {status, publicUrl} dict
+# reconcile_posts consumes; publicUrl is _postiz_permalink (None today). State map (case-insensitive):
+# PUBLISHED→published, ERROR/FAILED→failed, everything-else→scheduled (parked), missing-row→unknown.
+def test_postiz_status_published_maps_and_attaches_permalink(tmp_path, monkeypatch, mocker):
+    from fanops.post.metrics import PostizStatusClient
+    from fanops.post.postiz import _postiz_permalink
+    cfg = _pcfg(tmp_path, monkeypatch)
+    page = {"posts": [{"id": "sid1", "state": "PUBLISHED", "publishDate": "2099-01-01T00:00:00.000Z"}]}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, page))
+    out = PostizStatusClient(cfg).get_status("sid1", publish_date="2099-01-01T00:00:00Z")
+    assert out["status"] == "published"
+    assert out["publicUrl"] == _postiz_permalink(cfg, "sid1")   # None today — asserted vs the helper, not a literal
+
+def test_postiz_status_error_state_maps_failed(tmp_path, monkeypatch, mocker):
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [{"id": "sid1", "state": "ERROR"}]}))
+    assert PostizStatusClient(cfg).get_status("sid1")["status"] == "failed"
+
+def test_postiz_status_queue_state_left_parked(tmp_path, monkeypatch, mocker):
+    # QUEUE/DRAFT/unknown ⇒ "scheduled" so reconcile_posts LEAVES it parked — never guess failed
+    # (re-queuing a possibly-live post is the C1 double-post hazard).
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [{"id": "sid1", "state": "QUEUE"}]}))
+    assert PostizStatusClient(cfg).get_status("sid1")["status"] == "scheduled"
+
+def test_postiz_status_missing_row_is_unknown(tmp_path, monkeypatch, mocker):
+    # Row absent from the returned page ⇒ "unknown" (left parked, never guessed failed).
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [{"id": "other", "state": "PUBLISHED"}]}))
+    assert PostizStatusClient(cfg).get_status("sid1")["status"] == "unknown"
+
+def test_postiz_status_queries_date_window_covering_the_post(tmp_path, monkeypatch, mocker):
+    # THE date-window fix: the list endpoint defaults to ~a week, so a future/old/2099 post is
+    # PERMANENTLY absent unless the query carries a `date` covering its publishDate. Stub the endpoint
+    # to return the target row ONLY when the request's `date` matches the post's day, an unrelated page
+    # otherwise. The post must be FOUND (published), not falsely "unknown".
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    def fake_get(url, **kw):
+        if (kw.get("params") or {}).get("date") == "2099-01-01":
+            return _R(200, {"posts": [{"id": "sid1", "state": "PUBLISHED"}]})
+        return _R(200, {"posts": [{"id": "someone-else", "state": "PUBLISHED"}]})   # default window: target absent
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
+    out = PostizStatusClient(cfg).get_status("sid1", publish_date="2099-01-01T00:00:00Z")
+    assert out["status"] == "published"            # found via the date query, not "unknown"
+
+def test_postiz_status_401_is_typed_auth_with_redacted_body(tmp_path, monkeypatch, mocker):
+    from fanops.errors import PostizAuthError
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_R(401, {"e": "denied for key SENTINEL-KEY-ECHO"}))
+    with pytest.raises(PostizAuthError) as ei:
+        PostizStatusClient(cfg).get_status("sid1")
+    assert "SENTINEL-KEY-ECHO" not in str(ei.value) and "401" in str(ei.value)
+    assert cfg.postiz_api_key not in str(ei.value)             # the KEY VALUE itself must never appear
+
+def test_postiz_status_5xx_raises_runtimeerror(tmp_path, monkeypatch, mocker):
+    # 5xx → RuntimeError, per-post-isolated upstream by reconcile_posts (parked, not failed).
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(503, "down"))
+    with pytest.raises(RuntimeError, match="503"):
+        PostizStatusClient(cfg).get_status("sid1")

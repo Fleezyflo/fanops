@@ -14,7 +14,7 @@ import requests
 from fanops.config import Config
 from fanops.errors import BlotatoAuthError, PostizAuthError
 from fanops.post.blotato_base import BASE_URL
-from fanops.post.postiz import _base, _key
+from fanops.post.postiz import _base, _key, _postiz_permalink
 from fanops.log import get_logger
 
 # A 401 on a metrics/status read is the SAME fatal auth condition as a 401 on publish — raise the
@@ -155,3 +155,52 @@ class PostizMetricsClient:
                 metrics, labels = {}, []
             rows.append({"postSubmissionId": sid, "metrics": metrics, "_raw_labels": labels})
         return rows
+
+
+# Postiz post `state` (GET /public/v1/posts) -> reconcile's backend-agnostic status. Case-insensitive.
+# ONLY PUBLISHED->published and ERROR/FAILED->failed are terminal; EVERYTHING ELSE (QUEUE/DRAFT/unknown)
+# -> scheduled (parked) so reconcile_posts leaves it alone. NEVER guess failed for an unknown state —
+# that re-queues a possibly-live post (the C1 double-post hazard). Integration checkpoint: the exact
+# enum is not pinned in the public docs (like _extract_postiz_id) — confirm against your Postiz version.
+_POSTIZ_STATE_MAP = {"PUBLISHED": "published", "ERROR": "failed", "FAILED": "failed"}
+
+class PostizStatusClient:
+    """Reconcile READ for the Postiz backend (P2). Postiz has NO per-post status endpoint and NO
+    permalink in any response (Context7-verified) — the ONLY status signal is the `state` field on a
+    row of GET /public/v1/posts. That list endpoint is DATE-WINDOWED (`display` day/week/month +
+    `date`, default ~week), so a post at a FUTURE operator-set time, an old post, or a 2099 cutover
+    probe is PERMANENTLY absent from the default page (a correctness bug, not a transient miss). So
+    get_status derives a `date` from the post's own publishDate/scheduled_time and queries a wide
+    window (display=month) around it. Emits the SAME {status, publicUrl} dict reconcile_posts consumes;
+    publicUrl is _postiz_permalink (None today — no URL in the API). 401 -> PostizAuthError (halt, so
+    reconcile's auth-halt fires); 5xx -> RuntimeError (per-post-isolated by reconcile_posts -> parked,
+    never failed). A row absent from the page -> {"status":"unknown"} (parked, never guessed failed).
+
+    The `GetStatus` seam (reconcile.py) is Callable[[str], dict]; the per-post `date` window rides in
+    via the optional publish_date arg, supplied by the closure _default_get_status builds (which has
+    the ledger in hand) — so the seam signature stays unchanged and the 30+ existing reconcile tests
+    keep passing. A direct unit call without publish_date falls back to the default (week) window."""
+    def __init__(self, cfg: Config):
+        self.cfg = cfg; self.base = _base(cfg); self.key = _key(cfg)  # _key raises PostizAuthError if missing
+
+    def get_status(self, submission_id: str, publish_date: Optional[str] = None) -> dict:
+        params = {"display": "month"}                       # widen beyond the default ~week window
+        day = (publish_date or "")[:10]                     # ISO date portion (YYYY-MM-DD); "" -> omit
+        if day:
+            params["date"] = day                            # cover the post's own publishDate (the date-window fix)
+        resp = requests.get(f"{self.base}/public/v1/posts", headers={"Authorization": self.key},
+                            params=params, timeout=30)
+        if resp.status_code == 401:
+            raise PostizAuthError("Postiz 401 on posts list — check POSTIZ_API_KEY (response body withheld)")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"postiz posts {resp.status_code}: {(resp.text or '')[:200]}")
+        body = _json_or_raise(resp, "postiz posts")
+        rows = body.get("posts", []) if isinstance(body, dict) else (body if isinstance(body, list) else [])
+        row = next((r for r in rows if isinstance(r, dict) and r.get("id") == submission_id), None)
+        if row is None:
+            return {"status": "unknown"}                    # absent from the page -> left parked, never guessed
+        status = _POSTIZ_STATE_MAP.get(str(row.get("state", "")).upper(), "scheduled")
+        out = {"status": status}
+        if status == "published":
+            out["publicUrl"] = _postiz_permalink(self.cfg, submission_id)   # None today (no URL in the API)
+        return out

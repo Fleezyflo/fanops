@@ -105,11 +105,12 @@ def cmd_reconcile(cfg: Config) -> int:
     # Phase-B-followup: the per-post POLLS (network) run OUTSIDE the lock against a lock-free
     # snapshot; only the apply runs inside a tight transaction. So N status polls never hold the
     # ledger flock, and a concurrent advance can't be clobbered.
-    try:
-        poll = _default_get_status(cfg)              # raises if no key -> skip cleanly (like track)
-    except RuntimeError as e:
-        print(f"reconcile skipped: {e}"); return 0
-    snapshot = Ledger.load(cfg)                      # lock-free read to learn WHICH posts to poll
+    snapshot = Ledger.load(cfg)                      # lock-free read: learn WHICH posts to poll AND (P2)
+                                                     # give the Postiz poll each post's scheduled_time so it
+    try:                                             # can date-window GET /public/v1/posts (else a future/
+        poll = _default_get_status(cfg, snapshot)    # old post is permanently off the default ~week page).
+    except (RuntimeError, AuthError) as e:           # no key -> skip cleanly: RuntimeError (blotato) /
+        print(f"reconcile skipped: {e}"); return 0   # PostizAuthError (postiz) both = "not configured".
     results: dict[str, dict] = {}
     for p in snapshot.posts.values():
         if p.state in _RECONCILABLE and p.submission_id:
