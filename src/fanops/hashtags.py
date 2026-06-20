@@ -25,6 +25,16 @@ _RANK = {t: i for i, t in enumerate(_MEGA + _RELEVANCE + _ARABIC + ["#fyp", "#re
 # The membership set: a tag the model returns survives only if it is one of these.
 VETTED = set(_MEGA) | set(_RELEVANCE) | set(_ARABIC) | {t for v in _DISCOVERY.values() for t in v}
 
+# Per-account tag LEAN (persona differentiation). Each pool is an ORDERED preference drawn ONLY from
+# VETTED — genre/relevance FLAVOR plus cross-platform #viral; NO #fyp/#reels (those stay platform-correct
+# via _composition). When an account declares a lean, its pool floats ahead of the frozen rank for both
+# the kept model tags and the backfill, so a tasteful account leads lyrical/craft tags and a bold one
+# leads viral. lean=None / unknown -> no pool -> byte-identical to the frozen behavior.
+_LEANS = {"tasteful":    ["#bars", "#undergroundhiphop", "#newmusic", "#rapper"],
+          "underground": ["#undergroundhiphop", "#rapper", "#bars"],
+          "bold":        ["#viral", "#hiphop", "#rap"]}                # all subset of VETTED
+TAG_LEANS = frozenset(_LEANS)                  # the valid lean names — the write-boundary validates against this
+
 def load_store(cfg) -> list[str] | None:
     """M4: the dynamic reach-ranked tag store (00_control/hashtags.json `{"tags": [...]}`), normalized.
     Absent / corrupt / empty -> None so every caller falls back to the frozen pools (fail-open, like
@@ -68,22 +78,34 @@ def _composition(platform: Platform, language: str | None) -> list[str]:
     return _MEGA[:1] + _RELEVANCE[:1] + lang_slot + disc[:1] + _MEGA[1:] + _RELEVANCE[1:] + disc[1:]
 
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
-                 max_tags: int = 4, *, store: list[str] | None = None) -> list[str]:
+                 max_tags: int = 4, *, store: list[str] | None = None, lean: str | None = None) -> list[str]:
     """Return at most `max_tags` reach-vetted hashtags. Keeps the model's VETTED tags (reach-ordered),
     then backfills the balanced default until full. Drops every non-vetted word, dedupes case/'#'
     variants, hard-caps the count. Deterministic; never empty (the default always fills). With a live
     `store` (M4), the store IS the vetted set + reach order (data-driven); store tags backfill first,
-    the frozen composition is the last-resort fill. store=None -> today's frozen behavior, byte-identical."""
+    the frozen composition is the last-resort fill. store=None -> today's frozen behavior, byte-identical.
+    `lean` (persona differentiation) floats that account's pool ahead of the frozen rank for BOTH the kept
+    tags and the backfill; an Arabic clip keeps a language tag as a floor so the lean can't displace its
+    region reach. lean=None / unknown -> empty pool -> byte-identical (no language floor, frozen rank)."""
     vetted = set(store) if store else VETTED
-    rank = {t: i for i, t in enumerate(store)} if store else _RANK
+    base_rank = {t: i for i, t in enumerate(store)} if store else _RANK
+    pool = _LEANS.get((lean or "").strip().lower(), [])              # unknown/None lean -> [] -> byte-identical
+    rank = {**base_rank, **{t: i - len(pool) for i, t in enumerate(pool)}}   # lean tags float to the front
+    lang_floor = _ARABIC[:1] if (pool and (language or "").strip().lower().startswith("ar")) else []
     seen: set[str] = set()
     kept: list[str] = []
     for t in (tags or []):                          # honour the model's choices, but ONLY vetted ones
         h = _norm(t)
         if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
-    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (own-reach store, or the frozen rank)
-    for h in (store or []) + _composition(platform, language):   # store first, then the balanced default
+    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (lean pool, own-reach store, or frozen rank)
+    # Arabic floor under a lean: GUARANTEE one region tag survives the cap even when the model already filled
+    # all max_tags slots (a flavor lean must not strip AR reach). Reserve the LAST slot for it (lean tags keep
+    # the lead). No lean -> lang_floor empty -> floor None -> skipped -> byte-identical.
+    floor = next((h for h in lang_floor if h not in seen), None)
+    if floor and not any(h in set(_ARABIC) for h in kept[:max_tags]):
+        kept = kept[:max_tags - 1]; seen = set(kept); kept.append(floor); seen.add(floor)
+    for h in pool + (store or []) + _composition(platform, language):   # lean, store, then balanced default
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)

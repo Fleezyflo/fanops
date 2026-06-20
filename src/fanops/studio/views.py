@@ -123,6 +123,7 @@ class GoLiveAccount:
     handle: str
     persona: Optional[str]
     channels: list[GoLiveChannel]    # one per platform this handle posts to
+    tag_lean: Optional[str] = None   # persona-differentiation tag knob: tasteful|underground|bold (None -> none)
 
 
 @dataclass
@@ -135,6 +136,7 @@ class GoLiveStatus:
     checks: list[dict]
     notes: list[str]
     learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
+    creative_variation: bool = False   # per-account on-screen hooks ON (FANOPS_CREATIVE_VARIATION) — persona diff
 
 
 @dataclass
@@ -657,7 +659,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
     from fanops.doctor import doctor_report
     try:
         accts = [GoLiveAccount(
-            handle=a.handle, persona=a.persona,
+            handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "")
                       for p in a.platforms])
@@ -681,7 +683,8 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         accounts=accts,
         checks=report["checks"],
         notes=report["notes"],
-        learning_validated=learning_validated(cfg))   # M3: shows whether the loop is unfrozen (cutover done)
+        learning_validated=learning_validated(cfg),    # M3: shows whether the loop is unfrozen (cutover done)
+        creative_variation=cfg.creative_variation)     # per-account on-screen hooks toggle state (persona diff)
 
 
 def gate_rows(cfg: Config) -> list[dict]:

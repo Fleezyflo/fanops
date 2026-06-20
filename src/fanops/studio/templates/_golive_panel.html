@@ -52,6 +52,11 @@
         {% endfor %}
       </span>
       <label>Persona <input type="text" name="persona" placeholder="optional — caption voice" size="24"></label>
+      <label>Tag lean
+        <select name="tag_lean">
+          <option value="">— none —</option>
+          {% for l in tag_leans %}<option value="{{ l }}">{{ l }}</option>{% endfor %}
+        </select></label>
       <button type="submit">Add account</button>
     </form>
   </section>
@@ -96,10 +101,20 @@
         <button type="submit">Save channel mappings</button>
       </form>
       <div class="account-manage">
-        <p class="muted">Remove a placeholder, or demote an account to stop it publishing (keeps its row + history).</p>
+        <p class="muted">Set each account's tag lean (persona differentiation), or demote/remove it. Demote stops
+          publishing but keeps the row + history; remove clears a placeholder.</p>
         {% for a in status.accounts %}
         <div class="account-row meta">
           <span><strong>{{ a.handle }}</strong></span>
+          <form hx-post="{{ url_for('do_golive_account_lean') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+            <input type="hidden" name="handle" value="{{ a.handle }}">
+            <label class="lean-pick">lean
+              <select name="tag_lean" aria-label="Tag lean for {{ a.handle }}">
+                <option value="">— none —</option>
+                {% for l in tag_leans %}<option value="{{ l }}" {{ 'selected' if l == a.tag_lean else '' }}>{{ l }}</option>{% endfor %}
+              </select></label>
+            <button type="submit">Set lean</button>
+          </form>
           <form hx-post="{{ url_for('do_golive_account_demote') }}" hx-target="#golive-panel" hx-swap="outerHTML"
                 hx-confirm="Demote {{ a.handle }} to planned? It stops publishing but keeps its row.">
             <input type="hidden" name="handle" value="{{ a.handle }}">
@@ -112,6 +127,19 @@
           </form>
         </div>
         {% endfor %}
+      </div>
+      <div class="account-hooks">
+        <p class="muted">Per-account on-screen hooks: each account burns its OWN persona-flavored hook in the
+          clip's first seconds. Default OFF — every account shows the same shared hook.</p>
+        <form hx-post="{{ url_for('do_golive_hooks') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+          {% if status.creative_variation %}
+            <span class="ok">● ON — accounts get distinct on-screen hooks</span>
+            <button type="submit" name="on" value="">Turn off (shared hook)</button>
+          {% else %}
+            <span class="muted">○ off — all accounts show the shared hook</span>
+            <button type="submit" name="on" value="1">Turn on (per-account hooks)</button>
+          {% endif %}
+        </form>
       </div>
     {% else %}
       <p class="muted">No active accounts yet — add one above, then map its channels here.</p>
