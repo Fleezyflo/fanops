@@ -58,6 +58,8 @@ class SurfacePost:
     state: str
     imminent: bool
     editable: bool
+    suggested_time: Optional[str] = None   # P1: ONE deterministic strictly-future suggestion (surface_time
+                                           # index=0), set ONLY for editable surfaces; read-only rows carry None.
 
 
 @dataclass
@@ -96,6 +98,8 @@ class ScheduleRow:
     editable: bool
     integration_id: str = ""        # the Postiz channel this post will hit (post.account_id) — surfaced so
                                     # the operator sees WHICH integration each approved post publishes to.
+    suggested_time: Optional[str] = None   # P1: ONE deterministic strictly-future suggestion (surface_time
+                                           # index=0), set ONLY for editable rows; read-only past rows carry None.
 
 
 @dataclass
@@ -161,6 +165,24 @@ def _imminent(scheduled_time: Optional[str], now: datetime,
     return dt <= now + timedelta(minutes=threshold_min)
 
 
+def suggest_time(cfg: Config, post, *, now: datetime) -> str:
+    """ONE deterministic, strictly-future ISO-Z suggestion for a single post (P1). REUSES crosspost's
+    proven surface_time with index=0 — a single anchored near-future time, NEVER a 40-min stagger (the
+    stagger only appears at index>0, reachable only via operator Reschedule-all). Depends solely on
+    account/platform/parent_id (all on the Post) + lead_minutes, so it never resolves a clip/moment and
+    survives broken lineage. Pure, lock-free, no ledger write. Local import keeps views->crosspost acyclic
+    (mirrors reschedule_bucket). Anti-degenerate: a raw value <= now (seed%50==0 && jitter==0 with lead 0)
+    gets the smallest deterministic +1s nudge so the suggestion is never == now (which would re-open the
+    publish-now hole) — NOT a cadence rule, just 'never equal now'."""
+    from fanops.crosspost import surface_time
+    from fanops.timeutil import iso_z
+    raw = surface_time(now, post.account, post.platform.value, now.date().isoformat(), 0,
+                       clip_id=post.parent_id or "", lead_minutes=cfg.publish_lead_minutes)
+    if parse_iso(raw) <= now:
+        return iso_z(now + timedelta(seconds=1))
+    return raw
+
+
 def _personas(accounts: Accounts) -> dict:
     return {a.handle: a.persona for a in accounts.accounts}
 
@@ -188,7 +210,7 @@ def _lineage_for_clip(led: Ledger, clip):
     excerpt = mom.transcript_excerpt if mom else None
     return source_name, label, moment_window, reason, language, excerpt
 
-def _surface(post, *, persona, now: datetime) -> SurfacePost:
+def _surface(post, *, persona, now: datetime, cfg: Config) -> SurfacePost:
     state = post.state.value
     # an awaiting_approval post is GATED — it cannot ship until approved, so it is never "imminent"
     # (no false "shipping now" badge) and is always editable (edit/regenerate/reschedule before approving).
@@ -199,11 +221,12 @@ def _surface(post, *, persona, now: datetime) -> SurfacePost:
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=post.caption, hashtags=list(post.hashtags or []),
         scheduled_time=post.scheduled_time, media_url=f"/media/{post.id}",
-        state=state, imminent=imm, editable=editable)
+        state=state, imminent=imm, editable=editable,
+        suggested_time=suggest_time(cfg, post, now=now) if editable else None)   # P1: only editable surfaces
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime) -> ReviewCard:
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
-    surfaces = [_surface(p, persona=personas.get(p.account), now=now)
+    surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg)
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed (clip -> moment)
     return ReviewCard(
@@ -280,13 +303,14 @@ def review_counts(cards: list[ReviewCard]) -> dict:
     return {"awaiting": c.get("editable", 0), "prepared": c.get("prepared", 0), "held": c.get("held", 0)}
 
 
-def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: datetime) -> Optional[SurfacePost]:
-    """The single-surface read-model for ONE post — used by the Regenerate route to re-render just
-    that surface's editable caption field after the model rewrites it. None if the post is gone."""
+def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: datetime, cfg: Config) -> Optional[SurfacePost]:
+    """The single-surface read-model for ONE post — used by the Regenerate/Reschedule/Clear routes to
+    re-render just that surface's editable field after a mutation. None if the post is gone. `cfg` is
+    needed for the P1 suggested_time (surface_time)."""
     p = led.posts.get(post_id)
     if p is None:
         return None
-    return _surface(p, persona=_personas(accounts).get(p.account), now=now)
+    return _surface(p, persona=_personas(accounts).get(p.account), now=now, cfg=cfg)
 
 
 def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRow]:
@@ -311,10 +335,12 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime) -> list[ScheduleRo
             continue
         imm = _imminent(p.scheduled_time, now)
         state = p.state.value
+        editable = (state == PostState.queued.value and not imm)
         rows.append(ScheduleRow(
             post_id=p.id, scheduled_time=p.scheduled_time, account=p.account,
             platform=p.platform.value, clip_id=p.parent_id, state=state, imminent=imm,
-            editable=(state == PostState.queued.value and not imm), integration_id=p.account_id))
+            editable=editable, integration_id=p.account_id,
+            suggested_time=suggest_time(cfg, p, now=now) if editable else None))   # P1: only editable rows
 
     def _key(r: ScheduleRow):
         if not r.scheduled_time:

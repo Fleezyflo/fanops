@@ -36,6 +36,7 @@ from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
 from fanops.studio.views import review_buckets
+from fanops.timeutil import parse_iso
 
 def _seed_accounts(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -381,3 +382,73 @@ def test_review_card_surfaces_removed_hook(tmp_path):
     ed = [c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
           if c.bucket == "editable" and c.clip_id == "clip_1"][0]
     assert ed.hook_removed == "made it and lost everything"
+
+
+# ---- P1: suggest_time helper + suggested_time on read-models (per-account operator scheduling) ----
+def _post(account="@a", platform=Platform.instagram, parent_id="clip_1"):
+    return Post(id="p", parent_id=parent_id, account=account, account_id="1", platform=platform,
+                caption="x", state=PostState.awaiting_approval)
+
+def test_suggest_time_is_deterministic_and_future(tmp_path):
+    from fanops.studio.views import suggest_time
+    cfg = Config(root=tmp_path)
+    p = _post()
+    a = suggest_time(cfg, p, now=NOW); b = suggest_time(cfg, p, now=NOW)
+    assert a == b                                   # deterministic (content-addressed, no random)
+    assert parse_iso(a) > NOW                       # strictly future
+
+def test_suggest_time_index_zero_no_stagger(tmp_path):
+    # two posts on the SAME surface (same account/platform/date) get index=0 each -> NOT 40 min apart.
+    # surface_time's clip_id seed differs per parent_id, so they may differ slightly, but never by a
+    # full _STEP_MIN (40 min) — that stagger only appears for index>0 (Reschedule-all).
+    from fanops.studio.views import suggest_time
+    cfg = Config(root=tmp_path)
+    a = suggest_time(cfg, _post(parent_id="clip_a"), now=NOW)
+    b = suggest_time(cfg, _post(parent_id="clip_b"), now=NOW)
+    assert abs((parse_iso(a) - parse_iso(b)).total_seconds()) < 40 * 60   # no imposed 40-min stagger
+
+def test_suggest_time_strictly_after_now_when_lead_zero(tmp_path, monkeypatch):
+    # publish_lead_minutes==0 (default) + a degenerate seed (offset 0) could land == now; the +1s nudge
+    # keeps it strictly future. Probe seeds until one yields raw == now, then assert the nudge fired.
+    from fanops.studio.views import suggest_time
+    from fanops.crosspost import surface_time
+    monkeypatch.delenv("FANOPS_PUBLISH_LEAD_MINUTES", raising=False)   # lead == 0
+    cfg = Config(root=tmp_path)
+    date_str = NOW.date().isoformat()
+    for n in range(2000):                            # find a (parent_id) whose surface_time(index=0) == now
+        pid = f"clip_{n}"
+        raw = surface_time(NOW, "@a", "instagram", date_str, 0, clip_id=pid, lead_minutes=0)
+        if parse_iso(raw) <= NOW:
+            out = suggest_time(cfg, _post(parent_id=pid), now=NOW)
+            assert parse_iso(out) > NOW              # anti-degenerate +1s nudge fired
+            break
+    else:
+        # no degenerate seed in range — assert the helper is at least always strictly future
+        assert parse_iso(suggest_time(cfg, _post(), now=NOW)) > NOW
+
+def test_surfacepost_carries_suggested_time(tmp_path):
+    # an awaiting (editable) surface carries a strictly-future suggestion on its read-model.
+    from fanops.studio.views import _surface
+    cfg = Config(root=tmp_path)
+    s = _surface(_post(), persona=None, now=NOW, cfg=cfg)
+    assert s.suggested_time is not None and parse_iso(s.suggested_time) > NOW
+
+def test_schedulerow_carries_suggested_time(tmp_path):
+    # a queued (editable) row carries the suggestion; a read-only past row carries None.
+    from fanops.studio.views import schedule_rows
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pq", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=3))))
+    led.add_post(Post(id="pp", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.published, scheduled_time=_z(NOW - timedelta(hours=1))))
+    rows = {r.post_id: r for r in schedule_rows(led, cfg, now=NOW)}
+    assert rows["pq"].suggested_time is not None and parse_iso(rows["pq"].suggested_time) > NOW
+    assert rows["pp"].suggested_time is None         # read-only past row gets no suggestion
+
+def test_suggested_time_with_broken_clip_lineage_still_renders(tmp_path):
+    # the suggestion needs ONLY account/platform/parent_id (all on the Post) — a post whose parent clip
+    # is missing from the ledger still builds the read-model with a suggestion; no crash.
+    from fanops.studio.views import _surface
+    cfg = Config(root=tmp_path)
+    s = _surface(_post(parent_id="ghost_clip"), persona=None, now=NOW, cfg=cfg)
+    assert s.suggested_time is not None and parse_iso(s.suggested_time) > NOW

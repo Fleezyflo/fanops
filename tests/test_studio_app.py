@@ -326,3 +326,53 @@ def test_approve_as_is_route_approves_clean(tmp_path):
     led = Ledger.load(cfg)
     assert led.posts["p1"].state is PostState.queued
     assert led.moments["mom_1"].hook is None                 # shipped clean — not restored
+
+
+# ---- P1: suggest/clear UI controls + the stale-input swap fix ----
+def _seed_awaiting(cfg, tmp_path, *, pid="p_aw"):
+    # an awaiting_approval post on the SAME clip as _seed, so /review shows it in the editable bucket.
+    _seed(cfg, tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="AWAIT", state=PostState.awaiting_approval,
+                      scheduled_time=_z(NOW + timedelta(hours=5))))
+    led.save()
+
+def test_review_renders_suggestion_and_clear_action(tmp_path):
+    cfg = Config(root=tmp_path); _seed_awaiting(cfg, tmp_path)
+    html = _client(cfg).get("/review").data.decode()
+    assert "/clear/p_aw" in html                              # Clear-time form action for the editable surface
+    assert "Suggested" in html                                # the suggestion hint is shown
+
+def test_schedule_renders_suggestion_and_clear_action(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)         # p_base/p_var are queued + editable
+    html = _client(cfg).get("/schedule").data.decode()
+    assert "/schedule/clear/p_base" in html                   # Clear-time form action for the editable row
+    assert "Use suggested" in html
+
+def test_clear_route_on_awaiting_returns_empty_time_input(tmp_path):
+    cfg = Config(root=tmp_path); _seed_awaiting(cfg, tmp_path)
+    r = _client(cfg).post("/clear/p_aw")
+    assert r.status_code == 200
+    body = r.data.decode()
+    assert 'name="new_time" value=""' in body                 # the re-rendered editor's time input is EMPTY (not stale)
+    assert Ledger.load(cfg).posts["p_aw"].scheduled_time is None
+
+def test_schedule_clear_route_moves_queued_back_to_review(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    r = _client(cfg).post("/schedule/clear/p_base")
+    assert r.status_code == 200
+    assert b"p_base" not in r.data                             # the row is GONE from the re-rendered bucket
+    led = Ledger.load(cfg)
+    assert led.posts["p_base"].state is PostState.awaiting_approval and led.posts["p_base"].scheduled_time is None
+
+def test_review_reschedule_surface_reflects_new_time_in_input(tmp_path):
+    # the stale-input fix: rescheduling from the Review editor re-renders _surface_edit.html with the NEW
+    # value in the time input (not _result.html, which left the old value visible).
+    cfg = Config(root=tmp_path); _seed_awaiting(cfg, tmp_path)
+    new = _z(NOW + timedelta(days=3))
+    r = _client(cfg).post("/reschedule-surface/p_aw", data={"new_time": new})
+    assert r.status_code == 200
+    body = r.data.decode()
+    assert f'name="new_time" value="{new}"' in body           # the editor shows the fresh value
+    assert Ledger.load(cfg).posts["p_aw"].scheduled_time == new
