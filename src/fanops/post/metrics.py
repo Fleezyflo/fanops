@@ -134,14 +134,16 @@ class PostizMetricsClient:
         labels = [str(it.get("label", "")) for it in arr if isinstance(it, dict)] if isinstance(arr, list) else []
         return _map_analytics(arr), labels
 
-    def list_posts(self, window: str = "30d", *, now: Optional[datetime] = None) -> list[dict]:
-        # Postiz /analytics/post/{id} `date` is a Unix-MS TIMESTAMP (Context7-verified), NOT a day count:
-        # it is the date to retrieve analytics AS OF, so we pass NOW (ms-epoch) to get the latest totals
-        # (_latest_total then collapses the returned series to its newest point). `window` is accepted for
-        # the shared list_posts signature but is not a Postiz query param (the endpoint takes a single date).
+    def list_posts(self, window: str = "30d") -> list[dict]:
+        # Postiz /analytics/post/{id} `date` is a Unix-MS TIMESTAMP (Context7-verified vs the public docs),
+        # NOT a day count: we send NOW (ms-epoch) to retrieve the latest totals (_latest_total then collapses
+        # the returned series to its newest point). INTEGRATION CHECKPOINT: whether `date=now` returns data
+        # (vs the post's own publishDate-in-ms as the anchor) needs a live verify on a real published post —
+        # but either conforms to the documented type, unlike the old day-count (7/30) which queried ~1970.
+        # `window` is kept for the shared list_posts signature but is NOT a Postiz query param (single date).
         # submission_ids=None -> [] (nothing to fetch; never crashes cmd_track/cutover callers).
         if not self.submission_ids: return []
-        date = int((now or datetime.now(timezone.utc)).timestamp() * 1000); rows = []
+        date = int(datetime.now(timezone.utc).timestamp() * 1000); rows = []
         for sid in self.submission_ids:
             try:
                 metrics, labels = self._fetch_one(sid, date)
