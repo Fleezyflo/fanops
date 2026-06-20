@@ -1,8 +1,12 @@
 {# src/fanops/studio/templates/_schedule_panel.html — the APPROVED-posts bucket cockpit (htmx-swapped
    in place). Each approved (queued) row shows the Postiz integration it will hit, and offers Move
    (reschedule), Publish now (ship immediately), and Send back (un-approve -> Review). 'Reschedule all'
-   re-spreads the whole bucket onto a fresh cadence. Per-row forms are independent siblings (no nesting). #}
+   re-spreads the whole bucket onto a fresh cadence. Per-row forms are independent siblings (no nesting).
+   P5: an account chip row scopes the bucket; the "All" view runs a per-account header (groups) over the
+   account-then-time-sorted rows; every panel-re-rendering form carries account=active in its POST URL so
+   the htmx swap re-applies the same scope (R1). Publish now returns a one-off result, so it is NOT threaded. #}
 <div id="schedule-body">
+  {% include "_account_filter.html" %}
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
       {% if result.ok %}{% if result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s) onto a fresh cadence.{% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time }}.{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
@@ -10,14 +14,18 @@
   {% endif %}
   {% set approved = rows | selectattr('editable') | list %}
   {% if approved %}
-    <form class="respread" hx-post="{{ url_for('do_reschedule_bucket') }}" hx-target="#schedule-body" hx-swap="outerHTML">
+    <form class="respread" hx-post="{{ url_for('do_reschedule_bucket', account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
       <button type="submit">Reschedule all</button> <span class="muted">— re-spread the {{ approved|length }} approved post(s) from now</span>
     </form>
   {% endif %}
   {% if rows %}
+  {# P5: in the unfiltered "All" view, a running per-account header sits above each account's rows; a
+     single-account filter renders one block with no header (the active chip already names it). #}
+  {% for acct, acct_rows in (groups if groups else [('', rows)]) %}
+  {% if not active and groups %}<h3 class="day-head">{{ acct }}</h3>{% endif %}
   <table>
     <tr><th>Time</th><th>Account</th><th>Integration</th><th>State</th><th><span class="vh">Actions</span></th></tr>
-    {% for r in rows %}
+    {% for r in acct_rows %}
     <tr>
       <td>{{ r.scheduled_time or 'unscheduled' }}{% if r.imminent %} <span class="badge {{ 'shipped' if r.state != 'queued' else '' }}">{{ 'shipped' if r.state != 'queued' else 'now' }}</span>{% endif %}</td>
       <td>{{ r.account }} <span class="muted">{{ r.platform }}</span></td>
@@ -25,17 +33,17 @@
       <td>{{ r.state }}</td>
       <td>
         {% if r.editable %}
-        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <input type="text" name="new_time" value="{{ r.scheduled_time }}" aria-label="New time for {{ r.account }} {{ r.platform }}">
           <button type="submit">Move</button>
         </form>
         {% if r.suggested_time %}
-        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <input type="hidden" name="new_time" value="{{ r.suggested_time }}">
           <button type="submit">Use suggested</button> <span class="muted">{{ r.suggested_time }}</span>
         </form>
         {% endif %}
-        <form hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <button type="submit">Clear time</button>
         </form>
         <form hx-post="{{ url_for('do_publish_now', post_id=r.post_id) }}" hx-target="#res-s-{{ r.post_id }}" hx-swap="innerHTML">
@@ -44,7 +52,7 @@
           {% endif %}
           <button type="submit" class="primary">Publish now</button>
         </form>
-        <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <button type="submit">Send back to Review</button>
         </form>
         <span id="res-s-{{ r.post_id }}"></span>
@@ -53,5 +61,7 @@
     </tr>
     {% endfor %}
   </table>
+  {% endfor %}
+  {% elif active %}<div class="empty">No approved or recent posts for {{ active }} — <a href="{{ url_for('schedule') }}">clear the filter</a> to see all accounts.</div>
   {% else %}<div class="empty">No approved or recent posts. Approve posts in the Review tab to schedule them.</div>{% endif %}
 </div>

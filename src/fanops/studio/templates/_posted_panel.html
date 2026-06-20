@@ -1,7 +1,12 @@
 {# src/fanops/studio/templates/_posted_panel.html — the Posted library (htmx-swapped). Shipped posts are
    immutable history; each row offers 'Post again' — a fresh awaiting_approval repost of the same clip that
-   re-enters the approval gate. Not a dead archive: it doubles as the reuse surface. #}
+   re-enters the approval gate. Not a dead archive: it doubles as the reuse surface. P5: an account chip row
+   scopes the library (day-grouping is preserved within the scope); each row shows the raw saves/shares/
+   retention/reach breakdown from post.metrics (the LATEST snapshot) so one account's curve reads without
+   arithmetic across interleaved rows. The reuse/crosspost forms carry account=active so the htmx swap keeps
+   scope (R1). NB: `accounts` (the cross-account picker options) is distinct from the chip universe. #}
 <div id="posted-body">
+  {% include "_account_filter.html" %}
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
       {% if result.ok %}{% if result.detail and result.detail.minted is defined %}Cross-posted: {{ result.detail.minted }} minted, {{ result.detail.already_exists }} already scheduled, {{ result.detail.skipped }} skipped — new copies wait in Review.{% elif result.detail and result.detail.already_exists is defined %}{% if result.detail.already_exists %}Already scheduled to {{ result.detail.surface }} — see Review/Schedule.{% else %}Cross-posted to {{ result.detail.surface }} — waiting in Review for approval.{% endif %}{% else %}Reposted — a fresh copy is waiting in Review for your approval.{% endif %}{% else %}{{ result.error }}{% endif %}
@@ -9,7 +14,7 @@
   {% endif %}
   {# content-lifecycle Phase 4: bulk cross-account backfill — send everything from one account also to another. #}
   {% if accounts and accounts|length > 1 %}
-  <form class="crosspost-all" hx-post="{{ url_for('do_crosspost_all') }}" hx-target="#posted-body" hx-swap="outerHTML">
+  <form class="crosspost-all" hx-post="{{ url_for('do_crosspost_all', account=active) }}" hx-target="#posted-body" hx-swap="outerHTML">
     <label>Send all of
       <select name="source_account" aria-label="Source account">{% for a in accounts %}<option value="{{ a.handle }}">{{ a.handle }}</option>{% endfor %}</select>
       also to
@@ -26,20 +31,24 @@
   {% for day, day_rows in (groups if groups else [('', rows)]) %}
   {% if day %}<h3 class="day-head">{{ day }}</h3>{% endif %}
   <table>
-    <tr><th>Time</th><th>Account</th><th>Lift</th><th>Link</th><th><span class="vh">Reuse</span></th></tr>
+    <tr><th>Time</th><th>Account</th><th>Lift</th><th>Saves</th><th>Shares</th><th>Retention</th><th>Reach</th><th>Link</th><th><span class="vh">Reuse</span></th></tr>
     {% for r in day_rows %}
     <tr>
       <td>{{ r.published_at or r.scheduled_time or '—' }}</td>
       <td>{{ r.account }} <span class="muted">{{ r.platform }}</span></td>
       <td>{{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }}</td>
+      <td>{{ r.saves if r.saves is not none else '—' }}</td>
+      <td>{{ r.shares if r.shares is not none else '—' }}</td>
+      <td>{{ r.retention if r.retention is not none else '—' }}</td>
+      <td>{{ r.reach if r.reach is not none else '—' }}</td>
       <td>{% if r.public_url %}<a href="{{ r.public_url }}" target="_blank" rel="noopener">{{ r.public_url }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td>
-        <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id) }}" hx-target="#posted-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active) }}" hx-target="#posted-body" hx-swap="outerHTML">
           <button type="submit">Post again</button>
         </form>
         {% if accounts %}
         {# content-lifecycle Phase 4: reuse this clip on ANOTHER account/platform (a fresh awaiting_approval post). #}
-        <form class="crosspost-one" hx-post="{{ url_for('do_crosspost_to_account', clip_id=r.clip_id) }}" hx-target="#posted-body" hx-swap="outerHTML">
+        <form class="crosspost-one" hx-post="{{ url_for('do_crosspost_to_account', clip_id=r.clip_id, account=active) }}" hx-target="#posted-body" hx-swap="outerHTML">
           <select name="target_account" aria-label="Target account">{% for a in accounts %}<option value="{{ a.handle }}">{{ a.handle }}</option>{% endfor %}</select>
           <select name="platform" aria-label="Target platform">{% for a in accounts %}{% for p in a.platforms %}<option value="{{ p.value }}">{{ p.value }}</option>{% endfor %}{% endfor %}</select>
           <button type="submit">Post to another account</button>
@@ -50,5 +59,6 @@
     {% endfor %}
   </table>
   {% endfor %}
+  {% elif active %}<div class="empty">Nothing posted yet for {{ active }} — <a href="{{ url_for('posted') }}">clear the filter</a> to see all accounts.</div>
   {% else %}<div class="empty">Nothing posted yet. Approved posts that ship will appear here with their results.</div>{% endif %}
 </div>

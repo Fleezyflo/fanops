@@ -4,6 +4,7 @@ core no-[studio] install never touches it. Reads use lock-free Ledger.load (atom
 guarantees a complete file); writes go through studio.actions (one Ledger.transaction each)."""
 from __future__ import annotations
 import os
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from flask import Flask, abort, redirect, render_template, request, send_file, u
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import Platform
+from fanops.models import Platform, PostState, LIFT_SCORE
 from fanops.discover import make_thumbnail        # reuse the cheap one-frame ffmpeg extractor for clip posters
 from fanops.studio import views, actions, golive
 
@@ -95,42 +96,78 @@ def create_app(cfg: Config) -> Flask:
         except (TypeError, ValueError):
             return 0
 
+    def _account_arg():
+        # P5: the per-account filter from ?account=. A blank/absent param -> None (the unfiltered "All"
+        # view); read from request.args, so an htmx POST that carries account= in its action URL re-applies
+        # the same scope after a mutation (R1). Never raises; an unknown handle simply matches zero rows.
+        v = (request.args.get("account") or "").strip()
+        return v or None
+
+    def _with_active(counts, active):
+        # The chip UNIVERSE = the accounts present in the (unfiltered) list, PLUS the active filter itself, so
+        # an account whose last item just left the list still shows its (active) chip — the filter stays
+        # visible + recoverable ("No work for @a — clear the filter") instead of silently vanishing.
+        accts = set(counts)
+        if active: accts.add(active)
+        return sorted(accts)
+
+    def _row_chips(rows, route, active):
+        # Chip context for a row/dict-based surface: the distinct account UNIVERSE + per-account counts,
+        # derived from the POSTS in this list (never accounts.json — a retired account's history stays
+        # filterable). Splatted into render_template; the _account_filter.html include reads these.
+        counts = Counter((r["account"] if isinstance(r, dict) else r.account) for r in rows)
+        return {"chip_accounts": _with_active(counts, active), "chip_counts": dict(counts),
+                "chip_route": route, "chip_total": len(rows), "active": active}
+
+    def _card_chips(cards, active):
+        # Chip context for Review (cards have no scalar account — collect surface accounts; a fan-out card
+        # contributes to each surface's account). chip_total counts cards, the count map counts surfaces.
+        counts = Counter(s.account for c in cards for s in c.surfaces)
+        return {"chip_accounts": _with_active(counts, active), "chip_counts": dict(counts),
+                "chip_route": "review", "chip_total": len(cards), "active": active}
+
     @app.get("/")
     def index():
         return redirect(url_for("review"))
 
     @app.get("/review")
     def review():
-        led = Ledger.load(cfg)
-        accounts = Accounts.load(cfg)
-        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
-        counts = views.review_counts(cards)              # the live strip's initial counts (no banner: shown==awaiting)
+        led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
+        account = _account_arg()
+        cards_full = views.review_buckets(led, accounts, cfg, now=now)               # universe for chips
+        cards = cards_full if account is None else views.review_buckets(led, accounts, cfg, now=now, account=account)
+        counts = views.review_counts(cards)              # counts reflect what's shown (the scoped worklist)
         page = views.paginate(cards, _offset_arg())
         return render_template("review.html", cards=page.items, page=page, tab="review",
                                backend=cfg.poster_backend, counts=counts, shown=counts["awaiting"],
-                               awaiting_total=counts["awaiting"])
+                               awaiting_total=counts["awaiting"], **_card_chips(cards_full, account))
 
     def _review_panel(result=None):
-        led = Ledger.load(cfg); accounts = Accounts.load(cfg)
-        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
+        led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
+        account = _account_arg()                          # R1: rides the POST URL into request.args -> scope preserved
+        cards_full = views.review_buckets(led, accounts, cfg, now=now)
+        cards = cards_full if account is None else views.review_buckets(led, accounts, cfg, now=now, account=account)
         awaiting_total = views.review_counts(cards)["awaiting"]    # keep #review-body's data-awaiting fresh after every mutation
         page = views.paginate(cards, _offset_arg())
         return render_template("_review_body.html", cards=page.items, page=page, result=result,
-                               tab="review", backend=cfg.poster_backend, awaiting_total=awaiting_total)
+                               tab="review", backend=cfg.poster_backend, awaiting_total=awaiting_total,
+                               **_card_chips(cards_full, account))
 
     @app.get("/review/live")
     def review_live():
         # The Review tab's self-polling strip: live bucket counts + a 'load them' button when new
         # awaiting posts exceed what the worklist currently shows (?shown, read live from the body's
         # data-awaiting). A garbage/negative ?shown -> 0 (never a 500); the banner is gated on '>'.
-        led = Ledger.load(cfg); accounts = Accounts.load(cfg)
-        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
+        # P5: the strip counts the SAME per-account scope the body shows (else a filtered worklist's
+        # scoped data-awaiting would forever trail the unscoped poll, pinning the 'new' banner open).
+        led = Ledger.load(cfg); accounts = Accounts.load(cfg); account = _account_arg()
+        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc), account=account)
         counts = views.review_counts(cards)
         try:
             shown = max(0, int(request.args.get("shown", 0)))
         except (TypeError, ValueError):
             shown = 0
-        return render_template("_review_live.html", counts=counts, shown=shown)
+        return render_template("_review_live.html", counts=counts, shown=shown, active=account)
 
     @app.get("/review/refresh")
     def review_panel_refresh():
@@ -164,9 +201,13 @@ def create_app(cfg: Config) -> Flask:
         return _review_panel(actions.approve_as_is(cfg, clip_id))
 
     def _schedule_panel(result=None, *, full=False):
-        rows = views.schedule_rows(Ledger.load(cfg), cfg, now=datetime.now(timezone.utc))
+        led = Ledger.load(cfg); now = datetime.now(timezone.utc); account = _account_arg()
+        rows_full = views.schedule_rows(led, cfg, now=now)                            # universe for chips
+        rows = rows_full if account is None else views.schedule_rows(led, cfg, now=now, account=account)
+        groups = views.group_schedule_by_account(rows)   # per-account header groups (the "All" view reads per account)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
-        return render_template(tmpl, rows=rows, result=result, tab="schedule", backend=cfg.poster_backend)
+        return render_template(tmpl, rows=rows, groups=groups, result=result, tab="schedule",
+                               backend=cfg.poster_backend, **_row_chips(rows_full, "schedule", account))
 
     @app.get("/schedule")
     def schedule():
@@ -196,16 +237,25 @@ def create_app(cfg: Config) -> Flask:
 
     @app.get("/lift")
     def lift():
-        led = Ledger.load(cfg)
-        view = views.lift_rows(led, cfg, Accounts.load(cfg))
-        return render_template("lift.html", view=view, tab="lift")
+        led = Ledger.load(cfg); accts = Accounts.load(cfg); account = _account_arg()
+        view = views.lift_rows(led, cfg, accts, account=account)
+        # Chip universe from a CHEAP post scan (the same analyzed-variant predicate lift_rows uses), so we
+        # call lift_rows ONCE — building an unfiltered view just for chips would re-run its per-row gate I/O.
+        vcounts = Counter(p.account for p in led.posts.values()
+                          if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics)
+        chips = {"chip_accounts": _with_active(vcounts, account), "chip_counts": dict(vcounts),
+                 "chip_route": "lift", "chip_total": sum(vcounts.values()), "active": account}
+        return render_template("lift.html", view=view, tab="lift", **chips)
 
     def _posted_panel(result=None, *, full=False):
-        rows = views.posted_library(Ledger.load(cfg), cfg)
+        led = Ledger.load(cfg); account = _account_arg()
+        rows_full = views.posted_library(led, cfg)                                    # universe for chips
+        rows = rows_full if account is None else views.posted_library(led, cfg, account=account)
         groups = views.group_posted_by_day(rows)          # content-lifecycle Phase 3: publish-day buckets
         accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
         return render_template("posted.html" if full else "_posted_panel.html", rows=rows, groups=groups,
-                               accounts=accounts, result=result, tab="posted")
+                               accounts=accounts, result=result, tab="posted",
+                               **_row_chips(rows_full, "posted", account))
 
     @app.get("/posted")
     def posted():
@@ -334,10 +384,12 @@ def create_app(cfg: Config) -> Flask:
         # Track B: the manual / no-service worklist — queued posts to post by hand, with the clip to
         # download (/media/<post_id>) + the caption to copy + a "Mark posted" button. Capped to a page
         # (the 164-<video>-at-once perf problem); the total stays visible with a show-more link.
-        rows = views.publish_queue(cfg, now=datetime.now(timezone.utc))
+        account = _account_arg(); now = datetime.now(timezone.utc)
+        rows_full = views.publish_queue(cfg, now=now)                                 # universe for chips
+        rows = rows_full if account is None else views.publish_queue(cfg, now=now, account=account)
         page = views.paginate(rows, _offset_arg())
         return render_template("publish.html", rows=page.items, page=page, tab="publish",
-                               backend=cfg.poster_backend)
+                               backend=cfg.poster_backend, **_row_chips(rows_full, "publish_panel", account))
 
     @app.post("/publish/posted/<post_id>")
     def do_mark_posted(post_id):

@@ -172,6 +172,10 @@ input[type=file]::file-selector-button { margin-right:.7rem; background:var(--su
 input[type=file]::file-selector-button:hover { border-color:var(--accent); color:var(--accent-bright); }
 input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1.15); margin-right:.35rem; vertical-align:-.1em; }
 
+/* ── P5: per-account filter chips ───────────────────────────────────────── */
+.account-chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.6rem 0 1rem; }
+.account-chips .button.active { background:var(--accent-dim); border-color:var(--accent); color:var(--ink); }
+
 /* ── Run/Make tab: instrument cluster + actions ─────────────────────────── */
 .status { display:flex; flex-wrap:wrap; gap:.6rem; margin:var(--s-4) 0; padding:0; align-items:stretch; }
 .status > span { display:inline-flex; flex-direction:column; gap:.15rem; padding:.7rem 1rem; background:var(--surface-2);
