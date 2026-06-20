@@ -114,6 +114,17 @@ def test_postiz_empty_data_series_omits_key(tmp_path, monkeypatch, mocker):
                  return_value=_R(200, [{"label": "Likes", "data": []}]))
     assert PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()[0]["metrics"] == {}
 
+def test_postiz_analytics_date_param_is_unix_ms_not_day_count(tmp_path, monkeypatch, mocker):
+    # BUG (Context7-confirmed): /public/v1/analytics/post/{id} `date` is a Unix-MS TIMESTAMP, NOT a day
+    # count. The old code sent date=_window_days(window) (7/30), which queries ~1970 -> empty metrics ->
+    # a live Postiz post never feeds the learning loop. The `date` must be a real ms-epoch timestamp.
+    from fanops.post.metrics import PostizMetricsClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    g = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, _DOC_ARRAY))
+    PostizMetricsClient(cfg, submission_ids=["sid1"]).list_posts("30d")
+    sent = g.call_args.kwargs.get("params", {}).get("date")
+    assert isinstance(sent, int) and sent > 1_500_000_000_000   # a real ms-epoch timestamp (post-2017), never 7/30
+
 def test_postiz_non_list_response_yields_empty_metrics(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizMetricsClient
     cfg = _pcfg(tmp_path, monkeypatch)
@@ -160,10 +171,6 @@ def test_postiz_map_analytics_maps_four_documented_labels():
            {"label": "Impressions", "data": [{"total": "4", "date": "d"}]}]
     # comments is mapped (present in the dict) even though default _W ignores it — the whitelist is the gate, not the map
     assert _map_analytics(arr) == {"likes": 1.0, "shares": 2.0, "comments": 3.0, "reach": 4.0}
-
-def test_postiz_window_days_table():
-    from fanops.post.metrics import _window_days
-    assert (_window_days("30d"), _window_days("7d"), _window_days(""), _window_days("garbage")) == (30, 7, 7, 7)
 
 
 def test_postiz_list_posts_one_failing_sid_does_not_lose_the_others(tmp_path, monkeypatch, mocker):
