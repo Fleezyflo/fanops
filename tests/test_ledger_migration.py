@@ -15,8 +15,8 @@ def _write(cfg, raw):
     cfg.ledger_path.write_text(json.dumps(raw))
 
 
-def test_schema_version_is_three():
-    assert SCHEMA_VERSION == 3
+def test_schema_version_is_four():
+    assert SCHEMA_VERSION == 4
 
 
 def test_migration_v2_to_v3_round_trip(tmp_path):
@@ -56,15 +56,16 @@ def test_migration_v2_to_v3_round_trip(tmp_path):
     # Save re-stamps schema_version 3; reload is a no-op (created_at unchanged = idempotent).
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 3
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 4
     led2 = Ledger.load(cfg)
     assert led2.posts["p_sched"].created_at == led.posts["p_sched"].created_at
     assert led2.sources["src_aaaaaaaaaaaa"].created_at == led.sources["src_aaaaaaaaaaaa"].created_at
 
 
-def test_migration_v0_to_v3_full_chain(tmp_path):
-    # A pre-versioning ledger (schema_version absent = v0, no stitch_plans, no created_at) hops v0->v1->v2->v3:
-    # stitch_plans injected by step 2 must NOT be undone by step 3; every row backfilled; saved version == 3.
+def test_migration_v0_to_v4_full_chain(tmp_path):
+    # A pre-versioning ledger (schema_version absent = v0, no stitch_plans, no created_at) hops
+    # v0->v1->v2->v3->v4: stitch_plans injected by step 2 must NOT be undone by later steps; every row
+    # backfilled; saved version == 4. (The post has no metrics, so the v4 step leaves metrics_series [].)
     cfg = Config(root=tmp_path)
     raw = {"sources": {"src_cccccccccccc": {"id": "src_cccccccccccc", "source_path": "/gone.mp4",
                                             "state": "catalogued"}},
@@ -77,9 +78,10 @@ def test_migration_v0_to_v3_full_chain(tmp_path):
     assert led.stitch_plans == {}                                   # step-2 injection survives step 3
     assert "src_cccccccccccc" in led.sources and led.sources["src_cccccccccccc"].created_at
     assert led.posts["p1"].created_at
+    assert led.posts["p1"].metrics_series == []                    # no metrics -> no legacy row
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 3
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 4
 
 
 def test_migration_v0_source_missing_source_path_no_crash(tmp_path):
@@ -142,9 +144,64 @@ def test_migration_idempotent_keeps_existing_created_at(tmp_path):
 
 
 def test_newer_schema_still_refused(tmp_path):
-    # The v4+ refusal guard is untouched by the new step.
+    # The v(N+1)+ refusal guard is untouched by the new step.
     cfg = Config(root=tmp_path)
     raw = {"schema_version": SCHEMA_VERSION + 1, "sources": {}, "moments": {}, "clips": {}, "posts": {}}
     _write(cfg, raw)
     with pytest.raises(ControlFileError, match="schema|upgrade"):
         Ledger.load(cfg)
+
+
+# ---- P3: v3->v4 metrics_series back-fill (a single `legacy` row for pre-P3 analyzed posts) ----
+def _v3_post(pid, state, **extra):
+    return {"id": pid, "parent_id": "c1", "account": "@a", "account_id": "1", "platform": "instagram",
+            "caption": "x", "state": state, "created_at": "2026-01-01T00:00:00Z", **extra}
+
+def test_migration_v3_to_v4_backfills_one_legacy_row_for_analyzed_post(tmp_path):
+    # A pre-P3 analyzed post carrying metrics but no series gets ONE 'legacy'-tagged row preserving that
+    # single data point, and STAYS analyzed. 'legacy' is deliberately not a cadence offset, so it never
+    # blocks a real future poll. The lift_score / metrics are carried verbatim into the row.
+    cfg = Config(root=tmp_path)
+    raw = {"schema_version": 3, "sources": {}, "moments": {}, "clips": {},
+           "posts": {"pa": _v3_post("pa", "analyzed", metrics={"saves": 9, "lift_score": 36.0})},
+           "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
+    _write(cfg, raw)
+    led = Ledger.load(cfg)
+    p = led.posts["pa"]
+    assert p.state.value == "analyzed"
+    assert len(p.metrics_series) == 1
+    row = p.metrics_series[0]
+    assert row["offset"] == "legacy" and row["saves"] == 9 and row["lift_score"] == 36.0
+    assert row["captured_at"] and parse_iso(row["captured_at"]).tzinfo is not None
+    assert p.metrics == {"saves": 9, "lift_score": 36.0}             # LATEST snapshot untouched
+
+def test_migration_v3_to_v4_empty_metrics_post_gets_empty_series(tmp_path):
+    # A v3 post with NO metrics (e.g. a published-but-unmeasured or queued post) gets metrics_series ==
+    # [] — we never fabricate a row from nothing.
+    cfg = Config(root=tmp_path)
+    raw = {"schema_version": 3, "sources": {}, "moments": {}, "clips": {},
+           "posts": {"pq": _v3_post("pq", "queued"),
+                     "pp": _v3_post("pp", "published", metrics={})},
+           "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
+    _write(cfg, raw)
+    led = Ledger.load(cfg)
+    assert led.posts["pq"].metrics_series == [] and led.posts["pp"].metrics_series == []
+
+def test_migration_v3_to_v4_idempotent_existing_series_untouched(tmp_path):
+    # A row that ALREADY carries a metrics_series is NOT double-backfilled (idempotent).
+    cfg = Config(root=tmp_path)
+    existing = [{"saves": 5, "lift_score": 20.0, "offset": "4h", "captured_at": "2026-01-01T04:00:00Z"}]
+    raw = {"schema_version": 3, "sources": {}, "moments": {}, "clips": {},
+           "posts": {"pa": _v3_post("pa", "analyzed", metrics={"saves": 5, "lift_score": 20.0},
+                                    metrics_series=existing)},
+           "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
+    _write(cfg, raw)
+    led = Ledger.load(cfg)
+    assert led.posts["pa"].metrics_series == existing               # no 'legacy' row added
+
+def test_migration_v4_never_raises_on_torn_post_row():
+    # The pure migration step must not raise on a non-dict post row (mirrors _migrate_v3_created_at).
+    from fanops.ledger import _migrate_v4_metrics_series
+    out = _migrate_v4_metrics_series({"posts": {"good": {"metrics": {"saves": 1}}, "torn": "not-a-dict"}})
+    assert out["posts"]["good"]["metrics_series"][0]["offset"] == "legacy"
+    assert out["posts"]["torn"] == "not-a-dict"                     # left untouched, no crash

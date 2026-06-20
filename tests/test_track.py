@@ -1,8 +1,12 @@
 import json
+from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
+from fanops.timeutil import iso_z
 from fanops.track import lift_score, record_metrics, pull_metrics
+
+_PUB = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 def test_lift_weights_saves_shares_over_likes():
     hi = lift_score({"likes": 10, "saves": 50, "shares": 40, "retention": 0.8, "reach": 1000})
@@ -104,16 +108,22 @@ def test_record_metrics_guards_non_published(tmp_path):
     assert led.posts["pf"].state is PostState.failed          # unchanged
     assert "lift_score" not in led.posts["pf"].metrics        # not recorded
 
-def test_record_metrics_already_analyzed_is_noop(tmp_path):
-    # An already-analyzed post is not re-overwritten by a stray direct call.
+def test_record_metrics_analyzed_is_repollable_latest_updates_state_stays(tmp_path):
+    # P3 REPLACES the old "analyzed is a no-op": an analyzed post is now RE-POLLABLE so its series can
+    # accumulate later offsets through the year. A later call updates Post.metrics (LATEST) and appends a
+    # later series row, but NEVER reverts state and NEVER rewrites an earlier row. (A non-(published|
+    # analyzed) post — failed/error/rejected/needs_reconcile — is still an absolute no-op; see below.)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pa", parent_id="c", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published))
-    led = record_metrics(led, "pa", {"saves": 10})            # published -> analyzed
+    led = record_metrics(led, "pa", {"saves": 10}, offset="4h", captured_at="t0")   # published -> analyzed
     assert led.posts["pa"].state is PostState.analyzed
-    first = dict(led.posts["pa"].metrics)
-    led = record_metrics(led, "pa", {"saves": 999})           # now analyzed -> guard no-ops
-    assert led.posts["pa"].metrics == first                    # unchanged (not re-overwritten)
+    led = record_metrics(led, "pa", {"saves": 999}, offset="24h", captured_at="t1") # analyzed re-poll
+    p = led.posts["pa"]
+    assert p.state is PostState.analyzed                       # stays analyzed (no revert)
+    assert p.metrics["saves"] == 999                           # LATEST updated (NOT a no-op anymore)
+    assert [r["offset"] for r in p.metrics_series] == ["4h", "24h"]
+    assert p.metrics_series[0]["saves"] == 10                  # earlier row preserved verbatim
 
 def test_pull_leaves_unmatched_published_post(tmp_path):
     # A published post with NO matching metrics row stays published (documented stuck-state;
@@ -243,3 +253,147 @@ def test_pull_metrics_postiz_computes_lift_score(tmp_path, monkeypatch, mocker):
     p = led.posts["p1"]
     assert p.state is PostState.analyzed
     assert p.metrics["lift_score"] == round(0.05 * 2 + 4.0 * 5 + 0.001 * 1000, 4)   # 0.1 + 20 + 1.0 = 21.1
+
+
+# ============================ P3: multi-interval metrics time-series ============================
+def _pub_at(led, pid="p1", sub="s_A", pub=_PUB, state=PostState.published, **kw):
+    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=state, submission_id=sub,
+                      published_at=(iso_z(pub) if pub else None), **kw))
+
+# ---- T2: Post.metrics_series field + the LATEST-snapshot byte-identical contract ----
+def test_metrics_series_defaults_empty(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    assert led.posts["p1"].metrics_series == []
+
+def test_record_keeps_post_metrics_latest_and_appends_one_provenance_row(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"saves": 20, "shares": 12, "retention": 0.7},
+                         offset="4h", captured_at="2026-01-01T04:00:00Z")
+    p = led.posts["p1"]
+    # Post.metrics is the LATEST snapshot EXACTLY as today — no offset/captured_at keys leak into it.
+    assert p.metrics == {"saves": 20, "shares": 12, "retention": 0.7,
+                         "lift_score": lift_score({"saves": 20, "shares": 12, "retention": 0.7})}
+    assert len(p.metrics_series) == 1
+    row = p.metrics_series[0]
+    assert row["offset"] == "4h" and row["captured_at"] == "2026-01-01T04:00:00Z"
+    assert row["saves"] == 20 and row["lift_score"] == p.metrics["lift_score"]   # row = snapshot + provenance
+
+# ---- T3: record_metrics appends at the due offset, widens re-entry, terminal UNCHANGED ----
+def test_record_published_flips_analyzed_and_appends_4h_row(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"saves": 5}, offset="4h", captured_at="t0")
+    assert led.posts["p1"].state is PostState.analyzed
+    assert [r["offset"] for r in led.posts["p1"].metrics_series] == ["4h"]
+
+def test_record_duplicate_offset_does_not_duplicate_row_but_updates_latest(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"saves": 5}, offset="4h", captured_at="t0")
+    led = record_metrics(led, "p1", {"saves": 8}, offset="4h", captured_at="t0b")   # same offset again
+    p = led.posts["p1"]
+    assert [r["offset"] for r in p.metrics_series] == ["4h"]    # not duplicated
+    assert p.metrics_series[0]["saves"] == 5                    # the captured row is unchanged
+    assert p.metrics["saves"] == 8                              # but LATEST snapshot DOES update
+
+def test_record_failed_post_is_absolute_noop_no_row(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.failed))
+    led = record_metrics(led, "pf", {"saves": 99}, offset="4h", captured_at="t0")
+    assert led.posts["pf"].state is PostState.failed
+    assert led.posts["pf"].metrics_series == [] and "lift_score" not in led.posts["pf"].metrics
+
+def test_record_no_offset_updates_latest_appends_no_row(tmp_path):
+    # back-compat: a legacy no-offset call updates Post.metrics + flips published->analyzed, NO series row.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"saves": 7})
+    assert led.posts["p1"].state is PostState.analyzed
+    assert led.posts["p1"].metrics["saves"] == 7 and led.posts["p1"].metrics_series == []
+
+def test_series_is_bounded_at_twenty_by_the_finite_cadence(tmp_path):
+    from fanops.metrics_schedule import CADENCE_OFFSETS
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    for off in CADENCE_OFFSETS:
+        led = record_metrics(led, "p1", {"saves": 1}, offset=off, captured_at="t")
+    led = record_metrics(led, "p1", {"saves": 1}, offset="52w", captured_at="t")   # re-poll terminal -> no dup
+    assert len(led.posts["p1"].metrics_series) == 20            # one row per offset, bounded, no pruning
+
+# ---- T4: pull_metrics computes the due offset per post (clock-injected) ----
+def test_pull_5h_old_gets_one_4h_row(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_at(led)
+    rows = [{"postSubmissionId": "s_A", "metrics": {"saves": 30, "shares": 25, "retention": 0.8}}]
+    led = pull_metrics(led, cfg, list_posts=lambda w: rows, now=_PUB + timedelta(hours=5))
+    p = led.posts["p1"]
+    assert p.state is PostState.analyzed
+    assert [r["offset"] for r in p.metrics_series] == ["4h"]
+
+def test_pull_too_soon_flips_analyzed_but_no_row(tmp_path):
+    # R1: a matched post flips to analyzed on the FIRST poll regardless of timing; the SERIES row only
+    # lands once an offset is due (1h-old -> due_offset None -> no row, but still analyzed + LATEST set).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_at(led)
+    rows = [{"postSubmissionId": "s_A", "metrics": {"saves": 3}}]
+    led = pull_metrics(led, cfg, list_posts=lambda w: rows, now=_PUB + timedelta(hours=1))
+    p = led.posts["p1"]
+    assert p.state is PostState.analyzed and p.metrics["saves"] == 3 and p.metrics_series == []
+
+def test_pull_30h_old_gets_24h_row(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_at(led)
+    rows = [{"postSubmissionId": "s_A", "metrics": {"saves": 9}}]
+    led = pull_metrics(led, cfg, list_posts=lambda w: rows, now=_PUB + timedelta(hours=30))
+    assert [r["offset"] for r in led.posts["p1"].metrics_series] == ["24h"]
+
+def test_pull_repolls_an_analyzed_post_accumulating_a_later_offset(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _pub_at(led, state=PostState.analyzed, metrics={"saves": 1, "lift_score": 4.0},
+            metrics_series=[{"saves": 1, "lift_score": 4.0, "offset": "4h", "captured_at": "t0"}])
+    rows = [{"postSubmissionId": "s_A", "metrics": {"saves": 12}}]
+    led = pull_metrics(led, cfg, list_posts=lambda w: rows, now=_PUB + timedelta(hours=30))
+    p = led.posts["p1"]
+    assert p.state is PostState.analyzed
+    assert [r["offset"] for r in p.metrics_series] == ["4h", "24h"]   # widened match-set re-polls it
+
+def test_pull_no_published_at_flips_analyzed_no_row(tmp_path):
+    # back-compat (why the existing skip-failed/match tests still pass): a published post WITHOUT a
+    # published_at is matched -> analyzed + LATEST set, but due_offset is None -> no series row.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_at(led, pub=None)
+    rows = [{"postSubmissionId": "s_A", "metrics": {"saves": 7}}]
+    led = pull_metrics(led, cfg, list_posts=lambda w: rows, now=datetime(2027, 1, 1, tzinfo=timezone.utc))
+    p = led.posts["p1"]
+    assert p.state is PostState.analyzed and p.metrics["saves"] == 7 and p.metrics_series == []
+
+# ---- T5: Postiz-degraded honesty on the series row ----
+def test_pull_postiz_row_carries_lift_degraded(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_at(led)
+    rows = [{"postSubmissionId": "s_A", "metrics": {"shares": 30, "reach": 50000, "likes": 200}}]
+    led = pull_metrics(led, cfg, list_posts=lambda w: rows, now=_PUB + timedelta(hours=5))
+    row = led.posts["p1"].metrics_series[0]
+    assert row["lift_degraded"] is True
+    assert row["lift_missing_keys"] == ["retention", "saves"]   # asserted on the ROW, not only Post.metrics
+
+def test_cmd_track_prints_series_and_degraded_summary(tmp_path, monkeypatch, mocker, capsys):
+    # cmd_track summarizes the pass: series rows ADDED and how many were degraded. A Postiz-shaped row
+    # (shares only) on a >4h-old post adds exactly one degraded row.
+    from fanops.cli import cmd_track
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        _pub_at(led, sub="sid1")                                # published 2026-01-01 -> well past 4h vs real now
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_R(200, [{"label": "Shares", "data": [{"total": "7", "date": "d"}]}]))
+    cmd_track(cfg, "30d")
+    out = capsys.readouterr().out
+    assert "series_rows+=1" in out and "degraded=1" in out
+
+def test_cmd_track_threads_analyzed_post_ids_too(tmp_path, monkeypatch, mocker):
+    # P3 widened the published-id snapshot to published|analyzed so an analyzed post keeps being
+    # re-polled (its series accumulates later offsets through the year). Pin that an ANALYZED post's
+    # submission_id is threaded into the Postiz per-post fetch, not silently dropped (review completeness).
+    from fanops.cli import cmd_track
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="pa", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.analyzed, submission_id="sidA",
+                          published_at=iso_z(_PUB), metrics={"saves": 1, "lift_score": 4.0}))
+    spy = mocker.patch("fanops.post.metrics.requests.get",
+                       return_value=_R(200, [{"label": "Shares", "data": [{"total": "3", "date": "d"}]}]))
+    cmd_track(cfg, "30d")
+    assert "analytics/post/sidA" in spy.call_args[0][0]   # analyzed post's id threaded, not dropped
