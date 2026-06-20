@@ -90,6 +90,24 @@ def reschedule_post(cfg: Config, post_id: str, new_time: str, *, now: Optional[d
     return ActionResult(ok=True, detail={"post_id": post_id, "scheduled_time": z})
 
 
+def clear_time(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """P1: deliberately DROP a post's scheduled_time. On an awaiting post just clears it. On a QUEUED post,
+    FIRST sends it back to awaiting_approval (unapprove) THEN clears — both in ONE transaction, in that order,
+    so the post is NEVER persisted as queued-and-timeless (which publish_due would publish-now). Reuses
+    _guard_editable_post (rejects unknown/imminent/wrong-state), mirroring reschedule_post's shape. The
+    unapprove uses the immutable model_copy (ledger layer); the scheduled_time=None is the in-place actions-
+    layer edit (like reschedule_post line 89) — consistent with both conventions."""
+    now = _now(now)
+    with Ledger.transaction(cfg) as led:
+        p, err = _guard_editable_post(led, post_id, now)
+        if err:
+            return ActionResult(ok=False, error=err)
+        if p.state is PostState.queued:
+            led.unapprove_post(post_id)        # queued -> awaiting FIRST (model_copy), so it's never queued+None
+        led.posts[post_id].scheduled_time = None
+    return ActionResult(ok=True, detail={"post_id": post_id})
+
+
 def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datetime] = None) -> ActionResult:
     now = _now(now)
     with Ledger.transaction(cfg) as led:

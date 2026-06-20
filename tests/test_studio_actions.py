@@ -78,6 +78,55 @@ def test_reschedule_imminent_rejected(tmp_path):
     res = reschedule_post(cfg, "p_edit", _z(NOW + timedelta(hours=8)), now=NOW)
     assert res.ok is False and "imminent" in res.error.lower()
 
+# ---- P1: clear_time (atomic unapprove-then-clear for queued) ----
+def _seed_awaiting(cfg):
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="p_aw", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.awaiting_approval,
+                      scheduled_time=_z(NOW + timedelta(hours=3))))
+    led.save()
+    return led
+
+def test_clear_time_sets_none_on_awaiting_post(tmp_path):
+    from fanops.studio.actions import clear_time
+    cfg = Config(root=tmp_path); _seed_awaiting(cfg)
+    res = clear_time(cfg, "p_aw", now=NOW)
+    assert res.ok is True
+    p = Ledger.load(cfg).posts["p_aw"]
+    assert p.scheduled_time is None and p.state is PostState.awaiting_approval   # awaiting: just clear
+
+def test_clear_time_on_queued_unapproves_and_clears(tmp_path):
+    from fanops.studio.actions import clear_time
+    cfg = Config(root=tmp_path); _seed(cfg)            # p_edit is queued, future
+    res = clear_time(cfg, "p_edit", now=NOW)
+    assert res.ok is True
+    p = Ledger.load(cfg).posts["p_edit"]
+    assert p.state is PostState.awaiting_approval and p.scheduled_time is None   # back to review AND timeless
+
+def test_clear_time_rejects_imminent_queued(tmp_path):
+    from fanops.studio.actions import clear_time
+    cfg = Config(root=tmp_path); led = _seed(cfg)
+    led.posts["p_edit"].scheduled_time = _z(NOW + timedelta(minutes=1)); led.save()   # imminent
+    res = clear_time(cfg, "p_edit", now=NOW)
+    assert res.ok is False and "imminent" in res.error.lower()
+    assert Ledger.load(cfg).posts["p_edit"].state is PostState.queued    # untouched — still about to ship
+
+def test_clear_time_unknown_post(tmp_path):
+    from fanops.studio.actions import clear_time
+    cfg = Config(root=tmp_path)
+    res = clear_time(cfg, "ghost", now=NOW)
+    assert res.ok is False and "no such post" in res.error.lower()
+
+def test_clear_time_never_leaves_queued_with_none(tmp_path):
+    # INVARIANT: after any successful clear_time, no post is simultaneously queued AND timeless
+    # (that combination = silent publish-now in publish_due).
+    from fanops.studio.actions import clear_time
+    cfg = Config(root=tmp_path); _seed(cfg)
+    assert clear_time(cfg, "p_edit", now=NOW).ok
+    for p in Ledger.load(cfg).posts.values():
+        assert not (p.state is PostState.queued and p.scheduled_time is None)
+
+
 def test_edit_caption_persists(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     res = edit_caption(cfg, "p_edit", "BRAND NEW CAPTION", now=NOW)
