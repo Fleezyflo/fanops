@@ -104,7 +104,7 @@ def test_post_has_optional_variant_fields():
 
 # ---- M1 (structural-hooks): asset origin (native vs third-party) ----
 # origin_kind is a THIRD axis, distinct from source_origin (drop|url|scan, HOW it arrived) and the
-# P1 creative-provenance (first_frame_kind/hook_pattern, attribution). WRITE-ONCE at catalogue.
+# P1 creative-provenance (first_frame_kind, attribution). WRITE-ONCE at catalogue.
 def test_source_origin_kind_defaults_native():
     s = Source(id="src_1", source_path="/s/x.mp4")          # old ledgers (no field) load as native
     assert s.origin_kind == "native"

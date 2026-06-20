@@ -295,11 +295,11 @@ def test_transferred_hooks_called_only_on_safe_read_or_request_side():
         f"transferred_hooks called from an unexpected file (review for safety): {sorted(callers - allowed)}"
 
 
-# P1/P2 creative-provenance dims (hook_pattern, first_frame_kind, variation_axis) are STAMPED for
+# P1/P2 creative-provenance dims (first_frame_kind, variation_axis) are STAMPED for
 # attribution (P3/P4) and must — like variant_* signal — never reach the amplify/delete-cascade path.
 # They don't intersect _FORBIDDEN_IN_AMPLIFY (exact-match), so this is a SEPARATE data-flow lock: the
 # obligation per the audit is "if a dim ever flows into amplify/retire/cascade, this goes red".
-_FORBIDDEN_PROVENANCE_IN_AMPLIFY = ("hook_pattern", "first_frame_kind", "variation_axis")
+_FORBIDDEN_PROVENANCE_IN_AMPLIFY = ("first_frame_kind", "variation_axis")
 
 def test_amplify_path_blind_to_creative_provenance():
     root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"

@@ -1,5 +1,5 @@
 """P2: a variation earns a post only when it is a COHERENT, EXPLAINABLE difference — each declares the
-cheap-text AXIS it moves (hook_pattern|hook_string|caption_angle|hook_placement) + a one-line rationale.
+cheap-text AXIS it moves (hook_string|caption_angle|hook_placement) + a one-line rationale.
 T1 = the schema/prompt/round-trip; T2 = the coherence gate. No new module — folds into caption.py."""
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -17,8 +17,8 @@ def _clip(led, cfg):
 
 
 def test_caption_item_carries_axis_and_rationale():
-    it = CaptionItem(surface="@a/instagram", caption="x", axis="hook_pattern", rationale="contrarian angle")
-    assert it.axis == "hook_pattern" and it.rationale == "contrarian angle"
+    it = CaptionItem(surface="@a/instagram", caption="x", axis="hook_string", rationale="different opening words")
+    assert it.axis == "hook_string" and it.rationale == "different opening words"
 
 def test_caption_item_axis_defaults_none():
     it = CaptionItem(surface="@a/instagram", caption="x")
@@ -27,7 +27,7 @@ def test_caption_item_axis_defaults_none():
 def test_normalize_variation_axis_known_and_unknown():
     for a in VARIATION_AXES:
         assert normalize_variation_axis(a) == a
-    assert normalize_variation_axis("Hook Pattern") == "hook_pattern"
+    assert normalize_variation_axis("Hook String") == "hook_string"
     assert normalize_variation_axis("hook-placement") == "hook_placement"
     assert normalize_variation_axis("vibes") is None
     assert normalize_variation_axis(None) is None
@@ -44,12 +44,12 @@ def test_ingest_round_trips_axis_and_rationale(tmp_path):
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
         CaptionItem(surface="@a/instagram", caption="no warning. just impact.", hashtags=["#mohflow"],
-                    hook="wait for the drop", axis="Hook Pattern", rationale="open-loop tease")
+                    hook="wait for the drop", axis="Hook String", rationale="different opening words")
     ]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["@a/instagram"]
-    assert mc["axis"] == "hook_pattern"                  # normalized
-    assert mc["rationale"] == "open-loop tease"
+    assert mc["axis"] == "hook_string"                   # normalized
+    assert mc["rationale"] == "different opening words"
 
 
 # --- P2 T2: the coherence gate (clean beats noise) ----------------------------------------------

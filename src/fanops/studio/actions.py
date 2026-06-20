@@ -509,7 +509,7 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
                               media_urls=list(src.media_urls or []), scheduled_time=None,
                               created_at=iso_z(_now(None)),   # content-lifecycle: fresh birth day (aware)
                               submission_id=f"fanops_{_hash('idemp', new_id)}",
-                              hook_pattern=src.hook_pattern, first_frame_kind=src.first_frame_kind,
+                              first_frame_kind=src.first_frame_kind,
                               cut_seconds=src.cut_seconds, clip_profile=src.clip_profile,
                               variant_key=src.variant_key, variant_hook=src.variant_hook,
                               variation_axis=src.variation_axis))   # carry P2 axis so a repost's attribution isn't lost

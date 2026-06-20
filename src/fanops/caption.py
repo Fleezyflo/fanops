@@ -40,7 +40,7 @@ _TAG_RE = re.compile(r"#\S+")
 # length axes are a P4-gated follow-up, NOT here). normalize_variation_axis maps an LLM label to a
 # canonical key (case/space/dash-insensitive), unknown -> None — so a bad label is "unlabeled", never a
 # crash. The coherence gate (T2) requires a KNOWN axis + a rationale; P3 attributes reach by the axis.
-VARIATION_AXES = ("hook_pattern", "hook_string", "caption_angle", "hook_placement")
+VARIATION_AXES = ("hook_string", "caption_angle", "hook_placement")
 
 def normalize_variation_axis(value) -> str | None:
     if not isinstance(value, str) or not value.strip():

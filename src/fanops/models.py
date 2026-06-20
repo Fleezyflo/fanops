@@ -140,10 +140,6 @@ class Moment(BaseModel):
                                                 # mechanical guard killed, not dead footage). None = nothing
                                                 # was stripped (old ledgers load fine).
     signal_score: float = 0.0
-    hook_pattern: Optional[str] = None          # P1 provenance: which of the 6 _hook_spec patterns the
-                                                # responder chose for this hook (open_loop|curiosity|
-                                                # comment_bait|contrarian|pov|proof). None = unknown/clean.
-                                                # The dim P4 ranks FIRST. One writer: moments ingest.
     hook_strategy: Optional[str] = None         # M2 router: text | clean_final | clean_awaiting_strategy:<key>
                                                 # | stitch:<format>. Observe-only annotation; None = unrouted
                                                 # (router off / old ledgers load). One writer: router.route_moments.
@@ -194,7 +190,6 @@ class Post(BaseModel):
     variant_hook: Optional[str] = None  # the burned-in hook text this account's variant used (observe-only)
     # P1 attribution key (one writer = crosspost): the creative dims P3 aggregates reach by and P4 ranks.
     # All None on old ledgers + when the upstream dim is unknown (validate-or-default; never crashes a load).
-    hook_pattern: Optional[str] = None      # the moment's chosen _hook_spec pattern (P4 ranks this FIRST)
     first_frame_kind: Optional[str] = None  # "visual" | "transcript" — how the opening frame was chosen
     clip_profile: Optional[str] = None      # song | talk — the per-video-type group ("hook for which video type")
     cut_seconds: Optional[float] = None     # rendered clip length (observational; length not varied)
@@ -257,7 +252,6 @@ class MomentPick(BaseModel):
     transcript_excerpt: str = ""
     signal_score: float = 0.0
     hook: Optional[str] = None      # on-screen RETENTION hook (curiosity-gap, NOT a transcript quote); None -> derive a default
-    hook_pattern: Optional[str] = None  # which of the 6 _hook_spec patterns this hook is; normalized at ingest
 
     @field_validator("start", "end")
     @classmethod
