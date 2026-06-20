@@ -15,8 +15,6 @@ from fanops.ingest import ingest_drops
 from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments
-from fanops.hookedit import request_hook_edit, ingest_hook_edit, hook_edit_pending
-from fanops.hookjudge import request_hook_judge, ingest_hook_judge, hook_judge_pending, in_repair
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
@@ -70,17 +68,15 @@ class SourceResult:
     source_id: str
     error_reason: str | None = None
 
-def _produce_source(cfg: Config, source_id: str, aspects: set[Fmt], *,
-                    hold_edit: bool, hold_judge: bool, log) -> SourceResult:
+def _produce_source(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> SourceResult:
     """Worker body for ONE source: load a PRIVATE throwaway Ledger.load(cfg) snapshot, run the slow
-    subprocess chain (transcribe -> detect_signals) on this source, finalize hooks on the private
-    ledger (ledger-only, no disk side effects), then render THIS source's decided moments — warming the
-    exact same on-disk artifacts (transcript JSON, signals sidecar, clip mp4 + fingerprint) the
-    sequential _prewarm warms today. Mirrors _prewarm's per-unit fail-open quarantine but RETURNS a
-    SourceResult instead of mutating in place. NEVER calls led.save()/_save_unlocked/Ledger.transaction
-    — the private in-memory ledger is discarded; only the artifacts + the result survive. The feed-wide
-    hold_edit/hold_judge are computed ONCE serially in _prewarm_concurrent and passed in, so every
-    worker's render-gate decision is identical to the sequential path (determinism)."""
+    subprocess chain (transcribe -> detect_signals) on this source, then render THIS source's decided
+    moments — warming the exact same on-disk artifacts (transcript JSON, signals sidecar, clip mp4 +
+    fingerprint) the sequential _prewarm warms today. Mirrors _prewarm's per-unit fail-open quarantine
+    but RETURNS a SourceResult instead of mutating in place. NEVER calls led.save()/_save_unlocked/
+    Ledger.transaction — the private in-memory ledger is discarded; only the artifacts + the result
+    survive. The on-screen hook is final at decision time (vision author + is_weak_hook floor), so a
+    decided moment's render fingerprint is stable — no feed-level hook stage to wait on (determinism)."""
     err: str | None = None
     try:
         led = Ledger.load(cfg)
@@ -96,19 +92,9 @@ def _produce_source(cfg: Config, source_id: str, aspects: set[Fmt], *,
             led = detect_signals(led, cfg, source_id)
     except Exception as e:                                # fail-open: the commit pass retries in-lock
         log("prewarm", source_id, "warn", err=str(e)[:120]); err = f"{type(e).__name__}: {e}"
-    # Finalize hooks on the PRIVATE ledger (ingest_hook_edit/judge only READ the response + mutate the
-    # ledger — no disk side effects) so a warmed render's fingerprint matches the in-lock render. Mirror
-    # _prewarm's render gate; hold_edit/hold_judge are the feed-wide decision passed in by the caller.
-    if cfg.hook_editor:
-        try: led = ingest_hook_edit(led, cfg)
-        except Exception as e: log("prewarm", source_id, "warn", err=f"hook edit ingest failed: {str(e)[:120]}")
-    if cfg.hook_judge:
-        try: led = ingest_hook_judge(led, cfg)
-        except Exception as e: log("prewarm", source_id, "warn", err=f"hook judge ingest failed: {str(e)[:120]}")
     for m in list(led.moments.values()):
         if m.parent_id != source_id: continue             # render only THIS source's moments (disjoint paths)
-        if m.state is MomentState.decided and not (hold_edit and not m.hook_edited) \
-                and not (hold_judge and not m.hook_judged):
+        if m.state is MomentState.decided:
             try:
                 led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
             except Exception as e:
@@ -120,35 +106,16 @@ def _prewarm_concurrent(cfg: Config, aspects: set[Fmt], log) -> None:
     bounded ThreadPoolExecutor instead of one-source-at-a-time, so a long video no longer head-of-line
     blocks the queue. The pool produces ONLY artifacts + pure SourceResults — NO worker touches the
     ledger (the one-writer rule). The throwaway ledger here is loaded ONLY to snapshot the eligible
-    source ids and compute the feed-wide hook holds serially (decided-moment hook state is from prior
-    committed passes; this pass's transcribe/signals don't alter it, so the holds match the sequential
-    path). The stitch prewarm tail stays serial. The single main transaction in advance() is the reduce
-    (the only writer) and is UNCHANGED — it re-runs the stages in-lock and skips on the warm artifacts."""
+    source ids. The stitch prewarm tail stays serial. The single main transaction in advance() is the
+    reduce (the only writer) and is UNCHANGED — it re-runs the stages in-lock and skips on the warm artifacts."""
     try:
         led = Ledger.load(cfg)
     except Exception as e:
         log("prewarm", "-", "warn", err=str(e)[:120]); return
     ids = [s.id for s in led.sources.values() if s.origin_kind != "third_party"]   # M1: third-party assets are INERT
-    # Feed-wide render holds (same as _prewarm_sequential): don't warm a render of a hook the editor will
-    # rewrite / the judge may reject (the fingerprint would mismatch the in-lock render). Computed ONCE
-    # here and passed to every worker so the render-gate decision is identical across the pool.
-    hold_edit = hold_judge = False
-    if cfg.hook_editor:
-        try:
-            led = ingest_hook_edit(led, cfg)
-            if cfg.responder_mode == "llm": hold_edit = hook_edit_pending(led, cfg)
-        except Exception:
-            hold_edit = False
-    if cfg.hook_judge:
-        try:
-            led = ingest_hook_judge(led, cfg)
-            if cfg.responder_mode == "llm": hold_judge = hook_judge_pending(led, cfg)
-        except Exception:
-            hold_judge = False
     if ids:
         with ThreadPoolExecutor(max_workers=cfg.concurrent_workers) as ex:   # bound = rate-limit guardrail, not correctness
-            futs = [ex.submit(_produce_source, cfg, sid, aspects,
-                              hold_edit=hold_edit, hold_judge=hold_judge, log=log) for sid in ids]
+            futs = [ex.submit(_produce_source, cfg, sid, aspects, log=log) for sid in ids]
             for fut in as_completed(futs):
                 fut.result()                              # surface a worker crash here (each worker already fail-open)
     # M4/M6 structural-hooks stitch prewarm stays SERIAL (independent of the per-source map; warms
@@ -180,27 +147,8 @@ def _prewarm_sequential(cfg: Config, aspects: set[Fmt], log) -> None:
                 led = detect_signals(led, cfg, s.id)
         except Exception as e:                            # fail-open: the commit pass retries in-lock
             log("prewarm", s.id, "warn", err=str(e)[:120])
-    # Finalize hooks on the throwaway ledger (ingest_hook_edit only READS the response + mutates the
-    # ledger — no disk side effects) so a warmed render's fingerprint matches the in-lock render and the
-    # commit skips ffmpeg. Mirror advance()'s render gate so we don't warm a hook the editor will rewrite.
-    hold_edit = hold_judge = False
-    if cfg.hook_editor:
-        try:
-            led = ingest_hook_edit(led, cfg)
-            if cfg.responder_mode == "llm":
-                hold_edit = hook_edit_pending(led, cfg)
-        except Exception:
-            hold_edit = False
-    if cfg.hook_judge:                                    # Phase 3 critic: don't warm a render of a hook
-        try:                                             # the judge may reject (fingerprint would mismatch)
-            led = ingest_hook_judge(led, cfg)
-            if cfg.responder_mode == "llm":
-                hold_judge = hook_judge_pending(led, cfg)
-        except Exception:
-            hold_judge = False
     for m in list(led.moments.values()):
-        if m.state is MomentState.decided and not (hold_edit and not m.hook_edited) \
-                and not (hold_judge and not m.hook_judged):
+        if m.state is MomentState.decided:
             try:
                 led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
             except Exception as e:
@@ -265,64 +213,22 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                     led.sources[s.id].state = SourceState.error
                     led.sources[s.id].error_reason = f"{type(e).__name__}: {e}"
                     log("moments", s.id, "error", err=str(e)[:120])
-        # Feed-aware hook editor (opt-in, fail-open): one pass over the WHOLE feed of decided hooks
-        # rewrites the weak/duplicated/templated ones into strong, DISTINCT hooks BEFORE any clip
-        # burns one — the per-clip moment responder answers in isolation and cannot diversify across
-        # the feed. Gated on cfg.hook_editor AND the llm responder (the only path that can answer the
-        # gate; without it the gate would never clear and HOLD rendering forever). DEFAULT OFF -> this
-        # block is skipped entirely and rendering is byte-identical to today.
-        hold_hooks = hold_judge = False
-        if cfg.hook_editor:
-            try:
-                # ALWAYS consume an already-written answer (review HIGH): if the operator flips
-                # FANOPS_RESPONDER llm->manual while a gate is pending, ingest must still apply the
-                # editor's answer rather than orphan it. Only REQUEST + HOLD on the llm path — the
-                # only responder that can answer the gate; holding for an unanswerable (manual) gate
-                # would wedge rendering forever.
-                if cfg.responder_mode == "llm":
-                    led = request_hook_edit(led, cfg)    # open the feed gate (idempotent per feed set)
-                led = ingest_hook_edit(led, cfg)         # apply the editor's answer whenever it lands
-                if cfg.responder_mode == "llm":
-                    hold_hooks = hook_edit_pending(led, cfg)  # still unanswered -> HOLD rendering this pass
-            except Exception as e:                       # fail-open: never let the editor wedge a pass
-                log("hookedit", "-", "error", err=str(e)[:120])
-                hold_hooks = False
-        # Specificity critic (Phase 3, opt-in via cfg.hook_judge): runs AFTER the editor on each finalized
-        # hook and REJECTS a generic/unanchored one to a clean clip. Same gate contract as the editor —
-        # request + HOLD only on the llm path (the only responder that can answer); ingest always applies
-        # a written verdict. Fail-open: a critic error never wedges a pass (hold_judge stays False).
-        if cfg.hook_judge:
-            try:
-                if cfg.responder_mode == "llm":
-                    led = request_hook_judge(led, cfg)   # open the critic gate (idempotent per batch set)
-                led = ingest_hook_judge(led, cfg)        # apply the critic's verdicts whenever they land
-                if cfg.responder_mode == "llm":
-                    hold_judge = hook_judge_pending(led, cfg)  # unanswered -> HOLD rendering this pass
-            except Exception as e:
-                log("hookjudge", "-", "error", err=str(e)[:120])
-                hold_judge = False
-        # Task 9 scoreboard: one read-only digest line of hook quality (null/repaired/viewer_pov_rate)
-        # when a hook subsystem is on. The viewer-POV rate is critic-INDEPENDENT (narration_signature),
-        # so a loosened critic can't inflate it. Read-only + fail-open — never wedges a pass.
-        if cfg.hook_editor or cfg.hook_judge:
-            try: log_hook_quality(led, cfg)
-            except Exception as e: log("hookscore", "-", "error", err=str(e)[:120])
-        # M2 structural-hooks router (opt-in, observe-only): classify each FINAL decided hook into a
+        # Task 9 scoreboard: one read-only digest line of hook quality (null/viewer_pov_rate) on EVERY
+        # pass. viewer_pov_rate (narration_signature) measures the FINAL on-screen hooks the vision
+        # author wrote — independent of any subsystem flag — so the operator's hook-quality visibility
+        # stays on by default (it rode the now-deleted editor/critic flags before). Read-only + fail-open.
+        try: log_hook_quality(led, cfg)
+        except Exception as e: log("hookscore", "-", "error", err=str(e)[:120])
+        # M2 structural-hooks router (opt-in, observe-only): classify each decided hook into a
         # hook_strategy reason BEFORE the render loop. Renders nothing; a router error never wedges the
-        # pass (fail-open, like the editor/critic blocks above). Default OFF -> byte-identical to today.
+        # pass (fail-open). Default OFF -> byte-identical to today.
         if cfg.hook_router:
             try:
-                led = route_moments(led, cfg, hold_hooks=hold_hooks, hold_judge=hold_judge)
+                led = route_moments(led, cfg)
             except Exception as e:
                 log("router", "-", "error", err=str(e)[:120])
         for m in list(led.moments.values()):
             if m.state is MomentState.decided:
-                if hold_hooks and not m.hook_edited:
-                    continue                             # wait for the feed editor before burning this hook
-                if hold_judge and not m.hook_judged:
-                    continue                             # wait for the critic's verdict before burning
-                if in_repair(m):
-                    continue                             # critic rejected; awaiting re-edit+re-judge — don't burn the rejected hook
                 try:
                     led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
                     for clip in clips:
@@ -435,13 +341,11 @@ def advance(cfg: Config, *, base_time: str) -> dict:
             # surfaced here so the unattended operator sees the drop, not only in run.log.
             "hook_burn_failed": sum(1 for c in led.clips.values() if c.hook_burn_failed),
             "errors": sum(1 for s in led.sources.values() if s.state is SourceState.error),
-            # ALL four agent-gate kinds the responder answers (responder._SCHEMA): the hook editor AND
-            # judge gates BLOCK rendering, so `fanops run` must see them to know it has NOT converged.
-            # Omitting hookjudge let the run loop declare done while the critic gate was still open.
+            # Both agent-gate kinds the responder answers (responder._SCHEMA): moments blocks the
+            # clip/caption stages, captions blocks crosspost, so `fanops run` must see them to know it
+            # has NOT converged.
             "awaiting": {"moments": len(pending(cfg, kind="moments")),
-                         "captions": len(pending(cfg, kind="captions")),
-                         "hookedit": len(pending(cfg, kind="hookedit")),
-                         "hookjudge": len(pending(cfg, kind="hookjudge"))},
+                         "captions": len(pending(cfg, kind="captions"))},
         }
     # digest is read-only reporting: build it from the just-committed ledger, OUTSIDE the lock, so
     # the slow markdown render never extends the lock-held window (it would block an overlapping

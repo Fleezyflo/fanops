@@ -1,12 +1,12 @@
 # src/fanops/intro_match.py
 """M6 (structural-hooks): the LLM-vision intro PAIRING matcher — the gate that decides WHICH intro asset
-pairs with a clean clip and what the "wait for it / [X] incoming" tease says. Mirrors hookedit.py: request
+pairs with a clean clip and what the "wait for it / [X] incoming" tease says. A vision gate: request
 writes one agent gate per router-reserved (clean_awaiting_strategy:intro_tease) moment carrying the clip's
 context (keyframes, router reason, transcript, hook) against the candidate THIRD-PARTY intro assets
 (thumbnail, origin_kind); the llm responder answers RANKED pairings; ingest writes them onto
 Moment.intro_matches for the producer (stitch_render._intro_tease_candidates).
 
-Gated on cfg.intro_tease + FANOPS_RESPONDER=llm and FAIL-OPEN exactly like hookedit: no responder, no
+Gated on cfg.intro_tease + FANOPS_RESPONDER=llm and FAIL-OPEN: no responder, no
 answer, or a corrupt answer leaves the moment unmatched (-> no intro_tease plan), and impact-cut + the bare
 clip are unaffected — a poisoned matcher pair must never wedge the loop. The gate key is EPHEMERAL (moment +
 candidate set + MATCHER_VERSION), SEPARATE from the durable content-addressed stitch_plan id, so changing
@@ -111,8 +111,8 @@ def request_intro_match(led: Ledger, cfg: Config) -> Ledger:
 
 def intro_match_pending(led: Ledger, cfg: Config) -> bool:
     """True when the matcher is ON, there is a reserved moment + a candidate set, and any gate is not yet
-    answered — a queryable "matcher still working" read-model (e.g. for Studio status). NOTE: unlike
-    hookedit/hookjudge, the pipeline does NOT hold rendering on this — the bare clip always ships and the
+    answered — a queryable "matcher still working" read-model (e.g. for Studio status). NOTE: the
+    pipeline does NOT hold rendering on this — the bare clip always ships and the
     intro stitch is purely additive, so the producer self-defers (a moment with no `intro_matches` yields no
     candidate) until the pairings land. False when off / nothing reserved / no candidates (never spurious)."""
     if not (cfg.intro_tease and cfg.responder_mode == "llm"):

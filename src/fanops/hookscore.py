@@ -1,11 +1,11 @@
 # src/fanops/hookscore.py
-"""Hook-quality measurement (Task 5 + Task 9). Two jobs, BOTH non-gating:
+"""Hook-quality measurement (Task 5 + Task 9). One job, non-gating:
   - narration_signature(): a high-precision detector for third-person scene-narration with no viewer
-    address. Used as (a) a critic-INDEPENDENT viewer-POV METER on the scoreboard (so a loosened/biased
-    critic can't inflate the number) and (b) a SIGNAL fed to the critic ('this reads as narration, look
-    here'). It REJECTS NOTHING — quality decisions belong to the reasoning critic. High precision on
+    address. Used as a viewer-POV METER on the read-only scoreboard — it measures how many shipped
+    on-screen hooks read as recaps instead of addressing the scroller. It REJECTS NOTHING (the vision
+    author writes the hook; the deterministic is_weak_hook floor is the only gate). High precision on
     purpose: it flags only CLEAR third-person-pronoun recaps, accepting misses (a regex can decide the
-    obvious 'he stopped answering' but not the borderline call — that is the critic's job).
+    obvious 'he stopped answering' but not the borderline call).
 The narration shape the operator's failures share: a third-person pronoun subject (he/she/they/his/...)
 with NO second-person/viewer address and no question — it recounts the clip to no one. A viewer marker
 (you/your/pov/imagine/?) or an imperative-to-the-viewer opener (wait/watch/listen/...) means the line
@@ -43,19 +43,16 @@ def narration_signature(text: str | None) -> bool:
 
 def hook_quality(led: Ledger) -> dict:
     """Read-only hook scoreboard (Task 9) over the decided moments — no LLM, no network, no ledger
-    write/flock. Reports `viewer_pov_rate` from narration_signature, INDEPENDENT of the critic's verdict:
-    a hook the critic KEPT still counts against the rate if it reads as third-person narration, so a
-    loosened/biased critic cannot inflate the number (that is the whole point of a separate meter).
-    `repaired` = shipped hooks that took at least one critic->editor repair round. viewer_pov_rate is
-    1.0 when no hook shipped (vacuously full POV, and no division by zero)."""
+    write/flock. Reports `viewer_pov_rate` from narration_signature: a shipped hook counts against the
+    rate if it reads as third-person narration, so the meter measures hook quality directly off the
+    final on-screen text. viewer_pov_rate is 1.0 when no hook shipped (vacuously full POV, and no
+    division by zero)."""
     decided = [m for m in led.moments.values() if m.state is MomentState.decided]
     with_hook = [m for m in decided if m.hook]
-    repaired = [m for m in with_hook if m.hook_rounds > 0]
     narrated = [m for m in with_hook if narration_signature(m.hook)]
     pov = 1.0 - (len(narrated) / len(with_hook)) if with_hook else 1.0
     return {"decided": len(decided), "with_hook": len(with_hook),
-            "null": len(decided) - len(with_hook), "repaired": len(repaired),
-            "viewer_pov_rate": pov}
+            "null": len(decided) - len(with_hook), "viewer_pov_rate": pov}
 
 def log_hook_quality(led: Ledger, cfg: Config) -> dict:
     """Emit ONE digest line of hook_quality(led) via the standard logger and return the dict. Read-only

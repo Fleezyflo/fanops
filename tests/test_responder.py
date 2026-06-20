@@ -182,30 +182,10 @@ def test_llm_responder_retries_once_on_timeout(tmp_path, monkeypatch):
     assert n == 1 and calls["n"] == 2                       # retried once, then answered
     assert response_path(cfg, "moments", "src_1").exists()
 
-def test_hookedit_model_passes_frames_as_images_for_vision(mocker):
-    # The production model for a hookedit gate must hand the clip's frames to claude_json as images
-    # (Read tool) so the editor SEES each clip; moments/captions stay pure text generators.
-    from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"items": []}, None))
-    payload = {"items": [{"moment_id": "m1", "hook": "x", "frames": ["/t/a.jpg", "/t/b.jpg"]},
-                         {"moment_id": "m2", "hook": "y", "frames": ["/t/c.jpg"]}]}
-    _default_claude_model("hookedit", payload)
-    assert spy.call_args.kwargs.get("images") == ["/t/a.jpg", "/t/b.jpg", "/t/c.jpg"]
-
-def test_hookjudge_model_passes_frames_as_images_for_vision(mocker):
-    # Task 6: the critic is now ALSO a vision call — the hookjudge gate hands the clip's frames to
-    # claude_json as images so the judge SEES the footage, mirroring hookedit. moments/captions stay text.
-    from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"items": []}, None))
-    payload = {"items": [{"moment_id": "m1", "hook": "x", "frames": ["/t/a.jpg", "/t/b.jpg"]},
-                         {"moment_id": "m2", "hook": "y", "frames": ["/t/c.jpg"]}]}
-    _default_claude_model("hookjudge", payload)
-    assert spy.call_args.kwargs.get("images") == ["/t/a.jpg", "/t/b.jpg", "/t/c.jpg"]
-
 def test_moments_model_passes_frames_as_images_for_vision(mocker):
-    # Phase 1: the AUTHOR is now a vision call — the moments gate hands its sampled source frames to
-    # claude as images so the hook is written SEEING the footage (mirrors hookedit/hookjudge). The
-    # moments payload carries frames at the TOP level (not per-item like the editor's feed).
+    # Phase 1: the AUTHOR is a vision call — the moments gate hands its sampled source frames to
+    # claude as images so the hook is written SEEING the footage. The moments payload carries frames
+    # at the TOP level.
     from fanops.responder import _default_claude_model
     spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
     _default_claude_model("moments", {"source_id": "s", "duration": 10.0, "frames": ["/k/a.jpg", "/k/b.jpg"]})
@@ -247,26 +227,6 @@ def test_default_model_provenance_falls_back_to_pinned_when_envelope_lacks_model
     _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
     prov = next(c for c in logfn.call_args_list if c.args[2] == "call")
     assert prov.kwargs["model"] == "opus" and prov.kwargs["brief_sha"] == "absent"   # moments -> opus
-
-def test_llm_responder_answers_hookedit_gate(tmp_path, monkeypatch):
-    # The feed-aware hook editor rides the same gate contract: a pending hookedit request is answered
-    # by the SAME responder, validated against HookEditDecision, request_id stamped — no moments-style
-    # source_id injection (hookedit has no source_id).
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path)
-    from fanops.agentstep import write_request, response_path
-    from fanops.responder import LlmResponder
-    write_request(cfg, kind="hookedit", key="feeddigest",
-                  payload={"guidance": "", "items": [{"moment_id": "m1", "hook": "his hardest bar",
-                           "transcript_excerpt": "x", "reason": "r", "language": "en"}]})
-    seen = {}
-    def model(kind, payload):
-        seen["kind"] = kind
-        return {"items": [{"moment_id": "m1", "hook": "before he was Moh Flow"}]}
-    n = LlmResponder(cfg, model=model).answer_pending(cfg)
-    assert n == 1 and seen["kind"] == "hookedit"
-    data = json.loads(response_path(cfg, "hookedit", "feeddigest").read_text())
-    assert data["items"][0]["hook"] == "before he was Moh Flow" and "request_id" in data
 
 def test_llm_responder_double_timeout_leaves_gate_pending_not_raise(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")

@@ -1,5 +1,5 @@
-# tests/test_intro_match.py — M6 (structural-hooks): the LLM-vision intro PAIRING matcher gate. Mirrors
-# hookedit: request_intro_match writes one agent gate per router-reserved (clean_awaiting_strategy:intro_tease)
+# tests/test_intro_match.py — M6 (structural-hooks): the LLM-vision intro PAIRING matcher gate.
+# request_intro_match writes one agent gate per router-reserved (clean_awaiting_strategy:intro_tease)
 # moment carrying the clip context vs the candidate third-party intro assets; the llm responder answers ranked
 # pairings; ingest writes them onto Moment.intro_matches for the producer. Gated on cfg.intro_tease +
 # FANOPS_RESPONDER=llm, FAIL-OPEN (no responder / corrupt answer -> moment stays unmatched, never wedges).

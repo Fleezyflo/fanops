@@ -352,122 +352,12 @@ def _accts_one(cfg):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "98432", "platforms": ["instagram"], "status": "active"}]}))
 
-def _answer_moments_with_hook(cfg, hook):
-    from fanops.models import MomentDecision, MomentPick
-    from fanops.agentstep import response_path, latest_request_id
-    src_id = next(iter(Ledger.load(cfg).sources))
-    rid = latest_request_id(cfg, "moments", src_id)
-    response_path(cfg, "moments", src_id).write_text(MomentDecision(
-        source_id=src_id, request_id=rid,
-        picks=[MomentPick(start=14.0, end=18.0, reason="punchline",
-                          transcript_excerpt="they slept on me", hook=hook)]).model_dump_json())
-
-def test_hook_editor_holds_then_rewrites_across_the_feed(tmp_path, monkeypatch, mocker):
-    # FANOPS_HOOK_EDITOR on + llm responder: after moments are decided, advance() opens ONE feed-level
-    # hookedit gate and HOLDS clip rendering until it's answered, then renders with the REWRITTEN hook.
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
-    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "off")     # isolate the EDITOR; the critic (default ON v2) has its own tests
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
-    from fanops.models import HookEditDecision, HookEditItem
-    from fanops.agentstep import response_path, latest_request_id, pending
-
-    advance(cfg, base_time="2026-07-01T18:00:00Z")                 # -> moments gate
-    _answer_moments_with_hook(cfg, "the word he repeated twice")    # a guard-passing hook to be rewritten
-
-    s = advance(cfg, base_time="2026-07-01T18:00:00Z")             # ingest moments -> hookedit gate, HOLD
-    assert s["awaiting"]["hookedit"] == 1 and s["clips"] == 0       # rendering held until the editor answers
-
-    mid = next(iter(Ledger.load(cfg).moments))
-    key = pending(cfg, kind="hookedit")[0]
-    rid = latest_request_id(cfg, "hookedit", key)
-    response_path(cfg, "hookedit", key).write_text(HookEditDecision(
-        request_id=rid, items=[HookEditItem(moment_id=mid, hook="before he was Moh Flow")]).model_dump_json())
-
-    s = advance(cfg, base_time="2026-07-01T18:00:00Z")            # ingest hookedit -> render with edited hook
-    assert s["clips"] >= 1 and s["awaiting"]["hookedit"] == 0
-    m = Ledger.load(cfg).moments[mid]
-    assert m.hook == "before he was Moh Flow" and m.hook_edited is True
-
-def test_critic_reject_holds_render_for_repair_not_burns_rejected_hook(tmp_path, monkeypatch, mocker):
-    # Repair-loop pipeline guard (review HIGH): when the critic REJECTS an edited hook, advance() must
-    # HOLD rendering (re-open for one editor repair), NOT burn the rejected hook in the same pass.
-    # Without an explicit repair guard the clip rendered: hold_hooks was already computed (the editor
-    # block runs first, when the moment was still hook_edited=True), and hold_judge drops the re-opened
-    # moment (hook_edited=False) from _judgeable -> both render guards False -> the rejected hook burns.
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
-    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "1")                    # critic ON (the repair driver)
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
-    from fanops.models import HookEditDecision, HookEditItem, HookJudgeDecision, HookJudgeItem
-    from fanops.agentstep import response_path, latest_request_id, pending
-
-    advance(cfg, base_time="2026-07-01T18:00:00Z")                 # -> moments gate
-    _answer_moments_with_hook(cfg, "the word he repeated twice")
-    advance(cfg, base_time="2026-07-01T18:00:00Z")                 # ingest moments -> hookedit gate, HOLD
-    mid = next(iter(Ledger.load(cfg).moments))
-
-    ek = pending(cfg, kind="hookedit")[0]                          # editor keeps a hook -> critic gate opens
-    response_path(cfg, "hookedit", ek).write_text(HookEditDecision(
-        request_id=latest_request_id(cfg, "hookedit", ek),
-        items=[HookEditItem(moment_id=mid, hook="before he was Moh Flow")]).model_dump_json())
-    s = advance(cfg, base_time="2026-07-01T18:00:00Z")
-    assert s["clips"] == 0                                          # critic gate holds the render
-
-    jk = pending(cfg, kind="hookjudge")[0]                          # critic REJECTS -> must re-open + HOLD
-    response_path(cfg, "hookjudge", jk).write_text(HookJudgeDecision(
-        request_id=latest_request_id(cfg, "hookjudge", jk),
-        items=[HookJudgeItem(moment_id=mid, keep=False, why="re-aim at the viewer")]).model_dump_json())
-    s = advance(cfg, base_time="2026-07-01T18:00:00Z")
-    m = Ledger.load(cfg).moments[mid]
-    assert m.hook_rounds == 1 and m.hook_edited is False            # re-opened for one repair pass
-    assert m.hook == "before he was Moh Flow"                       # rejected text kept for the editor to rewrite
-    assert s["clips"] == 0                                          # HELD — the rejected hook was NOT burned
-
-def test_hook_editor_consumes_answer_even_after_responder_flipped_to_manual(tmp_path, monkeypatch, mocker):
-    # Review HIGH: a gate answered under llm must still be APPLIED if the operator flips
-    # FANOPS_RESPONDER->manual mid-session, never orphaned + never rendered with the un-edited hook.
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
-    monkeypatch.setenv("FANOPS_HOOK_JUDGE", "off")     # isolate the EDITOR; the critic (default ON v2) has its own tests
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
-    from fanops.models import HookEditDecision, HookEditItem
-    from fanops.agentstep import response_path, latest_request_id, pending
-    advance(cfg, base_time="2026-07-01T18:00:00Z")
-    _answer_moments_with_hook(cfg, "the word he repeated twice")
-    advance(cfg, base_time="2026-07-01T18:00:00Z")                 # opens hookedit gate, holds
-    mid = next(iter(Ledger.load(cfg).moments)); key = pending(cfg, kind="hookedit")[0]
-    rid = latest_request_id(cfg, "hookedit", key)
-    response_path(cfg, "hookedit", key).write_text(HookEditDecision(
-        request_id=rid, items=[HookEditItem(moment_id=mid, hook="before he was Moh Flow")]).model_dump_json())
-    monkeypatch.setenv("FANOPS_RESPONDER", "manual")               # operator flips mid-session
-    s = advance(cfg, base_time="2026-07-01T18:00:00Z")
-    m = Ledger.load(cfg).moments[mid]
-    assert m.hook == "before he was Moh Flow" and m.hook_edited is True   # answer consumed, not orphaned
-    assert s["clips"] >= 1
-
-def test_hook_editor_off_renders_immediately_no_gate(tmp_path, monkeypatch, mocker):
-    # Explicitly OFF (editor now defaults ON): no hookedit gate, clips render in the same pass moments
-    # are ingested (the pre-C2 flow, still available when an operator opts out).
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path); _accts_one(cfg); _put(cfg.inbox / "raw.mp4", b"V"); _ff(mocker)
-    advance(cfg, base_time="2026-07-01T18:00:00Z")
-    _answer_moments_with_hook(cfg, "the word he repeated twice")
-    s = advance(cfg, base_time="2026-07-01T18:00:00Z")
-    assert s["clips"] >= 1 and s["awaiting"]["hookedit"] == 0       # no hold, no gate
-
-
 # ---- M1 (structural-hooks): third-party sources are INERT to clip-production ----
 def test_third_party_skipped_in_both_loops_native_still_processed(tmp_path, monkeypatch, mocker):
     # The guard skips a third_party source as the FIRST line of BOTH _prewarm and the in-lock loop, so
     # transcribe_source is NEVER called for it (asserting "0 clips" alone is hollow — the gate blocks
     # clips regardless). A native source IS still processed (transcribe IS called for it).
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); _accts_one(cfg)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_native", source_path=str(cfg.sources / "n.mp4"),
@@ -482,7 +372,7 @@ def test_third_party_skipped_in_both_loops_native_still_processed(tmp_path, monk
 def test_discovered_source_is_inert(tmp_path, monkeypatch, mocker):
     # a rebuild orphan (SourceState.discovered) matches no processing state -> never transcribed,
     # stays discovered (Task 5's rebuild relies on this inertness).
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); _accts_one(cfg)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_disc", source_path=str(cfg.sources / "d.mp4"),
@@ -495,7 +385,7 @@ def test_native_renders_clip_while_third_party_inert(tmp_path, monkeypatch, mock
     # non-regression: with a third_party source present, a native moment STILL renders to a clip, and
     # the third_party source produces no moment/clip and stays catalogued (never enters the pipeline).
     from fanops.models import Moment, MomentState
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); _accts_one(cfg)
     src = cfg.sources / "src_n.mp4"; _put(src, b"V"); _ff(mocker)
     with Ledger.transaction(cfg) as led:
@@ -528,7 +418,7 @@ def _seed_clean_decided(cfg):
 
 def test_router_on_annotates_clean_moment_with_impact_cut_reservation(tmp_path, monkeypatch, mocker):
     from fanops.router import awaiting
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1")
     cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_decided(cfg)
     advance(cfg, base_time="2099-01-01T00:00:00Z")                     # router runs after critic, before render
@@ -536,13 +426,26 @@ def test_router_on_annotates_clean_moment_with_impact_cut_reservation(tmp_path, 
 
 def test_router_off_no_annotation_clip_still_renders(tmp_path, monkeypatch, mocker):
     # non-regression: router DEFAULT OFF -> no annotation, and the clean clip renders exactly as before
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False)
     cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_decided(cfg)
     advance(cfg, base_time="2099-01-01T00:00:00Z")
     led = Ledger.load(cfg)
     assert led.moments["mom_r"].hook_strategy is None                  # observe-only; OFF = no delta
     assert any(c.parent_id == "mom_r" for c in led.clips.values())     # clip still renders
+
+def test_hook_quality_scoreboard_fires_on_default_path(tmp_path, monkeypatch, mocker):
+    # the viewer_pov_rate scoreboard is independent of the (deleted) editor/critic — it measures the
+    # FINAL on-screen hooks, so it must still log on a normal run with the router DEFAULT OFF (else the
+    # operator's hook-quality visibility silently vanished with the cascade).
+    import fanops.pipeline as pipeline
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False)
+    calls = []
+    monkeypatch.setattr(pipeline, "log_hook_quality", lambda led, cfg: calls.append(1))
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_decided(cfg)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    assert calls, "log_hook_quality must fire on the default path (router off)"
 
 
 # ---- M4 (structural-hooks): impact-cut SUGGEST wired after the render loop (gated, fail-open) ----
@@ -560,7 +463,7 @@ def _seed_wide_clean_decided(cfg):
                               start=0.0, end=18.0, reason="punchline"))   # hook=None -> clean
 
 def test_impact_cut_on_suggests_plan_and_reroutes(tmp_path, monkeypatch, mocker):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1"); monkeypatch.setenv("FANOPS_IMPACT_CUT", "1")
     cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_wide_clean_decided(cfg)
     advance(cfg, base_time="2099-01-01T00:00:00Z")
@@ -571,7 +474,7 @@ def test_impact_cut_on_suggests_plan_and_reroutes(tmp_path, monkeypatch, mocker)
 
 def test_impact_cut_off_no_plans(tmp_path, monkeypatch, mocker):
     # router on (so the moment is reserved) but the producer OFF -> no plans, no re-route (non-regression)
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1"); monkeypatch.delenv("FANOPS_IMPACT_CUT", raising=False)
     cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_wide_clean_decided(cfg)
     advance(cfg, base_time="2099-01-01T00:00:00Z")
@@ -584,7 +487,7 @@ def test_impact_cut_killswitch_warns_and_does_not_render(tmp_path, monkeypatch, 
     # forward-only kill-switch: an approved plan with the feature OFF stays approved (not rendered, not
     # retracted) and the pass logs a WARNING naming the count — never a silent freeze (PRD).
     from fanops.models import StitchPlan, StitchState, ClipState, Clip
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False); monkeypatch.delenv("FANOPS_IMPACT_CUT", raising=False)
     cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker)
     with Ledger.transaction(cfg) as led:
@@ -619,7 +522,7 @@ def test_intro_tease_matcher_gate_requested(tmp_path, monkeypatch, mocker):
     # router on + intro_tease on + responder llm: advance reserves the clean moment intro_tease and OPENS the
     # matcher gate (no responder answers it here -> no plan yet, which is the benign fail-open).
     from fanops.agentstep import pending
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1"); monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_nopeak_decided(cfg)
@@ -633,7 +536,7 @@ def test_intro_tease_matcher_gate_requested(tmp_path, monkeypatch, mocker):
 def test_intro_tease_off_no_matcher_gate(tmp_path, monkeypatch, mocker):
     # intro_tease OFF: no reservation, no matcher gate, clean_final (non-regression)
     from fanops.agentstep import pending
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.setenv("FANOPS_HOOK_ROUTER", "1"); monkeypatch.delenv("FANOPS_INTRO_TEASE", raising=False)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_nopeak_decided(cfg)
@@ -646,7 +549,7 @@ def test_intro_tease_off_no_matcher_gate(tmp_path, monkeypatch, mocker):
 def test_intro_tease_killswitch_warns(tmp_path, monkeypatch, mocker):
     # an approved intro_tease plan with the format OFF stays approved (frozen, not rendered) + warns
     from fanops.models import StitchPlan, StitchState, ClipState, Clip
-    monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False); monkeypatch.delenv("FANOPS_INTRO_TEASE", raising=False)
     cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker)
     with Ledger.transaction(cfg) as led:

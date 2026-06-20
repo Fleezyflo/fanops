@@ -59,7 +59,7 @@ _VALID_BACKENDS = frozenset({"dryrun", "postiz", "rest", "mcp"})
 # Per-gate model tier (llm_model_for): the `moments` gate is the CREATIVE VISION hook AUTHOR (Phase 1 —
 # it SEES source frames and writes the on-screen retention hook, the watch-through driver) -> opus.
 # `captions` (hashtags only) stays MECHANICAL -> sonnet. FANOPS_LLM_MODEL overrides all.
-_GATE_MODEL_DEFAULTS = {"moments": "opus", "captions": "sonnet", "hookedit": "opus", "hookjudge": "opus"}
+_GATE_MODEL_DEFAULTS = {"moments": "opus", "captions": "sonnet"}
 
 class Config:
     def __init__(self, root: Path | str | None = None):
@@ -214,9 +214,9 @@ class Config:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
         # But the tier is now PER-GATE, not one blanket "opus": the MECHANICAL gates — moment-window picks
         # and hashtags-only captions — run on `sonnet` (fast + plenty for the task; blanket-opus made a
-        # 28-source run ~40min of SEQUENTIAL calls). The CREATIVE quality gates — `hookedit`/`hookjudge`,
-        # which author and critique the on-screen RETENTION hook (the watch-through driver) — stay on
-        # `opus`. FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
+        # 28-source run ~40min of SEQUENTIAL calls). The CREATIVE gate — `moments`, the VISION author of
+        # the on-screen RETENTION hook (the watch-through driver) — stays on `opus`.
+        # FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
         # like "claude-opus-4-..." for bit-stable repro). Validate-or-default shape (mirrors clip_profile).
         g = os.getenv("FANOPS_LLM_MODEL")
         if g and g.strip():
@@ -247,8 +247,8 @@ class Config:
     def visual_start(self) -> bool:
         # P1 strongest-frame cut start (clip.pick_visual_start): refine the cut entry onto the strongest
         # opening FRAME within a small bounded shift — the top muted-autoplay lever after the text hook
-        # (a black/flat/transition opener is the weakest still). DEFAULT ON (mirrors hook_editor: the
-        # weakest link is closed by default, not by remembering a flag) and FAIL-OPEN: with ffmpeg absent
+        # (a black/flat/transition opener is the weakest still). DEFAULT ON (the weakest link is closed
+        # by default, not by remembering a flag) and FAIL-OPEN: with ffmpeg absent
         # or no strong frame, the start is left exactly as the band/transcript-snap chose it (today's
         # behavior). Only the explicit off-words disable it; the decision is cached per-window so the
         # in-lock commit pass re-spawns no frame-probe ffmpeg (Phase D).
@@ -330,52 +330,12 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
-    def hook_editor(self) -> bool:
-        # Feed-aware on-screen-hook editor (Phase 2 of the hook framework): with this ON, after all
-        # moments are decided a SINGLE LLM pass sees EVERY clip's hook at once and rewrites the
-        # weak/duplicated/templated ones into strong, DISTINCT hooks before any clip burns them. The
-        # moment responder answers each clip in isolation, so it CANNOT diversify across the feed (the
-        # 'before he was Moh Flow' x6 round-2 failure); only a feed-level pass can. DEFAULT ON (Phase
-        # C2 — the weakest link must be closed by default, not by remembering a flag); fail-open +
-        # idempotent. Only answered under FANOPS_RESPONDER=llm; with it explicitly off there is no
-        # hookedit gate and behavior is the pre-C2 flow. Only explicit off-words disable it.
-        v = (os.getenv("FANOPS_HOOK_EDITOR") or "").strip().lower()
-        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
-
-    @property
-    def hook_judge(self) -> bool:
-        # Specificity critic (Phase 3 of the hook framework): with this ON, AFTER the editor finalizes
-        # each hook an INDEPENDENT LLM pass judges it against the verified retention rubric (anchored to
-        # a concrete specific of THIS clip; passes the portability test; opens a loop) and REJECTS to a
-        # clean clip whatever fails — the enforcement (teeth) the deterministic floor defers to a critic.
-        # The critic stays STRICT (reject when unsure); the author<->critic repair loop absorbs the
-        # null-rate cost, so it no longer needs to be opt-in. DEFAULT ON (v2; mirrors hook_editor):
-        # only requested/held under FANOPS_RESPONDER=llm; runs only on hooks the editor has finalized
-        # (hook_edited). Only explicit off-words disable it.
-        v = (os.getenv("FANOPS_HOOK_JUDGE") or "").strip().lower()
-        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
-
-    @property
     def hook_router(self) -> bool:
-        # M2 structural-hooks router: a read-only Moment classifier (runs AFTER the critic, BEFORE the
-        # render loop) that records hook_strategy and RENDERS NOTHING. DEFAULT OFF (opt-in, like
-        # hook_judge): observe-only, so the annotation is the SOLE delta and feature-off render/post
-        # bytes are byte-identical. Only explicit on-words enable it.
+        # M2 structural-hooks router: a read-only Moment classifier (runs BEFORE the render loop) that
+        # records hook_strategy and RENDERS NOTHING. DEFAULT OFF (opt-in): observe-only, so the annotation
+        # is the SOLE delta and feature-off render/post bytes are byte-identical. Only explicit on-words enable it.
         v = (os.getenv("FANOPS_HOOK_ROUTER") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
-
-    @property
-    def hook_critic_advisory(self) -> bool:
-        # M2 / finding #3 (de-veto): the specificity critic is ADVISORY BY DEFAULT — at the repair cap a
-        # reject KEEPS the raw hook (+ pattern) and LOGS the critic's dissent instead of nulling to a clean
-        # clip. This realizes the operator's standing "don't veto anything, surface the raw output" position
-        # WITHOUT gutting the critic: it still RUNS, still does its one repair pass, still meters, still logs
-        # — it just no longer DELETES a raw hook on a subjective call. The MECHANICAL is_weak_hook floor
-        # (empty / exact-dup / template-cluster) is unaffected — that is hygiene, not taste. DEFAULT ON;
-        # set FANOPS_HOOK_CRITIC_ADVISORY=0 to restore the hard terminal veto (opt-OUT shape, mirrors
-        # hook_judge); FANOPS_HOOK_JUDGE=0 still drops the critic entirely.
-        v = (os.getenv("FANOPS_HOOK_CRITIC_ADVISORY") or "").strip().lower()
-        return v not in ("0", "false", "no", "off")     # DEFAULT ON; only explicit off-words restore the veto
 
     @property
     def impact_cut(self) -> bool:
@@ -575,8 +535,8 @@ class Config:
 
     @property
     def concurrent_workers(self) -> int:
-        # Pool size for concurrent_sources (the source map AND the responder fan-out). DEFAULT 4 — the
-        # proven safe concurrent-opus ceiling (hookedit._MAX_EDIT_BATCH), a rate-limit guardrail that
+        # Pool size for concurrent_sources (the source map AND the responder fan-out). DEFAULT 4 — a
+        # proven safe concurrent-opus ceiling, a rate-limit guardrail that
         # caps simultaneous claude -p / whisper / ffmpeg children, NOT a correctness device. CLAMPED
         # >= 1: a pool of 0 would never run a worker and HANG, and a hang is a deadlock-guard violation
         # (the variant_ucb_c clamp precedent). A non-int env falls back to the default rather than

@@ -1,7 +1,7 @@
 # src/fanops/hookcheck.py
-"""Deterministic MECHANICAL hook-hygiene floor (v2). It no longer judges hook QUALITY — that is the
-reasoning critic's job (hookjudge.py). It rejects only the three things a regex can decide without
-reading meaning:
+"""Deterministic MECHANICAL hook-hygiene floor (v2). It does not judge hook QUALITY — that is the
+vision author's job (the author writes the hook seeing the footage). This floor is the ONLY gate after
+the author; it rejects only the three things a regex can decide without reading meaning:
   - an EMPTY hook (nothing to show)
   - an EXACT cross-clip duplicate (the same line burned twice)
   - an opening-TEMPLATE cluster (the 'before he was X' x6 / 'wait for the Y' x6 'reads like a bot' tell)
