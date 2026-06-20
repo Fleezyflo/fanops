@@ -322,3 +322,23 @@ def test_blank_account_param_is_all(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
     r = _client(cfg).get("/review?account=")                 # blank -> None (All), both accounts shown
     assert r.status_code == 200 and b"await a" in r.data and b"await b" in r.data
+
+def test_schedule_all_view_renders_per_account_headers(tmp_path):
+    # the unfiltered "All" Schedule reads per account: a running .day-head header per account group.
+    cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
+    html = _client(cfg).get("/schedule").data.decode()
+    assert html.count('class="day-head"') >= 2 and ">@a<" in html and ">@b<" in html   # both account headers
+    # ...and the single-account filter renders NO running header (the active chip already names it)
+    one = _client(cfg).get("/schedule?account=@a").data.decode()
+    assert 'class="day-head">@a<' not in one and "q_b" not in one                       # scoped, header suppressed
+
+def test_review_live_strip_is_account_scoped(tmp_path):
+    # HIGH (review fix): the live strip counts the SAME scope the body shows, so a filtered worklist's
+    # banner is not pinned open by the unscoped poll. review_counts tallies editable CARDS (clips): @a has
+    # ONE editable card (clip_a), @b has one -> @a-scoped count is 1, while the unscoped All view is 2.
+    cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
+    scoped = _client(cfg).get("/review/live?account=@a").data.decode()
+    assert "Awaiting <strong>1</strong>" in scoped              # @a-scoped (1 card), not the unscoped 2
+    assert "account=@a" in scoped                               # the 5s poll + 'load them' carry the scope forward
+    allview = _client(cfg).get("/review/live").data.decode()
+    assert "Awaiting <strong>2</strong>" in allview            # unscoped: both clips' editable cards

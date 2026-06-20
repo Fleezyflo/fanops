@@ -4,6 +4,7 @@ core no-[studio] install never touches it. Reads use lock-free Ledger.load (atom
 guarantees a complete file); writes go through studio.actions (one Ledger.transaction each)."""
 from __future__ import annotations
 import os
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from flask import Flask, abort, redirect, render_template, request, send_file, u
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import Platform
+from fanops.models import Platform, PostState, LIFT_SCORE
 from fanops.discover import make_thumbnail        # reuse the cheap one-frame ffmpeg extractor for clip posters
 from fanops.studio import views, actions, golive
 
@@ -114,7 +115,6 @@ def create_app(cfg: Config) -> Flask:
         # Chip context for a row/dict-based surface: the distinct account UNIVERSE + per-account counts,
         # derived from the POSTS in this list (never accounts.json — a retired account's history stays
         # filterable). Splatted into render_template; the _account_filter.html include reads these.
-        from collections import Counter
         counts = Counter((r["account"] if isinstance(r, dict) else r.account) for r in rows)
         return {"chip_accounts": _with_active(counts, active), "chip_counts": dict(counts),
                 "chip_route": route, "chip_total": len(rows), "active": active}
@@ -122,7 +122,6 @@ def create_app(cfg: Config) -> Flask:
     def _card_chips(cards, active):
         # Chip context for Review (cards have no scalar account — collect surface accounts; a fan-out card
         # contributes to each surface's account). chip_total counts cards, the count map counts surfaces.
-        from collections import Counter
         counts = Counter(s.account for c in cards for s in c.surfaces)
         return {"chip_accounts": _with_active(counts, active), "chip_counts": dict(counts),
                 "chip_route": "review", "chip_total": len(cards), "active": active}
@@ -159,14 +158,16 @@ def create_app(cfg: Config) -> Flask:
         # The Review tab's self-polling strip: live bucket counts + a 'load them' button when new
         # awaiting posts exceed what the worklist currently shows (?shown, read live from the body's
         # data-awaiting). A garbage/negative ?shown -> 0 (never a 500); the banner is gated on '>'.
-        led = Ledger.load(cfg); accounts = Accounts.load(cfg)
-        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc))
+        # P5: the strip counts the SAME per-account scope the body shows (else a filtered worklist's
+        # scoped data-awaiting would forever trail the unscoped poll, pinning the 'new' banner open).
+        led = Ledger.load(cfg); accounts = Accounts.load(cfg); account = _account_arg()
+        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc), account=account)
         counts = views.review_counts(cards)
         try:
             shown = max(0, int(request.args.get("shown", 0)))
         except (TypeError, ValueError):
             shown = 0
-        return render_template("_review_live.html", counts=counts, shown=shown)
+        return render_template("_review_live.html", counts=counts, shown=shown, active=account)
 
     @app.get("/review/refresh")
     def review_panel_refresh():
@@ -237,10 +238,13 @@ def create_app(cfg: Config) -> Flask:
     @app.get("/lift")
     def lift():
         led = Ledger.load(cfg); accts = Accounts.load(cfg); account = _account_arg()
-        view_full = views.lift_rows(led, cfg, accts)                                  # universe for chips
-        view = view_full if account is None else views.lift_rows(led, cfg, accts, account=account)
-        # chip universe = distinct accounts across the unfiltered variant + amplify rows
-        chips = _row_chips(view_full.variant_rows + view_full.amplify_rows, "lift", account)
+        view = views.lift_rows(led, cfg, accts, account=account)
+        # Chip universe from a CHEAP post scan (the same analyzed-variant predicate lift_rows uses), so we
+        # call lift_rows ONCE — building an unfiltered view just for chips would re-run its per-row gate I/O.
+        vcounts = Counter(p.account for p in led.posts.values()
+                          if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics)
+        chips = {"chip_accounts": _with_active(vcounts, account), "chip_counts": dict(vcounts),
+                 "chip_route": "lift", "chip_total": sum(vcounts.values()), "active": account}
         return render_template("lift.html", view=view, tab="lift", **chips)
 
     def _posted_panel(result=None, *, full=False):
