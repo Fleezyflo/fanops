@@ -506,7 +506,7 @@ def test_post_golive_account_demote_route(tmp_path, monkeypatch):
     r = _client(cfg).post("/golive/account/demote", data={"handle": "@a"})
     assert r.status_code == 200
     from fanops.accounts import Accounts
-    assert Accounts.load(cfg).active() == []          # @a left active after the demote
+    assert Accounts.load(cfg).active() == []          # @a left the active fan-out after the demote
 
 def test_golive_panel_renders_remove_and_demote_controls(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)

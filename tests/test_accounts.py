@@ -276,6 +276,14 @@ def test_set_status_unknown_handle_raises(tmp_path):
     with pytest.raises(KeyError):
         set_status(cfg, "@nope", "planned")
 
+def test_set_status_demotes_ALL_duplicate_rows(tmp_path):
+    # defense-in-depth (review): a hand-edited file with a duplicate handle must not leave a 2nd copy active.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@dup", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+                {"handle": "@dup", "account_id": "2", "platforms": ["tiktok"], "status": "active"}])
+    set_status(cfg, "@dup", "planned")
+    assert [x["status"] for x in json.loads(cfg.accounts_path.read_text())["accounts"]] == ["planned", "planned"]
+
 def test_remove_account_drops_only_target_preserves_siblings(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [

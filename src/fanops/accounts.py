@@ -181,11 +181,11 @@ def set_status(cfg: Config, handle: str, status: str) -> str:
         raise ValueError(f"unknown status: {status!r}")
     p = cfg.accounts_path
     raw, accounts = _load_raw_accounts(p)
-    for a in accounts:
-        if isinstance(a, dict) and a.get("handle") == handle:
-            a["status"] = str(status)
-            break
-    else:
+    found = False
+    for a in accounts:                                           # scan ALL rows (no break): a hand-edited file with
+        if isinstance(a, dict) and a.get("handle") == handle:    # duplicate handles must not leave a 2nd copy active —
+            a["status"] = str(status); found = True              # mirrors remove_account dropping every match
+    if not found:
         raise KeyError(handle)
     _write_accounts_atomic(p, raw)
     return handle
