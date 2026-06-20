@@ -417,7 +417,7 @@ def create_app(cfg: Config) -> Flask:
         if not result.ok:
             return render_template("_result.html", result=result)
         s = views.surface_for_post(Ledger.load(cfg), Accounts.load(cfg), post_id,
-                                   now=datetime.now(timezone.utc))
+                                   now=datetime.now(timezone.utc), cfg=cfg)
         if s is None:
             return render_template("_result.html",
                                    result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
