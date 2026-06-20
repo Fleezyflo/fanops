@@ -28,10 +28,9 @@ def _gates_blocked_note(s) -> str | None:
     from 'nothing to do' (which the bare summary buries). None when converged / no status, so the
     caller can `if (note := ...)` unconditionally."""
     aw = (s or {}).get("awaiting", {})
-    # EVERY agent gate blocks downstream work: moments+captions block their stages, and the hook
-    # editor/judge gates BLOCK RENDERING — a run that ends with any of them open has NOT converged
-    # (it produced no clips), so all four must raise the same loud signal (not just moments/captions).
-    open_gates = {k: v for k in ("moments", "captions", "hookedit", "hookjudge") if (v := aw.get(k, 0))}
+    # Both agent gates block downstream work: moments blocks the clip/caption stages, captions blocks
+    # crosspost — a run that ends with either open has NOT converged, so both raise the same loud signal.
+    open_gates = {k: v for k in ("moments", "captions") if (v := aw.get(k, 0))}
     if open_gates:
         detail = " ".join(f"{k}={v}" for k, v in open_gates.items())
         return (f"gates STILL BLOCKED after the run loop: {detail} — the responder is not clearing "
@@ -664,11 +663,8 @@ def _dispatch(cfg: Config, args) -> int:
             except Exception as e:
                 print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
                 return 1
-            # Converge only when EVERY gate is clear — incl. the hook editor/judge, which BLOCK
-            # rendering. Testing only moments+captions broke the loop one iteration too early: with the
-            # default-ON hook editor, advance opens a hookedit gate right after moments, the loop saw
-            # moments==0/captions==0 and exited BEFORE answering it -> nothing ever rendered (no clips,
-            # no posts) in autonomous mode. any() over all awaiting kinds is robust to future gates too.
+            # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
+            # is robust to future gates too — a run that exits with any open has not produced its clips/posts.
             if not any(s["awaiting"].values()):
                 break
         # B2: if the loop ended with gates still awaiting, say so LOUDLY (a stuck responder used to

@@ -12,21 +12,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
-from fanops.models import MomentDecision, CaptionSet, HookEditDecision, HookJudgeDecision
+from fanops.models import MomentDecision, CaptionSet
 from fanops.agentstep import pending, request_path, response_path, latest_request_id
 from fanops.llm import claude_json_meta, LlmTimeoutError
-from fanops.prompts import moment_prompt, caption_prompt, hookedit_prompt, hookjudge_prompt
+from fanops.prompts import moment_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
 
-# hookedit (feed-aware hook editor) + hookjudge (specificity critic) ride the same gate contract: when
-# no request of that kind is pending the inner loop is empty, so registering them is inert unless
-# cfg.hook_editor is on. BOTH are vision calls (Task 6) — _default_claude_model attaches each item's
-# frames as images for hookedit AND hookjudge, so the critic SEES the footage it judges.
-_SCHEMA = {"moments": MomentDecision, "captions": CaptionSet, "hookedit": HookEditDecision,
-           "hookjudge": HookJudgeDecision}
-_PROMPT = {"moments": moment_prompt, "captions": caption_prompt, "hookedit": hookedit_prompt,
-           "hookjudge": hookjudge_prompt}
+# Two agent gates: `moments` (the vision hook AUTHOR — sees source frames) and `captions` (text-only).
+_SCHEMA = {"moments": MomentDecision, "captions": CaptionSet}
+_PROMPT = {"moments": moment_prompt, "captions": caption_prompt}
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg
@@ -36,19 +31,14 @@ class ManualResponder:
 def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None, log=None) -> dict:
     """The production model: hand claude -p the committed prompt + the gate's JSON schema, PINNED to
     cfg.llm_model_for(kind) (V2 M1/F1 — an unpinned `claude -p` drifts with the CLI default; the tier is
-    PER-GATE — sonnet for mechanical moment/caption gates, opus for the creative hook gates). For
-    the hookedit AND hookjudge gates, also hand it the clip frames (collected from the payload items)
-    as images so the editor/critic SEES each clip and grounds its rewrite/verdict in the footage;
-    moments/captions stay text-only. When cfg is given, emit ONE provenance line per call (the model
-    that ANSWERED, the prompt fingerprint, and the brief fingerprint) so every creative output is
-    traceable to the exact model + brief that produced it (M1/F10). cfg=None (the legacy test path)
-    keeps the old behavior: no pin, no provenance."""
+    PER-GATE — opus for the creative VISION moments gate, sonnet for the mechanical caption gate). For
+    the `moments` gate, also hand it the SOURCE frames (top-level `frames`) as images so the author SEES
+    the footage and writes the on-screen hook true to what is on screen; captions stay text-only. When
+    cfg is given, emit ONE provenance line per call (the model that ANSWERED, the prompt fingerprint, and
+    the brief fingerprint) so every creative output is traceable to the exact model + brief that produced
+    it (M1/F10). cfg=None (the legacy test path) keeps the old behavior: no pin, no provenance."""
     schema = _SCHEMA[kind].model_json_schema()
-    images = None
-    if kind in ("hookedit", "hookjudge"):
-        images = [f for it in payload.get("items", []) for f in (it.get("frames") or [])] or None
-    elif kind == "moments":
-        images = payload.get("frames") or None            # Phase 1: the author SEES the source stills (top-level frames)
+    images = (payload.get("frames") or None) if kind == "moments" else None   # Phase 1: author SEES source stills
     prompt = _PROMPT[kind](payload)
     out, answered = claude_json_meta(prompt, schema, images=images,
                                      model=(cfg.llm_model_for(kind) if cfg else None))

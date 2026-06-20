@@ -32,54 +32,26 @@ def test_tuning_passes_clean_overrides_unchanged(tmp_path):
     assert t["offbrand_en"] == ["\\bpls\\b"] and t["lift_weights"] == {"saves": 5}
 
 def test_llm_model_per_gate_defaults(monkeypatch, tmp_path):
-    # V2 M1/F1 PIN stays; the TIER is now PER-GATE. The `moments` gate is now the CREATIVE VISION hook
+    # V2 M1/F1 PIN stays; the TIER is now PER-GATE. The `moments` gate is the CREATIVE VISION hook
     # AUTHOR (it sees source frames + writes the on-screen retention hook) -> opus. `captions` (hashtags
-    # only) stays mechanical -> sonnet. hookedit/hookjudge stay opus until they are deleted (Phase 2).
+    # only) stays mechanical -> sonnet.
     monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
     c = Config(root=tmp_path)
     assert c.llm_model_for("moments") == "opus"                 # Phase 1: vision hook author
     assert c.llm_model_for("captions") == "sonnet"
-    assert c.llm_model_for("hookedit") == "opus"
-    assert c.llm_model_for("hookjudge") == "opus"
     assert c.llm_model_for("unknown_kind") == "sonnet"          # default-safe for any new gate
 
 def test_llm_model_global_override_forces_all_gates(monkeypatch, tmp_path):
     # FANOPS_LLM_MODEL forces ONE model for EVERY gate — operator escape hatch / a FULL id for repro.
     monkeypatch.setenv("FANOPS_LLM_MODEL", "claude-opus-4-x")
     c = Config(root=tmp_path)
-    assert c.llm_model_for("moments") == "claude-opus-4-x"      # mechanical gate forced up
-    assert c.llm_model_for("hookjudge") == "claude-opus-4-x"
+    assert c.llm_model_for("moments") == "claude-opus-4-x"      # creative gate forced
+    assert c.llm_model_for("captions") == "claude-opus-4-x"     # mechanical gate forced up
 
 def test_llm_model_blank_override_falls_back_to_per_gate(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_LLM_MODEL", "   ")               # whitespace-only -> per-gate defaults
     c = Config(root=tmp_path)
     assert c.llm_model_for("moments") == "opus" and c.llm_model_for("captions") == "sonnet"
-
-def test_hook_editor_defaults_on(monkeypatch, tmp_path):
-    # Phase C2: the feed-aware hook editor closes the weakest link (template clustering); it must be
-    # ON by default, not gated on the operator remembering a flag. It is fail-open + idempotent.
-    monkeypatch.delenv("FANOPS_HOOK_EDITOR", raising=False)
-    assert Config(root=tmp_path).hook_editor is True
-
-def test_hook_editor_explicit_off_disables(monkeypatch, tmp_path):
-    for off in ("0", "false", "no", "off"):
-        monkeypatch.setenv("FANOPS_HOOK_EDITOR", off)
-        assert Config(root=tmp_path).hook_editor is False
-
-def test_hook_editor_explicit_on(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_HOOK_EDITOR", "1")
-    assert Config(root=tmp_path).hook_editor is True
-
-def test_hook_judge_defaults_on_when_unset(monkeypatch, tmp_path):
-    # v2: the STRICT critic is the teeth and must be ON by default — the repair loop absorbs the
-    # null-rate cost, so the critic no longer needs to be opt-in. Only explicit off-words disable it.
-    monkeypatch.delenv("FANOPS_HOOK_JUDGE", raising=False)
-    assert Config(root=tmp_path).hook_judge is True
-
-def test_hook_judge_explicit_off_disables(monkeypatch, tmp_path):
-    for off in ("0", "false", "no", "off"):
-        monkeypatch.setenv("FANOPS_HOOK_JUDGE", off)
-        assert Config(root=tmp_path).hook_judge is False
 
 def test_hook_router_default_off(monkeypatch, tmp_path):
     # M2 structural-hooks router: opt-in, default OFF (observe-only annotation when on; non-regression)
@@ -386,17 +358,6 @@ def test_aware_reframe_flag_default_off_and_env_on(tmp_path, monkeypatch):
     assert Config(root=tmp_path).aware_reframe is True
     monkeypatch.setenv("FANOPS_AWARE_REFRAME", "off")
     assert Config(root=tmp_path).aware_reframe is False
-
-def test_hook_critic_advisory_default_on_and_opt_out(tmp_path, monkeypatch):
-    # M2 / finding #3 (de-veto): advisory is DEFAULT ON — the critic no longer DELETES a raw hook on a
-    # subjective call (it still runs+repairs+meters+logs). Opt-OUT shape (mirrors hook_judge): only an
-    # explicit off-word restores the hard terminal veto.
-    monkeypatch.delenv("FANOPS_HOOK_CRITIC_ADVISORY", raising=False)
-    assert Config(root=tmp_path).hook_critic_advisory is True            # DEFAULT ON (raw output, no veto)
-    monkeypatch.setenv("FANOPS_HOOK_CRITIC_ADVISORY", "0")
-    assert Config(root=tmp_path).hook_critic_advisory is False           # explicit opt-out -> restore the veto
-    monkeypatch.setenv("FANOPS_HOOK_CRITIC_ADVISORY", "on")
-    assert Config(root=tmp_path).hook_critic_advisory is True
 
 def test_require_full_objective_default_off_and_opt_in(monkeypatch, tmp_path):
     # T4 opt-in: block amplify on a DEGRADED-lift winner (a partial objective). Default OFF (learning

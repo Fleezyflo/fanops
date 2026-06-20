@@ -1,7 +1,6 @@
-# tests/test_keyframes.py — frames are the editor's EYES. The vision-grounded hook editor judges each
-# clip against what is actually on screen, so it needs real frames from the SOURCE video in the
-# moment's window (clips are not rendered yet when the hookedit gate opens). Bounded + fail-open like
-# vocals.isolate_vocals: a missing/unspawnable ffmpeg returns [] (degrade to text-only), never crashes.
+# tests/test_keyframes.py — extract_keyframes pulls real frames from the SOURCE video in a moment's
+# window (clips are not rendered yet when callers need them). Bounded + fail-open like
+# vocals.isolate_vocals: a missing/unspawnable ffmpeg returns [] (degrade gracefully), never crashes.
 from pathlib import Path
 from fanops.keyframes import extract_keyframes
 

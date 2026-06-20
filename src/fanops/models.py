@@ -139,27 +139,11 @@ class Moment(BaseModel):
                                                 # restore it (the 29% blank rate is mostly good hooks the
                                                 # mechanical guard killed, not dead footage). None = nothing
                                                 # was stripped (old ledgers load fine).
-    hook_edited: bool = False                   # the feed-aware hook editor (hookedit.py) has run on
-                                                # this moment's hook; latches True so it never re-edits
-                                                # (no loop). Default False -> old ledgers load + are
-                                                # eligible for one edit pass.
-    hook_judged: bool = False                   # the specificity critic (hookjudge.py) has judged this
-                                                # hook against the rubric; latches True so it never
-                                                # re-judges (no loop). Default False -> old ledgers
-                                                # load + are eligible for one judge pass.
-    hook_rounds: int = 0                        # Task 7 repair loop: how many critic->editor REPAIR
-                                                # rounds this hook has had. A reject under the cap
-                                                # (_MAX_REPAIR) re-opens (rounds+=1, hook_edited/judged
-                                                # reset); at the cap a reject nulls. Default 0 -> old
-                                                # ledgers load + start with the full repair budget.
-    hook_feedback: Optional[str] = None         # Task 7/8: the critic's reject reason carried to the
-                                                # editor for ONE repair pass; cleared after the editor
-                                                # applies it. None = no pending repair (old ledgers load).
     signal_score: float = 0.0
     hook_pattern: Optional[str] = None          # P1 provenance: which of the 6 _hook_spec patterns the
-                                                # responder/editor chose for this hook (open_loop|curiosity|
+                                                # responder chose for this hook (open_loop|curiosity|
                                                 # comment_bait|contrarian|pov|proof). None = unknown/clean.
-                                                # The dim P4 ranks FIRST. One writer: moments/hookedit ingest.
+                                                # The dim P4 ranks FIRST. One writer: moments ingest.
     hook_strategy: Optional[str] = None         # M2 router: text | clean_final | clean_awaiting_strategy:<key>
                                                 # | stitch:<format>. Observe-only annotation; None = unrouted
                                                 # (router off / old ledgers load). One writer: router.route_moments.
@@ -307,33 +291,6 @@ class CaptionItem(BaseModel):
 class CaptionSet(BaseModel):
     request_id: str
     items: list[CaptionItem] = Field(default_factory=list)
-
-# Feed-aware hook editor (hookedit.py): a SINGLE gate over the WHOLE feed of decided hooks. The
-# moment responder answers each clip in isolation, so it cannot avoid reusing a hook/template across
-# clips; this gate hands the editor every hook at once to rewrite the weak/duplicated/templated ones
-# into strong, DISTINCT hooks. Response = one item per moment_id; hook None -> no honest hook (clean clip).
-class HookEditItem(BaseModel):
-    moment_id: str
-    hook: Optional[str] = None
-    hook_pattern: Optional[str] = None  # the editor's pattern for its rewrite (normalized at ingest)
-
-class HookEditDecision(BaseModel):
-    request_id: str
-    items: list[HookEditItem] = Field(default_factory=list)
-
-# Specificity critic (hookjudge.py): the INDEPENDENT LLM judge the hookcheck floor references ("a later
-# LLM critic") but that was never built. Runs AFTER the editor on each kept hook and applies the verified
-# retention rubric (anchored to a concrete specific of THIS clip; passes the portability test; opens a
-# loop). reject (keep=False) -> the hook is nulled to a clean clip (clean beats slop). One verdict per
-# moment_id; keep defaults True so the judge's silence/omission NEVER strips a hook (fail-open).
-class HookJudgeItem(BaseModel):
-    moment_id: str
-    keep: bool = True               # True = hook clears the rubric; False = reject to a clean clip
-    why: str = ""                   # one line: the deciding rubric test (unanchored / generic / no loop)
-
-class HookJudgeDecision(BaseModel):
-    request_id: str
-    items: list[HookJudgeItem] = Field(default_factory=list)
 
 # M6 intro-tease: the LLM-vision pairing matcher (intro_match.py). The matcher sees a clean clip's context
 # (keyframes, router reason, transcript, hook) against candidate intro assets (thumbnail, origin_kind) and

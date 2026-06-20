@@ -1,6 +1,6 @@
 # src/fanops/router.py
 """M2 (structural-hooks): the hook-strategy ROUTER — a read-only, Moment-level classifier that runs
-AFTER the specificity critic (hookjudge.ingest_hook_judge) and BEFORE the render loop. It records a
+BEFORE the render loop. It records a
 per-Moment `hook_strategy` reason and RENDERS NOTHING; the existing render loop reads the annotation.
 Default-OFF (cfg.hook_router): observe-only, so an additive annotation is the sole delta (non-regression).
 M2 emits text | clean_final | clean_awaiting_strategy:impact_cut; `stitch:<format>` only becomes
@@ -48,16 +48,14 @@ def _has_peak_in_window(led: "Ledger", m: "Moment") -> bool:
     return False
 
 
-def route_moments(led: "Ledger", cfg: "Config", *, hold_hooks: bool = False, hold_judge: bool = False) -> "Ledger":
-    """Classify each `decided` Moment whose hook is FINAL this pass into a `hook_strategy` reason and
-    return led. RENDERS / persists nothing else (observe-only). A held moment (still awaiting the feed
-    editor or the critic this pass) is left UNROUTED so it is classified on its final hook — never a
-    seed about to be rewritten, nor a hook the critic may still reject. M2 emits text | clean_final |
-    clean_awaiting_strategy:impact_cut; `stitch:<format>` becomes reachable only when a format handler
-    ships (M4). cfg is the stage-convention handle (reserved for per-format gating in later milestones)."""
+def route_moments(led: "Ledger", cfg: "Config") -> "Ledger":
+    """Classify each `decided` Moment into a `hook_strategy` reason and return led. RENDERS / persists
+    nothing else (observe-only). The hook is final at this gate (the on-screen hook is written by the
+    vision author and the deterministic is_weak_hook floor — no later rewrite stage). M2 emits text |
+    clean_final | clean_awaiting_strategy:impact_cut; `stitch:<format>` becomes reachable only when a
+    format handler ships (M4). cfg is the stage-convention handle (reserved for per-format gating later)."""
     for m in led.moments.values():
         if m.state is not MomentState.decided: continue
-        if (hold_hooks and not m.hook_edited) or (hold_judge and not m.hook_judged): continue
         if (m.hook_strategy or "").startswith(CLEAN_AWAITING + ":"):  # FORWARD-ONLY: keep an existing structural
             continue                                          # reservation — never silently demote it when a format is toggled OFF
         if m.hook:                                            # the text hook survived the critic -> no stitch

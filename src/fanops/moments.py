@@ -19,7 +19,7 @@ import os
 
 # Phase 1: how many SOURCE stills the vision author gets. Sampled evenly across the whole source (the
 # clip isn't rendered yet at the moments gate, so frames come from the source span, not a clip window).
-# Bounded so the opus+vision call stays under the claude -p ceiling (mirrors hookedit's image budget).
+# Bounded so the opus+vision call stays under the claude -p image ceiling.
 _AUTHOR_FRAME_COUNT = 6
 
 def _source_frames(cfg: Config, src) -> list[str]:
@@ -27,9 +27,9 @@ def _source_frames(cfg: Config, src) -> list[str]:
     vibe (who/where/lighting), grounding hook TONE. HONEST LIMITATION (ecc review, do not overclaim): this
     is a whole-source SURVEY, not the picked window — in one call the author picks a sub-window AND writes
     its hook, so a still from the exact picked window may not be attached. The window-accurate fix is a
-    two-pass pick->frame->hook (deferred follow-up). Fail-open exactly like hookedit._frames: no real source
-    file (tests / not-yet-downloaded) or an unprobed/zero duration -> [] -> text-only author, never spawns
-    ffmpeg on a path that isn't there."""
+    two-pass pick->frame->hook (deferred follow-up). Fail-open: no real source file (tests / not-yet-
+    downloaded) or an unprobed/zero duration -> [] -> text-only author, never spawns ffmpeg on a path
+    that isn't there."""
     if not (src.source_path and os.path.exists(src.source_path) and (src.duration or 0) > 0):
         return []
     return extract_keyframes(src.source_path, 0.0, src.duration, count=_AUTHOR_FRAME_COUNT,

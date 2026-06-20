@@ -15,15 +15,6 @@ def test_moment_hook_strategy_defaults_none():
     m = Moment(id="m1", parent_id="src_1", start=0.0, end=10.0, reason="x")
     assert m.hook_strategy is None                # M2: router annotation; old ledgers load (no migration)
 
-def test_moment_repair_fields_default_and_old_ledger_loads():
-    # Task 7 repair loop: a Moment JSON written before these fields existed must still load, with
-    # hook_rounds==0 and hook_feedback is None (no migration).
-    m = Moment(id="m1", parent_id="src_1", start=0.0, end=10.0, reason="x")
-    assert m.hook_rounds == 0 and m.hook_feedback is None
-    old = {"id": "m2", "parent_id": "src_1", "start": 0.0, "end": 9.0, "reason": "y", "hook": "h"}
-    loaded = Moment.model_validate(old)           # no hook_rounds/hook_feedback in the payload
-    assert loaded.hook_rounds == 0 and loaded.hook_feedback is None
-
 def test_stitch_plan_defaults_suggested():
     from fanops.models import StitchPlan, StitchState
     sp = StitchPlan(id="sp1", clip_id="c1", strategy_key="impact_cut")

@@ -28,9 +28,9 @@ def _seed(cfg, *, peaks):
                           state=SourceState.moments_decided, signal_peaks=peaks))
     return led
 
-def _add(led, mid, *, hook, start=0.0, end=18.0, edited=True, judged=True):
+def _add(led, mid, *, hook, start=0.0, end=18.0):
     led.add_moment(Moment(id=mid, parent_id="s1", state=MomentState.decided, start=start, end=end,
-                          reason="r", hook=hook, hook_edited=edited, hook_judged=judged))
+                          reason="r", hook=hook))
 
 def test_route_text_when_hook_survived_critic(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg, peaks=[])
@@ -49,12 +49,6 @@ def test_route_clean_final_when_no_peak_in_window(tmp_path):
     _add(led, "m1", hook=None, start=0.0, end=18.0)
     route_moments(led, cfg)
     assert led.moments["m1"].hook_strategy == CLEAN_FINAL
-
-def test_route_skips_held_moment_awaiting_critic(tmp_path):
-    cfg = Config(root=tmp_path); led = _seed(cfg, peaks=[])
-    _add(led, "m1", hook="might be rejected", judged=False)  # critic verdict not yet landed
-    route_moments(led, cfg, hold_judge=True)
-    assert led.moments["m1"].hook_strategy is None           # not routed until the hook is final
 
 def test_route_ignores_malformed_peak_t(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg, peaks=[{"t": "oops", "score": 0.9}])  # non-numeric t

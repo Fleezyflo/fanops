@@ -1,10 +1,10 @@
 # src/fanops/keyframes.py
-"""Extract a few still frames from a SOURCE video inside a moment's [start,end] window — the EYES of
-the vision-grounded hook editor (hookedit.py). The editor judges each clip's on-screen hook against
-what is actually on screen, so it needs real frames; clips are not rendered yet when the hookedit
-gate opens, so the frames come from the source. Bounded + fail-open exactly like vocals.isolate_vocals
-(`vocals.py`): a missing/unspawnable ffmpeg, a timeout, or a per-frame failure degrades to fewer (or
-zero) frames — the editor falls back to text-only — and NEVER crashes a pass."""
+"""Extract a few still frames from a SOURCE video inside a [start,end] window — the EYES of the
+vision-grounded hook AUTHOR (moments gate) and the intro-tease matcher. The author writes each clip's
+on-screen hook true to what is actually on screen, so it needs real frames; clips are not rendered yet
+when the moments gate opens, so the frames come from the source. Bounded + fail-open exactly like
+vocals.isolate_vocals (`vocals.py`): a missing/unspawnable ffmpeg, a timeout, or a per-frame failure
+degrades to fewer (or zero) frames — the caller falls back to text-only — and NEVER crashes a pass."""
 from __future__ import annotations
 import subprocess
 from pathlib import Path
