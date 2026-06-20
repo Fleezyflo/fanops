@@ -46,8 +46,10 @@ def _hook_spec(max_words: int = 6) -> str:
     measurable short-form data — NOT taste. ~70% watch MUTED and decide in <3s; the first 3s drive ~80%
     of watch-through. A hook's one job: flip a passive muted scroller into active attention by firing a
     proven psychological TRIGGER. Success is identifiable downstream (the viewer-POV meter + the learning
-    loop), so this encodes the priors; the data picks winners. The four triggers + force multipliers are
-    the craft; the few-shot below are real evidence-based demonstrations, not a style to copy."""
+    loop), so this encodes the priors; the data picks winners. The four triggers, the additional proven
+    mechanisms (result-first/atmospheric-pov/peer-challenge/social-proof/fomo), and the force multipliers
+    are the craft; the few-shot below are real evidence-based demonstrations, not a style to copy. The
+    input-dependent SELECTION of which mechanism fits a given clip lives in moment-only `_hook_decision`."""
     return (
         f"  The on-screen hook is the single biggest lever on reach: ~70% watch MUTED and decide in under "
         f"3 seconds, and the first 3s drive ~80% of whether they keep watching (the proven RETENTION "
@@ -66,6 +68,18 @@ def _hook_spec(max_words: int = 6) -> str:
         f"      4) EMOTIONAL AROUSAL: tap a HIGH-arousal feeling the viewer has lived — awe, longing, "
         f"betrayal, nostalgia, devotion. A confession works here ('you don't expect a rapper to make you "
         f"pray'). Low-arousal moods get scrolled past.\n"
+        f"    BEYOND those four, these proven MECHANISMS each fit a SPECIFIC clip — use the ONE that "
+        f"matches what THIS clip actually shows, never all of them, and never as a label you slap on:\n"
+        f"      - RESULT-FIRST: open on the payoff/destination, then the journey ('how a bedroom demo "
+        f"became this'); dies if the chaotic BEFORE drags past ~3s before the viewer sees why to stay.\n"
+        f"      - ATMOSPHERIC POV: drop the viewer inside a scene they step into ('pov: the verse that "
+        f"ended the argument'); dies the moment it reads as a marketing directive, not a felt moment.\n"
+        f"      - PEER-CHALLENGE: dare the viewer to resist a natural reaction ('try not to rewind "
+        f"this') — it must be a REAL dare the clip earns, never a hollow 'you won't believe'.\n"
+        f"      - SOCIAL PROOF: organic devotional validation ('the verse that made the group chat go "
+        f"quiet'); dies if it reads fabricated or like invented authority.\n"
+        f"      - FOMO: genuine scarcity the clip truly has (unreleased, a leak, a one-time drop); dies "
+        f"if the urgency is artificial or the clip is just a normal post.\n"
         f"    FORCE MULTIPLIERS (these separate a hook that hits from one that dies):\n"
         f"      - SPECIFIC, but about the VIEWER, not the clip. Name the viewer's exact feeling or "
         f"identity so they recognize themselves in under 2 seconds. Universal is fine when the FEELING is "
@@ -74,6 +88,8 @@ def _hook_spec(max_words: int = 6) -> str:
         f"      - ZERO THROAT-CLEARING: open ON the trigger. No 'this is the part where', no warm-up.\n"
         f"      - RAW + SPOKEN: write how a real person talks to a friend, not polished marketing copy.\n"
         f"      - STACK two triggers whenever the clip allows it.\n"
+        f"      - COMPLEMENT the footage: say what the frame does NOT already show; never caption what is "
+        f"plainly visible on screen.\n"
         f"    PROCESS (in order): 1) find the single most arresting beat (punchline, turn, flex, "
         f"confession, betrayal); 2) ask what FEELING or RECOGNITION that beat gives the VIEWER — name "
         f"THAT, never the lyric; 3) write it as the trigger that delivers it (pick the pattern that "
@@ -101,9 +117,38 @@ def _hook_spec(max_words: int = 6) -> str:
         f"('his hardest bar', 'GOAT', 'so cold'); LYRIC PARAPHRASE — it is NOT a caption and NOT a quote "
         f"of the audio; GENERIC filler that names no feeling and fits any clip; hooking on the EDITING or "
         f"camera ('watch how he cuts', 'drone up'); and BAIT the clip never pays off.\n"
-        f"    OUTPUT: <={max_words} words; the clip's own language (write the hook in English or Arabic to "
-        f"match the source); no em-dashes, en-dashes, or smart quotes (use a comma, period, or straight "
-        f"apostrophe). A clip with no honest hook is better CLEAN (hook = null) than slop.\n")
+        f"      Also BANNED: ROUND or clickbait NUMBERS and fabricated authority ('#1 certified', 'the "
+        f"best ever recorded') — you have no real stats, so never invent one.\n"
+        f"    BILINGUAL: write the hook in whichever language hits hardest. NEVER literal-translate an "
+        f"Arabic idiom or slang — frame the FEELING it carries. For a dense Arabic verse, a high-contrast "
+        f"ENGLISH hook can contextualize the emotion for non-Arabic scrollers (one clear line, not a "
+        f"translation).\n"
+        f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes (use a comma, period, "
+        f"or straight apostrophe). A clip with no honest hook is better CLEAN (hook = null) than slop.\n")
+
+def _hook_decision() -> str:
+    """Moment-only hook SELECTION logic. Deliberately NOT in the shared `_hook_spec` so the caption
+    author — whose CaptionRequest carries no frames and no signal peaks — is never ordered to read inputs
+    it lacks. Encodes the research's input-dependent decision: read the clip's VISUAL energy + AUDIO
+    transient + REGISTER, THEN pick the mechanism that fits. Wired into `moment_prompt` between the FRAMES
+    line and `_hook_spec`. Takes no max_words (the length cap is stated by `_hook_spec`, which follows)."""
+    return (
+        "    SELECT THE HOOK BY READING THIS CLIP (do this first, in order):\n"
+        "      1) VISUAL: from the attached FRAMES, read the opening ~3s energy — lighting, motion, a "
+        "hard cut or transition. A calm opening and a chaotic one call for different mechanisms.\n"
+        "      2) AUDIO: from the SIGNAL PEAKS, find the highest-energy transient (a drop or a turn) and "
+        "its timecode; the hook should set up the beat the viewer is about to hit.\n"
+        "      3) REGISTER: read the dialect and voice from the brand brief (Arabic here is a spoken "
+        "DIALECT, never formal MSA); match the hook's register to it.\n"
+        "      4) SELECT the mechanism that fits what you just read:\n"
+        "        A) LOW-ENERGY / atmospheric opening -> Atmospheric POV or Curiosity Gap (let the mood "
+        "pull them in); fails if you force a loud dare onto a quiet clip.\n"
+        "        B) HIGH-ENERGY / a hard drop or punchline -> Result-First or Peer-Challenge (establish "
+        "the destination by ~3s so the energy has a reason); fails if the payoff lands after the scroll.\n"
+        "        C) DENSE ARABIC verse non-Arabic scrollers can't parse -> Curiosity/Tension as a "
+        "high-contrast ENGLISH hook that frames the feeling; fails if it literal-translates the bars.\n"
+        "      These name the MECHANISM to fit THIS clip, not words to reuse — generate FRESH wording "
+        "from these frames and this transient; never paste an example line.\n")
 
 def moment_prompt(payload: dict) -> str:
     duration = payload.get("duration", 0.0)
@@ -139,6 +184,7 @@ def moment_prompt(payload: dict) -> str:
         "  - `hook` is REQUIRED: the ON-SCREEN TEXT shown in the clip's first ~2 seconds.\n"
         "  - FRAMES: a few stills sampled across the source may be ATTACHED as images — SEE them and write "
         "each hook true to what is actually ON SCREEN, not only the transcript.\n"
+        + _hook_decision()
         + _hook_spec(6) +
         "  - Use the SIGNAL PEAKS only to find WHERE the energy is, never as the hook's subject; do not depend "
         "on the transcript being correct.\n"
