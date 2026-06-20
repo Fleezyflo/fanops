@@ -17,10 +17,22 @@
     <input id="guidance-{{ s.post_id }}" type="text" name="guidance" placeholder="e.g. punchier · mention the beat drop · less hype">
     <button type="submit" class="primary">Regenerate caption</button>
   </form>
-  <form hx-post="{{ url_for('do_reschedule', post_id=s.post_id) }}" hx-target="#res-{{ s.post_id }}" hx-swap="innerHTML">
+  {# Reschedule + suggest/clear post to /reschedule-surface & /clear, which re-render THIS editor (outerHTML
+     swap of #edit-<id>) so the time input always reflects the fresh value — not the stale /reschedule result. #}
+  <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
     <label for="time-{{ s.post_id }}">Scheduled time</label>
-    <input id="time-{{ s.post_id }}" type="text" name="new_time" value="{{ s.scheduled_time }}" placeholder="2026-06-08T14:00:00Z">
+    <input id="time-{{ s.post_id }}" type="text" name="new_time" value="{{ s.scheduled_time if s.scheduled_time is not none else '' }}" placeholder="2026-06-08T14:00:00Z">
     <button type="submit">Reschedule</button>
+    {% if s.suggested_time %}<span class="muted">Suggested: {{ s.suggested_time }}</span>{% endif %}
+  </form>
+  {% if s.suggested_time %}
+  <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
+    <input type="hidden" name="new_time" value="{{ s.suggested_time }}">
+    <button type="submit">Use suggested</button>
+  </form>
+  {% endif %}
+  <form hx-post="{{ url_for('do_clear', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
+    <button type="submit">Clear time</button>
   </form>
   {# Publish-now lives on the Schedule tab now (post-approval-lifecycle): a Review post is awaiting_approval,
      which publish_now rejects (queued-only). Approve it first; it then ships from the Schedule bucket. #}

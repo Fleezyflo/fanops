@@ -29,6 +29,15 @@
           <input type="text" name="new_time" value="{{ r.scheduled_time }}" aria-label="New time for {{ r.account }} {{ r.platform }}">
           <button type="submit">Move</button>
         </form>
+        {% if r.suggested_time %}
+        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+          <input type="hidden" name="new_time" value="{{ r.suggested_time }}">
+          <button type="submit">Use suggested</button> <span class="muted">{{ r.suggested_time }}</span>
+        </form>
+        {% endif %}
+        <form hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+          <button type="submit">Clear time</button>
+        </form>
         <form hx-post="{{ url_for('do_publish_now', post_id=r.post_id) }}" hx-target="#res-s-{{ r.post_id }}" hx-swap="innerHTML">
           {% if backend is defined and backend != 'dryrun' %}
             <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> publish to the REAL account ({{ backend }})</label>

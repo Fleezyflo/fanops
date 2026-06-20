@@ -188,6 +188,12 @@ def create_app(cfg: Config) -> Flask:
         # (the shared /reschedule route returns only an inline result, leaving the time input stale).
         return _schedule_panel(actions.reschedule_post(cfg, post_id, request.form.get("new_time", "")))
 
+    @app.post("/schedule/clear/<post_id>")
+    def do_schedule_clear(post_id):
+        # P1: clear the time on an approved (queued) post -> it goes back to awaiting_approval and LEAVES the
+        # bucket; re-render the whole bucket (the #schedule-body outerHTML swap drops the now-absent row).
+        return _schedule_panel(actions.clear_time(cfg, post_id))
+
     @app.get("/lift")
     def lift():
         led = Ledger.load(cfg)
@@ -398,10 +404,37 @@ def create_app(cfg: Config) -> Flask:
                 abort(404)                                    # ffmpeg missing/failed/empty -> fail-open
         return send_file(cache, mimetype="image/jpeg")
 
+    def _render_surface_edit(post_id, result):
+        # P1: on success re-render _surface_edit.html via surface_for_post so the editor's time input
+        # reflects the fresh value (mirrors do_regenerate); on failure show the clean inline error.
+        if not result.ok:
+            return render_template("_result.html", result=result)
+        s = views.surface_for_post(Ledger.load(cfg), Accounts.load(cfg), post_id,
+                                   now=datetime.now(timezone.utc), cfg=cfg)
+        if s is None:
+            return render_template("_result.html",
+                                   result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
+        return render_template("_surface_edit.html", s=s, backend=cfg.poster_backend)
+
     @app.post("/reschedule/<post_id>")
     def do_reschedule(post_id):
+        # legacy route kept for back-compat (any other caller) — returns only the inline result.
         result = actions.reschedule_post(cfg, post_id, request.form.get("new_time", ""))
         return render_template("_result.html", result=result)
+
+    @app.post("/reschedule-surface/<post_id>")
+    def do_reschedule_surface(post_id):
+        # R4 fix: the Review editor's reschedule + "Use suggested" forms post HERE so the time input
+        # re-renders with the fresh scheduled_time (the legacy /reschedule left it stale).
+        result = actions.reschedule_post(cfg, post_id, request.form.get("new_time", ""))
+        return _render_surface_edit(post_id, result)
+
+    @app.post("/clear/<post_id>")
+    def do_clear(post_id):
+        # P1: drop the time on a Review (awaiting) post; re-render the editor with an EMPTY time input.
+        # (On a queued post clear_time sends it back to awaiting first, then clears — same re-render.)
+        result = actions.clear_time(cfg, post_id)
+        return _render_surface_edit(post_id, result)
 
     @app.post("/caption/<post_id>")
     def do_caption(post_id):
