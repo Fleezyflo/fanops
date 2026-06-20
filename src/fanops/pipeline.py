@@ -213,12 +213,12 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                     led.sources[s.id].state = SourceState.error
                     led.sources[s.id].error_reason = f"{type(e).__name__}: {e}"
                     log("moments", s.id, "error", err=str(e)[:120])
-        # Task 9 scoreboard: one read-only digest line of hook quality (null/viewer_pov_rate) when the
-        # hook router is on. viewer_pov_rate (narration_signature) measures the final on-screen hooks.
-        # Read-only + fail-open — never wedges a pass.
-        if cfg.hook_router:
-            try: log_hook_quality(led, cfg)
-            except Exception as e: log("hookscore", "-", "error", err=str(e)[:120])
+        # Task 9 scoreboard: one read-only digest line of hook quality (null/viewer_pov_rate) on EVERY
+        # pass. viewer_pov_rate (narration_signature) measures the FINAL on-screen hooks the vision
+        # author wrote — independent of any subsystem flag — so the operator's hook-quality visibility
+        # stays on by default (it rode the now-deleted editor/critic flags before). Read-only + fail-open.
+        try: log_hook_quality(led, cfg)
+        except Exception as e: log("hookscore", "-", "error", err=str(e)[:120])
         # M2 structural-hooks router (opt-in, observe-only): classify each decided hook into a
         # hook_strategy reason BEFORE the render loop. Renders nothing; a router error never wedges the
         # pass (fail-open). Default OFF -> byte-identical to today.

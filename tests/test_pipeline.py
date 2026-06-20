@@ -434,6 +434,19 @@ def test_router_off_no_annotation_clip_still_renders(tmp_path, monkeypatch, mock
     assert led.moments["mom_r"].hook_strategy is None                  # observe-only; OFF = no delta
     assert any(c.parent_id == "mom_r" for c in led.clips.values())     # clip still renders
 
+def test_hook_quality_scoreboard_fires_on_default_path(tmp_path, monkeypatch, mocker):
+    # the viewer_pov_rate scoreboard is independent of the (deleted) editor/critic — it measures the
+    # FINAL on-screen hooks, so it must still log on a normal run with the router DEFAULT OFF (else the
+    # operator's hook-quality visibility silently vanished with the cascade).
+    import fanops.pipeline as pipeline
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("FANOPS_HOOK_ROUTER", raising=False)
+    calls = []
+    monkeypatch.setattr(pipeline, "log_hook_quality", lambda led, cfg: calls.append(1))
+    cfg = Config(root=tmp_path); _accts_one(cfg); _ff(mocker); _seed_clean_decided(cfg)
+    advance(cfg, base_time="2099-01-01T00:00:00Z")
+    assert calls, "log_hook_quality must fire on the default path (router off)"
+
 
 # ---- M4 (structural-hooks): impact-cut SUGGEST wired after the render loop (gated, fail-open) ----
 def _seed_wide_clean_decided(cfg):
