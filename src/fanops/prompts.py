@@ -140,10 +140,7 @@ def moment_prompt(payload: dict) -> str:
         "  - FRAMES: a few stills sampled across the source may be ATTACHED as images — SEE them and write "
         "each hook true to what is actually ON SCREEN, not only the transcript.\n"
         + _hook_spec(6) +
-        "  - `hook_pattern` is OPTIONAL — a post-hoc analytics label, NOT a quality gate and NOT the "
-        "driver of the hook (the craft above is). If you set a `hook` you MAY tag it with the closest of "
-        "open_loop | curiosity | comment_bait | contrarian | pov | proof (lowercase), else leave it null. "
-        "Use the SIGNAL PEAKS only to find WHERE the energy is, never as the hook's subject; do not depend "
+        "  - Use the SIGNAL PEAKS only to find WHERE the energy is, never as the hook's subject; do not depend "
         "on the transcript being correct.\n"
         "  - Prefer moments that align with a transcript line and/or a signal peak.\n"
         "  - A source with real spoken or musical content MUST yield at least one clip. Return an EMPTY "
@@ -217,7 +214,7 @@ def caption_prompt(payload: dict) -> str:
         "variants per account. The hook rules:\n"
         + _hook_spec(7) +
         "  - For each item ALSO declare `axis`: the ONE cheap-text lever this variant moves versus the "
-        "others — exactly one of hook_pattern | hook_string | caption_angle | hook_placement — plus a "
+        "others — exactly one of hook_string | caption_angle | hook_placement — plus a "
         "one-line `rationale` (WHY it is a coherent, justified difference, not noise). A variant with no "
         "clear axis or rationale is dropped: a justified variation beats an unexplained one.\n"
         f"{learned_block}"

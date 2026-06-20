@@ -20,7 +20,7 @@ import re
 # nuked good distinct hooks that merely shared a 2-word opener ('you ever win…' killed because 'you ever'
 # was already taken twice). THREE tokens / max 3 keeps real ×6 templates caught (they share 3+ opening
 # words and recur >>3) while letting 'you ever X' diverge on the 3rd word. This is mechanical feed-
-# HYGIENE (deterministic anti-repetition), not a quality judgment — the reasoning critic owns quality.
+# HYGIENE (deterministic anti-repetition), not a quality judgment — the vision author owns quality.
 _TEMPLATE_PREFIX_TOKENS = 3
 _TEMPLATE_CLUSTER_MAX = 3                             # the (MAX+1)th hook sharing the 3-word opening is rejected
 
@@ -33,9 +33,9 @@ def is_weak_hook(text: str | None, used: set[str] = frozenset(), *, cluster_scop
     is rejected anywhere — burning the same line twice reads like a bot). `cluster_scope` is the
     opening-template scope: the caller's CURRENT decision batch (one source's picks / one edit run), so a
     'before he was X' x6 lazy batch is caught while the same opener recurring across DIFFERENT videos is
-    NOT — feed-wide opener MONOTONY is a quality/diversity concern the prompt + critic own, not this
-    mechanical floor. cluster_scope=None defaults to `used` (byte-identical to the single-set callers).
-    Hook QUALITY (generic, narration, hype) is judged by the reasoning critic, not here."""
+    NOT — feed-wide opener MONOTONY is a quality/diversity concern the vision author (the prompt) owns,
+    not this mechanical floor. cluster_scope=None defaults to `used` (byte-identical to the single-set callers).
+    Hook QUALITY (generic, narration, hype) is owned by the vision author (the prompt), not here."""
     if not text or not text.strip():
         return True                                   # nothing to show
     low = text.strip().lower()
@@ -48,27 +48,3 @@ def is_weak_hook(text: str | None, used: set[str] = frozenset(), *, cluster_scop
     return False
 
 
-# P1 hook-pattern provenance. The 6 proven retention formulas defined in prompts._hook_spec, as stable
-# snake_case KEYS the responder/editor declare and P3/P4 group by. normalize_hook_pattern maps an LLM's
-# label (any case/spacing/synonym) to a canonical key, or None when it is absent/unknown — so a bad
-# label degrades to "unknown pattern" (validate-or-default) and never crashes an ingest.
-HOOK_PATTERNS = ("open_loop", "curiosity", "comment_bait", "contrarian", "pov", "proof")
-_PATTERN_ALIASES = {
-    "open_loop": "open_loop", "openloop": "open_loop", "open": "open_loop", "loop": "open_loop",
-    "payoff": "open_loop", "payoff_tease": "open_loop",
-    "curiosity": "curiosity", "curiosity_gap": "curiosity", "gap": "curiosity",
-    "comment_bait": "comment_bait", "comment": "comment_bait", "opinion": "comment_bait",
-    "opinion_bait": "comment_bait", "comment_opinion": "comment_bait", "comment_opinion_bait": "comment_bait",
-    "contrarian": "contrarian", "bold": "contrarian", "bold_claim": "contrarian", "contrarian_bold": "contrarian",
-    "pov": "pov", "relatable": "pov", "pov_relatable": "pov",
-    "proof": "proof", "stakes": "proof", "proof_stakes": "proof",
-}
-
-def normalize_hook_pattern(value) -> str | None:
-    """Map an LLM-declared hook-pattern label to a canonical HOOK_PATTERNS key, or None if it is
-    empty/non-string/unknown. Case-, space-, slash- and dash-insensitive (e.g. 'Open Loop',
-    'curiosity-gap', 'POV / relatable' all resolve). Unknown labels -> None (never raises)."""
-    if not isinstance(value, str) or not value.strip():
-        return None
-    key = re.sub(r"[\s/\-]+", "_", value.strip().lower())
-    return _PATTERN_ALIASES.get(key)

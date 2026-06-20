@@ -34,7 +34,7 @@ def _counts(units) -> str:
 _ENGAGEMENT_KEYS = ("saves", "shares", "retention")
 
 def aggregate_by_dim(led: Ledger, dim: str) -> dict:
-    """Group ANALYZED posts by one stamped creative dim (hook_pattern | first_frame_kind | clip_profile
+    """Group ANALYZED posts by one stamped creative dim (first_frame_kind | clip_profile
     | variation_axis) and report per value: n, raw reach (sum+mean), and mean engagement context. REACH-
     FIRST — the primary number is the raw `reach` metric, not the engagement-skewed lift_score. Posts
     missing the dim (None) or not yet analyzed are skipped. Pure + empty-safe ({} when nothing matches)."""
@@ -190,7 +190,7 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     try:
         from fanops.validation_gate import p4_unlocked
         dlines = []
-        for dim in ("hook_pattern", "first_frame_kind", "clip_profile"):
+        for dim in ("first_frame_kind", "clip_profile"):
             if not p4_unlocked(led, cfg, dim): continue
             for value, row in sorted(aggregate_by_dim(led, dim).items(),
                                      key=lambda kv: kv[1]["reach_mean"], reverse=True):
