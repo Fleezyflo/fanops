@@ -23,12 +23,17 @@ grounded in what actually works, with proof.
 #hiphop #hiphopmusic #rap #rapper #bars #undergroundhiphop #newmusic #arabicmusic #arabtiktok #arabicmusiclovers #fyp #foryou #viral #reels
 ```
 
-<!-- DRIFT-GUARD:patterns — the 4 proven psychological TRIGGERS a hook fires; each must appear in prompts._hook_spec -->
+<!-- DRIFT-GUARD:patterns — the proven hook MECHANISMS (4 psychological triggers + 5 evidence-rewrite mechanisms); each must appear lowercased in prompts._hook_spec -->
 ```text
 curiosity gap
 pattern interrupt
 self-relevance
 emotional arousal
+result-first
+atmospheric pov
+peer-challenge
+social proof
+fomo
 ```
 
 ## Operator hard rules (override any generic advice below)
@@ -93,6 +98,50 @@ not taste — the viewer-POV meter + the learning loop pick winners from real da
 - **Bait** the clip doesn't pay off.
 
 A clip with no honest hook is better **clean** (hook = null) than slop.
+
+---
+
+## Part 1b — The full mechanism taxonomy (exhaustive reference)
+
+The **prompt is selective by design**: only the fan-relevant mechanisms enter the generator —
+the 4 triggers + 5 mechanisms carry their craft + fail-condition in `_hook_spec` (and the
+DRIFT-GUARD:patterns block above mirrors all 9), and the input-dependent *selection* of which one
+fits a clip lives in `_hook_decision` (moment-only). Dumping all 13 into the prompt contradicts the
+selection spec and worsens few-shot parroting — the diagnosed failure mode. This table is the
+exhaustive set for **reference**; the "Where" column says what actually reaches the model.
+
+| Mechanism | Evidence (3s-hold / lift) | Fail-condition | Where |
+|---|---|---|---|
+| **Result-First** | ≥80% hold (measured) | the chaotic *before* drags past ~3s | prompt (`_hook_spec` + decision B) |
+| **Open-Loop** | ≥78% hold (measured) | the loop never pays off (bait) | prompt (trigger 1) |
+| **Contrarian** | ≥75% hold (measured) | the contrarianism is hollow | prompt (trigger 2) |
+| **Curiosity-Gap** | ≥70% hold (measured) | the gap is never closed | prompt (trigger 1) |
+| **Pattern-Interrupt** | +36% completion (measured) | interrupt with no point behind it | prompt (trigger 2) |
+| **Identity / Self-Relevance** | 2026's highest-scoring | addresses no one in particular | prompt (trigger 3) |
+| **Emotional Arousal** | high-arousal only | a low-arousal mood (scrolled past) | prompt (trigger 4) |
+| **Atmospheric POV** | widely claimed | reads as a marketing directive | prompt (`_hook_spec` + decision A) |
+| **Peer-Challenge** | widely claimed | a hollow dare the clip can't earn | prompt (`_hook_spec` + decision B) |
+| **Social-Proof / Devotional** | widely claimed | the validation reads fabricated | prompt (`_hook_spec`) |
+| **FOMO / Scarcity** | widely claimed | the urgency is artificial | prompt (`_hook_spec`) |
+| **Warning / Negativity** | widely claimed | off-brand for a fan repost (creator-voice) | **doc-only** |
+| **Specificity / Concrete-Numbers** | widely claimed | the author has no real stats → fabrication | **doc-only** (the spec instead BANS round/clickbait numbers) |
+
+### Selection hierarchy (D1 — mirrored in `_hook_decision`)
+
+Read the clip's **visual** energy (frames) + **audio** transient (signal peaks) + **register**
+(dialect), then pick:
+
+- **A — low-energy / atmospheric opening** → Atmospheric POV or Curiosity Gap.
+- **B — high-energy / hard drop or punchline** → Result-First or Peer-Challenge (destination by ~3s).
+- **C — dense Arabic verse** non-Arabic scrollers can't parse → Curiosity/Tension as a high-contrast
+  **English** hook that frames the feeling (never a literal translation).
+
+### Render concerns (deferred)
+
+Stacked EN/AR on-screen typography, the 100–200ms caption-lead **anticipation timing**, and central
+**safe-zone Y** placement are *render* concerns (`overlay.build_ass`), out of scope for the generator
+and deferred to a future render PR. Today the author emits a **single high-contrast string** the
+renderer ships unchanged; the safe-zone work should also re-check the current top-third placement.
 
 ---
 

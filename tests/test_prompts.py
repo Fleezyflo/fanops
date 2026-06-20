@@ -378,3 +378,42 @@ def test_moment_prompt_mentions_attached_frames():
     # (not just the transcript). Minimal plumbing note; the full hook-spec rewrite is a later plan.
     p = moment_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "clip_profile": "talk"})
     assert "frame" in p.lower()
+
+# --- Evidence-rewrite: the D1 decision process + selective hierarchy reach the MOMENT author only ---
+# The hook research (D1 selection spec / D2 13-mechanism taxonomy / D3 retention psychology) is baked
+# into the generator: the input-dependent SELECTION logic (read frames + signal + register, THEN pick a
+# mechanism) lives in moment-only `_hook_decision`; the mechanism CRAFT lives in the shared `_hook_spec`.
+# The caption author (CaptionRequest has NO frames/signal) must never be ordered to read inputs it lacks.
+
+def test_caption_prompt_has_no_decision_pollution():
+    # FIREWALL: the moment-only decision process (read the attached frames + signal peaks + register,
+    # then select) must NOT reach the caption author. CaptionRequest carries no frames/signal, so
+    # instructing it to read them is a hallucination prompt. _hook_decision is wired into moment_prompt
+    # ONLY; the shared _hook_spec stays frame-agnostic. Passes vacuously today — a regression lock.
+    p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
+                        "transcript_excerpt": "x",
+                        "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]}).lower()
+    assert "attached frames" not in p                # the visual read is moment-only
+    assert "select the hook by reading" not in p     # the decision header is moment-only
+    assert "msa" not in p                            # the register/dialect read is moment-only
+
+def test_moment_prompt_runs_the_d1_decision_process():
+    # D1's input-dependent SELECTION reaches the moment author: read the clip's VISUAL energy (frames)
+    # and REGISTER, THEN select the mechanism. Ordering is the fidelity signal — "read, then choose",
+    # not keyword soup: the visual-read must precede the select step.
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""}).lower()
+    assert "select the hook by reading this clip" in p     # the decision header
+    assert "register" in p                                  # the dialect/register read (D1 step 3)
+    assert p.index("attached frames") < p.index("select the mechanism that fits")   # read -> choose
+
+def test_moment_prompt_hierarchy_is_selective():
+    # D1's A/B/C selection hierarchy reaches the author (low-energy / high-energy / dense-Arabic), but
+    # the prompt stays SELECTIVE: the two doc-only mechanisms (warning/negativity, concrete-numbers as a
+    # mechanism) must NOT leak into the generator — dumping all 13 contradicts D1 and worsens parroting.
+    p = moment_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                       "language": "en", "guidance": ""}).lower()
+    assert "atmospheric pov" in p and "result-first" in p and "peer-challenge" in p   # fan-relevant set
+    assert "low-energy" in p and "high-energy" in p          # the A/B branches
+    assert "warning" not in p and "negativity" not in p      # doc-only mechanism, not instructed
+    assert "concrete number" not in p                        # doc-only mechanism, not instructed

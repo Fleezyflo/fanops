@@ -9,9 +9,12 @@ from fanops.prompts import _hook_spec
 
 _SKILL = Path(__file__).resolve().parents[1] / ".claude" / "skills" / "fanops-hook-hashtag" / "SKILL.md"
 
-# v2 (craft): the 4 psychological TRIGGERS every hook fires, named in _hook_spec; the doc must not
-# drop or rename one. These replace the old 6 inert self-declared labels.
-_PATTERNS = ["curiosity gap", "pattern interrupt", "self-relevance", "emotional arousal"]
+# The proven hook MECHANISMS named in _hook_spec; the doc must not drop or rename one. The original 4
+# psychological TRIGGERS (which replaced the old 6 inert labels) plus the 5 evidence-rewrite mechanisms
+# (result-first / atmospheric pov / peer-challenge / social proof / fomo) — each carries its craft +
+# fail-condition in _hook_spec. One canonical lowercased form (space vs hyphen is the only drift risk).
+_PATTERNS = ["curiosity gap", "pattern interrupt", "self-relevance", "emotional arousal",
+             "result-first", "atmospheric pov", "peer-challenge", "social proof", "fomo"]
 
 
 def _guard_block(name: str) -> str:
