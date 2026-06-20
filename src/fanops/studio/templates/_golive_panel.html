@@ -95,6 +95,24 @@
         </table>
         <button type="submit">Save channel mappings</button>
       </form>
+      <div class="account-manage">
+        <p class="muted">Remove a placeholder, or demote an account to stop it publishing (keeps its row + history).</p>
+        {% for a in status.accounts %}
+        <div class="account-row meta">
+          <span><strong>{{ a.handle }}</strong></span>
+          <form hx-post="{{ url_for('do_golive_account_demote') }}" hx-target="#golive-panel" hx-swap="outerHTML"
+                hx-confirm="Demote {{ a.handle }} to planned? It stops publishing but keeps its row.">
+            <input type="hidden" name="handle" value="{{ a.handle }}">
+            <button type="submit">Demote</button>
+          </form>
+          <form hx-post="{{ url_for('do_golive_account_remove') }}" hx-target="#golive-panel" hx-swap="outerHTML"
+                hx-confirm="Remove {{ a.handle }} entirely? This deletes it from accounts.json.">
+            <input type="hidden" name="handle" value="{{ a.handle }}">
+            <button type="submit" class="danger">Remove</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
     {% else %}
       <p class="muted">No active accounts yet — add one above, then map its channels here.</p>
     {% endif %}

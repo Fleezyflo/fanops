@@ -21,7 +21,8 @@ from typing import Optional
 
 from fanops import cutover
 from fanops.config import Config
-from fanops.accounts import Accounts, write_integration, add_account as _accounts_add_account
+from fanops.accounts import (Accounts, write_integration, add_account as _accounts_add_account,
+                             set_status as _accounts_set_status, remove_account as _accounts_remove_account)
 from fanops.autopilot import set_env_var
 from fanops.errors import CutoverError, PostizAuthError
 from fanops.post import postiz
@@ -129,6 +130,37 @@ def map_account(cfg: Config, handle: str, platform: str, integration_id: str) ->
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not map {handle} {platform}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"handle": handle, "platform": platform, "account_id": integration_id})
+
+
+def remove_account(cfg: Config, handle: str) -> ActionResult:
+    """Remove an account ENTIRELY from the Go-Live tab (no JSON hand-edit) — clears a placeholder like
+    @TBD-1 the UI couldn't delete before. Unknown handle / blank -> clean error, never a 500."""
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=False, error="no account selected")
+    try:
+        _accounts_remove_account(cfg, handle)
+    except KeyError:
+        return ActionResult(ok=False, error=f"no such account: {handle}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not remove {handle}: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"removed": handle})
+
+
+def demote_account(cfg: Config, handle: str) -> ActionResult:
+    """Demote an account to `planned` from the Go-Live tab — it leaves active() + the publishing fan-out
+    but keeps its row/history (the gentle alternative to remove for an account with live posts). Unknown
+    handle / blank -> clean error."""
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=False, error="no account selected")
+    try:
+        _accounts_set_status(cfg, handle, "planned")
+    except KeyError:
+        return ActionResult(ok=False, error=f"no such account: {handle}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not demote {handle}: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"demoted": handle})
 
 
 def go_live(cfg: Config, confirmed: bool = False) -> ActionResult:

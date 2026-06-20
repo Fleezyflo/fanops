@@ -466,3 +466,50 @@ def test_golive_panel_renders_validate_select_when_live_postiz(tmp_path, monkeyp
     r = app.test_client().get("/golive")
     assert r.status_code == 200 and b'name="integration_id"' in r.data and b"Validate learning" in r.data
     assert b"ig_1" in r.data            # the operator's mapped channel is offered as an option
+
+
+# ---- finalization: remove / demote account (the CRUD the UI was missing) ----
+def test_remove_account_action_drops_it(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [
+        {"handle": "@TBD-1", "account_id": "dryrun", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@keep", "account_id": "1", "platforms": ["tiktok"], "status": "active"}])
+    res = golive.remove_account(cfg, "@TBD-1")
+    assert res.ok is True and res.detail["removed"] == "@TBD-1"
+    assert [x["handle"] for x in json.loads(cfg.accounts_path.read_text())["accounts"]] == ["@keep"]
+
+def test_remove_account_unknown_clean_error(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    res = golive.remove_account(cfg, "@nope")
+    assert res.ok is False and "no such account" in res.error.lower()
+
+def test_demote_account_action_sets_planned(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    res = golive.demote_account(cfg, "@a")
+    assert res.ok is True and res.detail["demoted"] == "@a"
+    from fanops.accounts import Accounts
+    assert Accounts.load(cfg).active() == []          # demoted -> leaves the active publishing fan-out
+
+def test_post_golive_account_remove_route(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [
+        {"handle": "@TBD-1", "account_id": "dryrun", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@keep", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    r = _client(cfg).post("/golive/account/remove", data={"handle": "@TBD-1"})
+    assert r.status_code == 200 and b"@TBD-1" not in r.data and b"@keep" in r.data   # re-rendered panel, placeholder gone
+
+def test_post_golive_account_demote_route(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    r = _client(cfg).post("/golive/account/demote", data={"handle": "@a"})
+    assert r.status_code == 200
+    from fanops.accounts import Accounts
+    assert Accounts.load(cfg).active() == []          # @a left the active fan-out after the demote
+
+def test_golive_panel_renders_remove_and_demote_controls(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    r = _client(cfg).get("/golive")
+    assert r.status_code == 200 and b"/golive/account/remove" in r.data and b"/golive/account/demote" in r.data

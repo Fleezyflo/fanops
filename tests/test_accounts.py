@@ -1,7 +1,7 @@
 import json
 import pytest
 from fanops.config import Config
-from fanops.accounts import Accounts, write_integration, add_account
+from fanops.accounts import Accounts, write_integration, add_account, set_status, remove_account
 
 def _seed(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,3 +248,61 @@ def test_add_account_requires_handle(tmp_path):
     cfg = Config(root=tmp_path)
     with pytest.raises(ValueError):
         add_account(cfg, "   ", ["instagram"])
+
+
+# ---- finalization: complete the accounts CRUD (set_status + remove_account, atomic raw-dict) ----
+def test_set_status_flips_and_preserves_siblings_and_unknown_fields(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [
+        {"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active",
+         "integrations": {"instagram": "ig_1"}, "note": "keep me"},
+        {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"},
+    ])
+    assert set_status(cfg, "@a", "planned") == "@a"
+    raw = json.loads(cfg.accounts_path.read_text())
+    a = next(x for x in raw["accounts"] if x["handle"] == "@a")
+    b = next(x for x in raw["accounts"] if x["handle"] == "@b")
+    assert a["status"] == "planned" and a["integrations"] == {"instagram": "ig_1"} and a["note"] == "keep me"
+    assert b == {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"}  # sibling untouched
+    assert "@a" not in [x.handle for x in Accounts.load(cfg).active()]   # demoted -> no longer active
+
+def test_set_status_rejects_unknown_status(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    with pytest.raises(ValueError):
+        set_status(cfg, "@a", "deleted")                  # not an AccountStatus value -> never write an unloadable status
+
+def test_set_status_unknown_handle_raises(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    with pytest.raises(KeyError):
+        set_status(cfg, "@nope", "planned")
+
+def test_set_status_demotes_ALL_duplicate_rows(tmp_path):
+    # defense-in-depth (review): a hand-edited file with a duplicate handle must not leave a 2nd copy active.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@dup", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+                {"handle": "@dup", "account_id": "2", "platforms": ["tiktok"], "status": "active"}])
+    set_status(cfg, "@dup", "planned")
+    assert [x["status"] for x in json.loads(cfg.accounts_path.read_text())["accounts"]] == ["planned", "planned"]
+
+def test_remove_account_drops_only_target_preserves_siblings(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [
+        {"handle": "@TBD-1", "account_id": "dryrun", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@keep", "account_id": "x", "platforms": ["tiktok"], "status": "active", "note": "keep me"},
+    ])
+    assert remove_account(cfg, "@TBD-1") == "@TBD-1"
+    raw = json.loads(cfg.accounts_path.read_text())
+    handles = [x["handle"] for x in raw["accounts"]]
+    assert handles == ["@keep"]                            # only the target dropped
+    assert raw["accounts"][0]["note"] == "keep me"         # sibling + unknown field intact
+
+def test_remove_last_account_leaves_valid_empty_registry(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, [{"handle": "@only", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    remove_account(cfg, "@only")
+    assert json.loads(cfg.accounts_path.read_text())["accounts"] == []   # empty but valid
+    assert Accounts.load(cfg).active() == []                              # reloads clean
+
+def test_remove_account_unknown_handle_raises(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    with pytest.raises(KeyError):
+        remove_account(cfg, "@nope")
