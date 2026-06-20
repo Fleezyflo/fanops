@@ -20,6 +20,7 @@ from fanops.track import pull_metrics, _default_list_posts
 from fanops.reconcile import reconcile_posts, _default_get_status, _RECONCILABLE
 from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
+from fanops.p4_dim_bias import apply_p4_dim_bias
 from fanops import autopilot, daemon
 from fanops.log import get_logger
 
@@ -103,7 +104,7 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
     rows = list(_default_list_posts(cfg, submission_ids=sub_ids)(window))   # network, NO lock held
     with Ledger.transaction(cfg) as led:
         led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
-        r = classify_outcomes(led)
+        r = classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
         led = amplify(led, cfg, r["winners"])
         led = retire(led, r["losers"])
 
@@ -139,7 +140,8 @@ def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: fl
     # network here — classify_outcomes/amplify/retire only read+mutate the ledger and write agent
     # request files (fast, local) — so holding the lock across them is correct and cheap.
     with Ledger.transaction(cfg) as led:
-        r = classify_outcomes(led, winner_pct=winner_pct, retire_pct=retire_pct, lift_floor=lift_floor)
+        r = classify_outcomes(led, winner_pct=winner_pct, retire_pct=retire_pct, lift_floor=lift_floor,
+                              per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
         led = amplify(led, cfg, r["winners"])
         led = retire(led, r["losers"])
     write_digest(Ledger.load(cfg), cfg)
@@ -157,6 +159,19 @@ def cmd_amplify_variants(cfg: Config) -> int:
         after = len(led.sources_in_state(SourceState.moments_requested))
     write_digest(Ledger.load(cfg), cfg)
     print(f"variant-amplify: {max(0, after - before)} source(s) amplified")
+    return 0
+
+def cmd_p4_bias(cfg: Config) -> int:
+    # P4(b) cross-account reach dim-bias: one transaction wrapping apply_p4_dim_bias (no network — like
+    # cmd_amplify_variants). Inert unless FANOPS_P4_DIM_BIAS is on AND learning is validated (the function
+    # self-guards), so this verb is always safe to run/inspect. Amplify-only: never retires/deletes.
+    from fanops.models import SourceState
+    with Ledger.transaction(cfg) as led:
+        before = len(led.sources_in_state(SourceState.moments_requested))
+        led = apply_p4_dim_bias(led, cfg)
+        after = len(led.sources_in_state(SourceState.moments_requested))
+    write_digest(Ledger.load(cfg), cfg)
+    print(f"p4-bias: {max(0, after - before)} source(s) amplified")
     return 0
 
 def cmd_publish_queue(cfg: Config) -> int:
@@ -362,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     p_adj.add_argument("--retire-pct", type=float, default=0.2); p_adj.add_argument("--lift-floor", type=float, default=20.0)
     p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=None)   # None -> cfg.gc_keep_days
     sub.add_parser("amplify-variants")     # variant-gated amplification (v3); inert unless flag on
+    sub.add_parser("p4-bias")              # P4(b) cross-account reach dim-bias; inert unless flag on + validated
     p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
     p_res.add_argument("status", choices=["published", "failed"]); p_res.add_argument("--url", default=None)
     p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
@@ -565,6 +581,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "reconcile": return cmd_reconcile(cfg)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
+    if args.cmd == "p4-bias": return cmd_p4_bias(cfg)
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
     if args.cmd == "learn":
         if args.learn_cmd == "doctor":

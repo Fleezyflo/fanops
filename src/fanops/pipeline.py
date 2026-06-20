@@ -198,7 +198,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                 if led.sources[s.id].state is SourceState.transcribed:
                     led = detect_signals(led, cfg, s.id)
                 if led.sources[s.id].state is SourceState.signalled:
-                    led = request_moments(led, cfg, s.id)
+                    led = request_moments(led, cfg, s.id, accounts=accts)   # P4(c): proven-hook STYLE block
             except Exception as e:
                 led.sources[s.id].state = SourceState.error
                 led.sources[s.id].error_reason = f"{type(e).__name__}: {e}"

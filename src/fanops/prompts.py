@@ -164,6 +164,16 @@ def moment_prompt(payload: dict) -> str:
              "pick covering the whole source (start=0, end=SOURCE DURATION). NEVER return an empty "
              "list for a short source — a short clip is still worth posting.\n"
              ) if 0 < duration < band.lo else ""
+    # P4(c): a cross-surface union of gated winning on-screen-hook styles, fed up from the learning loop
+    # (the SAME signal caption_prompt uses). A STYLE cue the author leans toward — explicitly NOT to copy
+    # verbatim. Absent/empty/None `learned_hooks` key -> no block, so the prompt stays byte-identical.
+    learned = payload.get("learned_hooks")
+    learned_block = (
+        "  - WHAT WORKED for these accounts — lean toward this on-screen-hook STYLE (tone, length, "
+        "angle), do NOT copy verbatim: "
+        f"{json.dumps(learned, ensure_ascii=False)}\n"
+        if learned else ""
+    )
     return (
         "You are the editorial brain of an autonomous fan-account engine for a bilingual (EN/AR) "
         "rapper. From the transcript and signal peaks below, choose the MOMENTS most worth cutting "
@@ -185,7 +195,8 @@ def moment_prompt(payload: dict) -> str:
         "  - FRAMES: a few stills sampled across the source may be ATTACHED as images — SEE them and write "
         "each hook true to what is actually ON SCREEN, not only the transcript.\n"
         + _hook_decision()
-        + _hook_spec(6) +
+        + _hook_spec(6)
+        + learned_block +
         "  - Use the SIGNAL PEAKS only to find WHERE the energy is, never as the hook's subject; do not depend "
         "on the transcript being correct.\n"
         "  - Prefer moments that align with a transcript line and/or a signal peak.\n"

@@ -495,6 +495,50 @@ class Config:
             return 2
 
     @property
+    def adjust_per_surface(self) -> bool:
+        # P4(a): with this ON, classify_outcomes ranks WINNERS per (account, platform) surface so a
+        # small account's best post can win on its OWN pool instead of being crowded out by a big
+        # account's hits. The LOSER side stays GLOBAL regardless (D1) — per-surface logic never
+        # re-scopes retirement, so a shared clip another surface won is never retired. DEFAULT OFF
+        # (opt-in); unset/empty/other -> today's global ranking, byte-identical.
+        v = (os.getenv("FANOPS_ADJUST_PER_SURFACE") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def p4_dim_bias(self) -> bool:
+        # P4(b): with this ON, a creative DIM (first_frame_kind | clip_profile) whose higher-reach
+        # value clears the per-dim P4 unlock auto-amplifies a representative source (the existing
+        # adjust.amplify path), injecting the winning dim as moment-request guidance. AMPLIFY-ONLY,
+        # never retires. This touches the amplify/cascade machinery (audit C1), so it is a KILL SWITCH:
+        # DEFAULT OFF. VALIDATION-FROZEN (Phase 2): even ON, apply_p4_dim_bias stays INERT until
+        # `fanops cutover metrics` confirms the live metrics shape (validation_gate.learning_validated).
+        v = (os.getenv("FANOPS_P4_DIM_BIAS") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def moment_hook_learning(self) -> bool:
+        # P4(c): with this ON (and the FANOPS_VARIANT_LEARNING master gate on), request_moments feeds
+        # the cross-surface union of gated winning hook STYLES into moment_prompt, so the vision hook
+        # AUTHOR (not just captions) leans toward what has worked. STYLE cue only ("do NOT copy
+        # verbatim"). DEFAULT OFF, fail-open; unset/empty/other -> today's behavior, no block injected.
+        v = (os.getenv("FANOPS_MOMENT_HOOK_LEARNING") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def p4_min_reach_gap(self) -> float:
+        # P4(b) comparative guard: the leading dim value's reach_mean must beat the runner-up's by at
+        # least this many impressions before dim_bias_candidates emits it (mirrors best_hooks' min_gap).
+        # DEFAULT 0.0 (the per-dim >=8-posts/>=2-values unlock is the real signal floor; the default
+        # just trusts the higher-reach ranking — set a positive margin to demand a real lead for your
+        # reach scale). A non-float OR NEGATIVE env -> default (a negative gap would emit on no lead at
+        # all — guarded exactly like variant_ucb_c).
+        try:
+            v = float(os.getenv("FANOPS_P4_MIN_REACH_GAP", ""))
+        except ValueError:
+            return 0.0
+        return v if v >= 0 else 0.0
+
+    @property
     def gc_keep_days(self) -> int:
         # Declarative MANUAL-gc retention window (content-lifecycle Phase 3). DEFAULT 30 (today's literal —
         # unchanged when unset). CLAMPED >= 1 (the cmd_gc keep_days<1 reject precedent): a 0/negative window

@@ -176,3 +176,80 @@ def test_classify_winner_never_also_a_loser(tmp_path):
     assert "mid" in r["winners"]                       # rank 2 of 3 -> in the top 67%
     assert "mid" not in r["losers"]                    # ...so it must NOT also be retired
     assert "low" in r["losers"]                        # the true bottom still retires
+
+
+# ======================= P4(a): account-aware (per-surface) WINNER ranking =======================
+def _ap(led, pid, lift, account="@a", platform=Platform.instagram):
+    led.add_post(Post(id=pid, parent_id="c", account=account, account_id="1", platform=platform,
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}))
+
+def test_per_surface_lets_a_small_accounts_best_win(tmp_path):
+    # A1: @big (4 posts) would crowd @small (2 posts) out of the GLOBAL top winner_pct. per_surface=True
+    # ranks each (account, platform) on its OWN pool, so @small's best (lift 40) wins in its bucket even
+    # though it never wins globally.
+    led = Ledger.load(Config(root=tmp_path))
+    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150)]:
+        _ap(led, pid, lift, account="@big")
+    _ap(led, "s1", 40, account="@small"); _ap(led, "s2", 5, account="@small")
+    glob = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0)
+    assert "s1" not in glob["winners"]                                   # globally crowded out
+    surf = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0, per_surface=True)
+    assert "s1" in surf["winners"]                                       # wins on its own surface
+    assert "b1" in surf["winners"]                                       # @big's best still wins
+
+def test_per_surface_false_is_byte_identical_to_default(tmp_path):
+    # A3: per_surface defaults False and is byte-identical to the no-kwarg call (today's global path) —
+    # same winners AND same losers.
+    led = Ledger.load(Config(root=tmp_path))
+    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150)]:
+        _ap(led, pid, lift, account="@big")
+    _ap(led, "s1", 40, account="@small"); _ap(led, "s2", 5, account="@small")
+    assert classify_outcomes(led) == classify_outcomes(led, per_surface=False)
+    r = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0, per_surface=False)
+    assert set(r["winners"]) == {"b1", "b2"} and r["losers"] == ["s2"]   # global top-2; global bottom-1 <floor
+
+def test_per_surface_winner_is_protected_from_global_retire_D1(tmp_path):
+    # A4/D1 (the safety crux): the LOSER side stays GLOBAL (never bucketed per-surface). per_surface only
+    # changes WINNERS — and a post that becomes a per-surface winner is therefore NEVER also retired
+    # (no amplify+retire on the same post). @small's best (lift 15) is below the global floor AND in the
+    # global bottom slice; per_surface=True makes it a winner and SHIELDS it from retirement, while the
+    # genuinely-worst post (lift 3) is still retired. The bottom slice itself is unchanged (global).
+    led = Ledger.load(Config(root=tmp_path))
+    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200)]:
+        _ap(led, pid, lift, account="@big")
+    _ap(led, "s_best", 15, account="@small"); _ap(led, "s_worst", 3, account="@small")
+    off = classify_outcomes(led, winner_pct=0.3, retire_pct=0.5, lift_floor=20.0, per_surface=False)
+    on = classify_outcomes(led, winner_pct=0.3, retire_pct=0.5, lift_floor=20.0, per_surface=True)
+    assert "s_best" in off["losers"]                       # globally it WOULD be retired (bottom + <floor)
+    assert "s_best" in on["winners"] and "s_best" not in on["losers"]   # per-surface: wins -> shielded
+    assert "s_worst" in off["losers"] and "s_worst" in on["losers"]     # the true worst still retires (global)
+
+def test_per_surface_single_post_surface_wins_and_is_never_a_loser(tmp_path):
+    # A5: a surface with exactly ONE analyzed post -> win_cut = max(1, round(1*pct)) = 1, so that post is
+    # its bucket's winner (its own best) and, being a winner, can never be forced into the global losers.
+    led = Ledger.load(Config(root=tmp_path))
+    for pid, lift in [("b1", 300), ("b2", 250)]:
+        _ap(led, pid, lift, account="@big")
+    _ap(led, "solo", 2, account="@solo")                   # one post, below floor, globally the worst
+    on = classify_outcomes(led, winner_pct=0.3, retire_pct=0.5, lift_floor=20.0, per_surface=True)
+    assert "solo" in on["winners"] and "solo" not in on["losers"]
+
+def test_per_surface_buckets_by_platform_not_just_account(tmp_path):
+    # the bucket key is (account, platform): the same handle's IG and TikTok are distinct surfaces, so
+    # each platform's best wins independently (matches the per-platform integration model).
+    led = Ledger.load(Config(root=tmp_path))
+    _ap(led, "ig1", 300, account="@a", platform=Platform.instagram)
+    _ap(led, "ig2", 250, account="@a", platform=Platform.instagram)
+    _ap(led, "tk1", 40, account="@a", platform=Platform.tiktok)        # @a's best on TikTok (globally low)
+    _ap(led, "tk2", 5, account="@a", platform=Platform.tiktok)
+    on = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0, per_surface=True)
+    assert "ig1" in on["winners"] and "tk1" in on["winners"]            # each platform's best wins
+
+def test_cmd_adjust_threads_per_surface_flag(tmp_path, monkeypatch, mocker):
+    # A6: cmd_adjust passes cfg.adjust_per_surface into classify_outcomes — only when the flag is on.
+    import fanops.cli as cli
+    monkeypatch.chdir(tmp_path); monkeypatch.setenv("FANOPS_ADJUST_PER_SURFACE", "on")
+    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    spy = mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": [], "losers": []})
+    cli.cmd_adjust(cfg, 0.3, 0.2, 20.0)
+    assert spy.call_args.kwargs.get("per_surface") is True

@@ -152,7 +152,10 @@ def test_best_hooks_called_only_on_safe_read_or_request_side():
     root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
     # variant_amplify.py (v3 amplify, reviewed above) AND variant_transfer.py (a safe read-only
     # cross-surface scorer) both legitimately call best_hooks — both are allowed safe callers.
-    allowed = {"caption.py", "digest.py", "variant_amplify.py", "variant_transfer.py"}
+    # P4(c): moment_hook_learning.py is a SAFE read-only invocation site (it unions gated winners for the
+    # moment_prompt STYLE block, never touching amplify/retire). Listed for documentation like caption.py;
+    # it invokes via the `scorer` indirection so it is not a literal best_hooks( caller anyway.
+    allowed = {"caption.py", "digest.py", "variant_amplify.py", "variant_transfer.py", "moment_hook_learning.py"}
     danger = {"adjust.py", "track.py", "pipeline.py", "ledger.py"}
     callers = set()
     for py in root.rglob("*.py"):
@@ -174,7 +177,10 @@ def test_ucb_rank_called_only_on_safe_read_or_request_side():
     the C1 danger files. If a future edit calls it from the amplify/delete path, this names it."""
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops"
-    allowed = {"caption.py", "digest.py"}
+    # P4(c): moment_hook_learning.py reuses caption.py's scorer indirection (ucb_rank if variant_ucb else
+    # best_hooks), so it is not a literal ucb_rank( caller; listed here for documentation symmetry with the
+    # best_hooks lock. A future edit that calls ucb_rank( DIRECTLY from a danger file would still be caught.
+    allowed = {"caption.py", "digest.py", "moment_hook_learning.py"}
     danger = {"adjust.py", "track.py", "pipeline.py", "ledger.py", "variant_amplify.py"}
     callers = set()
     for py in root.rglob("*.py"):
