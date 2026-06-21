@@ -1,11 +1,39 @@
-{# src/fanops/studio/templates/_card.html — one clip, shown in a vertical 9:16 frame. The clip video
-   renders ONCE; per-surface posts list compactly below it. Editing a surface opens a disclosure so the
-   grid stays scannable instead of stacking giant players. #}
+{# src/fanops/studio/templates/_card.html — one moment. The PREVIEW is now a per-account switcher: each
+   surface (account) shows its OWN burned-hook video + hook text, selectable by pure-CSS radio tabs (no JS),
+   so persona differentiation is visible instead of one shared clip. The per-surface CONTROL list below
+   (checkbox / caption / edit / result sink) is UNCHANGED — all accounts stay visible+selectable for batch
+   approve. A post-less prepared/held card (no surfaces) keeps the single shared preview. Safe by default:
+   variation OFF -> media_url serves the base clip + no hook line, so every account shows the same video. #}
 <div class="card clip-card" id="card-{{ card.clip_id }}">
+  {% if card.surfaces %}
+  <div class="surface-switch">
+    {# radios FIRST (the pure-CSS toggle): :nth-of-type(N):checked ~ shows the Nth video panel + tab #}
+    {% for s in card.surfaces %}
+    <input class="stab vh" type="radio" name="preview-{{ card.clip_id }}" id="tab-{{ s.post_id }}"{% if loop.first %} checked{% endif %} aria-label="show {{ s.account }} {{ s.platform }} preview">
+    {% endfor %}
+    {% if card.surfaces|length > 1 %}
+    <div class="surface-tabs" role="group" aria-label="{{ card.label }} account previews">
+      {% for s in card.surfaces %}<label class="surface-tab" for="tab-{{ s.post_id }}">{{ s.account }} <span class="muted">{{ s.platform }}</span></label>{% endfor %}
+    </div>
+    {% endif %}
+    <div class="surface-panels">
+      {% for s in card.surfaces %}
+      <div class="surface-panel">
+        <div class="clip-frame">
+          {% if card.bucket == 'held' %}<span class="badge held-badge">HELD</span>{% endif %}
+          <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=card.clip_id) }}" src="{{ s.media_url }}" aria-label="{{ s.account }} {{ s.platform }} clip"></video>
+        </div>
+        {% if s.variant_hook %}<div class="surface-hook" title="the on-screen hook burned into {{ s.account }}'s video">✦ {{ s.variant_hook }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
   <div class="clip-frame">
     {% if card.bucket == 'held' %}<span class="badge held-badge">HELD</span>{% endif %}
     <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=card.clip_id) }}" src="{{ card.preview_url }}" aria-label="{{ card.label }} preview"></video>
   </div>
+  {% endif %}
 
   <div class="clip-body">
     <div class="clip-title">{{ card.label }}</div>
