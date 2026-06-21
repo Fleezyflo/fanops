@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
-from fanops.models import (Source, Moment, Clip, Post, StitchPlan, StitchState,
+from fanops.models import (Source, Moment, Clip, Post, StitchPlan, StitchState, Batch,
                            SourceState, MomentState, ClipState, PostState)
 
 
@@ -75,17 +75,20 @@ def _migrate_v4_metrics_series(raw: dict) -> dict:
     return out
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
 # v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
 # scheduled_time, else a single migration-time stamp). Additive + idempotent. published_at is NOT backfilled.
 # v3 -> v4 (P3): back-fill a single 'legacy' metrics_series row for posts that already carry metrics.
+# v4 -> v5 (Account-First Studio): inject the new top-level batches map (additive; batch_id rides the
+# pydantic default on Source/Post, so NO row backfill — byte-for-byte the v1->v2 stitch_plans injection).
 # Additive + idempotent + never-raising. The ledger is NEVER wiped — every migration is copy-on-write.
 _MIGRATIONS = {1: lambda raw: raw,
                2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})},
                3: _migrate_v3_created_at,
-               4: _migrate_v4_metrics_series}
+               4: _migrate_v4_metrics_series,
+               5: lambda raw: {**raw, "batches": raw.get("batches", {})}}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
@@ -187,6 +190,8 @@ class Ledger:
         self.stitch_plans: dict[str, StitchPlan] = {}   # M3: structural-hook plans (suggested->approved->
                                               # in_use / dismissed / error); additive top-level map, the
                                               # operator-approval spine. Empty until a format (M4+) emits one.
+        self.batches: dict[str, Batch] = {}   # Account-First Studio: named, account-targeted ingest groups
+                                              # (5th id->unit map; additive). Empty until a named ingest mints one.
 
     @classmethod
     def load(cls, cfg: Config) -> "Ledger":
@@ -211,6 +216,7 @@ class Ledger:
                 led.tag_log = raw.get("tag_log", {})
                 led.variant_streaks = raw.get("variant_streaks", {})
                 led.stitch_plans = {k: StitchPlan(**v) for k, v in raw.get("stitch_plans", {}).items()}
+                led.batches = {k: Batch(**v) for k, v in raw.get("batches", {}).items()}
             except ControlFileError:
                 raise                                  # _NewerSchema / _migrate gap: pass through, unreworded
             except Exception as e:
@@ -254,6 +260,7 @@ class Ledger:
             "tag_log": self.tag_log,
             "variant_streaks": self.variant_streaks,
             "stitch_plans": {k: v.model_dump() for k, v in self.stitch_plans.items()},
+            "batches": {k: v.model_dump() for k, v in self.batches.items()},
         }
         self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
@@ -442,3 +449,11 @@ class Ledger:
         p = self.stitch_plans.get(plan_id)             # suggested|approved -> dismissed (terminal); an in_use
         if p is not None and p.state in (StitchState.suggested, StitchState.approved):   # plan is forward-only
             self.stitch_plans[plan_id] = p.model_copy(update={"state": StitchState.dismissed})  # ECC fix #10
+
+    # ---- Account-First Studio: batch ops (named, account-targeted ingest groups; caller holds the transaction) ----
+    def add_batch(self, b: Batch) -> None:
+        self.batches.setdefault(b.id, b)               # idempotent by content-addressed id (re-submit dedup)
+    def get_batch(self, bid: str) -> Batch | None:
+        return self.batches.get(bid)
+    def batches_for_account(self, handle: str) -> list[Batch]:
+        return [b for b in self.batches.values() if not b.target_accounts or handle in b.target_accounts]

@@ -214,21 +214,28 @@ def approve_candidate(cfg: Config, eid: str) -> ActionResult:
     return ActionResult(ok=True, detail={"eid": eid})
 
 
-def run_ingest(cfg: Config) -> ActionResult:
+def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=()) -> ActionResult:
     """Drive `fanops ingest` from the browser: catalogue 01_inbox under one transaction (the exact
-    cmd_ingest path). A toolchain-absent / control-file error is surfaced as a clean ActionResult,
-    never a 500."""
+    cmd_ingest path). When batch_name is non-blank, mint a named, account-targeted Batch in the SAME
+    transaction and catalogue the inbox under its id (blank name => today's ungrouped ingest, byte-
+    identical). A toolchain-absent / control-file error is surfaced as a clean ActionResult, never a 500."""
     from fanops.ingest import ingest_drops
     from fanops.digest import write_digest
-    n = 0
+    from fanops.batches import create_batch
+    n = 0; batch = None
     try:
         with Ledger.transaction(cfg) as led:
-            led = ingest_drops(led, cfg)
+            if batch_name.strip():
+                batch = create_batch(led, name=batch_name, target_accounts=list(target_accounts),
+                                     now_iso=iso_z(_now(None)))
+            led = ingest_drops(led, cfg, batch_id=(batch.id if batch else None))
             n = len(led.sources)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"sources": n})
+    detail = {"sources": n}
+    if batch is not None: detail.update(batch=batch.name, batch_id=batch.id)
+    return ActionResult(ok=True, detail=detail)
 
 
 def run_pull(cfg: Config, url: str) -> ActionResult:
@@ -300,16 +307,18 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
     return ActionResult(ok=True, detail={"saved": saved, "skipped": skipped})
 
 
-def save_uploads_and_ingest(cfg: Config, files: Sequence[FileStorage]) -> ActionResult:
+def save_uploads_and_ingest(cfg: Config, files: Sequence[FileStorage], *, batch_name: str = "",
+                            target_accounts=()) -> ActionResult:
     """One-click upload->catalogue (M5 fast-follow): stream the uploads (save_uploads) and, IF any landed,
     immediately run the ingest pass so the operator doesn't need a second 'Ingest inbox' click. A save
     failure short-circuits (nothing landed -> nothing to ingest). An ingest failure is surfaced but the
     files are SAFELY in 01_inbox — a manual 'Ingest inbox' still catalogues them — so it's a recoverable
-    not-fully-done, never a lost upload. Returns the merged detail (saved/skipped + sources)."""
+    not-fully-done, never a lost upload. Returns the merged detail (saved/skipped + sources). batch_name/
+    target_accounts thread through to run_ingest so an upload can mint its named batch in one click."""
     up = save_uploads(cfg, files)
     if not up.ok:
         return up                                          # nothing landed -> nothing to ingest
-    ing = run_ingest(cfg)
+    ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts)
     detail = {**(up.detail or {}), **(ing.detail or {})}
     if not ing.ok:
         n = len((up.detail or {}).get("saved", []))
@@ -562,6 +571,7 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
                               submission_id=f"fanops_{_hash('idemp', new_id)}",
                               first_frame_kind=src.first_frame_kind,
                               cut_seconds=src.cut_seconds, clip_profile=src.clip_profile,
+                              batch_id=src.batch_id,   # Account-First Studio: a repost keeps its source batch grouping
                               variant_key=src.variant_key, variant_hook=src.variant_hook,
                               variation_axis=src.variation_axis))   # carry P2 axis so a repost's attribution isn't lost
     except Exception as exc:

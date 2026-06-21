@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Clip, Moment, Source, ClipState, MomentState, Platform, Fmt
+from fanops.models import Clip, Moment, Source, Batch, ClipState, MomentState, Platform, Fmt
 from fanops.accounts import Accounts
 from fanops.crosspost import surface_time, crosspost_clips
 from fanops.ids import _hash
@@ -206,6 +206,62 @@ def test_crosspost_multi_account_fans_out_n_times_m(tmp_path, mocker):
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert len(led.posts) == 4
     assert {p.account_id for p in led.posts.values()} == {"1", "2"}
+
+# ---- Account-First Studio: the per-surface batch-target SKIP (casting-OFF enforcement) + denormalization ----
+def _fake_ffmpeg(mocker):
+    def fake_run(cmd, **kw):
+        from pathlib import Path
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+
+def _two_accounts_clip(cfg, *, source_batch_id=None):
+    _seed_accounts(cfg, [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram", "youtube"], "status": "active"},
+        {"handle": "@b", "account_id": "2", "platforms": ["instagram", "youtube"], "status": "active"},
+    ])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, batch_id=source_batch_id))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
+    clip.meta_captions = {
+        "@a/instagram": {"caption": "a ig", "hashtags": []}, "@a/youtube": {"caption": "a yt", "hashtags": []},
+        "@b/instagram": {"caption": "b ig", "hashtags": []}, "@b/youtube": {"caption": "b yt", "hashtags": []},
+    }
+    led.add_clip(clip)
+    return led
+
+def test_crosspost_batch_target_skips_off_target_surfaces(tmp_path, mocker):
+    # A source ingested under a batch targeting ONLY @a: posts are born for @a's surfaces only (the
+    # casting-OFF enforcement path) and each carries the denormalized batch_id; @b is skipped, not posted.
+    cfg = Config(root=tmp_path)
+    led = _two_accounts_clip(cfg, source_batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="launch", target_accounts=["@a"]))
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert {p.account for p in led.posts.values()} == {"@a"}          # @b surfaces skipped (not in target)
+    assert len(led.posts) == 2                                        # @a x {instagram, youtube}
+    assert all(p.batch_id == "batch_x" for p in led.posts.values())  # denormalized onto the Post
+
+def test_crosspost_unbatched_fans_to_all_with_none_batch(tmp_path, mocker):
+    # No batch (source.batch_id is None) => byte-identical fan-out to all 4 surfaces, batch_id None.
+    cfg = Config(root=tmp_path)
+    led = _two_accounts_clip(cfg, source_batch_id=None)
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert len(led.posts) == 4 and all(p.batch_id is None for p in led.posts.values())
+
+def test_crosspost_empty_target_batch_fans_to_all(tmp_path, mocker):
+    # A batch with target_accounts == [] is the ALL-ACTIVE sentinel: no skip, fans to all 4, batch stamped.
+    cfg = Config(root=tmp_path)
+    led = _two_accounts_clip(cfg, source_batch_id="batch_all")
+    led.add_batch(Batch(id="batch_all", name="everyone", target_accounts=[]))
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert len(led.posts) == 4 and all(p.batch_id == "batch_all" for p in led.posts.values())
 
 
 def test_crosspost_two_clips_same_surface_do_not_collide_on_time(tmp_path, mocker):

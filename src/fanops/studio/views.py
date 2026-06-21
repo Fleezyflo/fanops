@@ -598,6 +598,7 @@ def pipeline_status(cfg: Config) -> dict:
         "pending_moments": len(pending(cfg, kind="moments")),
         "pending_captions": len(pending(cfg, kind="captions")),
         "backend": cfg.poster_backend,
+        "accounts": [a.handle for a in Accounts.load(cfg).active()],   # Account-First: Run-form batch-target options
     }
 
 

@@ -93,16 +93,20 @@ def has_video_stream(path: Path) -> bool:
     return "video" in r.stdout.replace(",", " ").split()
 
 def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str,
-                    origin_kind: Literal["native", "third_party"] = "native") -> None:
+                    origin_kind: Literal["native", "third_party"] = "native",
+                    batch_id: str | None = None) -> None:
     """Catalogue ONE file as a Source (content-addressed, deduped, probed) — the single spine shared by
     the native drop/url scan and the third-party intake; the caller sets origin_kind. Same bytes already
     seen under a DIFFERENT origin_kind = a conflict: keep the first (origin_kind is WRITE-ONCE), surface
-    it via a visible log line, never silently flip native<->third_party."""
+    it via a visible log line, never silently flip native<->third_party. batch_id is likewise WRITE-ONCE
+    (the prior batch wins); a re-drop under a different batch is logged, never silently re-stamped."""
     digest = sha256_of(f)
     if led.already_seen(sha256=digest):
         prior = next((s for s in led.sources.values() if s.sha256 == digest), None)
         if prior is not None and prior.origin_kind != origin_kind:   # dedup-suppressed an upload — make it visible
             get_logger(cfg)("ingest", prior.id, "origin_conflict", want=origin_kind, have=prior.origin_kind)
+        if prior is not None and batch_id and prior.batch_id != batch_id:   # re-drop under a different batch
+            get_logger(cfg)("ingest", prior.id, "batch_conflict", want=batch_id, have=prior.batch_id)
         return
     sid = make_id("src", digest)                  # identity = content, not path
     dest = cfg.sources / f"{sid}{f.suffix.lower()}"
@@ -112,11 +116,11 @@ def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str,
     led.add_source(Source(id=sid, state=SourceState.catalogued, source_path=str(dest),
                           source_origin=origin, origin_kind=origin_kind, sha256=digest, width=w, height=h,
                           duration=dur or None, created_at=iso_z(datetime.now(timezone.utc)),  # ingest-day anchor (aware)
-                          meta={"bytes": f.stat().st_size}))   # AUDIT: no original_name (PII)
+                          batch_id=batch_id, meta={"bytes": f.stat().st_size}))   # AUDIT: no original_name (PII)
 
 def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
                  origin_kind: Literal["native", "third_party"] = "native",
-                 inbox: Path | None = None) -> Ledger:
+                 inbox: Path | None = None, batch_id: str | None = None) -> Ledger:
     cfg.sources.mkdir(parents=True, exist_ok=True)
     for f in sorted((inbox or cfg.inbox).rglob("*")):     # inbox= lets third-party scan its own staging dir
         # ECC fix #9: skip symlinks BEFORE any probe/copy. f.is_file() follows links, and the copy2
@@ -128,7 +132,7 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
             continue
         if not has_video_stream(f):
             continue                              # audio-only (no video stream): not a clip source (FIX)
-        _catalogue_file(led, cfg, f, origin=origin, origin_kind=origin_kind)
+        _catalogue_file(led, cfg, f, origin=origin, origin_kind=origin_kind, batch_id=batch_id)
     return led
 
 def download_url(cfg: Config, url: str) -> None:

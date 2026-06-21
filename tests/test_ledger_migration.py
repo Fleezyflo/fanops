@@ -15,8 +15,8 @@ def _write(cfg, raw):
     cfg.ledger_path.write_text(json.dumps(raw))
 
 
-def test_schema_version_is_four():
-    assert SCHEMA_VERSION == 4
+def test_schema_version_is_five():
+    assert SCHEMA_VERSION == 5
 
 
 def test_migration_v2_to_v3_round_trip(tmp_path):
@@ -56,16 +56,16 @@ def test_migration_v2_to_v3_round_trip(tmp_path):
     # Save re-stamps schema_version 3; reload is a no-op (created_at unchanged = idempotent).
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 4
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 5
     led2 = Ledger.load(cfg)
     assert led2.posts["p_sched"].created_at == led.posts["p_sched"].created_at
     assert led2.sources["src_aaaaaaaaaaaa"].created_at == led.sources["src_aaaaaaaaaaaa"].created_at
 
 
-def test_migration_v0_to_v4_full_chain(tmp_path):
-    # A pre-versioning ledger (schema_version absent = v0, no stitch_plans, no created_at) hops
-    # v0->v1->v2->v3->v4: stitch_plans injected by step 2 must NOT be undone by later steps; every row
-    # backfilled; saved version == 4. (The post has no metrics, so the v4 step leaves metrics_series [].)
+def test_migration_v0_to_v5_full_chain(tmp_path):
+    # A pre-versioning ledger (schema_version absent = v0, no stitch_plans, no created_at, no batches) hops
+    # v0->v1->v2->v3->v4->v5: stitch_plans injected by step 2 + batches by step 5 must NOT be undone by
+    # later steps; every row backfilled; saved version == 5. (No metrics, so the v4 step leaves series [].)
     cfg = Config(root=tmp_path)
     raw = {"sources": {"src_cccccccccccc": {"id": "src_cccccccccccc", "source_path": "/gone.mp4",
                                             "state": "catalogued"}},
@@ -76,12 +76,13 @@ def test_migration_v0_to_v4_full_chain(tmp_path):
     _write(cfg, raw)
     led = Ledger.load(cfg)
     assert led.stitch_plans == {}                                   # step-2 injection survives step 3
+    assert led.batches == {}                                        # step-5 injection (empty batches map)
     assert "src_cccccccccccc" in led.sources and led.sources["src_cccccccccccc"].created_at
     assert led.posts["p1"].created_at
     assert led.posts["p1"].metrics_series == []                    # no metrics -> no legacy row
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 4
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 5
 
 
 def test_migration_v0_source_missing_source_path_no_crash(tmp_path):
@@ -205,3 +206,22 @@ def test_migration_v4_never_raises_on_torn_post_row():
     out = _migrate_v4_metrics_series({"posts": {"good": {"metrics": {"saves": 1}}, "torn": "not-a-dict"}})
     assert out["posts"]["good"]["metrics_series"][0]["offset"] == "legacy"
     assert out["posts"]["torn"] == "not-a-dict"                     # left untouched, no crash
+
+
+# ---- Account-First Studio: v4->v5 batches map injection (additive-map-only, NO Post backfill) ----
+def test_migration_v4_to_v5_injects_empty_batches(tmp_path):
+    # A v4 ledger with populated posts + stitch_plans migrates v4->v5: the empty `batches` map is injected,
+    # NO row lost or mutated, batch_id rides the pydantic default (no Post backfill), saved version == 5.
+    cfg = Config(root=tmp_path)
+    raw = {"schema_version": 4, "sources": {}, "moments": {}, "clips": {},
+           "posts": {"pa": _v3_post("pa", "queued")},
+           "tag_log": {}, "variant_streaks": {},
+           "stitch_plans": {"sp1": {"id": "sp1", "clip_id": "c1", "strategy_key": "impact_cut"}}}
+    _write(cfg, raw)
+    led = Ledger.load(cfg)
+    assert led.batches == {}                                        # injected empty
+    assert set(led.posts) == {"pa"} and led.posts["pa"].batch_id is None   # row survives; batch_id default None
+    assert set(led.stitch_plans) == {"sp1"}                         # stitch_plans untouched by the v5 step
+    with Ledger.transaction(cfg):
+        pass
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 5

@@ -105,6 +105,8 @@ class Source(BaseModel):
     origin_kind: Literal["native", "third_party"] = "native"   # M1: WHOSE it is — a THIRD axis, distinct from
                                                 # source_origin (channel) and P1 provenance (attribution). WRITE-ONCE
                                                 # at catalogue (add_source setdefault); old ledgers load native.
+    batch_id: Optional[str] = None              # Account-First Studio: the named ingest Batch this source belongs to.
+                                                # WRITE-ONCE at _catalogue_file (mirrors origin_kind); None == ungrouped.
     sha256: Optional[str] = None
     duration: Optional[float] = None
     width: Optional[int] = None                 # FIX F68 — probed at ingest for safe reframe
@@ -200,6 +202,8 @@ class Post(BaseModel):
     clip_profile: Optional[str] = None      # song | talk — the per-video-type group ("hook for which video type")
     cut_seconds: Optional[float] = None     # rendered clip length (observational; length not varied)
     variation_axis: Optional[str] = None    # P2 (one writer = crosspost): the cheap-text axis this variant moved
+    batch_id: Optional[str] = None      # Account-First Studio: DENORMALIZED from the source at crosspost (carried by
+                                        # repost_post); the single join key the Studio surfaces group by. None == ungrouped.
     created_at: Optional[str] = None    # content-lifecycle: ISO-8601 UTC BIRTH day (wall-clock), set at crosspost
                                         # add_post / repost / crosspost_to_account. NOT part of the content-
                                         # addressed pid. None on old ledgers -> migration backfill (scheduled_time
@@ -237,6 +241,25 @@ def stitch_plan_id(clip_id: str, asset_ids: list[str], strategy_key: str, plan_p
     token = json.dumps({"assets": sorted(asset_ids), "strategy": strategy_key, "params": plan_params},
                        sort_keys=True, default=str)
     return content_id("stitch", clip_id, token)
+
+
+# ---- Account-First Studio: the Batch entity — a named, account-targeted ingest grouping ----
+class BatchState(str, Enum):
+    open = "open"; closed = "closed"; error = "error"   # born open; this build only ever sets open (StitchState parity)
+
+class Batch(BaseModel):
+    id: str                                              # content-addressed (batch_id) — the durable key
+    name: str                                            # operator label, required non-blank (validated in create_batch)
+    target_accounts: list[str] = Field(default_factory=list)   # [] == ALL-ACTIVE-ACCOUNTS sentinel; else exact HANDLES
+    state: BatchState = BatchState.open                  # (Account.handle == Surface.account == Post.account)
+    created_at: Optional[str] = None                     # ISO-8601 UTC birth (microsecond); None on a hand-built Batch
+    error_reason: Optional[str] = None
+
+def batch_id(name: str, created_at: str) -> str:
+    """Content-addressed id keyed on (name, microsecond-precision created_at): a re-submit of the same
+    (name, birth) yields the same id (idempotent), two distinct create_batch calls cannot collide.
+    Deterministic across processes (ids.content_id)."""
+    return content_id("batch", name, created_at)
 
 
 # ---- agent-step contracts (all carry request_id for correlation — FIX F21) ----

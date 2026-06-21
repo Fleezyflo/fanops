@@ -8,7 +8,7 @@
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}Done{% if result.detail %} — {% if result.detail.saved is defined %}{{ result.detail.saved|length }} added, {{ result.detail.skipped|length }} skipped{% else %}{{ result.detail }}{% endif %}{% endif %}
+      {% if result.ok %}Done{% if result.detail %} — {% if result.detail.saved is defined %}{{ result.detail.saved|length }} added, {{ result.detail.skipped|length }} skipped{% else %}{{ result.detail }}{% endif %}{% endif %}{% if result.detail and result.detail.batch %} · batch '{{ result.detail.batch }}'{% endif %}
       {% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
@@ -27,6 +27,16 @@
     <form hx-post="{{ url_for('do_run_upload') }}" hx-target="#run-panel" hx-swap="outerHTML"
           hx-encoding="multipart/form-data" class="upload-form">
       <input type="file" name="files" accept="video/*" multiple aria-label="Choose video files to add" title="Choose video files to add">
+      <input type="text" name="batch_name" placeholder="Batch name (optional)" aria-label="Batch name" class="batch-name">
+      {% if status.accounts and status.accounts|length >= 2 %}
+        <fieldset class="batch-target">
+          <legend>Run for</legend>
+          <span class="muted">All accounts, or tick specific ones:</span>
+          {% for h in status.accounts %}
+            <label><input type="checkbox" name="target_accounts" value="{{ h }}"> {{ h }}</label>
+          {% endfor %}
+        </fieldset>
+      {% endif %}
       <button type="submit">Add video</button>
     </form>
     <form hx-post="{{ url_for('do_run_ingest') }}" hx-target="#run-panel" hx-swap="outerHTML">
