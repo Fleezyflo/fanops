@@ -112,3 +112,87 @@ def test_review_unbatched_renders_ungrouped_section(tmp_path):
     _await(led, "p_a", "clip_1", "@a"); led.save()
     html = _client(cfg).get("/review").data.decode()
     assert "Ungrouped" in html and b"c" in _client(cfg).get("/review").data   # card still renders
+
+
+# ---- Face 4 follow-up: B3 header / B4 excluded / C3 affinity / B2 filter ----
+def _editable(led, cfg):
+    return next(c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable")
+
+def test_header_card_carries_targets_state_created(tmp_path):   # B3
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    _lineage(led, batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["@a"], created_at="2026-06-22T00:00:00Z"))
+    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x")
+    card = _editable(led, cfg)
+    assert card.batch_targets == ["@a"] and card.batch_state == "open" and card.batch_created == "2026-06-22T00:00:00Z"
+
+def test_header_unbatched_fields_empty(tmp_path):               # B3 byte-identity
+    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
+    _await(led, "p_a", "clip_1", "@a")
+    card = _editable(led, cfg)
+    assert card.batch_targets == [] and card.batch_state is None and card.batch_created is None and card.batch_excluded == 0
+
+def test_excluded_counts_active_accounts_outside_target(tmp_path):   # B4
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    _lineage(led, batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["@a"]))   # active {@a,@b}, target {@a} -> 1 excluded
+    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x")
+    assert _editable(led, cfg).batch_excluded == 1
+
+def test_excluded_all_sentinel_is_zero(tmp_path):              # B4 ALL-sentinel
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    _lineage(led, batch_id="batch_all")
+    led.add_batch(Batch(id="batch_all", name="Everyone", target_accounts=[]))   # [] == ALL -> excludes nobody
+    _await(led, "p_a", "clip_1", "@a", batch_id="batch_all")
+    assert _editable(led, cfg).batch_excluded == 0
+
+def test_affinity_from_moment(tmp_path):                       # C3
+    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
+    led.moments["mom_1"].affinities = ["@a", "@b"]
+    _await(led, "p_a", "clip_1", "@a")
+    assert _editable(led, cfg).affinities == ["@a", "@b"]
+
+def test_affinity_default_empty_when_uncast(tmp_path):         # C3 byte-identity (casting OFF)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
+    _await(led, "p_a", "clip_1", "@a")
+    assert _editable(led, cfg).affinities == []
+
+def test_batch_filter_keeps_only_that_batch(tmp_path):         # B2
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    _lineage(led, cid="clip_x", mid="mom_x", sid="src_x", batch_id="bx")
+    _lineage(led, cid="clip_y", mid="mom_y", sid="src_y", batch_id="by")
+    led.add_batch(Batch(id="bx", name="X", target_accounts=[])); led.add_batch(Batch(id="by", name="Y", target_accounts=[]))
+    _await(led, "p_x", "clip_x", "@a", batch_id="bx"); _await(led, "p_y", "clip_y", "@a", batch_id="by")
+    cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW, batch="bx")
+    assert {c.clip_id for c in cards} == {"clip_x"}            # only bx's card; by dropped
+
+def test_batch_filter_composes_with_account(tmp_path):         # B2 + P5
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    _lineage(led, cid="clip_x", mid="mom_x", sid="src_x", batch_id="bx")
+    led.add_batch(Batch(id="bx", name="X", target_accounts=[]))
+    _await(led, "p_xa", "clip_x", "@a", batch_id="bx"); _await(led, "p_xb", "clip_x", "@b", batch_id="bx")
+    assert {c.clip_id for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW, account="@a", batch="bx")} == {"clip_x"}
+    assert review_buckets(led, Accounts.load(cfg), cfg, now=NOW, account="@a", batch="by") == []   # wrong batch -> none
+
+def test_route_batch_filter_scope_preserved_and_header_rendered(tmp_path):   # B2 R1 + B3 render
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    _lineage(led, batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["@a"], created_at="2026-06-22T00:00:00Z"))
+    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x"); led.save()
+    html = _client(cfg).get("/review?batch=batch_x").data.decode()
+    assert "batch=batch_x" in html                 # POST/pagination URLs carry the batch scope (R1)
+    assert "Launch" in html and "→ @a" in html and "1 account(s) excluded" in html   # B3 header + B4 line
+
+def test_route_unknown_batch_is_recoverable(tmp_path):        # B2 stale id
+    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg)
+    _lineage(led, batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["@a"]))
+    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x"); led.save()
+    r = _client(cfg).get("/review?batch=ghost")
+    assert r.status_code == 200 and b"show all batches" in r.data   # recoverable, never a 404
+
+def test_route_unbatched_has_no_batch_param_or_excluded(tmp_path):   # nonregression / byte-identity
+    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
+    _await(led, "p_a", "clip_1", "@a"); led.save()
+    html = _client(cfg).get("/review").data.decode()
+    assert "batch=" not in html and "excluded by batch target" not in html and "show all batches" not in html

@@ -2,7 +2,7 @@
 (lock-free) and assembles these dataclasses; templates render them. Mutations live in actions.py."""
 from __future__ import annotations
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -98,6 +98,12 @@ class ReviewCard:
     batch_id: Optional[str] = None       # Face 4: Post.batch_id (Face 1's denormalized Batch.id) — the REAL
                                          # Batch these posts belong to; None == unbatched (groups under 'Ungrouped').
     batch_title: Optional[str] = None    # the Batch.name (led.get_batch(batch_id).name); None when unbatched.
+    # Face 4 follow-up — batch legibility (all default-safe; unbatched/empty -> byte-identical render):
+    batch_targets: list[str] = field(default_factory=list)   # B3: Batch.target_accounts ([] == ALL / Ungrouped)
+    batch_state: Optional[str] = None    # B3: Batch.state.value (None when unbatched/stale)
+    batch_created: Optional[str] = None  # B3: Batch.created_at (None -> rendered '—')
+    batch_excluded: int = 0              # B4: active accounts NOT in a non-empty target (0 == ALL/none excluded)
+    affinities: list[str] = field(default_factory=list)      # C3: Moment.affinities (cast reach; [] == all accounts)
 
 
 @dataclass
@@ -247,23 +253,30 @@ def _surface(post, *, persona, now: datetime, cfg: Config) -> SurfacePost:
         suggested_time=suggest_time(cfg, post, now=now) if editable else None,   # P1: only editable surfaces
         variant_hook=getattr(post, "variant_hook", None))   # persona on-screen hook (None when variation OFF)
 
-def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime) -> ReviewCard:
+def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
+          active_handles: frozenset = frozenset()) -> ReviewCard:
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
     surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg)
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
-    mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed (clip -> moment)
+    mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed + affinities (clip -> moment)
     # Face 4: the REAL Batch this card belongs to — Post.batch_id (all posts on one clip share the lineage,
     # so the same batch). Post-less cards (held/prepared, posts == []) carry None -> 'Ungrouped'. Title via
     # led.get_batch defensively (a stale/None batch_id -> None title -> 'Ungrouped' at the grouper).
     bid = next((p.batch_id for p in posts if getattr(p, "batch_id", None)), None)
     b = led.get_batch(bid) if bid else None
+    tgts = (b.target_accounts if b is not None else [])
+    # B4: how many ACTIVE accounts a non-empty target excludes (the enforcement signal; 0 for ALL-sentinel/none).
+    excluded = len([h for h in active_handles if h not in tgts]) if tgts else 0
     return ReviewCard(
         clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name, label=label,
         moment_window=window, reason=reason, language=language, subtitles_burned=cfg.burn_subs,
         held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
         surfaces=surfaces, bucket=bucket, clip_state=clip.state.value,
         hook_removed=(mom.hook_removed if mom is not None else None),
-        batch_id=bid, batch_title=(b.name if b is not None else None))
+        batch_id=bid, batch_title=(b.name if b is not None else None),
+        batch_targets=tgts, batch_state=(b.state.value if b is not None else None),
+        batch_created=(b.created_at if b is not None else None), batch_excluded=excluded,
+        affinities=(getattr(mom, "affinities", None) or []))
 
 def _card_day(led: Ledger, card: ReviewCard) -> str:
     """The ingest day (YYYY-MM-DD) a Review card buckets under: clip -> moment -> source.created_at.
@@ -277,7 +290,7 @@ def _card_day(led: Ledger, card: ReviewCard) -> str:
     except (ValueError, TypeError, AttributeError): return "undated"
 
 def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime,
-                   account: Optional[str] = None) -> list[ReviewCard]:
+                   account: Optional[str] = None, batch: Optional[str] = None) -> list[ReviewCard]:
     """Three buckets (spec §6): editable (awaiting_approval posts grouped by clip — the approve worklist),
     recent (published/analyzed within RECENT_WINDOW_HOURS), held (clips with held=True, no posts). A clip
     may appear in both editable and recent (different posts). Approved (`queued`) posts have left Review for
@@ -289,6 +302,7 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     post-less card (prepared/held, surfaces == []) has no surface on any account -> excluded under any
     non-None filter, present under None (byte-identical default)."""
     personas = _personas(accounts)
+    active_handles = frozenset(a.handle for a in accounts.active())   # B4: active universe for the excluded-count
     cards: list[ReviewCard] = []
     queued_by_clip: dict[str, list] = {}
     recent_by_clip: dict[str, list] = {}
@@ -310,7 +324,7 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     for clip_id, posts in queued_by_clip.items():
         clip = led.clips.get(clip_id)
         if clip is not None and not clip.held:        # a held clip belongs ONLY in the held bucket
-            editable_cards.append(_card(led, clip, posts, "editable", cfg, personas, now))
+            editable_cards.append(_card(led, clip, posts, "editable", cfg, personas, now, active_handles))
     # editable cards: day-sorted (newest ingest day first, 'undated' last) so _review_body.html can emit a
     # running day-header across the paginated slice WITHOUT touching pagination (content-lifecycle Phase 3 H8).
     for c in editable_cards: c.day = _card_day(led, c)
@@ -322,15 +336,17 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
             continue
         clip = led.clips.get(clip_id)
         if clip is not None and not clip.held:        # (same rule for the recent/shipped bucket)
-            cards.append(_card(led, clip, posts, "recent", cfg, personas, now))
+            cards.append(_card(led, clip, posts, "recent", cfg, personas, now, active_handles))
     clips_with_posts = {p.parent_id for p in led.posts.values()}
     for clip in led.clips.values():
         if clip.held:
-            cards.append(_card(led, clip, [], "held", cfg, personas, now))
+            cards.append(_card(led, clip, [], "held", cfg, personas, now, active_handles))
         elif clip.id not in clips_with_posts and clip.state in PREPARABLE_STATES:
-            cards.append(_card(led, clip, [], "prepared", cfg, personas, now))
+            cards.append(_card(led, clip, [], "prepared", cfg, personas, now, active_handles))
     if account is not None:        # P5: keep a card iff a SURFACE matches (post-less cards have none -> dropped)
         cards = [c for c in cards if any(s.account == account for s in c.surfaces)]
+    if batch is not None:          # B2: drill into ONE batch — keep cards whose denormalized Batch.id matches
+        cards = [c for c in cards if c.batch_id == batch]
     return cards
 
 
