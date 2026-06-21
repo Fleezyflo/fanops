@@ -1,6 +1,10 @@
 import json
+import os
+import fcntl
+import threading
 import pytest
 from fanops.config import Config
+from fanops.errors import LockBusyError
 from fanops.accounts import Accounts, write_integration, add_account, set_status, remove_account, set_tag_lean
 
 def _seed(cfg, accounts):
@@ -360,3 +364,41 @@ def test_load_unknown_tag_lean_does_not_crash(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "tag_lean": "weird"}])
     assert Accounts.load(cfg).accounts[0].tag_lean == "weird"     # persisted, inert downstream
+
+
+# ---- HIGH (audit Slice 4): the 5 mutators must serialize their read-modify-write under a file lock ----
+def test_accounts_lock_path_in_config(tmp_path):
+    cfg = Config(root=tmp_path)
+    assert cfg.accounts_lock_path == cfg.control / "accounts.lock"
+
+def test_mutator_serializes_on_the_accounts_lock(tmp_path, monkeypatch):
+    # A live holder of the accounts lock must EXCLUDE a mutator (it waits the shortened timeout then
+    # raises LockBusyError) — proves the read-modify-write runs under cfg.accounts_lock_path, so two
+    # concurrent Studio/daemon writers can't lost-update. Mirrors test_ledger_lock's held-flock proof.
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@base", ["instagram"])                       # seed (itself must acquire+release the lock)
+    monkeypatch.setattr("fanops.ledger._DEFAULT_LOCK_TIMEOUT", 0.3)   # don't wait the 30s default
+    cfg.accounts_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(cfg.accounts_lock_path), os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)                                  # a live holder takes the lock
+    try:
+        with pytest.raises(LockBusyError):
+            set_status(cfg, "@base", "planned")                    # must contend on the held lock
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
+
+def test_concurrent_add_account_no_lost_update(tmp_path):
+    # The real lost-update: two threads each add a DIFFERENT account. Without a serialized read-modify-
+    # write both load the same base, both append their own, and the last full-snapshot write wins —
+    # silently dropping the other. Looped so the unlocked failure is reliable, not a lucky pass.
+    cfg = Config(root=tmp_path)
+    for it in range(8):
+        a, b = f"@a{it}", f"@b{it}"
+        start = threading.Barrier(2)
+        def w(h):
+            start.wait(); add_account(cfg, h, ["instagram"])
+        ts = [threading.Thread(target=w, args=(a,)), threading.Thread(target=w, args=(b,))]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        handles = {x.handle for x in Accounts.load(cfg).accounts}
+        assert a in handles and b in handles, f"iter {it}: lost update -> {sorted(handles)}"
