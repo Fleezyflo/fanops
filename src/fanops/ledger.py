@@ -264,7 +264,8 @@ class Ledger:
         """Standalone save for callers OUTSIDE a transaction (e.g. cmd_ingest, cmd_gc). Acquires
         the lock, then delegates the write to _save_unlocked. A caller already inside
         Ledger.transaction() must NOT call this (it would self-deadlock/LockBusyError) — it gets the
-        single exit-save instead; publish_due takes an in_transaction flag for its mid-loop saves."""
+        single exit-save instead. (publish now runs its network OUTSIDE the lock via per-post
+        claim->network->finalize transactions, so it no longer needs a mid-loop unlocked save.)"""
         with _file_lock(self.cfg.lock_path):
             self._save_unlocked()
 

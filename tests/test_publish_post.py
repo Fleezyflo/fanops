@@ -1,7 +1,8 @@
-# tests/test_publish_post.py — publish_post: ship ONE queued post NOW, ignoring its (future)
-# schedule, scoped to just that post. The "Publish now" engine behind the Studio button (milestone 5:
-# publish in the UI). Reuses publish_due's crash-safe per-post core (_submit_one) — so the due-gating
-# behavior of publish_due (test_post_run.py) is unchanged; here we prove the publish-now path.
+# tests/test_publish_post.py — publish_post(cfg, post_id): ship ONE queued post NOW, ignoring its
+# (future) schedule, scoped to just that post. The "Publish now" engine behind the Studio button.
+# Reuses publish_due's per-post claim->network->finalize core (_publish_one) with the network OUTSIDE
+# the ledger flock; returns the final post-state value (or None when nothing was claimable). Setup
+# persists to disk (self-loading path) and assertions reload from disk.
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Clip, PostState, ClipState, Platform
@@ -14,6 +15,7 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2999-01-01T00:00:00Z"):
     led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
                       platform=Platform.instagram, caption="ship it",
                       scheduled_time=when, state=PostState.queued))
+    led.save()
 
 
 def test_publish_post_ships_a_future_scheduled_post_now(tmp_path, monkeypatch):
@@ -21,8 +23,8 @@ def test_publish_post_ships_a_future_scheduled_post_now(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)                      # dryrun
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2999-01-01T00:00:00Z")      # NOT due by schedule
-    led = publish_post(led, cfg, "p1")
-    assert led.posts["p1"].state is PostState.published
+    assert publish_post(cfg, "p1") == "published"
+    assert Ledger.load(cfg).posts["p1"].state is PostState.published
 
 def test_publish_post_is_scoped_to_the_target(tmp_path, monkeypatch):
     # other queued posts are UNTOUCHED — Publish now ships only the clicked piece, not the batch.
@@ -30,7 +32,8 @@ def test_publish_post_is_scoped_to_the_target(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2999-01-01T00:00:00Z")
     _queued(led, cfg, pid="p2", cid="c2", when="2020-01-01T00:00:00Z")      # already due, but NOT clicked
-    led = publish_post(led, cfg, "p1")
+    publish_post(cfg, "p1")
+    led = Ledger.load(cfg)
     assert led.posts["p1"].state is PostState.published
     assert led.posts["p2"].state is PostState.queued                        # untouched
 
@@ -38,16 +41,17 @@ def test_publish_post_unknown_is_noop(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1")
-    led = publish_post(led, cfg, "nope")                                    # no such post -> no raise, no change
-    assert led.posts["p1"].state is PostState.queued
+    assert publish_post(cfg, "nope") is None                                # no such post -> no raise, no change
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
 
 def test_publish_post_non_queued_is_noop(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1")
-    led.posts["p1"].state = PostState.published
-    led = publish_post(led, cfg, "p1")                                      # already published -> no-op
-    assert led.posts["p1"].state is PostState.published
+    with Ledger.transaction(cfg) as led:
+        led.posts["p1"].state = PostState.published                         # already published on disk
+    assert publish_post(cfg, "p1") is None                                  # claim sees non-queued -> no-op
+    assert Ledger.load(cfg).posts["p1"].state is PostState.published
 
 def test_publish_post_propagates_fatal_auth(tmp_path, monkeypatch):
     # a bad key must HALT (raise), not silently mark the post failed — same contract as publish_due.
@@ -59,6 +63,6 @@ def test_publish_post_propagates_fatal_auth(tmp_path, monkeypatch):
         def publish(self, led, post_id): raise BlotatoAuthError("401 unauthorized")
     monkeypatch.setattr(run, "get_poster", lambda cfg: BoomPoster())
     try:
-        publish_post(led, cfg, "p1"); assert False, "expected BlotatoAuthError to propagate"
+        publish_post(cfg, "p1"); assert False, "expected BlotatoAuthError to propagate"
     except BlotatoAuthError:
         pass
