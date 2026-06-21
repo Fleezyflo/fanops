@@ -17,6 +17,7 @@ from fanops.models import ClipState, StitchState, StitchPlan, stitch_plan_id, Cl
 from fanops.ids import child_id
 from fanops.router import awaiting, stitched, CLEAN_AWAITING
 from fanops.impact_cut import make_stitch_plan, STRATEGY_KEY
+from fanops.log import get_logger
 
 # A bare clip in any of these states is not a valid impact-cut base: error/retired are broken/gone, and a
 # stitch_draft is itself a stitch (never stitch a stitch).
@@ -321,6 +322,7 @@ def _commit_intro(led: Ledger, cfg: Config, p: StitchPlan, base: Clip) -> None:
         return
     # not warm: the prewarm ran first this pass and produced no valid composite -> a FAILED attempt. Bound the
     # retries (flaky matcher pair / unrenderable intro asset) — park at the cap instead of looping forever.
+    get_logger(cfg)("intro_tease", p.id, "warn", err=f"prewarm not ready (attempt {p.render_attempts + 1}/{MAX_INTRO_RENDER_ATTEMPTS})")   # breadcrumb: the silent retry-burn was invisible until the cap errored
     p.render_attempts += 1
     if p.render_attempts >= MAX_INTRO_RENDER_ATTEMPTS:
         p.state = StitchState.error

@@ -117,7 +117,8 @@ def _prewarm_concurrent(cfg: Config, aspects: set[Fmt], log) -> None:
         with ThreadPoolExecutor(max_workers=cfg.concurrent_workers) as ex:   # bound = rate-limit guardrail, not correctness
             futs = [ex.submit(_produce_source, cfg, sid, aspects, log=log) for sid in ids]
             for fut in as_completed(futs):
-                fut.result()                              # surface a worker crash here (each worker already fail-open)
+                try: fut.result()                         # each worker already fail-opens; this guards a thread-level crash
+                except Exception as e: log("prewarm", "-", "warn", err=f"worker crash: {type(e).__name__}: {str(e)[:120]}")
     # M4/M6 structural-hooks stitch prewarm stays SERIAL (independent of the per-source map; warms
     # operator-APPROVED stitch renders lock-free), mirroring _prewarm_sequential's tail.
     strategies = _enabled_strategies(cfg)

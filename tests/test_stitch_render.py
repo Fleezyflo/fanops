@@ -451,3 +451,20 @@ def test_approved_disabled_count(tmp_path):
     assert approved_disabled_count(led, enabled={"impact_cut"}) == 1     # the intro plan's format is disabled
     assert approved_disabled_count(led, enabled={"intro_tease"}) == 0    # enabled -> not frozen
     assert approved_disabled_count(led, enabled=set()) == 1              # both off -> frozen
+
+
+def test_commit_intro_logs_when_prewarm_not_ready(tmp_path, mocker):
+    # M6 observability: an approved intro_tease plan that isn't warm burns a render_attempt EACH pass; that
+    # silent burn left no log trace until the plan hit the retry cap and errored. It must leave a breadcrumb.
+    from pathlib import Path
+    from fanops.stitch_render import _commit_intro
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    base = Clip(id="b", parent_id="m", path=str(tmp_path / "b.mp4"), state=ClipState.queued, aspect=Fmt.r9x16)
+    p = StitchPlan(id="sp_intro", clip_id="b", strategy_key="intro_tease", state=StitchState.approved)
+    mocker.patch("fanops.stitch_render._intro_compose_fp", return_value="fp")
+    mocker.patch("fanops.stitch_render._intro_render_target",
+                 return_value=(base, base, "cid_x", Path(str(tmp_path / "nope.mp4"))))   # out_path absent -> not warm
+    _commit_intro(led, cfg, p, base)
+    assert p.render_attempts == 1                                        # an attempt was consumed
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "sp_intro" in log and "intro" in log.lower()                 # breadcrumb names the plan
