@@ -715,6 +715,18 @@ def _dispatch(cfg: Config, args) -> int:
                     led = apply_variant_amplify(led, cfg)
             except Exception as e:
                 get_logger(cfg)("variant_amplify", "-", "error", err=str(e)[:120])
+        # P4(b) cross-account reach dim-bias: SYMMETRIC with variant_amplify — a SEPARATE, independently
+        # gated learning pass so the unattended run applies a proven higher-reach creative dim, not only
+        # the manual `fanops p4-bias` verb. Gated by its OWN kill switch (cfg.p4_dim_bias, default OFF) AND
+        # the live-backend+key guard; apply_p4_dim_bias is amplify-only AND stays INERT until cutover
+        # validation (validation_gate.learning_validated), so wiring it in is fail-SAFE. Own try/except —
+        # a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
+        if cfg.p4_dim_bias and cfg.is_live_backend:
+            try:
+                with Ledger.transaction(cfg) as led:
+                    led = apply_p4_dim_bias(led, cfg)
+            except Exception as e:
+                get_logger(cfg)("p4_dim_bias", "-", "error", err=str(e)[:120])
         # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
         # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
         _heartbeat(cfg, s); print(s); return 0
