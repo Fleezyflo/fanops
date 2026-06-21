@@ -79,9 +79,10 @@ def _pcfg(tmp_path, monkeypatch):
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     return Config(root=tmp_path)
 
-# the documented analytics array shape (docs.postiz.com) — the integration-checkpoint fixture
+# the VERIFIED-live analytics array shape (labels Views/Reach/Saves/Likes/Comments/Shares, confirmed
+# against the running instance 2026-06-21) — the integration-checkpoint fixture
 _DOC_ARRAY = [{"label": "Likes", "data": [{"total": "3", "date": "2026-06-10"}, {"total": "5", "date": "2026-06-12"}], "percentageChange": 2},
-              {"label": "Impressions", "data": [{"total": "100", "date": "2026-06-12"}]}]
+              {"label": "Reach", "data": [{"total": "100", "date": "2026-06-12"}]}]
 
 def test_postiz_list_posts_maps_documented_array(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizMetricsClient
@@ -89,7 +90,7 @@ def test_postiz_list_posts_maps_documented_array(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, _DOC_ARRAY))
     rows = PostizMetricsClient(cfg, submission_ids=["sid1"]).list_posts("30d")
     assert rows == [{"postSubmissionId": "sid1", "metrics": {"likes": 5.0, "reach": 100.0},
-                     "_raw_labels": ["Likes", "Impressions"]}]   # latest total wins, str→num, Impressions→reach
+                     "_raw_labels": ["Likes", "Reach"]}]   # latest total wins, str→num, Reach→reach
 
 def test_postiz_list_posts_none_ids_makes_no_network_call(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizMetricsClient
@@ -101,11 +102,11 @@ def test_postiz_list_posts_none_ids_makes_no_network_call(tmp_path, monkeypatch,
 def test_postiz_unknown_label_dropped_from_metrics_but_kept_in_raw_labels(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizMetricsClient
     cfg = _pcfg(tmp_path, monkeypatch)
-    arr = [{"label": "Saves", "data": [{"total": "9", "date": "2026-06-12"}]},   # unmapped → dropped from metrics
+    arr = [{"label": "Retention", "data": [{"total": "9", "date": "2026-06-12"}]},   # genuinely absent from the live label map → dropped
            {"label": "Shares", "data": [{"total": "4", "date": "2026-06-12"}]}]
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, arr))
     row = PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()[0]
-    assert row["metrics"] == {"shares": 4.0} and row["_raw_labels"] == ["Saves", "Shares"]
+    assert row["metrics"] == {"shares": 4.0} and row["_raw_labels"] == ["Retention", "Shares"]
 
 def test_postiz_empty_data_series_omits_key(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizMetricsClient
@@ -162,15 +163,21 @@ def test_postiz_list_posts_isolates_a_single_5xx(tmp_path, monkeypatch, mocker):
     rows = PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()
     assert rows == [{"postSubmissionId": "s", "metrics": {}, "_raw_labels": []}]   # skipped, not fatal
 
-# ---- M2 Task 2: lock the label→lift mapping + the window→date helper (the integration checkpoint) ----
-def test_postiz_map_analytics_maps_four_documented_labels():
+# ---- M2 Task 2: lock the label→lift mapping to the VERIFIED-live label set (the integration checkpoint) ----
+def test_postiz_map_analytics_maps_live_labels():
+    # The 6 labels the live Postiz analytics endpoint actually emits (verified 2026-06-21): Views/Reach/
+    # Saves/Likes/Comments/Shares. The OLD map keyed `impressions` (never present) and dropped saves+reach
+    # — which silently froze the learning loop (reach gates learn_doctor; saves is the top lift weight).
     from fanops.post.metrics import _map_analytics
     arr = [{"label": "Likes", "data": [{"total": "1", "date": "d"}]},
            {"label": "Shares", "data": [{"total": "2", "date": "d"}]},
            {"label": "Comments", "data": [{"total": "3", "date": "d"}]},
-           {"label": "Impressions", "data": [{"total": "4", "date": "d"}]}]
-    # comments is mapped (present in the dict) even though default _W ignores it — the whitelist is the gate, not the map
-    assert _map_analytics(arr) == {"likes": 1.0, "shares": 2.0, "comments": 3.0, "reach": 4.0}
+           {"label": "Reach", "data": [{"total": "4", "date": "d"}]},
+           {"label": "Saves", "data": [{"total": "5", "date": "d"}]},
+           {"label": "Views", "data": [{"total": "6", "date": "d"}]}]
+    # saves+reach are the lift-consumed keys (track._W); views/comments map but are present-but-unweighted
+    assert _map_analytics(arr) == {"likes": 1.0, "shares": 2.0, "comments": 3.0,
+                                   "reach": 4.0, "saves": 5.0, "views": 6.0}
 
 
 def test_postiz_list_posts_one_failing_sid_does_not_lose_the_others(tmp_path, monkeypatch, mocker):
@@ -194,21 +201,29 @@ def test_postiz_list_posts_one_failing_sid_does_not_lose_the_others(tmp_path, mo
 
 # ---- P2 Task 3: PostizStatusClient.get_status — the date-windowed reconcile read ----
 # Postiz has NO per-post status endpoint; the ONLY status signal is the `state` field on a row of
-# GET /public/v1/posts (Context7-verified: {posts:[{id, publishDate, state, integration, content}]}).
-# That list endpoint is DATE-WINDOWED (display day/week/month + date, default ~week), so a future /
-# old / 2099-probe post is PERMANENTLY absent from the default page unless the query carries a `date`
-# covering its publishDate. get_status maps the state into the SAME {status, publicUrl} dict
-# reconcile_posts consumes; publicUrl is _postiz_permalink (None today). State map (case-insensitive):
-# PUBLISHED→published, ERROR/FAILED→failed, everything-else→scheduled (parked), missing-row→unknown.
-def test_postiz_status_published_maps_and_attaches_permalink(tmp_path, monkeypatch, mocker):
+# GET /public/v1/posts (verified live 2026-06-21: {posts:[{id, publishDate, state, releaseURL, ...}]}).
+# That list endpoint DEMANDS startDate/endDate ISO-8601 (the old display/date returns HTTP 400), so
+# get_status sends an ISO window bracketing the post's publishDate. A PUBLISHED row carries the real IG
+# permalink in `releaseURL`. get_status maps the state into the SAME {status, publicUrl} dict
+# reconcile_posts consumes. State map (case-insensitive): PUBLISHED→published, ERROR/FAILED→failed,
+# everything-else→scheduled (parked), missing-row→unknown.
+def test_postiz_status_published_captures_releaseURL(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizStatusClient
-    from fanops.post.postiz import _postiz_permalink
     cfg = _pcfg(tmp_path, monkeypatch)
-    page = {"posts": [{"id": "sid1", "state": "PUBLISHED", "publishDate": "2099-01-01T00:00:00.000Z"}]}
+    url = "https://www.instagram.com/reel/DZvZ8Itkaxz/"
+    page = {"posts": [{"id": "sid1", "state": "PUBLISHED", "releaseURL": url, "publishDate": "2099-01-01T00:00:00.000Z"}]}
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, page))
     out = PostizStatusClient(cfg).get_status("sid1", publish_date="2099-01-01T00:00:00Z")
     assert out["status"] == "published"
-    assert out["publicUrl"] == _postiz_permalink(cfg, "sid1")   # None today — asserted vs the helper, not a literal
+    assert out["publicUrl"] == url                              # the real IG permalink from the row, not None
+
+def test_postiz_status_published_without_releaseURL_is_none(tmp_path, monkeypatch, mocker):
+    # ERROR/queued rows carry no releaseURL; a published row that lacks it -> publicUrl None (never crash).
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_R(200, {"posts": [{"id": "sid1", "state": "PUBLISHED"}]}))
+    assert PostizStatusClient(cfg).get_status("sid1")["publicUrl"] is None
 
 def test_postiz_status_error_state_maps_failed(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizStatusClient
@@ -231,20 +246,43 @@ def test_postiz_status_missing_row_is_unknown(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [{"id": "other", "state": "PUBLISHED"}]}))
     assert PostizStatusClient(cfg).get_status("sid1")["status"] == "unknown"
 
-def test_postiz_status_queries_date_window_covering_the_post(tmp_path, monkeypatch, mocker):
-    # THE date-window fix: the list endpoint defaults to ~a week, so a future/old/2099 post is
-    # PERMANENTLY absent unless the query carries a `date` covering its publishDate. Stub the endpoint
-    # to return the target row ONLY when the request's `date` matches the post's day, an unrelated page
-    # otherwise. The post must be FOUND (published), not falsely "unknown".
+def test_postiz_status_uses_startdate_enddate_window_not_display_date(tmp_path, monkeypatch, mocker):
+    # THE CRITICAL fix: the live /public/v1/posts endpoint REJECTS the old {display,date} with HTTP 400
+    # ("startDate must be a valid ISO 8601 date string"). The query MUST send startDate/endDate ISO dates
+    # (YYYY-MM-DD) bracketing the post's publishDate — verified against the running instance 2026-06-21.
     from fanops.post.metrics import PostizStatusClient
     cfg = _pcfg(tmp_path, monkeypatch)
-    def fake_get(url, **kw):
-        if (kw.get("params") or {}).get("date") == "2099-01-01":
-            return _R(200, {"posts": [{"id": "sid1", "state": "PUBLISHED"}]})
-        return _R(200, {"posts": [{"id": "someone-else", "state": "PUBLISHED"}]})   # default window: target absent
-    mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
+    g = mocker.patch("fanops.post.metrics.requests.get",
+                     return_value=_R(200, {"posts": [{"id": "sid1", "state": "PUBLISHED", "releaseURL": "u"}]}))
     out = PostizStatusClient(cfg).get_status("sid1", publish_date="2099-01-01T00:00:00Z")
-    assert out["status"] == "published"            # found via the date query, not "unknown"
+    params = g.call_args.kwargs.get("params", {})
+    assert "display" not in params and "date" not in params           # the rejected contract is gone
+    assert params["startDate"] <= "2099-01-01" <= params["endDate"]    # ISO window brackets the post's day
+    assert len(params["startDate"]) == 10 and len(params["endDate"]) == 10   # date-only ISO, the accepted form
+    assert out["status"] == "published"                               # still found + mapped
+
+def test_postiz_status_window_anchors_on_now_when_no_publish_date(tmp_path, monkeypatch, mocker):
+    # A near-future operator-set post can have publish_date=None; the window must anchor on `now` so it
+    # still brackets a just-published post (not crash, not an empty ~1970 window).
+    from fanops.post.metrics import PostizStatusClient
+    from datetime import datetime, timezone
+    cfg = _pcfg(tmp_path, monkeypatch)
+    g = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": []}))
+    PostizStatusClient(cfg).get_status("sid1")                        # no publish_date
+    params = g.call_args.kwargs.get("params", {})
+    today = datetime.now(timezone.utc).date().isoformat()
+    assert params["startDate"] <= today <= params["endDate"]          # window straddles now
+
+def test_postiz_status_malformed_publish_date_falls_back_to_now(tmp_path, monkeypatch, mocker):
+    # A non-ISO publish_date must NOT raise — fall back to a now-anchored window (parse_iso failure caught).
+    from fanops.post.metrics import PostizStatusClient
+    from datetime import datetime, timezone
+    cfg = _pcfg(tmp_path, monkeypatch)
+    g = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": []}))
+    PostizStatusClient(cfg).get_status("sid1", publish_date="not-a-date")
+    params = g.call_args.kwargs.get("params", {})
+    today = datetime.now(timezone.utc).date().isoformat()
+    assert params["startDate"] <= today <= params["endDate"]
 
 def test_postiz_status_401_is_typed_auth_with_redacted_body(tmp_path, monkeypatch, mocker):
     from fanops.errors import PostizAuthError

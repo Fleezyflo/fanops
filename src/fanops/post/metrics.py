@@ -8,14 +8,15 @@ here (a future reader of a list row's URL must use postUrl). Which METRICS field
 remains an INTEGRATION CHECKPOINT: if saves/shares/retention are unavailable, redesign lift_score
 (Task 21) on the available fields."""
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 import requests
 from fanops.config import Config
 from fanops.errors import BlotatoAuthError, PostizAuthError
 from fanops.post.blotato_base import BASE_URL
-from fanops.post.postiz import _base, _key, _postiz_permalink
+from fanops.post.postiz import _base, _key
+from fanops.timeutil import parse_iso
 from fanops.log import get_logger
 
 # A 401 on a metrics/status read is the SAME fatal auth condition as a 401 on publish — raise the
@@ -82,11 +83,15 @@ class BlotatoStatusClient:
 # and fetches each. It emits the SAME {postSubmissionId, metrics} row contract pull_metrics consumes,
 # plus an inert _raw_labels list that M3's cutover reconcile reads (so it never re-fetches). ----
 
-# documented Postiz label -> lift_score key. The optimization-target weights live in tuning.json
-# lift_weights (applied downstream by lift_score); unknown labels are DROPPED (lift_score whitelists
-# keys anyway). NB: `comments` is mapped but the default _W has no `comments` weight, so it stays a
-# present-but-unweighted candidate until the operator weights it via tuning.json — intended.
-_POSTIZ_LABEL_MAP = {"likes": "likes", "shares": "shares", "comments": "comments", "impressions": "reach"}
+# VERIFIED-live Postiz analytics labels (Views/Reach/Saves/Likes/Comments/Shares, confirmed against the
+# running instance 2026-06-21) -> lift_score key. The optimization-target weights live in tuning.json
+# lift_weights (applied downstream by lift_score); unknown labels are DROPPED (lift_score whitelists keys
+# anyway). `saves` (top _W weight) and `reach` (the learn_doctor gating key) are exactly the keys the old
+# {"impressions":"reach"} map silently dropped — that froze the learning loop on live Postiz. NB:
+# `comments`+`views` map but the default _W has no weight for them (present-but-unweighted until the
+# operator weights them via tuning.json — intended). `retention` is genuinely absent from the live label
+# set, so it stays unmapped (the one remaining _W gap learn_doctor reports).
+_POSTIZ_LABEL_MAP = {"likes": "likes", "shares": "shares", "comments": "comments", "reach": "reach", "saves": "saves", "views": "views"}
 
 def _latest_total(series) -> Optional[float]:
     # collapse a label's time-series [{total:str,date:str},...] to its latest `total`, coerced to num.
@@ -168,12 +173,13 @@ _POSTIZ_STATE_MAP = {"PUBLISHED": "published", "ERROR": "failed", "FAILED": "fai
 class PostizStatusClient:
     """Reconcile READ for the Postiz backend (P2). Postiz has NO per-post status endpoint and NO
     permalink in any response (Context7-verified) — the ONLY status signal is the `state` field on a
-    row of GET /public/v1/posts. That list endpoint is DATE-WINDOWED (`display` day/week/month +
-    `date`, default ~week), so a post at a FUTURE operator-set time, an old post, or a 2099 cutover
-    probe is PERMANENTLY absent from the default page (a correctness bug, not a transient miss). So
-    get_status derives a `date` from the post's own publishDate/scheduled_time and queries a wide
-    window (display=month) around it. Emits the SAME {status, publicUrl} dict reconcile_posts consumes;
-    publicUrl is _postiz_permalink (None today — no URL in the API). 401 -> PostizAuthError (halt, so
+    row of GET /public/v1/posts. That list endpoint DEMANDS startDate/endDate ISO-8601 (the old
+    `display`/`date` params are rejected with HTTP 400 — verified against the running instance
+    2026-06-21), so a post at a FUTURE operator-set time, an old post, or a 2099 cutover probe is found
+    only when the query window covers its publishDate. So get_status anchors a ±35d ISO window on the
+    post's own publishDate/scheduled_time (or now when unset). Emits the SAME {status, publicUrl} dict
+    reconcile_posts consumes; publicUrl is the row's `releaseURL` (the real IG permalink, present on
+    PUBLISHED rows). 401 -> PostizAuthError (halt, so
     reconcile's auth-halt fires); 5xx -> RuntimeError (per-post-isolated by reconcile_posts -> parked,
     never failed). A row absent from the page -> {"status":"unknown"} (parked, never guessed failed).
 
@@ -185,10 +191,13 @@ class PostizStatusClient:
         self.cfg = cfg; self.base = _base(cfg); self.key = _key(cfg)  # _key raises PostizAuthError if missing
 
     def get_status(self, submission_id: str, publish_date: Optional[str] = None) -> dict:
-        params = {"display": "month"}                       # widen beyond the default ~week window
-        day = (publish_date or "")[:10]                     # ISO date portion (YYYY-MM-DD); "" -> omit
-        if day:
-            params["date"] = day                            # cover the post's own publishDate (the date-window fix)
+        # The live endpoint demands startDate/endDate ISO-8601 (display/date -> HTTP 400). Anchor a ±35d
+        # window on the post's publishDate (or now when unset/unparseable) so a future operator-set time,
+        # an old post, and a 2099 probe all fall inside the queried page. Date-only ISO is accepted.
+        try: anchor = parse_iso(publish_date) if publish_date else datetime.now(timezone.utc)
+        except (ValueError, TypeError, AttributeError): anchor = datetime.now(timezone.utc)
+        params = {"startDate": (anchor - timedelta(days=35)).date().isoformat(),
+                  "endDate": (anchor + timedelta(days=35)).date().isoformat()}
         resp = requests.get(f"{self.base}/public/v1/posts", headers={"Authorization": self.key},
                             params=params, timeout=30)
         if resp.status_code == 401:
@@ -203,5 +212,5 @@ class PostizStatusClient:
         status = _POSTIZ_STATE_MAP.get(str(row.get("state", "")).upper(), "scheduled")
         out = {"status": status}
         if status == "published":
-            out["publicUrl"] = _postiz_permalink(self.cfg, submission_id)   # None today (no URL in the API)
+            out["publicUrl"] = row.get("releaseURL") or None   # the real IG permalink (present only on PUBLISHED rows)
         return out

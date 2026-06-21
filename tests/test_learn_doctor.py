@@ -1,9 +1,9 @@
 # tests/test_learn_doctor.py
 # F2 — read-only learning-loop field-shape doctor. Answers ONE question: does the LIVE Postiz
 # analytics field shape carry the `reach` signal lift_score/M4 reach-attribution need? The verdict is
-# per-key on `reach` (the one weighted key mappable from the Postiz `impressions` label) — NOT all of
-# _W: saves+retention are PERMANENTLY unmapped (a design gap, reported but never gated). Tri-state:
-# PASS / FAIL / NO-DATA, so 0 posts is never a vacuous PASS. Persisted so M4 can gate on it.
+# per-key on `reach` (mapped from the live `reach` label) — NOT all of _W: `retention` is genuinely
+# absent from the live label set (reported, never gated). `saves` now maps (the 2026-06-21 label fix).
+# Tri-state: PASS / FAIL / NO-DATA, so 0 posts is never a vacuous PASS. Persisted so M4 can gate on it.
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -21,12 +21,12 @@ def _led_with_shipped(tmp_path, *, sub="s_A", state=PostState.published):
 def test_verdict_pass_when_reach_present(tmp_path):
     cfg, led = _led_with_shipped(tmp_path)
     rows = [{"postSubmissionId": "s_A", "metrics": {"reach": 5000, "likes": 10},
-             "_raw_labels": ["impressions", "Likes"]}]
+             "_raw_labels": ["Reach", "Likes"]}]
     rep = field_shape_report(led, cfg, list_posts=lambda w: rows)
     assert rep["verdict"] == "PASS"
     assert rep["reach_present"] is True
     assert rep["posts_sampled"] == 1
-    assert "impressions" in rep["labels_seen"]
+    assert "Reach" in rep["labels_seen"]
 
 
 def test_verdict_fail_when_labels_present_but_no_reach(tmp_path):
@@ -58,15 +58,15 @@ def test_verdict_no_data_when_rows_have_no_usable_analytics(tmp_path):
     assert rep["posts_sampled"] == 1
 
 
-def test_reach_pass_despite_saves_and_retention_unmapped(tmp_path):
-    # THE C3 correction: saves+retention can NEVER be present on Postiz (unmapped), so an all-_W-key
-    # verdict would permanently FAIL. The doctor gates only on `reach`: a reach-bearing row PASSes and
-    # surfaces saves/retention as a known permanent gap, not a failure.
+def test_reach_pass_with_retention_unmapped(tmp_path):
+    # THE C3 correction: the doctor gates ONLY on `reach`, not all of _W. `retention` is genuinely absent
+    # from the live Postiz label set, so an all-_W verdict would permanently FAIL; a reach-bearing row
+    # PASSes and surfaces retention as a known gap. (`saves` now maps — the 2026-06-21 label fix.)
     cfg, led = _led_with_shipped(tmp_path)
-    rows = [{"postSubmissionId": "s_A", "metrics": {"reach": 9000}, "_raw_labels": ["impressions"]}]
+    rows = [{"postSubmissionId": "s_A", "metrics": {"reach": 9000}, "_raw_labels": ["Reach"]}]
     rep = field_shape_report(led, cfg, list_posts=lambda w: rows)
     assert rep["verdict"] == "PASS"
-    assert rep["unmapped_weight_keys"] == ["retention", "saves"]   # reported, never gated
+    assert rep["unmapped_weight_keys"] == ["retention"]   # only retention now; saves maps -> reported, never gated
     assert rep["gating_key"] == "reach"
 
 

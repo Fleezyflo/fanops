@@ -149,9 +149,9 @@ def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch, mocker):
 def test_cmd_reconcile_postiz_date_windows_each_post(tmp_path, monkeypatch, mocker):
     # P2 review fix: the explicit `fanops reconcile` verb must carry the date window for Postiz too.
     # _default_get_status(cfg, snapshot) lets the Postiz poll read each post's own scheduled_time and
-    # pass it as the GET /public/v1/posts `date` — else a future/old post is permanently off the
-    # default ~week page and never reconciles. Run the REAL Postiz dispatch (no _default_get_status
-    # mock); capture the params the client sends.
+    # pass a startDate/endDate window bracketing it on GET /public/v1/posts — else a future/old post is
+    # permanently off the page and never reconciles (and the live server rejects the old display/date
+    # with HTTP 400). Run the REAL Postiz dispatch (no _default_get_status mock); capture the params.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
@@ -167,7 +167,8 @@ def test_cmd_reconcile_postiz_date_windows_each_post(tmp_path, monkeypatch, mock
         seen["params"] = kw.get("params"); return _Resp()
     mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
     assert main_ok(["reconcile"])
-    assert (seen.get("params") or {}).get("date") == "2099-01-01"      # date-windowed by the post's own time
+    p = seen.get("params") or {}
+    assert "date" not in p and p["startDate"] <= "2099-01-01" <= p["endDate"]   # ISO window brackets the post's own time
     assert Ledger.load(cfg).posts["p"].state is PostState.published
 
 def test_cmd_reconcile_postiz_without_key_skips_cleanly(tmp_path, monkeypatch, capsys):
