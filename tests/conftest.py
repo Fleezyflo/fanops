@@ -39,7 +39,10 @@ _LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL"
               # persona/learning behavior flags (default OFF): once the operator persists e.g.
               # FANOPS_CREATIVE_VARIATION=1 to the repo .env (the supported "system default"), it must not
               # leak into tests that assume the code default — same class as FANOPS_HOOK_JUDGE above.
-              "FANOPS_CREATIVE_VARIATION", "FANOPS_VARIANT_LEARNING", "FANOPS_P4_DIM_BIAS")
+              "FANOPS_CREATIVE_VARIATION", "FANOPS_VARIANT_LEARNING", "FANOPS_P4_DIM_BIAS",
+              # Account-First Studio casting (Face 3): default OFF + budget 3 — a repo .env value must not leak
+              # into tests that assume the code default (same class as FANOPS_CREATIVE_VARIATION above).
+              "FANOPS_ACCOUNT_CASTING", "FANOPS_CAST_PICK_BUDGET")
 
 
 @pytest.fixture(autouse=True)

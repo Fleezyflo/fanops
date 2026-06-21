@@ -89,6 +89,8 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 get_logger(cfg)("crosspost", clip.id, "batch_target_skip",
                                 surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
                 continue   # batch targets a specific account set; this surface isn't in it (no post born)
+            if m is not None and m.affinities and surf.account not in m.affinities:
+                continue   # affinity gate (Face 3): a cast moment fans ONLY to its accounts; uncast ([]) fans to all
             # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
             # platform's hard cap, SKIP this surface only (conservative — the clip can still post
             # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown

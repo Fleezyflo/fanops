@@ -263,6 +263,16 @@ def test_crosspost_empty_target_batch_fans_to_all(tmp_path, mocker):
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert len(led.posts) == 4 and all(p.batch_id == "batch_all" for p in led.posts.values())
 
+def test_crosspost_affinity_skips_off_affinity_surfaces(tmp_path, mocker):
+    # Face 3: a cast moment (affinities=['@a']) fans ONLY to @a's surfaces — the affinity skip composes
+    # with the batch-target skip; an uncast moment ([] affinities) fans to all (byte-identical).
+    cfg = Config(root=tmp_path)
+    led = _two_accounts_clip(cfg, source_batch_id=None)
+    led.moments["mom_1"].affinities = ["@a"]
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
+
 
 def test_crosspost_two_clips_same_surface_do_not_collide_on_time(tmp_path, mocker):
     # AUDIT H1/H2: two clips (distinct moments) posting to the SAME surface must not land on the

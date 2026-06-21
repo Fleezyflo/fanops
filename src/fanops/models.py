@@ -150,6 +150,10 @@ class Moment(BaseModel):
                                                 # this moment — [{asset_id, fit_score, rationale, tease_text}, ...],
                                                 # best-fit first. None = unmatched (matcher off / no answer / old
                                                 # ledgers load). One writer: intro_match.ingest_intro_match.
+    affinities: list[str] = Field(default_factory=list)   # Account-First: handles this moment was CAST to
+                                                # (sole writer casting.cast_moments, default-OFF). [] = uncast =
+                                                # ALL active accounts (byte-identical). SUBSET of the batch target;
+                                                # NON-DURABLE across a re-decision (re-derived each gated pass).
     error_reason: Optional[str] = None
 
 class Clip(BaseModel):
