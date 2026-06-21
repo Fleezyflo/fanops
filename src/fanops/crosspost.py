@@ -84,8 +84,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         src = led.sources.get(m.parent_id) if m is not None else None
         src_batch = src.batch_id if src is not None else None
         tgt = led.get_batch(src_batch).target_accounts if (src_batch and led.get_batch(src_batch)) else []
+        n_skipped = 0   # T5: per-CLIP tally of batch-target exclusions (reset inside the clip loop, never bled across clips)
         for i, surf in enumerate(surfaces):
             if tgt and surf.account not in tgt:
+                n_skipped += 1
                 get_logger(cfg)("crosspost", clip.id, "batch_target_skip",
                                 surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
                 continue   # batch targets a specific account set; this surface isn't in it (no post born)
@@ -169,5 +171,9 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 first_frame_kind=target_clip.first_frame_kind, cut_seconds=target_clip.cut_seconds,
                 clip_profile=cfg.clip_profile, batch_id=src_batch,   # Account-First Studio: denormalized batch (None=ungrouped)
                 variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))   # P2: the axis this variant moved
+        if tgt:   # T5: one structured exclusion summary per batched clip (the ONLY persistent record — excluded
+                  # surfaces become no Post). Silent when tgt==[] (unbatched/ALL-sentinel) -> byte-identical fan-out.
+            get_logger(cfg)("crosspost", clip.id, "batch_target_summary",
+                            skipped=n_skipped, kept=len(surfaces) - n_skipped, batch=src_batch)
         led.set_clip_state(clip.id, ClipState.queued)
     return led

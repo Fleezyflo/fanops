@@ -59,3 +59,33 @@ def test_batches_for_account(tmp_path):
     a_only = create_batch(led, name="a-only", target_accounts=["@a"], now_iso="2026-06-21T00:00:00.000002Z")
     assert {b.id for b in led.batches_for_account("@a")} == {all_b.id, a_only.id}   # []==ALL + specific match
     assert {b.id for b in led.batches_for_account("@b")} == {all_b.id}             # only the ALL-sentinel batch
+
+
+# ---- Face 1 follow-up (T1): create-time target validation — advisory error_reason, never a hard-fail ----
+def test_create_batch_zero_active_target_sets_error_reason(tmp_path):
+    # A target naming NO active handle is a diagnosable zero-result batch (crosspost would skip every
+    # surface -> 0 posts, silently). Surface it via error_reason; the batch STILL mints (operator may
+    # re-activate the handle later), state stays open — advisory, not fatal.
+    led = _led(tmp_path)
+    b = create_batch(led, name="launch", target_accounts=["ghost"],
+                     now_iso="2026-06-21T00:00:00.000001Z", active_handles={"markmakmouly"})
+    assert "ghost" in (b.error_reason or "") and b.state is BatchState.open
+
+def test_create_batch_active_handles_none_is_byte_identical(tmp_path):
+    # active_handles defaults None => NO validation => byte-identical to today (every pre-existing call unchanged).
+    led = _led(tmp_path)
+    b = create_batch(led, name="launch", target_accounts=["ghost"], now_iso="2026-06-21T00:00:00.000001Z")
+    assert b.error_reason is None
+
+def test_create_batch_target_intersects_active_no_error(tmp_path):
+    led = _led(tmp_path)
+    b = create_batch(led, name="launch", target_accounts=["@a"],
+                     now_iso="2026-06-21T00:00:00.000001Z", active_handles={"@a", "@b"})
+    assert b.error_reason is None
+
+def test_create_batch_empty_target_never_flagged(tmp_path):
+    # [] is the ALL-ACTIVE sentinel: never a zero-target, even with zero active accounts (guard: `and tgt`).
+    led = _led(tmp_path)
+    b = create_batch(led, name="all", target_accounts=[],
+                     now_iso="2026-06-21T00:00:00.000001Z", active_handles=set())
+    assert b.error_reason is None

@@ -248,6 +248,27 @@ def test_crosspost_batch_target_skips_off_target_surfaces(tmp_path, mocker):
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "batch_target_skip" in log and "@b" in log                # off-target skip left a breadcrumb (mirrors skipped_surface)
 
+def test_crosspost_emits_batch_target_summary_count(tmp_path, mocker):
+    # Face 1-fu (T5): a batched clip emits ONE structured exclusion summary the surfaces can read. The
+    # excluded surfaces become no Post, so this run-log line is the ONLY persistent record of "N excluded".
+    cfg = Config(root=tmp_path)
+    led = _two_accounts_clip(cfg, source_batch_id="batch_x")            # 4 surfaces: @a/@b x ig/yt
+    led.add_batch(Batch(id="batch_x", name="launch", target_accounts=["@a"]))   # targets @a -> @b's 2 skip
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert log.count("batch_target_summary") == 1                       # exactly one summary per clip
+    assert "skipped=2" in log and "kept=2" in log                      # @b's 2 surfaces excluded, @a's 2 kept
+
+def test_crosspost_unbatched_emits_no_summary(tmp_path, mocker):
+    # An unbatched clip (tgt == []) emits NO batch_target_summary line (byte-identity gate).
+    cfg = Config(root=tmp_path)
+    led = _two_accounts_clip(cfg, source_batch_id=None)
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "batch_target_summary" not in log
+
 def test_crosspost_unbatched_fans_to_all_with_none_batch(tmp_path, mocker):
     # No batch (source.batch_id is None) => byte-identical fan-out to all 4 surfaces, batch_id None.
     cfg = Config(root=tmp_path)

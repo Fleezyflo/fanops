@@ -264,19 +264,25 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=()) -> Acti
     from fanops.ingest import ingest_drops
     from fanops.digest import write_digest
     from fanops.batches import create_batch
+    from fanops.accounts import Accounts
     n = 0; batch = None
     try:
         with Ledger.transaction(cfg) as led:
             if batch_name.strip():
+                # Account-First (T1/T4): feed the active-handle set so a batch targeting a dead/typo'd
+                # handle is FLAGGED at creation (else crosspost silently skips every surface -> 0 posts).
+                active = {a.handle for a in Accounts.load(cfg).active()}   # loaded only on the batched path (byte-identical otherwise)
                 batch = create_batch(led, name=batch_name, target_accounts=list(target_accounts),
-                                     now_iso=iso_z(_now(None)))
+                                     now_iso=iso_z(_now(None)), active_handles=active)
             led = ingest_drops(led, cfg, batch_id=(batch.id if batch else None))
             n = len(led.sources)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
     detail = {"sources": n}
-    if batch is not None: detail.update(batch=batch.name, batch_id=batch.id)
+    if batch is not None:
+        detail.update(batch=batch.name, batch_id=batch.id)
+        if batch.error_reason: detail["warnings"] = [batch.error_reason]   # zero-target advisory -> Studio Run panel
     return ActionResult(ok=True, detail=detail)
 
 
