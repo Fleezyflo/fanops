@@ -91,6 +91,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         if status == "published":
             post.state = PostState.published
             post.public_url = info.get("publicUrl") or post.public_url
+            post.error_reason = None                      # a transient poll-error reason must not survive a successful publish
             log("reconcile", post.id, "published")
         elif status == "failed":
             post.state = PostState.failed

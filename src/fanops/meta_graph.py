@@ -166,7 +166,7 @@ def sample_trends(cfg: Config, candidates: list[str], *, get=None, now: datetime
         if tag in already:
             continue                                # recent unique search -> free but not re-sampled
         s = trend_score(cfg, tag, get=get)
-        record_query(cfg, tag, now=now); remaining -= 1
+        record_query(cfg, tag, now=now); remaining -= 1; already.add(tag)   # a duplicate candidate must not spend the budget twice
         if s is not None:
             scores[tag] = s
     if deferred:

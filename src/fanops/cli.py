@@ -73,7 +73,7 @@ def cmd_track(cfg: Config, window: str) -> int:
                if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
     try:
         rows = list(_default_list_posts(cfg, submission_ids=sub_ids)(window))   # network, NO lock held
-    except RuntimeError as e:
+    except (RuntimeError, AuthError) as e:               # postiz no-key raises PostizAuthError, not RuntimeError -> skip cleanly (mirror cmd_reconcile)
         print(f"track skipped: {e}"); return 0
     with Ledger.transaction(cfg) as led:
         # apply the pre-fetched rows: pull_metrics matches them to still-pollable posts in THIS
@@ -708,9 +708,13 @@ def _dispatch(cfg: Config, args) -> int:
         if cfg.is_live_backend:
             try:
                 _learn_pass(cfg)
+            except AuthError as e:
+                # A bad/rotated key is actionable, not a transient 5xx — surface it VISIBLY on stderr +
+                # a distinct breadcrumb, but keep exit 0: the unattended run SKIPS the learn pass cleanly,
+                # mirroring cmd_track/cmd_reconcile (read paths skip; only the WRITE path publish_due halts).
+                print(f"learn skipped: auth failure ({type(e).__name__}) — check the API key", file=sys.stderr)
+                get_logger(cfg)("learn", "-", "auth_error", err=f"{type(e).__name__}: {str(e)[:120]}")
             except Exception as e:
-                # Include the exception TYPE so a swallowed AuthError (a real auth failure that must be
-                # actioned) is distinguishable in run.log from a transient 5xx — not all one level.
                 get_logger(cfg)("learn", "-", "error", err=f"{type(e).__name__}: {str(e)[:120]}")
         # variant-amplify (v3): a SEPARATE, independently-gated learning pass — proven SUSTAINED
         # variant winners auto-amplify their source. Gated by its OWN kill switch (cfg.variant_amplify,

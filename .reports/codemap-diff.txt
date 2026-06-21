@@ -1,35 +1,39 @@
-Codemap update — 2026-06-19
-Prior scan: 2026-06-18 (commit 5a00541, M6 intro-tease baseline).
-Branch: feat/content-lifecycle. Files: 74 src .py (was 69) · 113 test .py (was 100).
-Change vs prior: ~12% of codemap text (surgical, < 30% threshold → updated in place).
+Codemap update — 2026-06-21 (IG account-connection resolution)
+================================================================
+Prior scan: 2026-06-19 (feat/content-lifecycle, post-approval lifecycle).
 
-ARCHITECTURE CHANGES SINCE LAST SCAN
-- Post lifecycle now BORN `awaiting_approval` (human approval gate) — was documented as starting at
-  `queued`. publish_due/publish_now iterate ONLY `queued`; nothing ships unattended. New `rejected`
-  terminal state. (post-approval-lifecycle PRs #56-#59 + content-lifecycle, this session.)
-- Ledger SCHEMA_VERSION 2 -> 3; new v2->v3 migration `_migrate_v3_created_at` (backfills Source/Post
-  created_at; idempotent, never raises; proven on the real 51-post ledger).
-- New model fields: Source.created_at, Post.created_at, Post.published_at (all Optional, default None).
-- `_PROTECTED_POST_STATES` wipe-guard added to the reconcile cascade (awaiting/queued/retired + live
-  states survive a re-ingest/reconcile — the operator's 51 awaiting clips can't be wiped).
-- 06_published/ NOW ACTIVE: day-bucketed <YYYY-MM-DD>/<post_id>.json archive (post/run._archive_published,
-  fail-open). 05_scheduled/ written by post/dryrun.py, swept by `gc`. (Both were labelled "reserved".)
-- Cross-account onboarding: studio/actions.{crosspost_to_account, crosspost_all_to_account} + repost_post.
-- `gc` retention window now declarative via config.gc_keep_days / FANOPS_GC_KEEP_DAYS (default 30, >=1).
+Trigger: connected perca.late + cisumwolfhom to Postiz; root-caused the day-long
+connect failure (wrong INSTAGRAM_APP_SECRET in the Postiz container env).
 
-NEW ROUTES (were absent from the codemap)
-  /posts/{approve,reject} · /posts/unapprove/<id>            (Review approval lifecycle)
-  /schedule/respread · /schedule/{move,unapprove}/<id>       (Schedule cockpit)
-  /posted · /posts/repost/<id> · /posts/crosspost/<clip_id> · /posts/crosspost-all   (Posted + cross-account)
-  /review/{live,refresh} · /run/{upload,status} · /clip-thumb/<clip_id>
-  /golive/{account/add,validate}
+CODEMAPS UPDATED
+- docs/CODEMAPS/account-connection.md  (REWRITTEN, < 30% threshold → in place)
+    * Verified state: all THREE fan accounts now connected + mapped
+      (markmakmouly cmqeb1uuv0001o579bjcdj7my, perca.late cmqno51tb0001p68ez9tx5a6k,
+       cisumwolfhom cmqno5ops0003p68ea2k3kgzs).
+    * "BLOCKER (unresolved)" -> "RESOLVED connect failure": root cause = wrong
+      INSTAGRAM_APP_SECRET in container env; Meta's "redirect_uri identical" is its
+      generic bad-client-secret error; fix = correct secret in compose + docker compose up -d.
+    * App-id reference corrected to the IG app id 976142145032195 (OAuth client_id).
+    * Non-stock cookie/data[] patches reclassified NOT-required-for-connect (stock connected).
 
-NEW DEPENDENCIES / ENV
-- FANOPS_GC_KEEP_DAYS (content-lifecycle). No new external services or Python deps.
+CODEMAPS NOT CHANGED (verified still accurate)
+- docs/CODEMAPS/architecture.md   (no connection-state claims; FanOps structure unchanged)
+- docs/CODEMAPS/data.md           (data model + accounts.json schema unchanged)
+- docs/CODEMAPS/dependencies.md   (Postiz dependency unchanged; only a config VALUE was wrong)
+
+SCAN DELTA
+- Source changes this session: NONE (git status --porcelain src/ empty) -> structural
+  codemaps remain current; no regeneration needed.
+- Data changes: MohFlow-FanOps/00_control/accounts.json (perca.late + cisumwolfhom
+  integrations['instagram'] populated via accounts.write_integration).
+- New dependencies: none. New routes/services: none.
+
+COMPANION DOCS (rewritten same session, narrative)
+- docs/INSTAGRAM_CONNECT.md  (full guide: root cause, proof, fix, false-elimination warnings)
+- docs/POSTIZ_SETUP.md       (Instagram callout corrected)
 
 STALENESS NOTE
-- The codemap had drifted by the ENTIRE post-approval-lifecycle (#56-#59) despite a 2026-06-18 stamp —
-  the route table and Post lifecycle were a full feature-set behind. Run update-codemaps as part of each
-  merge-to-main, not only at finalization checkpoints. No doc is > 90 days stale.
-
-OPEN ITEMS captured for the next ECC plan -> .claude/PRPs/codemap-sync-findings.notes.md
+- No doc > 90 days stale. The previous account-connection codemap + guide enshrined a WRONG
+  root cause (redirect/scopes/multi-hop) and an actively harmful false elimination
+  ("INSTAGRAM_APP_SECRET valid") — both corrected. Lesson: do not record an unproven
+  hypothesis as a ruled-out fact in a codemap.
