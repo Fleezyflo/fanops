@@ -15,24 +15,30 @@
   {% set advanced = ['footage','library','stitches','schedule','gates','golive'] %}
   <header class="nav">
     <h1 class="nav-brand">FanOps Studio</h1>
+    {# Face 4 SPINE: every nav link carries the active ?account= (nav_account, injected globally) so the
+       account filter persists across tabs. nav_account is None when nothing is filtered -> url_for drops the
+       param -> these links are byte-identical to before. #}
     <nav class="nav-primary" aria-label="Primary">
-      <a href="{{ url_for('run_panel') }}" class="{{ 'active' if tab=='run' else '' }}">Make</a>
-      <a href="{{ url_for('review') }}" class="{{ 'active' if tab=='review' else '' }}">Review</a>
-      <a href="{{ url_for('publish_panel') }}" class="{{ 'active' if tab=='publish' else '' }}">Publish</a>
-      <a href="{{ url_for('lift') }}" class="{{ 'active' if tab=='lift' else '' }}">Results</a>
-      <a href="{{ url_for('posted') }}" class="{{ 'active' if tab=='posted' else '' }}">Posted</a>
+      <a href="{{ url_for('run_panel', account=nav_account) }}" class="{{ 'active' if tab=='run' else '' }}">Make</a>
+      <a href="{{ url_for('review', account=nav_account) }}" class="{{ 'active' if tab=='review' else '' }}">Review</a>
+      <a href="{{ url_for('publish_panel', account=nav_account) }}" class="{{ 'active' if tab=='publish' else '' }}">Publish</a>
+      <a href="{{ url_for('lift', account=nav_account) }}" class="{{ 'active' if tab=='lift' else '' }}">Results</a>
+      <a href="{{ url_for('posted', account=nav_account) }}" class="{{ 'active' if tab=='posted' else '' }}">Posted</a>
     </nav>
     <details class="nav-more"{{ ' open' if tab in advanced else '' }}>
       <summary class="{{ 'active' if tab in advanced else '' }}">Advanced</summary>
       <div class="nav-more-menu" role="navigation" aria-label="Advanced">
-        <a href="{{ url_for('candidates') }}" class="{{ 'active' if tab=='footage' else '' }}">Footage intake</a>
-        <a href="{{ url_for('library') }}" class="{{ 'active' if tab=='library' else '' }}">Asset library</a>
-        <a href="{{ url_for('stitches') }}" class="{{ 'active' if tab=='stitches' else '' }}">Stitch approvals</a>
-        <a href="{{ url_for('schedule') }}" class="{{ 'active' if tab=='schedule' else '' }}">Schedule</a>
-        <a href="{{ url_for('gates') }}" class="{{ 'active' if tab=='gates' else '' }}">Processing decisions</a>
-        <a href="{{ url_for('golive_view') }}" class="{{ 'active' if tab=='golive' else '' }}">Go Live &amp; connect</a>
+        <a href="{{ url_for('candidates', account=nav_account) }}" class="{{ 'active' if tab=='footage' else '' }}">Footage intake</a>
+        <a href="{{ url_for('library', account=nav_account) }}" class="{{ 'active' if tab=='library' else '' }}">Asset library</a>
+        <a href="{{ url_for('stitches', account=nav_account) }}" class="{{ 'active' if tab=='stitches' else '' }}">Stitch approvals</a>
+        <a href="{{ url_for('schedule', account=nav_account) }}" class="{{ 'active' if tab=='schedule' else '' }}">Schedule</a>
+        <a href="{{ url_for('gates', account=nav_account) }}" class="{{ 'active' if tab=='gates' else '' }}">Processing decisions</a>
+        <a href="{{ url_for('golive_view', account=nav_account) }}" class="{{ 'active' if tab=='golive' else '' }}">Go Live &amp; connect</a>
       </div>
     </details>
+    {% if nav_account %}
+    <div class="active-account" role="status">Filtering <strong>{{ nav_account }}</strong> — <a href="{{ request.path }}">show all accounts</a></div>
+    {% endif %}
   </header>
   <main>{% block body %}{% endblock %}</main>
 </body>
