@@ -67,6 +67,36 @@ def test_save_uploads_multiple_files(tmp_path):
     assert sorted(res.detail["saved"]) == ["a.mp4", "b.mov"]
     assert (cfg.inbox / "a.mp4").exists() and (cfg.inbox / "b.mov").exists()
 
+def test_save_uploads_and_ingest_chains_ingest_in_one_call(tmp_path, mocker):
+    # M5 auto-ingest: a successful upload immediately catalogues — no second 'Ingest inbox' click. The
+    # merged result carries the saved files AND the ingest detail. (Mock the ffprobe video-stream check +
+    # run_ingest so the WIRING is asserted toolchain-independently; the real end-to-end is covered above.)
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    spy = mocker.patch.object(actions, "run_ingest", return_value=actions.ActionResult(ok=True, detail={"sources": 1}))
+    res = actions.save_uploads_and_ingest(cfg, [_Up("clip.mp4")])
+    assert res.ok and res.detail["saved"] == ["clip.mp4"] and res.detail["sources"] == 1
+    spy.assert_called_once()                                            # ingest auto-ran after the upload
+    assert (cfg.inbox / "clip.mp4").exists()                            # the file actually landed
+
+def test_save_uploads_and_ingest_skips_ingest_when_nothing_saved(tmp_path, mocker):
+    # a rejected upload (non-video) short-circuits — nothing landed, so no ingest pass is run.
+    cfg = Config(root=tmp_path)
+    spy = mocker.patch.object(actions, "run_ingest")
+    res = actions.save_uploads_and_ingest(cfg, [_Up("notes.txt")])
+    assert res.ok is False
+    spy.assert_not_called()
+
+def test_save_uploads_and_ingest_surfaces_ingest_failure_recoverably(tmp_path, mocker):
+    # if the upload lands but auto-ingest fails, the files are SAFE in 01_inbox — report a recoverable
+    # not-fully-done (point at the manual 'Ingest inbox'), never lose the upload.
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch.object(actions, "run_ingest", return_value=actions.ActionResult(ok=False, error="ingest boom"))
+    res = actions.save_uploads_and_ingest(cfg, [_Up("clip.mp4")])
+    assert res.ok is False and "Ingest inbox" in (res.error or "")      # tells the operator how to retry
+    assert (cfg.inbox / "clip.mp4").exists()                            # the upload survived the ingest failure
+
 def test_no_uploadpart_left_after_success(tmp_path):
     cfg = Config(root=tmp_path); actions.save_uploads(cfg, [_Up("a.mp4")], probe=False)
     assert not list(cfg.inbox.glob("*.uploadpart"))         # temp swapped in, none orphaned
