@@ -1,0 +1,51 @@
+{# src/fanops/studio/templates/home.html — Face 2: the read-only status home (GET /). Accounts + connection
+   state, headline counts, a navigable batch list with zero-result warnings, and per-account post counts in
+   the #home-metrics slot. Read-only: no form, no mutation, no API key (the read-model carries none). #}
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block body %}
+  <h2>Home</h2>
+  {% if status.is_live %}<div class="banner live">● LIVE ({{ status.mode }}) — reviewed posts publish to REAL accounts</div>
+  {% else %}<div class="banner dryrun">● DRYRUN ({{ status.mode }}) — writes payloads, posts nothing</div>{% endif %}
+
+  <div class="count-strip meta">
+    <span>Native sources <strong>{{ status.counts.sources }}</strong></span> ·
+    <span data-count="batches">Batches <a href="{{ url_for('review') }}"><strong>{{ status.counts.batches if status.counts.batches is not none else '—' }}</strong></a></span> ·
+    <span>Awaiting <strong>{{ status.counts.awaiting }}</strong></span> ·
+    <span>Scheduled <strong>{{ status.counts.scheduled }}</strong></span> ·
+    <span>Posted <strong>{{ status.counts.posted }}</strong></span>
+  </div>
+
+  {% if batches %}
+  <section class="home-batches">
+    <h3>Batches</h3>
+    <ul data-list="batches">
+      {% for b in batches %}
+      <li><a href="{{ url_for('review', batch=b.id) }}">{{ b.name }}</a> <span class="muted">· {{ b.posts_born }} posts</span>{% if b.is_zero_result %} <span class="warn" data-warn="zero-result">⚠ targets match no active account — 0 posts</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <section class="home-accounts">
+    <h3>Accounts</h3>
+    {% if status.accounts %}
+    <ul>
+      {% for a in status.accounts %}
+      <li><strong>{{ a.handle }}</strong>{% for ch in a.channels %} <span class="muted">{{ ch.platform }}: {% if ch.integration_id %}connected ({{ ch.integration_id }}){% else %}not connected — map it{% endif %}</span>{% endfor %}</li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted">No active accounts yet.</p>{% endif %}
+  </section>
+
+  <section id="home-metrics" data-slot="metrics">
+    <h3>Posts by account</h3>
+    {% if status.by_account %}
+    <table data-metric="by-account">
+      {% for handle, n in status.by_account|dictsort %}<tr><td><strong>{{ handle }}</strong></td><td class="muted">· {{ n }} posts</td></tr>{% endfor %}
+    </table>
+    {% else %}<p class="muted">No posts yet</p>{% endif %}
+  </section>
+
+  <p class="home-cta"><a class="button" href="{{ url_for('golive_view') }}">Connect accounts (Go Live)</a></p>
+{% endblock %}

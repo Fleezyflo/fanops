@@ -457,3 +457,76 @@ def test_suggested_time_with_broken_clip_lineage_still_renders(tmp_path):
     cfg = Config(root=tmp_path)
     s = _surface(_post(parent_id="ghost_clip"), persona=None, now=NOW, cfg=cfg)
     assert s.suggested_time is not None and parse_iso(s.suggested_time) > NOW
+
+
+# ---- Face 2: home_status / golive_accounts / home_batches (status home + batch entry + per-account metrics) ----
+from fanops.studio.views import home_status, golive_accounts, home_batches, golive_status
+from fanops.batches import create_batch
+
+def _seed_home(cfg):
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+                         {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_source(Source(id="src_tp", source_path="/v/tp.mp4", language="en", origin_kind="third_party"))
+    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.awaiting_approval))
+    led.add_post(Post(id="p2", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.queued))
+    led.add_post(Post(id="p3", parent_id="clip_1", account="@b", account_id="2", platform=Platform.instagram,
+                      caption="x", state=PostState.published))
+    led.save(); return led
+
+def test_home_status_counts(tmp_path):
+    cfg = Config(root=tmp_path); _seed_home(cfg)
+    st = home_status(cfg)
+    assert st.counts["sources"] == 1                                  # native only (the third_party src excluded)
+    assert st.counts["awaiting"] == 1 and st.counts["scheduled"] == 1 and st.counts["posted"] == 1
+    assert st.mode == "dryrun" and st.is_live is False
+
+def test_home_status_by_account(tmp_path):
+    cfg = Config(root=tmp_path); _seed_home(cfg)
+    assert home_status(cfg).by_account == {"@a": 2, "@b": 1}          # on-disk post facts, never fabricated
+
+def test_home_status_batches_count(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    create_batch(led, name="Launch", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    assert home_status(cfg).counts["batches"] == 1
+
+def test_home_status_fail_open(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); _seed_home(cfg)
+    def _boom(c): raise RuntimeError("torn")
+    monkeypatch.setattr(Ledger, "load", _boom)
+    st = home_status(cfg)
+    assert st.counts == {"sources": 0, "batches": None, "awaiting": 0, "scheduled": 0, "posted": 0}
+    assert st.by_account == {}                                        # zeroed shell, never a 500
+
+def test_golive_accounts_parity_with_golive_status(tmp_path):
+    cfg = Config(root=tmp_path); _seed_home(cfg)
+    assert golive_accounts(cfg) == golive_status(cfg).accounts        # shared helper = single source of truth
+
+def test_home_batches_counts_posts_born(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    b = create_batch(led, name="Launch", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000001Z")
+    led.add_post(Post(id="pb", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.awaiting_approval, batch_id=b.id)); led.save()
+    hb = home_batches(cfg)
+    assert len(hb) == 1 and hb[0].posts_born == 1 and hb[0].is_zero_result is False
+
+def test_home_batches_flags_zero_result(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    create_batch(led, name="Ghost", target_accounts=["@ghost"], now_iso="2026-06-22T00:00:00.000001Z")   # non-empty target, 0 posts
+    create_batch(led, name="All", target_accounts=[], now_iso="2026-06-22T00:00:00.000002Z"); led.save()  # [] ALL-sentinel
+    by_name = {h.name: h for h in home_batches(cfg)}
+    assert by_name["Ghost"].is_zero_result is True and by_name["All"].is_zero_result is False
+
+def test_home_batches_fail_open(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    def _boom(c): raise RuntimeError("torn")
+    monkeypatch.setattr(Ledger, "load", _boom)
+    assert home_batches(cfg) == []

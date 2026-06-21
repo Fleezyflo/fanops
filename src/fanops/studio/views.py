@@ -152,6 +152,26 @@ class GoLiveStatus:
 
 
 @dataclass
+class HomeStatus:                      # Face 2: the GET / status-home read-model (read-only, no secret, no flag)
+    mode: str
+    is_live: bool
+    counts: dict                       # {sources, batches(int|None on fail-open), awaiting, scheduled, posted}
+    accounts: list[GoLiveAccount]      # via the shared golive_accounts helper (NEVER golive_status -> no doctor_report on /)
+    by_account: dict                   # Face 2 fu (D2): per-account post counts for #home-metrics (on-disk facts, never lift)
+
+
+@dataclass
+class HomeBatch:                       # Face 2 fu: one batch row for the Home entry point (deep-links ?batch=<id>)
+    id: str
+    name: str
+    targets: list[str]
+    state: str
+    created_at: Optional[str]
+    posts_born: int
+    is_zero_result: bool               # bool(targets) and posts_born == 0 — a mis-targeted batch that birthed nothing
+
+
+@dataclass
 class LiftRow:
     variant_hook: Optional[str]
     account: str
@@ -696,6 +716,70 @@ def pending_stitch_drafts(cfg: Config) -> list:
         return []
 
 
+def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
+    """The active accounts as a per-channel read-model, SHARED by golive_status + home_status so the two
+    surfaces never drift on what "connected" means. One GoLiveChannel per platform; integration_id is the
+    effective per-platform id (integrations[platform] -> account_id fallback -> "" unmapped). Fail-open: a
+    malformed accounts.json logs accounts_error and degrades to [] (the surface never 500s). NO secret."""
+    try:
+        return [GoLiveAccount(
+            handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
+            channels=[GoLiveChannel(platform=p.value,
+                                    integration_id=a.integrations.get(p.value) or a.account_id or "")
+                      for p in a.platforms])
+            for a in Accounts.load(cfg).active()]
+    except Exception as exc:
+        from fanops.log import get_logger             # ECC fix #5: a disk/parse error was invisible
+        get_logger(cfg)("golive", "-", "accounts_error", err=str(exc)[:160])
+        return []                                     # malformed accounts.json — doctor's readiness check names it
+
+
+def home_status(cfg: Config) -> HomeStatus:
+    """Lock-free, fail-open read-model for GET / (the status home): connection state per account (via the
+    shared golive_accounts helper — NEVER golive_status, which also runs doctor_report on every load) +
+    headline counts + per-account post counts, all from ONE Ledger.load. A torn ledger -> zeroed counts +
+    batches=None + empty by_account, never a 500."""
+    accounts = golive_accounts(cfg)                   # once-bound, already fail-open (no doctor_report on /)
+    mode = cfg.poster_backend
+    try:
+        from collections import Counter
+        led = Ledger.load(cfg)
+        st = Counter(p.state for p in led.posts.values())
+        counts = {"sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),
+                  "batches": len(getattr(led, "batches", {})),
+                  "awaiting": st.get(PostState.awaiting_approval, 0),
+                  "scheduled": st.get(PostState.queued, 0),
+                  "posted": st.get(PostState.published, 0) + st.get(PostState.analyzed, 0)}
+        by_account = dict(Counter(p.account for p in led.posts.values()))
+    except Exception as exc:                          # the first page an operator sees must never 500
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "error", err=str(exc)[:160])
+        counts = {"sources": 0, "batches": None, "awaiting": 0, "scheduled": 0, "posted": 0}
+        by_account = {}
+    return HomeStatus(mode=mode, is_live=mode != "dryrun", counts=counts, accounts=accounts, by_account=by_account)
+
+
+def home_batches(cfg: Config) -> list[HomeBatch]:
+    """Lock-free, fail-open batch list for the Home entry point — each row deep-links ?batch=<id> into Review
+    and carries posts_born + a zero-result flag (a non-empty target that birthed NO post — the silent
+    crosspost batch_target_skip outcome, surfaced). Newest-first by created_at (None sinks last), tie-broken
+    by id. Torn ledger -> [] + logged, never a 500. Surfaces the outcome; computes no skip logic."""
+    try:
+        led = Ledger.load(cfg)
+        out = []
+        for b in getattr(led, "batches", {}).values():
+            born = sum(1 for p in led.posts.values() if p.batch_id == b.id)
+            out.append(HomeBatch(id=b.id, name=b.name, targets=list(b.target_accounts), state=b.state.value,
+                                 created_at=b.created_at, posts_born=born,
+                                 is_zero_result=bool(b.target_accounts) and born == 0))   # [] ALL-sentinel is NEVER zero-result
+        out.sort(key=lambda h: (h.created_at or "", h.id), reverse=True)
+        return out
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home_batches", "-", "error", err=str(exc)[:160])
+        return []
+
+
 def golive_status(cfg: Config) -> GoLiveStatus:
     """Lock-free read-model for the Go-Live tab: the publish mode (dryrun/live), whether Postiz is
     configured (postiz_url is shown — it is NON-secret; key_set is a BOOL only, the key itself is never
@@ -707,17 +791,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
     fallback, else "" (unmapped). Tolerates a malformed accounts.json (falls back to an empty list) so the
     tab never 500s."""
     from fanops.doctor import doctor_report
-    try:
-        accts = [GoLiveAccount(
-            handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
-            channels=[GoLiveChannel(platform=p.value,
-                                    integration_id=a.integrations.get(p.value) or a.account_id or "")
-                      for p in a.platforms])
-            for a in Accounts.load(cfg).active()]
-    except Exception as exc:
-        from fanops.log import get_logger             # ECC fix #5: a disk/parse error was invisible
-        get_logger(cfg)("golive", "-", "accounts_error", err=str(exc)[:160])
-        accts = []                                   # malformed accounts.json — doctor's readiness check below names it
+    accts = golive_accounts(cfg)                      # shared helper (single source of truth for the accounts read-model)
     try:
         report = doctor_report(cfg)
     except Exception as exc:                          # invariant: the Go-Live tab must never 500 (ecc:python-review)

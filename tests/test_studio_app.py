@@ -50,10 +50,41 @@ def test_tabs_return_200(tmp_path):
     for path, needle in [("/review", b"Review"), ("/schedule", b"Schedule"), ("/lift", b"Lift")]:
         r = c.get(path); assert r.status_code == 200 and needle in r.data
 
-def test_root_redirects_to_review(tmp_path):
+def test_root_renders_home(tmp_path):
+    # Face 2: GET / is a real status home page now, NOT a redirect to /review.
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     r = _client(cfg).get("/")
-    assert r.status_code in (301, 302) and "/review" in r.headers["Location"]
+    assert r.status_code == 200 and b"Home" in r.data and b"Posted" in r.data
+
+def test_home_nav_link(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    assert b">Home<" in _client(cfg).get("/review").data   # the primary nav carries a Home anchor
+
+def test_home_links_to_golive(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    assert b"/golive" in _client(cfg).get("/").data        # onboarding CTA into the Go-Live connect flow
+
+def test_home_metrics_per_account(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)       # _seed births @a posts
+    html = _client(cfg).get("/").data.decode()
+    assert 'data-slot="metrics"' in html and 'data-metric="by-account"' in html and "@a" in html
+
+def test_home_batch_deep_link_and_zero_result(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    from fanops.batches import create_batch
+    led = Ledger.load(cfg)
+    create_batch(led, name="Ghost", target_accounts=["@ghost"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    html = _client(cfg).get("/").data.decode()
+    assert "/review?batch=" in html and 'data-warn="zero-result"' in html   # deep-link + the silent-fail badge
+
+def test_home_no_zero_result_for_matched_batch(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    from fanops.batches import create_batch
+    led = Ledger.load(cfg)
+    b = create_batch(led, name="Real", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000003Z")
+    led.add_post(Post(id="p_rb", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.queued, batch_id=b.id)); led.save()
+    assert b'data-warn="zero-result"' not in _client(cfg).get("/").data   # matched target -> no false alarm
 
 def test_media_serves_variant_when_present(tmp_path):
     cfg = Config(root=tmp_path); base, variant = _seed(cfg, tmp_path)
