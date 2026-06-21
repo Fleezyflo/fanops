@@ -38,6 +38,9 @@
   <div class="clip-body">
     <div class="clip-title">{{ card.label }}</div>
     <div class="meta clip-reason">{{ card.reason }}</div>
+    {# Face 4 follow-up (C3): which accounts this moment was cast to (read-only). Empty/casting-OFF -> "all
+       accounts" (a moment with no cast affinity reaches every account). Non-interactive spans, group aria-label. #}
+    {% if card.affinities %}<div class="meta cast-affinity" aria-label="cast to {{ card.affinities|join(', ') }}">cast to {% for h in card.affinities %}<span class="chip ro">{{ h }}</span>{% endfor %}</div>{% else %}<div class="meta cast-affinity muted">all accounts</div>{% endif %}
 
     {% if card.hook_removed %}
       <div class="meta hook-removed" title="the model wrote this hook but it was auto-removed (duplicate or shared-opening template); this clip is running CLEAN. Restore it from the surface below.">
@@ -74,8 +77,8 @@
       {# removed-hook choice (slice 2): one click to ship WITH the restored hook burned in, or clean as-is. #}
       <div class="hook-choice meta">
         <span class="muted">Hook was auto-removed. Approve with it burned in, or ship clean.</span>
-        <button type="button" class="primary" hx-post="{{ url_for('do_approve_with_hook', clip_id=card.clip_id, account=active) }}" hx-target="#review-body" hx-swap="outerHTML">Approve with hook ✎</button>
-        <button type="button" hx-post="{{ url_for('do_approve_as_is', clip_id=card.clip_id, account=active) }}" hx-target="#review-body" hx-swap="outerHTML">Approve as-is (no hook)</button>
+        <button type="button" class="primary" hx-post="{{ url_for('do_approve_with_hook', clip_id=card.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve with hook ✎</button>
+        <button type="button" hx-post="{{ url_for('do_approve_as_is', clip_id=card.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve as-is (no hook)</button>
       </div>
     {% endif %}
 

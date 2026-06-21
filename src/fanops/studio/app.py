@@ -121,6 +121,14 @@ def create_app(cfg: Config) -> Flask:
         v = (request.args.get("account") or "").strip()
         return v or None
 
+    def _batch_arg():
+        # Face 4 follow-up (B2): drill into ONE batch from ?batch=<Batch.id> (content-addressed id, NOT name —
+        # names aren't unique). Mirrors _account_arg: blank/absent -> None (unfiltered); read from request.args so
+        # an htmx POST carrying batch= in its action URL re-applies the same scope after a mutation (R1). Review-
+        # local (NOT injected into the cross-tab nav like account) — a batch id is meaningless on other tabs.
+        v = (request.args.get("batch") or "").strip()
+        return v or None
+
     def _with_active(counts, active):
         # The chip UNIVERSE = the accounts present in the (unfiltered) list, PLUS the active filter itself, so
         # an account whose last item just left the list still shows its (active) chip — the filter stays
@@ -160,25 +168,27 @@ def create_app(cfg: Config) -> Flask:
     @app.get("/review")
     def review():
         led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
-        account = _account_arg()
+        account = _account_arg(); batch = _batch_arg()
         cards_full = views.review_buckets(led, accounts, cfg, now=now)               # universe for chips
-        cards = cards_full if account is None else views.review_buckets(led, accounts, cfg, now=now, account=account)
+        cards = (views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch)
+                 if (account or batch) else cards_full)                              # both filters compose (B2 + P5)
         counts = views.review_counts(cards)              # counts reflect what's shown (the scoped worklist)
         page = views.paginate(cards, _offset_arg())
         return render_template("review.html", cards=page.items, page=page, tab="review",
                                backend=cfg.poster_backend, counts=counts, shown=counts["awaiting"],
-                               awaiting_total=counts["awaiting"], **_card_chips(cards_full, account))
+                               awaiting_total=counts["awaiting"], active_batch=batch, **_card_chips(cards_full, account))
 
     def _review_panel(result=None):
         led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
-        account = _account_arg()                          # R1: rides the POST URL into request.args -> scope preserved
+        account = _account_arg(); batch = _batch_arg()    # R1: both ride the POST URL into request.args -> scope preserved
         cards_full = views.review_buckets(led, accounts, cfg, now=now)
-        cards = cards_full if account is None else views.review_buckets(led, accounts, cfg, now=now, account=account)
+        cards = (views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch)
+                 if (account or batch) else cards_full)
         awaiting_total = views.review_counts(cards)["awaiting"]    # keep #review-body's data-awaiting fresh after every mutation
         page = views.paginate(cards, _offset_arg())
         return render_template("_review_body.html", cards=page.items, page=page, result=result,
                                tab="review", backend=cfg.poster_backend, awaiting_total=awaiting_total,
-                               **_card_chips(cards_full, account))
+                               active_batch=batch, **_card_chips(cards_full, account))
 
     @app.get("/review/live")
     def review_live():
