@@ -23,6 +23,8 @@ def test_safe_public_url_accepts_only_well_formed_https():
     assert safe_public_url("ftp://x.com/p") is None
     assert safe_public_url("not-a-url") is None
     assert safe_public_url("https://") is None              # scheme but no host
+    assert safe_public_url("https://evil\n.com/p") is None   # embedded newline -> malformed/injected
+    assert safe_public_url("https://x.com/a b") is None      # internal whitespace
     assert safe_public_url("") is None
     assert safe_public_url(None) is None
 

@@ -15,7 +15,8 @@ def safe_public_url(url: str | None) -> str | None:
     routed through this — they are explicit operator intent, not untrusted backend capture."""
     if not isinstance(url, str): return None
     url = url.strip()
-    try: u = urlparse(url)
+    if any(c.isspace() for c in url): return None        # a permalink has NO internal whitespace; an
+    try: u = urlparse(url)                                # embedded newline/tab/space is a malformed/injected url
     except (ValueError, TypeError): return None
     return url if u.scheme == "https" and u.netloc else None
 
