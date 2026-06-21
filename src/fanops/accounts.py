@@ -5,6 +5,8 @@ maps a handle to its numeric Blotato id (FIX F06: v1 passed the handle straight 
 from __future__ import annotations
 import json
 import os
+import tempfile
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Optional, NamedTuple
@@ -113,13 +115,31 @@ def _load_raw_accounts(p: Path) -> tuple[dict, list]:
     return raw, accounts
 
 
+@contextmanager
+def _accounts_txn(cfg: Config):
+    """Serialize a mutator's READ-modify-write under cfg.accounts_lock_path so two concurrent Studio/
+    daemon writers can't lost-update (the _load_raw_accounts MUST run INSIDE this lock — reading outside
+    it is the lost-update window). Reuses the proven fcntl flock helper; the import is LAZY so there is no
+    module-load cycle (ledger never imports accounts — verified one-way)."""
+    from fanops.ledger import _file_lock
+    with _file_lock(cfg.accounts_lock_path):
+        yield
+
+
 def _write_accounts_atomic(p: Path, raw: dict) -> None:
     """Persist the raw accounts dict via temp file + os.replace, so a crash mid-write never leaves a
-    torn accounts.json. Indented for the operator who still hand-edits."""
+    torn accounts.json. A UNIQUE temp (mkstemp, same dir so os.replace stays atomic) — a fixed
+    accounts.json.tmp lets two concurrent writers clobber each other's temp (one's os.replace then
+    FileNotFoundErrors); cleaned up on any failure. Indented for the operator who still hand-edits."""
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(raw, indent=2) + "\n")
-    os.replace(tmp, p)                                   # atomic: never a half-written accounts.json
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh: fh.write(json.dumps(raw, indent=2) + "\n")
+        os.replace(tmp, p)                               # atomic: never a half-written accounts.json
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
 
 
 def write_integration(cfg: Config, handle: str, platform: str, integration_id: str | int) -> str:
@@ -133,18 +153,19 @@ def write_integration(cfg: Config, handle: str, platform: str, integration_id: s
     if platform not in {pf.value for pf in Platform}:
         raise ValueError(f"unknown platform: {platform!r}")
     p = cfg.accounts_path
-    raw, accounts = _load_raw_accounts(p)
-    for a in accounts:
-        if isinstance(a, dict) and a.get("handle") == handle:
-            integ = a.get("integrations")
-            if not isinstance(integ, dict):
-                integ = {}
-            integ[str(platform)] = str(integration_id)
-            a["integrations"] = integ
-            break
-    else:
-        raise KeyError(handle)
-    _write_accounts_atomic(p, raw)
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        for a in accounts:
+            if isinstance(a, dict) and a.get("handle") == handle:
+                integ = a.get("integrations")
+                if not isinstance(integ, dict):
+                    integ = {}
+                integ[str(platform)] = str(integration_id)
+                a["integrations"] = integ
+                break
+        else:
+            raise KeyError(handle)
+        _write_accounts_atomic(p, raw)
     return handle
 
 
@@ -169,13 +190,14 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
     if lean and lean not in TAG_LEANS:
         raise ValueError(f"unknown tag_lean: {tag_lean!r}")
     p = cfg.accounts_path
-    raw, accounts = _load_raw_accounts(p)
-    if any(isinstance(a, dict) and a.get("handle") == handle for a in accounts):
-        raise ValueError(f"duplicate handle {handle} (already exists)")
-    accounts.append({"handle": handle, "account_id": "", "platforms": plats,
-                     "status": str(status), "access": str(access),
-                     "persona": persona or "", "tag_lean": lean or None, "integrations": {}})
-    _write_accounts_atomic(p, raw)
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        if any(isinstance(a, dict) and a.get("handle") == handle for a in accounts):
+            raise ValueError(f"duplicate handle {handle} (already exists)")
+        accounts.append({"handle": handle, "account_id": "", "platforms": plats,
+                         "status": str(status), "access": str(access),
+                         "persona": persona or "", "tag_lean": lean or None, "integrations": {}})
+        _write_accounts_atomic(p, raw)
     return handle
 
 
@@ -188,14 +210,15 @@ def set_status(cfg: Config, handle: str, status: str) -> str:
     if status not in {s.value for s in AccountStatus}:
         raise ValueError(f"unknown status: {status!r}")
     p = cfg.accounts_path
-    raw, accounts = _load_raw_accounts(p)
-    found = False
-    for a in accounts:                                           # scan ALL rows (no break): a hand-edited file with
-        if isinstance(a, dict) and a.get("handle") == handle:    # duplicate handles must not leave a 2nd copy active —
-            a["status"] = str(status); found = True              # mirrors remove_account dropping every match
-    if not found:
-        raise KeyError(handle)
-    _write_accounts_atomic(p, raw)
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        found = False
+        for a in accounts:                                       # scan ALL rows (no break): a hand-edited file with
+            if isinstance(a, dict) and a.get("handle") == handle:  # duplicate handles must not leave a 2nd copy active —
+                a["status"] = str(status); found = True          # mirrors remove_account dropping every match
+        if not found:
+            raise KeyError(handle)
+        _write_accounts_atomic(p, raw)
     return handle
 
 
@@ -209,14 +232,15 @@ def set_tag_lean(cfg: Config, handle: str, lean: str) -> str:
     if lean and lean not in TAG_LEANS:
         raise ValueError(f"unknown tag_lean: {lean!r}")
     p = cfg.accounts_path
-    raw, accounts = _load_raw_accounts(p)
-    found = False
-    for a in accounts:
-        if isinstance(a, dict) and a.get("handle") == handle:
-            a["tag_lean"] = lean or None; found = True
-    if not found:
-        raise KeyError(handle)
-    _write_accounts_atomic(p, raw)
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        found = False
+        for a in accounts:
+            if isinstance(a, dict) and a.get("handle") == handle:
+                a["tag_lean"] = lean or None; found = True
+        if not found:
+            raise KeyError(handle)
+        _write_accounts_atomic(p, raw)
     return handle
 
 
@@ -226,10 +250,11 @@ def remove_account(cfg: Config, handle: str) -> str:
     dict; preserves every sibling + unknown field; an empty registry stays valid. Unknown handle -> KeyError
     (caller -> clean ActionResult)."""
     p = cfg.accounts_path
-    raw, accounts = _load_raw_accounts(p)
-    kept = [a for a in accounts if not (isinstance(a, dict) and a.get("handle") == handle)]
-    if len(kept) == len(accounts):
-        raise KeyError(handle)
-    raw["accounts"] = kept
-    _write_accounts_atomic(p, raw)
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        kept = [a for a in accounts if not (isinstance(a, dict) and a.get("handle") == handle)]
+        if len(kept) == len(accounts):
+            raise KeyError(handle)
+        raw["accounts"] = kept
+        _write_accounts_atomic(p, raw)
     return handle

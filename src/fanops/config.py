@@ -72,6 +72,7 @@ class Config:
         self.lock_path = self.control / "ledger.lock"
         self.digest_path = self.control / "ledger_digest.md"
         self.accounts_path = self.control / "accounts.json"
+        self.accounts_lock_path = self.control / "accounts.lock"   # serializes the accounts.json read-modify-write mutators
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
         self.hashtags_path = self.control / "hashtags.json"  # M4 dynamic reach-ranked tag store; absent -> frozen pools
