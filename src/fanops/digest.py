@@ -230,4 +230,10 @@ def write_digest(led: Ledger, cfg: Config) -> None:
         except Exception:
             logger.warning("digest accounts load skipped (fail-open)", exc_info=True)
             accounts = None
-    cfg.digest_path.write_text(render_digest(led, cfg, accounts=accounts))
+    # FAIL-OPEN: the digest is a convenience artifact written AFTER the ledger is committed. An OSError
+    # here (disk full / permissions) must NOT abort advance()/the CLI verb (a non-zero exit respins the
+    # daemon against the same disk) — log it and move on, exactly like _archive_published (post/run.py).
+    try:
+        cfg.digest_path.write_text(render_digest(led, cfg, accounts=accounts))
+    except OSError:
+        logger.warning("digest write skipped (fail-open)", exc_info=True)

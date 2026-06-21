@@ -274,6 +274,17 @@ def test_default_get_status_postiz_resolves_end_to_end_with_date_window(tmp_path
     p = captured["params"] or {}
     assert "date" not in p and p["startDate"] <= "2099-01-01" <= p["endDate"]   # window brackets scheduled_time
 
+def test_reconcile_poll_error_log_carries_the_error_detail(tmp_path):
+    # OBSERVABILITY: a persistent reconcile failure (API shape change, 404-on-every-token) must be
+    # diagnosable from the log STREAM, not only by loading the ledger and reading each post's
+    # error_reason. The poll-error log line must carry the err= detail.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "pp", PostState.needs_reconcile, sub="sub_1")
+    def boom(sid): raise RuntimeError("connreset SENTINEL-ERR")
+    reconcile_posts(led, cfg, get_status=boom)
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "poll-error" in log and "SENTINEL-ERR" in log          # the error detail rides the log line
+
 def test_reconcile_halts_on_postiz_auth_error(tmp_path):
     # The widened auth-halt catch (BlotatoAuthError → the shared AuthError base): a Postiz 401 in the
     # status poll must ALSO halt the pass (not grind a bogus error onto every parked post). Before the

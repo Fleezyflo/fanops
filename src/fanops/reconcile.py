@@ -85,7 +85,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             # Leave it parked (state untouched, NOT failed) and surface the reason for the digest;
             # a later pass retries. Then move on so the next post still gets reconciled.
             post.error_reason = f"reconcile poll error: {str(exc)[:200]}"
-            log("reconcile", post.id, "poll-error")
+            log("reconcile", post.id, "poll-error", err=str(exc)[:200])   # detail rides the log stream, not only the ledger
             continue
         status = (info.get("status") or "").lower()
         if status == "published":
