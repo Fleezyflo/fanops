@@ -113,11 +113,41 @@ def test_publish_uploads_media_once_and_advances(tmp_path, monkeypatch, mocker):
     led = Ledger.load(cfg)
     assert led.posts["p1"].state is PostState.published and led.posts["p2"].state is PostState.published
     assert led.posts["p1"].media_urls[0].startswith("file://")
-    # clip_1 media ensured but cached: ensure runs once per post (spy=2), but the SECOND post hits the
-    # clip.media_url that the FIRST post's finalize persisted to disk (F44) — so the underlying upload
-    # is shared and clip.media_url survives the claim->network->finalize round-trip.
+    # dryrun cannot prove "one real upload" (its uploader just regenerates the same file:// string), but
+    # it DOES prove the F44 cache SURVIVES the per-post claim->network->finalize round-trip: ensure runs
+    # once per post (spy=2), clip.media_url is persisted by the first post's finalize, and both posts
+    # resolve to the same url. The actual single-upload-across-posts property is locked on a LIVE backend
+    # by test_publish_uploads_clip_media_once_across_posts_live below.
     assert spy.call_count == 2 and led.clips["clip_1"].media_url
     assert led.posts["p1"].media_urls == led.posts["p2"].media_urls
+
+def test_publish_uploads_clip_media_once_across_posts_live(tmp_path, monkeypatch, mocker):
+    # F44 locked for the per-post claim->finalize world: two posts on ONE clip must trigger EXACTLY ONE
+    # real upload. The first post's finalize persists clip.media_url to disk; the second post's lock-free
+    # network phase reloads that cache and skips the upload. dryrun can't show this (no real upload), so
+    # use the rest backend and spy the actual uploader (ensure_clip_media -> get_media_uploader ->
+    # media.upload_media). A double-upload here would be a per-post cost/latency regression the separate
+    # claim-per-post design could silently reintroduce if the clip cache stopped surviving finalize.
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="shared", when="2020-01-01T00:00:00Z")
+    _queued(led, cfg, pid="p2", cid="shared", when="2020-01-01T00:00:00Z")  # same clip, 2nd post
+    uploads = []
+    def fake_upload(cfg_, path):
+        uploads.append(str(path)); return "https://cdn.blotato.test/shared.mp4"
+    mocker.patch("fanops.post.media.upload_media", side_effect=fake_upload)
+    import fanops.post.run as run
+    class _OkPoster:
+        def __init__(self, cfg): pass
+        def publish(self, led_, post_id):
+            led_.posts[post_id].state = PostState.submitted; led_.posts[post_id].submission_id = "s"
+            return led_
+    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    led = Ledger.load(cfg)
+    assert len(uploads) == 1                                   # the clip uploaded ONCE, not once-per-post
+    assert led.posts["p1"].state is PostState.published and led.posts["p2"].state is PostState.published
+    assert led.posts["p1"].media_urls == led.posts["p2"].media_urls == ["https://cdn.blotato.test/shared.mp4"]
 
 def test_publish_idempotent_skips_already_submitted(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)

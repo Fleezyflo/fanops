@@ -466,11 +466,14 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
         # A non-auth failure (media upload RuntimeError, corrupt clip.path, etc.) must NOT escape to
         # Flask as a 500 — the cockpit surfaces it cleanly (mirrors run_advance's broad catch).
         return ActionResult(ok=False, error=f"publish failed: {str(exc)[:160]}")
-    # ONLY 'published' is success: _publish_one advances submitted -> published on a clean poster
-    # return, so any other terminal state (failed/needs_reconcile, or None when the post was no longer
-    # claimable) means the post did NOT fully ship — report it incomplete rather than a false success.
+    # ONLY 'published' is success: _publish_one advances submitted -> published on a clean poster return,
+    # so any other terminal state means the post did NOT fully ship. A None return means the CLAIM gate
+    # found it no longer queued (e.g. a concurrent daemon pass just claimed it between the guard read and
+    # the claim) — tell the operator to retry rather than print a confusing "post is None".
     if state == "published":
         return ActionResult(ok=True, detail={"post_id": post_id, "state": state})
+    if state is None:
+        return ActionResult(ok=False, error="post was not claimable (it may be publishing already) — refresh and try again")
     return ActionResult(ok=False, error=f"publish did not complete (post is {state}) — see the run log")
 
 
