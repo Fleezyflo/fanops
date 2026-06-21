@@ -58,7 +58,7 @@ def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
     return BlotatoStatusClient(cfg).get_status
 
 
-def reconcile_due(cfg: Config) -> dict:
+def reconcile_due(cfg: Config) -> dict[str, int]:
     """Reconcile stranded posts with the per-post status POLLS (network) OUTSIDE the ledger flock —
     only the apply runs inside a tight transaction (mirrors cmd_reconcile; M1, same fix as publish #89).
     Pre-poll each reconcilable post's status against a lock-free snapshot, then hand the CACHED results
