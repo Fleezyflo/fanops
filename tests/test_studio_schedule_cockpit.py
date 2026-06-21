@@ -82,8 +82,10 @@ def test_schedule_unapprove_route_sends_back_to_review(tmp_path):
     assert r.status_code == 200 and Ledger.load(cfg).posts["p1"].state is PostState.awaiting_approval
 
 def test_schedule_move_route_reschedules_and_rerenders_panel(tmp_path):
-    # Move re-renders the whole bucket (so the row's time is fresh, not stale in the input).
+    # Move re-renders the whole bucket (so the row's time is fresh, not stale in the input). local-time:
+    # the panel shows the operator's LOCAL form of the time; the ledger keeps canonical UTC.
+    from fanops.timeutil import to_local_input
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1")
     r = _client(cfg).post("/schedule/move/p1", data={"new_time": "2099-09-09T09:00:00Z"})
-    assert r.status_code == 200 and b"2099-09-09T09:00:00Z" in r.data
+    assert r.status_code == 200 and to_local_input("2099-09-09T09:00:00Z").encode() in r.data
     assert Ledger.load(cfg).posts["p1"].scheduled_time == "2099-09-09T09:00:00Z"

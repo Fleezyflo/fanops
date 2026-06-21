@@ -20,10 +20,10 @@
   {# Reschedule + suggest/clear post to /reschedule-surface & /clear, which re-render THIS editor (outerHTML
      swap of #edit-<id>) so the time input always reflects the fresh value — not the stale /reschedule result. #}
   <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
-    <label for="time-{{ s.post_id }}">Scheduled time</label>
-    <input id="time-{{ s.post_id }}" type="text" name="new_time" value="{{ s.scheduled_time if s.scheduled_time is not none else '' }}" placeholder="2026-06-08T14:00:00Z">
+    <label for="time-{{ s.post_id }}">Scheduled time <span class="muted">(your local time)</span></label>
+    <input id="time-{{ s.post_id }}" type="datetime-local" name="new_time" value="{{ s.scheduled_time | localinput }}">
     <button type="submit">Reschedule</button>
-    {% if s.suggested_time %}<span class="muted">Suggested: {{ s.suggested_time }}</span>{% endif %}
+    {% if s.suggested_time %}<span class="muted">Suggested: {{ s.suggested_time | localdt }}</span>{% endif %}
   </form>
   {% if s.suggested_time %}
   <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">

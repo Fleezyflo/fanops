@@ -15,7 +15,7 @@
       </div>
       <div class="clip-body">
         <div class="clip-title">{{ r.account }} <span class="muted">{{ r.platform }}</span></div>
-        <div class="meta">{% if r.state != 'queued' %}<span class="badge">{{ r.state }}</span> {% endif %}{% if r.due %}due now{% else %}scheduled {{ r.scheduled_time }}{% endif %}</div>
+        <div class="meta">{% if r.state != 'queued' %}<span class="badge">{{ r.state }}</span> {% endif %}{% if r.due %}due now{% else %}scheduled {{ r.scheduled_time | localdt }}{% endif %}</div>
         <textarea readonly rows="2" aria-label="Caption to copy">{{ r.caption }}</textarea>
         <a class="button" href="{{ url_for('media', post_id=r.post_id) }}" download aria-label="Download clip for {{ r.account }} {{ r.platform }}">Download clip</a>
         <form hx-post="{{ url_for('do_mark_posted', post_id=r.post_id) }}"
