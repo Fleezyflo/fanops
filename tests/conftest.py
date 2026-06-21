@@ -35,7 +35,11 @@ import pytest
 _LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_HOOK_JUDGE",
               "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL",
               "FANOPS_GC_KEEP_DAYS",   # content-lifecycle Phase 3: a repo .env value must not leak into the gc-window tests
-              "FANOPS_CONCURRENT_SOURCES", "FANOPS_CONCURRENT_WORKERS")
+              "FANOPS_CONCURRENT_SOURCES", "FANOPS_CONCURRENT_WORKERS",
+              # persona/learning behavior flags (default OFF): once the operator persists e.g.
+              # FANOPS_CREATIVE_VARIATION=1 to the repo .env (the supported "system default"), it must not
+              # leak into tests that assume the code default — same class as FANOPS_HOOK_JUDGE above.
+              "FANOPS_CREATIVE_VARIATION", "FANOPS_VARIANT_LEARNING", "FANOPS_P4_DIM_BIAS")
 
 
 @pytest.fixture(autouse=True)
