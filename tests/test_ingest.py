@@ -151,6 +151,27 @@ def test_dedupe_by_content_not_path(tmp_path, mocker):
     led = ingest_drops(led, cfg)
     assert len(led.sources) == 1
 
+def test_ingest_stamps_batch_id_write_once(tmp_path, mocker):
+    # batch_id is stamped on the Source at catalogue and is WRITE-ONCE: re-dropping the same bytes under
+    # a DIFFERENT batch keeps the first (the prior batch wins; a conflict breadcrumb is logged).
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
+    led = ingest_drops(Ledger.load(cfg), cfg, batch_id="batch_x")
+    src = next(iter(led.sources.values()))
+    assert src.batch_id == "batch_x"
+    led = ingest_drops(led, cfg, batch_id="batch_y")          # same bytes, new batch
+    assert led.sources[src.id].batch_id == "batch_x" and len(led.sources) == 1   # write-once: prior wins
+    assert "batch_conflict" in cfg.log_path.read_text()       # the conflict is visible (mirrors origin_conflict)
+
+def test_ingest_no_batch_is_byte_identical(tmp_path, mocker):
+    # No batch_id => Source.batch_id is None (today's path, byte-identical).
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
+    led = ingest_drops(Ledger.load(cfg), cfg)
+    assert next(iter(led.sources.values())).batch_id is None
+
 def test_catalogue_stamps_created_at(tmp_path, mocker):
     # content-lifecycle Phase 2: a freshly catalogued Source carries a parseable ISO-Z created_at (ingest day).
     from fanops.timeutil import parse_iso

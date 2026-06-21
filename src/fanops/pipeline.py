@@ -17,6 +17,7 @@ from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
+from fanops.casting import cast_moments
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
                                   prewarm_approved_stitches, approved_disabled_count)
 from fanops.intro_match import request_intro_match, ingest_intro_match
@@ -229,12 +230,22 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                 led = route_moments(led, cfg)
             except Exception as e:
                 log("router", "-", "error", err=str(e)[:120])
+        # Account-First Studio casting (Face 3, opt-in, default OFF): assign per-account moment affinities
+        # BEFORE the render loop — a pure ledger annotation (no render/LLM; the batch target is resolved
+        # per-moment inside cast_moments). Fail-open; OFF -> affinities stay [] -> render/fan-out byte-identical.
+        if cfg.account_casting:
+            try:
+                led = cast_moments(led, cfg, accts)
+            except Exception as e:
+                log("casting", "-", "error", err=str(e)[:120])
         for m in list(led.moments.values()):
             if m.state is MomentState.decided:
                 try:
                     led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
                     for clip in clips:
                         if clip.state is not ClipState.rendered: continue   # a failed-aspect clip (ClipState.error) must not be laundered into a phantom captioned post with a dangling mp4
+                        # Affinity scoping happens at CROSSPOST (intent = Moment.affinities + Batch.target_accounts),
+                        # NOT here — caption requests stay unscoped, so no later face reads meta_captions as casting intent.
                         led = request_captions(led, cfg, clip.id,
                                                [(s.account, s.platform) for s in accts.surfaces()],
                                                accounts=accts)

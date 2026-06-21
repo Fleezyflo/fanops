@@ -21,6 +21,27 @@ def test_run_ingest_catalogues_inbox(tmp_path, mocker):
     assert res.ok and res.detail["sources"] == 1
     assert len(Ledger.load(cfg).sources) == 1
 
+def test_run_ingest_with_batch_name_mints_batch_and_stamps_source(tmp_path, mocker):
+    # A non-blank batch_name mints a named, account-targeted Batch in the SAME transaction; the catalogued
+    # source carries its id and the detail reports the batch.
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    res = actions.run_ingest(cfg, batch_name="  Launch week  ", target_accounts=["@a", "@a", ""])
+    assert res.ok and res.detail["sources"] == 1
+    led = Ledger.load(cfg)
+    assert len(led.batches) == 1
+    b = next(iter(led.batches.values()))
+    assert b.name == "Launch week" and b.target_accounts == ["@a"]    # stripped + deduped + blank-dropped
+    assert res.detail["batch"] == "Launch week" and res.detail["batch_id"] == b.id
+    assert next(iter(led.sources.values())).batch_id == b.id          # source stamped under the batch
+
+def test_run_ingest_blank_batch_name_is_byte_identical(tmp_path, mocker):
+    # Blank batch_name => today's ungrouped ingest: no batch minted, source.batch_id None.
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    res = actions.run_ingest(cfg, batch_name="   ")
+    assert res.ok and "batch" not in res.detail
+    led = Ledger.load(cfg)
+    assert len(led.batches) == 0 and next(iter(led.sources.values())).batch_id is None
+
 def test_run_ingest_wraps_toolchain_error(tmp_path, mocker):
     # ffprobe absent -> ingest raises ToolchainMissingError; Studio must surface a clean error, not 500.
     cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)
@@ -197,6 +218,19 @@ def test_run_ingest_route_drives_ingest(tmp_path, mocker):
     r = app.test_client().post("/run/ingest")
     assert r.status_code == 200
     assert len(Ledger.load(cfg).sources) == 1
+
+def test_run_ingest_route_passes_batch_fields(tmp_path, mocker):
+    # The route reads batch_name + the repeated target_accounts form fields and threads them to run_ingest.
+    from fanops.studio.app import create_app
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().post("/run/ingest", data={"batch_name": "Launch", "target_accounts": ["@a", "@b"]})
+    assert r.status_code == 200
+    led = Ledger.load(cfg)
+    assert len(led.batches) == 1
+    b = next(iter(led.batches.values()))
+    assert b.name == "Launch" and b.target_accounts == ["@a", "@b"]
+    assert next(iter(led.sources.values())).batch_id == b.id
 
 def test_run_advance_route(tmp_path):
     from fanops.studio.app import create_app

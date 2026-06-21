@@ -331,6 +331,25 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def account_casting(self) -> bool:
+        # Account-First Studio: per-account MOMENT casting (Face 3). ON -> each active account is cast up to
+        # cast_pick_budget of its best persona-fit moments (bounded by the batch target); crosspost then fans
+        # a cast moment ONLY to its accounts. DEFAULT OFF (opt-in, mirrors creative_variation) — a fan-out-
+        # changing selection layer ships behind a kill-switch; unset/empty/other stays OFF (today's behavior).
+        v = (os.getenv("FANOPS_ACCOUNT_CASTING") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def cast_pick_budget(self) -> int:
+        # Per-account max moments cast per pass (Face 3). DEFAULT 3, CLAMPED >= 1 (a 0 budget casts nothing;
+        # the concurrent_workers clamp precedent). A non-int env falls back to the default, never crashing a run.
+        try:
+            v = int(os.getenv("FANOPS_CAST_PICK_BUDGET", "3"))
+        except ValueError:
+            return 3
+        return v if v >= 1 else 1
+
+    @property
     def hook_router(self) -> bool:
         # M2 structural-hooks router: a read-only Moment classifier (runs BEFORE the render loop) that
         # records hook_strategy and RENDERS NOTHING. DEFAULT OFF (opt-in): observe-only, so the annotation

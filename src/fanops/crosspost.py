@@ -78,7 +78,19 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         # (treat as UNKNOWN -> fail-open, never skip). dur is None/<=0 => unknown.
         m = led.moments.get(moment_id)
         clip_dur = (m.end - m.start) if m is not None else None
+        # Account-First Studio: resolve the named-batch account target ONCE per clip via the
+        # moment->source lineage (m.parent_id == source id). A non-empty target_accounts HARD-bounds
+        # which surfaces a post is born for (the casting-OFF enforcement path); empty/missing => no skip.
+        src = led.sources.get(m.parent_id) if m is not None else None
+        src_batch = src.batch_id if src is not None else None
+        tgt = led.get_batch(src_batch).target_accounts if (src_batch and led.get_batch(src_batch)) else []
         for i, surf in enumerate(surfaces):
+            if tgt and surf.account not in tgt:
+                get_logger(cfg)("crosspost", clip.id, "batch_target_skip",
+                                surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
+                continue   # batch targets a specific account set; this surface isn't in it (no post born)
+            if m is not None and m.affinities and surf.account not in m.affinities:
+                continue   # affinity gate (Face 3): a cast moment fans ONLY to its accounts; uncast ([]) fans to all
             # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
             # platform's hard cap, SKIP this surface only (conservative — the clip can still post
             # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown
@@ -154,7 +166,7 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 # first_frame_kind/cut_seconds from the rendered clip, clip_profile from the global
                 # video-type knob (its only home today — config.py). Absent dims default None cleanly.
                 first_frame_kind=target_clip.first_frame_kind, cut_seconds=target_clip.cut_seconds,
-                clip_profile=cfg.clip_profile,
+                clip_profile=cfg.clip_profile, batch_id=src_batch,   # Account-First Studio: denormalized batch (None=ungrouped)
                 variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))   # P2: the axis this variant moved
         led.set_clip_state(clip.id, ClipState.queued)
     return led
