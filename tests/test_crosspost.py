@@ -375,14 +375,16 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
         Account(handle="@a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active),
         Account(handle="@b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active)]
     led.add_source(Source(id="s1", source_path=str(tmp_path/"s.mp4"), width=1080, height=1920))
+    # ROOT FIX: the per-account on-screen hooks are the FRAME-SEEING moment author's, keyed by handle
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
-                          state=MomentState.clipped, hook="default hook"))
-    # a captioned base clip with per-surface captions+hooks for both accounts
+                          state=MomentState.clipped, hook="default hook",
+                          hooks_by_persona={"@a": "HOOK A", "@b": "HOOK B"}))
+    # a captioned base clip; the caption gate writes NO hook now — a sentinel proves crosspost IGNORES it
     clip = Clip(id="c1", parent_id="m1", path=str(tmp_path/"c1.mp4"), aspect=Fmt.r9x16,
                 state=ClipState.captioned)
     Path(clip.path).write_bytes(b"BASECLIP")
-    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": [], "hook": "HOOK A"},
-                          "@b/instagram": {"caption": "B cap", "hashtags": [], "hook": "HOOK B"}}
+    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": [], "hook": "CAPHOOK_IGNORED"},
+                          "@b/instagram": {"caption": "B cap", "hashtags": [], "hook": "CAPHOOK_IGNORED"}}
     led.add_clip(clip)
     # make burn_hook_only deterministic + observable (write a distinct file per call)
     calls = []

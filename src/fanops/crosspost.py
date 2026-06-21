@@ -119,7 +119,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
             variant_key = None
             variant_hook = None
             media_path = target_clip.path
-            hook_v = (cap.get("hook") if isinstance(cap, dict) else None)
+            # ROOT FIX: the on-screen per-account hook is the FRAME-SEEING moment author's hook for THIS
+            # handle (m.hooks_by_persona[handle]) — falling back to the shared moment hook. The blind
+            # caption gate no longer authors a shipped hook. m guarded defensively (None -> no hook).
+            hook_v = (m.hooks_by_persona.get(surf.account) or m.hook) if m is not None else None
             if cfg.creative_variation and hook_v:
                 variant_key = surface_key(surf.account, surf.platform.value)
                 tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080),
