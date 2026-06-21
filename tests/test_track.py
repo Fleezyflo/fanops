@@ -247,7 +247,7 @@ def test_pull_metrics_postiz_computes_lift_score(tmp_path, monkeypatch, mocker):
     led.add_post(_published("p1", "sid1"))
     arr = [{"label": "Likes", "data": [{"total": "2", "date": "d"}]},
            {"label": "Shares", "data": [{"total": "5", "date": "d"}]},
-           {"label": "Impressions", "data": [{"total": "1000", "date": "d"}]}]
+           {"label": "Reach", "data": [{"total": "1000", "date": "d"}]}]
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, arr))
     led = pull_metrics(led, cfg)
     p = led.posts["p1"]
