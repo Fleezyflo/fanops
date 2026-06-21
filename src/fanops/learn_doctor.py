@@ -1,11 +1,11 @@
 # src/fanops/learn_doctor.py
 """F2 — read-only learning-loop field-shape doctor. Answers ONE question: does the LIVE Postiz
-analytics field shape carry the signal the learning loop optimizes? The loop weights track._W, but the
-live Postiz backend can only deliver labels _POSTIZ_LABEL_MAP maps (likes/shares/comments/reach);
-`saves` and `retention` are PERMANENTLY unmapped — a known design gap, NOT a doctor failure. So the
-verdict gates ONLY on `reach` (mapped from the `impressions` label), the one weighted key M4's
+analytics field shape carry the signal the learning loop optimizes? The loop weights track._W, and the
+live Postiz backend delivers the labels _POSTIZ_LABEL_MAP maps (likes/shares/comments/reach/saves/views);
+`retention` is genuinely absent from the live label set — a known gap, NOT a doctor failure. So the
+verdict gates ONLY on `reach` (mapped from the live `reach` label), the one weighted key M4's
 reach-attribution consumes. Tri-state, so 0 posts is never a vacuous PASS:
-  PASS    — sampled posts carry a reach signal (impressions reconciles)
+  PASS    — sampled posts carry a reach signal (the reach label reconciles)
   FAIL    — sampled posts carry analytics labels but NONE yields `reach`
   NO-DATA — no shipped posts, or none with usable analytics yet
 Genuinely read-only of the ledger: pulls analytics, never writes the ledger / flips a flag / calls
@@ -19,8 +19,8 @@ from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.track import _W
 
-# The ONE weighted key the verdict gates on: mapped from the Postiz `impressions` label and the field
-# M4 reach-attribution reads. saves/retention are unmappable on Postiz (reported, never gated).
+# The ONE weighted key the verdict gates on: mapped from the live Postiz `reach` label and the field
+# M4 reach-attribution reads. `retention` is absent from the live label set (reported, never gated).
 _GATING_KEY = "reach"
 
 
@@ -46,14 +46,14 @@ def field_shape_report(led: Ledger, cfg: Config, *, window: str = "30d", list_po
     labels_seen = sorted({lbl for r in rows for lbl in (r.get("_raw_labels") or [])})
     metric_keys = {k for r in rows for k in (r.get("metrics") or {})}
     mapped_lift_keys = _mapped_lift_keys()
-    unmapped_weight_keys = sorted(k for k in _W if k not in mapped_lift_keys)   # saves, retention
+    unmapped_weight_keys = sorted(k for k in _W if k not in mapped_lift_keys)   # retention (saves now maps)
     reach_present = _GATING_KEY in metric_keys
     if posts_sampled == 0 or not (labels_seen or metric_keys):
         verdict, detail = "NO-DATA", "no shipped posts with usable analytics yet — nothing to judge."
     elif reach_present:
-        verdict, detail = "PASS", "the `reach` signal reconciles (impressions present)."
+        verdict, detail = "PASS", "the `reach` signal reconciles (the reach label is present)."
     else:
-        verdict, detail = "FAIL", "`reach` absent from sampled analytics (the impressions label did not reconcile)."
+        verdict, detail = "FAIL", "`reach` absent from sampled analytics (the reach label did not reconcile)."
     return {"posts_sampled": posts_sampled, "labels_seen": labels_seen,
             "weight_keys": sorted(_W), "gating_key": _GATING_KEY, "reach_present": reach_present,
             "unmapped_weight_keys": unmapped_weight_keys, "verdict": verdict, "detail": detail}

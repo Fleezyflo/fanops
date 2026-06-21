@@ -256,19 +256,23 @@ def test_default_get_status_dispatches_blotato_for_rest(tmp_path, monkeypatch):
 def test_default_get_status_postiz_resolves_end_to_end_with_date_window(tmp_path, monkeypatch, mocker):
     # postiz + key: a parked Postiz post resolves end-to-end through the UNCHANGED reconcile_posts via
     # the Postiz list read (proves dispatch without closure introspection), AND the closure passes the
-    # post's own scheduled_time as the `date` window so a future/2099 post is FOUND, not "unknown".
+    # post's own scheduled_time so the startDate/endDate window brackets a future/2099 post (FOUND, not
+    # "unknown"), capturing its real IG permalink from the row's releaseURL.
     _postiz_env(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "pp", PostState.needs_reconcile, sub="postiz_99")
     led.posts["pp"].scheduled_time = "2099-01-01T00:00:00Z"
-    page = {"posts": [{"id": "postiz_99", "state": "PUBLISHED", "publishDate": "2099-01-01T00:00:00.000Z"}]}
+    url = "https://www.instagram.com/reel/DZvZ8Itkaxz/"
+    page = {"posts": [{"id": "postiz_99", "state": "PUBLISHED", "releaseURL": url, "publishDate": "2099-01-01T00:00:00.000Z"}]}
     captured = {}
-    def fake_get(url, **kw):
+    def fake_get(url_, **kw):
         captured["params"] = kw.get("params"); return _R(200, page)
     mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
     led = reconcile_posts(led, cfg)                # NO injected get_status → exercises _default_get_status(postiz)
     assert led.posts["pp"].state is PostState.published
-    assert (captured["params"] or {}).get("date") == "2099-01-01"   # date derived from the post's scheduled_time
+    assert led.posts["pp"].public_url == url                          # releaseURL flowed through reconcile
+    p = captured["params"] or {}
+    assert "date" not in p and p["startDate"] <= "2099-01-01" <= p["endDate"]   # window brackets scheduled_time
 
 def test_reconcile_halts_on_postiz_auth_error(tmp_path):
     # The widened auth-halt catch (BlotatoAuthError → the shared AuthError base): a Postiz 401 in the
