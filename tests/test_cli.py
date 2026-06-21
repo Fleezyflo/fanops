@@ -420,6 +420,41 @@ def test_run_learning_pass_entered_with_postiz_backend_and_key(tmp_path, monkeyp
     assert rc == 0
     assert spy.call_count == 1                                # learning pass runs once when postiz+keyed
 
+def _run_with_live_learning_stubs(tmp_path, monkeypatch, mocker):
+    # shared setup: a live postiz backend with the learn-pass network stubbed (spies keep it offline).
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    import fanops.cli as cli
+    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
+    mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
+    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
+    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
+    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
+    spy = mocker.patch.object(cli, "apply_p4_dim_bias", side_effect=lambda led, cfg: led)
+    from fanops.config import Config
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    return spy
+
+def test_run_fires_p4_dim_bias_when_flag_on_and_live(tmp_path, monkeypatch, mocker):
+    # the P4(b) cross-account reach dim-bias actuator must fire in the AUTONOMOUS run loop when its flag
+    # is on + live backend — symmetric with apply_variant_amplify. Before, it was reachable ONLY via the
+    # manual `fanops p4-bias` verb, so unattended runs never applied it. Network-free (spied); the actuator
+    # self-guards on the flag AND stays validation-frozen until cutover, so wiring it in is fail-SAFE.
+    monkeypatch.setenv("FANOPS_P4_DIM_BIAS", "1")            # operator intent ON
+    spy = _run_with_live_learning_stubs(tmp_path, monkeypatch, mocker)
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    assert spy.call_count == 1                                # fired once in the autonomous loop
+
+def test_run_skips_p4_dim_bias_when_flag_off(tmp_path, monkeypatch, mocker):
+    # symmetric kill-switch: flag OFF -> apply_p4_dim_bias is NEVER called from run (default behavior).
+    monkeypatch.delenv("FANOPS_P4_DIM_BIAS", raising=False)  # flag OFF (default)
+    spy = _run_with_live_learning_stubs(tmp_path, monkeypatch, mocker)
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    assert spy.call_count == 0
+
 def test_run_prints_heartbeat_with_version(tmp_path, monkeypatch, capsys):
     # B5/E2: every `fanops run` must emit a heartbeat line on stdout carrying the fanops version,
     # so a monitor diffing consecutive lines can distinguish 'alive-but-idle' from 'cron is dead'.
