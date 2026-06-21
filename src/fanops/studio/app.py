@@ -96,6 +96,10 @@ def create_app(cfg: Config) -> Flask:
     # tighter than `or` in Jinja, so the dash is the fallback for an empty/missing time).
     app.jinja_env.filters["localdt"] = to_local_display
     app.jinja_env.filters["localinput"] = to_local_input
+    # Face 4: group the editable Review cards by their REAL Batch (Post.batch_id) for collapsible
+    # per-batch <details> sections. Pure read-model helper (views), exposed as a filter so the
+    # already-paginated card slice is grouped at render time without threading it through every route.
+    app.jinja_env.filters["group_review_by_batch"] = views.group_review_by_batch
 
     def _time_arg() -> str:
         # The datetime-local control submits naive LOCAL; convert to canonical UTC before the action sees it.
@@ -525,6 +529,21 @@ def create_app(cfg: Config) -> Flask:
             return render_template("_result.html",
                                    result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
         return render_template("_surface_edit.html", s=s, regen_note=result.detail, backend=cfg.poster_backend)
+
+    @app.post("/reburn-hook/<post_id>")
+    def do_reburn_hook(post_id):
+        # Face 4: re-burn the operator's edited on-screen HOOK for ONE surface (ffmpeg only, no LLM), then
+        # swap the editor so the new hook lands in the box (and a "couldn't burn (no libass)" warning shows
+        # if the burn failed open). Clean inline error on a guard/unknown-post failure, never a 500.
+        result = actions.reburn_hook(cfg, post_id, request.form.get("hook") or "")
+        if not result.ok:
+            return render_template("_result.html", result=result)
+        s = views.surface_for_post(Ledger.load(cfg), Accounts.load(cfg), post_id,
+                                   now=datetime.now(timezone.utc), cfg=cfg)
+        if s is None:
+            return render_template("_result.html",
+                                   result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
+        return render_template("_surface_edit.html", s=s, reburn_note=result.detail, backend=cfg.poster_backend)
 
     @app.post("/snooze/<clip_id>")
     def do_snooze(clip_id):

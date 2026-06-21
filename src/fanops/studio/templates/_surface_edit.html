@@ -17,6 +17,19 @@
     <input id="guidance-{{ s.post_id }}" type="text" name="guidance" placeholder="e.g. punchier · mention the beat drop · less hype">
     <button type="submit" class="primary">Regenerate caption</button>
   </form>
+  {# Face 4: the editable on-screen HOOK (per-account, burned into the video). Shown ONLY when this surface
+     HAS a variant hook (creative_variation ON). "Re-burn text" re-burns the literal typed text via ffmpeg
+     (no LLM) onto the same /media path; a fail-open burn (no libass) warns but still saves the text. #}
+  {% if s.variant_hook is not none %}
+  {% if reburn_note is defined and reburn_note and not reburn_note.hook_burned %}
+    <div class="result err">Hook saved, but ffmpeg couldn't burn it on screen (no libass / nothing burnable) — this surface ships CLEAN. Install libass to burn the text.</div>
+  {% endif %}
+  <form hx-post="{{ url_for('do_reburn_hook', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
+    <label for="hook-{{ s.post_id }}">On-screen hook <span class="muted">(burned into the video — keep it short)</span></label>
+    <textarea id="hook-{{ s.post_id }}" name="hook" rows="2">{{ s.variant_hook }}</textarea>
+    <button type="submit">Re-burn text</button>
+  </form>
+  {% endif %}
   {# Reschedule + suggest/clear post to /reschedule-surface & /clear, which re-render THIS editor (outerHTML
      swap of #edit-<id>) so the time input always reflects the fresh value — not the stale /reschedule result. #}
   <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">

@@ -21,6 +21,7 @@ from fanops.ingest import MEDIA_EXT
 from fanops.ledger import Ledger
 from fanops.models import CaptionSet, ClipState, MomentDecision, Post, PostState
 from fanops.ids import child_id, surface_key, _hash
+from fanops import overlay
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent, suggest_time
 
@@ -193,6 +194,47 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
         p2.caption = new_caption
         p2.hashtags = new_tags
     return ActionResult(ok=True, detail={"post_id": post_id, "caption": new_caption, "hashtags": new_tags})
+
+
+def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """Face 4 — re-burn ONE editable surface's on-screen HOOK (NO LLM). The operator edits the literal
+    per-account hook text; this re-burns it via ffmpeg (overlay.burn_hook_only) onto the SAME deterministic
+    variant path /media serves, then a SHORT transaction flips post.variant_hook + post.media_urls ONLY.
+    Both survive repost_post (the real 'Post again' reuse path). It NEVER writes clip.meta_captions['hook']
+    — that key is dead (the on-screen-hook source of truth is Moment.hooks_by_persona, read at crosspost).
+    Gated on cfg.creative_variation (per-surface variant burns only exist then). The 600s ffmpeg runs
+    LOCK-FREE (the 60s flock guard forbids holding the lock across it — mirror regenerate_caption); the
+    field flip is re-guarded inside a short transaction. hook_burn_failed (burn returns False — no libass /
+    nothing burnable) -> ok=True, detail.hook_burned=False (WARN, surfaced; an EDIT, so NO rollback, unlike
+    approve_with_hook). Does NOT publish — safe on any backend, no confirm gate."""
+    if not cfg.creative_variation:
+        return ActionResult(ok=False, error="re-burn needs per-account hooks ON (FANOPS_CREATIVE_VARIATION)")
+    from fanops.models import Fmt, PLATFORM_ASPECT
+    now = _now(now)
+    led = Ledger.load(cfg)                              # lock-free read: reject early, then burn OUTSIDE the lock
+    p, err = _guard_editable_post(led, post_id, now)
+    if err:
+        return ActionResult(ok=False, error=err)
+    clip = led.clips.get(p.parent_id)
+    if clip is None:
+        return ActionResult(ok=False, error=f"no clip for post {post_id}")
+    # Path == crosspost.py's variant path EXACTLY: post.parent_id == the per-aspect clip id, surface_key keys
+    # the account/platform — NEVER a ReviewCard seed clip_id (a different id per aspect -> a file /media never
+    # serves). _media_path_for_post resolves media_urls[0] back to this same file.
+    aspect = PLATFORM_ASPECT.get(p.platform, Fmt.r9x16)
+    tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080), Fmt.r16x9: (1920, 1080)}.get(aspect, (1080, 1920))
+    cfg.clips.mkdir(parents=True, exist_ok=True)        # burn_hook_only writes the variant + its .ass, no mkdir of its own
+    vpath = str(cfg.clips / f"{p.parent_id}_{_hash('variant', surface_key(p.account, p.platform.value))}.mp4")
+    burned = overlay.burn_hook_only(clip.path, vpath, hook, width=tw, height=th,
+                                    font=cfg.subtitle_font)   # LOCK-FREE; fail-open: vpath always exists
+    with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
+        p2, err2 = _guard_editable_post(led2, post_id, _now(None))   # fresh now: the burn may have made it imminent
+        if err2:
+            return ActionResult(ok=False, error=err2)
+        p2.variant_hook = hook                          # post-level fields ONLY (carried by repost_post) — no meta_captions
+        p2.media_urls = [f"file://{vpath}"]
+    return ActionResult(ok=True, detail={"post_id": post_id, "hook": hook, "hook_burned": bool(burned),
+                                         "media_url": f"file://{vpath}"})
 
 
 def approve_candidate(cfg: Config, eid: str) -> ActionResult:
