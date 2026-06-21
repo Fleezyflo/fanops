@@ -33,6 +33,7 @@ from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.models import PostState
+from fanops.text import safe_public_url
 
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.
 _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reconcile)
@@ -126,7 +127,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         status = (info.get("status") or "").lower()
         if status == "published":
             post.state = PostState.published
-            post.public_url = info.get("publicUrl") or post.public_url
+            post.public_url = safe_public_url(info.get("publicUrl")) or post.public_url   # M2: https-only or keep existing
             post.error_reason = None                      # a transient poll-error reason must not survive a successful publish
             log("reconcile", post.id, "published")
         elif status == "failed":

@@ -23,6 +23,7 @@ from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
 from fanops.models import PostState
+from fanops.text import safe_public_url
 
 _log = logging.getLogger("fanops.post.postiz")
 _MAX_RETRIES = 4
@@ -214,8 +215,9 @@ class PostizPoster:
                 post.submission_id = sid
                 # P2: record a public URL ONLY on the confirmed-submitted branch (no confirmed id ->
                 # no link). _postiz_permalink is None today (no URL in the API); `or post.public_url`
-                # keeps any operator-set link and makes this a no-op until the route is verified.
-                post.public_url = _postiz_permalink(self.cfg, sid) or post.public_url
+                # keeps any operator-set link and makes this a no-op until the route is verified. M2:
+                # safe_public_url guards a future permalink to https-only (never persist a dead link).
+                post.public_url = safe_public_url(_postiz_permalink(self.cfg, sid)) or post.public_url
                 return led
             if resp.status_code == 401:
                 raise PostizAuthError("Postiz 401 unauthorized — check POSTIZ_API_KEY (response body withheld)")

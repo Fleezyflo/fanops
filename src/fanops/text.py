@@ -4,6 +4,21 @@ no em/en-dash, curly quote, or invisible character survives, regardless of model
 Idempotent; None-safe; leaves Arabic and hashtag text untouched. Codepoints as \\u escapes."""
 from __future__ import annotations
 import re
+from urllib.parse import urlparse
+
+def safe_public_url(url: str | None) -> str | None:
+    """Return `url` iff it is a well-formed https:// URL with a host — the only shape a public IG/TikTok
+    permalink takes — else None. Guards a malformed/non-https value captured from a backend (Postiz
+    releaseURL / Blotato publicUrl) from being persisted and later surfaced as a dead 'live URL' (M2).
+    https-only on purpose: a public social permalink is always https; a non-https value here is malformed.
+    None-safe, never raises. Operator-supplied URLs (`fanops resolve --url`, Studio mark-posted) are NOT
+    routed through this — they are explicit operator intent, not untrusted backend capture."""
+    if not isinstance(url, str): return None
+    url = url.strip()
+    if any(c.isspace() for c in url): return None        # a permalink has NO internal whitespace; an
+    try: u = urlparse(url)                                # embedded newline/tab/space is a malformed/injected url
+    except (ValueError, TypeError): return None
+    return url if u.scheme == "https" and u.netloc else None
 
 _DASHES = re.compile(r"\s*[—–‒―]\s*")   # em / en / figure / horizontal-bar -> ", "
 _SQUO = re.compile(r"[‘’‛]")                 # curly single -> straight '
