@@ -193,6 +193,20 @@ def test_write_integration_creates_map_when_absent(tmp_path):
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0]["integrations"] == {"instagram": "7"}
 
+def test_write_integration_updates_every_duplicate_handle_row(tmp_path):
+    # M3: handles SHOULD be unique (add_account rejects a dup), but a hand-edited accounts.json with a
+    # duplicate handle must NOT leave the 2nd copy diverged. write_integration now scans ALL rows (no
+    # break) — mirroring set_status and remove_account — so a (handle, platform) maps consistently
+    # across every matching row instead of only the first.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [
+        {"handle": "@dup", "account_id": "1", "platforms": ["instagram"], "status": "active", "integrations": {}},
+        {"handle": "@dup", "account_id": "2", "platforms": ["instagram"], "status": "active", "integrations": {}}])
+    write_integration(cfg, "@dup", "instagram", "ig_123")
+    dups = [a for a in json.loads(cfg.accounts_path.read_text())["accounts"] if a["handle"] == "@dup"]
+    assert len(dups) == 2
+    assert all(a.get("integrations", {}).get("instagram") == "ig_123" for a in dups)   # BOTH updated, no divergence
+
 def test_write_integration_reload_resolves_per_platform(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"], "status": "active"}])
