@@ -184,8 +184,11 @@ def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, moc
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
     led.save()
-    import fanops.cli as cli
-    mocker.patch.object(cli, "_default_get_status",
+    # cmd_reconcile now delegates to reconcile.reconcile_due, which binds the poller via
+    # _default_get_status there — patch the seam at its definition site (exercises the REAL
+    # reconcile_due -> reconcile_posts transactional path, network pre-polled outside the lock).
+    import fanops.reconcile as rec
+    mocker.patch.object(rec, "_default_get_status",
                         return_value=lambda sid: {"status": "published", "publicUrl": "https://x/p"})
     rc = main(["reconcile"])
     assert rc == 0

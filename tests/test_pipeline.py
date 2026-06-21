@@ -337,7 +337,7 @@ def test_advance_postiz_now_reconciles_its_parked_posts(tmp_path, monkeypatch, m
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); led.add_post(_needs_reconcile_post()); led.save()
-    spy = mocker.patch("fanops.pipeline.reconcile_posts", side_effect=lambda _led, _cfg: _led)
+    spy = mocker.patch("fanops.pipeline.reconcile_due", side_effect=lambda _cfg: {"needs_reconcile": 0, "published": 0})
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     spy.assert_called_once()
 
@@ -355,7 +355,7 @@ def test_advance_dryrun_never_reconciles(tmp_path, monkeypatch, mocker):
     # (DryRunPoster needs no key, so advance completes; reconcile_posts is never invoked).
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); led.add_post(_needs_reconcile_post()); led.save()
-    spy = mocker.patch("fanops.pipeline.reconcile_posts", side_effect=lambda _led, _cfg: _led)
+    spy = mocker.patch("fanops.pipeline.reconcile_due", side_effect=lambda _cfg: {"needs_reconcile": 0, "published": 0})
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     spy.assert_not_called()
 
@@ -363,7 +363,7 @@ def test_advance_rest_backend_still_calls_reconciler(tmp_path, monkeypatch, mock
     # Back-compat: a rest/mcp + key backend STILL reconciles its stranded posts (unchanged from pre-M2).
     monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); led.add_post(_needs_reconcile_post()); led.save()
-    spy = mocker.patch("fanops.pipeline.reconcile_posts", side_effect=lambda _led, _cfg: _led)
+    spy = mocker.patch("fanops.pipeline.reconcile_due", side_effect=lambda _cfg: {"needs_reconcile": 0, "published": 0})
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     spy.assert_called_once()
 

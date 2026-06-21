@@ -66,7 +66,7 @@ def test_cmd_reconcile_uses_a_transaction(tmp_path, monkeypatch, mocker):
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
     led.save()
     # inject a status poll so no real network; report still in-progress (no state change needed)
-    mocker.patch("fanops.cli._default_get_status", return_value=lambda sid: {"status": "in-progress"})
+    mocker.patch("fanops.reconcile._default_get_status", return_value=lambda sid: {"status": "in-progress"})
     spy = mocker.spy(Ledger, "transaction")
     assert main_ok(["reconcile"])
     assert spy.call_count >= 1, "cmd_reconcile must apply poll results under Ledger.transaction"
@@ -122,7 +122,7 @@ def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker)
         seen["lock_free_during_poll"] = _lock_is_free(cfg)
         return {"status": "in-progress"}
 
-    mocker.patch("fanops.cli._default_get_status", return_value=polling)
+    mocker.patch("fanops.reconcile._default_get_status", return_value=polling)
     assert main_ok(["reconcile"])
     assert seen.get("lock_free_during_poll") is True, \
         "the status poll held the ledger lock — per-post network must be OUTSIDE the transaction"
@@ -138,7 +138,7 @@ def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch, mocker):
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
     led.save()
-    mocker.patch("fanops.cli._default_get_status",
+    mocker.patch("fanops.reconcile._default_get_status",
                  return_value=lambda sid: {"status": "published", "publicUrl": "https://x/p"})
     assert main_ok(["reconcile"])
     again = Ledger.load(cfg)
