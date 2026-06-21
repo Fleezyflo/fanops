@@ -42,6 +42,35 @@ def test_run_ingest_blank_batch_name_is_byte_identical(tmp_path, mocker):
     led = Ledger.load(cfg)
     assert len(led.batches) == 0 and next(iter(led.sources.values())).batch_id is None
 
+def _seed_accounts(cfg, handles):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": h, "account_id": "x", "platforms": ["instagram"], "status": "active"} for h in handles]}))
+
+def test_run_ingest_zero_target_bubbles_warning(tmp_path, mocker):
+    # Face 1-fu (T4): a batch targeting a handle that is NOT active still mints (advisory, not fatal) but
+    # surfaces detail["warnings"] — so the operator isn't left with a silent zero-post run downstream.
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["@a"])
+    res = actions.run_ingest(cfg, batch_name="Ghost run", target_accounts=["ghost"])
+    assert res.ok and res.detail.get("warnings") and "ghost" in res.detail["warnings"][0]
+    b = next(iter(Ledger.load(cfg).batches.values()))
+    assert "ghost" in (b.error_reason or "")            # the advisory is persisted on the batch too
+
+def test_run_ingest_on_target_no_warnings_key(tmp_path, mocker):
+    # A batch targeting an ACTIVE handle carries no warning (no false positive).
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["@a", "@b"])
+    res = actions.run_ingest(cfg, batch_name="Real", target_accounts=["@a"])
+    assert res.ok and "warnings" not in res.detail
+
+def test_run_ingest_single_account_mints_named_batch(tmp_path, mocker):
+    # B1: with exactly ONE active account, a named batch with NO target is the []-ALL sentinel — never
+    # flagged as zero-target (regression guard for T1's [] path on the production run_ingest path).
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["@solo"])
+    res = actions.run_ingest(cfg, batch_name="Solo")
+    assert res.ok and res.detail["batch"] == "Solo" and "warnings" not in res.detail
+    b = next(iter(Ledger.load(cfg).batches.values()))
+    assert b.target_accounts == [] and b.error_reason is None
+
 def test_run_ingest_wraps_toolchain_error(tmp_path, mocker):
     # ffprobe absent -> ingest raises ToolchainMissingError; Studio must surface a clean error, not 500.
     cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)
