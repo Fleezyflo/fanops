@@ -107,6 +107,16 @@ def test_publish_2xx_no_id_error_reason_withholds_response_body(tmp_path, monkey
     er = PostizPoster(cfg).publish(led, "p1").posts["p1"].error_reason or ""
     assert "SENTINEL-BODY-ECHO" not in er
 
+def test_upload_media_error_withholds_response_body(tmp_path, monkeypatch, mocker):
+    # the upload error RuntimeError reaches error_reason via _submit_one's publish-failure catch -> the
+    # response body (which can echo the auth header) must be withheld there too, not only on publish.
+    from fanops.post.postiz import postiz_upload_media
+    cfg = _cfg(tmp_path, monkeypatch); f = tmp_path / "v.mp4"; f.write_bytes(b"V")
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(500, {}, text="upstream SENTINEL-BODY-ECHO"))
+    with pytest.raises(RuntimeError) as ei:
+        postiz_upload_media(cfg, f)
+    assert "SENTINEL-BODY-ECHO" not in str(ei.value) and "500" in str(ei.value)
+
 def test_publish_2xx_no_id_parks_needs_reconcile(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     mocker.patch("fanops.post.postiz.requests.post", return_value=_R(200, {"ok": True}))

@@ -115,7 +115,7 @@ def postiz_upload_media(cfg: Config, path: Path) -> str:
     if resp.status_code == 401:
         raise PostizAuthError("Postiz 401 on media upload — check POSTIZ_API_KEY (response body withheld)")
     if resp.status_code >= 300:
-        raise RuntimeError(f"Postiz upload failed ({resp.status_code}): {(resp.text or '')[:200]}")
+        raise RuntimeError(f"Postiz upload failed ({resp.status_code}) — body withheld")   # body may echo the auth header (reaches error_reason via _submit_one)
     body = resp.json()
     media_id = body.get("id") if isinstance(body, dict) else None
     media_path = body.get("path") if isinstance(body, dict) else None
@@ -208,7 +208,7 @@ class PostizPoster:
                     sid = None
                 if not sid:
                     post.state = PostState.needs_reconcile
-                    post.error_reason = f"postiz 2xx but no recognizable post id: {(resp.text or '')[:200]}"
+                    post.error_reason = "postiz 2xx but no recognizable post id (body withheld)"   # body may echo the auth header -> never persist it
                     return led
                 post.state = PostState.submitted
                 post.submission_id = sid
@@ -222,7 +222,7 @@ class PostizPoster:
             if 500 <= resp.status_code < 600:
                 # Ambiguous after the body was sent (no idempotency key) — park, do NOT re-POST.
                 post.state = PostState.needs_reconcile
-                post.error_reason = f"postiz {resp.status_code}, may be live (reconcile by hand): {(resp.text or '')[:160]}"
+                post.error_reason = f"postiz {resp.status_code}, may be live (reconcile by hand) — body withheld"   # body may echo the auth header
                 return led
             if resp.status_code == 429:
                 time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
@@ -232,5 +232,5 @@ class PostizPoster:
         # so a future edit to the retry/return flow can't strand a needs_reconcile post as failed.
         if post.state is not PostState.needs_reconcile:
             post.state = PostState.failed
-            post.error_reason = f"postiz {getattr(last, 'status_code', '?')}: {getattr(last, 'text', '')[:200]}"
+            post.error_reason = f"postiz {getattr(last, 'status_code', '?')} (body withheld)"   # body may echo the auth header -> never persist it
         return led
