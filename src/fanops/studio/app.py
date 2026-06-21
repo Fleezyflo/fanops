@@ -308,10 +308,11 @@ def create_app(cfg: Config) -> Flask:
 
     @app.post("/run/upload")
     def do_run_upload():
-        # Stream operator-uploaded raw video into 01_inbox so the next "Ingest inbox" catalogues it — the
-        # browser replacement for a Finder drag. save_uploads owns validation + atomic os.replace; the
-        # panel re-renders with fresh counts (htmx outerHTML), mirroring do_run_ingest.
-        return _run_panel(actions.save_uploads(cfg, request.files.getlist("files")))
+        # Stream operator-uploaded raw video into 01_inbox AND catalogue it in one click (M5 auto-ingest)
+        # — the browser replacement for a Finder drag + Ingest. save_uploads owns validation + atomic
+        # os.replace; save_uploads_and_ingest chains the ingest pass; the panel re-renders with fresh
+        # counts (htmx outerHTML). The manual "Ingest inbox" button stays for a re-ingest / failed retry.
+        return _run_panel(actions.save_uploads_and_ingest(cfg, request.files.getlist("files")))
 
     @app.post("/run/advance")
     def do_run_advance():

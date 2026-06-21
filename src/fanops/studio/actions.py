@@ -300,6 +300,25 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
     return ActionResult(ok=True, detail={"saved": saved, "skipped": skipped})
 
 
+def save_uploads_and_ingest(cfg: Config, files: Sequence[FileStorage]) -> ActionResult:
+    """One-click upload->catalogue (M5 fast-follow): stream the uploads (save_uploads) and, IF any landed,
+    immediately run the ingest pass so the operator doesn't need a second 'Ingest inbox' click. A save
+    failure short-circuits (nothing landed -> nothing to ingest). An ingest failure is surfaced but the
+    files are SAFELY in 01_inbox — a manual 'Ingest inbox' still catalogues them — so it's a recoverable
+    not-fully-done, never a lost upload. Returns the merged detail (saved/skipped + sources)."""
+    up = save_uploads(cfg, files)
+    if not up.ok:
+        return up                                          # nothing landed -> nothing to ingest
+    ing = run_ingest(cfg)
+    detail = {**(up.detail or {}), **(ing.detail or {})}
+    if not ing.ok:
+        n = len((up.detail or {}).get("saved", []))
+        return ActionResult(ok=False, detail=detail,
+                            error=f"uploaded {n} file(s), but auto-ingest failed (they're in 01_inbox — "
+                                  f"click 'Ingest inbox' to retry): {ing.error}")
+    return ActionResult(ok=True, detail=detail)
+
+
 def save_thirdparty_uploads(cfg: Config, files: Sequence[FileStorage]) -> ActionResult:
     """Land operator-uploaded THIRD-PARTY assets (video OR photo) through the EXACT same validated
     contract as save_uploads (traversal triad + secure_filename + dir-bound resolve + atomic replace +
