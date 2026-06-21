@@ -1,6 +1,5 @@
 # tests/test_casting.py — Face 3: per-account moment casting (affinities, budget, batch-bounded, fail-open).
 import json
-import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Batch, MomentState

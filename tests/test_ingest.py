@@ -162,6 +162,7 @@ def test_ingest_stamps_batch_id_write_once(tmp_path, mocker):
     assert src.batch_id == "batch_x"
     led = ingest_drops(led, cfg, batch_id="batch_y")          # same bytes, new batch
     assert led.sources[src.id].batch_id == "batch_x" and len(led.sources) == 1   # write-once: prior wins
+    assert "batch_conflict" in cfg.log_path.read_text()       # the conflict is visible (mirrors origin_conflict)
 
 def test_ingest_no_batch_is_byte_identical(tmp_path, mocker):
     # No batch_id => Source.batch_id is None (today's path, byte-identical).

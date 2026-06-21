@@ -100,6 +100,19 @@ def test_repost_carries_variation_axis(tmp_path):
     assert Ledger.load(cfg).posts[new_id].variation_axis == "caption_angle"
 
 
+def test_repost_carries_batch_id(tmp_path):
+    # Account-First Studio (Face 1 T8): a repost MUST keep the source's batch grouping, else the reposted
+    # clip silently drops out of its batch in Review/Schedule. Mirrors the variation_axis carry above.
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c/clip_1.mp4", state=ClipState.published))
+        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="ig_1",
+                          platform=Platform.instagram, caption="c", state=PostState.published,
+                          scheduled_time="2026-06-01T00:00:00Z", batch_id="batch_x"))
+    new_id = actions.repost_post(cfg, "p1").detail["post_id"]
+    assert Ledger.load(cfg).posts[new_id].batch_id == "batch_x"
+
+
 def test_repost_unknown_post_errors(tmp_path):
     cfg = Config(root=tmp_path)
     r = actions.repost_post(cfg, "nope")

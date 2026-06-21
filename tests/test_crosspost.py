@@ -245,6 +245,8 @@ def test_crosspost_batch_target_skips_off_target_surfaces(tmp_path, mocker):
     assert {p.account for p in led.posts.values()} == {"@a"}          # @b surfaces skipped (not in target)
     assert len(led.posts) == 2                                        # @a x {instagram, youtube}
     assert all(p.batch_id == "batch_x" for p in led.posts.values())  # denormalized onto the Post
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "batch_target_skip" in log and "@b" in log                # off-target skip left a breadcrumb (mirrors skipped_surface)
 
 def test_crosspost_unbatched_fans_to_all_with_none_batch(tmp_path, mocker):
     # No batch (source.batch_id is None) => byte-identical fan-out to all 4 surfaces, batch_id None.
