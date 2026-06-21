@@ -609,6 +609,13 @@ def create_app(cfg: Config) -> Flask:
         # per-account render, not whether posts publish).
         return _golive_panel(golive.set_per_account_hooks(cfg, request.form.get("on") == "1"))
 
+    @app.post("/golive/casting")
+    def do_golive_casting():
+        # Toggle per-account moment casting (FANOPS_ACCOUNT_CASTING). Same shape as do_golive_hooks: explicit
+        # "1"==on (NOT bool(str) — bool("0") is True; the off button sends value=""). Works in dryrun or live
+        # (changes which posts are BORN, not whether they publish).
+        return _golive_panel(golive.set_account_casting(cfg, request.form.get("on") == "1"))
+
     @app.post("/golive/account/remove")
     def do_golive_account_remove():
         # Remove an account from the UI (no JSON hand-edit) — clears a placeholder like @TBD-1; re-render the panel.

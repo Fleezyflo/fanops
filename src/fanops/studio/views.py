@@ -142,6 +142,7 @@ class GoLiveStatus:
     notes: list[str]
     learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
     creative_variation: bool = False   # per-account on-screen hooks ON (FANOPS_CREATIVE_VARIATION) — persona diff
+    account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
 
 
 @dataclass
@@ -717,7 +718,8 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         checks=report["checks"],
         notes=report["notes"],
         learning_validated=learning_validated(cfg),    # M3: shows whether the loop is unfrozen (cutover done)
-        creative_variation=cfg.creative_variation)     # per-account on-screen hooks toggle state (persona diff)
+        creative_variation=cfg.creative_variation,     # per-account on-screen hooks toggle state (persona diff)
+        account_casting=cfg.account_casting)           # per-account moment casting toggle state (persona diff)
 
 
 def gate_rows(cfg: Config) -> list[dict]:
