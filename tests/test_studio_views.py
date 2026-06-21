@@ -65,8 +65,11 @@ def test_review_buckets_editable_recent_held(tmp_path):
     led.add_post(Post(id="p_appr", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="APPROVED", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(minutes=1))))
-    # recent published post (within 24h)
-    led.add_post(Post(id="p_recent", parent_id="clip_1", account="@a", account_id="1",
+    # recent published post (within 24h) on a DISTINCT clip — Face 4 dedups a clip out of 'recent' when it
+    # is ALSO in the editable worklist, so the recent bucket needs its own shipped-only clip to cover it.
+    led.add_clip(Clip(id="clip_recent", parent_id="mom_1", path="/clips/clip_recent.mp4", aspect=Fmt.r9x16,
+                      state=ClipState.published))
+    led.add_post(Post(id="p_recent", parent_id="clip_recent", account="@a", account_id="1",
                       platform=Platform.instagram, caption="SHIPPED", state=PostState.published,
                       scheduled_time=_z(NOW - timedelta(hours=2))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
@@ -82,8 +85,10 @@ def test_review_buckets_editable_recent_held(tmp_path):
     assert sp["p_edit"].editable is True and sp["p_edit"].imminent is False
     assert ed.source_name == "show.mp4" and ed.moment_window == "0–7" and ed.reason == "big drop"
     assert sp["p_edit"].media_url == "/media/p_edit" and sp["p_edit"].persona == "hype"
-    # recent bucket holds the published post, read-only
-    rc = [c for c in by_bucket.get("recent", []) if c.clip_id == "clip_1"][0]
+    # Face 4 dedup: clip_1 is in the editable worklist, so it is NOT also rendered as a recent card (one <video>)
+    assert not [c for c in by_bucket.get("recent", []) if c.clip_id == "clip_1"]
+    # recent bucket holds the DISTINCT shipped-only clip, read-only
+    rc = [c for c in by_bucket.get("recent", []) if c.clip_id == "clip_recent"][0]
     assert all(not s.editable for s in rc.surfaces)
     assert any(s.post_id == "p_recent" for s in rc.surfaces)
 

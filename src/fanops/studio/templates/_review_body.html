@@ -25,15 +25,22 @@
         </div>
       {% endif %}
       {% if key == 'editable' %}
-        {# content-lifecycle Phase 3: running ingest-day header on the already-day-sorted editable bucket.
-           A day spanning the paginated 'Show more' boundary simply re-emits its header on the next page. #}
-        {% set ns = namespace(day=None) %}
-        <div class="clip-grid">
-          {% for card in group %}
-            {% if card.day != ns.day %}<h4 class="day-head">{{ card.day or 'undated' }}</h4>{% set ns.day = card.day %}{% endif %}
-            {% include "_card.html" %}
-          {% endfor %}
-        </div>
+        {# Face 4: account-first, batch-grouped Review — collapsible <details> per REAL Batch (Post.batch_id),
+           first-appearance order, unbatched cards under 'Ungrouped' (sorts LAST). content-lifecycle Phase 3:
+           the running ingest-day header is preserved WITHIN each batch; a day (or batch) spanning the
+           paginated 'Show more' boundary simply re-emits its header/summary on the next page. #}
+        {% for batch_id, batch_title, bcards in group | group_review_by_batch %}
+        <details class="batch" open>
+          <summary>{{ batch_title }} ({{ bcards|length }})</summary>
+          {% set ns = namespace(day=None) %}
+          <div class="clip-grid">
+            {% for card in bcards %}
+              {% if card.day != ns.day %}<h4 class="day-head">{{ card.day or 'undated' }}</h4>{% set ns.day = card.day %}{% endif %}
+              {% include "_card.html" %}
+            {% endfor %}
+          </div>
+        </details>
+        {% endfor %}
       {% else %}
       <div class="clip-grid">
         {% for card in group %}{% include "_card.html" %}{% endfor %}

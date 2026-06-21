@@ -95,6 +95,9 @@ class ReviewCard:
     hook_removed: Optional[str] = None   # Moment.hook_removed: the model's hook is_weak_hook stripped. Present ->
                                          # the clip is clean but a good hook was killed; Review badges it + offers
                                          # "approve with hook". None -> nothing was stripped.
+    batch_id: Optional[str] = None       # Face 4: Post.batch_id (Face 1's denormalized Batch.id) — the REAL
+                                         # Batch these posts belong to; None == unbatched (groups under 'Ungrouped').
+    batch_title: Optional[str] = None    # the Batch.name (led.get_batch(batch_id).name); None when unbatched.
 
 
 @dataclass
@@ -248,12 +251,18 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg)
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed (clip -> moment)
+    # Face 4: the REAL Batch this card belongs to — Post.batch_id (all posts on one clip share the lineage,
+    # so the same batch). Post-less cards (held/prepared, posts == []) carry None -> 'Ungrouped'. Title via
+    # led.get_batch defensively (a stale/None batch_id -> None title -> 'Ungrouped' at the grouper).
+    bid = next((p.batch_id for p in posts if getattr(p, "batch_id", None)), None)
+    b = led.get_batch(bid) if bid else None
     return ReviewCard(
         clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name, label=label,
         moment_window=window, reason=reason, language=language, subtitles_burned=cfg.burn_subs,
         held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
         surfaces=surfaces, bucket=bucket, clip_state=clip.state.value,
-        hook_removed=(mom.hook_removed if mom is not None else None))
+        hook_removed=(mom.hook_removed if mom is not None else None),
+        batch_id=bid, batch_title=(b.name if b is not None else None))
 
 def _card_day(led: Ledger, card: ReviewCard) -> str:
     """The ingest day (YYYY-MM-DD) a Review card buckets under: clip -> moment -> source.created_at.
@@ -306,7 +315,10 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     for c in editable_cards: c.day = _card_day(led, c)
     editable_cards.sort(key=lambda c: (c.day != "undated", c.day), reverse=True)   # undated (False) sorts last under reverse
     cards.extend(editable_cards)
-    for clip_id, posts in recent_by_clip.items():
+    editable_clip_ids = {c.clip_id for c in editable_cards}   # Face 4: dedup — a clip already in the approve
+    for clip_id, posts in recent_by_clip.items():             # worklist must not ALSO render a 'recent' card
+        if clip_id in editable_clip_ids:                      # (two <video> for one clip — the volume fix)
+            continue
         clip = led.clips.get(clip_id)
         if clip is not None and not clip.held:        # (same rule for the recent/shipped bucket)
             cards.append(_card(led, clip, posts, "recent", cfg, personas, now))
@@ -396,6 +408,23 @@ def group_schedule_by_account(rows: list) -> list:
     by_acct: dict[str, list] = {}
     for r in rows: by_acct.setdefault(r.account, []).append(r)
     return [(a, by_acct[a]) for a in sorted(by_acct)]
+
+
+def group_review_by_batch(cards: list) -> list:
+    """Group editable ReviewCards by the REAL Batch (Post.batch_id) for collapsible per-batch <details>
+    sections. Pure; FIRST-APPEARANCE batch order (preserves the upstream day-sort), within-batch INPUT order.
+    Unbatched cards (batch_id is None) collect under ONE (None, 'Ungrouped', [...]) group that sorts LAST.
+    Mirrors group_schedule_by_account but first-appearance (NOT sorted), so the day-sort survives. Returns
+    [(batch_id, batch_title, [ReviewCard])]; a None/stale batch_title renders as 'Ungrouped'."""
+    groups: dict = {}                                  # batch_id -> [cards]; dict preserves first-appearance order
+    titles: dict = {}
+    for c in cards:
+        groups.setdefault(c.batch_id, []).append(c)
+        titles.setdefault(c.batch_id, c.batch_title or "Ungrouped")
+    out = [(bid, titles[bid], cs) for bid, cs in groups.items() if bid is not None]
+    if None in groups:
+        out.append((None, "Ungrouped", groups[None]))  # the unbatched group ALWAYS sorts LAST
+    return out
 
 
 @dataclass
