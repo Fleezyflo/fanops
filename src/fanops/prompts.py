@@ -280,14 +280,11 @@ def caption_prompt(payload: dict) -> str:
         "fine. Anything beyond 4 or off-menu is dropped by the system, so pick well.\n"
         "  - Honor each surface's `persona` when present — it sets the fan angle/voice for that "
         "account (e.g. which sub-scene to lean into within the menu).\n"
-        "  - ALSO return a short on-screen `hook` per item — the big text in the clip's first ~2s. "
-        "Make each surface's hook GENUINELY DIFFERENT (different pattern/words); these are A/B creative "
-        "variants per account. The hook rules:\n"
-        + _hook_spec(7) +
-        "  - For each item ALSO declare `axis`: the ONE cheap-text lever this variant moves versus the "
-        "others — exactly one of hook_string | caption_angle | hook_placement — plus a "
-        "one-line `rationale` (WHY it is a coherent, justified difference, not noise). A variant with no "
-        "clear axis or rationale is dropped: a justified variation beats an unexplained one.\n"
+        # ROOT FIX: the caption gate is HASHTAGS ONLY now — the on-screen hook is authored by the frame-
+        # seeing MOMENT gate (hooks_by_persona), never this blind text-only gate. The per-surface
+        # hook/axis/rationale ask was removed. The dormant variation machinery (coherent_variation +
+        # the learned/transferred feeds, empty by default while learning is frozen) is a /ecc:prp-plan
+        # deeper-fix follow-up next session.
         f"{learned_block}"
         f"{transferred_block}"
         "\n"
