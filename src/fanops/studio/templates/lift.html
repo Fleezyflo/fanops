@@ -16,7 +16,7 @@
       <tr>
         <td>{{ r.variant_hook }}</td>
         <td>{{ r.account }}/{{ r.platform }}</td>
-        <td class="muted">{{ r.scheduled_time or '—' }}</td>
+        <td class="muted">{{ r.scheduled_time | localdt or '—' }}</td>
         <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> {{ '%.1f'|format(r.lift_score) }}
             {% if r.lift_degraded %}<span class="badge degraded" title="Partial objective — a primary metric was not returned by the backend, so this lift is reach/shares-weighted, not the full saves/retention objective.">DEGRADED{% if r.lift_missing %} · missing {{ r.lift_missing|join(', ') }}{% endif %}</span>{% endif %}</td>
         <td>{{ r.saves if r.saves is not none else '—' }}</td>
@@ -36,7 +36,7 @@
         <tr><th>Hook</th><th>Account/Platform</th><th>When</th><th>Lift</th><th>Evidence</th></tr>
         {% for r in view.amplify_rows %}
         <tr><td>{{ r.variant_hook }}</td><td>{{ r.account }}/{{ r.platform }}</td>
-            <td class="muted">{{ r.scheduled_time or '—' }}</td>
+            <td class="muted">{{ r.scheduled_time | localdt or '—' }}</td>
             <td>{{ '%.1f'|format(r.lift_score) }}</td><td class="ro">{{ r.amplify_state }}</td></tr>
         {% endfor %}
       </table>

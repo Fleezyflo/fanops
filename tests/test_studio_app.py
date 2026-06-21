@@ -368,11 +368,23 @@ def test_schedule_clear_route_moves_queued_back_to_review(tmp_path):
 
 def test_review_reschedule_surface_reflects_new_time_in_input(tmp_path):
     # the stale-input fix: rescheduling from the Review editor re-renders _surface_edit.html with the NEW
-    # value in the time input (not _result.html, which left the old value visible).
+    # value in the time input (not _result.html, which left the old value visible). local-time: storage stays
+    # canonical UTC, but the datetime-local input shows the operator's LOCAL form of that instant.
+    from fanops.timeutil import to_local_input
     cfg = Config(root=tmp_path); _seed_awaiting(cfg, tmp_path)
     new = _z(NOW + timedelta(days=3))
     r = _client(cfg).post("/reschedule-surface/p_aw", data={"new_time": new})
     assert r.status_code == 200
     body = r.data.decode()
-    assert f'name="new_time" value="{new}"' in body           # the editor shows the fresh value
-    assert Ledger.load(cfg).posts["p_aw"].scheduled_time == new
+    assert f'name="new_time" value="{to_local_input(new)}"' in body   # the editor shows the fresh value, localized
+    assert Ledger.load(cfg).posts["p_aw"].scheduled_time == new       # ...but the ledger keeps UTC
+
+def test_reschedule_surface_local_input_stored_as_utc(tmp_path):
+    # the datetime-local control submits a naive LOCAL value; the route interprets it as local and stores
+    # canonical UTC. tz-INDEPENDENT: a UTC instant -> its local-input form -> back through the route == itself.
+    from fanops.timeutil import to_local_input
+    cfg = Config(root=tmp_path); _seed_awaiting(cfg, tmp_path)
+    z = _z(NOW.replace(second=0) + timedelta(days=4))         # minute-granular (datetime-local has no seconds)
+    r = _client(cfg).post("/reschedule-surface/p_aw", data={"new_time": to_local_input(z)})
+    assert r.status_code == 200
+    assert Ledger.load(cfg).posts["p_aw"].scheduled_time == z

@@ -9,7 +9,7 @@
   {% include "_account_filter.html" %}
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}{% if result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s) onto a fresh cadence.{% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time }}.{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
+      {% if result.ok %}{% if result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s) onto a fresh cadence.{% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time | localdt }}.{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
   {% set approved = rows | selectattr('editable') | list %}
@@ -27,20 +27,20 @@
     <tr><th>Time</th><th>Account</th><th>Integration</th><th>State</th><th><span class="vh">Actions</span></th></tr>
     {% for r in acct_rows %}
     <tr>
-      <td>{{ r.scheduled_time or 'unscheduled' }}{% if r.imminent %} <span class="badge {{ 'shipped' if r.state != 'queued' else '' }}">{{ 'shipped' if r.state != 'queued' else 'now' }}</span>{% endif %}</td>
+      <td>{{ r.scheduled_time | localdt or 'unscheduled' }}{% if r.imminent %} <span class="badge {{ 'shipped' if r.state != 'queued' else '' }}">{{ 'shipped' if r.state != 'queued' else 'now' }}</span>{% endif %}</td>
       <td>{{ r.account }} <span class="muted">{{ r.platform }}</span></td>
       <td class="muted">{{ r.integration_id or '—' }}</td>
       <td>{{ r.state }}</td>
       <td>
         {% if r.editable %}
         <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-          <input type="text" name="new_time" value="{{ r.scheduled_time }}" aria-label="New time for {{ r.account }} {{ r.platform }}">
+          <input type="datetime-local" name="new_time" value="{{ r.scheduled_time | localinput }}" aria-label="New local time for {{ r.account }} {{ r.platform }}">
           <button type="submit">Move</button>
         </form>
         {% if r.suggested_time %}
         <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <input type="hidden" name="new_time" value="{{ r.suggested_time }}">
-          <button type="submit">Use suggested</button> <span class="muted">{{ r.suggested_time }}</span>
+          <button type="submit">Use suggested</button> <span class="muted">{{ r.suggested_time | localdt }}</span>
         </form>
         {% endif %}
         <form hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">

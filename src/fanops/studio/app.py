@@ -17,6 +17,7 @@ from fanops.models import Platform, PostState, LIFT_SCORE
 from fanops.discover import make_thumbnail        # reuse the cheap one-frame ffmpeg extractor for clip posters
 from fanops.studio import views, actions, golive
 from fanops.hashtags import TAG_LEANS            # the add-account lean picker options (no drift from the engine)
+from fanops.timeutil import local_input_to_utc_z, to_local_display, to_local_input  # local-time rendering at the web boundary
 
 _ALL_PLATFORMS = [p.value for p in Platform]    # the add-account form's platform checkboxes (no enum drift)
 _TAG_LEANS = sorted(TAG_LEANS)                  # add-account lean picker options (sourced from the engine)
@@ -89,6 +90,17 @@ def _parse_gate_form(kind: str, form) -> dict:
 def create_app(cfg: Config) -> Flask:
     app = Flask(__name__, template_folder=str(_HERE / "templates"), static_folder=str(_HERE / "static"))
     app.config["MAX_CONTENT_LENGTH"] = _MAX_UPLOAD_BYTES    # Werkzeug refuses an oversize upload body BEFORE the view runs (413)
+    # Stored times are canonical UTC; render them in the operator's local tz. `localdt` -> friendly display,
+    # `localinput` -> the naive-local value an <input type=datetime-local> edits. (Inverse: _time_arg below.)
+    # Both return "" on None/absent/garbage, so a display cell reads `{{ t | localdt or '—' }}` (filter binds
+    # tighter than `or` in Jinja, so the dash is the fallback for an empty/missing time).
+    app.jinja_env.filters["localdt"] = to_local_display
+    app.jinja_env.filters["localinput"] = to_local_input
+
+    def _time_arg() -> str:
+        # The datetime-local control submits naive LOCAL; convert to canonical UTC before the action sees it.
+        # A Z/offset value passes through normalized; garbage passes through so reschedule_post raises 'bad time'.
+        return local_input_to_utc_z(request.form.get("new_time", ""))
 
     def _offset_arg() -> int:
         # The grid show-more offset from ?offset=. A garbage/negative value -> 0 (paginate clamps too),
@@ -229,7 +241,7 @@ def create_app(cfg: Config) -> Flask:
     def do_schedule_move(post_id):
         # reschedule from the Schedule cockpit and re-render the WHOLE bucket so the row's time is fresh
         # (the shared /reschedule route returns only an inline result, leaving the time input stale).
-        return _schedule_panel(actions.reschedule_post(cfg, post_id, request.form.get("new_time", "")))
+        return _schedule_panel(actions.reschedule_post(cfg, post_id, _time_arg()))
 
     @app.post("/schedule/clear/<post_id>")
     def do_schedule_clear(post_id):
@@ -474,14 +486,14 @@ def create_app(cfg: Config) -> Flask:
     @app.post("/reschedule/<post_id>")
     def do_reschedule(post_id):
         # legacy route kept for back-compat (any other caller) — returns only the inline result.
-        result = actions.reschedule_post(cfg, post_id, request.form.get("new_time", ""))
+        result = actions.reschedule_post(cfg, post_id, _time_arg())
         return render_template("_result.html", result=result)
 
     @app.post("/reschedule-surface/<post_id>")
     def do_reschedule_surface(post_id):
         # R4 fix: the Review editor's reschedule + "Use suggested" forms post HERE so the time input
         # re-renders with the fresh scheduled_time (the legacy /reschedule left it stale).
-        result = actions.reschedule_post(cfg, post_id, request.form.get("new_time", ""))
+        result = actions.reschedule_post(cfg, post_id, _time_arg())
         return _render_surface_edit(post_id, result)
 
     @app.post("/clear/<post_id>")
