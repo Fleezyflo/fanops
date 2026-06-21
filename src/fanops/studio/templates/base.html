@@ -19,6 +19,7 @@
        account filter persists across tabs. nav_account is None when nothing is filtered -> url_for drops the
        param -> these links are byte-identical to before. #}
     <nav class="nav-primary" aria-label="Primary">
+      <a href="{{ url_for('index') }}" class="{{ 'active' if tab=='home' else '' }}">Home</a>
       <a href="{{ url_for('run_panel', account=nav_account) }}" class="{{ 'active' if tab=='run' else '' }}">Make</a>
       <a href="{{ url_for('review', account=nav_account) }}" class="{{ 'active' if tab=='review' else '' }}">Review</a>
       <a href="{{ url_for('publish_panel', account=nav_account) }}" class="{{ 'active' if tab=='publish' else '' }}">Publish</a>

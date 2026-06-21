@@ -8,7 +8,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, abort, redirect, render_template, request, send_file, url_for
+from flask import Flask, abort, render_template, request, send_file
 
 from fanops.config import Config
 from fanops.accounts import Accounts
@@ -163,7 +163,10 @@ def create_app(cfg: Config) -> Flask:
 
     @app.get("/")
     def index():
-        return redirect(url_for("review"))
+        # Face 2: a real read-only status home (accounts + connection + headline counts + batch entry + per-
+        # account post counts), NOT a redirect. nav_account is injected globally (Face 4 spine); no chip context
+        # here (Home renders no per-surface chip row — the chip universe is a per-tab concern).
+        return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), tab="home")
 
     @app.get("/review")
     def review():
