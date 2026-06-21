@@ -174,6 +174,19 @@ def moment_prompt(payload: dict) -> str:
         f"{json.dumps(learned, ensure_ascii=False)}\n"
         if learned else ""
     )
+    # Per-account hooks (the root-fix): the frame-seeing author also writes ONE hook PER active fan account,
+    # keyed by handle, in that account's persona voice — so the on-screen hook is ALWAYS frame-grounded
+    # (never the blind caption gate). Absent/empty `personas` -> no block (byte-identical to today).
+    personas = payload.get("personas")
+    persona_block = (
+        "  - PER-ACCOUNT HOOKS: ALSO return `hooks_by_persona` on each pick — a map from each account HANDLE "
+        "below to ITS OWN on-screen hook, written in that account's voice and obeying EVERY hook rule above "
+        "(frame-grounded, viewer-POV, <=6 words, never a third-person recap of the artist). Make each "
+        "account's hook GENUINELY DIFFERENT to fit its angle; key the map by the EXACT handle string. Omit "
+        "an account only when it has no honest hook (it then falls back to the shared `hook`). Accounts:\n"
+        + "".join(f"      * {p.get('handle')}: {p.get('persona','')}\n" for p in personas)
+        if personas else ""
+    )
     return (
         "You are the editorial brain of an autonomous fan-account engine for a bilingual (EN/AR) "
         "rapper. From the transcript and signal peaks below, choose the MOMENTS most worth cutting "
@@ -196,7 +209,8 @@ def moment_prompt(payload: dict) -> str:
         "each hook true to what is actually ON SCREEN, not only the transcript.\n"
         + _hook_decision()
         + _hook_spec(6)
-        + learned_block +
+        + learned_block
+        + persona_block +
         "  - Use the SIGNAL PEAKS only to find WHERE the energy is, never as the hook's subject; do not depend "
         "on the transcript being correct.\n"
         "  - Prefer moments that align with a transcript line and/or a signal peak.\n"
@@ -266,14 +280,11 @@ def caption_prompt(payload: dict) -> str:
         "fine. Anything beyond 4 or off-menu is dropped by the system, so pick well.\n"
         "  - Honor each surface's `persona` when present — it sets the fan angle/voice for that "
         "account (e.g. which sub-scene to lean into within the menu).\n"
-        "  - ALSO return a short on-screen `hook` per item — the big text in the clip's first ~2s. "
-        "Make each surface's hook GENUINELY DIFFERENT (different pattern/words); these are A/B creative "
-        "variants per account. The hook rules:\n"
-        + _hook_spec(7) +
-        "  - For each item ALSO declare `axis`: the ONE cheap-text lever this variant moves versus the "
-        "others — exactly one of hook_string | caption_angle | hook_placement — plus a "
-        "one-line `rationale` (WHY it is a coherent, justified difference, not noise). A variant with no "
-        "clear axis or rationale is dropped: a justified variation beats an unexplained one.\n"
+        # ROOT FIX: the caption gate is HASHTAGS ONLY now — the on-screen hook is authored by the frame-
+        # seeing MOMENT gate (hooks_by_persona), never this blind text-only gate. The per-surface
+        # hook/axis/rationale ask was removed. The dormant variation machinery (coherent_variation +
+        # the learned/transferred feeds, empty by default while learning is frozen) is a /ecc:prp-plan
+        # deeper-fix follow-up next session.
         f"{learned_block}"
         f"{transferred_block}"
         "\n"

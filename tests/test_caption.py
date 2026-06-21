@@ -399,9 +399,9 @@ def test_request_captions_failopen_on_transfer_error(monkeypatch, tmp_path):
     assert "learned_hooks_transferred" not in payload          # error -> no prior
     assert led.clips["clip_1"].state is ClipState.captions_requested
 
-def test_ingest_captions_stores_per_surface_hook(tmp_path):
-    # variation (3): the caption agent returns a per-surface `hook`; ingest_captions stores it
-    # into meta_captions[surface]["hook"] (additive — readers of caption/hashtags unaffected).
+def test_ingest_captions_ignores_legacy_caption_hook(tmp_path):
+    # ROOT FIX: the caption gate no longer authors a hook (the frame-seeing moment gate does). Even if a
+    # (legacy) response still carries a hook, ingest_captions IGNORES it and stores None.
     from fanops.config import Config
     from fanops.ledger import Ledger
     from fanops.models import Source, Moment, Clip, MomentState, ClipState
@@ -418,7 +418,7 @@ def test_ingest_captions_stores_per_surface_hook(tmp_path):
             "hashtags": ["#x"], "language": "en", "hook": "THEY SLEPT ON ME"}]}
     response_path(cfg, "captions", "c1").write_text(json.dumps(resp))
     led = capmod.ingest_captions(led, cfg, "c1")
-    assert led.clips["c1"].meta_captions["@a/instagram"]["hook"] == "THEY SLEPT ON ME"
+    assert led.clips["c1"].meta_captions["@a/instagram"]["hook"] is None   # caption hook ignored (moment gate owns hooks)
 
 # ---- variation v3 (UCB bandit): the flag selects ucb_rank over best_hooks for the OWN-surface bias.
 # A surface engineered so UCB's pick DIFFERS from greedy's: 8x LEAD@60 + 1x NEW@59. Greedy's gap
@@ -503,27 +503,9 @@ def test_request_captions_no_persona_key_without_accounts(tmp_path):
 
 
 # --- M2: em-dash / overlong-hook sanitation at caption ingest ------------------------------------
-def test_ingest_captions_sanitizes_em_dash_in_hook(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
-    rid = latest_request_id(cfg, "captions", "clip_1")
-    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="@a/instagram", caption="#fyp #bars", language="en",
-                    hook="Hometown hero snapped — Moh Flow")]).model_dump_json())
-    led = ingest_captions(led, cfg, "clip_1")
-    h = led.clips["clip_1"].meta_captions["@a/instagram"]["hook"]
-    assert h == "Hometown hero snapped, Moh Flow" and "—" not in h
-
-def test_ingest_captions_trims_overlong_hook(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
-    rid = latest_request_id(cfg, "captions", "clip_1")
-    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="@a/instagram", caption="#fyp", language="en",
-                    hook="one two three four five six seven eight nine ten")]).model_dump_json())
-    led = ingest_captions(led, cfg, "clip_1")
-    h = led.clips["clip_1"].meta_captions["@a/instagram"]["hook"]
-    assert len(h.split()) <= 7
+# REMOVED with the root fix: the caption gate no longer authors a hook, so the caption-hook em-dash
+# sanitize AND the 7-word truncation (the mid-sentence chop bug) no longer exist. Hook sanitization now
+# lives on the frame-seeing moment gate (tests/test_hook_authorship.py::test_ingest_sanitizes_persona_hooks).
 
 
 # --- persona differentiation: per-account tag_lean threaded request -> ingest ---

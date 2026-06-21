@@ -74,6 +74,12 @@ def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
 
 def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     src = led.sources[source_id]
+    # Per-account voices reach the frame-seeing author so IT writes each handle's on-screen hook (the
+    # root fix — the blind caption gate no longer authors a shipped hook). Only accounts WITH a persona
+    # ride along; none -> [] -> no per-persona prompt block (byte-identical to pre-persona).
+    personas = ([{"handle": a.handle, "persona": a.persona}
+                 for a in accounts.accounts if getattr(a, "persona", None)]
+                if accounts is not None else [])
     payload = MomentRequest(source_id=source_id, request_id="",   # filled by write_request
                             duration=src.duration or 0.0,
                             transcript=src.transcript or [],
@@ -81,7 +87,8 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> 
                             language=src.language,
                             guidance=load_guidance(cfg),
                             clip_profile=cfg.clip_profile,
-                            frames=_source_frames(cfg, src)).model_dump()   # band + the author's eyes reach the picks
+                            frames=_source_frames(cfg, src),
+                            personas=personas).model_dump()   # band + the author's eyes + per-account voices reach the picks
     payload.pop("request_id", None)
     # P4(c): carry the cross-surface union of gated winning hook STYLES up to the moment author (the SAME
     # signal caption already uses). Optional payload KEY (mirrors caption's learned_hooks), NOT a model
@@ -135,11 +142,17 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
             hook = None                 # ...the clip still renders CLEAN by default (today's behavior unchanged)
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())   # feed-wide dup set + this-decision cluster set
+        # per-account hooks (the moment author writes one per active handle): sanitize each the same way
+        # as the base hook (em-dash/quote burn-safety); a blank/empty one drops out -> that handle falls
+        # back to the shared `hook` at crosspost. No cross-clip dedup here: these are per-account variants
+        # of ONE clip, not cross-video repeats.
+        hbp = {h: s for h, ph in (pick.hooks_by_persona or {}).items() if (s := sanitize_generated_text(ph))}
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.decided,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
                            transcript_excerpt=pick.transcript_excerpt, hook=hook,
                            hook_removed=hook_removed,                      # preserved-for-review (None unless stripped)
+                           hooks_by_persona=hbp,                           # handle -> that account's frame-grounded hook
                            signal_score=pick.signal_score)
     if not keep:
         if dec.picks:

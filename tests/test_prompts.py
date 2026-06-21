@@ -167,11 +167,8 @@ def test_caption_prompt_honors_surface_persona():
     assert "hype superfan" in p                # the persona value reaches the model
     assert "persona" in p.lower()              # named as a voice instruction
 
-def test_caption_prompt_forbids_em_dash_in_hook():
-    p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
-                        "transcript_excerpt": "x",
-                        "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
-    assert "em-dash" in p.lower() or "em dash" in p.lower()   # belt-and-suspenders for the sanitizer
+# REMOVED with the root fix: caption_prompt is hashtags-only now (no on-screen hook), so it carries no
+# em-dash hook rule. The hook em-dash guarantee lives on the moment gate + the deterministic text sanitizer.
 
 def test_caption_prompt_lists_every_surface_and_language():
     payload = {"clip_id": "c1",

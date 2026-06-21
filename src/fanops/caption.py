@@ -26,7 +26,6 @@ from fanops.variant_learning import ucb_rank
 # (the amplify/delete path stays blind to it; the isolation tests enforce it). Bound at module scope
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
-from fanops.text import sanitize_generated_text
 from fanops.hashtags import vet_hashtags, load_store
 from fanops.log import get_logger
 from fanops.control import load_guidance
@@ -262,10 +261,12 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
                                             # the vet filter) so Studio can show picked-vs-vetted, not just
                                             # the survivors. Display-only; the posted line is still `tags`.
                                             "hashtags_raw": [str(h) for h in (item.hashtags or [])],
-                                            "hook": sanitize_generated_text(item.hook, max_words=7),
-                                            # P2: carry the variant's declared axis (normalized) + rationale
-                                            "axis": normalize_variation_axis(item.axis),
-                                            "rationale": (item.rationale or "").strip() or None}
+                                            # ROOT FIX: the caption gate no longer authors an on-screen hook
+                                            # (the frame-seeing moment gate does, via hooks_by_persona). No
+                                            # hook stored here, so no 7-word mid-sentence chop. axis/rationale
+                                            # described the removed per-surface hook variant -> None now; the
+                                            # dormant variation machinery is a /ecc:prp-plan deeper-fix.
+                                            "hook": None, "axis": None, "rationale": None}
     answered = {item.surface for item in cs.items}
     missing = requested - answered
     # SEED-TAG FALLBACK (was: hold). The caption is hashtags-ONLY, and the model frequently returns NO

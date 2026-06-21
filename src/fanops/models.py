@@ -140,6 +140,7 @@ class Moment(BaseModel):
                                                 # mechanical guard killed, not dead footage). None = nothing
                                                 # was stripped (old ledgers load fine).
     signal_score: float = 0.0
+    hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own frame-grounded on-screen hook (the moment author writes these); {} -> every surface uses `hook` (old ledgers load fine)
     hook_strategy: Optional[str] = None         # M2 router: text | clean_final | clean_awaiting_strategy:<key>
                                                 # | stitch:<format>. Observe-only annotation; None = unrouted
                                                 # (router off / old ledgers load). One writer: router.route_moments.
@@ -249,6 +250,7 @@ class MomentRequest(BaseModel):
     guidance: str = ""
     clip_profile: str = "talk"      # content-type band selector (bands.band_for); "talk" -> today's behavior
     frames: list[str] = Field(default_factory=list)   # Phase 1: source stills the vision author SEES while picking + hooking (fail-open [] when no source)
+    personas: list[dict] = Field(default_factory=list)   # [{handle, persona}] active fan accounts -> per-handle hooks_by_persona. Absent/[] -> no per-account hooks (byte-identical to today).
 
 class MomentPick(BaseModel):
     start: float
@@ -257,6 +259,7 @@ class MomentPick(BaseModel):
     transcript_excerpt: str = ""
     signal_score: float = 0.0
     hook: Optional[str] = None      # on-screen RETENTION hook (curiosity-gap, NOT a transcript quote); None -> derive a default
+    hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own frame-grounded hook; {} -> fall back to `hook` (old responses omit it)
 
     @field_validator("start", "end")
     @classmethod
