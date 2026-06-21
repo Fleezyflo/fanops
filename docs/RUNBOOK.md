@@ -101,6 +101,7 @@ with real per-variant lift. Until then it shows an honest empty state — that's
 | Any | `fanops doctor` / Go-Live "4 · Readiness" — it names the exact missing piece |
 | 1 (Connect) | *auth failed* → re-enter the key · *could not reach* → fix `POSTIZ_URL` (see [`POSTIZ_SETUP.md`](POSTIZ_SETUP.md#troubleshooting)) |
 | 2 (Upload) | only video files are accepted; oversize uploads re-render the panel with a "too large" note |
+| 6 (Map accounts) | nothing to map / **Add Channel** fails in Postiz with "redirect_uri" or "Not enough scopes" → it's almost always a **wrong `INSTAGRAM_APP_SECRET`** in the Postiz container, not a redirect/scope/account issue. Fix + verify in [`INSTAGRAM_CONNECT.md`](INSTAGRAM_CONNECT.md#4-root-cause-of-the-connect-failure-resolved-2026-06-21) |
 | 3/4 (Prepare) | no autopilot → the gates wait in the **Gates** tab |
 | 9 (Publish) | preflight refuses a live run with no key — Readiness shows what's unset |
 | 11 (Lift) | empty is normal until the platform reports; come back later |

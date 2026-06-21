@@ -69,6 +69,13 @@ account on each platform yourself, on any publisher, paid or free.** No tooling 
 Each connected channel becomes an **integration** in Postiz. A handle's Instagram and its TikTok are
 **two different integrations** — you'll map each one separately in FanOps later.
 
+> **Instagram specifically — read [`INSTAGRAM_CONNECT.md`](INSTAGRAM_CONNECT.md) first.** It documents
+> the exact IG-standalone connect flow, what's connected (all three fan accounts as of 2026-06-21), and
+> the root cause + fix of the connect failure that once blocked it: a **wrong `INSTAGRAM_APP_SECRET` in
+> the Postiz container env** surfacing as a misleading "redirect_uri" / "Not enough scopes" error. Fix =
+> correct the secret in `docker-compose.yaml` and `docker compose up -d` (recreate). Connect works on
+> **stock Postiz** — no patches required.
+
 ---
 
 ## Get your Public API key + base URL
