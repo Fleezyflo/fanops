@@ -174,6 +174,19 @@ def moment_prompt(payload: dict) -> str:
         f"{json.dumps(learned, ensure_ascii=False)}\n"
         if learned else ""
     )
+    # Per-account hooks (the root-fix): the frame-seeing author also writes ONE hook PER active fan account,
+    # keyed by handle, in that account's persona voice — so the on-screen hook is ALWAYS frame-grounded
+    # (never the blind caption gate). Absent/empty `personas` -> no block (byte-identical to today).
+    personas = payload.get("personas")
+    persona_block = (
+        "  - PER-ACCOUNT HOOKS: ALSO return `hooks_by_persona` on each pick — a map from each account HANDLE "
+        "below to ITS OWN on-screen hook, written in that account's voice and obeying EVERY hook rule above "
+        "(frame-grounded, viewer-POV, <=6 words, never a third-person recap of the artist). Make each "
+        "account's hook GENUINELY DIFFERENT to fit its angle; key the map by the EXACT handle string. Omit "
+        "an account only when it has no honest hook (it then falls back to the shared `hook`). Accounts:\n"
+        + "".join(f"      * {p.get('handle')}: {p.get('persona','')}\n" for p in personas)
+        if personas else ""
+    )
     return (
         "You are the editorial brain of an autonomous fan-account engine for a bilingual (EN/AR) "
         "rapper. From the transcript and signal peaks below, choose the MOMENTS most worth cutting "
@@ -196,7 +209,8 @@ def moment_prompt(payload: dict) -> str:
         "each hook true to what is actually ON SCREEN, not only the transcript.\n"
         + _hook_decision()
         + _hook_spec(6)
-        + learned_block +
+        + learned_block
+        + persona_block +
         "  - Use the SIGNAL PEAKS only to find WHERE the energy is, never as the hook's subject; do not depend "
         "on the transcript being correct.\n"
         "  - Prefer moments that align with a transcript line and/or a signal peak.\n"
