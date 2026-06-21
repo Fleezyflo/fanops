@@ -144,6 +144,15 @@ def create_app(cfg: Config) -> Flask:
         return {"chip_accounts": _with_active(counts, active), "chip_counts": dict(counts),
                 "chip_route": "review", "chip_total": len(cards), "active": active}
 
+    @app.context_processor
+    def _inject_nav_account():
+        # Face 4 SPINE: the active ?account= filter, injected GLOBALLY so base.html's nav links carry it
+        # across tabs (cross-tab persistence — pick @a on Review, it stays @a when you click Schedule) and the
+        # header shows a clearable "Filtering @x" indicator. Nav-level propagation, NOT a chip-row relocation:
+        # the per-surface chip rows + their R1 htmx-swap scope preservation + live counts are untouched. None
+        # (no filter / a partial swap with no request args) -> url_for drops the param -> byte-identical nav.
+        return {"nav_account": _account_arg()}
+
     @app.get("/")
     def index():
         return redirect(url_for("review"))
