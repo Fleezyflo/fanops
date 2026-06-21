@@ -17,7 +17,7 @@ from fanops.studio import golive
 # restoration (pytest only tracks a delitem when the key was present), so the production dual-write
 # (os.environ[...]=...) would otherwise leak FANOPS_POSTER/POSTIZ_* into later tests — e.g. flipping
 # test_studio_run's dryrun assertions to postiz. Restore-to-baseline after every test fixes it at the source.
-_ENV_KEYS = ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_CREATIVE_VARIATION")
+_ENV_KEYS = ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_CREATIVE_VARIATION", "FANOPS_ACCOUNT_CASTING")
 _ENV_BASELINE = {k: os.environ.get(k) for k in _ENV_KEYS}
 
 @pytest.fixture(autouse=True)
@@ -29,7 +29,7 @@ def _restore_golive_env():
 
 def _clean(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    for k in ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_CREATIVE_VARIATION"):
+    for k in ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_CREATIVE_VARIATION", "FANOPS_ACCOUNT_CASTING"):
         monkeypatch.delenv(k, raising=False)             # clean start + registers the key for teardown-restore
     return Config(root=tmp_path)
 
@@ -557,6 +557,28 @@ def test_set_per_account_hooks_dual_writes_both_directions(tmp_path, monkeypatch
     assert cfg.creative_variation is True                                     # in-process (reads os.environ live)
     assert golive.set_per_account_hooks(cfg, False).ok is True
     assert cfg.creative_variation is False                                    # flipped back off
+
+def test_set_account_casting_dual_writes_both_directions(tmp_path, monkeypatch):
+    # C2: the Go-Live casting toggle dual-writes FANOPS_ACCOUNT_CASTING (.env + os.environ), mirroring hooks.
+    cfg = _clean(monkeypatch, tmp_path)
+    assert golive.set_account_casting(cfg, True).ok is True
+    assert "FANOPS_ACCOUNT_CASTING=1" in (tmp_path / ".env").read_text()      # durable
+    assert cfg.account_casting is True                                        # in-process (reads os.environ live)
+    assert golive.set_account_casting(cfg, False).ok is True
+    assert cfg.account_casting is False                                       # flipped back off
+
+def test_golive_status_reflects_account_casting(tmp_path, monkeypatch):
+    from fanops.studio import views
+    cfg = _clean(monkeypatch, tmp_path)
+    assert views.golive_status(cfg).account_casting is False                  # default OFF
+    golive.set_account_casting(cfg, True)
+    assert views.golive_status(cfg).account_casting is True                   # mirrors the flag after a toggle
+
+def test_post_golive_casting_route_swaps_panel(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    r = _client(cfg).post("/golive/casting", data={"on": "1"})
+    assert r.status_code == 200 and cfg.account_casting is True               # route dual-wrote + re-rendered
 
 def test_golive_status_carries_lean_and_hooks_state(tmp_path, monkeypatch):
     from fanops.studio import views

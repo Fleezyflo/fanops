@@ -141,6 +141,19 @@
           {% endif %}
         </form>
       </div>
+      <div class="account-hooks">
+        <p class="muted">Per-account moment casting: each account gets its OWN best-fit set of moments/clips
+          (by persona). Default OFF — every account gets every moment.</p>
+        <form hx-post="{{ url_for('do_golive_casting') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+          {% if status.account_casting %}
+            <span class="ok">● ON — accounts get distinct moment sets</span>
+            <button type="submit" name="on" value="">Turn off (every account gets every moment)</button>
+          {% else %}
+            <span class="muted">○ off — every account gets every moment</span>
+            <button type="submit" name="on" value="1">Turn on (per-account casting)</button>
+          {% endif %}
+        </form>
+      </div>
     {% else %}
       <p class="muted">No active accounts yet — add one above, then map its channels here.</p>
     {% endif %}

@@ -265,15 +265,27 @@ def test_crosspost_empty_target_batch_fans_to_all(tmp_path, mocker):
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert len(led.posts) == 4 and all(p.batch_id == "batch_all" for p in led.posts.values())
 
-def test_crosspost_affinity_skips_off_affinity_surfaces(tmp_path, mocker):
-    # Face 3: a cast moment (affinities=['@a']) fans ONLY to @a's surfaces — the affinity skip composes
-    # with the batch-target skip; an uncast moment ([] affinities) fans to all (byte-identical).
+def test_crosspost_affinity_skips_off_affinity_surfaces(tmp_path, mocker, monkeypatch):
+    # Face 3: with casting ON, a cast moment (affinities=['@a']) fans ONLY to @a's surfaces — the affinity skip
+    # composes with the batch-target skip; an uncast moment ([] affinities) fans to all (byte-identical).
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id=None)
     led.moments["mom_1"].affinities = ["@a"]
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
+
+def test_crosspost_affinity_ignored_when_casting_off(tmp_path, mocker):
+    # A2 (kill-switch): casting OFF (the default — conftest strips the flag) IGNORES persisted affinities and
+    # fans to ALL surfaces, even on a ledger already cast in a prior pass. "Off" is fully off — the crosspost
+    # affinity skip is gated on cfg.account_casting, not just on the presence of m.affinities.
+    cfg = Config(root=tmp_path)
+    led = _two_accounts_clip(cfg, source_batch_id=None)
+    led.moments["mom_1"].affinities = ["@a"]          # a prior cast pass stamped this
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert {p.account for p in led.posts.values()} == {"@a", "@b"} and len(led.posts) == 4   # cast ignored when OFF
 
 
 def test_crosspost_two_clips_same_surface_do_not_collide_on_time(tmp_path, mocker):
