@@ -92,6 +92,8 @@ def create_app(cfg: Config) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = _MAX_UPLOAD_BYTES    # Werkzeug refuses an oversize upload body BEFORE the view runs (413)
     # Stored times are canonical UTC; render them in the operator's local tz. `localdt` -> friendly display,
     # `localinput` -> the naive-local value an <input type=datetime-local> edits. (Inverse: _time_arg below.)
+    # Both return "" on None/absent/garbage, so a display cell reads `{{ t | localdt or '—' }}` (filter binds
+    # tighter than `or` in Jinja, so the dash is the fallback for an empty/missing time).
     app.jinja_env.filters["localdt"] = to_local_display
     app.jinja_env.filters["localinput"] = to_local_input
 

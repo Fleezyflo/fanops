@@ -51,7 +51,10 @@ def local_input_to_utc_z(s) -> str:
     """The inverse for the web boundary: a datetime-local form value (naive == LOCAL per the HTML spec) ->
     canonical UTC '...Z'. A value already carrying a tz (Z/offset) is NORMALIZED to UTC, never reinterpreted
     as local (so a pasted UTC time still round-trips). Empty/None -> ''. Unparseable -> the raw string
-    UNCHANGED, so the action layer raises its own 'bad time' error (the error path stays at one home)."""
+    UNCHANGED, so the action layer raises its own 'bad time' error (the error path stays at one home).
+    KNOWN EDGE: a wall-clock time in the once-a-year DST fall-back hour is ambiguous; astimezone() resolves
+    it to the standard-time side deterministically — a tolerable 1h skew for a scheduler whose localized
+    result is echoed back for the operator to verify (hardening would need a tzlocal dep, not worth it)."""
     if not isinstance(s, str) or not s.strip(): return ""
     s = s.strip()
     try: dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
