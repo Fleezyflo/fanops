@@ -119,3 +119,13 @@ def test_stitches_route_shows_rationale(tmp_path):
                                        rank_score=0.8, rationale="impact peak at 9.0s (score 0.8)"))
     r = _client(cfg).get("/stitches")
     assert r.status_code == 200 and b"impact peak at 9.0s" in r.data
+
+def test_inherit_captions_deep_copies(tmp_path):
+    # release_stitches / approve_with_hook inherit a sibling's captions. The copy MUST be deep so a later
+    # in-place edit to the source's inner {caption,hashtags} dict can't silently corrupt the other clip
+    # (dict()/model_copy share the inner dicts — latent today, defended here).
+    src = {"@a/instagram": {"caption": "c", "hashtags": ["#x"]}}
+    out = actions._inherit_captions(src)
+    out["@a/instagram"]["caption"] = "MUTATED"; out["@a/instagram"]["hashtags"].append("#y")
+    assert src["@a/instagram"] == {"caption": "c", "hashtags": ["#x"]}    # source untouched -> deep copy
+    assert actions._inherit_captions(None) == {}                         # None -> empty, never crashes

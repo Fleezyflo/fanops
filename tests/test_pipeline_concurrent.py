@@ -191,3 +191,17 @@ def test_single_source_on(tmp_path, monkeypatch, mocker):
     cfg = _run(tmp_path, monkeypatch, mocker, on=True, n=1)
     st = _final_state(cfg)
     assert st["n_clips"] == 1 and st["moments"]["mom_0"] == "clipped"
+
+
+def test_prewarm_concurrent_isolates_a_worker_crash(tmp_path, monkeypatch, mocker):
+    # Defensive: a worker that crashes PAST its own fail-open guard (OOM / thread-level) must NOT
+    # propagate fut.result() up through _prewarm -> advance() and abort the pass before the main
+    # transaction opens. It is logged as a warn and the prewarm returns normally.
+    from fanops.pipeline import _prewarm_concurrent
+    from fanops.log import get_logger
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="s1", source_path="/x.mp4", state=SourceState.catalogued)); led.save()
+    mocker.patch("fanops.pipeline._produce_source", side_effect=RuntimeError("worker SENTINEL-CRASH"))
+    _prewarm_concurrent(cfg, set(), get_logger(cfg))             # must NOT raise
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "SENTINEL-CRASH" in log                              # surfaced as a warn, not propagated
