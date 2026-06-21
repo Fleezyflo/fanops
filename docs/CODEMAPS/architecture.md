@@ -48,7 +48,7 @@ Structural hooks (M2–M6, all default-OFF): a read-only ROUTER classifies each 
 | Schedule/post | crosspost.py (deterministic schedule), tagging.py, post/{run,media,payload,blotato_rest,blotato_mcp,postiz,dryrun,metrics}.py |
 | Publishing | post/run.py (_submit_one, publish_due, publish_post — the Publish-now engine; `_archive_published` day-bucketed 06_published record, fail-open) |
 | Content lifecycle | born-awaiting_approval gate (crosspost + Ledger.approve_post/reject_post/unapprove); `_PROTECTED_POST_STATES` wipe-guard (ledger reconcile cascade); created_at/published_at stamps (models); day-bucketed Review + Posted (studio/views.{review_buckets day-sort, posted_library, group_posted_by_day}); cross-account onboard (studio/actions.{crosspost_to_account, crosspost_all_to_account}, repost_post); `gc` retention (cli + config.gc_keep_days, sweeps 05_scheduled); v2→v3 created_at migration (ledger._migrate_v3_created_at) |
-| Learn (default OFF) | track.py (writes LIFT_SCORE), adjust.py (classify/amplify/retire), variant_learning.py (best_hooks/ucb_rank), variant_amplify.py, variant_transfer.py |
+| Learn (default OFF) | track.py (writes LIFT_SCORE), adjust.py (classify/amplify/retire), variant_learning.py (best_hooks/ucb_rank), variant_amplify.py, variant_transfer.py, p4_dim_bias.py (P4(b) cross-account reach dim-bias, autonomous via cli.run) |
 | State/infra | ledger.py (flock+atomic JSON), models.py (pydantic units + LIFT_SCORE), accounts.py (+ atomic write_account_id), ids.py (SHA1 content-addressing), timeutil.py (single parse site), log.py (TAB-column run.log), errors.py, digest.py (+public gate_state), validation_gate.py |
 | Autonomous ops | autopilot.py (one-cmd: enable llm responder + launchd daemon), daemon.py (launchd supervisor around `run`), doctor.py (readiness pre-flight checks), cutover.py (Blotato: auth/post/metrics/lift prover) |
 | Studio (optional [studio]) | studio/app.py (Flask factory, lazily imported), studio/views.py (read models), studio/actions.py (one transaction per mutation), studio/golive.py (Postiz connect/config surface) |
@@ -129,7 +129,10 @@ The control surface — every input that changes what the engine outputs:
 ## Learning-gate seams (the C1-sensitive area)
 
 caption.request_captions biases on `variant_learning.best_hooks` (or `ucb_rank` when UCB on);
-`cli.run` executes TWO independent post-loop passes when `cfg.is_live_backend`:
-classify→amplify/retire, then (own kill switch) `apply_variant_amplify`. Both share
-`adjust.MAX_AMPLIFY_PER_SOURCE`. Isolation invariant: the amplify/cascade path never imports
-the learner — enforced by AST tests in tests/test_variant_learning.py / test_variant_amplify.py.
+`cli.run` executes THREE independent post-loop passes when `cfg.is_live_backend`, each its own
+kill switch + try/except: classify→amplify/retire (`_learn_pass`), then `apply_variant_amplify`
+(`cfg.variant_amplify`), then `apply_p4_dim_bias` (`cfg.p4_dim_bias`, P4(b) cross-account reach
+dim-bias — symmetric with variant_amplify, no longer manual-verb-only). All amplify-only and
+validation-frozen (inert until `learning_validated`); all share `adjust.MAX_AMPLIFY_PER_SOURCE`.
+Isolation invariant: the amplify/cascade path never imports the learner — enforced by AST tests in
+tests/test_variant_learning.py / test_variant_amplify.py.

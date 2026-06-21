@@ -5,8 +5,10 @@ posts, attributing `post.hashtags <-> post.metrics["reach"]` on ONE entity (audi
 join). refresh_store writes the reach-ranked 00_control/hashtags.json store — but ONLY when the F2
 learn-doctor verdict is PASS (if the reach analytics label does not reconcile, reach is garbage-in, so
 we refuse to write and the frozen pools stand). The live Meta Graph TREND fetch (ig_hashtag_search +
-top_media) + its 30/7-day budget is a DEFERRED, operator-gated follow-up — not built here because it
-needs a real IG Business token + app-review and cannot be unit-tested (the cutover-harness precedent)."""
+top_media) + its 30/7-day budget IS built (fanops.meta_graph) and wired here as opt-in SECONDARY
+signal via cfg.hashtag_trends (FANOPS_HASHTAG_TRENDS) — budget-bounded + fail-open (no token / fetch
+miss -> trends simply absent, own-reach + frozen seed still stand). Default OFF: it needs a real IG
+Business token, so a deployment without one is byte-identical to own-reach-only ranking."""
 from __future__ import annotations
 import json
 from fanops.config import Config
