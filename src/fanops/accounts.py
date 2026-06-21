@@ -155,15 +155,14 @@ def write_integration(cfg: Config, handle: str, platform: str, integration_id: s
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
-        for a in accounts:
-            if isinstance(a, dict) and a.get("handle") == handle:
-                integ = a.get("integrations")
-                if not isinstance(integ, dict):
-                    integ = {}
-                integ[str(platform)] = str(integration_id)
-                a["integrations"] = integ
-                break
-        else:
+        found = False
+        for a in accounts:                                       # scan ALL rows (no break): mirror set_status/
+            if isinstance(a, dict) and a.get("handle") == handle:  # remove_account so a hand-edited duplicate handle
+                integ = a.get("integrations")                     # maps consistently across EVERY copy, not just the
+                if not isinstance(integ, dict): integ = {}        # first (handles SHOULD be unique — add_account
+                integ[str(platform)] = str(integration_id)        # rejects dupes — but a hand-edit must not diverge)
+                a["integrations"] = integ; found = True
+        if not found:
             raise KeyError(handle)
         _write_accounts_atomic(p, raw)
     return handle
