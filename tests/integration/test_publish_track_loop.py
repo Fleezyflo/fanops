@@ -26,9 +26,11 @@ def test_dryrun_published_post_reaches_analyzed(tmp_path, monkeypatch):
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="42",
                       platform=Platform.instagram, caption="hello", media_urls=["https://h/v.mp4"],
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued))
+    led.save()                                                  # persist for the self-loading publish_due
 
     # publish in dryrun (past schedule => due now): queued -> submitting -> submitted -> published
-    led = publish_due(led, cfg)
+    publish_due(cfg)
+    led = Ledger.load(cfg)
     p = led.posts["p1"]
     assert p.state is PostState.published
     assert p.submission_id == "dryrun_p1", "dryrun post must carry a trackable submission_id"

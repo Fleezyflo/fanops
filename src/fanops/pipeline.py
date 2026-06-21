@@ -306,51 +306,53 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                 led = reconcile_posts(led, cfg)
             except Exception as e:                       # status API hiccup must not wedge the pass
                 log("reconcile", "-", "error", err=str(e)[:120])
-        # publish cutoff = real now (base_time is the SCHEDULE anchor for crosspost; publishing uses
-        # actual now). in_transaction=True so publish_due's crash-safe mid-loop saves use the
-        # UNLOCKED save and don't self-deadlock against the transaction's held lock (AUDIT B4/B2).
-        # AUDIT M2 net: a non-auth raise here must not roll back the pass; a FATAL AuthError (Blotato
-        # or Postiz) MUST still escape (F52 — a bad key fails every post; halt + roll back, CLI exits clean).
-        try:
-            led = publish_due(led, cfg, now=None, in_transaction=True)
-        except AuthError:
-            raise                                        # F52: halt the run on a bad key
-        except Exception as e:
-            log("publish", "-", "error", err=str(e)[:120])
+    # publish-out-of-lock: publishing runs AFTER the main transaction COMMITS — its network I/O (media
+    # upload + poster.publish) must NOT hold the ledger flock (it would starve a concurrent Studio/daemon
+    # writer up to the 30s lock timeout). publish_due now owns its locking: per-post claim->network->
+    # finalize, network lock-free, no stale full-snapshot save (B4). The main pass's transcribe/render/
+    # crosspost progress is already committed above, so a FATAL AuthError halt here no longer rolls it
+    # back (improvement over the old in-txn publish). publish cutoff = real now (base_time anchors the
+    # crosspost SCHEDULE; publishing uses actual now).
+    try:
+        publish_due(cfg, now=None)
+    except AuthError:
+        raise                                            # F52: halt the run on a bad key
+    except Exception as e:
+        log("publish", "-", "error", err=str(e)[:120])
 
-        # B5/E2 heartbeat inputs: published_in_run is the set-difference of published ids at EXIT
-        # vs `before` (THIS-RUN delta); last_published_age_hours is the age (hours, 2dp) of the
-        # newest published post's scheduled_time vs now, or None when none has a parseable time.
-        after = led.posts_in_state(PostState.published)
-        published_in_run = len([p for p in after if p.id not in before])
-        newest = max((_parse(p.scheduled_time) for p in after if p.scheduled_time), default=None)
-        last_published_age_hours = (None if newest is None
-                                    else round((datetime.now(timezone.utc) - newest).total_seconds() / 3600, 2))
-        summary = {
-            "sources": len(led.sources), "moments": len(led.moments),
-            "clips": len(led.clips), "posts": len(led.posts),
-            "published": len(led.posts_in_state(PostState.published)),
-            "failed": len(led.posts_in_state(PostState.failed)),
-            # B5/E2: this-run published delta + newest published age, for the heartbeat monitor.
-            "published_in_run": published_in_run,
-            "last_published_age_hours": last_published_age_hours,
-            # needs_reconcile (AUDIT C1): ambiguous publish failures parked for human reconcile —
-            # may be live on the platform, must NOT be blindly re-queued. Surfaced here so the
-            # unattended operator sees it in `fanops run`/`advance` output, not only the digest.
-            "needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
-            "holds": sum(1 for c in led.clips.values() if c.held),
-            # V2 M1/F9: clips that rendered but silently lost their on-screen hook (couldn't burn) —
-            # surfaced here so the unattended operator sees the drop, not only in run.log.
-            "hook_burn_failed": sum(1 for c in led.clips.values() if c.hook_burn_failed),
-            "errors": sum(1 for s in led.sources.values() if s.state is SourceState.error),
-            # Both agent-gate kinds the responder answers (responder._SCHEMA): moments blocks the
-            # clip/caption stages, captions blocks crosspost, so `fanops run` must see them to know it
-            # has NOT converged.
-            "awaiting": {"moments": len(pending(cfg, kind="moments")),
-                         "captions": len(pending(cfg, kind="captions"))},
-        }
-    # digest is read-only reporting: build it from the just-committed ledger, OUTSIDE the lock, so
-    # the slow markdown render never extends the lock-held window (it would block an overlapping
-    # pass longer than the actual mutation requires).
-    write_digest(Ledger.load(cfg), cfg)
+    # B5/E2 heartbeat + summary: built from a POST-publish reload (the publish committed via its own
+    # finalize txns above). published_in_run = published ids now MINUS `before` (snapshotted at main-txn
+    # ENTRY — the THIS-RUN delta, incl. reconcile-driven publishes); last_published_age_hours is the age
+    # (hours, 2dp) of the newest published post's scheduled_time vs now, or None when none is parseable.
+    led = Ledger.load(cfg)                               # post-publish snapshot, READ-ONLY (no save/lock)
+    after = led.posts_in_state(PostState.published)
+    published_in_run = len([p for p in after if p.id not in before])
+    newest = max((_parse(p.scheduled_time) for p in after if p.scheduled_time), default=None)
+    last_published_age_hours = (None if newest is None
+                                else round((datetime.now(timezone.utc) - newest).total_seconds() / 3600, 2))
+    summary = {
+        "sources": len(led.sources), "moments": len(led.moments),
+        "clips": len(led.clips), "posts": len(led.posts),
+        "published": len(led.posts_in_state(PostState.published)),
+        "failed": len(led.posts_in_state(PostState.failed)),
+        # B5/E2: this-run published delta + newest published age, for the heartbeat monitor.
+        "published_in_run": published_in_run,
+        "last_published_age_hours": last_published_age_hours,
+        # needs_reconcile (AUDIT C1): ambiguous publish failures parked for human reconcile —
+        # may be live on the platform, must NOT be blindly re-queued. Surfaced here so the
+        # unattended operator sees it in `fanops run`/`advance` output, not only the digest.
+        "needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
+        "holds": sum(1 for c in led.clips.values() if c.held),
+        # V2 M1/F9: clips that rendered but silently lost their on-screen hook (couldn't burn) —
+        # surfaced here so the unattended operator sees the drop, not only in run.log.
+        "hook_burn_failed": sum(1 for c in led.clips.values() if c.hook_burn_failed),
+        "errors": sum(1 for s in led.sources.values() if s.state is SourceState.error),
+        # Both agent-gate kinds the responder answers (responder._SCHEMA): moments blocks the
+        # clip/caption stages, captions blocks crosspost, so `fanops run` must see them to know it
+        # has NOT converged.
+        "awaiting": {"moments": len(pending(cfg, kind="moments")),
+                     "captions": len(pending(cfg, kind="captions"))},
+    }
+    # digest is read-only reporting, built from the SAME post-publish snapshot, OUTSIDE the lock.
+    write_digest(led, cfg)
     return summary

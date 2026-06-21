@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 from fanops.config import Config
 from fanops.errors import AuthError
 from fanops.ledger import Ledger
@@ -54,96 +53,122 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
     failure; everything else is a per-post failure."""
     return isinstance(exc, AuthError)
 
-def _submit_one(led: Ledger, cfg: Config, poster: Poster, post: Post, _save: Callable[[], None]) -> Ledger:
-    """Publish ONE queued post NOW (no schedule gate): ensure media, crash-safe 'submitting' persist
-    BEFORE the irreversible network call (FIX F11), poster.publish -> published. A per-post failure
-    (e.g. media upload 5xx) marks THIS post failed and is swallowed so the queue keeps moving
-    (FIX F54); a FATAL AuthError (bad key/401) is RE-RAISED to halt instead of burning the queue
-    (AUDIT H8). Shared by publish_due (after its due-gate) and publish_post (the Publish-now path)."""
+# Network-determined fields merged back at finalize: the union a poster.publish mutates
+# ({state, submission_id, error_reason, public_url}) + the two run.py sets here (media_urls upload
+# result, published_at stamp). The throwaway network ledger is otherwise DISCARDED — only these
+# travel into the persisted ledger, so a concurrent writer's other changes are never clobbered (B4).
+_NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at")
+
+
+def _ensure_media(led: Ledger, cfg: Config, post: Post) -> None:
+    """Resolve post.media_urls to network-fetchable URLs (FIX F44 cache on the Clip). In-memory only;
+    runs in the LOCK-FREE network phase."""
+    if not post.media_urls:
+        post.media_urls = [ensure_clip_media(led, cfg, post.parent_id)]
+    elif cfg.poster_backend != "dryrun":
+        # AUDIT (stage-6 HIGH): a variant post is BORN with media_urls=["file://<variant render>"]
+        # (crosspost.py stamps the per-account hook-burned file). Pre-stamped media used to skip the
+        # upload and ship the LOCAL path to Blotato, which cannot fetch it — every live variant post
+        # died. Upload the variant FILE itself, NOT ensure_clip_media (the clip cache holds the
+        # parent's BASE render — using it would drop the burned hook). dryrun keeps file:// (offline).
+        _upload = get_media_uploader(cfg)
+        post.media_urls = [_upload(cfg, Path(u.removeprefix("file://")))
+                           if u.startswith("file://") else u for u in post.media_urls]
+
+
+def _publish_one(cfg: Config, poster: Poster, post_id: str) -> str | None:
+    """Publish ONE post via claim -> network -> finalize, with the network OUTSIDE the ledger flock.
+
+    CLAIM (tight txn): re-read under lock; publish ONLY if still 'queued' (the double-post guard — a
+      lost race / already-submitting post is a clean no-op); flip 'queued'->'submitting' and persist
+      BEFORE any network (FIX F11 crash-safety — a crash mid-network leaves it 'submitting', never
+      re-driven, healed by reconcile/`fanops resolve`).
+    NETWORK (lock-free): on a THROWAWAY loaded ledger, ensure media (upload) + poster.publish. A
+      per-post failure marks THIS post failed (FIX F54); a needs_reconcile park is NOT downgraded to
+      failed (AUDIT C1/#17 — failed is re-queueable => double-post); a FATAL AuthError RE-RAISES (H8).
+    FINALIZE (tight txn): merge ONLY the network-determined post fields + the clip media cache into a
+      FRESHLY loaded ledger — never persist the stale full snapshot (B4 lost-update). Returns the
+      final post-state value (or None if not claimable)."""
+    # ---- CLAIM ----
+    with Ledger.transaction(cfg) as led:
+        post = led.posts.get(post_id)
+        if post is None or post.state is not PostState.queued:
+            return None                                # lost the race / not eligible — no-op (F11)
+        post.state = PostState.submitting              # crash-safe intent, persisted on txn exit (F11/B4)
+    # ---- NETWORK (no lock held) ----
+    led = Ledger.load(cfg)
+    post = led.posts.get(post_id)
+    if post is None or post.state is not PostState.submitting:
+        return None                                    # vanished/changed under us — leave it be
     try:
-        # ensure media once per clip (FIX F44 — cached on the Clip)
-        if not post.media_urls:
-            post.media_urls = [ensure_clip_media(led, cfg, post.parent_id)]
-        elif cfg.poster_backend != "dryrun":
-            # AUDIT (stage-6 HIGH): a variant post is BORN with media_urls=["file://<variant
-            # render>"] (crosspost.py stamps the per-account hook-burned file). Pre-stamped media
-            # used to skip the upload entirely and ship the LOCAL path to Blotato, which cannot
-            # fetch it — every live variant post died. Upload the variant FILE itself, NOT
-            # ensure_clip_media (the clip-level cache holds the parent's BASE render — using it
-            # would silently drop the burned hook). The https result replaces file:// on the post
-            # and is persisted by the submitting _save below, so a retried post never re-uploads.
-            # dryrun keeps file:// (the offline pipeline must run with no network by design).
-            _upload = get_media_uploader(cfg)
-            post.media_urls = [_upload(cfg, Path(u.removeprefix("file://")))
-                               if u.startswith("file://") else u for u in post.media_urls]
-        # crash-safe: record intent + persist BEFORE the irreversible network call (FIX F11)
-        post.state = PostState.submitting
-        _save()                                        # crash-safe persist, txn-aware (AUDIT B4)
+        _ensure_media(led, cfg, post)
         led = poster.publish(led, post.id)
         if post.state is PostState.submitted:
             post.state = PostState.published
-            post.published_at = iso_z(datetime.now(timezone.utc))   # content-lifecycle: TRUE publish time (Posted-archive day-anchor)
+            post.published_at = iso_z(datetime.now(timezone.utc))   # TRUE publish time (Posted-archive day-anchor)
     except Exception as exc:
         if _is_fatal_auth_error(exc):
-            raise                                      # bad key/401: halt, don't burn the queue
-        # per-post failure (e.g. media upload 5xx): mark THIS post failed, keep going (FIX F54).
-        # ECC fix #17 (defensive): if poster.publish already parked the post as needs_reconcile
-        # (ambiguous-live), do NOT downgrade it to failed here — failed is re-queueable => double-post.
-        if post.state is not PostState.needs_reconcile:
+            raise                                      # bad key/401: halt, don't burn the queue (H8)
+        if post.state is not PostState.needs_reconcile:   # C1/#17: don't downgrade an ambiguous-live park
             post.state = PostState.failed
             post.error_reason = f"publish failed: {str(exc)[:200]}"
-    # content-lifecycle Phase 3: fail-open day-bucketed record. OUTSIDE the try on purpose (ECC review) —
-    # _archive_published is double-guarded and cannot leak, but placing it here makes the guarantee
-    # structural: an archive write can NEVER be caught by the per-post except above and downgrade an
-    # already-published post to failed (a re-queueable double-post). Fires only on a confirmed publish.
-    if post.state is PostState.published:
+    net = {f: getattr(post, f) for f in _NET_POST_FIELDS}
+    clip = led.clips.get(post.parent_id)
+    clip_media = clip.media_url if clip is not None else None   # carry the F44 upload cache forward
+    final_state = net["state"]
+    # ---- FINALIZE ----
+    with Ledger.transaction(cfg) as led:
+        p = led.posts.get(post_id)
+        if p is None:
+            return final_state.value if final_state else None   # gone (shouldn't happen) — nothing to merge
+        for f, v in net.items(): setattr(p, f, v)
+        c = led.clips.get(p.parent_id)
+        if c is not None and clip_media and not c.media_url:
+            c.media_url = clip_media                   # persist the once-per-clip upload (FIX F44)
+    # content-lifecycle Phase 3: fail-open day-bucketed record, OUTSIDE the finalize txn so an archive
+    # write can NEVER roll back the just-committed publish. The network-phase `post` carries every field
+    # the archive reads (loaded from disk) PLUS the network mutations. Fires only on a confirmed publish.
+    if final_state is PostState.published:
         _archive_published(cfg, post)
-    _save()                                            # persist the post's terminal/failed state
-    return led
+    return final_state.value if final_state else None
 
 
-def publish_due(led: Ledger, cfg: Config, *, now: str | None = None,
-                in_transaction: bool = False) -> Ledger:
+def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
+    """Schedule gate (FIX F12): True if the post is due now. A malformed/naive scheduled_time (hand-edit,
+    corruption) is a per-post FAILURE — marked failed in a short txn (FIX F54), returns False."""
+    if not post.scheduled_time:
+        return True                                    # no schedule => due now
+    try:
+        return _parse(post.scheduled_time) <= cutoff
+    except (ValueError, TypeError) as exc:
+        with Ledger.transaction(cfg) as led:
+            p = led.posts.get(post.id)
+            if p is not None and p.state is PostState.queued:
+                p.state = PostState.failed
+                p.error_reason = f"bad schedule time {post.scheduled_time!r}: {str(exc)[:120]}"
+        return False
+
+
+def publish_due(cfg: Config, *, now: str | None = None) -> dict:
+    """Publish every DUE queued post, each via _publish_one (network OUTSIDE the ledger lock). Only
+    'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
+    job — auto-resubmitting could double-post a live post, FIX F11). A FATAL AuthError propagates
+    (halt the queue, H8). Returns a small summary."""
     poster = get_poster(cfg)
     cutoff = _now(now)
-    # AUDIT B4: when called inside Ledger.transaction() (the lock is already held), the crash-safe
-    # mid-loop persists must use the UNLOCKED save — a plain led.save() would try to re-acquire the
-    # held flock and self-deadlock (block to LockBusyError under the timeout loop). Standalone
-    # callers keep the locking save().
-    _save = led._save_unlocked if in_transaction else led.save
-    # Only 'queued' is iterated: a post stranded in 'submitting' by a crash is deliberately
-    # NOT re-driven here — recovering it is a separate reconcile/poll concern, because
-    # auto-resubmitting could double-post a live post (FIX F11).
-    for post in led.posts_in_state(PostState.queued):
-        # Schedule gate (AUDIT M2 / review): a malformed or timezone-naive scheduled_time on disk
-        # (hand-edit, corruption, older schema) makes _parse raise TypeError/ValueError — that is a
-        # per-post FAILURE (mark this post failed, keep going — FIX F54), never an uncaught escape
-        # that, inside advance()'s transaction, would skip the exit-save and roll back the whole
-        # pass. The "not due yet" skip (FIX F12) stays normal flow: continue WITHOUT marking failed
-        # or saving (unchanged post). The submit body lives in _submit_one (shared with publish_post).
-        if post.scheduled_time:
-            try:
-                not_due = _parse(post.scheduled_time) > cutoff
-            except (ValueError, TypeError) as exc:
-                post.state = PostState.failed
-                post.error_reason = f"bad schedule time {post.scheduled_time!r}: {str(exc)[:120]}"
-                _save()
-                continue
-            if not_due:
-                continue                               # not due yet (FIX F12) — leave queued
-        led = _submit_one(led, cfg, poster, post, _save)
-    return led
+    led = Ledger.load(cfg)                             # lock-free snapshot of the due queue
+    due = [post.id for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
+    published = 0
+    for pid in due:
+        if _publish_one(cfg, poster, pid) == PostState.published.value:
+            published += 1
+    return {"due": len(due), "published": published}
 
 
-def publish_post(led: Ledger, cfg: Config, post_id: str, *, in_transaction: bool = False) -> Ledger:
+def publish_post(cfg: Config, post_id: str) -> str | None:
     """Publish ONE queued post NOW, IGNORING its schedule — the operator clicked 'Publish now' in the
-    Studio (milestone 5: publish in the UI). Same crash-safe per-post path as publish_due (_submit_one)
-    but with NO due-gate and scoped to a single post: other queued/future posts are untouched. A
-    missing or non-queued post is a no-op (the Studio action guards + reports first). A FATAL AuthError
-    propagates (halt), matching publish_due."""
-    post = led.posts.get(post_id)
-    if post is None or post.state is not PostState.queued:
-        return led
-    poster = get_poster(cfg)
-    _save = led._save_unlocked if in_transaction else led.save
-    return _submit_one(led, cfg, poster, post, _save)
+    Studio. Same per-post claim->network->finalize path as publish_due but with NO due-gate and scoped
+    to a single post. A missing/non-queued post is a no-op (returns None). A FATAL AuthError propagates
+    (halt), matching publish_due. Returns the final post-state value (e.g. 'published'/'failed') or
+    None when nothing was claimable."""
+    return _publish_one(cfg, get_poster(cfg), post_id)

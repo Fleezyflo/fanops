@@ -446,15 +446,18 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     if cfg.poster_backend != "dryrun" and not confirmed:
         return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): this PUBLISHES the "
                             "post to a real account — tick the confirm box, then click again.")
+    # Short lock-free guard read for a friendly message; publish_post's own CLAIM transaction is the
+    # authoritative queued-only gate (a state change in the gap is re-validated there -> a clean no-op).
+    led = Ledger.load(cfg)
+    if post_id not in led.posts:
+        return ActionResult(ok=False, error=f"no such post: {post_id}")
+    st = led.posts[post_id].state
+    if st is not PostState.queued:
+        return ActionResult(ok=False, error=f"post {post_id} is {st.value} — only a queued post can be published")
     try:
-        with Ledger.transaction(cfg) as led:
-            if post_id not in led.posts:
-                return ActionResult(ok=False, error=f"no such post: {post_id}")
-            st = led.posts[post_id].state
-            if st is not PostState.queued:
-                return ActionResult(ok=False, error=f"post {post_id} is {st.value} — only a queued post can be published")
-            led = publish_post(led, cfg, post_id, in_transaction=True)
-            state = led.posts[post_id].state.value
+        # network runs OUTSIDE the ledger lock (per-post claim->network->finalize) — the Studio no longer
+        # holds the flock across the publish round-trip, so a concurrent daemon pass isn't starved.
+        state = publish_post(cfg, post_id)
     except AuthError as exc:
         # bad/missing key fails every post — publish_post re-raises (halt); name the right key per backend.
         key = "POSTIZ_API_KEY" if cfg.poster_backend == "postiz" else "BLOTATO_API_KEY"
@@ -463,9 +466,9 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
         # A non-auth failure (media upload RuntimeError, corrupt clip.path, etc.) must NOT escape to
         # Flask as a 500 — the cockpit surfaces it cleanly (mirrors run_advance's broad catch).
         return ActionResult(ok=False, error=f"publish failed: {str(exc)[:160]}")
-    # ONLY 'published' is success: _submit_one advances submitted -> published on a clean poster
-    # return, so any other terminal state (failed, or a poster that stalled at submitting/submitted)
-    # means the post did NOT fully ship — report it incomplete rather than a false success.
+    # ONLY 'published' is success: _publish_one advances submitted -> published on a clean poster
+    # return, so any other terminal state (failed/needs_reconcile, or None when the post was no longer
+    # claimable) means the post did NOT fully ship — report it incomplete rather than a false success.
     if state == "published":
         return ActionResult(ok=True, detail={"post_id": post_id, "state": state})
     return ActionResult(ok=False, error=f"publish did not complete (post is {state}) — see the run log")
