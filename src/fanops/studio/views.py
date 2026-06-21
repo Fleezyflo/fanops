@@ -69,6 +69,8 @@ class SurfacePost:
     editable: bool
     suggested_time: Optional[str] = None   # P1: ONE deterministic strictly-future suggestion (surface_time
                                            # index=0), set ONLY for editable surfaces; read-only rows carry None.
+    variant_hook: Optional[str] = None     # persona-differentiation: the per-account on-screen hook burned into
+                                           # this surface's media (crosspost burn_hook_only). None when creative_variation is OFF.
 
 
 @dataclass
@@ -238,7 +240,8 @@ def _surface(post, *, persona, now: datetime, cfg: Config) -> SurfacePost:
         caption=post.caption, hashtags=list(post.hashtags or []),
         scheduled_time=post.scheduled_time, media_url=f"/media/{post.id}",
         state=state, imminent=imm, editable=editable,
-        suggested_time=suggest_time(cfg, post, now=now) if editable else None)   # P1: only editable surfaces
+        suggested_time=suggest_time(cfg, post, now=now) if editable else None,   # P1: only editable surfaces
+        variant_hook=getattr(post, "variant_hook", None))   # persona on-screen hook (None when variation OFF)
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime) -> ReviewCard:
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
