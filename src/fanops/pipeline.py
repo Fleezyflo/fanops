@@ -24,7 +24,7 @@ from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
 from fanops.crosspost import crosspost_clips
 from fanops.post.run import publish_due
-from fanops.reconcile import reconcile_posts
+from fanops.reconcile import reconcile_due
 from fanops.digest import write_digest
 from fanops.log import get_logger
 from fanops.agentstep import pending
@@ -291,21 +291,22 @@ def advance(cfg: Config, *, base_time: str) -> dict:
             # (e.g. pre-flight account validation) a bad key must halt, not be logged-and-continued.
         except Exception as e:
             log("crosspost", "-", "error", err=str(e)[:120])
-        # Reconcile last pass's stranded posts BEFORE publishing this pass (AUDIT H4): resolve any
-        # submitting/needs_reconcile post that has a submission_id. The reconciler is backend-agnostic
-        # (reconcile.py dispatches per backend): Blotato (rest/mcp) over GET /v2/posts/:id; Postiz (P2)
-        # over the date-windowed GET /public/v1/posts `state` field. Gated on is_live_backend (key
-        # present) AND a known-live backend — dryrun never produces these and key-less postiz is not
-        # live. Each daemon fire thus publishes due posts AND heals parked ones. `fanops resolve` stays
-        # the manual escape hatch (e.g. a Postiz post genuinely absent from its page -> 'unknown', parked).
-        reconcilable = (led.posts_in_state(PostState.submitting)
-                        + led.posts_in_state(PostState.submitted)
-                        + led.posts_in_state(PostState.needs_reconcile))
-        if reconcilable and cfg.is_live_backend and cfg.poster_backend in ("rest", "mcp", "postiz"):
-            try:
-                led = reconcile_posts(led, cfg)
-            except Exception as e:                       # status API hiccup must not wedge the pass
-                log("reconcile", "-", "error", err=str(e)[:120])
+    # Reconcile last pass's stranded posts AFTER the main txn commits, BEFORE publishing this pass
+    # (AUDIT H4 + M1 reconcile-out-of-lock): a submitting/submitted/needs_reconcile post with a
+    # submission_id is resolved by polling the backend (Blotato GET /v2/posts/:id; Postiz the
+    # date-windowed GET /public/v1/posts `state`). reconcile_due pre-polls each status with NO lock held,
+    # then applies the cached results in its OWN tight transaction — so N status GETs never hold the
+    # ledger flock (same contention fix as publish #89). Gated on is_live_backend (key present) AND a
+    # known-live backend — dryrun never produces these and key-less postiz is not live. A FATAL AuthError
+    # halts (symmetry with publish_due); any other hiccup must not wedge the pass. `fanops resolve` stays
+    # the manual escape hatch (e.g. a Postiz post genuinely absent from its page -> 'unknown', parked).
+    if cfg.is_live_backend and cfg.poster_backend in ("rest", "mcp", "postiz"):
+        try:
+            reconcile_due(cfg)
+        except AuthError:
+            raise                                        # bad key: every poll fails -> halt
+        except Exception as e:                           # status API hiccup must not wedge the pass
+            log("reconcile", "-", "error", err=str(e)[:120])
     # publish-out-of-lock: publishing runs AFTER the main transaction COMMITS — its network I/O (media
     # upload + poster.publish) must NOT hold the ledger flock (it would starve a concurrent Studio/daemon
     # writer up to the 30s lock timeout). publish_due now owns its locking: per-post claim->network->

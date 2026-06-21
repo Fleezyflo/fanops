@@ -17,7 +17,7 @@ from fanops.digest import write_digest
 from fanops.agentstep import pending
 from fanops.responder import get_responder
 from fanops.track import pull_metrics, _default_list_posts
-from fanops.reconcile import reconcile_posts, _default_get_status, _RECONCILABLE
+from fanops.reconcile import reconcile_due
 from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
 from fanops.p4_dim_bias import apply_p4_dim_bias
@@ -109,30 +109,18 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
         led = retire(led, r["losers"])
 
 def cmd_reconcile(cfg: Config) -> int:
-    # AUDIT H4: resolve posts stranded in submitting/needs_reconcile by polling GET /v2/posts/:id.
-    # Needs a key (dryrun has no live status source) — skip cleanly if absent, like track.
-    # Phase-B-followup: the per-post POLLS (network) run OUTSIDE the lock against a lock-free
-    # snapshot; only the apply runs inside a tight transaction. So N status polls never hold the
-    # ledger flock, and a concurrent advance can't be clobbered.
-    snapshot = Ledger.load(cfg)                      # lock-free read: learn WHICH posts to poll AND (P2)
-                                                     # give the Postiz poll each post's scheduled_time so it
-    try:                                             # can date-window GET /public/v1/posts (else a future/
-        poll = _default_get_status(cfg, snapshot)    # old post is permanently off the default ~week page).
-    except (RuntimeError, AuthError) as e:           # no key -> skip cleanly: RuntimeError (blotato) /
-        print(f"reconcile skipped: {e}"); return 0   # PostizAuthError (postiz) both = "not configured".
-    results: dict[str, dict] = {}
-    for p in snapshot.posts.values():
-        if p.state in _RECONCILABLE and p.submission_id:
-            results[p.submission_id] = poll(p.submission_id) or {}   # network, NO lock held
-    with Ledger.transaction(cfg) as led:
-        # apply the pre-polled results; reconcile_posts re-checks each post's CURRENT state in the
-        # re-loaded ledger, so a post that changed between poll and apply is handled correctly
-        # (an id with no pre-polled result yields {} -> left parked, retried next pass).
-        led = reconcile_posts(led, cfg, get_status=lambda sid: results.get(sid, {}))
-        nr = len(led.posts_in_state(PostState.needs_reconcile))
-        pub = len(led.posts_in_state(PostState.published))
+    # AUDIT H4 + M1: resolve posts stranded in submitting/needs_reconcile by polling the backend status.
+    # reconcile_due pre-polls each status (network) OUTSIDE the lock against a lock-free snapshot, then
+    # applies the cached results in ONE tight transaction (a single poll error is contained per-post —
+    # parked, never guessed failed). Needs a key (dryrun has no live status source) — skip cleanly if
+    # absent, like track: _default_get_status raises RuntimeError (blotato) / PostizAuthError (postiz)
+    # when not configured, and a mid-poll fatal AuthError likewise = "can't reconcile, skip".
+    try:
+        r = reconcile_due(cfg)
+    except (RuntimeError, AuthError) as e:
+        print(f"reconcile skipped: {e}"); return 0
     write_digest(Ledger.load(cfg), cfg)
-    print(f"reconciled; needs_reconcile={nr} published={pub}")
+    print(f"reconciled; needs_reconcile={r['needs_reconcile']} published={r['published']}")
     return 0
 
 def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: float) -> int:

@@ -58,6 +58,42 @@ def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
     return BlotatoStatusClient(cfg).get_status
 
 
+def reconcile_due(cfg: Config) -> dict[str, int]:
+    """Reconcile stranded posts with the per-post status POLLS (network) OUTSIDE the ledger flock —
+    only the apply runs inside a tight transaction (mirrors cmd_reconcile; M1, same fix as publish #89).
+    Pre-poll each reconcilable post's status against a lock-free snapshot, then hand the CACHED results
+    to reconcile_posts inside ONE Ledger.transaction (it re-checks each post's CURRENT state under the
+    lock, so a post that changed between poll and apply is handled correctly). A single poll error is
+    CAPTURED and re-raised inside the apply so reconcile_posts' per-post containment (park, set
+    error_reason, never guess failed) is preserved byte-for-byte; a FATAL AuthError halts the pass.
+    Empty/not-stranded -> no transaction. Caller gates on backend/key. Returns the resolved counts.
+    `_default_get_status` may raise (no key) — the caller decides whether that's 'skip clean'."""
+    snapshot = Ledger.load(cfg)
+    poll = _default_get_status(cfg, snapshot)            # built FIRST so the not-configured raise (no key
+                                                         # -> caller skips clean) is independent of whether
+                                                         # anything is stranded; cheap (no network on build)
+    reconcilable = [p for p in snapshot.posts.values() if p.state in _RECONCILABLE and p.submission_id]
+    if not reconcilable:
+        return {"needs_reconcile": len(snapshot.posts_in_state(PostState.needs_reconcile)),
+                "published": len(snapshot.posts_in_state(PostState.published))}
+    results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
+    for p in reconcilable:
+        try:
+            results[p.submission_id] = poll(p.submission_id) or {}   # network, NO lock held
+        except AuthError:
+            raise                                        # bad key (Blotato OR Postiz): every poll fails -> halt
+        except Exception as exc:
+            results[p.submission_id] = exc               # capture; re-raised in apply -> parked (never guessed failed)
+    def cached(sid: str) -> dict:
+        r = results.get(sid, {})
+        if isinstance(r, Exception): raise r             # reconcile_posts' per-post except parks it + logs
+        return r
+    with Ledger.transaction(cfg) as led:
+        led = reconcile_posts(led, cfg, get_status=cached)
+        return {"needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
+                "published": len(led.posts_in_state(PostState.published))}
+
+
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None) -> Ledger:
     poll = get_status or _default_get_status(cfg, led)
     log = get_logger(cfg)
