@@ -1,8 +1,19 @@
+from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Clip, Post, SourceState, ClipState, PostState, Platform
 from fanops.agentstep import write_request, response_path
-from fanops.digest import render_digest
+from fanops.digest import render_digest, write_digest
+
+
+def test_write_digest_failopen_on_oserror(tmp_path, monkeypatch):
+    # OPERATIONAL: the digest is a convenience artifact written AFTER the ledger is already committed.
+    # An OSError on its write (disk full / permissions) must NOT abort advance()/the CLI verb — it
+    # fails open like _archive_published. Otherwise the daemon exits non-zero and launchd respins it.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    def boom(self, *a, **k): raise OSError("No space left on device")
+    monkeypatch.setattr(Path, "write_text", boom)
+    write_digest(led, cfg)                                # must NOT raise (fail-open)
 
 def test_counts_holds_failures(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

@@ -87,6 +87,26 @@ def test_publish_5xx_parks_needs_reconcile_no_repost(tmp_path, monkeypatch, mock
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.needs_reconcile
 
+def test_publish_5xx_error_reason_withholds_response_body(tmp_path, monkeypatch, mocker):
+    # SECURITY: a misconfigured self-hosted proxy can echo the Authorization header into a 5xx error
+    # page; that body must NEVER land in error_reason (persisted to ledger.json + the digest on disk).
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(500, {}, text="upstream SENTINEL-BODY-ECHO"))
+    er = PostizPoster(cfg).publish(led, "p1").posts["p1"].error_reason or ""
+    assert "SENTINEL-BODY-ECHO" not in er and "500" in er         # status kept, body withheld
+
+def test_publish_4xx_error_reason_withholds_response_body(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(422, {}, text="bad SENTINEL-BODY-ECHO"))
+    er = PostizPoster(cfg).publish(led, "p1").posts["p1"].error_reason or ""
+    assert "SENTINEL-BODY-ECHO" not in er and "422" in er
+
+def test_publish_2xx_no_id_error_reason_withholds_response_body(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(200, {"ok": True}, text="SENTINEL-BODY-ECHO"))
+    er = PostizPoster(cfg).publish(led, "p1").posts["p1"].error_reason or ""
+    assert "SENTINEL-BODY-ECHO" not in er
+
 def test_publish_2xx_no_id_parks_needs_reconcile(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     mocker.patch("fanops.post.postiz.requests.post", return_value=_R(200, {"ok": True}))
