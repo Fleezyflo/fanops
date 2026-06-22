@@ -161,7 +161,7 @@ def _auto_validate_metrics_shape(led: Ledger, cfg: Config) -> None:
     `learning_validated` unfreezes with NO operator probe. dryrun never reaches a real analytics row, so it
     never falsely unfreezes; a DEGRADED row (a primary weighted key absent) is the unproven/mis-keyed case
     the gate exists for and never stamps. Idempotent (skips once confirmed); the manual cutover still works."""
-    if cfg.poster_backend == "dryrun":
+    if not cfg.is_live:
         return                                                   # no live analytics -> the shape is never proven here
     from fanops.validation_gate import learning_validated
     if learning_validated(cfg):

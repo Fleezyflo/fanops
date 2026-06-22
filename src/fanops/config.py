@@ -142,6 +142,22 @@ class Config:
         return v
 
     @property
+    def is_live(self) -> bool:
+        # THE dryrun<->live switch (M2): the operator's intent, independent of WHICH provider publishes a
+        # channel (that's per-channel — M3). Sourced from FANOPS_LIVE; when UNSET, derived from the legacy
+        # FANOPS_POSTER (a recognized live backend -> live) so the running deployment keeps publishing with
+        # NO .env edit. An unknown FANOPS_LIVE is never presented as live (the W4 false-banner guard).
+        v = (os.getenv("FANOPS_LIVE") or "").strip().lower()
+        if not v:
+            return self.poster_backend in _LIVE_BACKENDS          # back-compat: a live FANOPS_POSTER implies live
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off"):
+            return False
+        _log.warning("ignoring unknown FANOPS_LIVE=%r (treating as not live); use 1/0", v)
+        return False
+
+    @property
     def postiz_url(self) -> str | None:
         # Base URL of a self-hosted (or hosted) Postiz instance, e.g. https://postiz.example.com or
         # https://api.postiz.com. The free, non-Blotato poster backend (FANOPS_POSTER=postiz) posts
@@ -222,8 +238,10 @@ class Config:
         # BLOTATO_API_KEY; dryrun (or any unrecognized backend) is never live. NB: this gates the
         # learn/reconcile passes — the Blotato status reconciler (pipeline.py) further restricts itself
         # to rest/mcp, and the speculative actuators stay frozen by learning_validated until cutover.
-        b = self.poster_backend
-        return self.backend_has_creds(b)
+        # M2: "live" now flows from the is_live switch (FANOPS_LIVE, or the legacy FANOPS_POSTER derivation)
+        # AND the global backend has its key. Byte-identical when FANOPS_LIVE is unset (is_live then ==
+        # "poster_backend is a live backend").
+        return self.is_live and self.backend_has_creds(self.poster_backend)
 
     def backend_has_creds(self, backend: str) -> bool:
         # Does THIS backend have the credential to post live? Per-account routing (Zernio slice 2) asks

@@ -417,7 +417,7 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     nothing and needs no confirm."""
     from fanops.pipeline import advance
     from fanops.accounts import Accounts
-    if cfg.poster_backend != "dryrun" and not confirmed:
+    if cfg.is_live and not confirmed:
         return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): a pass PUBLISHES "
                             "due posts to real accounts — tick the confirm box, then run again.")
     try:
@@ -450,7 +450,7 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     from fanops.pipeline import advance
     from fanops.accounts import Accounts
     from fanops.responder import get_responder
-    if cfg.poster_backend != "dryrun" and not confirmed:
+    if cfg.is_live and not confirmed:
         return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): a prepare pass "
                             "PUBLISHES due posts to real accounts — tick the confirm box, then run again.")
     try:
@@ -519,7 +519,7 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     (other scheduled posts are untouched). Distinct from mark_published (Track B: 'I posted by hand')
     — this actually drives the poster."""
     from fanops.post.run import publish_post
-    if cfg.poster_backend != "dryrun" and not confirmed:
+    if cfg.is_live and not confirmed:
         return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): this PUBLISHES the "
                             "post to a real account — tick the confirm box, then click again.")
     # Short lock-free guard read for a friendly message; publish_post's own CLAIM transaction is the
