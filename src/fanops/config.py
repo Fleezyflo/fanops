@@ -59,10 +59,12 @@ _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio", "rest", "mcp"})
 # "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
 _LIVE_BACKENDS = frozenset({"postiz", "zernio", "rest", "mcp"})
 
-# Per-gate model tier (llm_model_for): the `moments` gate is the CREATIVE VISION hook AUTHOR (Phase 1 —
-# it SEES source frames and writes the on-screen retention hook, the watch-through driver) -> opus.
-# `captions` (hashtags only) stays MECHANICAL -> sonnet. FANOPS_LLM_MODEL overrides all.
-_GATE_MODEL_DEFAULTS = {"moments": "opus", "captions": "sonnet"}
+# Per-gate model tier (llm_model_for): M1b splits the moment gate. `moments` (pass 1) chooses the
+# WINDOWS; `moment_hooks` (pass 2) is the CREATIVE VISION hook AUTHOR — it SEES the picked window's
+# frames and writes the on-screen retention hook (the watch-through driver). BOTH -> opus (picking
+# quality unchanged + the hook is the operator's #1 ask). `captions` (hashtags only) stays MECHANICAL
+# -> sonnet. FANOPS_LLM_MODEL overrides all.
+_GATE_MODEL_DEFAULTS = {"moments": "opus", "moment_hooks": "opus", "captions": "sonnet"}
 
 class Config:
     def __init__(self, root: Path | str | None = None):
