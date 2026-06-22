@@ -241,12 +241,16 @@ def create_app(cfg: Config) -> Flask:
         return _review_panel(actions.approve_as_is(cfg, clip_id))
 
     def _schedule_panel(result=None, *, full=False):
-        led = Ledger.load(cfg); now = datetime.now(timezone.utc); account = _account_arg()
-        rows_full = views.schedule_rows(led, cfg, now=now)                            # universe for chips
-        rows = rows_full if account is None else views.schedule_rows(led, cfg, now=now, account=account)
-        groups = views.group_schedule_by_account(rows)   # per-account header groups (the "All" view reads per account)
+        led = Ledger.load(cfg); now = datetime.now(timezone.utc); account = _account_arg(); batch = _batch_arg()
+        rows_full = views.schedule_rows(led, cfg, now=now)                            # universe for chips (account-only)
+        rows = (views.schedule_rows(led, cfg, now=now, account=account, batch=batch)
+                if (account or batch) else rows_full)
+        approved_total = sum(1 for r in rows if r.editable)              # Face 5: full scoped count (pre-slice, page-safe banner)
+        page = views.paginate(rows, _offset_arg())
+        groups = views.group_schedule_by_account(page.items)            # regroup the SLICE (header re-emits across a page)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
-        return render_template(tmpl, rows=rows, groups=groups, result=result, tab="schedule",
+        return render_template(tmpl, rows=page.items, groups=groups, page=page, approved_total=approved_total,
+                               active_batch=batch, result=result, tab="schedule",
                                backend=cfg.poster_backend, **_row_chips(rows_full, "schedule", account))
 
     @app.get("/schedule")
@@ -288,14 +292,17 @@ def create_app(cfg: Config) -> Flask:
         return render_template("lift.html", view=view, tab="lift", **chips)
 
     def _posted_panel(result=None, *, full=False):
-        led = Ledger.load(cfg); account = _account_arg()
-        rows_full = views.posted_library(led, cfg)                                    # universe for chips
-        rows = rows_full if account is None else views.posted_library(led, cfg, account=account)
-        groups = views.group_posted_by_day(rows)          # content-lifecycle Phase 3: publish-day buckets
+        led = Ledger.load(cfg); account = _account_arg(); batch = _batch_arg()
+        rows_full = views.posted_library(led, cfg)                                    # universe for chips (account-only)
+        rows = (views.posted_library(led, cfg, account=account, batch=batch)
+                if (account or batch) else rows_full)
+        rollup = views.posted_batch_rollup(rows) if batch else None     # Face 5: full scoped (pre-slice) per-batch summary
+        page = views.paginate(rows, _offset_arg())
+        groups = views.group_posted_by_day(page.items)    # content-lifecycle Phase 3: publish-day buckets (over the slice)
         accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
-        return render_template("posted.html" if full else "_posted_panel.html", rows=rows, groups=groups,
-                               accounts=accounts, result=result, tab="posted",
-                               **_row_chips(rows_full, "posted", account))
+        return render_template("posted.html" if full else "_posted_panel.html", rows=page.items, groups=groups,
+                               page=page, rollup=rollup, active_batch=batch, accounts=accounts, result=result,
+                               tab="posted", **_row_chips(rows_full, "posted", account))
 
     @app.get("/posted")
     def posted():

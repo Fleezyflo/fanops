@@ -120,6 +120,8 @@ class ScheduleRow:
                                     # the operator sees WHICH integration each approved post publishes to.
     suggested_time: Optional[str] = None   # P1: ONE deterministic strictly-future suggestion (surface_time
                                            # index=0), set ONLY for editable rows; read-only past rows carry None.
+    batch_id: Optional[str] = None         # Face 5: denormalized Post.batch_id (None == ungrouped)
+    batch_title: Optional[str] = None      # Batch.name via led.get_batch (None when unbatched/dangling)
 
 
 @dataclass
@@ -390,8 +392,15 @@ def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: date
     return _surface(p, persona=_personas(accounts).get(p.account), now=now, cfg=cfg)
 
 
+def _batch_title(led: Ledger, bid: Optional[str]) -> Optional[str]:
+    # Face 5: resolve a denormalized Post.batch_id to its Batch.name defensively — a dangling id (batch gone)
+    # yields None (renders no label), never an AttributeError. Dict lookup, no I/O.
+    b = led.get_batch(bid) if bid else None
+    return b.name if b is not None else None
+
+
 def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
-                  account: Optional[str] = None) -> list[ScheduleRow]:
+                  account: Optional[str] = None, batch: Optional[str] = None) -> list[ScheduleRow]:
     """Queued posts (the editable timeline) plus recent published/analyzed posts (read-only past),
     sorted chronologically by scheduled_time. Rows with no/naive/unparseable time sort last. P5: an optional
     `account` filters AFTER the time-sort (the None default stays byte-identical); the per-account display
@@ -420,7 +429,8 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             post_id=p.id, scheduled_time=p.scheduled_time, account=p.account,
             platform=p.platform.value, clip_id=p.parent_id, state=state, imminent=imm,
             editable=editable, integration_id=p.account_id,
-            suggested_time=suggest_time(cfg, p, now=now) if editable else None))   # P1: only editable rows
+            suggested_time=suggest_time(cfg, p, now=now) if editable else None,   # P1: only editable rows
+            batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id)))      # Face 5: batch legibility
 
     def _key(r: ScheduleRow):
         if not r.scheduled_time:
@@ -435,6 +445,8 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
     rows.sort(key=_key)
     if account is not None:        # P5: per-account filter, applied after the canonical time-sort
         rows = [r for r in rows if r.account == account]
+    if batch is not None:          # Face 5: per-batch filter (follow a batch through to publish)
+        rows = [r for r in rows if r.batch_id == batch]
     return rows
 
 
@@ -480,9 +492,11 @@ class PostedRow:
     shares: Optional[float] = None       # account's curve, read from post.metrics (the LATEST snapshot — NOT
     retention: Optional[float] = None    # metrics_series, which is P3's concern). Absent key -> None -> "—".
     reach: Optional[float] = None
+    batch_id: Optional[str] = None       # Face 5: denormalized Post.batch_id (None == ungrouped)
+    batch_title: Optional[str] = None    # Batch.name via led.get_batch (None when unbatched/dangling)
 
 
-def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None) -> list[PostedRow]:
+def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, batch: Optional[str] = None) -> list[PostedRow]:
     """The Posted library (post-approval-lifecycle): ALL-time shipped posts (published/analyzed), newest
     first, with the live URL + lift score. NOT a dead archive — each row also offers 'Post again' (a fresh
     awaiting_approval repost of the same clip). Unscheduled/naive/unparseable times sort last. Lock-free read.
@@ -491,6 +505,8 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None) -
     posts = [p for p in led.posts.values() if p.state in (PostState.published, PostState.analyzed)]
     if account is not None:
         posts = [p for p in posts if p.account == account]
+    if batch is not None:          # Face 5: per-batch filter
+        posts = [p for p in posts if p.batch_id == batch]
     def _key(p):
         if not p.scheduled_time: return (0, "")
         try:
@@ -502,7 +518,18 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None) -
                       caption=p.caption, public_url=p.public_url, scheduled_time=p.scheduled_time,
                       lift_score=p.metrics.get(LIFT_SCORE), published_at=p.published_at,
                       saves=p.metrics.get("saves"), shares=p.metrics.get("shares"),
-                      retention=p.metrics.get("retention"), reach=p.metrics.get("reach")) for p in posts]
+                      retention=p.metrics.get("retention"), reach=p.metrics.get("reach"),
+                      batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id)) for p in posts]
+
+
+def posted_batch_rollup(rows) -> Optional[dict]:
+    """Read-only per-batch summary over the already-built PostedRow list (zero extra I/O, no metrics_series,
+    no write, no learning unfreeze): {posted, with_lift, mean_lift}. mean_lift is over rows that CARRY a
+    lift_score (None when none do -> renders '—'); never fabricates. None for an empty list."""
+    if not rows: return None
+    lifts = [r.lift_score for r in rows if r.lift_score is not None]
+    return {"posted": len(rows), "with_lift": len(lifts),
+            "mean_lift": (sum(lifts) / len(lifts)) if lifts else None}
 
 
 def group_posted_by_day(rows: list) -> list:
