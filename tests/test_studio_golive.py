@@ -602,6 +602,15 @@ def test_set_clip_profile_validates_talk_song(tmp_path, monkeypatch):
     assert golive.set_clip_profile(cfg, "talk").ok is True and cfg.clip_profile == "talk"
     assert golive.set_clip_profile(cfg, "bogus").ok is False                  # unknown profile rejected
 
+def test_set_clip_profile_accepts_short_medium_long(tmp_path, monkeypatch):
+    # M2: the three new length tiers are accepted and persisted VERBATIM (no normalize -> no learning-
+    # cohort split, no silent re-band). talk/song stay valid (additive).
+    cfg = _clean(monkeypatch, tmp_path)
+    for p in ("short", "medium", "long"):
+        assert golive.set_clip_profile(cfg, p).ok is True and cfg.clip_profile == p
+        assert f"FANOPS_CLIP_PROFILE={p}" in (tmp_path / ".env").read_text()   # persisted verbatim, not normalized
+    assert golive.set_clip_profile(cfg, "talk").ok is True and cfg.clip_profile == "talk"   # legacy still valid
+
 def test_golive_status_carries_casting_levers(tmp_path, monkeypatch):
     from fanops.studio import views
     cfg = _clean(monkeypatch, tmp_path)

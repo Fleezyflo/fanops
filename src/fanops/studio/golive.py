@@ -247,11 +247,14 @@ def set_cast_pick_budget(cfg: Config, value) -> ActionResult:
 
 
 def set_clip_profile(cfg: Config, profile: str) -> ActionResult:
-    """Set FANOPS_CLIP_PROFILE (clip-length band) from the Go-Live tab — 'talk' (tight 12-22s) or 'song' (wider
-    18-35s, fewer/longer picks). Validates the value (unknown -> clean error, never silently mis-set); dual-written."""
+    """Set FANOPS_CLIP_PROFILE (clip-length band) from the Go-Live tab. Length tiers: 'short' (8-15s),
+    'medium' (16-26s), 'long' (28-45s); legacy content-type bands 'talk' (12-22s) / 'song' (18-35s) stay
+    valid (M2 additive — no remap). Persisted VERBATIM (no normalize -> no learning-cohort split). Validates
+    the value (unknown -> clean error, never silently mis-set); dual-written."""
     profile = (profile or "").strip().lower()
-    if profile not in ("talk", "song"):
-        return ActionResult(ok=False, error=f"clip profile must be 'talk' or 'song' (got {profile!r})")
+    _ALLOWED = ("short", "medium", "long", "talk", "song")
+    if profile not in _ALLOWED:
+        return ActionResult(ok=False, error=f"clip profile must be one of {_ALLOWED} (got {profile!r})")
     err = _dual_write(cfg, "FANOPS_CLIP_PROFILE", profile)
     if err:
         return ActionResult(ok=False, error=err)

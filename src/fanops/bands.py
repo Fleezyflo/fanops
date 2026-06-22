@@ -17,7 +17,15 @@ class Band(NamedTuple):
 TALK = Band(12.0, 22.0)     # spoken beats: tight, punchy (today's default)
 SONG = Band(18.0, 35.0)     # music: a full hook/verse is longer and more watchable
 
-_PROFILES = {"talk": TALK, "song": SONG}
+# M2 (LOCKED 2026-06-22): three operator-facing LENGTH tiers, ADDED alongside the legacy content-type
+# bands — NOT aliases of talk/song. Keeping talk/song at their own values means every existing .env /
+# ledger profile renders byte-identically (no re-band, no normalize, no learning-cohort split); the
+# operator picks short/medium/long as a deliberate new choice.
+SHORT = Band(8.0, 15.0)     # quick punch
+MEDIUM = Band(16.0, 26.0)   # default-ish watchable unit
+LONG = Band(28.0, 45.0)     # a full section / longer watch
+
+_PROFILES = {"talk": TALK, "song": SONG, "short": SHORT, "medium": MEDIUM, "long": LONG}
 
 def band_for(profile: str | None) -> Band:
     """Resolve a content-type profile name to its Band. Unknown/empty/None -> TALK (the safe default,
