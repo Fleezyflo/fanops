@@ -13,7 +13,11 @@ from fanops.models import Platform
 
 # Reach-ranked pools (June 2026 research; counts in the skill). Lower index = higher reach.
 _MEGA = ["#hiphop", "#hiphopmusic", "#rap"]                  # ~504M / ~113M / ~113M posts
-_RELEVANCE = ["#rapper", "#bars", "#undergroundhiphop", "#newmusic"]   # targets the rap feed
+# M3 (2026-06-22): widened with real high-reach rap tags so personas can draw from DISTINCT flavor
+# vocabularies (was: 4 tags, so the 3 leans overlapped and produced near-identical lines). These are
+# class-ranked (well-known massive rap hashtags), not live-counted — same disclaimer as the file header.
+_RELEVANCE = ["#rapper", "#bars", "#undergroundhiphop", "#newmusic",
+              "#lyrics", "#freestyle", "#trap", "#rapmusic"]           # targets the rap feed
 _ARABIC = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]        # AR language/region reach
 _DISCOVERY = {Platform.tiktok: ["#fyp", "#foryou", "#viral"],
               Platform.instagram: ["#reels", "#foryou", "#viral"]}
@@ -30,9 +34,11 @@ VETTED = set(_MEGA) | set(_RELEVANCE) | set(_ARABIC) | {t for v in _DISCOVERY.va
 # via _composition). When an account declares a lean, its pool floats ahead of the frozen rank for both
 # the kept model tags and the backfill, so a tasteful account leads lyrical/craft tags and a bold one
 # leads viral. lean=None / unknown -> no pool -> byte-identical to the frozen behavior.
-_LEANS = {"tasteful":    ["#bars", "#undergroundhiphop", "#newmusic", "#rapper"],
-          "underground": ["#undergroundhiphop", "#rapper", "#bars"],
-          "bold":        ["#viral", "#hiphop", "#rap"]}                # all subset of VETTED
+# M3: DISJOINT flavor vocabularies — no shared tag, so each persona produces a visibly different line
+# (not the same pool reordered). 3 tags each (leaving a slot for the platform-discovery floor below).
+_LEANS = {"tasteful":    ["#lyrics", "#bars", "#newmusic"],            # lyrical / craft
+          "underground": ["#freestyle", "#undergroundhiphop", "#trap"],# raw / scene
+          "bold":        ["#viral", "#rapmusic", "#hiphop"]}           # mainstream / viral — all subset of VETTED
 TAG_LEANS = frozenset(_LEANS)                  # the valid lean names — the write-boundary validates against this
 
 def load_store(cfg) -> list[str] | None:
@@ -106,7 +112,12 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     if lang_floor and not any(h in arabic for h in kept[:max_tags]):     # detect against the CAP WINDOW, not `seen` (the model's own AR tag may be in seen but sorted PAST the cap)
         promote = next((h for h in kept if h in arabic), lang_floor[0])  # promote the model's own AR tag, else the floor default
         kept = kept[:max_tags - 1] + [promote]; seen = set(kept)
-    for h in pool + (store or []) + _composition(platform, language):   # lean, store, then balanced default
+    # M3: a leaned account keeps one platform DISCOVERY tag (#fyp/#reels/…) — backfill it right after the
+    # lean pool so a flavor lean (e.g. tasteful) can't eat all 4 slots and lose its reach. Gated on `pool`
+    # (leaned only) -> no-lean backfill is byte-identical. An AR clip's region floor still wins the reserved
+    # last slot above, so AR accounts prioritise region reach over discovery (acceptable).
+    disc_floor = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)[:1] if pool else []
+    for h in pool + disc_floor + (store or []) + _composition(platform, language):   # lean, discovery floor, store, default
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)
