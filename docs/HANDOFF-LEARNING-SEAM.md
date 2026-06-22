@@ -18,18 +18,22 @@ up; it is a plan, not code.
   over `PostedRow.lift_score`. It is a pure read, computes no learning, and writes nothing — it is the shape the
   future reader generalizes, NOT a learner.
 
-## The unfreeze prerequisite (the gate — do NOT skip)
+## The unfreeze prerequisite (a CORRECTNESS gate — auto-opens on real data, NOT an operator step)
 
 Learning stays **validation-frozen** behind `learning_validated(cfg)` (`src/fanops/validation_gate.py`, which
-reads `cutover.json metrics_confirmed`). `variant_amplify` / `variant_ucb` / `variant_transfer` are INERT until
-`fanops cutover metrics` writes `metrics_confirmed=True` (`cutover.py` / `cutover_postiz.py`) against the LIVE
-Postiz analytics label shape. **No batch / casting flag unfreezes learning** — `FANOPS_ACCOUNT_CASTING` gates
-organization/casting only, never the learning actuators.
+reads `cutover.json metrics_confirmed`) until the live metric field-shape is PROVEN against `track._W`.
+`metrics_confirmed` is now stamped **automatically** — `track.pull_metrics` (`_auto_validate_metrics_shape`)
+sets it the first time a real, **non-degraded** analyzed metric lands from a LIVE backend (dryrun never proves
+it; a degraded row never stamps). There is **no operator step**: the gate opens on real data, not a manual
+`fanops cutover metrics` ritual (that probe still works as an optional early shortcut). It is a correctness
+gate (don't learn on an unproven / mis-keyed shape), not an operator gate. **No batch / casting flag unfreezes
+learning** — `FANOPS_ACCOUNT_CASTING` gates organization/casting only, never the learning actuators.
 
 ## Explicit ordering (prerequisites, then build — none of it in this program)
 
-1. **(prereq, operator-gated)** Land a LIVE Postiz metrics capture on a real instance → `fanops cutover metrics`
-   confirms the `lift_score` field shape → `metrics_confirmed`.
+1. **(prereq, automatic)** Land a LIVE Postiz metrics capture on a real instance → the first real, non-degraded
+   poll auto-confirms the `lift_score` field shape → `metrics_confirmed` (no manual step; the cutover probe is
+   an optional early shortcut).
 2. **(prereq)** The learning actuators unfreeze (existing machinery; nothing new built).
 3. **(future build)** The per-batch rollup READER: group `Post.metrics[LIFT_SCORE]` by `Post.batch_id`; `None` →
    Ungrouped. Pure read, additive — generalizes `posted_batch_rollup`.

@@ -120,4 +120,24 @@ def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = 
             off = due_offset(post.published_at, _captured_offsets(post), now)
             record_metrics(led, post.id, row.get("metrics", {}), weights=weights,
                            offset=off, captured_at=(iso_z(now) if off else None))
+    _auto_validate_metrics_shape(led, cfg)
     return led
+
+
+def _auto_validate_metrics_shape(led: Ledger, cfg: Config) -> None:
+    """De-gated learning (the operator's `fanops cutover metrics` step is removed): the FIRST real,
+    non-degraded analyzed metric pulled from a LIVE backend PROVES the metric field-shape against _W —
+    exactly what the manual cutover reconciled by hand. Auto-stamp cutover.json `metrics_confirmed` so
+    `learning_validated` unfreezes with NO operator probe. dryrun never reaches a real analytics row, so it
+    never falsely unfreezes; a DEGRADED row (a primary weighted key absent) is the unproven/mis-keyed case
+    the gate exists for and never stamps. Idempotent (skips once confirmed); the manual cutover still works."""
+    if cfg.poster_backend == "dryrun":
+        return                                                   # no live analytics -> the shape is never proven here
+    from fanops.validation_gate import learning_validated
+    if learning_validated(cfg):
+        return                                                   # already proven (manual cutover or a prior pull)
+    proven = any(p.state is PostState.analyzed and LIFT_SCORE in p.metrics and not p.metrics.get("lift_degraded")
+                 for p in led.posts.values())
+    if proven:
+        from fanops import cutover
+        cutover._save_state(cfg, {"metrics_confirmed": True, "metrics_confirmed_auto": True})  # real data proved it

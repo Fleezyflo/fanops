@@ -1,9 +1,13 @@
 """Phase 2 — the OFF-until-proven gate. The speculative learning stack (variant_amplify especially,
 which re-mines sources off lift_score) must not ACT on metrics whose field shape has never been
-confirmed against live Blotato. learning_validated(cfg) is True only after `fanops cutover metrics`
-reconciled a REAL row against track._W (cutover.json metrics_confirmed). Until then the consequential
-actuator stays inert even with its kill switch ON — converting 'default OFF' (trust the operator)
-into 'OFF until proven' (structural). Pure read, no side effects; takes cfg, imports no actuator."""
+confirmed against live analytics. learning_validated(cfg) is True once cutover.json metrics_confirmed
+is set — and that is now stamped AUTOMATICALLY (NO operator step): the first real, non-degraded
+analyzed metric pulled from a LIVE backend proves the field shape against track._W and auto-confirms it
+(track._auto_validate_metrics_shape). The legacy `fanops cutover metrics` probe still works as an early
+manual shortcut, but is no longer required. This is a correctness gate (don't learn on an unproven /
+mis-keyed metric shape), not an operator gate — it opens on real data, never on a manual ritual. Until
+then the consequential actuator stays inert even with its kill switch ON ('OFF until proven', structural).
+Pure read, no side effects; takes cfg, imports no actuator."""
 from __future__ import annotations
 import json
 from fanops.config import Config
