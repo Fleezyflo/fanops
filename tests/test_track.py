@@ -397,3 +397,37 @@ def test_cmd_track_threads_analyzed_post_ids_too(tmp_path, monkeypatch, mocker):
                        return_value=_R(200, [{"label": "Shares", "data": [{"total": "3", "date": "d"}]}]))
     cmd_track(cfg, "30d")
     assert "analytics/post/sidA" in spy.call_args[0][0]   # analyzed post's id threaded, not dropped
+
+
+# ---- de-gated learning: real non-degraded live metrics auto-confirm the shape (NO operator cutover step) ----
+def _pub_post(led, sid="sub1"):
+    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.published, submission_id=sid))
+
+_FULL = {"saves": 10, "shares": 5, "retention": 0.8, "reach": 1000, "likes": 3}   # all high-weight keys present
+_DEGRADED = {"likes": 3, "reach": 1000}                                            # missing saves/shares/retention
+
+def test_pull_live_non_degraded_auto_validates_learning(tmp_path, monkeypatch):
+    # The first REAL, non-degraded analyzed metric from a LIVE backend proves the metric field-shape against
+    # _W — exactly what `fanops cutover metrics` did by hand. learning_validated flips True with NO operator step.
+    from fanops.validation_gate import learning_validated
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://x"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_post(led); led.save()
+    assert learning_validated(cfg) is False
+    pull_metrics(led, cfg, list_posts=lambda w: [{"postSubmissionId": "sub1", "metrics": _FULL}])
+    assert learning_validated(cfg) is True
+
+def test_pull_dryrun_never_auto_validates(tmp_path, monkeypatch):
+    from fanops.validation_gate import learning_validated
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)            # dryrun: no real analytics, never proves the shape
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_post(led); led.save()
+    pull_metrics(led, cfg, list_posts=lambda w: [{"postSubmissionId": "sub1", "metrics": _FULL}])
+    assert learning_validated(cfg) is False
+
+def test_pull_degraded_metric_never_auto_validates(tmp_path, monkeypatch):
+    # A degraded row (a primary weighted key absent) is the unproven/mis-keyed case the gate exists for.
+    from fanops.validation_gate import learning_validated
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://x"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_post(led); led.save()
+    pull_metrics(led, cfg, list_posts=lambda w: [{"postSubmissionId": "sub1", "metrics": _DEGRADED}])
+    assert learning_validated(cfg) is False
