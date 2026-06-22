@@ -12,38 +12,26 @@ class Poster(Protocol):
 
 def get_poster(cfg: Config, backend: str | None = None) -> "Poster":
     # `backend` defaults to the global cfg.poster_backend (back-compat: existing callers pass nothing ->
-    # byte-identical). Zernio slice 2 passes an explicit per-account backend so one publish_due run can
-    # send IG through Postiz and TikTok through Zernio at once.
-    backend = backend or cfg.poster_backend
-    if backend == "rest":
-        from fanops.post.blotato_rest import BlotatoRestPoster
-        return BlotatoRestPoster(cfg)
-    if backend == "mcp":
-        from fanops.post.blotato_mcp import BlotatoMcpPoster
-        return BlotatoMcpPoster(cfg)
-    if backend == "postiz":
-        from fanops.post.postiz import PostizPoster
-        return PostizPoster(cfg)
-    if backend == "zernio":
-        from fanops.post.zernio import ZernioPoster
-        return ZernioPoster(cfg)
+    # byte-identical). An explicit per-account backend (Zernio slice 2) lets one publish_due run send IG
+    # through Postiz and TikTok through Zernio at once. M1: resolved through the provider registry; an
+    # UNKNOWN backend still falls back to DryRunPoster (the exact old behavior — note the uploader's
+    # unknown-fallback is Blotato, a deliberate asymmetry preserved below).
+    from fanops.post.providers import get_provider
+    provider = get_provider(cfg, backend or cfg.poster_backend)
+    if provider is not None:
+        return provider.make_poster(cfg)
     from fanops.post.dryrun import DryRunPoster
     return DryRunPoster(cfg)
 
 def get_media_uploader(cfg: Config, backend: str | None = None) -> Callable[[Config, Path], str]:
     """Return the (cfg, Path) -> hosted-URL function for `backend` (defaults to the global
-    cfg.poster_backend — back-compat). dryrun -> file:// (no network); postiz -> Postiz upload
-    (uploads.postiz.com); rest/mcp -> Blotato presign. (zernio's uploader is wired in slice 3.) Lazy
-    imports keep the core importable without optional deps and avoid an import cycle with media.py."""
-    backend = backend or cfg.poster_backend
-    if backend == "postiz":
-        from fanops.post.postiz import postiz_upload_media
-        return postiz_upload_media
-    if backend == "zernio":
-        from fanops.post.zernio import zernio_upload_media
-        return zernio_upload_media
-    if backend == "dryrun":
-        from fanops.post.media import dryrun_media_url
-        return lambda c, p: dryrun_media_url(p)
+    cfg.poster_backend — back-compat). dryrun -> file:// (no network); postiz -> Postiz upload; zernio ->
+    Zernio upload; rest/mcp -> Blotato presign. M1: resolved through the provider registry. An UNKNOWN
+    backend falls back to the Blotato presign uploader (the exact old else-branch — NOT dryrun; this
+    differs from get_poster's dryrun fallback, an asymmetry the registry preserves)."""
+    from fanops.post.providers import get_provider
+    provider = get_provider(cfg, backend or cfg.poster_backend)
+    if provider is not None:
+        return provider.make_uploader(cfg)
     from fanops.post.media import upload_media
     return upload_media
