@@ -62,6 +62,14 @@ Extras:
   `FANOPS_VARIANT_UCB` (+_C), `FANOPS_VARIANT_AMPLIFY` (+_MIN_POSTS/_MIN_GAP/_MIN_STREAK),
   `FANOPS_VARIANT_TRANSFER` (+_MAX_HOOKS/_MIN_DONORS).
 
+**Account-casting (Account-First, default OFF — a deliberate kill-switch over live-account fan-out):**
+- `FANOPS_ACCOUNT_CASTING` (gates the per-account moment-casting stage in `casting.py`: when ON a cast
+  Moment fans ONLY to its `affinities` accounts; OFF leaves `affinities=[]` and is render/post byte-identical);
+  `FANOPS_CAST_PICK_BUDGET` (per-account winner cap, default 3, clamped ≥1). The Go-Live tab's **casting
+  toggle** (Studio, go_live-style) now writes `FANOPS_ACCOUNT_CASTING` to `.env` + `os.environ`, so the flag
+  is UI-reachable, not env-only. Batch targeting (`Batch.target_accounts`) is a SEPARATE, always-on hard
+  bound enforced at crosspost (no flag) — distinct from this casting narrow.
+
 **Autonomous:**
 - `FANOPS_RESPONDER=llm` (set durably by `autopilot`).
 
