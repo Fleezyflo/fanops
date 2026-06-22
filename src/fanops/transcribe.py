@@ -17,8 +17,8 @@ from fanops.vocals import isolate_vocals
 
 # Hard bound on the whisper run — THE flock-critical timeout: transcribe_source is called INSIDE
 # Ledger.transaction (pipeline.py), so an UNBOUNDED hang held the ledger lock against every cron
-# pass, Studio write and recovery verb. 30min covers a long source on CPU turbo/small.
-_WHISPER_TIMEOUT = 1800.0
+# pass, Studio write and recovery verb. 45min covers a long (~26min) source on CPU at the medium model.
+_WHISPER_TIMEOUT = 2700.0
 
 def _cached_models() -> list[str]:
     """Model names whose checkpoint is already on disk (no download needed). whisper stores

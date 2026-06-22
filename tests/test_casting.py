@@ -19,9 +19,9 @@ def _moment(led, mid, *, reason="r", hook=None, signal=0.0, transcript="", batch
                           hook=hook, signal_score=signal, transcript_excerpt=transcript, state=MomentState.decided))
 
 
-def test_config_casting_flags_default_off_and_budget_three(tmp_path):
+def test_config_casting_flags_default_off_and_budget_six(tmp_path):
     c = Config(root=tmp_path)
-    assert c.account_casting is False and c.cast_pick_budget == 3
+    assert c.account_casting is False and c.cast_pick_budget == 6
 
 def test_persona_fit_score_is_deterministic_total_order():
     m1 = Moment(id="m1", parent_id="s", start=0, end=7, reason="guitar riff solo", signal_score=1.0)
@@ -30,14 +30,15 @@ def test_persona_fit_score_is_deterministic_total_order():
     assert persona_fit_score("guitar", m1)[0] >= 1                                          # 'guitar' overlaps the corpus
     assert persona_fit_score(None, m1)[0] == 0                                              # None persona -> zero overlap
 
-def test_cast_moments_budget_caps_per_account_by_fit(tmp_path):
+def test_cast_moments_budget_caps_per_account_by_fit(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_CAST_PICK_BUDGET", "3")            # pin the cap so the test is default-independent
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct("@a", "guitar")])
     led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4"))
     for i in range(5): _moment(led, f"m{i}", reason="guitar", signal=float(i))
     led = cast_moments(led, cfg, Accounts.load(cfg))
     cast = {m.id for m in led.moments.values() if m.affinities == ["@a"]}
     uncast = {m.id for m in led.moments.values() if m.affinities == []}
-    assert cast == {"m2", "m3", "m4"} and uncast == {"m0", "m1"}   # default budget 3 -> top-3 by signal
+    assert cast == {"m2", "m3", "m4"} and uncast == {"m0", "m1"}   # budget 3 -> top-3 by signal
 
 def test_cast_moments_account_target_bounds(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])

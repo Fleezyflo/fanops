@@ -24,6 +24,22 @@ def test_fw_cmd_shape():
     assert cmd[cmd.index("--language") + 1] == ""            # "" -> runner auto-detects (EN+AR)
     assert cmd[cmd.index("--output_dir") + 1] == "/out" and cmd[-1] == "/s/x.mp3"
 
+def test_fwrun_pins_en_ar_as_multilingual(tmp_path, mocker):
+    # "en,ar" pins BOTH candidates -> per-segment detection (multilingual=True, language=None) so a mixed
+    # EN+AR source transcribes; a single value forces that language; the runner never drops the pin.
+    from fanops import _fwrun
+    calls = {}
+    class _Info: language = "en"
+    class _Fake:
+        def transcribe(self, audio, **kw): calls.update(kw); return ([], _Info())
+    mocker.patch("fanops._fwrun._load_model", return_value=_Fake())
+    (tmp_path / "x.mp3").write_bytes(b"")
+    _fwrun.transcribe_to_json(str(tmp_path / "x.mp3"), str(tmp_path), "medium", "en,ar")
+    assert calls["multilingual"] is True and calls["language"] is None
+    calls.clear()
+    _fwrun.transcribe_to_json(str(tmp_path / "x.mp3"), str(tmp_path), "medium", "ar")
+    assert calls["multilingual"] is False and calls["language"] == "ar"
+
 def test_transcribe_prefers_faster_whisper_when_available(tmp_path, mocker, monkeypatch):
     # DEFAULT engine: when faster-whisper (the [asr] extra) is importable, transcribe_source runs the
     # fanops._fwrun runner with cfg.asr_model (large-v3 — the proven music/rap winner), NOT the
@@ -261,7 +277,8 @@ def test_whisper_hang_goes_to_error_not_crash(tmp_path, mocker):
     assert led.sources["src_1"].state is SourceState.error
     assert "timed out" in (led.sources["src_1"].error_reason or "")
     assert led.sources["src_1"].meta.get("transcribed") is not True   # a re-run actually retries
-    assert seen.get("timeout") == 1800.0                              # the bound is actually wired
+    from fanops.transcribe import _WHISPER_TIMEOUT
+    assert seen.get("timeout") == _WHISPER_TIMEOUT                    # the bound is actually wired (2700s)
 
 def test_transcribe_adopts_existing_json_and_skips_subprocess(tmp_path, mocker):
     # Phase D: a lock-free pre-warm pass already ran whisper to its DETERMINISTIC per-stem JSON.

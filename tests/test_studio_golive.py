@@ -606,7 +606,7 @@ def test_golive_status_carries_casting_levers(tmp_path, monkeypatch):
     from fanops.studio import views
     cfg = _clean(monkeypatch, tmp_path)
     s = views.golive_status(cfg)
-    assert s.cast_exclusive is False and s.cast_pick_budget == 3 and s.clip_profile == "talk"   # defaults
+    assert s.cast_exclusive is False and s.cast_pick_budget == 6 and s.clip_profile == "talk"   # defaults
     golive.set_cast_exclusive(cfg, True); golive.set_clip_profile(cfg, "song")
     s = views.golive_status(cfg)
     assert s.cast_exclusive is True and s.clip_profile == "song"
