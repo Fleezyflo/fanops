@@ -14,7 +14,7 @@ from fanops.accounts import Accounts
 from fanops.ingest import ingest_drops
 from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
-from fanops.moments import request_moments, ingest_moments
+from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
 from fanops.casting import cast_moments
@@ -216,6 +216,20 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                     led.sources[s.id].state = SourceState.error
                     led.sources[s.id].error_reason = f"{type(e).__name__}: {e}"
                     log("moments", s.id, "error", err=str(e)[:120])
+        # M1b PASS 2 (frame-seeing hook): for each source whose picks reconciled (picks_decided), open a
+        # per-pick moment_hooks gate (request, write-once) seeing THAT window's frames, then ingest any
+        # landed hooks (promote picked->decided; source->moments_decided once every pick's hook lands).
+        # Per-source quarantine, mirroring the pick gate above. The responder answers the moment_hooks
+        # gates between passes — the SAME multi-gate convergence as moments->captions (one extra cycle).
+        for s in list(led.sources.values()):
+            if s.state is SourceState.picks_decided:
+                try:
+                    led = request_moment_hooks(led, cfg, s.id, accounts=accts)   # personas + learned hook styles ride here
+                    led = ingest_moment_hooks(led, cfg, s.id)
+                except Exception as e:
+                    led.sources[s.id].state = SourceState.error
+                    led.sources[s.id].error_reason = f"{type(e).__name__}: {e}"
+                    log("moment_hooks", s.id, "error", err=str(e)[:120])
         # Task 9 scoreboard: one read-only digest line of hook quality (null/viewer_pov_rate) on EVERY
         # pass. viewer_pov_rate (narration_signature) measures the FINAL on-screen hooks the vision
         # author wrote — independent of any subsystem flag — so the operator's hook-quality visibility
@@ -359,10 +373,11 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # surfaced here so the unattended operator sees the drop, not only in run.log.
         "hook_burn_failed": sum(1 for c in led.clips.values() if c.hook_burn_failed),
         "errors": sum(1 for s in led.sources.values() if s.state is SourceState.error),
-        # Both agent-gate kinds the responder answers (responder._SCHEMA): moments blocks the
-        # clip/caption stages, captions blocks crosspost, so `fanops run` must see them to know it
-        # has NOT converged.
+        # All three agent-gate kinds the responder answers (responder._SCHEMA): moments (pick) blocks the
+        # hook gate, moment_hooks blocks the clip/caption stages, captions blocks crosspost — so `fanops
+        # run` must see every one to know it has NOT converged.
         "awaiting": {"moments": len(pending(cfg, kind="moments")),
+                     "moment_hooks": len(pending(cfg, kind="moment_hooks")),
                      "captions": len(pending(cfg, kind="captions"))},
     }
     # digest is read-only reporting, built from the SAME post-publish snapshot, OUTSIDE the lock.
