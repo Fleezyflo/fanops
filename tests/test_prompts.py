@@ -65,6 +65,10 @@ def test_moment_prompt_hook_bans_narration_and_embeds_fewshot_priors():
     assert "contrarian" in low and "confession" in low and "identity" in low   # proven patterns named
     assert "maybe your favorite artist copied too" in low  # real few-shot prior (contrarian + identity)
     assert "the line you'll send to one person" in low     # real few-shot prior (open loop + self-relevance)
+    # M1a: the poisoned third-person EXAMPLE that taught the recap voice is gone; the Arabic exemplar is
+    # now viewer-POV, and the ban names he/his/her + the artist's NAME as a forbidden subject.
+    assert "he switches to arabic when it gets personal" not in low   # the poisoned positive example, removed
+    assert "the artist's name as the subject" in low                  # ban now covers name-as-subject
 
 def test_moment_prompt_target_is_a_ceiling_but_forbids_zero_on_content():
     # The pick count is a CEILING ("up to N", never a quota — operator decision 2026-06-22): the model
