@@ -29,9 +29,10 @@ def _gates_blocked_note(s) -> str | None:
     from 'nothing to do' (which the bare summary buries). None when converged / no status, so the
     caller can `if (note := ...)` unconditionally."""
     aw = (s or {}).get("awaiting", {})
-    # Both agent gates block downstream work: moments blocks the clip/caption stages, captions blocks
-    # crosspost — a run that ends with either open has NOT converged, so both raise the same loud signal.
-    open_gates = {k: v for k in ("moments", "captions") if (v := aw.get(k, 0))}
+    # All three agent gates block downstream work: moments (pick) blocks the hook gate, moment_hooks
+    # blocks the clip/caption stages, captions blocks crosspost — a run that ends with ANY open has NOT
+    # converged, so each raises the same loud signal (a stuck hook gate must never read as convergence).
+    open_gates = {k: v for k in ("moments", "moment_hooks", "captions") if (v := aw.get(k, 0))}
     if open_gates:
         detail = " ".join(f"{k}={v}" for k, v in open_gates.items())
         return (f"gates STILL BLOCKED after the run loop: {detail} — the responder is not clearing "
@@ -56,6 +57,7 @@ def cmd_status(cfg: Config) -> int:
           f"needs_reconcile={len(led.posts_in_state(PostState.needs_reconcile))} "
           f"backend={cfg.poster_backend} "
           f"awaiting_moments={len(pending(cfg, kind='moments'))} "
+          f"awaiting_moment_hooks={len(pending(cfg, kind='moment_hooks'))} "
           f"awaiting_captions={len(pending(cfg, kind='captions'))}")
     return 0
 

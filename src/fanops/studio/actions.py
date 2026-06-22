@@ -19,14 +19,14 @@ from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ingest import MEDIA_EXT
 from fanops.ledger import Ledger
-from fanops.models import CaptionSet, ClipState, MomentDecision, Post, PostState
+from fanops.models import CaptionSet, ClipState, MomentDecision, MomentHookDecision, Post, PostState
 from fanops.ids import child_id, surface_key, _hash
 from fanops import overlay
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent, suggest_time
 
 SNOOZE_DAYS = 365
-_GATE_MODELS = {"moments": MomentDecision, "captions": CaptionSet}
+_GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
 _VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}   # the has_video_stream subset of MEDIA_EXT
 if not (_VIDEO_EXT <= MEDIA_EXT): raise ValueError("_VIDEO_EXT drifted out of ingest.MEDIA_EXT")  # import-time drift guard (not assert — survives -O)
 
