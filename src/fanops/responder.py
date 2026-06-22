@@ -12,18 +12,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
-from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
+from fanops.models import MomentDecision, MomentHookDecision, MomentCastingDecision, CaptionSet
 from fanops.agentstep import pending, request_path, response_path, latest_request_id
 from fanops.llm import claude_json_meta, LlmTimeoutError
-from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
+from fanops.prompts import moment_pick_prompt, moment_hook_prompt, moment_casting_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
 
-# Three agent gates (M1b frame-seeing two-pass): `moments` (pass 1 — pick the WINDOWS, sees whole-source
-# frames), `moment_hooks` (pass 2 — the vision hook AUTHOR, sees the PICKED WINDOW's frames), and
-# `captions` (text-only hashtags). Both vision gates attach their `frames` as images (see below).
-_SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
-_PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}
+# Agent gates: `moments` (M1b pass 1 — pick the WINDOWS, sees whole-source frames), `moment_hooks` (pass 2 —
+# the vision hook AUTHOR, sees the PICKED WINDOW's frames), `moment_casting` (M1 Option C — per-account moment
+# SELECTION, text-only), and `captions` (text-only hashtags). The two vision gates attach `frames` as images.
+_SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision,
+           "moment_casting": MomentCastingDecision, "captions": CaptionSet}
+_PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt,
+           "moment_casting": moment_casting_prompt, "captions": caption_prompt}
 _VISION_GATES = ("moments", "moment_hooks")   # gates whose payload carries top-level `frames` to attach as images
 
 class ManualResponder:

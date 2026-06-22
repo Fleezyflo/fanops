@@ -118,6 +118,30 @@ def test_ingest_only_casts_decided_moments(tmp_path):
     assert led.moments["m_picked"].affinities == []
 
 
+# ---- wiring: responder dispatch + prompt ----
+def test_responder_answers_casting_gate(tmp_path):
+    # the responder is wired (_SCHEMA/_PROMPT registered): a fake model answers the moment_casting gate, then
+    # ingest applies it — proving the gate validates against MomentCastingDecision end-to-end (no live LLM).
+    from fanops.responder import LlmResponder
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, [_acct("@a", "guitar"), _acct("@b", "drums", aid="2")])
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg)); led.save()
+    def fake_model(kind, payload):
+        assert kind == "moment_casting" and {p["handle"] for p in payload["personas"]} == {"@a", "@b"}
+        return {"selections": {"@a": ["m0"], "@b": ["m1", "m2"]}}
+    LlmResponder(cfg, model=fake_model).answer_pending(cfg)
+    led = ingest_moment_casting(Ledger.load(cfg), cfg, "src_1", Accounts.load(cfg))
+    assert led.moments["m0"].affinities == ["@a"]
+    assert led.moments["m1"].affinities == ["@b"] and led.moments["m2"].affinities == ["@b"]
+
+def test_moment_casting_prompt_builds():
+    from fanops.prompts import moment_casting_prompt
+    out = moment_casting_prompt({"moments": [{"moment_id": "m0", "reason": "guitar solo", "start": 0, "end": 7,
+                                              "signal_score": 1.0, "hook": "watch this"}],
+                                 "personas": [{"handle": "@a", "persona": "guitar nerd"}], "language": "en"})
+    assert "@a" in out and "m0" in out and "GENEROUS" in out.upper()
+
+
 def _req_path(cfg, source_id):
     from fanops.agentstep import request_path
     return request_path(cfg, "moment_casting", source_id)
