@@ -209,7 +209,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     approve_with_hook). Does NOT publish — safe on any backend, no confirm gate."""
     if not cfg.creative_variation:
         return ActionResult(ok=False, error="re-burn needs per-account hooks ON (FANOPS_CREATIVE_VARIATION)")
-    from fanops.models import Fmt, PLATFORM_ASPECT
+    from fanops.models import Fmt, PLATFORM_ASPECT, Render, RenderState
     now = _now(now)
     led = Ledger.load(cfg)                              # lock-free read: reject early, then burn OUTSIDE the lock
     p, err = _guard_editable_post(led, post_id, now)
@@ -218,23 +218,35 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     clip = led.clips.get(p.parent_id)
     if clip is None:
         return ActionResult(ok=False, error=f"no clip for post {post_id}")
-    # Path == crosspost.py's variant path EXACTLY: post.parent_id == the per-aspect clip id, surface_key keys
-    # the account/platform — NEVER a ReviewCard seed clip_id (a different id per aspect -> a file /media never
-    # serves). _media_path_for_post resolves media_urls[0] back to this same file.
+    # The on-screen hook is owned by the per-account RENDER (the single source of truth). A hook EDIT changes
+    # the content -> a NEW content-addressed render id (child_id of clip+hook); burn it (atomic, LOCK-FREE)
+    # and point the post at it. The render's hook_text ALWAYS matches the burned pixels — the old reburn
+    # mutated post.variant_hook alone and drifted from the file. Lineage for filing: clip->moment->source.
     aspect = PLATFORM_ASPECT.get(p.platform, Fmt.r9x16)
     tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080), Fmt.r16x9: (1920, 1080)}.get(aspect, (1080, 1920))
-    cfg.clips.mkdir(parents=True, exist_ok=True)        # burn_hook_only writes the variant + its .ass, no mkdir of its own
-    vpath = str(cfg.clips / f"{p.parent_id}_{_hash('variant', surface_key(p.account, p.platform.value))}.mp4")
+    rid = child_id("render", p.parent_id, hook)         # content-addressed: same hook on this clip -> same render
+    mom = led.moments.get(clip.parent_id)
+    src = led.sources.get(mom.parent_id) if mom is not None else None
+    batch_id = src.batch_id if src is not None else None
+    source_id = src.id if src is not None else None
+    skey = surface_key(p.account, p.platform.value)
+    vpath = cfg.render_path(batch_id, source_id, rid, aspect)   # filed under clips/{batch}/{src}/; mkdirs
     burned = overlay.burn_hook_only(clip.path, vpath, hook, width=tw, height=th,
-                                    font=cfg.subtitle_font)   # LOCK-FREE; fail-open: vpath always exists
+                                    font=cfg.subtitle_font)   # LOCK-FREE; atomic + fail-open: vpath always exists
     with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
         p2, err2 = _guard_editable_post(led2, post_id, _now(None))   # fresh now: the burn may have made it imminent
         if err2:
             return ActionResult(ok=False, error=err2)
-        p2.variant_hook = hook                          # post-level fields ONLY (carried by repost_post) — no meta_captions
+        # add_render is content-addressed first-write-wins: a re-burn of an EXISTING hook reuses the same
+        # render; a NEW hook adds a fresh one (the prior render, if now unreferenced, is GC-swept by state).
+        led2.add_render(Render(id=rid, clip_id=p2.parent_id, account=p2.account, surface_key=skey,
+                               hook_text=hook, path=vpath, state=RenderState.rendered,
+                               batch_id=batch_id, source_id=source_id))
+        p2.render_id = rid                              # the authoritative pointer
+        p2.variant_hook = hook                          # read-only mirror of Render.hook_text (carried by repost_post)
         p2.media_urls = [f"file://{vpath}"]
     return ActionResult(ok=True, detail={"post_id": post_id, "hook": hook, "hook_burned": bool(burned),
-                                         "media_url": f"file://{vpath}"})
+                                         "render_id": rid, "media_url": f"file://{vpath}"})
 
 
 def approve_candidate(cfg: Config, eid: str) -> ActionResult:
