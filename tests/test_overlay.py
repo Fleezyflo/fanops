@@ -276,11 +276,29 @@ def test_burn_hook_only_builds_hook_ass_and_cmd(tmp_path, mocker):
     assert ok is True and out.exists()
     vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
     assert "subtitles=" in vf                      # the hook is burned via an ass
-    assert captured["cmd"][-1] == str(out)         # output is last (matches fake_run + clip.py convention)
+    # ATOMIC: ffmpeg writes the .part temp; burn_hook_only os.replace's it onto out_path on success.
+    assert captured["cmd"][-1] == str(out) + ".part"   # output is the temp (atomic-write convention)
     # the hook text reached the .ass (read during the run)
     assert "WATCH THIS" in captured["ass_text"]
-    # ECC fix #8: the intermediate .ass is cleaned up — no orphan left beside the output
-    assert list(tmp_path.glob("*.ass")) == []
+    # ECC fix #8 + atomic: the intermediate .ass AND the .part temp are cleaned up — no orphans
+    assert list(tmp_path.glob("*.ass")) == [] and list(tmp_path.glob("*.part")) == []
+
+
+def test_burn_hook_only_atomic_no_partial_on_crash(tmp_path, mocker):
+    # A crash mid-ffmpeg (the subprocess raises after writing a PARTIAL .part) must NEVER leave a
+    # half-written file at out_path — the serve route would otherwise stream a truncated mp4.
+    import fanops.overlay as overlay
+    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
+    base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
+    out = tmp_path / "variant.mp4"
+    def boom(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"PARTIAL")          # a truncated temp was written...
+        raise OSError("ffmpeg crashed")                 # ...then the process dies mid-write
+    mocker.patch("fanops.overlay.subprocess.run", side_effect=boom)
+    overlay.burn_hook_only(str(base), str(out), "HOOK")
+    # fail-open re-copies the base atomically -> out is a COMPLETE base copy, never the PARTIAL temp;
+    # and no .part orphan survives.
+    assert out.read_bytes() == b"BASE" and list(tmp_path.glob("*.part")) == []
 
 def test_burn_hook_only_failopen_when_no_textfilter(tmp_path, mocker):
     import fanops.overlay as overlay

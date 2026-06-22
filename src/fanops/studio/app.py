@@ -37,13 +37,22 @@ def _bounded(cfg: Config, candidate) -> Path | None:
 
 
 def _media_path_for_post(led: Ledger, post_id: str):
-    """Resolve the local file to serve for a post: the variant overlay (media_urls[0], stripped of
-    file://) when it is a local file, else the base clip path. Returns None if nothing resolvable.
-    The id is only a dict-key lookup and the path comes from the trusted ledger (never the URL), so
-    there is no path traversal."""
+    """Resolve the local file to serve for a post — a pure lookup, no guessing (the Render foundation
+    killed the old 3-way heuristic that silently served a textless base):
+      1. post.render_id -> the per-account Render's path (THE authoritative per-account artifact);
+      2. else media_urls[0] when it is a local file:// / bare path (legacy pre-Render rows; resilient if
+         a Render entity was swept but its file remains — media_urls still points at the same path);
+      3. else the shared base clip.path (a hookless surface legitimately ships the base).
+    An http(s) media_urls (an already-published URL) is NOT locally servable -> fall through. The id is a
+    dict-key lookup and every path comes from the trusted ledger (never the URL), so no path traversal.
+    The route 404s when the resolved path does not exist (a missing render surfaces, never a silent swap)."""
     post = led.posts.get(post_id)
     if post is None:
         return None
+    if post.render_id:
+        r = led.renders.get(post.render_id)
+        if r is not None:
+            return r.path                  # per-account render — the authoritative file for this surface
     candidate = None
     if post.media_urls:
         raw = post.media_urls[0]

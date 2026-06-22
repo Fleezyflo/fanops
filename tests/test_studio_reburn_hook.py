@@ -6,8 +6,9 @@
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
-from fanops.ids import surface_key, _hash
+from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt,
+                           PLATFORM_ASPECT)
+from fanops.ids import child_id
 from fanops.studio.actions import reburn_hook
 from fanops.studio.app import _media_path_for_post
 
@@ -29,32 +30,39 @@ def _seed(cfg, *, platform=Platform.instagram, state=PostState.awaiting_approval
                       caption="c", state=state, variant_hook=hook, scheduled_time=FUTURE))
     led.save(); return led
 
-def _expected_vpath(cfg, post):
-    return str(cfg.clips / f"{post.parent_id}_{_hash('variant', surface_key(post.account, post.platform.value))}.mp4")
+def _expected_render(cfg, post, hook):
+    # Stage D: the hook EDIT yields a content-addressed Render id (child_id of clip+hook); reburn files it
+    # via cfg.render_path (src_1 has no batch -> "unbatched"/"src_1"). The post points at it via render_id.
+    rid = child_id("render", post.parent_id, hook)
+    aspect = PLATFORM_ASPECT.get(post.platform, Fmt.r9x16)
+    return rid, cfg.render_path(None, "src_1", rid, aspect)
 
 
-def test_reburn_sets_variant_hook_and_media_urls(tmp_path, monkeypatch, mocker):
+def test_reburn_mints_render_sets_render_id_and_mirror(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed(cfg)
     burn = mocker.patch("fanops.overlay.burn_hook_only", return_value=True)
     res = reburn_hook(cfg, "p_edit", "NEW HOOK")
     assert res.ok is True and res.detail["hook_burned"] is True
-    p = Ledger.load(cfg).posts["p_edit"]
-    assert p.variant_hook == "NEW HOOK"
-    assert p.media_urls == [f"file://{_expected_vpath(cfg, p)}"]
+    led = Ledger.load(cfg); p = led.posts["p_edit"]
+    rid, exp = _expected_render(cfg, p, "NEW HOOK")
+    # the Render is the single source of truth: its hook_text == the burned hook; post mirrors it.
+    assert p.render_id == rid and led.get_render(rid) is not None and led.get_render(rid).hook_text == "NEW HOOK"
+    assert p.variant_hook == "NEW HOOK"                # read-only mirror (no drift vs the render)
+    assert p.media_urls == [f"file://{exp}"] and led.get_render(rid).path == exp
     burn.assert_called_once()                          # ffmpeg re-burn happened (lock-free)
 
 def test_reburn_path_is_deterministic_media_path_non_9x16(tmp_path, monkeypatch, mocker):
-    # YouTube (16:9) surface: the path derives from post.parent_id + surface_key — NOT a ReviewCard seed
-    # clip_id (a different id per aspect) — so /media (via _media_path_for_post) serves exactly the file written.
+    # YouTube (16:9) surface: the render path derives from the content-addressed render id, so /media (via
+    # _media_path_for_post -> render_id -> Render.path) serves exactly the file written.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed(cfg, platform=Platform.youtube)
     mocker.patch("fanops.overlay.burn_hook_only", return_value=True)
     assert reburn_hook(cfg, "p_edit", "YT HOOK").ok is True
     p = Ledger.load(cfg).posts["p_edit"]
-    exp = _expected_vpath(cfg, p)
-    assert p.media_urls == [f"file://{exp}"]
-    assert _media_path_for_post(Ledger.load(cfg), "p_edit") == exp     # /media serves the re-burned file
+    rid, exp = _expected_render(cfg, p, "YT HOOK")
+    assert p.render_id == rid and p.media_urls == [f"file://{exp}"]
+    assert _media_path_for_post(Ledger.load(cfg), "p_edit") == exp     # /media serves the re-burned render
 
 def test_reburn_does_not_touch_meta_captions(tmp_path, monkeypatch, mocker):
     # the dead-key lock (A1): reburn writes post-level fields ONLY, never clip.meta_captions['hook'].

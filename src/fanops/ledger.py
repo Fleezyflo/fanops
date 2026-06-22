@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
-from fanops.models import (Source, Moment, Clip, Post, StitchPlan, StitchState, Batch,
+from fanops.models import (Source, Moment, Clip, Post, Render, StitchPlan, StitchState, Batch,
                            SourceState, MomentState, ClipState, PostState)
 
 
@@ -75,7 +75,7 @@ def _migrate_v4_metrics_series(raw: dict) -> dict:
     return out
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
 # v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
@@ -83,12 +83,16 @@ SCHEMA_VERSION = 5
 # v3 -> v4 (P3): back-fill a single 'legacy' metrics_series row for posts that already carry metrics.
 # v4 -> v5 (Account-First Studio): inject the new top-level batches map (additive; batch_id rides the
 # pydantic default on Source/Post, so NO row backfill — byte-for-byte the v1->v2 stitch_plans injection).
+# v5 -> v6 (per-account Render foundation): inject the new top-level renders map (additive; render_id rides
+# the pydantic default on Post, so NO row backfill — same injection shape). The Render entity is the
+# per-account shippable artifact; old ledgers load with renders={} and render_id None (byte-identical).
 # Additive + idempotent + never-raising. The ledger is NEVER wiped — every migration is copy-on-write.
 _MIGRATIONS = {1: lambda raw: raw,
                2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})},
                3: _migrate_v3_created_at,
                4: _migrate_v4_metrics_series,
-               5: lambda raw: {**raw, "batches": raw.get("batches", {})}}
+               5: lambda raw: {**raw, "batches": raw.get("batches", {})},
+               6: lambda raw: {**raw, "renders": raw.get("renders", {})}}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
@@ -192,6 +196,9 @@ class Ledger:
                                               # operator-approval spine. Empty until a format (M4+) emits one.
         self.batches: dict[str, Batch] = {}   # Account-First Studio: named, account-targeted ingest groups
                                               # (5th id->unit map; additive). Empty until a named ingest mints one.
+        self.renders: dict[str, Render] = {}  # per-account Render foundation: the per-account shippable artifacts
+                                              # (6th id->unit map; additive). Empty until crosspost mints one under
+                                              # creative_variation. Content-addressed by (clip_id, hook_text).
 
     @classmethod
     def load(cls, cfg: Config) -> "Ledger":
@@ -217,6 +224,7 @@ class Ledger:
                 led.variant_streaks = raw.get("variant_streaks", {})
                 led.stitch_plans = {k: StitchPlan(**v) for k, v in raw.get("stitch_plans", {}).items()}
                 led.batches = {k: Batch(**v) for k, v in raw.get("batches", {}).items()}
+                led.renders = {k: Render(**v) for k, v in raw.get("renders", {}).items()}
             except ControlFileError:
                 raise                                  # _NewerSchema / _migrate gap: pass through, unreworded
             except Exception as e:
@@ -261,6 +269,7 @@ class Ledger:
             "variant_streaks": self.variant_streaks,
             "stitch_plans": {k: v.model_dump() for k, v in self.stitch_plans.items()},
             "batches": {k: v.model_dump() for k, v in self.batches.items()},
+            "renders": {k: v.model_dump() for k, v in self.renders.items()},
         }
         self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
@@ -281,6 +290,8 @@ class Ledger:
     def add_moment(self, m: Moment) -> None: self.moments.setdefault(m.id, m)
     def add_clip(self, c: Clip) -> None: self.clips.setdefault(c.id, c)
     def add_post(self, p: Post) -> None: self.posts.setdefault(p.id, p)
+    def add_render(self, r: Render) -> None: self.renders.setdefault(r.id, r)   # first-write-wins (content-addressed dedup)
+    def get_render(self, rid: str): return self.renders.get(rid)
 
     # ---- typed state setters (FIX F65 — no cross-unit scan) ----
     # ECC fix #10: immutable update (model_copy + dict reassignment) instead of in-place `.state =`.

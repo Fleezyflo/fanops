@@ -10,7 +10,7 @@ from fanops import overlay
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import (Post, PostState, ClipState, Fmt,
+from fanops.models import (Post, PostState, ClipState, Fmt, Render, RenderState,
                            PLATFORM_ASPECT, PLATFORM_MAX_SECONDS)
 from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment
@@ -131,32 +131,38 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                                  clip_id=clip.id, lead_minutes=cfg.publish_lead_minutes)
             if decide_tag(led, account=surf.account, clip_id=clip.id, when=_parse(sched)):
                 caption = f"{caption}\n{ARTIST_HANDLE}"
-            # Per-account creative variation (gated by FANOPS_CREATIVE_VARIATION, default OFF; fail-
-            # open). When ON and this surface has a per-account hook, burn a CHEAP per-account overlay
-            # onto the SHARED base render -> a distinct file the poster uploads via Post.media_urls
-            # (run.py:60 reads media_urls FIRST). variant_key is DETERMINISTIC (surface_key — never
-            # random/hash()), so a re-run computes the identical file id + key. OFF / no hook / no
-            # libass -> today's shared-clip behavior (media_urls stays [], variant_* stay None).
+            # Per-account creative variation (gated by FANOPS_CREATIVE_VARIATION, default OFF; fail-open).
+            # When ON and this surface has a per-account hook, mint a first-class RENDER — the per-account
+            # shippable artifact (Stage B of the Render foundation). The Render owns the burned file + the
+            # hook (the single source of truth); Post.render_id is the authoritative "which file" pointer and
+            # the serve route resolves post->render->path (no media_urls guessing). CONTENT-ADDRESSED by
+            # (target_clip.id, hook): two surfaces with the SAME hook on the SAME aspect-clip dedup to ONE
+            # render + ONE file (anti-explosion). OFF / no hook -> render_id None, media_urls [], variant_*
+            # None == today's shared-clip behavior (byte-identical).
+            render_id = None
             variant_key = None
             variant_hook = None
-            media_path = target_clip.path
+            media_urls = []
             # ROOT FIX: the on-screen per-account hook is the FRAME-SEEING moment author's hook for THIS
             # handle (m.hooks_by_persona[handle]) — falling back to the shared moment hook. The blind
             # caption gate no longer authors a shipped hook. m guarded defensively (None -> no hook).
             hook_v = (m.hooks_by_persona.get(surf.account) or m.hook) if m is not None else None
             if cfg.creative_variation and hook_v:
-                variant_key = surface_key(surf.account, surf.platform.value)
-                tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080),
-                          Fmt.r16x9: (1920, 1080)}.get(aspect, (1080, 1920))
-                # the base clip may have been REUSED (not freshly rendered this run), so cfg.clips
-                # is not guaranteed to exist yet — burn_hook_only writes the variant + its .ass here
-                # and does no mkdir of its own; ensure the dir (matches clip.py's render_moment).
-                cfg.clips.mkdir(parents=True, exist_ok=True)
-                vpath = str(cfg.clips / f"{target_clip.id}_{_hash('variant', variant_key)}.mp4")
-                overlay.burn_hook_only(target_clip.path, vpath, hook_v, width=tw, height=th,
-                                       font=cfg.subtitle_font)   # fail-open: vpath always exists
-                media_path = vpath
+                variant_key = skey
                 variant_hook = hook_v
+                # content-address by (clip, hook): identical hooks on this aspect-clip share ONE render.
+                render_id = child_id("render", target_clip.id, hook_v)
+                if led.get_render(render_id) is None:
+                    tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080),
+                              Fmt.r16x9: (1920, 1080)}.get(aspect, (1080, 1920))
+                    src_id = src.id if src is not None else None
+                    vpath = cfg.render_path(src_batch, src_id, render_id, aspect)   # filed under clips/{batch}/{src}/
+                    overlay.burn_hook_only(target_clip.path, vpath, hook_v, width=tw, height=th,
+                                           font=cfg.subtitle_font)   # atomic + fail-open: vpath always exists
+                    led.add_render(Render(id=render_id, clip_id=target_clip.id, account=surf.account,
+                                          surface_key=skey, hook_text=hook_v, path=vpath,
+                                          state=RenderState.rendered, batch_id=src_batch, source_id=src_id))
+                media_urls = [f"file://{led.get_render(render_id).path}"]
             led.add_post(Post(
                 # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator
                 # approves it in the Review tab. publish_due/publish_now iterate only `queued`, so a fresh
@@ -165,12 +171,12 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 account=surf.account, account_id=surf.account_id, platform=surf.platform,
                 caption=caption, hashtags=cap.get("hashtags", []), aspect=aspect,
                 scheduled_time=sched, created_at=iso_z(datetime.now(timezone.utc)),   # wall-clock BIRTH (NOT in the pid)
-                media_urls=[f"file://{media_path}"] if cfg.creative_variation and hook_v else [],
+                media_urls=media_urls,
                 # AUDIT H1: stamp a stable, content-addressed CLIENT idempotency token at birth so
                 # an ambiguous publish is ALWAYS pollable (a real Blotato id overwrites it in
                 # blotato_rest). pid is content-addressed -> a re-run computes the identical token.
                 submission_id=f"fanops_{_hash('idemp', pid)}",
-                variant_key=variant_key, variant_hook=variant_hook,
+                render_id=render_id, variant_key=variant_key, variant_hook=variant_hook,
                 # P1 attribution key (one writer = here): the creative dims P3 groups reach by.
                 # first_frame_kind/cut_seconds from the rendered clip, clip_profile from the global
                 # video-type knob (its only home today — config.py). Absent dims default None cleanly.

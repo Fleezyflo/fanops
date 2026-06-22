@@ -32,11 +32,12 @@
   {% for day, day_rows in (groups if groups else [('', rows)]) %}
   {% if day %}<h3 class="day-head">{{ day }}</h3>{% endif %}
   <table>
-    <tr><th>Time</th><th>Account</th><th>Lift</th><th>Saves</th><th>Shares</th><th>Retention</th><th>Reach</th><th>Link</th><th><span class="vh">Reuse</span></th></tr>
+    <tr><th>Time</th><th>Account</th><th>Hook</th><th>Lift</th><th>Saves</th><th>Shares</th><th>Retention</th><th>Reach</th><th>Link</th><th><span class="vh">Reuse</span></th></tr>
     {% for r in day_rows %}
     <tr>
       <td>{{ (r.published_at or r.scheduled_time) | localdt or '—' }}</td>
       <td>{{ r.account }} <span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %}</td>
+      <td class="muted" title="on-screen hook">{% if r.variant_hook %}✦ {{ r.variant_hook }}{% else %}—{% endif %}</td>
       <td>{{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }}</td>
       <td>{{ r.saves if r.saves is not none else '—' }}</td>
       <td>{{ r.shares if r.shares is not none else '—' }}</td>

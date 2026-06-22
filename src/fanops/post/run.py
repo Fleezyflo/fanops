@@ -38,7 +38,12 @@ def _archive_published(cfg: Config, post: Post) -> None:
         rec = {"post_id": post.id, "clip_id": post.parent_id, "account": post.account,
                "platform": post.platform.value, "caption": post.caption, "hashtags": list(post.hashtags or []),
                "public_url": post.public_url, "scheduled_time": post.scheduled_time,
-               "created_at": post.created_at, "published_at": post.published_at}
+               "created_at": post.created_at, "published_at": post.published_at,
+               # Render foundation: durably record the per-account render identity (id + the on-screen hook
+               # text + the file path) so "what hook/media shipped for @a on this day" is reconstructable
+               # forever — even after the Render entity + its file are GC-swept from the live ledger.
+               "render_id": post.render_id, "variant_hook": post.variant_hook,
+               "media": (post.media_urls[0] if post.media_urls else None)}
         (d / f"{post.id}.json").write_text(json.dumps(rec, indent=2, ensure_ascii=False))
     except Exception as exc:
         try: get_logger(cfg)("publish", post.id, "archive_error", err=str(exc)[:160])

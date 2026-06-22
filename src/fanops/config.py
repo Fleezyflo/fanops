@@ -99,6 +99,18 @@ class Config:
         self.learn_doctor_path = self.control / "learn_doctor.json"   # F2 read-only learning field-shape verdict; M4 gates on it
         self.log_path = self.reports / "run.log"
 
+    def render_path(self, batch_id, source_id, render_id: str, aspect) -> str:
+        """Per-account Render file location. Hierarchical under clips/ by (batch, source) so every
+        ingest BATCH has its own space and the renders are auditable on disk by lineage (the operator's
+        'name/file/track all these things properly'); deterministic (same inputs -> same path) and ALWAYS
+        under self.base, so the Studio _bounded serve check passes. Creates the subtree (mirrors the
+        render_moment mkdir). aspect ('9:16') is colon-sanitized for the filename; the render_id is already
+        aspect-specific via its parent clip, so the suffix is a human-scan aid, not the uniqueness."""
+        a = str(getattr(aspect, "value", aspect)).replace(":", "x")
+        sub = self.clips / (batch_id or "unbatched") / (source_id or "nosrc")
+        sub.mkdir(parents=True, exist_ok=True)
+        return str(sub / f"{render_id}.{a}.mp4")
+
     def tuning(self) -> dict:
         """Operator overrides for the HOLD gate + optimization target, read from the OPTIONAL
         00_control/tuning.json (audit b). Shape:

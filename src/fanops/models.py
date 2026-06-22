@@ -39,6 +39,13 @@ class ClipState(str, Enum):
                                     # crosspost's captioned-selection AND _REUSABLE_CLIP_STATES) until an
                                     # operator approval transitions it to captioned. Reusing `held` is forbidden.
 
+class RenderState(str, Enum):
+    # Per-account Render lifecycle (mirrors the shippable arc of ClipState, minus the substrate-only
+    # states). A Render is BORN `rendered`; it rides its Post's approve->publish->analyze arc and is
+    # `retired` when GC sweeps it. Distinct enum (not ClipState) so the per-account artifact's lifecycle
+    # never entangles with the shared substrate Clip's caption/stitch states.
+    rendered = "rendered"; queued = "queued"; published = "published"; analyzed = "analyzed"; retired = "retired"
+
 class PostState(str, Enum):
     # awaiting_approval: a crossposted post is BORN here (post-approval-lifecycle). It is NOT publishable
     # — publish_due/publish_now iterate only `queued`, so an unapproved post is structurally never
@@ -207,8 +214,13 @@ class Post(BaseModel):
     # snapshot (byte-identical back-compat: every existing reader stays on it). An old ledger row lacking
     # this key defaults to [] (Pydantic default_factory; independent of extra="ignore").
     metrics_series: list[dict] = Field(default_factory=list)
+    render_id: Optional[str] = None     # per-account Render foundation: THE single authoritative pointer to the
+                                        # rendered file this account ships (Render owns the bytes + the hook).
+                                        # None == no per-account render (creative_variation OFF / no hook) -> the
+                                        # serve route falls to the shared Clip.path (byte-identical to old ledgers).
     variant_key: Optional[str] = None   # creative-variation attribution: deterministic per-(account,platform,clip) key
-    variant_hook: Optional[str] = None  # the burned-in hook text this account's variant used (observe-only)
+    variant_hook: Optional[str] = None  # the burned-in hook text this account's variant used (observe-only; a
+                                        # READ-ONLY mirror of Render.hook_text — Render is the single source of truth)
     # P1 attribution key (one writer = crosspost): the creative dims P3 aggregates reach by and P4 ranks.
     # All None on old ledgers + when the upstream dim is unknown (validate-or-default; never crashes a load).
     first_frame_kind: Optional[str] = None  # "visual" | "transcript" — how the opening frame was chosen
@@ -225,6 +237,29 @@ class Post(BaseModel):
                                         # run.py published transition. The Posted-archive day-anchor ("what shipped
                                         # Tuesday") — scheduled_time is INTENT day, not publish day. None until
                                         # published; old/in-flight rows fall back to scheduled_time in the grouper.
+
+
+class Render(BaseModel):
+    # The per-account SHIPPABLE artifact — a first-class child of the shared substrate Clip (the audit
+    # foundation: nothing owned the per-account render, so "which file does @a ship" was smeared across
+    # Post.parent_id + Post.media_urls + a loose orphan mp4, and the serve route GUESSED). A Render owns:
+    # the rendered bytes (`path`), the burned on-screen hook (`hook_text` — THE single home; Post.variant_hook
+    # is a read-only mirror), the upload cache (`media_url`, FIX-F44 parity), its lifecycle (`state`), and its
+    # lineage (`batch_id`/`source_id`, for batch-scoped filing + the durable archive). CONTENT-ADDRESSED by
+    # (clip_id, hook_text): two surfaces with the SAME hook compute the same id -> ONE render, ONE file (the
+    # anti-explosion dedup). Exists ONLY under creative_variation; a hookless surface has Post.render_id None
+    # and serves the shared Clip.path. Captions are NOT here — they stay surface-keyed on the shared Clip
+    # (the caption pipeline is intentionally untouched).
+    id: str                                     # child_id("render", clip_id, hook_text or "NO_HOOK")
+    clip_id: str                                # parent shared Clip (the substrate this render burned onto)
+    account: str                                # the handle this render belongs to (UI attribution)
+    surface_key: str                            # surface_key(account, platform) — UI attribution / grouping
+    hook_text: Optional[str] = None             # THE single source of truth for the per-account on-screen hook
+    path: str                                   # the rendered mp4 (filed under clips/{batch}/{source}/…)
+    media_url: Optional[str] = None             # per-render cached upload URL (FIX-F44 parity; uploaded once)
+    state: RenderState = RenderState.rendered
+    batch_id: Optional[str] = None              # denormalized from the source at mint (filing + archive lineage)
+    source_id: Optional[str] = None             # denormalized from the moment's source at mint (filing path)
 
 
 # ---- M3 (structural-hooks): the stitch_plan entity — the operator-approval spine ----
