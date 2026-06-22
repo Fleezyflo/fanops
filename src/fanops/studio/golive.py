@@ -18,14 +18,16 @@ THREE load-bearing invariants:
      "set". set_postiz_config tests the key by calling Postiz; it never hands it back."""
 from __future__ import annotations
 import os
-from typing import Optional
+import re
+from typing import NamedTuple, Optional
 
 from fanops import cutover
 from fanops.config import Config, _LIVE_BACKENDS
 from fanops.accounts import (Accounts, write_integration, add_account as _accounts_add_account,
                              set_status as _accounts_set_status, remove_account as _accounts_remove_account,
                              set_tag_lean as _accounts_set_tag_lean, set_persona as _accounts_set_persona,
-                             set_backend as _accounts_set_backend)
+                             set_backend as _accounts_set_backend, ensure_channel as _accounts_ensure_channel,
+                             load_accounts_safe)
 from fanops.autopilot import set_env_var
 from fanops.errors import CutoverError, PostizAuthError, ZernioAuthError
 from fanops.post import postiz, zernio
@@ -318,6 +320,122 @@ def map_account(cfg: Config, handle: str, platform: str, integration_id: str) ->
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not map {handle} {platform}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"handle": handle, "platform": platform, "account_id": integration_id})
+
+
+# ── M4: discover → adopt — one-click onboarding from the connected providers ───────────────────────────
+# Instead of hand-typing handles and pasting ids, the operator clicks Discover: FanOps lists every channel
+# its connected providers (Postiz + Zernio) already hold, proposes a handle for each, and the operator ticks
+# the ones to adopt. Adopt creates the account, maps the channel's id, and (confirm+creds gated) routes it to
+# its provider. Matching is DETERMINISTIC (exact normalized handle or an existing integration id) — FanOps
+# never silently merges two accounts on a guess; an unmatched channel is proposed NEW with an editable handle.
+
+class DiscoveredChannel(NamedTuple):
+    """One channel a connected provider already holds, proposed for adoption. `suggested_handle` is the
+    deterministic normalized handle (editable by the operator); `match` is an existing account handle when
+    this channel maps to one (by that exact handle OR by an already-mapped id), else None (a NEW account);
+    `already_mapped` is True when an existing account already carries THIS provider id for THIS platform."""
+    provider: str
+    id: str
+    name: str
+    platform: str
+    suggested_handle: str
+    match: Optional[str]
+    already_mapped: bool
+
+
+def _norm_handle(name: str) -> str:
+    """The deterministic handle proposed for a discovered channel: '@' + the name lowercased with every
+    non-alphanumeric stripped (so 'Mark Makmouly' -> '@markmakmouly', matching an existing '@markmakmouly').
+    A name that normalizes to empty (all punctuation/emoji) falls back to '@channel' — never a bare '@' —
+    and the operator edits it before adopting."""
+    body = re.sub(r"[^a-z0-9]", "", (name or "").lower())
+    return "@" + (body or "channel")
+
+
+def _match_channel(accts: Accounts, cid: str, platform: str, suggested: str) -> tuple[Optional[str], bool]:
+    """DETERMINISTIC match of a discovered (id, platform) channel to an existing account (handle, already_mapped).
+    By exact id FIRST (an account whose integrations[platform] or shared account_id already equals this id ->
+    that handle, already_mapped=True), else by exact normalized handle (suggested == an existing account's
+    normalized handle -> that handle, already_mapped=False), else (None, False) -> a NEW account. No fuzzy
+    matching: FanOps never merges two accounts on a guess."""
+    for a in accts.accounts:
+        if a.integrations.get(platform) == cid or (a.account_id and a.account_id == cid):
+            return a.handle, True
+    for a in accts.accounts:
+        if _norm_handle(a.handle) == suggested:
+            return a.handle, False
+    return None, False
+
+
+def discover_channels(cfg: Config) -> ActionResult:
+    """List every channel the CONNECTED providers (Postiz + Zernio) already hold, each proposed for one-click
+    adoption (handle + provider + id + deterministic match). FAIL-SOFT PER PROVIDER: a provider with no key is
+    skipped with a note; a provider whose list call fails is noted but never aborts the other. Refused (ok=False)
+    only when NEITHER provider is connected (nothing to discover). The operator confirms every row in adopt —
+    discover never writes. Never 500s (a torn accounts.json degrades to no matches via load_accounts_safe)."""
+    accts, _ = load_accounts_safe(cfg)                   # read-only; degrade rather than 500 on a torn registry
+    channels: list[DiscoveredChannel] = []
+    notes: list[str] = []
+    providers = ((cfg.postiz_api_key, "postiz", postiz.postiz_list_integrations, PostizAuthError, "POSTIZ_API_KEY"),
+                 (cfg.zernio_api_key, "zernio", zernio.zernio_list_accounts, ZernioAuthError, "ZERNIO_API_KEY"))
+    connected = 0
+    for key, name, lister, auth_exc, key_name in providers:
+        if not key:
+            notes.append(f"{name}: not connected (skipped)")
+            continue
+        connected += 1
+        try:
+            remote = lister(cfg)
+        except auth_exc:
+            notes.append(f"{name}: auth failed — check {key_name}")   # fixed text; the key is never echoed
+            continue
+        except Exception as exc:
+            notes.append(f"{name}: could not list channels ({str(exc)[:120]})")
+            continue
+        for r in remote:
+            suggested = _norm_handle(r.name)
+            match, mapped = _match_channel(accts, r.id, r.platform, suggested)
+            channels.append(DiscoveredChannel(provider=name, id=r.id, name=r.name, platform=r.platform,
+                                              suggested_handle=suggested, match=match, already_mapped=mapped))
+    if connected == 0:
+        return ActionResult(ok=False, error="connect Postiz or Zernio first to discover channels.")
+    return ActionResult(ok=True, detail={"channels": channels, "notes": notes})
+
+
+def adopt_channels(cfg: Config, selections: list, confirmed: bool = False) -> ActionResult:
+    """Adopt the operator-selected discovered channels: per row, ensure the account+platform exists, map the
+    channel's id, and (CONFIRM + creds gated) route it to its provider. PER-ROW ISOLATED: a bad row is recorded
+    and skipped, never aborting the batch. Account creation + id mapping ALWAYS happen (the channel is onboarded,
+    born inert); the CONFIRM gates ONLY the provider routing — without it the channel is mapped but unrouted (it
+    won't publish until routed), so a stray POST can never make a channel live. Returns counts + per-row outcomes;
+    always a clean result (never 500/raises), so the htmx panel can render it.
+
+    Each selection is a dict: {provider, id, platform, handle, persona?, tag_lean?}."""
+    adopted = routed = 0
+    rows: list[dict] = []
+    for sel in (selections or []):
+        handle = (sel.get("handle") or "").strip()
+        platform = (sel.get("platform") or "").strip()
+        provider = (sel.get("provider") or "").strip().lower()
+        cid = (sel.get("id") or "").strip()
+        if not (handle and platform and provider and cid):
+            rows.append({"handle": handle, "platform": platform, "ok": False, "error": "incomplete selection"})
+            continue
+        try:
+            _accounts_ensure_channel(cfg, handle, platform, persona=(sel.get("persona") or "").strip(),
+                                     tag_lean=(sel.get("tag_lean") or "").strip())
+            write_integration(cfg, handle, platform, cid)
+            adopted += 1
+            row = {"handle": handle, "platform": platform, "provider": provider, "ok": True, "routed": False}
+            if provider in _LIVE_BACKENDS and confirmed and cfg.backend_has_creds(provider):
+                _accounts_set_backend(cfg, handle, platform, provider)   # route this channel to its provider (live-capable)
+                row["routed"] = True; routed += 1
+            rows.append(row)
+        except (ValueError, KeyError) as exc:                # unknown platform/handle/lean — clean per-row error
+            rows.append({"handle": handle, "platform": platform, "ok": False, "error": str(exc)})
+        except Exception as exc:
+            rows.append({"handle": handle, "platform": platform, "ok": False, "error": str(exc)[:160]})
+    return ActionResult(ok=True, detail={"adopted": adopted, "routed": routed, "rows": rows})
 
 
 def remove_account(cfg: Config, handle: str) -> ActionResult:
