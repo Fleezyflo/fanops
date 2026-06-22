@@ -61,6 +61,15 @@ def _window_frames(cfg: Config, src, start: float, end: float) -> list[str]:
 def _token(pick: MomentPick) -> str:
     return f"{pick.start:.2f}-{pick.end:.2f}"
 
+def _peak_in_window(p, cs: float, ce: float) -> bool:
+    """True iff a signal peak's timecode falls in [cs,ce]. Fail-open PER PEAK: a malformed peak (not a
+    dict, missing/non-numeric `t`) is simply excluded, never an exception — a bad peak must not error the
+    whole source's hook gate (the never-wedge contract)."""
+    try:
+        return isinstance(p, dict) and cs <= float(p.get("t")) <= ce
+    except (TypeError, ValueError):
+        return False
+
 # ffprobe durations round; a pick may overrun probed EOF by this much before it's "past the end".
 _EOF_TOLERANCE_S = 0.5
 # shorter than this can't carry a hook + payoff — reject as noise
@@ -191,8 +200,7 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         if latest_request_id(cfg, "moment_hooks", key) is not None:
             continue                                # write-ONCE: never re-stamp an existing (pending/answered) gate
         cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the cut the renderer makes
-        peaks = [p for p in (src.signal_peaks or [])
-                 if isinstance(p, dict) and cs <= float(p.get("t", -1.0)) <= ce]   # window-scoped transients
+        peaks = [p for p in (src.signal_peaks or []) if _peak_in_window(p, cs, ce)]   # window-scoped transients (fail-open per peak)
         payload = MomentHookRequest(source_id=source_id, moment_id=m.id, token=m.content_token,
                                     request_id="", start=m.start, end=m.end, reason=m.reason,
                                     transcript_excerpt=m.transcript_excerpt, signal_score=m.signal_score,
