@@ -8,10 +8,11 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
+from fanops.accounts import Accounts
 from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState
-from fanops.post import get_poster, get_media_uploader, Poster
+from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media
 from fanops.timeutil import parse_iso as _parse, iso_z
 from fanops.log import get_logger
@@ -60,23 +61,32 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
 _NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at")
 
 
-def _ensure_media(led: Ledger, cfg: Config, post: Post) -> None:
+def _post_backend(cfg: Config, accounts: Accounts, post: Post) -> str:
+    """The poster backend for THIS post: the per-(handle, platform) override in accounts.json, else the
+    global FANOPS_POSTER (byte-identical when no override is set). Zernio slice 2 — lets one publish run
+    route IG through Postiz and TikTok through Zernio. A post whose account/platform isn't in accounts.json
+    (a stale/hand-made post) cleanly falls back to the global."""
+    return accounts.resolve_backend(post.account, post.platform) or cfg.poster_backend
+
+
+def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str) -> None:
     """Resolve post.media_urls to network-fetchable URLs (FIX F44 cache on the Clip). In-memory only;
-    runs in the LOCK-FREE network phase."""
+    runs in the LOCK-FREE network phase. `backend` is the POST's resolved backend (per-account routing),
+    not the global — so a TikTok-via-Zernio variant uploads to Zernio even if the global is Postiz."""
     if not post.media_urls:
         post.media_urls = [ensure_clip_media(led, cfg, post.parent_id)]
-    elif cfg.poster_backend != "dryrun":
+    elif backend != "dryrun":
         # AUDIT (stage-6 HIGH): a variant post is BORN with media_urls=["file://<variant render>"]
         # (crosspost.py stamps the per-account hook-burned file). Pre-stamped media used to skip the
         # upload and ship the LOCAL path to Blotato, which cannot fetch it — every live variant post
         # died. Upload the variant FILE itself, NOT ensure_clip_media (the clip cache holds the
         # parent's BASE render — using it would drop the burned hook). dryrun keeps file:// (offline).
-        _upload = get_media_uploader(cfg)
+        _upload = get_media_uploader(cfg, backend)
         post.media_urls = [_upload(cfg, Path(u.removeprefix("file://")))
                            if u.startswith("file://") else u for u in post.media_urls]
 
 
-def _publish_one(cfg: Config, poster: Poster, post_id: str) -> str | None:
+def _publish_one(cfg: Config, post_id: str, backend: str) -> str | None:
     """Publish ONE post via claim -> network -> finalize, with the network OUTSIDE the ledger flock.
 
     CLAIM (tight txn): re-read under lock; publish ONLY if still 'queued' (the double-post guard — a
@@ -100,8 +110,9 @@ def _publish_one(cfg: Config, poster: Poster, post_id: str) -> str | None:
     post = led.posts.get(post_id)
     if post is None or post.state is not PostState.submitting:
         return None                                    # vanished/changed under us — leave it be
+    poster = get_poster(cfg, backend)                  # per-account backend (slice 2), default = global
     try:
-        _ensure_media(led, cfg, post)
+        _ensure_media(led, cfg, post, backend)
         led = poster.publish(led, post.id)
         if post.state is PostState.submitted:
             post.state = PostState.published
@@ -154,13 +165,13 @@ def publish_due(cfg: Config, *, now: str | None = None) -> dict:
     'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
     job — auto-resubmitting could double-post a live post, FIX F11). A FATAL AuthError propagates
     (halt the queue, H8). Returns a small summary."""
-    poster = get_poster(cfg)
     cutoff = _now(now)
+    accounts = Accounts.load(cfg)                      # one load; per-post backend resolved off it (slice 2)
     led = Ledger.load(cfg)                             # lock-free snapshot of the due queue
-    due = [post.id for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
+    due = [post for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
     published = 0
-    for pid in due:
-        if _publish_one(cfg, poster, pid) == PostState.published.value:
+    for post in due:
+        if _publish_one(cfg, post.id, _post_backend(cfg, accounts, post)) == PostState.published.value:
             published += 1
     return {"due": len(due), "published": published}
 
@@ -171,4 +182,6 @@ def publish_post(cfg: Config, post_id: str) -> str | None:
     to a single post. A missing/non-queued post is a no-op (returns None). A FATAL AuthError propagates
     (halt), matching publish_due. Returns the final post-state value (e.g. 'published'/'failed') or
     None when nothing was claimable."""
-    return _publish_one(cfg, get_poster(cfg), post_id)
+    post = Ledger.load(cfg).posts.get(post_id)         # resolve the per-account backend for this one post
+    backend = _post_backend(cfg, Accounts.load(cfg), post) if post is not None else cfg.poster_backend
+    return _publish_one(cfg, post_id, backend)

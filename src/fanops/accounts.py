@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, NamedTuple
 from pydantic import BaseModel, Field
-from fanops.config import Config
+from fanops.config import Config, _VALID_BACKENDS
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform
 from fanops.hashtags import TAG_LEANS                 # the valid per-account tag_lean names (persona diff)
@@ -35,6 +35,12 @@ class Account(BaseModel):
     # resolve to its OWN id. ADDITIVE: empty on a legacy account, which then resolves via account_id —
     # no migration. A platform absent here falls back to account_id (so a partly-mapped account works).
     integrations: dict[str, str] = Field(default_factory=dict)
+    # Per-platform poster BACKEND override keyed by Platform.value (e.g. {"tiktok": "zernio"}). ADDITIVE,
+    # empty on every legacy account -> resolve_backend returns None -> the publish loop falls back to the
+    # GLOBAL FANOPS_POSTER (byte-identical to today). An override lets IG publish via Postiz while TikTok
+    # publishes via Zernio in the SAME run. integrations[platform] still holds the id; this names WHICH
+    # backend that id belongs to.
+    backends: dict[str, str] = Field(default_factory=dict)
 
 class Surface(NamedTuple):
     account: str
@@ -77,6 +83,16 @@ class Accounts:
                     raise KeyError(f"{handle} has no account_id for {where} (status={a.status.value})")
                 return chosen
         raise KeyError(handle)
+
+    def resolve_backend(self, handle: str, platform: Optional[Platform] = None) -> Optional[str]:
+        """The per-(handle, platform) poster BACKEND override, or None when unset (the publish loop then
+        uses the global FANOPS_POSTER — byte-identical to today). Unknown handle / no override -> None,
+        never raises: a missing override is the NORMAL case, not an error. Mirrors resolve_account_id's
+        per-platform lookup but with no fallback (the fallback is the GLOBAL backend, applied by the caller)."""
+        for a in self.accounts:
+            if a.handle == handle:
+                return a.backends.get(platform.value) if platform else None
+        return None
 
     def validate(self) -> list[str]:
         """Config problems to surface before a run. Per-platform: each active account's every platform
@@ -162,6 +178,38 @@ def write_integration(cfg: Config, handle: str, platform: str, integration_id: s
                 if not isinstance(integ, dict): integ = {}        # first (handles SHOULD be unique — add_account
                 integ[str(platform)] = str(integration_id)        # rejects dupes — but a hand-edit must not diverge)
                 a["integrations"] = integ; found = True
+        if not found:
+            raise KeyError(handle)
+        _write_accounts_atomic(p, raw)
+    return handle
+
+
+def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
+    """Set or CLEAR ONE (handle, platform) channel's poster BACKEND override in accounts.json atomically —
+    the per-account routing knob (e.g. route @tk's tiktok to "zernio" while the global stays "postiz").
+    A blank or "default" backend CLEARS the override (-> falls back to the global FANOPS_POSTER). Validates
+    at the control-file boundary: platform a known Platform.value (ValueError), backend a known poster
+    backend (ValueError) — never write a key/value that won't reload. Scans ALL rows (dup-handle safety,
+    mirrors write_integration); preserves every sibling, unknown field, and the account's other fields.
+    Unknown handle -> KeyError (caller -> clean ActionResult). The id itself stays in integrations[platform]."""
+    platform = getattr(platform, "value", platform)              # accept a Platform enum or its value string
+    if platform not in {pf.value for pf in Platform}:
+        raise ValueError(f"unknown platform: {platform!r}")
+    backend = (backend or "").strip().lower()
+    clearing = backend in ("", "default")
+    if not clearing and backend not in _VALID_BACKENDS:
+        raise ValueError(f"unknown backend: {backend!r} (valid: {', '.join(sorted(_VALID_BACKENDS))})")
+    p = cfg.accounts_path
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        found = False
+        for a in accounts:                                       # scan ALL rows (dup-handle safety)
+            if isinstance(a, dict) and a.get("handle") == handle:
+                bk = a.get("backends")
+                if not isinstance(bk, dict): bk = {}
+                if clearing: bk.pop(str(platform), None)
+                else: bk[str(platform)] = backend
+                a["backends"] = bk; found = True
         if not found:
             raise KeyError(handle)
         _write_accounts_atomic(p, raw)

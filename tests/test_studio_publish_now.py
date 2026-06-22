@@ -55,10 +55,10 @@ def test_publish_now_surfaces_fatal_auth(tmp_path, monkeypatch):
     import fanops.post.run as run
     monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); _seed(cfg, media=["file://x.mp4"])         # pre-stamped -> skips ensure_clip_media
-    monkeypatch.setattr(run, "get_media_uploader", lambda cfg: (lambda c, p: "https://x/u.mp4"))
+    monkeypatch.setattr(run, "get_media_uploader", lambda cfg, backend=None: (lambda c, p: "https://x/u.mp4"))
     class Boom:
         def publish(self, led, post_id): raise BlotatoAuthError("401 unauthorized")
-    monkeypatch.setattr(run, "get_poster", lambda cfg: Boom())
+    monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: Boom())
     res = actions.publish_now(cfg, "p1", confirmed=True)
     assert res.ok is False and "FATAL" in res.error and "BLOTATO_API_KEY" in res.error
 
