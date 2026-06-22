@@ -798,13 +798,28 @@ def golive_demoted_accounts(cfg: Config) -> list:
         return []
 
 
+def _publish_mode_label(cfg: Config) -> str:
+    """The publish-mode label for the status banner under the provider model (M3): 'dryrun' when the system
+    is not live, else the distinct providers that would ACTUALLY publish (e.g. 'postiz' / 'postiz, zernio'),
+    else 'live' (live but no resolved channel yet). Replaces the old cfg.poster_backend, which now reads
+    'dryrun' on a per-channel-provider deployment even when live — a contradictory 'LIVE (dryrun)' banner.
+    Fail-open: any accounts read error degrades to 'live' (the is_live truth is already shown separately)."""
+    if not cfg.is_live:
+        return "dryrun"
+    try:
+        provs = sorted({p for _, _, p in Accounts.load(cfg).live_ready_channels()})
+        return ", ".join(provs) if provs else "live"
+    except Exception:
+        return "live"
+
+
 def home_status(cfg: Config) -> HomeStatus:
     """Lock-free, fail-open read-model for GET / (the status home): connection state per account (via the
     shared golive_accounts helper — NEVER golive_status, which also runs doctor_report on every load) +
     headline counts + per-account post counts, all from ONE Ledger.load. A torn ledger -> zeroed counts +
     batches=None + empty by_account, never a 500."""
     accounts = golive_accounts(cfg)                   # once-bound, already fail-open (no doctor_report on /)
-    mode = cfg.poster_backend
+    mode = _publish_mode_label(cfg)                    # provider-aware (M3); 'dryrun' when not live
     try:
         from collections import Counter
         led = Ledger.load(cfg)
@@ -864,7 +879,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         report = {"checks": [], "notes": ["readiness check unavailable"]}
     from fanops.validation_gate import learning_validated
     return GoLiveStatus(
-        mode=cfg.poster_backend,
+        mode=_publish_mode_label(cfg),               # provider-aware (M3); 'dryrun' when not live
         is_live=cfg.is_live,
         postiz_url=cfg.postiz_url,                    # non-secret; shown so the operator can confirm config
         key_set=cfg.postiz_api_key is not None,       # BOOL only — the API key value is NEVER exposed

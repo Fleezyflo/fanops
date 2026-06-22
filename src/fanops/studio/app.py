@@ -745,8 +745,9 @@ def create_app(cfg: Config) -> Flask:
 
     @app.post("/golive/live")
     def do_golive_live():
-        # The ONLY route that can set FANOPS_POSTER=postiz; confirm derived from the checkbox, and
-        # go_live itself re-gates on readiness — a stray POST can't flip the system live.
+        # The ONLY route that can set FANOPS_LIVE=1 (the global live switch — provider is per-channel);
+        # confirm derived from the checkbox, and go_live itself re-gates on readiness (≥1 channel with a
+        # provider+creds) — a stray POST can't flip the system live.
         return _golive_panel(golive.go_live(cfg, confirmed=bool(request.form.get("confirm"))))
 
     @app.post("/golive/dryrun")

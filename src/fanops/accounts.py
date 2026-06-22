@@ -109,6 +109,21 @@ class Accounts:
             return self.cfg.poster_backend                       # legacy bridge: keep the running channels live
         return None
 
+    def live_ready_channels(self) -> list[tuple[str, str, str]]:
+        """Active (handle, platform, provider) channels that would ACTUALLY publish once the system is live —
+        each one's effective provider (M3) resolves AND that provider's creds are present. This is the
+        readiness primitive go_live gates on (flipping live with zero publishable channels would post
+        nothing) and the status banner derives its mode label from. Excludes: inactive accounts, channels
+        with no provider (no explicit + no live legacy bridge), and providers whose API key is absent.
+        Pure reads (no I/O); never raises — a torn registry surfaces upstream via load_accounts_safe."""
+        out = []
+        for a in self.active():
+            for p in a.platforms:
+                prov = self.effective_provider(a.handle, p)
+                if prov and self.cfg.backend_has_creds(prov):
+                    out.append((a.handle, p.value, prov))
+        return out
+
     def validate(self) -> list[str]:
         """Config problems to surface before a run. Per-platform: each active account's every platform
         must resolve to an id (its integrations[platform] OR the shared account_id) — so a multi-platform

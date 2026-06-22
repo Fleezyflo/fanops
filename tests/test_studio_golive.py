@@ -17,7 +17,8 @@ from fanops.studio import golive
 # restoration (pytest only tracks a delitem when the key was present), so the production dual-write
 # (os.environ[...]=...) would otherwise leak FANOPS_POSTER/POSTIZ_* into later tests — e.g. flipping
 # test_studio_run's dryrun assertions to postiz. Restore-to-baseline after every test fixes it at the source.
-_ENV_KEYS = ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_CREATIVE_VARIATION", "FANOPS_ACCOUNT_CASTING")
+_ENV_KEYS = ("FANOPS_LIVE", "FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "ZERNIO_API_KEY",
+             "FANOPS_CREATIVE_VARIATION", "FANOPS_ACCOUNT_CASTING")
 _ENV_BASELINE = {k: os.environ.get(k) for k in _ENV_KEYS}
 
 @pytest.fixture(autouse=True)
@@ -29,7 +30,7 @@ def _restore_golive_env():
 
 def _clean(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    for k in ("FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_CREATIVE_VARIATION", "FANOPS_ACCOUNT_CASTING"):
+    for k in _ENV_KEYS:
         monkeypatch.delenv(k, raising=False)             # clean start + registers the key for teardown-restore
     return Config(root=tmp_path)
 
@@ -169,48 +170,52 @@ def test_map_account_blank_platform_rejected(tmp_path, monkeypatch):
     assert res.ok is False and "platform" in res.error.lower()
 
 
-# ---- go_live: the ONLY FANOPS_POSTER=postiz setter; gated on readiness + explicit confirm ----
-def test_go_live_blocked_unconfigured(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
+# ---- go_live: the ONLY FANOPS_LIVE=1 setter (global switch, NOT a backend pick); gated on a
+# provider-bearing channel + explicit confirm. A channel needs an explicit provider OR the legacy
+# FANOPS_POSTER bridge to count as ready. ----
+def test_go_live_blocked_no_ready_channel(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)                  # no accounts, no provider, no creds
     res = golive.go_live(cfg, confirmed=True)
-    assert res.ok is False and "POSTIZ_URL" in res.error
-    assert cfg.poster_backend == "dryrun"                # NOT switched
+    assert res.ok is False and "provider" in res.error.lower()
+    assert cfg.is_live is False                          # NOT switched
 
 def test_go_live_blocked_active_account_missing_id(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("POSTIZ_URL", "https://x"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
+    # validate() fires before readiness: an active account with an empty id is named, even with a provider.
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active",
+                          "backends": {"instagram": "postiz"}}])
     res = golive.go_live(cfg, confirmed=True)
     assert res.ok is False and "@a" in res.error
-    assert cfg.poster_backend == "dryrun"
+    assert cfg.is_live is False
 
 def test_go_live_needs_confirm(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("POSTIZ_URL", "https://x"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                          "backends": {"instagram": "postiz"}}])
     res = golive.go_live(cfg, confirmed=False)
     assert res.ok is False and "confirm" in res.error.lower()
-    assert cfg.poster_backend == "dryrun"                # ready, but not shipped without confirm
+    assert cfg.is_live is False                           # ready, but not shipped without confirm
 
-def test_go_live_success_flips_backend_dual_write(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("POSTIZ_URL", "https://x"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+def test_go_live_success_writes_fanops_live_dual_write(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                          "backends": {"instagram": "postiz"}}])
     res = golive.go_live(cfg, confirmed=True)
-    assert res.ok is True and res.detail["mode"] == "postiz"
-    assert os.environ["FANOPS_POSTER"] == "postiz"                          # in-process
-    assert "FANOPS_POSTER=postiz" in (tmp_path / ".env").read_text()        # durable
-    assert cfg.poster_backend == "postiz"
+    assert res.ok is True and res.detail["live"] is True
+    assert os.environ["FANOPS_LIVE"] == "1"                                 # in-process
+    assert "FANOPS_LIVE=1" in (tmp_path / ".env").read_text()               # durable
+    assert "FANOPS_POSTER" not in (tmp_path / ".env").read_text()           # provider is per-channel, not global
+    assert cfg.is_live is True
 
 
-# ---- go_dryrun: always allowed (safe direction), no confirm ----
+# ---- go_dryrun: always allowed (safe direction), no confirm; writes FANOPS_LIVE=0 ----
 def test_go_dryrun_flips_back(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("FANOPS_LIVE", "1")
     res = golive.go_dryrun(cfg)
-    assert res.ok is True and res.detail["mode"] == "dryrun"
-    assert cfg.poster_backend == "dryrun"
-    assert "FANOPS_POSTER=dryrun" in (tmp_path / ".env").read_text()
+    assert res.ok is True and res.detail["live"] is False
+    assert cfg.is_live is False
+    assert "FANOPS_LIVE=0" in (tmp_path / ".env").read_text()
 
 
 # ---- golive_status read-model (views.golive_status): mode, config-set bools, active accounts to map,
@@ -370,24 +375,23 @@ def test_post_golive_account_add_route_rejects_no_platform(tmp_path, monkeypatch
     assert not cfg.accounts_path.exists() or json.loads(cfg.accounts_path.read_text())["accounts"] == []
 
 def test_post_golive_dryrun_route_sets_dryrun(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    monkeypatch.setenv("POSTIZ_URL", "https://x"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_LIVE", "1")
     r = _client(cfg).post("/golive/dryrun")
-    assert r.status_code == 200 and cfg.poster_backend == "dryrun"
+    assert r.status_code == 200 and cfg.is_live is False
 
 def test_post_golive_live_route_blocked_unconfigured(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     r = _client(cfg).post("/golive/live", data={"confirm": "1"})
     assert r.status_code == 200
-    assert cfg.poster_backend == "dryrun"             # still dryrun — blocked by readiness
-    assert b"POSTIZ_URL" in r.data                     # the panel shows the failing reason
+    assert cfg.is_live is False                        # still dryrun — blocked by readiness
+    assert b"provider" in r.data                        # the panel shows the failing reason
 
 def test_post_golive_live_route_success_flips_and_shows_live(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("POSTIZ_URL", "https://x"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                          "backends": {"instagram": "postiz"}}])
     r = _client(cfg).post("/golive/live", data={"confirm": "1"})
-    assert r.status_code == 200 and cfg.poster_backend == "postiz"
+    assert r.status_code == 200 and cfg.is_live is True
     assert b"LIVE" in r.data
 
 
