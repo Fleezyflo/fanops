@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from pathlib import Path
 from typing import NamedTuple
 import requests
 from fanops.config import Config
@@ -75,6 +76,49 @@ def build_zernio_payload(*, account_id: str, platform: str, content: str,
     if media:
         payload["media"] = media
     return payload
+
+
+def _extract_zernio_media_url(body) -> str | None:
+    # The media-upload response URL key isn't pinned (integration checkpoint). Accept a bare URL string,
+    # a top-level url/mediaUrl/secureUrl, or a nested {"media": {...}} / {"data": {...}}.
+    if isinstance(body, str) and body.startswith("http"):
+        return body
+    if not isinstance(body, dict):
+        return None
+    for k in ("url", "mediaUrl", "secureUrl", "secure_url"):
+        v = body.get(k)
+        if isinstance(v, str) and v:
+            return v
+    for k in ("media", "data"):
+        nested = body.get(k)
+        if isinstance(nested, dict):
+            return _extract_zernio_media_url(nested)
+    return None
+
+
+def zernio_upload_media(cfg: Config, path: Path) -> str:
+    """Upload a local file to Zernio (multipart POST /media/upload) and return its hosted URL, to reference
+    in build_zernio_payload's media[]. Mirrors postiz_upload_media's safety: 401 -> typed ZernioAuthError
+    (halt); any other non-2xx -> RuntimeError with the response BODY WITHHELD (a misconfigured proxy can
+    echo the Bearer header into an error page; it reaches error_reason via the publish-failure catch).
+    The endpoint path + response URL key are INTEGRATION CHECKPOINTS — locked by SHAPE in tests, verified
+    live by the operator at first publish."""
+    headers = {"Authorization": f"Bearer {_key(cfg)}"}
+    with open(path, "rb") as fh:
+        resp = requests.post(f"{_base(cfg)}/media/upload", headers=headers,
+                             files={"file": (Path(path).name, fh)}, timeout=120)
+    if resp.status_code == 401:
+        raise ZernioAuthError("Zernio 401 on media upload — check ZERNIO_API_KEY (response body withheld)")
+    if resp.status_code >= 300:
+        raise RuntimeError(f"Zernio upload failed ({resp.status_code}) — body withheld")
+    url = None
+    try:
+        url = _extract_zernio_media_url(resp.json())
+    except Exception:
+        url = None
+    if not url:
+        raise RuntimeError("Zernio upload 2xx but no recognizable media url (body withheld)")
+    return url
 
 
 def zernio_list_accounts(cfg: Config) -> list[ZernioAccount]:

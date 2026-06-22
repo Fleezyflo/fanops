@@ -39,6 +39,9 @@ def get_media_uploader(cfg: Config, backend: str | None = None) -> Callable[[Con
     if backend == "postiz":
         from fanops.post.postiz import postiz_upload_media
         return postiz_upload_media
+    if backend == "zernio":
+        from fanops.post.zernio import zernio_upload_media
+        return zernio_upload_media
     if backend == "dryrun":
         from fanops.post.media import dryrun_media_url
         return lambda c, p: dryrun_media_url(p)
