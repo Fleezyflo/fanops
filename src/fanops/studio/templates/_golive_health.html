@@ -1,0 +1,8 @@
+{# Issue 1 — live system-dependency strip, htmx-loaded into Go-Live §4 (GET /golive/health). The system
+   auto-starts these on launch; this shows their live state so nothing sits silently off. #}
+<p class="muted"><strong>System dependencies</strong> — live (auto-started on launch; nothing sits silently off).</p>
+<ul class="checks deps">
+  {% for d in health %}
+    <li class="{{ 'ok' if d.ok else 'err' }}">{{ '●' if d.ok else '○' }} {{ d.name }} — {{ d.detail }}</li>
+  {% endfor %}
+</ul>

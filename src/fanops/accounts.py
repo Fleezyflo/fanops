@@ -290,6 +290,49 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
     return handle
 
 
+def ensure_channel(cfg: Config, handle: str, platform: str, persona: str = "", tag_lean: str = "") -> bool:
+    """Idempotently ensure a (handle, platform) channel EXISTS in accounts.json atomically — the adopt-side
+    primitive (M4 discover→adopt): a discovered remote channel becomes an onboardable account+platform in
+    ONE write. If the handle is absent → append a NEW account (status active, [platform], empty account_id —
+    born inert; the id is mapped next via write_integration). If the handle EXISTS but lacks this platform →
+    append the platform (preserving every other field, sibling, and integration). If it already has the
+    platform → no-op. persona/tag_lean SEED a NEW account only — they are IGNORED when the handle already
+    exists (an existing account keeps its own persona/lean; change those via set_persona/set_tag_lean), so
+    adopting a second platform never clobbers an account's persona. Scans ALL rows (no break) so a hand-edited
+    duplicate handle gains the platform on EVERY copy — consistent with write_integration/set_backend, which
+    adopt calls next. Validates handle non-blank + platform a known Platform.value + tag_lean (when given) at
+    the control-file boundary. Returns True iff it changed accounts.json. Unlike add_account it NEVER raises
+    on a duplicate handle (idempotent by design); it raises ValueError only on bad input."""
+    handle = (handle or "").strip()
+    if not handle:
+        raise ValueError("handle is required")
+    platform = getattr(platform, "value", platform)              # accept a Platform enum or its value string
+    if platform not in {pf.value for pf in Platform}:
+        raise ValueError(f"unknown platform: {platform!r}")
+    lean = (tag_lean or "").strip().lower()
+    if lean and lean not in TAG_LEANS:
+        raise ValueError(f"unknown tag_lean: {tag_lean!r}")
+    p = cfg.accounts_path
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        found = changed = False
+        for a in accounts:                                       # scan ALL rows (dup-handle safety; mirrors write_integration)
+            if isinstance(a, dict) and a.get("handle") == handle:
+                found = True
+                plats = a.get("platforms")
+                if not isinstance(plats, list): plats = []
+                if platform not in plats:
+                    plats.append(platform); a["platforms"] = plats; changed = True
+        if not found:
+            accounts.append({"handle": handle, "account_id": "", "platforms": [platform],
+                             "status": "active", "access": "postiz",
+                             "persona": (persona or "").strip(), "tag_lean": lean or None, "integrations": {}})
+            changed = True
+        if changed:
+            _write_accounts_atomic(p, raw)
+        return changed
+
+
 def set_status(cfg: Config, handle: str, status: str) -> str:
     """Change ONE account's status atomically (the Go-Live DEMOTE control — e.g. an active placeholder ->
     planned, so it leaves active() and the publishing fan-out without losing its row). Validates status at
