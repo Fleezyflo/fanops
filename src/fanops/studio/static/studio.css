@@ -299,6 +299,54 @@ td input { width:auto; min-width:9rem; }
 form { margin:var(--s-3) 0; }
 form + form { margin-top:var(--s-2); }
 
+/* ── Account-first: batches, casting, affinity, persona ─────────────────── */
+/* A Batch is the account-first unit. In Review it is a collapsible card with an accent spine; its
+   <summary> reads as a real title, overriding the dim generic <summary>. The disclosure marker stays
+   (block summary keeps it) as the collapse affordance. */
+details.batch { background:linear-gradient(180deg,var(--surface-2),var(--surface-1)); margin:var(--s-4) 0; box-shadow:var(--elev-1); }
+details.batch > summary { font:600 var(--t-lg) var(--sans); letter-spacing:-.01em; color:var(--ink); padding:.7rem .9rem; border-left:3px solid var(--accent); }
+details.batch > summary:hover { color:var(--ink); background:oklch(100% 0 0 / .03); }
+details.batch[open] > summary { border-bottom:1px solid var(--line); }
+details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
+.batch-targets { color:var(--accent-bright); }
+.batch-meta { padding:.45rem .9rem 0; margin:0; }
+.batch-excluded { color:var(--warn); }
+.batch-scope { margin:.2rem 0 var(--s-3); }
+/* a day sub-header inside a batch / over a Schedule group — quieter than a section h3, no accent dot */
+.day-head { font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase; letter-spacing:.1em; color:var(--faint);
+  margin:var(--s-3) 0 var(--s-2); grid-column:1 / -1; }
+.day-head::before { content:none; }
+/* the «batch title» tag in Schedule/Posted table cells */
+.batch-tag { font-family:var(--serif); font-style:italic; }
+/* cast-to affinity row on a Review card */
+.cast-affinity { display:flex; align-items:center; flex-wrap:wrap; gap:.3rem; margin:.3rem 0; }
+.chip { display:inline-flex; align-items:center; padding:.1rem .5rem; border:1px solid var(--line-bright); border-radius:var(--r-pill);
+  font:600 var(--t-eyebrow) var(--sans); background:var(--surface-2); color:var(--muted); }
+.chip.ro { color:var(--faint); }
+/* batch rollup stat strip (Posted) */
+.batch-rollup { padding:.5rem .8rem; background:var(--surface-1); border:1px solid var(--line); border-left:3px solid var(--accent);
+  border-radius:var(--r-sm); margin:0 0 var(--s-3); }
+/* casting/routing explainer strip shown on Review + Run when casting is ON */
+.cast-state { padding:.45rem .75rem; background:var(--accent-dim); border:1px solid var(--line); border-radius:var(--r-sm); margin:.3rem 0 var(--s-3); }
+.cast-state strong { color:var(--accent-bright); }
+/* Home: the headline count cluster + section lists */
+.count-strip { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .6rem; margin:var(--s-3) 0 var(--s-4); }
+.count-strip span { display:inline-flex; align-items:baseline; gap:.35rem; }
+.count-strip strong { font:600 var(--t-lg) var(--mono); color:var(--ink); font-variant-numeric:tabular-nums; }
+.home-batches ul, .home-accounts ul { list-style:none; padding:0; margin:.4rem 0; display:grid; gap:.35rem; }
+.home-batches li, .home-accounts li { padding:.5rem .75rem; background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r-sm); }
+.warn { color:var(--warn); }
+/* Review approve action bar (Phase 5 makes it sticky) */
+.approve-bar { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; padding:.6rem .8rem; background:var(--surface-2);
+  border:1px solid var(--line); border-radius:var(--r-md); margin:0 0 var(--s-3); }
+/* Go-Live: cohesive routing / persona / demoted blocks */
+.account-hooks { margin-top:var(--s-3); padding:var(--s-3); background:oklch(16% 0.012 280 / .4); border:1px solid var(--line); border-radius:var(--r-md); }
+.account-hooks > p { margin-top:0; }
+.persona-edit { display:grid; gap:.4rem; }
+.persona-pick, .lean-pick { font-size:var(--t-meta); color:var(--muted); }
+.demoted-accounts { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-top:.5rem; padding-top:.5rem; border-top:1px solid var(--line); }
+.demoted-accounts p { flex-basis:100%; margin:0; }
+
 /* ── Motion safety ──────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; } }
 
