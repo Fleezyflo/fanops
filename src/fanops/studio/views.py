@@ -151,6 +151,9 @@ class GoLiveStatus:
     learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
     creative_variation: bool = False   # per-account on-screen hooks ON (FANOPS_CREATIVE_VARIATION) — persona diff
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
+    cast_exclusive: bool = False       # exclusive routing ON (FANOPS_CAST_EXCLUSIVE) — 1 moment -> best-fit account, drop poor-fit
+    cast_pick_budget: int = 3          # budget-mode moments/account/run (FANOPS_CAST_PICK_BUDGET); bypassed when cast_exclusive
+    clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
 
 
 @dataclass
@@ -836,7 +839,10 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         notes=report["notes"],
         learning_validated=learning_validated(cfg),    # M3: shows whether the loop is unfrozen (cutover done)
         creative_variation=cfg.creative_variation,     # per-account on-screen hooks toggle state (persona diff)
-        account_casting=cfg.account_casting)           # per-account moment casting toggle state (persona diff)
+        account_casting=cfg.account_casting,           # per-account moment casting toggle state (persona diff)
+        cast_exclusive=cfg.cast_exclusive,             # exclusive routing toggle state (volume governor)
+        cast_pick_budget=cfg.cast_pick_budget,         # budget-mode pick count
+        clip_profile=cfg.clip_profile)                 # clip-length band (talk/song)
 
 
 def gate_rows(cfg: Config) -> list[dict]:

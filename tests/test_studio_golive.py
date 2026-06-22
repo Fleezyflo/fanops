@@ -574,6 +574,61 @@ def test_golive_status_reflects_account_casting(tmp_path, monkeypatch):
     golive.set_account_casting(cfg, True)
     assert views.golive_status(cfg).account_casting is True                   # mirrors the flag after a toggle
 
+
+# ---- Phase 2: casting / volume levers (exclusive routing, pick budget, clip profile) ----
+
+def test_set_cast_exclusive_dual_writes_both_directions(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    assert golive.set_cast_exclusive(cfg, True).ok is True
+    assert "FANOPS_CAST_EXCLUSIVE=1" in (tmp_path / ".env").read_text()       # durable
+    assert cfg.cast_exclusive is True                                         # in-process
+    assert golive.set_cast_exclusive(cfg, False).ok is True
+    assert cfg.cast_exclusive is False
+
+def test_set_cast_pick_budget_clamps_and_rejects_non_int(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    assert golive.set_cast_pick_budget(cfg, "5").ok is True and cfg.cast_pick_budget == 5
+    assert golive.set_cast_pick_budget(cfg, "0").ok is True and cfg.cast_pick_budget == 1   # clamp >=1 (cfg precedent)
+    assert golive.set_cast_pick_budget(cfg, "abc").ok is False                # non-int -> clean error, no write
+
+def test_set_clip_profile_validates_talk_song(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    assert golive.set_clip_profile(cfg, "song").ok is True and cfg.clip_profile == "song"
+    assert "FANOPS_CLIP_PROFILE=song" in (tmp_path / ".env").read_text()
+    assert golive.set_clip_profile(cfg, "talk").ok is True and cfg.clip_profile == "talk"
+    assert golive.set_clip_profile(cfg, "bogus").ok is False                  # unknown profile rejected
+
+def test_golive_status_carries_casting_levers(tmp_path, monkeypatch):
+    from fanops.studio import views
+    cfg = _clean(monkeypatch, tmp_path)
+    s = views.golive_status(cfg)
+    assert s.cast_exclusive is False and s.cast_pick_budget == 3 and s.clip_profile == "talk"   # defaults
+    golive.set_cast_exclusive(cfg, True); golive.set_clip_profile(cfg, "song")
+    s = views.golive_status(cfg)
+    assert s.cast_exclusive is True and s.clip_profile == "song"
+
+def test_post_golive_casting_lever_routes_swap_panel(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    c = _client(cfg)
+    assert c.post("/golive/cast-exclusive", data={"on": "1"}).status_code == 200 and cfg.cast_exclusive is True
+    assert c.post("/golive/cast-budget", data={"budget": "4"}).status_code == 200 and cfg.cast_pick_budget == 4
+    assert c.post("/golive/clip-profile", data={"profile": "song"}).status_code == 200 and cfg.clip_profile == "song"
+
+def test_golive_panel_renders_routing_casting_controls(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    golive.set_account_casting(cfg, True)                    # casting ON -> exclusive + budget controls appear
+    h = _client(cfg).get("/golive").data.decode()
+    assert "Routing / casting" in h
+    assert "/golive/cast-exclusive" in h and "/golive/cast-budget" in h and "/golive/clip-profile" in h
+
+def test_run_and_review_show_readonly_cast_state(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    golive.set_account_casting(cfg, True); golive.set_cast_exclusive(cfg, True)
+    run_html = _client(cfg).get("/run").data.decode()
+    assert "cast-state" in run_html and "exclusive" in run_html.lower()       # Run panel echoes the routing config
+
 def test_post_golive_casting_route_swaps_panel(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
