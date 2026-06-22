@@ -251,6 +251,10 @@ def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
         found = False
         for a in accounts:                                       # scan ALL rows (dup-handle safety)
             if isinstance(a, dict) and a.get("handle") == handle:
+                # M4: refuse routing a platform the account doesn't carry (a config error -> never silently
+                # written). Clearing an override is always allowed (it may be removing a stale one).
+                if not clearing and platform not in (a.get("platforms") or []):
+                    raise ValueError(f"{handle} does not carry {platform!r} — add the platform first")
                 bk = a.get("backends")
                 if not isinstance(bk, dict): bk = {}
                 if clearing: bk.pop(str(platform), None)

@@ -79,7 +79,9 @@ def test_set_account_backend_live_requires_creds(tmp_path, monkeypatch):
 
 def test_set_account_backend_live_writes_with_creds_and_confirm(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "sk_x")
-    _seed(cfg, [{"handle": "@tk", "account_id": "acc", "platforms": ["tiktok"], "status": "active"}])
+    # H3: a live route requires a real per-platform integration id (not just the legacy shared account_id).
+    _seed(cfg, [{"handle": "@tk", "account_id": "acc", "platforms": ["tiktok"], "status": "active",
+                 "integrations": {"tiktok": "tk_x"}}])
     res = golive.set_account_backend(cfg, "@tk", "tiktok", "zernio", confirmed=True)
     assert res.ok is True
     from fanops.accounts import Accounts

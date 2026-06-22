@@ -30,8 +30,11 @@ from fanops.accounts import (Accounts, write_integration, add_account as _accoun
                              load_accounts_safe)
 from fanops.autopilot import set_env_var
 from fanops.errors import CutoverError, PostizAuthError, ZernioAuthError
+from fanops.models import Platform
 from fanops.post import postiz, zernio
 from fanops.studio.actions import ActionResult
+
+_PLATFORM_VALUES = frozenset(p.value for p in Platform)   # the platforms FanOps can route (M3)
 
 
 def _dual_write(cfg: Config, key: str, value: str) -> Optional[str]:
@@ -147,6 +150,12 @@ def set_account_backend(cfg: Config, handle: str, platform: str, backend: str, c
         if not confirmed:
             return ActionResult(ok=False, error=f"routing {handle}'s {platform} to {bk} publishes to the "
                                 "REAL account — tick the confirm box, then click again.")
+        # H3: a LIVE route must target a real per-platform integration id — without one the publish is
+        # mis-targeted or burnt. The shared legacy account_id is NOT a valid per-channel provider id.
+        acct = next((a for a in Accounts.load(cfg).accounts if a.handle == handle), None)
+        if not (acct and acct.integrations.get(platform)):
+            return ActionResult(ok=False, error=f"{handle} has no {platform} integration id — map the "
+                                f"{platform} channel (Discover → Adopt) first, then route it to {bk}.")
     try:
         _accounts_set_backend(cfg, handle, platform, bk)
     except KeyError:
@@ -362,8 +371,9 @@ def _match_channel(accts: Accounts, cid: str, platform: str, suggested: str) -> 
     normalized handle -> that handle, already_mapped=False), else (None, False) -> a NEW account. No fuzzy
     matching: FanOps never merges two accounts on a guess."""
     for a in accts.accounts:
-        if a.integrations.get(platform) == cid or (a.account_id and a.account_id == cid):
-            return a.handle, True
+        if a.integrations.get(platform) == cid:        # H6: platform-aware id match ONLY — the bare shared
+            return a.handle, True                       # account_id (platform-agnostic) matched cross-platform,
+                                                        # hiding a genuinely-new different-platform channel from adopt
     for a in accts.accounts:
         if _norm_handle(a.handle) == suggested:
             return a.handle, False
@@ -396,6 +406,9 @@ def discover_channels(cfg: Config) -> ActionResult:
             notes.append(f"{name}: could not list channels ({str(exc)[:120]})")
             continue
         for r in remote:
+            if r.platform not in _PLATFORM_VALUES:               # M3: a platform FanOps can't model isn't
+                notes.append(f"{name}: skipped {r.name} — unsupported platform {r.platform!r}")
+                continue                                          # routable -> classify into notes, never adoptable
             suggested = _norm_handle(r.name)
             match, mapped = _match_channel(accts, r.id, r.platform, suggested)
             channels.append(DiscoveredChannel(provider=name, id=r.id, name=r.name, platform=r.platform,
@@ -433,6 +446,10 @@ def adopt_channels(cfg: Config, selections: list, confirmed: bool = False) -> Ac
             if provider in _LIVE_BACKENDS and confirmed and cfg.backend_has_creds(provider):
                 _accounts_set_backend(cfg, handle, platform, provider)   # route this channel to its provider (live-capable)
                 row["routed"] = True; routed += 1
+            else:                                                        # M2: name WHY a mapped channel didn't route
+                row["routing_skipped"] = ("not live-capable" if provider not in _LIVE_BACKENDS
+                                          else "confirm not ticked" if not confirmed
+                                          else f"{provider} not connected")
             rows.append(row)
         except (ValueError, KeyError) as exc:                # unknown platform/handle/lean — clean per-row error
             rows.append({"handle": handle, "platform": platform, "ok": False, "error": str(exc)})
@@ -528,7 +545,15 @@ def go_live(cfg: Config, confirmed: bool = False) -> ActionResult:
     err = _dual_write(cfg, "FANOPS_LIVE", "1")
     if err:
         return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"live": True, "mode": "live", "ready": len(ready)})
+    # M1: a live-ready channel that resolves ONLY via the legacy FANOPS_POSTER bridge (no explicit
+    # `backends`) goes dark the instant FANOPS_POSTER is unset — name them so the operator can pin the
+    # provider explicitly (route the channel in the Go-Live tab; that persists `backends[platform]`).
+    bridge_only = sorted({h for (h, p, _prov) in ready if accounts.resolve_backend(h, Platform(p)) is None})
+    detail = {"live": True, "mode": "live", "ready": len(ready)}
+    if bridge_only:
+        detail["bridge_only_warning"] = ("publishes only via the legacy FANOPS_POSTER bridge (goes dark if "
+                                         "it's unset) — pin a provider for: " + ", ".join(bridge_only))
+    return ActionResult(ok=True, detail=detail)
 
 
 def go_dryrun(cfg: Config) -> ActionResult:
