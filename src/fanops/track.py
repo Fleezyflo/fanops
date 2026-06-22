@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 from fanops.config import Config
 from fanops.ledger import Ledger
+from fanops.log import get_logger
 from fanops.metrics_schedule import due_offset
 from fanops.models import LIFT_SCORE, PostState
 from fanops.timeutil import iso_z
@@ -85,15 +86,44 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
         post.state = PostState.analyzed
     return led
 
-def _default_list_posts(cfg: Config, *, submission_ids: Optional[list[str]] = None) -> ListPosts:
-    # Backend-polymorphic (M2): a postiz deployment reads per-post analytics (needs the published ids
-    # to fetch); rest/mcp reads the Blotato bulk list (ignores submission_ids — UNCHANGED). Lazy imports
-    # keep requests/postiz off the dryrun/core path.
-    if cfg.poster_backend == "postiz":
+def _metrics_client_for(cfg: Config, backend: str, submission_ids: Optional[list[str]]) -> ListPosts:
+    # One backend's metrics fetcher. postiz/zernio read PER-POST analytics (need the published ids);
+    # rest/mcp reads the Blotato BULK list (ignores ids — UNCHANGED). Lazy imports keep requests/postiz/
+    # zernio off the dryrun/core path.
+    if backend == "postiz":
         from fanops.post.metrics import PostizMetricsClient
         return PostizMetricsClient(cfg, submission_ids=submission_ids).list_posts
+    if backend == "zernio":
+        from fanops.post.metrics import ZernioMetricsClient
+        return ZernioMetricsClient(cfg, submission_ids=submission_ids).list_posts
     from fanops.post.metrics import BlotatoMetricsClient
     return BlotatoMetricsClient(cfg).list_posts
+
+def _default_list_posts(cfg: Config, *, submission_ids: Optional[list[str]] = None,
+                        posts: Optional[list] = None) -> ListPosts:
+    # Backend-polymorphic. `posts` (per-post routing, zernio): group the pollable posts by RESOLVED backend
+    # (an accounts.json `backends` override -> else the global FANOPS_POSTER) and fetch each group from its
+    # own client, concatenating the rows — so IG-via-Postiz and TikTok-via-Zernio metrics pull in ONE pass.
+    # When every post resolves to the global backend (no overrides), this is byte-identical to a single
+    # client. `submission_ids` (back-compat / a true single-backend deployment): ALL ids -> the global
+    # backend's client (UNCHANGED). Lazy imports keep deps off the dryrun/core path.
+    if posts is None:
+        return _metrics_client_for(cfg, cfg.poster_backend, submission_ids)
+    from fanops.accounts import load_accounts_safe
+    accounts, err = load_accounts_safe(cfg)
+    if err: get_logger(cfg)("backend_route", "accounts", "load_failed_global_fallback", err=err)
+    groups: dict[str, list[str]] = {}
+    for p in posts:
+        if not p.submission_id: continue
+        backend = accounts.resolve_backend(p.account, p.platform) or cfg.poster_backend
+        groups.setdefault(backend, []).append(p.submission_id)
+    fetchers = [_metrics_client_for(cfg, b, ids) for b, ids in groups.items()]
+    def fetch(window: str = "30d") -> list[dict]:
+        rows: list[dict] = []
+        for f in fetchers:
+            rows.extend(f(window))
+        return rows
+    return fetch
 
 def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = None,
                  window: str = "30d", now: Optional[datetime] = None) -> Ledger:
@@ -105,8 +135,8 @@ def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = 
     now = now or datetime.now(timezone.utc)
     pollable = (PostState.published, PostState.analyzed)
     fetch = list_posts or _default_list_posts(
-        cfg, submission_ids=[p.submission_id for p in led.posts.values()
-                             if p.submission_id and p.state in pollable])
+        cfg, posts=[p for p in led.posts.values()
+                    if p.submission_id and p.state in pollable])      # per-post backend routing (zernio)
     # Resolve the operator's lift-weight override ONCE per pull (audit b) and thread it down so the
     # real metrics path scores against the tuned optimization target; None -> the default _W.
     weights = cfg.tuning().get("lift_weights")

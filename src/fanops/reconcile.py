@@ -40,23 +40,55 @@ _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reco
 GetStatus = Callable[[str], dict]
 
 
-def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
-    # Backend dispatch (P2). Blotato (rest/mcp) polls GET /v2/posts/{id} — a true per-post status
-    # endpoint with a publicUrl. Postiz has NEITHER: its only status signal is the `state` field on a
-    # row of the DATE-WINDOWED GET /public/v1/posts, and no response carries a permalink. So the Postiz
-    # poll wraps PostizStatusClient in a closure that looks the parked post up in `led` to pass its own
-    # scheduled_time as the date window (a future/old/2099 post is otherwise PERMANENTLY off the default
-    # ~week page). The closure keeps the GetStatus seam Callable[[str], dict] unchanged — `cmd_reconcile`
-    # and the 30+ existing reconcile tests are untouched.
-    if cfg.poster_backend == "postiz":
+def _status_client_for(cfg: Config, backend: str, led: Optional[Ledger]) -> GetStatus:
+    # One backend's status poller. Blotato (rest/mcp) and Zernio have a TRUE per-post status endpoint
+    # (a bound get_status, no date window). Postiz has NEITHER: its only signal is the `state` field on a
+    # row of the DATE-WINDOWED GET /public/v1/posts, so it wraps PostizStatusClient in a closure that reads
+    # the parked post's own scheduled_time from `led` for the window (a future/old/2099 post is otherwise
+    # PERMANENTLY off the default ~week page). Lazy imports keep deps off the core path.
+    if backend == "postiz":
         from fanops.post.metrics import PostizStatusClient
         client = PostizStatusClient(cfg)
         def poll(sid: str) -> dict:
             post = next((p for p in led.posts.values() if p.submission_id == sid), None) if led else None
             return client.get_status(sid, publish_date=post.scheduled_time if post else None)
         return poll
+    if backend == "zernio":
+        from fanops.post.metrics import ZernioStatusClient
+        return ZernioStatusClient(cfg).get_status
     from fanops.post.metrics import BlotatoStatusClient
     return BlotatoStatusClient(cfg).get_status
+
+
+def _reconcilable_routing(cfg: Config, led: Optional[Ledger]) -> dict[str, str]:
+    # submission_id -> RESOLVED backend (accounts.json `backends` override -> else the global FANOPS_POSTER)
+    # for every reconcilable post that HAS a submission id. Empty when led is None. Accounts load is guarded:
+    # a corrupt accounts.json must NOT crash the reconcile read (publish surfaces it loudly) — degrade to
+    # the global backend for every post + log.
+    if led is None:
+        return {}
+    from fanops.accounts import load_accounts_safe
+    accounts, err = load_accounts_safe(cfg)
+    if err: get_logger(cfg)("backend_route", "accounts", "load_failed_global_fallback", err=err)
+    return {p.submission_id: (accounts.resolve_backend(p.account, p.platform) or cfg.poster_backend)
+            for p in led.posts.values() if p.state in _RECONCILABLE and p.submission_id}
+
+
+def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
+    # Per-post backend routing (zernio). When the reconcilable posts in `led` resolve to MORE THAN ONE
+    # backend (an account override + the global), route each submission to its own backend's status client
+    # — so IG-via-Postiz and TikTok-via-Zernio reconcile in ONE pass. With one backend (or no led) this is
+    # the UNCHANGED single-backend dispatch (Blotato/Zernio bound method, Postiz date-window closure), so
+    # the blotato bound-method check + the 30+ existing reconcile tests are byte-identical.
+    routing = _reconcilable_routing(cfg, led)
+    backends = set(routing.values())
+    if len(backends) <= 1:
+        return _status_client_for(cfg, next(iter(backends)) if backends else cfg.poster_backend, led)
+    pollers = {b: _status_client_for(cfg, b, led) for b in backends}
+    def poll(sid: str) -> dict:
+        backend = routing.get(sid, cfg.poster_backend)
+        return (pollers.get(backend) or _status_client_for(cfg, backend, led))(sid)
+    return poll
 
 
 def reconcile_due(cfg: Config) -> dict[str, int]:

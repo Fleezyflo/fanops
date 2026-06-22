@@ -69,10 +69,12 @@ def cmd_track(cfg: Config, window: str) -> int:
     led0 = Ledger.load(cfg)
     # P3: poll PUBLISHED OR ANALYZED posts (an analyzed post stays re-pollable so its metrics_series
     # accumulates later cadence offsets through the year; due_offset returns None once it's complete).
-    sub_ids = [p.submission_id for p in led0.posts.values()
-               if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
+    # Slice-5: pass the POST OBJECTS so the fetch routes each to its own backend (IG-via-Postiz +
+    # TikTok-via-Zernio in ONE pass); a no-override deployment is byte-identical to the old id-list path.
+    pollable_posts = [p for p in led0.posts.values()
+                      if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
     try:
-        rows = list(_default_list_posts(cfg, submission_ids=sub_ids)(window))   # network, NO lock held
+        rows = list(_default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held
     except (RuntimeError, AuthError) as e:               # postiz no-key raises PostizAuthError, not RuntimeError -> skip cleanly (mirror cmd_reconcile)
         print(f"track skipped: {e}"); return 0
     with Ledger.transaction(cfg) as led:
@@ -99,9 +101,9 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
     # must know which ids to fetch; the Blotato client ignores them and fetches the bulk list).
     # Raises on a fetch/apply hiccup; the caller logs+swallows so the unattended run stays exit 0.
     led0 = Ledger.load(cfg)
-    sub_ids = [p.submission_id for p in led0.posts.values()   # P3: published OR analyzed (re-pollable)
-               if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
-    rows = list(_default_list_posts(cfg, submission_ids=sub_ids)(window))   # network, NO lock held
+    pollable_posts = [p for p in led0.posts.values()   # P3: published OR analyzed (re-pollable)
+                      if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
+    rows = list(_default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held (per-post backend routing)
     with Ledger.transaction(cfg) as led:
         led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
         r = classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
