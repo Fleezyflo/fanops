@@ -21,6 +21,9 @@ def get_poster(cfg: Config) -> "Poster":
     if backend == "postiz":
         from fanops.post.postiz import PostizPoster
         return PostizPoster(cfg)
+    if backend == "zernio":
+        from fanops.post.zernio import ZernioPoster
+        return ZernioPoster(cfg)
     from fanops.post.dryrun import DryRunPoster
     return DryRunPoster(cfg)
 
