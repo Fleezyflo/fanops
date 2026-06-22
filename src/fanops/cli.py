@@ -268,6 +268,20 @@ def cmd_gc(cfg: Config, keep_days: int) -> int:
                 # Surface a failed removal (perms / read-only mount / disk issue) instead of hiding
                 # it — a silent pass could mask a disk filling up. gc still completes (other clips).
                 print(f"gc: could not remove {c.path}: {exc}", file=sys.stderr)
+    # per-account Render foundation: a Render file is reclaimable once NO live post points at it via
+    # render_id — e.g. a reburn replaced it with a new content-addressed render, or its posts were deleted.
+    # Reference-counted (not state-gated): content-addressed renders are SHARED, so reference is the right
+    # liveness signal. Mirror the clip sweep — drop the FILE only (the Render record + its durable hook_text
+    # persist for archive reconstruction); keep_days guards age exactly as for clips.
+    referenced = {p.render_id for p in led.posts.values() if p.render_id}
+    for r in led.renders.values():
+        if r.id in referenced or not (r.path and os.path.exists(r.path)):
+            continue
+        try:
+            if os.path.getmtime(r.path) < cutoff:
+                os.remove(r.path); removed += 1
+        except OSError as exc:
+            print(f"gc: could not remove {r.path}: {exc}", file=sys.stderr)
     # content-lifecycle Phase 3: fold the 05_scheduled/ dryrun-payload cleanup into gc. These would-send JSON
     # records accumulate unbounded every dryrun pass; drop the ones older than cutoff. NEVER 06_published/ (the
     # durable archive) and no subdir recursion — only top-level *.json. Fail-open per file.

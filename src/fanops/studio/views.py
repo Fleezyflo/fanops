@@ -124,6 +124,8 @@ class ScheduleRow:
     batch_title: Optional[str] = None      # Batch.name via led.get_batch (None when unbatched/dangling)
     caption: str = ""                      # P5: the post's caption, shown as a Schedule column so the
                                            # operator reads WHAT each scheduled row ships without opening it
+    variant_hook: Optional[str] = None     # Render foundation: the per-account on-screen hook (mirror of
+                                           # Render.hook_text) so the operator SEES which hook each account ships
 
 
 @dataclass
@@ -447,7 +449,8 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             editable=editable, integration_id=p.account_id,
             suggested_time=suggest_time(cfg, p, now=now) if editable else None,   # P1: only editable rows
             batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),       # Face 5: batch legibility
-            caption=p.caption))                                                   # P5: caption column
+            caption=p.caption,                                                    # P5: caption column
+            variant_hook=getattr(p, "variant_hook", None)))                       # Render: per-account hook column
 
     def _key(r: ScheduleRow):
         if not r.scheduled_time:
@@ -511,6 +514,8 @@ class PostedRow:
     reach: Optional[float] = None
     batch_id: Optional[str] = None       # Face 5: denormalized Post.batch_id (None == ungrouped)
     batch_title: Optional[str] = None    # Batch.name via led.get_batch (None when unbatched/dangling)
+    variant_hook: Optional[str] = None   # Render foundation: the per-account on-screen hook (mirror of
+                                         # Render.hook_text) so lift can be traced back to WHICH hook shipped
 
 
 def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, batch: Optional[str] = None) -> list[PostedRow]:
@@ -536,7 +541,8 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, b
                       lift_score=p.metrics.get(LIFT_SCORE), published_at=p.published_at,
                       saves=p.metrics.get("saves"), shares=p.metrics.get("shares"),
                       retention=p.metrics.get("retention"), reach=p.metrics.get("reach"),
-                      batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id)) for p in posts]
+                      batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
+                      variant_hook=getattr(p, "variant_hook", None)) for p in posts]
 
 
 def posted_batch_rollup(rows) -> Optional[dict]:
