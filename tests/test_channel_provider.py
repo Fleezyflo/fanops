@@ -177,3 +177,21 @@ def test_reconcile_routing_uses_effective_provider_skips_none(tmp_path, monkeypa
         _submitted(led, "p1", "@tk", Platform.tiktok, "s1", acct_id="z1")
         _submitted(led, "p2", "@ig", Platform.instagram, "s2", acct_id="i1")
     assert _reconcilable_routing(cfg, Ledger.load(cfg)) == {"s1": "zernio"}   # p2 skipped, NOT dryrun-defaulted
+
+
+# ---- H5: zernio has NO server idempotency key -> the queued-only publish filter is the SOLE double-POST guard ----
+def test_needs_reconcile_post_is_never_republished(tmp_path, monkeypatch, mocker):
+    # an ambiguous-live (needs_reconcile) post must NEVER be re-submitted by publish_due — a re-POST would
+    # double-publish (zernio publishNow:true carries no idempotency key). publish_due iterates `queued` ONLY.
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    cfg = Config(root=tmp_path)
+    _accounts(tmp_path, [{"handle": "@tk", "platforms": ["tiktok"], "status": "active",
+                          "backends": {"tiktok": "zernio"}, "integrations": {"tiktok": "z1"}}])
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p1", parent_id="c", account="@tk", account_id="z1", platform=Platform.tiktok,
+                          caption="c", state=PostState.needs_reconcile, submission_id="s1",
+                          media_urls=["https://x/v.mp4"], scheduled_time="2020-01-01T00:00:00+00:00"))
+    gp = mocker.patch("fanops.post.run.get_poster")
+    publish_due(cfg)
+    gp.assert_not_called()                                   # never re-submitted
+    assert Ledger.load(cfg).posts["p1"].state is PostState.needs_reconcile

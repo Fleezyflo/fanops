@@ -34,6 +34,21 @@ from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.models import PostState
 from fanops.text import safe_public_url
+from fanops.timeutil import parse_iso
+from datetime import datetime, timezone, timedelta
+
+_STUCK_AFTER = timedelta(hours=6)   # H4: a still-parked post older than this past its schedule gets a breadcrumb
+
+
+def _parked_age(post, now: datetime):
+    """now - scheduled_time for a parked post; None if there's no/invalid schedule (-> no breadcrumb, never a
+    false alarm). The post is submitted when scheduled_time <= now, so this is a sound 'stuck since' proxy."""
+    if not post.scheduled_time:
+        return None
+    try:
+        return now - parse_iso(post.scheduled_time)
+    except Exception:
+        return None
 
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.
 _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reconcile)
@@ -131,8 +146,10 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
                 "published": len(led.posts_in_state(PostState.published))}
 
 
-def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None) -> Ledger:
+def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None,
+                    now: Optional[datetime] = None) -> Ledger:
     poll = get_status or _default_get_status(cfg, led)
+    now = now or datetime.now(timezone.utc)               # clock injected by tests; real callers default to UTC now
     log = get_logger(cfg)
     for post in [p for p in led.posts.values() if p.state in _RECONCILABLE]:
         if not post.submission_id:
@@ -171,6 +188,14 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             post.error_reason = f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"
             log("reconcile", post.id, "failed")
         else:
-            # in-progress / scheduled / unknown -> leave parked; a later reconcile pass will retry.
+            # in-progress / scheduled / unknown -> leave parked (never guess the fate); a later pass retries.
+            # H4: a post stuck here across many passes would otherwise be SILENT (no digest section, no
+            # error_reason). Once it's parked well past its schedule, stamp an age breadcrumb so it surfaces
+            # in the digest's error column — WITHOUT changing state (its fate is genuinely unknown, not failed).
+            age = _parked_age(post, now)
+            if age is not None and age > _STUCK_AFTER:
+                hrs = int(age.total_seconds() // 3600)
+                post.error_reason = (f"stuck {status or 'unknown'} ~{hrs}h past schedule — check the channel "
+                                     "(publish may have silently failed)")
             log("reconcile", post.id, f"left: {status or 'unknown'}")
     return led

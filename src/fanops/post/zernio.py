@@ -70,6 +70,10 @@ def build_zernio_payload(*, account_id: str, platform: str, content: str,
     # NOT pass scheduledFor/timezone (kept in the signature for parity / future use). platforms[] targets
     # ONE Zernio account (a FanOps Post is one surface). media[] references already-uploaded URLs (the
     # file->URL upload is slice 3); the field name is an INTEGRATION CHECKPOINT — omitted when empty.
+    # H5: Zernio carries NO client/server idempotency key on publishNow, so a re-POST would DOUBLE-publish.
+    # The never-re-POST invariant rests ENTIRELY on the queued-only publish filter (run.py publish_due
+    # iterates PostState.queued + the under-lock claim re-checks `queued`) — a submitting/submitted/
+    # needs_reconcile post is structurally never re-submitted. See test_needs_reconcile_post_is_never_republished.
     payload: dict = {"content": content, "publishNow": True,
                      "platforms": [{"platform": platform, "accountId": account_id}]}
     media = [u for u in (media_urls or []) if u]

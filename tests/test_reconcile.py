@@ -33,6 +33,29 @@ def test_reconcile_promotes_published(tmp_path):
     assert led.posts["p1"].public_url == "https://ig.com/p/1"
 
 
+def test_reconcile_stamps_stuck_breadcrumb_past_schedule(tmp_path):
+    # H4: a post stuck 'scheduled'/unknown long past its schedule gets an age breadcrumb in error_reason so
+    # it surfaces (instead of silently looping). State is NOT changed — the post's fate is never guessed.
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="ps", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="s1",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
+    p = led.posts["ps"]
+    assert p.state is PostState.needs_reconcile and p.error_reason and "stuck" in p.error_reason.lower()
+
+
+def test_reconcile_no_stuck_breadcrumb_when_recent(tmp_path):
+    from datetime import datetime, timezone
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pr", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="s1",
+                      scheduled_time=datetime.now(timezone.utc).isoformat()))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
+    assert led.posts["pr"].error_reason is None              # recent -> no premature stuck breadcrumb
+
+
 def test_reconcile_marks_failed_when_not_live(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "p2", PostState.needs_reconcile, sub="sub_2")
