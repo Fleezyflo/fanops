@@ -13,9 +13,10 @@ from typing import Optional
 from urllib.parse import quote
 import requests
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError, PostizAuthError
+from fanops.errors import BlotatoAuthError, PostizAuthError, ZernioAuthError
 from fanops.post.blotato_base import BASE_URL
 from fanops.post.postiz import _base, _key
+from fanops.post.zernio import _base as _zbase, _key as _zkey
 from fanops.timeutil import parse_iso
 from fanops.log import get_logger
 
@@ -213,4 +214,166 @@ class PostizStatusClient:
         out = {"status": status}
         if status == "published":
             out["publicUrl"] = row.get("releaseURL") or None   # the real IG permalink (present only on PUBLISHED rows)
+        return out
+
+
+# ---- Zernio metrics + status (Slice 5) — the FREE TikTok backend's read clients. Zernio reads PER-POST
+# analytics (GET /analytics/posts/{id}, like Postiz) AND has a true single-post status lookup
+# (GET /posts/{id}, like Blotato). Both response SHAPES are INTEGRATION CHECKPOINTS: the maps below accept
+# the documented aliases + common nestings (locked offline here), the operator verifies live at first
+# publish. The ZERNIO_API_KEY rides the Bearer header and is NEVER logged/echoed (401 body withheld). ----
+
+# Zernio/TikTok analytics label (case-insensitive) -> lift_score key. Includes TikTok's own field names
+# (diggCount=likes, playCount=views, collectCount=saves, shareCount, commentCount). `impressions` is
+# DELIBERATELY unmapped (the documented {"impressions":"reach"} mistake that froze Postiz learning — for
+# TikTok reach != impressions). Unknown labels are dropped (lift_score whitelists keys anyway).
+_ZERNIO_LABEL_MAP = {
+    "likes": "likes", "like": "likes", "likecount": "likes", "like_count": "likes", "diggcount": "likes", "digg_count": "likes",
+    "comments": "comments", "comment": "comments", "commentcount": "comments", "comment_count": "comments",
+    "shares": "shares", "share": "shares", "sharecount": "shares", "share_count": "shares", "reposts": "shares",
+    "saves": "saves", "save": "saves", "saved": "saves", "bookmarks": "saves", "favorites": "saves", "collectcount": "saves", "collect_count": "saves",
+    "reach": "reach", "reachcount": "reach", "accountsreached": "reach", "accounts_reached": "reach",
+    "views": "views", "view": "views", "viewcount": "views", "view_count": "views", "plays": "views", "playcount": "views", "play_count": "views", "videoviews": "views", "video_views": "views",
+}
+_ZERNIO_WRAPS = ("metrics", "insights", "analytics", "stats", "data")
+
+def _zernio_num(v) -> Optional[float]:
+    # a metric value may be a scalar OR a {value|count|total:…} object; coerce to float, else None (drop).
+    if isinstance(v, dict):
+        v = v.get("value", v.get("count", v.get("total")))
+    try: return float(v)
+    except (TypeError, ValueError): return None
+
+def _map_zernio_analytics(body) -> dict:
+    # INTEGRATION CHECKPOINT: accept a FLAT metric dict, a LABELED array (Postiz-style), or ONE nesting
+    # level under metrics/insights/analytics/stats/data. Map known aliases -> canonical lift keys; drop
+    # unknown/uncoercible. Flat mapping wins so a real metric key isn't mistaken for a wrapper.
+    if isinstance(body, dict):
+        out: dict = {}
+        for k, v in body.items():
+            key = _ZERNIO_LABEL_MAP.get(str(k).strip().lower())
+            if not key: continue
+            num = _zernio_num(v)
+            if num is not None: out[key] = num
+        if out: return out
+        for wrap in _ZERNIO_WRAPS:
+            inner = body.get(wrap)
+            if isinstance(inner, (dict, list)):
+                return _map_zernio_analytics(inner)
+        return {}
+    if isinstance(body, list):
+        out = {}
+        for item in body:
+            if not isinstance(item, dict): continue
+            label = item.get("label") or item.get("metric") or item.get("name") or ""
+            key = _ZERNIO_LABEL_MAP.get(str(label).strip().lower())
+            if not key: continue
+            num = _zernio_num(item.get("value", item.get("count", item.get("total"))))
+            if num is not None: out[key] = num
+        return out
+    return {}
+
+def _zernio_raw_labels(body) -> list:
+    # inert diagnostic parity with PostizMetricsClient's _raw_labels: the raw key/label names PRESENT at the
+    # metric level (descend ONE wrapper only when the top dict carries no mapped key). Mirrors Postiz, which
+    # returns EVERY label in the array (mapped or not) — so this returns every key at the resolved level,
+    # never the partial mapped-only-vs-all asymmetry.
+    if isinstance(body, dict):
+        if not any(_ZERNIO_LABEL_MAP.get(str(k).strip().lower()) for k in body):
+            for wrap in _ZERNIO_WRAPS:
+                if isinstance(body.get(wrap), (dict, list)): return _zernio_raw_labels(body[wrap])
+        return [str(k) for k in body]
+    if isinstance(body, list):
+        return [str(it.get("label") or it.get("metric") or it.get("name") or "") for it in body if isinstance(it, dict)]
+    return []
+
+class ZernioMetricsClient:
+    """Reads Zernio per-post TikTok analytics into the lift/learning loop. Mirrors PostizMetricsClient:
+    takes the published submission_ids and fetches each, emitting the SAME {postSubmissionId, metrics,
+    _raw_labels} row contract pull_metrics consumes. submission_ids=None -> [] (no network). A 401 is FATAL
+    (ZernioAuthError, halts the pass); a single post's 5xx/transport failure is isolated (empty row, the
+    pass continues) so one bad id never loses every other post's metrics."""
+    def __init__(self, cfg: Config, *, submission_ids: Optional[list[str]] = None):
+        self.cfg = cfg; self.base = _zbase(cfg); self.key = _zkey(cfg)   # _zkey raises ZernioAuthError if missing
+        self.submission_ids = submission_ids
+
+    def _fetch_one(self, submission_id: str) -> tuple[dict, list]:
+        url = f"{self.base}/analytics/posts/{quote(str(submission_id), safe='')}"   # encode the id (no path metachar can alter the target)
+        resp = requests.get(url, headers={"Authorization": f"Bearer {self.key}"}, timeout=30)
+        if resp.status_code == 401:
+            raise ZernioAuthError("Zernio 401 on analytics — check ZERNIO_API_KEY (response body withheld)")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"zernio analytics {resp.status_code}: {(resp.text or '')[:200]}")
+        body = _json_or_raise(resp, "zernio analytics")
+        return _map_zernio_analytics(body), _zernio_raw_labels(body)
+
+    def list_posts(self, window: str = "30d") -> list[dict]:
+        if not self.submission_ids: return []
+        rows = []
+        for sid in self.submission_ids:
+            try:
+                metrics, labels = self._fetch_one(sid)
+            except ZernioAuthError:
+                raise                                       # 401 is FATAL for every post — never swallow
+            except Exception as e:
+                get_logger(self.cfg)("zernio_metrics", str(sid), "fetch_failed", err=str(e)[:120])
+                metrics, labels = {}, []                    # per-post isolation: keep going, don't abort the pass
+            rows.append({"postSubmissionId": sid, "metrics": metrics, "_raw_labels": labels})
+        return rows
+
+
+# Zernio post status (GET /posts/{id}) -> reconcile's backend-agnostic status. Case-insensitive. Known
+# terminal states -> published/failed; EVERYTHING ELSE (queued/processing/unknown) -> scheduled (parked) so
+# reconcile_posts leaves it alone — NEVER guess failed for an unknown state (re-queues a possibly-live post,
+# the double-post hazard). The status + permalink keys are INTEGRATION CHECKPOINTS.
+_ZERNIO_STATE_MAP = {"published": "published", "posted": "published", "live": "published", "complete": "published",
+                     "completed": "published", "success": "published", "succeeded": "published", "done": "published",
+                     "failed": "failed", "error": "failed", "errored": "failed", "rejected": "failed",
+                     "cancelled": "failed", "canceled": "failed"}
+
+def _extract_zernio_state(body) -> str:
+    if not isinstance(body, dict): return ""
+    for k in ("status", "state", "postStatus", "publishStatus"):
+        v = body.get(k)
+        if isinstance(v, str) and v: return v
+    for wrap in ("post", "data", "result"):
+        nested = body.get(wrap)
+        if isinstance(nested, dict):
+            s = _extract_zernio_state(nested)
+            if s: return s
+    return ""
+
+def _extract_zernio_permalink(body) -> Optional[str]:
+    if not isinstance(body, dict): return None
+    for k in ("permalink", "postUrl", "publicUrl", "url", "link", "shareUrl", "share_url", "releaseURL"):
+        v = body.get(k)
+        if isinstance(v, str) and v: return v
+    for wrap in ("post", "data", "result"):
+        nested = body.get(wrap)
+        if isinstance(nested, dict):
+            u = _extract_zernio_permalink(nested)
+            if u: return u
+    return None
+
+class ZernioStatusClient:
+    """Reconcile READ for the Zernio backend. GET /posts/{id} -> a per-post status + TikTok permalink.
+    Unlike Postiz, Zernio HAS a real single-post lookup, so this mirrors BlotatoStatusClient (a bound
+    get_status, no date window). Emits the SAME {status, publicUrl} dict reconcile_posts consumes. 401 ->
+    ZernioAuthError (halt); 5xx -> RuntimeError (per-post-isolated by reconcile_posts -> parked, never
+    failed). An unrecognized state -> {"status":"scheduled"} (parked, never guessed failed)."""
+    def __init__(self, cfg: Config):
+        self.cfg = cfg; self.base = _zbase(cfg); self.key = _zkey(cfg)   # _zkey raises ZernioAuthError if missing
+
+    def get_status(self, submission_id: str) -> dict:
+        url = f"{self.base}/posts/{quote(str(submission_id), safe='')}"
+        resp = requests.get(url, headers={"Authorization": f"Bearer {self.key}"}, timeout=30)
+        if resp.status_code == 401:
+            raise ZernioAuthError("Zernio 401 on post status — check ZERNIO_API_KEY (response body withheld)")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"zernio status {resp.status_code}: {(resp.text or '')[:200]}")
+        body = _json_or_raise(resp, "zernio status")
+        status = _ZERNIO_STATE_MAP.get(_extract_zernio_state(body).strip().lower(), "scheduled")
+        out = {"status": status}
+        if status == "published":
+            out["publicUrl"] = _extract_zernio_permalink(body) or None
         return out

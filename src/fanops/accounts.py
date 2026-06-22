@@ -120,6 +120,18 @@ class Accounts:
                 for a in self.active() for p in a.platforms]
 
 
+def load_accounts_safe(cfg: Config) -> tuple["Accounts", Optional[str]]:
+    """Accounts.load that NEVER raises — for the READ paths (metrics/reconcile per-post backend routing)
+    that must degrade to the global backend on a corrupt accounts.json rather than crash. Publish already
+    surfaces the corruption loudly (run.py Accounts.load raises ControlFileError), so a read path failing
+    hard would be a redundant new crash. Returns (accounts, error_or_None); on failure an EMPTY registry
+    (every handle then resolves to no override -> the global backend) plus the truncated error to log."""
+    try:
+        return Accounts.load(cfg), None
+    except Exception as e:
+        return Accounts(cfg), str(e)[:160]
+
+
 def _load_raw_accounts(p: Path) -> tuple[dict, list]:
     """Read accounts.json as the RAW parsed dict (absent file -> empty registry) and return (raw, the
     accounts list). Mutating the raw dict — not Account.model_dump() — is how every writer preserves
