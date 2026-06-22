@@ -131,6 +131,9 @@ class GoLiveChannel:
     platform: str
     integration_id: str        # effective current id: the per-platform integrations[platform], else the
                                # shared account_id fallback, else "" (unmapped). NEVER a secret.
+    backend: str = ""          # Zernio slice 4: the per-(handle, platform) backend OVERRIDE (e.g. "zernio");
+                               # "" == no override -> the global FANOPS_POSTER. Surfaced so the operator sees
+                               # WHICH scheduler each channel publishes through (IG postiz, TikTok zernio).
 
 
 @dataclass
@@ -150,6 +153,7 @@ class GoLiveStatus:
     accounts: list[GoLiveAccount]
     checks: list[dict]
     notes: list[str]
+    zernio_key_set: bool = False       # Zernio slice 4: BOOL only — ZERNIO_API_KEY present (connect-block state)
     learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
     creative_variation: bool = False   # per-account on-screen hooks ON (FANOPS_CREATIVE_VARIATION) — persona diff
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
@@ -766,7 +770,8 @@ def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
         return [GoLiveAccount(
             handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
             channels=[GoLiveChannel(platform=p.value,
-                                    integration_id=a.integrations.get(p.value) or a.account_id or "")
+                                    integration_id=a.integrations.get(p.value) or a.account_id or "",
+                                    backend=a.backends.get(p.value) or "")
                       for p in a.platforms])
             for a in Accounts.load(cfg).active()]
     except Exception as exc:
@@ -783,7 +788,8 @@ def golive_demoted_accounts(cfg: Config) -> list:
         return [GoLiveAccount(
             handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
             channels=[GoLiveChannel(platform=p.value,
-                                    integration_id=a.integrations.get(p.value) or a.account_id or "")
+                                    integration_id=a.integrations.get(p.value) or a.account_id or "",
+                                    backend=a.backends.get(p.value) or "")
                       for p in a.platforms])
             for a in Accounts.load(cfg).accounts if a.status.value == "planned"]
     except Exception as exc:
@@ -862,6 +868,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         is_live=cfg.poster_backend != "dryrun",
         postiz_url=cfg.postiz_url,                    # non-secret; shown so the operator can confirm config
         key_set=cfg.postiz_api_key is not None,       # BOOL only — the API key value is NEVER exposed
+        zernio_key_set=cfg.zernio_api_key is not None,  # Zernio slice 4: BOOL only (connect-block state)
         accounts=accts,
         checks=report["checks"],
         notes=report["notes"],
