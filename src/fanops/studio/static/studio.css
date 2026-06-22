@@ -336,9 +336,11 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .home-batches ul, .home-accounts ul { list-style:none; padding:0; margin:.4rem 0; display:grid; gap:.35rem; }
 .home-batches li, .home-accounts li { padding:.5rem .75rem; background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r-sm); }
 .warn { color:var(--warn); }
-/* Review approve action bar (Phase 5 makes it sticky) */
-.approve-bar { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; padding:.6rem .8rem; background:var(--surface-2);
-  border:1px solid var(--line); border-radius:var(--r-md); margin:0 0 var(--s-3); }
+/* Review approve action bar — sticky just under the nav so the approve/reject actions stay reachable while
+   scrolling a long worklist. Translucent backdrop masks rows scrolling underneath. */
+.approve-bar { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; padding:.6rem .8rem; background:oklch(24% 0.016 280 / .92);
+  -webkit-backdrop-filter:blur(8px) saturate(1.2); backdrop-filter:blur(8px) saturate(1.2);
+  border:1px solid var(--line); border-radius:var(--r-md); margin:0 0 var(--s-3); position:sticky; top:3.4rem; z-index:30; box-shadow:var(--elev-1); }
 /* Go-Live: cohesive routing / persona / demoted blocks */
 .account-hooks { margin-top:var(--s-3); padding:var(--s-3); background:oklch(16% 0.012 280 / .4); border:1px solid var(--line); border-radius:var(--r-md); }
 .account-hooks > p { margin-top:0; }
@@ -346,6 +348,20 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .persona-pick, .lean-pick { font-size:var(--t-meta); color:var(--muted); }
 .demoted-accounts { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-top:.5rem; padding-top:.5rem; border-top:1px solid var(--line); }
 .demoted-accounts p { flex-basis:100%; margin:0; }
+
+/* ── P5: Review density + Schedule caption ──────────────────────────────── */
+/* clip lineage line (source + moment window) + collapsed transcript peek on a Review card */
+.clip-lineage { margin:.15rem 0; font-size:var(--t-eyebrow); }
+.clip-transcript { margin:.15rem 0; }
+.clip-transcript > summary { padding:.2rem 0; font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.08em; color:var(--accent-bright); background:none; }
+.clip-transcript { border:none; background:none; }
+.clip-transcript p { margin:.2rem 0 0; max-height:9rem; overflow:auto; }
+/* per-surface reject — quiet danger affordance, pushed to the right of the surface head */
+.surface-reject { margin-left:auto; padding:.2rem .55rem; font:600 var(--t-eyebrow) var(--sans); background:transparent;
+  border:1px solid var(--line); color:var(--faint); }
+.surface-reject:hover { border-color:var(--danger); color:var(--danger); background:var(--danger-dim); transform:none; }
+/* Schedule caption cell — truncate to keep the table scannable; full text on hover (title attr) */
+.schedule-caption { max-width:22rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
 
 /* ── Motion safety ──────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; } }
