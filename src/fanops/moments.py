@@ -7,35 +7,56 @@ from __future__ import annotations
 import math
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState
+from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
+                           MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, read_response
+from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
 from fanops.hookscore import narration_signature
 from fanops.keyframes import extract_keyframes
+from fanops.bands import band_for
+from fanops.clip import fit_window
 from fanops.log import get_logger
 from fanops.control import load_guidance
 from fanops.moment_hook_learning import proven_hook_styles
 import os
 
-# Phase 1: how many SOURCE stills the vision author gets. Sampled evenly across the whole source (the
-# clip isn't rendered yet at the moments gate, so frames come from the source span, not a clip window).
-# Bounded so the opus+vision call stays under the claude -p image ceiling.
+# M1b PASS 1: how many SOURCE stills the PICK author gets — a whole-source survey (a picking aid: judge
+# which windows are visually strong). Bounded so the opus+vision call stays under the claude -p image
+# ceiling.
 _AUTHOR_FRAME_COUNT = 6
+# M1b PASS 2: how many stills the HOOK author gets — sampled over the PICKED+FITTED window only (fewer
+# than the survey: one window, the author's actual eyes for THIS clip's opening).
+_HOOK_FRAME_COUNT = 3
 
 def _source_frames(cfg: Config, src) -> list[str]:
-    """A few stills sampled EVENLY across the whole SOURCE — the author's eyes for the source's visual
-    vibe (who/where/lighting), grounding hook TONE. HONEST LIMITATION (ecc review, do not overclaim): this
-    is a whole-source SURVEY, not the picked window — in one call the author picks a sub-window AND writes
-    its hook, so a still from the exact picked window may not be attached. The window-accurate fix is a
-    two-pass pick->frame->hook (deferred follow-up). Fail-open: no real source file (tests / not-yet-
-    downloaded) or an unprobed/zero duration -> [] -> text-only author, never spawns ffmpeg on a path
-    that isn't there."""
+    """PASS 1 — a few stills sampled EVENLY across the whole SOURCE, the PICK author's eyes for judging
+    which windows are visually strong (who/where/lighting/motion). NOT for hook authoring: the hook is
+    written in pass 2, seeing the picked window's own frames (_window_frames). Fail-open: no real source
+    file (tests / not-yet-downloaded) or an unprobed/zero duration -> [] -> text-only pick, never spawns
+    ffmpeg on a path that isn't there."""
     if not (src.source_path and os.path.exists(src.source_path) and (src.duration or 0) > 0):
         return []
     return extract_keyframes(src.source_path, 0.0, src.duration, count=_AUTHOR_FRAME_COUNT,
                              out_dir=cfg.agent_io / "keyframes" / src.id)
+
+def _window_frames(cfg: Config, src, start: float, end: float) -> list[str]:
+    """PASS 2 — stills over the PICKED+FITTED window [start,end], the HOOK author's eyes for THIS exact
+    clip's opening (the operator's #1 ask: SEE the footage you ride the hook for). The window is the same
+    fit_window the renderer cuts, so the frames match what the clip actually opens on (snap/visual-start
+    drift accepted). Fail-open: no real source / unprobed -> []; if window extraction yields nothing,
+    fall back to a whole-source survey + a breadcrumb (never a silent text-only revert)."""
+    if not (src.source_path and os.path.exists(src.source_path) and (src.duration or 0) > 0):
+        return []
+    frames = extract_keyframes(src.source_path, start, end, count=_HOOK_FRAME_COUNT,
+                               out_dir=cfg.agent_io / "keyframes" / src.id)
+    if not frames:                                  # window probe failed -> the author still gets eyes
+        get_logger(cfg)("source", src.id, "hook_window_frames_empty", warn=True,
+                        window=f"{start:.2f}-{end:.2f}")
+        frames = extract_keyframes(src.source_path, 0.0, src.duration, count=_HOOK_FRAME_COUNT,
+                                   out_dir=cfg.agent_io / "keyframes" / src.id)
+    return frames
 
 def _token(pick: MomentPick) -> str:
     return f"{pick.start:.2f}-{pick.end:.2f}"
@@ -74,13 +95,11 @@ def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
     return None
 
 def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
+    """M1b PASS 1 — request the WINDOWS only. The on-screen hook (and the per-account hooks + learned
+    hook styles) ride the SEPARATE moment_hooks gate (request_moment_hooks), which sees each picked
+    window's own frames. `accounts` is accepted for caller-signature stability but unused here — personas
+    and learned styles belong to the hook pass, not picking."""
     src = led.sources[source_id]
-    # Per-account voices reach the frame-seeing author so IT writes each handle's on-screen hook (the
-    # root fix — the blind caption gate no longer authors a shipped hook). Only accounts WITH a persona
-    # ride along; none -> [] -> no per-persona prompt block (byte-identical to pre-persona).
-    personas = ([{"handle": a.handle, "persona": a.persona}
-                 for a in accounts.accounts if getattr(a, "persona", None)]
-                if accounts is not None else [])
     payload = MomentRequest(source_id=source_id, request_id="",   # filled by write_request
                             duration=src.duration or 0.0,
                             transcript=src.transcript or [],
@@ -88,21 +107,18 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> 
                             language=src.language,
                             guidance=load_guidance(cfg),
                             clip_profile=cfg.clip_profile,
-                            frames=_source_frames(cfg, src),
-                            personas=personas).model_dump()   # band + the author's eyes + per-account voices reach the picks
+                            frames=_source_frames(cfg, src)).model_dump()   # band + the picker's eyes
     payload.pop("request_id", None)
-    # P4(c): carry the cross-surface union of gated winning hook STYLES up to the moment author (the SAME
-    # signal caption already uses). Optional payload KEY (mirrors caption's learned_hooks), NOT a model
-    # field, so the request SHAPE is unchanged. proven_hook_styles returns [] when the flag is off /
-    # accounts is None / on any scorer error (fail-open) -> no key -> byte-identical to today.
-    styles = proven_hook_styles(led, cfg, accounts)
-    if styles:
-        payload["learned_hooks"] = styles
+    payload.pop("personas", None)   # M1b: per-account hooks ride the moment_hooks pass, not the pick pass
     write_request(cfg, kind="moments", key=source_id, payload=payload)
     led.set_source_state(source_id, SourceState.moments_requested)
     return led
 
 def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
+    """M1b PASS 1 ingest — validate + reconcile the picks into `picked` moments (window chosen, hook NOT
+    yet authored). The source lands `picks_decided`; request_moment_hooks then opens a per-pick hook gate,
+    and ingest_moment_hooks authors the hook + promotes picked -> decided. Render keys on `decided`, so a
+    picked moment never renders hookless."""
     dec = read_response(cfg, "moments", source_id, MomentDecision)
     if dec is None:
         return led                                  # still pending / stale ignored
@@ -120,48 +136,15 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     deduped = _drop_overlaps(valid)                 # drop near-duplicate windows (keep first)
     if len(deduped) < len(valid):                   # don't silently suppress picks — surface the count
         get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
-    # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks so an EXACT repeat is rejected (the
-    # 'reads like a bot' tell), then add each kept hook as we go. The opening-template CLUSTER check is
-    # scoped to THIS source's accepted hooks only (`cluster_used`, seeded empty): a 'before he was X' x6
-    # lazy batch is a single-decision tell, whereas the same opener recurring across DIFFERENT videos is
-    # not — feed-wide opener diversity is the prompt/critic's job, not this floor (else it over-strips at scale).
-    used = {(m.hook or "").strip().lower() for m in led.moments.values()
-            if m.hook and m.parent_id != source_id}
-    cluster_used: set[str] = set()                  # opening-cluster scope: this decision's accepted hooks only
     for pick in deduped:
         token = _token(pick)
         mid = child_id("moment", source_id, token)
-        # On-screen text = the model's RETENTION hook ONLY (curiosity-gap, signal-driven, NOT a
-        # transcript quote). Reject KNOWN slop (hookcheck.is_weak_hook: generic-superlative templates,
-        # cliches, editing/cuts hooks, cross-clip repeats) AND an omitted hook to None -> a CLEAN clip;
-        # burning slop or the unreliable transcript on screen is exactly what the operator rejected.
-        h = (pick.hook or "").strip()
-        hook = sanitize_generated_text(h) if h else None
-        hook_removed = None
-        # M1a: reject KNOWN-mechanical slop (is_weak_hook) OR a THIRD-PERSON scene-narration recap
-        # (narration_signature — high-precision: only a clear third-person-pronoun line with NO viewer
-        # address; viewer-POV/imperative hooks pass). Third-person is the operator's "hooks come back in
-        # third person" defect; it is mechanical and deterministic, so it belongs on this floor.
-        if hook and (is_weak_hook(hook, used, cluster_scope=cluster_used) or narration_signature(hook)):
-            hook_removed = hook         # PRESERVE the stripped hook (dup/template/third-person) — operator restores it in Review
-            hook = None                 # ...the clip still renders CLEAN by default (today's behavior unchanged)
-        if hook:
-            used.add(hook.lower()); cluster_used.add(hook.lower())   # feed-wide dup set + this-decision cluster set
-        # per-account hooks (the moment author writes one per active handle): sanitize each the same way
-        # as the base hook (em-dash/quote burn-safety); a blank/empty one drops out -> that handle falls
-        # back to the shared `hook` at crosspost. No cross-clip dedup here: these are per-account variants
-        # of ONE clip, not cross-video repeats.
-        # M1a: a per-account hook is rejected the same way for THIRD-PERSON (narration_signature) — a
-        # dropped handle falls back to the shared `hook` at crosspost (hooks_by_persona.get(h) or m.hook).
-        # No cross-clip dedup here (these are per-account variants of ONE clip, not cross-video repeats).
-        hbp = {h: s for h, ph in (pick.hooks_by_persona or {}).items()
-               if (s := sanitize_generated_text(ph)) and not narration_signature(s)}
-        keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.decided,
+        # Born `picked` with NO hook — the hook is authored in pass 2 (ingest_moment_hooks), seeing this
+        # window's frames. hook/hook_removed/hooks_by_persona stay at their empty defaults until then.
+        keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.picked,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
-                           transcript_excerpt=pick.transcript_excerpt, hook=hook,
-                           hook_removed=hook_removed,                      # preserved-for-review (None unless stripped)
-                           hooks_by_persona=hbp,                           # handle -> that account's frame-grounded hook
+                           transcript_excerpt=pick.transcript_excerpt,
                            signal_score=pick.signal_score)
     if not keep:
         if dec.picks:
@@ -180,5 +163,92 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
             led.set_source_state(source_id, SourceState.moments_empty)
         return led
     led.reconcile_moments(source_id, keep)          # upsert + cascade-delete dropped lineages
-    led.set_source_state(source_id, SourceState.moments_decided)
+    led.set_source_state(source_id, SourceState.picks_decided)   # M1b: picks reconciled; hook gates next
+    return led
+
+def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
+    """M1b PASS 2 request — open ONE frame-seeing hook gate per `picked` moment of this source. Each
+    request carries the picked WINDOW + stills extracted over that window (fit_window — the same cut the
+    renderer makes), plus the per-account personas + learned hook styles (the hook-authoring context that
+    used to ride the single-pass gate). Write-ONCE per moment (guard: a request already on disk is never
+    re-stamped, so an in-flight answer is never invalidated). The source stays `picks_decided`;
+    ingest_moment_hooks promotes it once every pick's hook has landed."""
+    src = led.sources[source_id]
+    # Per-account voices reach the frame-seeing hook author so IT writes each handle's on-screen hook
+    # (the root fix). Only accounts WITH a persona ride along; none -> [] -> no per-persona prompt block.
+    personas = ([{"handle": a.handle, "persona": a.persona}
+                 for a in accounts.accounts if getattr(a, "persona", None)]
+                if accounts is not None else [])
+    # P4(c): cross-surface union of gated winning hook STYLES (the SAME signal caption uses). [] when the
+    # flag is off / accounts is None / on any scorer error (fail-open).
+    styles = proven_hook_styles(led, cfg, accounts)
+    band = band_for(cfg.clip_profile)
+    guidance = load_guidance(cfg)
+    for m in list(led.moments.values()):
+        if m.parent_id != source_id or m.state is not MomentState.picked:
+            continue
+        key = f"{source_id}.{m.content_token}"
+        if latest_request_id(cfg, "moment_hooks", key) is not None:
+            continue                                # write-ONCE: never re-stamp an existing (pending/answered) gate
+        cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the cut the renderer makes
+        peaks = [p for p in (src.signal_peaks or [])
+                 if isinstance(p, dict) and cs <= float(p.get("t", -1.0)) <= ce]   # window-scoped transients
+        payload = MomentHookRequest(source_id=source_id, moment_id=m.id, token=m.content_token,
+                                    request_id="", start=m.start, end=m.end, reason=m.reason,
+                                    transcript_excerpt=m.transcript_excerpt, signal_score=m.signal_score,
+                                    language=src.language, guidance=guidance,
+                                    clip_profile=cfg.clip_profile,
+                                    frames=_window_frames(cfg, src, cs, ce),
+                                    signal_peaks=peaks, personas=personas).model_dump()
+        payload.pop("request_id", None)
+        if styles:
+            payload["learned_hooks"] = styles      # optional KEY (mirrors caption), not a model field
+        write_request(cfg, kind="moment_hooks", key=key, payload=payload)
+    return led
+
+def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
+    """M1b PASS 2 ingest — apply each landed window-grounded hook to its `picked` moment and promote it to
+    `decided`. The is_weak_hook + narration_signature floor (and hook_removed preservation + per-account
+    hooks_by_persona filtering) that used to live in ingest_moments runs HERE now, on the window-grounded
+    hooks. A pick whose gate hasn't answered yet stays `picked` (re-checked next pass, VISIBLE in the
+    awaiting count — never a silent wedge). A gate that VALIDATES with hook=null decides that pick CLEAN
+    (the author's honest 'no hook beats slop'). The source lands `moments_decided` once no pick is left
+    `picked`."""
+    # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks (an EXACT repeat reads like a bot).
+    # The opening-template CLUSTER scope is THIS source's already-decided hooks only — a templated batch
+    # is a single-decision tell; the same opener across DIFFERENT videos is not (else it over-strips).
+    used = {(m.hook or "").strip().lower() for m in led.moments.values()
+            if m.hook and m.parent_id != source_id}
+    cluster_used = {(m.hook or "").strip().lower() for m in led.moments.values()
+                    if m.hook and m.parent_id == source_id and m.state is not MomentState.picked}
+    picked = sorted([m for m in led.moments.values()
+                     if m.parent_id == source_id and m.state is MomentState.picked],
+                    key=lambda m: (m.start, m.end))   # stable order == the pick order (deterministic cluster dedup)
+    for m in picked:
+        key = f"{source_id}.{m.content_token}"
+        dec = read_response(cfg, "moment_hooks", key, MomentHookDecision)
+        if dec is None:
+            continue                                # pending / corrupt / stale -> leave picked (re-checked)
+        h = (dec.hook or "").strip()
+        hook = sanitize_generated_text(h) if h else None
+        hook_removed = None
+        # Reject KNOWN-mechanical slop (is_weak_hook) OR a THIRD-PERSON scene-narration recap
+        # (narration_signature — high precision; viewer-POV/imperative pass). The stripped hook is
+        # PRESERVED on hook_removed so Review can show it + let the operator restore it.
+        if hook and (is_weak_hook(hook, used, cluster_scope=cluster_used) or narration_signature(hook)):
+            hook_removed = hook
+            hook = None                             # ...the clip still ships CLEAN by default
+        if hook:
+            used.add(hook.lower()); cluster_used.add(hook.lower())
+        # per-account hooks: sanitize each (em-dash/quote burn-safety) + drop a THIRD-PERSON one; a
+        # dropped handle falls back to the shared `hook` at crosspost. No cross-clip dedup (these are
+        # per-account variants of ONE clip).
+        hbp = {hh: s for hh, ph in (dec.hooks_by_persona or {}).items()
+               if (s := sanitize_generated_text(ph)) and not narration_signature(s)}
+        led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
+                                                 "hooks_by_persona": hbp,
+                                                 "state": MomentState.decided})
+    if not any(m.parent_id == source_id and m.state is MomentState.picked
+               for m in led.moments.values()):
+        led.set_source_state(source_id, SourceState.moments_decided)   # every pick's hook landed
     return led
