@@ -820,7 +820,7 @@ def home_status(cfg: Config) -> HomeStatus:
         get_logger(cfg)("home", "-", "error", err=str(exc)[:160])
         counts = {"sources": 0, "batches": None, "awaiting": 0, "scheduled": 0, "posted": 0}
         by_account = {}
-    return HomeStatus(mode=mode, is_live=mode != "dryrun", counts=counts, accounts=accounts, by_account=by_account)
+    return HomeStatus(mode=mode, is_live=cfg.is_live, counts=counts, accounts=accounts, by_account=by_account)
 
 
 def home_batches(cfg: Config) -> list[HomeBatch]:
@@ -865,7 +865,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
     from fanops.validation_gate import learning_validated
     return GoLiveStatus(
         mode=cfg.poster_backend,
-        is_live=cfg.poster_backend != "dryrun",
+        is_live=cfg.is_live,
         postiz_url=cfg.postiz_url,                    # non-secret; shown so the operator can confirm config
         key_set=cfg.postiz_api_key is not None,       # BOOL only — the API key value is NEVER exposed
         zernio_key_set=cfg.zernio_api_key is not None,  # Zernio slice 4: BOOL only (connect-block state)

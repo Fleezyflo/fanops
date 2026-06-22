@@ -69,7 +69,7 @@ def doctor_report(cfg: Config) -> dict:
 
     notes: list[str] = []
     notes.append(f"poster backend: {cfg.poster_backend}"
-                 + (" (dryrun — writes payloads, posts nothing)" if cfg.poster_backend == "dryrun" else " (LIVE)"))
+                 + (" (dryrun — writes payloads, posts nothing)" if not cfg.is_live else " (LIVE)"))
     if lv:                                               # ECC fix #14: reuse the single read above
         notes.append("learning loop: validation-confirmed (lift fields reconciled by cutover) — amplify/bandit may be enabled")
     else:

@@ -35,8 +35,8 @@ def postiz_post(cfg: Config, integration_id: str, *, confirmed: bool, post=None)
     is one of the operator's mapped integrations. Platform is DERIVED from the chosen integration (Postiz
     is integration-level; the payload settings.__type must match the channel, so it is NOT hardcoded)."""
     from fanops.cutover import CUTOVER_SCHEDULE, CONFIRM_FLAG, _save_state
-    if cfg.poster_backend == "dryrun":
-        raise CutoverError("cutover proves the LIVE path; FANOPS_POSTER=dryrun posts nothing — GO LIVE on Postiz first.")
+    if not cfg.is_live:
+        raise CutoverError("cutover proves the LIVE path; the system is in dryrun (posts nothing) — GO LIVE on Postiz first.")
     if not confirmed:
         raise CutoverError(f"refusing to POST to a real account — confirm the selected channel is a THROWAWAY ({CONFIRM_FLAG}).")
     _require_postiz(cfg)
