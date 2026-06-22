@@ -19,6 +19,8 @@
         {%- elif result.detail and result.detail.integrations is defined %} found {{ result.detail.integrations|length }} integration(s)
         {%- elif result.detail and result.detail.mode %} switched to {{ result.detail.mode }}
         {%- elif result.detail and result.detail.url %} connected {{ result.detail.url }}
+        {%- elif result.detail and result.detail.adopted is defined %} adopted {{ result.detail.adopted }} channel(s){% if result.detail.routed %}, routed {{ result.detail.routed }} live{% endif %}
+        {%- elif result.detail and result.detail.channels is defined %} found {{ result.detail.channels|length }} channel(s) to adopt
         {%- else %} done{% endif %}
       {% else %}✗ {{ result.error }}{% endif %}
     </div>
@@ -74,9 +76,43 @@
   </section>
 
   <section class="golive-step">
-    <h3>3 · Map each channel to Postiz</h3>
-    <p class="muted">Every channel maps to its OWN Postiz integration — a handle's Instagram and TikTok
-      are different integrations. Click Refresh to pick from your connected channels, or paste an id.</p>
+    <h3>3 · Map each channel to its scheduler</h3>
+    <p class="muted">One-click: <strong>Discover</strong> lists every channel your connected schedulers
+      (Postiz + Zernio) already hold and proposes a handle for each — tick the ones to adopt, edit the
+      handle, optionally route them live. Or map a channel manually below.</p>
+    <form hx-post="{{ url_for('do_golive_discover') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+      <button type="submit" class="primary">Discover channels (Postiz + Zernio)</button>
+    </form>
+    {% set discovered = result.detail.get('channels') if (result and result.detail and result.detail.get('channels') is not none) else none %}
+    {% if discovered is not none %}
+      {% if discovered %}
+      <form class="golive-discover" hx-post="{{ url_for('do_golive_adopt') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        <p class="muted">{{ discovered|length }} channel(s) found — tick to adopt, edit the handle, then Adopt. Already-mapped channels are marked.</p>
+        <table class="golive-map">
+          <tr><th></th><th>scheduler</th><th>channel</th><th>handle</th><th>persona</th></tr>
+          {% for c in discovered %}
+          <tr>
+            <td>{% if c.already_mapped %}<span class="ok" title="already mapped to {{ c.match }}">✓ mapped</span>
+                {% else %}<input type="checkbox" name="adopt" value="{{ loop.index0 }}" aria-label="adopt {{ c.name }}">{% endif %}</td>
+            <td>{{ c.provider }}</td>
+            <td>{{ c.name }} <span class="muted">{{ c.platform }} · {{ c.id }}</span></td>
+            <td>
+              <input type="hidden" name="provider__{{ loop.index0 }}" value="{{ c.provider }}">
+              <input type="hidden" name="id__{{ loop.index0 }}" value="{{ c.id }}">
+              <input type="hidden" name="platform__{{ loop.index0 }}" value="{{ c.platform }}">
+              <input type="text" name="handle__{{ loop.index0 }}" value="{{ c.match or c.suggested_handle }}"
+                     {{ 'readonly' if c.already_mapped else '' }} aria-label="handle for {{ c.name }}" size="18">
+            </td>
+            <td>{% if not c.match %}<input type="text" name="persona__{{ loop.index0 }}" placeholder="optional — caption voice" size="20">{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> also route adopted channels to their scheduler (a per-account go-live)</label>
+        <button type="submit" class="primary">Adopt selected</button>
+      </form>
+      {% else %}<p class="muted">No channels found on the connected schedulers.</p>{% endif %}
+      {% for n in (result.detail.get('notes') or []) %}<p class="muted">{{ n }}</p>{% endfor %}
+    {% endif %}
     <form hx-post="{{ url_for('do_golive_refresh') }}" hx-target="#golive-panel" hx-swap="outerHTML">
       <button type="submit">Refresh from Postiz</button>
     </form>

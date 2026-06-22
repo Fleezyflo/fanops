@@ -721,6 +721,24 @@ def create_app(cfg: Config) -> Flask:
     def do_golive_refresh():
         return _golive_panel(golive.refresh_integrations(cfg))
 
+    @app.post("/golive/discover")
+    def do_golive_discover():
+        # M4b: list every channel the connected schedulers (Postiz + Zernio) already hold, each proposed
+        # for one-click adoption (handle + provider + id + deterministic match). discover_channels never
+        # writes — the operator confirms each row in adopt; re-render the panel with the proposed rows.
+        return _golive_panel(golive.discover_channels(cfg))
+
+    @app.post("/golive/adopt")
+    def do_golive_adopt():
+        # M4b: adopt the ticked discovered channels. Each ticked checkbox submits its row INDEX in `adopt`;
+        # the row's hidden provider__i/id__i/platform__i + the editable handle__i/persona__i carry the data
+        # (so adopt never re-discovers). confirm routes the adopted channels to their scheduler (creds-gated
+        # in adopt_channels — without it a channel is mapped but unrouted, never publishing).
+        sels = [{"provider": request.form.get(f"provider__{i}", ""), "id": request.form.get(f"id__{i}", ""),
+                 "platform": request.form.get(f"platform__{i}", ""), "handle": request.form.get(f"handle__{i}", ""),
+                 "persona": request.form.get(f"persona__{i}", "")} for i in request.form.getlist("adopt")]
+        return _golive_panel(golive.adopt_channels(cfg, sels, confirmed=request.form.get("confirm") == "1"))
+
     @app.post("/golive/map")
     def do_golive_map():
         # Batch per-CHANNEL map: one <select name="map__<handle>__<platform>"> per channel, submitted
