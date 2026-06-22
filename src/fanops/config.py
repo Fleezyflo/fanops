@@ -368,13 +368,12 @@ class Config:
 
     @property
     def creative_variation(self) -> bool:
-        # Per-account creative variation (v1, observe-only): with this ON, each active account
-        # gets a genuinely different caption + burned-in on-screen hook per clip. DEFAULT OFF
-        # (opt-in) — the OPPOSITE of burn_subs — because it adds a per-account ffmpeg pass and is
-        # an A/B experiment, not a baseline behavior. Only the explicit on-words enable it; unset,
-        # empty, or anything else stays OFF (today's shared-clip behavior).
+        # Per-account creative variation: each active account gets a genuinely different caption +
+        # burned-in on-screen hook per clip. PENDING the default-off sweep (2026-06-22): flipping this ON
+        # interacts with the approve-with-hook restore flow + the render burn site, so it lands as part of
+        # the methodical sweep (default-on + reworked restore), not a bare flag flip.
         v = (os.getenv("FANOPS_CREATIVE_VARIATION") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return v in ("1", "true", "yes", "on")          # (sweep target: flip to default-ON)
 
     @property
     def account_casting(self) -> bool:
@@ -416,15 +415,6 @@ class Config:
         # records hook_strategy and RENDERS NOTHING. DEFAULT OFF (opt-in): observe-only, so the annotation
         # is the SOLE delta and feature-off render/post bytes are byte-identical. Only explicit on-words enable it.
         v = (os.getenv("FANOPS_HOOK_ROUTER") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
-
-    @property
-    def frame_seeing_hook(self) -> bool:
-        # M1b: TWO-PASS frame-seeing hook author. OFF (default) = today's single moment gate (the author
-        # sees a whole-source frame SURVEY). ON = pass 1 picks the windows, then pass 2 authors each hook
-        # from THAT window's keyframes (grounded in the clip's real opening, the operator's #1 ask). The
-        # core gate every clip flows through must not change unconditionally -> opt-in, byte-identical-OFF.
-        v = (os.getenv("FANOPS_FRAME_SEEING_HOOK") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
