@@ -42,7 +42,8 @@ _LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL"
               "FANOPS_CREATIVE_VARIATION", "FANOPS_VARIANT_LEARNING", "FANOPS_P4_DIM_BIAS",
               # Account-First Studio casting (Face 3): default OFF + budget 3 — a repo .env value must not leak
               # into tests that assume the code default (same class as FANOPS_CREATIVE_VARIATION above).
-              "FANOPS_ACCOUNT_CASTING", "FANOPS_CAST_PICK_BUDGET")
+              # FANOPS_CAST_EXCLUSIVE (exclusive best-fit routing + drop poor-fit) is the same class: default OFF.
+              "FANOPS_ACCOUNT_CASTING", "FANOPS_CAST_PICK_BUDGET", "FANOPS_CAST_EXCLUSIVE")
 
 
 @pytest.fixture(autouse=True)
