@@ -12,10 +12,9 @@
       {% if result.ok %}{% if result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s) onto a fresh cadence.{% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time | localdt }}.{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
-  {% set approved = rows | selectattr('editable') | list %}
-  {% if approved %}
+  {% if approved_total %}
     <form class="respread" hx-post="{{ url_for('do_reschedule_bucket', account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-      <button type="submit">Reschedule all</button> <span class="muted">— re-spread the {{ approved|length }} approved post(s) from now</span>
+      <button type="submit">Reschedule all</button> <span class="muted">— re-spread the {{ approved_total }} approved post(s) from now</span>
     </form>
   {% endif %}
   {% if rows %}
@@ -28,7 +27,7 @@
     {% for r in acct_rows %}
     <tr>
       <td>{{ r.scheduled_time | localdt or 'unscheduled' }}{% if r.imminent %} <span class="badge {{ 'shipped' if r.state != 'queued' else '' }}">{{ 'shipped' if r.state != 'queued' else 'now' }}</span>{% endif %}</td>
-      <td>{{ r.account }} <span class="muted">{{ r.platform }}</span></td>
+      <td>{{ r.account }} <span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %}</td>
       <td class="muted">{{ r.integration_id or '—' }}</td>
       <td>{{ r.state }}</td>
       <td>
@@ -62,6 +61,13 @@
     {% endfor %}
   </table>
   {% endfor %}
+  {% if page and page.total > page.items|length %}
+    <div class="grid-more meta">
+      Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
+      {% if page.next_offset is not none %}<a class="button" href="{{ url_for('schedule', offset=page.next_offset, account=active, batch=active_batch|default(none)) }}">Show more</a>{% endif %}
+      {% if page.offset > 0 %}<a class="button" href="{{ url_for('schedule', account=active, batch=active_batch|default(none)) }}">Back to start</a>{% endif %}
+    </div>
+  {% endif %}
   {% elif active %}<div class="empty">No approved or recent posts for {{ active }} — <a href="{{ url_for('schedule') }}">clear the filter</a> to see all accounts.</div>
   {% else %}<div class="empty">No approved or recent posts. Approve posts in the Review tab to schedule them.</div>{% endif %}
 </div>

@@ -25,6 +25,7 @@
     <button type="submit">Backfill</button>
   </form>
   {% endif %}
+  {% if active_batch and rollup %}<div class="batch-rollup meta">This batch: {{ rollup.posted }} posted · mean lift {{ '%.2f'|format(rollup.mean_lift) if rollup.mean_lift is not none else '—' }}</div>{% endif %}
   {% if rows %}
   {# content-lifecycle Phase 3: grouped by PUBLISH day (published_at, scheduled_time fallback), newest first,
      'undated' last. groups = views.group_posted_by_day(rows); each is (day, rows). #}
@@ -35,7 +36,7 @@
     {% for r in day_rows %}
     <tr>
       <td>{{ (r.published_at or r.scheduled_time) | localdt or '—' }}</td>
-      <td>{{ r.account }} <span class="muted">{{ r.platform }}</span></td>
+      <td>{{ r.account }} <span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %}</td>
       <td>{{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }}</td>
       <td>{{ r.saves if r.saves is not none else '—' }}</td>
       <td>{{ r.shares if r.shares is not none else '—' }}</td>
@@ -59,6 +60,13 @@
     {% endfor %}
   </table>
   {% endfor %}
+  {% if page and page.total > page.items|length %}
+    <div class="grid-more meta">
+      Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
+      {% if page.next_offset is not none %}<a class="button" href="{{ url_for('posted', offset=page.next_offset, account=active, batch=active_batch|default(none)) }}">Show more</a>{% endif %}
+      {% if page.offset > 0 %}<a class="button" href="{{ url_for('posted', account=active, batch=active_batch|default(none)) }}">Back to start</a>{% endif %}
+    </div>
+  {% endif %}
   {% elif active %}<div class="empty">Nothing posted yet for {{ active }} — <a href="{{ url_for('posted') }}">clear the filter</a> to see all accounts.</div>
   {% else %}<div class="empty">Nothing posted yet. Approved posts that ship will appear here with their results.</div>{% endif %}
 </div>
