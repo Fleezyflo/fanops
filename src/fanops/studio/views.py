@@ -154,6 +154,7 @@ class GoLiveStatus:
     cast_exclusive: bool = False       # exclusive routing ON (FANOPS_CAST_EXCLUSIVE) — 1 moment -> best-fit account, drop poor-fit
     cast_pick_budget: int = 3          # budget-mode moments/account/run (FANOPS_CAST_PICK_BUDGET); bypassed when cast_exclusive
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
+    demoted: list = field(default_factory=list)   # Phase 3: planned/demoted accounts (promotable) — golive_accounts lists only active()
 
 
 @dataclass
@@ -764,6 +765,23 @@ def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
         return []                                     # malformed accounts.json — doctor's readiness check names it
 
 
+def golive_demoted_accounts(cfg: Config) -> list:
+    """Phase 3: the PLANNED (demoted / never-activated) accounts as a read-model so Go-Live can render them with
+    a Promote button — golive_accounts lists only active(), so a demote was a silent one-way door. Fail-open -> []
+    on a malformed accounts.json (mirrors golive_accounts)."""
+    try:
+        return [GoLiveAccount(
+            handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
+            channels=[GoLiveChannel(platform=p.value,
+                                    integration_id=a.integrations.get(p.value) or a.account_id or "")
+                      for p in a.platforms])
+            for a in Accounts.load(cfg).accounts if a.status.value == "planned"]
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("golive", "-", "accounts_error", err=str(exc)[:160])
+        return []
+
+
 def home_status(cfg: Config) -> HomeStatus:
     """Lock-free, fail-open read-model for GET / (the status home): connection state per account (via the
     shared golive_accounts helper — NEVER golive_status, which also runs doctor_report on every load) +
@@ -842,7 +860,8 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         account_casting=cfg.account_casting,           # per-account moment casting toggle state (persona diff)
         cast_exclusive=cfg.cast_exclusive,             # exclusive routing toggle state (volume governor)
         cast_pick_budget=cfg.cast_pick_budget,         # budget-mode pick count
-        clip_profile=cfg.clip_profile)                 # clip-length band (talk/song)
+        clip_profile=cfg.clip_profile,                 # clip-length band (talk/song)
+        demoted=golive_demoted_accounts(cfg))          # Phase 3: promotable planned accounts
 
 
 def gate_rows(cfg: Config) -> list[dict]:

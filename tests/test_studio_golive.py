@@ -629,6 +629,45 @@ def test_run_and_review_show_readonly_cast_state(tmp_path, monkeypatch):
     run_html = _client(cfg).get("/run").data.decode()
     assert "cast-state" in run_html and "exclusive" in run_html.lower()       # Run panel echoes the routing config
 
+
+# ---- Phase 3: persona edit + account promote/demote lifecycle ----
+
+def _persona_of(cfg, handle):
+    from fanops.accounts import Accounts
+    return next(a for a in Accounts.load(cfg).accounts if a.handle == handle).persona
+
+def test_set_persona_persists_and_clears(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    assert golive.set_persona(cfg, "@a", "  blunt underground zine voice  ").ok is True
+    assert _persona_of(cfg, "@a") == "blunt underground zine voice"           # trimmed + persisted
+    assert golive.set_persona(cfg, "@a", "").ok is True
+    assert (_persona_of(cfg, "@a") or "") == ""                               # blank clears
+
+def test_set_persona_unknown_handle_clean_error(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    r = golive.set_persona(cfg, "@nope", "x")
+    assert r.ok is False and "no such account" in r.error.lower()
+
+def test_promote_account_planned_to_active_and_demoted_in_status(tmp_path, monkeypatch):
+    from fanops.studio import views
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "planned"}])
+    s = views.golive_status(cfg)
+    assert all(x.handle != "@a" for x in s.accounts)                          # demoted -> not active
+    assert any(x.handle == "@a" for x in s.demoted)                           # ...but listed as demoted
+    assert golive.promote_account(cfg, "@a").ok is True
+    s = views.golive_status(cfg)
+    assert any(x.handle == "@a" for x in s.accounts)                          # promoted -> active again
+
+def test_golive_panel_renders_persona_editor_and_promote(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+                         {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "planned"}])
+    h = _client(cfg).get("/golive").data.decode()
+    assert "/golive/account/persona" in h                                     # persona editor wired (active @a)
+    assert "/golive/account/promote" in h and "@b" in h                       # demoted @b shown with a Promote path
+
 def test_post_golive_casting_route_swaps_panel(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])

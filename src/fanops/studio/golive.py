@@ -23,7 +23,7 @@ from fanops import cutover
 from fanops.config import Config
 from fanops.accounts import (Accounts, write_integration, add_account as _accounts_add_account,
                              set_status as _accounts_set_status, remove_account as _accounts_remove_account,
-                             set_tag_lean as _accounts_set_tag_lean)
+                             set_tag_lean as _accounts_set_tag_lean, set_persona as _accounts_set_persona)
 from fanops.autopilot import set_env_var
 from fanops.errors import CutoverError, PostizAuthError
 from fanops.post import postiz
@@ -242,6 +242,36 @@ def demote_account(cfg: Config, handle: str) -> ActionResult:
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not demote {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"demoted": handle})
+
+
+def promote_account(cfg: Config, handle: str) -> ActionResult:
+    """Promote a `planned`/demoted account back to `active` from the Go-Live tab — the inverse of demote, so a
+    demote is no longer a silent one-way door. Unknown handle / blank -> clean error, never a 500."""
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=False, error="no account selected")
+    try:
+        _accounts_set_status(cfg, handle, "active")
+    except KeyError:
+        return ActionResult(ok=False, error=f"no such account: {handle}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not promote {handle}: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"promoted": handle})
+
+
+def set_persona(cfg: Config, handle: str, persona: str) -> ActionResult:
+    """Set or clear ONE account's persona from the Go-Live tab (the persona was add-time-only before; editing it
+    meant hand-surgery on accounts.json). A blank persona clears it. Unknown handle / blank handle -> clean error."""
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=False, error="no account selected")
+    try:
+        _accounts_set_persona(cfg, handle, persona)
+    except KeyError:
+        return ActionResult(ok=False, error=f"no such account: {handle}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not set persona for {handle}: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"handle": handle})
 
 
 def go_live(cfg: Config, confirmed: bool = False) -> ActionResult:
