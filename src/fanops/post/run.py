@@ -61,12 +61,16 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
 _NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at")
 
 
-def _post_backend(cfg: Config, accounts: Accounts, post: Post) -> str:
-    """The poster backend for THIS post: the per-(handle, platform) override in accounts.json, else the
-    global FANOPS_POSTER (byte-identical when no override is set). Zernio slice 2 — lets one publish run
-    route IG through Postiz and TikTok through Zernio. A post whose account/platform isn't in accounts.json
-    (a stale/hand-made post) cleanly falls back to the global."""
-    return accounts.resolve_backend(post.account, post.platform) or cfg.poster_backend
+def _post_provider(cfg: Config, accounts: Accounts, post: Post) -> str | None:
+    """The provider to publish THIS post (M3 — provider is per-channel, live is global). `dryrun` when the
+    system is NOT live (cfg.is_live False -> write payloads, post NOTHING; the global on/off switch governs
+    ALL channels, even one with an explicit provider — so dryrun can never be bypassed by a per-channel
+    override). When live: the channel's effective provider (explicit accounts.json provider, else the
+    legacy-global bridge). None when live but the channel has NO provider -> publish SKIPS it with a
+    breadcrumb (never global-defaults a new deployment, never marks it failed)."""
+    if not cfg.is_live:
+        return "dryrun"
+    return accounts.effective_provider(post.account, post.platform)
 
 
 def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str) -> None:
@@ -166,14 +170,20 @@ def publish_due(cfg: Config, *, now: str | None = None) -> dict:
     job — auto-resubmitting could double-post a live post, FIX F11). A FATAL AuthError propagates
     (halt the queue, H8). Returns a small summary."""
     cutoff = _now(now)
-    accounts = Accounts.load(cfg)                      # one load; per-post backend resolved off it (slice 2)
+    accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
     led = Ledger.load(cfg)                             # lock-free snapshot of the due queue
     due = [post for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
-    published = 0
+    log = get_logger(cfg)
+    published = no_provider = 0
     for post in due:
-        if _publish_one(cfg, post.id, _post_backend(cfg, accounts, post)) == PostState.published.value:
+        provider = _post_provider(cfg, accounts, post)
+        if provider is None:                           # live but the channel has no provider -> skip, leave queued
+            no_provider += 1
+            log("publish", post.id, "no_provider", account=post.account, platform=post.platform.value)
+            continue
+        if _publish_one(cfg, post.id, provider) == PostState.published.value:
             published += 1
-    return {"due": len(due), "published": published}
+    return {"due": len(due), "published": published, "no_provider": no_provider}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:
@@ -182,6 +192,11 @@ def publish_post(cfg: Config, post_id: str) -> str | None:
     to a single post. A missing/non-queued post is a no-op (returns None). A FATAL AuthError propagates
     (halt), matching publish_due. Returns the final post-state value (e.g. 'published'/'failed') or
     None when nothing was claimable."""
-    post = Ledger.load(cfg).posts.get(post_id)         # resolve the per-account backend for this one post
-    backend = _post_backend(cfg, Accounts.load(cfg), post) if post is not None else cfg.poster_backend
-    return _publish_one(cfg, post_id, backend)
+    post = Ledger.load(cfg).posts.get(post_id)         # resolve the per-channel provider for this one post
+    if post is None:
+        return None                                    # no such post -> nothing to claim
+    provider = _post_provider(cfg, Accounts.load(cfg), post)
+    if provider is None:                               # live but the channel has no provider -> can't publish
+        get_logger(cfg)("publish", post_id, "no_provider", account=post.account, platform=post.platform.value)
+        return None
+    return _publish_one(cfg, post_id, provider)
