@@ -6,8 +6,10 @@
 # target, and stamps Moment.affinities. crosspost then fans a cast moment ONLY to its accounts.
 # C1-safe: reads persona + signal_score, writes ONLY affinities — never touches amplify/retire/cascade/track.
 from __future__ import annotations
-from fanops.models import MomentState
+from fanops.models import MomentState, MomentCastingRequest, MomentCastingDecision
 from fanops.variant_transfer import _persona_tokens
+from fanops.agentstep import write_request, read_response, latest_request_id
+from fanops.control import load_guidance
 from fanops.log import get_logger
 
 
@@ -69,5 +71,63 @@ def cast_moments(led, cfg, accounts, *, account_target=None):
         return led
     except Exception as e:
         try: get_logger(cfg)("casting", "-", "error", err=str(e)[:120])
+        except Exception: pass
+        return led
+
+
+# ---- M1 (Option C): LLM-driven per-account moment SELECTION (the generous, persona-smart selector) ----
+# cast_moments above is the deterministic token-overlap HEURISTIC (the no-LLM fallback / manual mode). The
+# gate below is the default selector when account_casting is ON with a responder: it sees each persona and
+# the whole decided pool and assigns each account its OWN moments — genuinely different per account, GENEROUS
+# (no count cap), reusing Moment.affinities + the existing crosspost gate. Request/respond/ingest mirrors the
+# moments gate; the deterministic ingest is fully testable with a mocked decision (no live LLM).
+
+def request_moment_casting(led, cfg, source_id, accounts):
+    """Open ONE per-account moment-SELECTION gate for this source. Carries the source's DECIDED moments
+    (reason + hook + excerpt + signal + window) and each active persona; the agent returns, per account,
+    that account's OWN set of moments. Write-ONCE. Skipped when there is nothing to differentiate (no decided
+    moments, OR no persona-bearing active account -> heuristic territory / nothing to select). Returns led."""
+    src = led.sources.get(source_id)
+    if src is None: return led
+    decided = sorted([m for m in led.moments.values()
+                      if m.parent_id == source_id and m.state is MomentState.decided],
+                     key=lambda m: (m.start, m.end))
+    personas = [{"handle": a.handle, "persona": a.persona}
+                for a in accounts.active() if getattr(a, "persona", None)]
+    if not decided or not personas: return led        # nothing to cast / no persona to differentiate -> no gate
+    if latest_request_id(cfg, "moment_casting", source_id) is not None:
+        return led                                    # write-ONCE: never re-stamp an in-flight gate
+    moments = [{"moment_id": m.id, "reason": m.reason, "hook": m.hook or "",
+                "transcript_excerpt": m.transcript_excerpt, "signal_score": m.signal_score,
+                "start": m.start, "end": m.end} for m in decided]
+    payload = MomentCastingRequest(source_id=source_id, request_id="", moments=moments, personas=personas,
+                                   language=src.language, guidance=load_guidance(cfg)).model_dump()
+    payload.pop("request_id", None)
+    write_request(cfg, kind="moment_casting", key=source_id, payload=payload)
+    return led
+
+
+def ingest_moment_casting(led, cfg, source_id, accounts):
+    """Apply the per-account selection to Moment.affinities (the crosspost gate honors it). AUTHORITATIVE +
+    GENEROUS: each selected (account, moment) appends the handle to that DECIDED moment's affinities (sorted
+    union, deduped) — NO count cap, overlap allowed. Skips unknown moment ids, moments of another source,
+    non-decided moments, and inactive handles. No response yet -> no-op (pending). Fail-open. Returns led."""
+    try:
+        dec = read_response(cfg, "moment_casting", source_id, MomentCastingDecision)
+        if dec is None: return led                    # still pending -> leave affinities as-is
+        active = {a.handle for a in accounts.active()}
+        add: dict = {}
+        for handle, mids in (dec.selections or {}).items():
+            if handle not in active: continue          # an inactive/unknown handle never casts
+            for mid in mids:
+                m = led.moments.get(mid)
+                if m is None or m.parent_id != source_id or m.state is not MomentState.decided:
+                    continue                           # foreign / unknown / not-yet-decided -> skip
+                add.setdefault(mid, set()).add(handle)
+        for mid, handles in add.items():
+            led.moments[mid].affinities = sorted(set(led.moments[mid].affinities) | handles)
+        return led
+    except Exception as e:
+        try: get_logger(cfg)("casting", source_id, "error", err=str(e)[:120])
         except Exception: pass
         return led
