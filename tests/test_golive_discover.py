@@ -219,3 +219,85 @@ def test_adopt_incomplete_selection_recorded_not_crashed(tmp_path, monkeypatch):
                                 confirmed=True)
     assert res.ok is True and res.detail["adopted"] == 0
     assert res.detail["rows"][0]["ok"] is False
+
+
+# ------------------------------------------------------------------ H6: platform-aware id match ----
+def test_discover_different_platform_same_id_surfaces_as_new(tmp_path, monkeypatch):
+    # H6: a shared/legacy account_id must NOT match a discovered channel of a DIFFERENT platform that
+    # happens to share the id — the channel would falsely read already-mapped and vanish from adopt.
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed(cfg, [{"handle": "@ig", "account_id": "tk_9", "platforms": ["instagram"], "status": "active"}])
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    monkeypatch.setattr(golive.zernio, "zernio_list_accounts",
+                        lambda c: [ZernioAccount(id="tk_9", name="someone", platform="tiktok")])
+    ch = next(c for c in golive.discover_channels(cfg).detail["channels"] if c.provider == "zernio")
+    assert ch.match is None and ch.already_mapped is False        # surfaces as NEW, not falsely already-mapped
+
+
+# ------------------------------------------------------------------ M3: unknown-platform classification ----
+def test_discover_skips_unknown_platform_channel(tmp_path, monkeypatch):
+    # M3: a provider channel on a platform FanOps doesn't model can't be routed -> NOT offered as adoptable;
+    # it's classified into notes instead of silently presented as a live-capable row.
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    monkeypatch.setattr(golive.zernio, "zernio_list_accounts",
+                        lambda c: [ZernioAccount(id="x1", name="weird", platform="threads")])
+    res = golive.discover_channels(cfg)
+    assert all(c.platform != "threads" for c in res.detail["channels"])   # not adoptable
+    assert any("threads" in n for n in res.detail["notes"])               # classified into notes
+
+
+# ------------------------------------------------------------------ M2: unrouted row reason ----
+def test_adopt_unrouted_row_records_reason_confirm(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, []); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    res = golive.adopt_channels(cfg, [{"provider": "postiz", "id": "ig_1", "platform": "instagram", "handle": "@n"}],
+                                confirmed=False)
+    row = res.detail["rows"][0]
+    assert row["routed"] is False and row.get("routing_skipped") == "confirm not ticked"
+
+
+def test_adopt_unrouted_row_records_reason_no_creds(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])          # no ZERNIO_API_KEY
+    res = golive.adopt_channels(cfg, [{"provider": "zernio", "id": "tk_9", "platform": "tiktok", "handle": "@tk"}],
+                                confirmed=True)
+    assert res.detail["rows"][0].get("routing_skipped") == "zernio not connected"
+
+
+# ------------------------------------------------------------------ H3: live route needs an integration id ----
+def test_set_account_backend_refuses_live_route_without_integration_id(tmp_path, monkeypatch):
+    # H3: routing to a LIVE provider must target a real per-platform integration id — without one the
+    # publish is mis-targeted or burnt. The bare shared account_id is NOT a valid per-channel id.
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    _seed(cfg, [{"handle": "@tk", "account_id": "", "platforms": ["tiktok"], "status": "active"}])  # no integrations.tiktok
+    res = golive.set_account_backend(cfg, "@tk", "tiktok", "zernio", confirmed=True)
+    assert res.ok is False and "integration" in res.error.lower()
+
+
+def test_set_account_backend_allows_live_route_with_integration_id(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    _seed(cfg, [{"handle": "@tk", "account_id": "", "platforms": ["tiktok"], "status": "active",
+                 "integrations": {"tiktok": "tk_9"}}])
+    res = golive.set_account_backend(cfg, "@tk", "tiktok", "zernio", confirmed=True)
+    assert res.ok is True and Accounts.load(cfg).effective_provider("@tk", Platform.tiktok) == "zernio"
+
+
+# ------------------------------------------------------------------ M4: route only a platform the account carries ----
+def test_set_account_backend_refuses_platform_not_carried(tmp_path, monkeypatch):
+    # M4: routing a platform the account doesn't carry is a config error -> refused, never silently written.
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    _seed(cfg, [{"handle": "@ig", "platforms": ["instagram"], "status": "active",
+                 "integrations": {"instagram": "ig_1", "tiktok": "tk_9"}}])   # has a tiktok id but NOT the platform
+    res = golive.set_account_backend(cfg, "@ig", "tiktok", "zernio", confirmed=True)
+    assert res.ok is False
+
+
+# ------------------------------------------------------------------ M1: bridge-only live-ready warning ----
+def test_go_live_warns_on_bridge_only_channel(tmp_path, monkeypatch):
+    # M1: a live-ready channel that publishes ONLY via the legacy FANOPS_POSTER bridge (no explicit backends)
+    # goes dark the instant FANOPS_POSTER is unset -> go_live surfaces a warning naming it.
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    _seed(cfg, [{"handle": "@ig", "platforms": ["instagram"], "status": "active",
+                 "integrations": {"instagram": "ig_1"}}])        # no explicit backends -> bridge-only
+    res = golive.go_live(cfg, confirmed=True)
+    assert res.ok is True and "@ig" in str(res.detail.get("bridge_only_warning") or "")

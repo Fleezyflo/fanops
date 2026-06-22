@@ -160,3 +160,34 @@ def test_claude_json_meta_falls_back_to_configured_model_when_envelope_lacks_it(
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
     out, model = claude_json_meta("pick", _SCHEMA, model="opus")
     assert out == {"x": 1} and model == "opus"
+
+
+# --- HOOK-TRANSPORT: verify the vision author OPENED the frames (num_turns), re-ask once on a miss ---
+def test_claude_json_meta_reasks_when_frames_unread(mocker):
+    # images given but the model answered text-only (num_turns=1 -> Read never fired) -> re-ask ONCE; the
+    # second, frame-reading answer (num_turns>=2) is the one returned.
+    from fanops.llm import claude_json_meta
+    seq = iter([json.dumps({"structured_output": {"x": 1}, "num_turns": 1}),
+                json.dumps({"structured_output": {"x": 2}, "num_turns": 3})])
+    def fake(cmd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
+    out, _ = claude_json_meta("hook", _SCHEMA, images=["/f/1.jpg"])
+    assert out == {"x": 2} and run.call_count == 2          # re-asked; the frame-reading answer won
+
+
+def test_claude_json_meta_no_reask_when_frames_read(mocker):
+    from fanops.llm import claude_json_meta
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
+        "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 9}, "num_turns": 2}), "stderr": ""})())
+    out, _ = claude_json_meta("hook", _SCHEMA, images=["/f/1.jpg"])
+    assert out == {"x": 9} and run.call_count == 1          # frames read first try -> no re-ask
+
+
+def test_claude_json_meta_no_reask_without_images(mocker):
+    # the no-image path never re-asks (num_turns ignored) -> byte-identical single call.
+    from fanops.llm import claude_json_meta
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
+        "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 5}, "num_turns": 1}), "stderr": ""})())
+    out, _ = claude_json_meta("pick", _SCHEMA)
+    assert out == {"x": 5} and run.call_count == 1

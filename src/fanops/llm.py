@@ -54,6 +54,16 @@ def _rate_limit_status(returncode: int, stdout: str) -> int | None:
     status = env.get("api_error_status") if isinstance(env, dict) else None
     return status if status in _RATELIMIT_STATUSES else None
 
+def _frames_unread(env: dict) -> bool:
+    """HOOK-TRANSPORT: True iff the envelope PROVES the model answered without any tool turn — so the
+    granted Read tool never fired and the attached frames were NOT opened. `num_turns` counts the agent
+    turns; ==1 is a pure single-shot answer (no Read), >=2 means a tool turn ran (Read is the only tool
+    granted). num_turns absent/non-int -> UNVERIFIABLE (older CLI / a synthetic test envelope) -> NOT
+    treated as unread, so the no-num_turns path is byte-identical and never falsely re-asks."""
+    n = env.get("num_turns")
+    return isinstance(n, int) and n <= 1
+
+
 def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                      images: list[str] | None = None, model: str | None = None) -> tuple[dict, str | None]:
     """Call `claude -p` with a JSON schema; return (schema-valid object, model-that-answered).
@@ -70,9 +80,6 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     `model` (V2 M1/F1): pin `claude -p --model` so the creative brain is REPRODUCIBLE — an unpinned
     call drifts with whatever the CLI defaults to. The returned model prefers the envelope's reported
     `model` (the true audit trail) and FALLS BACK to the pinned value when the envelope omits it."""
-    if images:
-        prompt = ("FIRST read these image frames with the Read tool, then answer using what you SEE:\n"
-                  + "\n".join(images) + "\n\n" + prompt)
     allowed = "Read" if images else ""
     # ECC fix #11: pass the prompt on STDIN (the documented `… | claude -p` headless form, default
     # --input-format text), NOT as an argv positional. argv was world-visible via `ps`/`/proc/<pid>/
@@ -85,38 +92,60 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
            "--json-schema", json.dumps(schema),
            "--allowedTools", allowed,
            "--strict-mcp-config"] + (["--model", model] if model else [])
-    # Rate-limit backoff (mirrors the publishers' jittered exponential retry — blotato_rest.py:131):
-    # a 429/503/529 is rejected pre-processing and SAFE to retry. Without this a usage spike turned
-    # the whole autonomous run into a silent no-op (one log line per gate). A timeout / hard nonzero
-    # exit is NOT retried here (timeout has its own one-shot retry in the responder).
-    delay = _RL_BASE_DELAY
-    for attempt in range(_MAX_RL_RETRIES + 1):
+
+    def _run(stdin_prompt: str) -> dict:
+        # Rate-limit backoff (mirrors the publishers' jittered exponential retry — blotato_rest.py:131):
+        # a 429/503/529 is rejected pre-processing and SAFE to retry. Without this a usage spike turned
+        # the whole autonomous run into a silent no-op (one log line per gate). A timeout / hard nonzero
+        # exit is NOT retried here (timeout has its own one-shot retry in the responder).
+        delay = _RL_BASE_DELAY
+        for attempt in range(_MAX_RL_RETRIES + 1):
+            try:
+                r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout, input=stdin_prompt)
+            except (FileNotFoundError, OSError) as e:
+                raise ToolchainMissingError(
+                    f"claude not found on PATH — install Claude Code to run the autonomous responder "
+                    f"({type(e).__name__})") from e
+            except subprocess.TimeoutExpired as e:
+                raise LlmTimeoutError(f"claude -p timed out after {timeout}s") from e
+            rl = _rate_limit_status(r.returncode, r.stdout)
+            if rl is None:
+                break                                        # success or a hard (non-retryable) failure
+            if attempt >= _MAX_RL_RETRIES:
+                raise LlmRateLimitError(
+                    f"claude -p rate-limited (api_error_status={rl}) after {_MAX_RL_RETRIES} retries")
+            logger.warning("claude -p rate-limited (api_error_status=%s) — backing off %.1fs "
+                           "(attempt %d/%d)", rl, delay, attempt + 1, _MAX_RL_RETRIES)
+            _sleep(delay + random.uniform(0, delay))         # jitter so many gates don't retry in lockstep
+            delay *= 2
+        if r.returncode != 0:
+            raise RuntimeError(f"claude -p failed (rc={r.returncode}): {(r.stderr or r.stdout or '')[:300]}")
         try:
-            r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout, input=prompt)
-        except (FileNotFoundError, OSError) as e:
-            raise ToolchainMissingError(
-                f"claude not found on PATH — install Claude Code to run the autonomous responder "
-                f"({type(e).__name__})") from e
-        except subprocess.TimeoutExpired as e:
-            raise LlmTimeoutError(f"claude -p timed out after {timeout}s") from e
-        rl = _rate_limit_status(r.returncode, r.stdout)
-        if rl is None:
-            break                                            # success or a hard (non-retryable) failure
-        if attempt >= _MAX_RL_RETRIES:
-            raise LlmRateLimitError(
-                f"claude -p rate-limited (api_error_status={rl}) after {_MAX_RL_RETRIES} retries")
-        logger.warning("claude -p rate-limited (api_error_status=%s) — backing off %.1fs "
-                       "(attempt %d/%d)", rl, delay, attempt + 1, _MAX_RL_RETRIES)
-        _sleep(delay + random.uniform(0, delay))             # jitter so many gates don't retry in lockstep
-        delay *= 2
-    if r.returncode != 0:
-        raise RuntimeError(f"claude -p failed (rc={r.returncode}): {(r.stderr or r.stdout or '')[:300]}")
-    try:
-        env = json.loads(r.stdout)
-    except Exception as e:
-        raise RuntimeError(f"claude -p output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
-    if not isinstance(env, dict):
-        raise RuntimeError(f"claude -p output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
+            env = json.loads(r.stdout)
+        except Exception as e:
+            raise RuntimeError(f"claude -p output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
+        if not isinstance(env, dict):
+            raise RuntimeError(f"claude -p output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
+        return env
+
+    # HOOK-TRANSPORT: hand the frames + a read-them-first instruction, then VERIFY the model actually
+    # OPENED them (num_turns proves a Read turn fired — Read is the only tool granted). If it answered
+    # text-only, re-ask ONCE forcing the Read; if STILL unread, proceed but log a degraded breadcrumb
+    # (the hook is then text-grounded, not frame-grounded — the narration_signature strip backstops it).
+    if images:
+        env = _run("FIRST read these image frames with the Read tool, then answer using what you SEE:\n"
+                   + "\n".join(images) + "\n\n" + prompt)
+        if _frames_unread(env):
+            env2 = _run("You did NOT open the frames. You MUST call the Read tool on EACH path below "
+                        "BEFORE answering — ground your hook in what you SEE, not the text:\n"
+                        + "\n".join(images) + "\n\n" + prompt)
+            if not _frames_unread(env2):
+                env = env2
+            else:
+                logger.warning("hook frames appear unread (num_turns<=1) after re-ask — hook is text-grounded")
+    else:
+        env = _run(prompt)
+
     rep = env.get("model")                                   # the model that actually answered, if reported
     resolved = rep if isinstance(rep, str) and rep.strip() else model   # else fall back to the pinned value
     so = env.get("structured_output")
@@ -128,7 +157,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
             return json.loads(result), resolved
         except Exception as e:
             raise RuntimeError(f"claude -p `result` was not JSON: {result[:300]}") from e
-    raise RuntimeError(f"claude -p envelope had no structured_output or JSON result: {(r.stdout or '')[:300]}")
+    raise RuntimeError(f"claude -p envelope had no structured_output or JSON result: {env}")
 
 def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
                 images: list[str] | None = None, model: str | None = None) -> dict:

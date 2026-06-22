@@ -115,7 +115,8 @@ def _default_list_posts(cfg: Config, *, submission_ids: Optional[list[str]] = No
     groups: dict[str, list[str]] = {}
     for p in posts:
         if not p.submission_id: continue
-        backend = accounts.resolve_backend(p.account, p.platform) or cfg.poster_backend
+        backend = accounts.effective_provider(p.account, p.platform)   # H1: per-channel provider, NOT the global fallback
+        if backend is None: continue                                   # no provider -> don't dryrun-default a live post's metrics
         groups.setdefault(backend, []).append(p.submission_id)
     fetchers = [_metrics_client_for(cfg, b, ids) for b, ids in groups.items()]
     def fetch(window: str = "30d") -> list[dict]:

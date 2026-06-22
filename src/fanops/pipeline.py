@@ -321,11 +321,13 @@ def advance(cfg: Config, *, base_time: str) -> dict:
     # submission_id is resolved by polling the backend (Blotato GET /v2/posts/:id; Postiz the
     # date-windowed GET /public/v1/posts `state`). reconcile_due pre-polls each status with NO lock held,
     # then applies the cached results in its OWN tight transaction — so N status GETs never hold the
-    # ledger flock (same contention fix as publish #89). Gated on is_live_backend (key present) AND a
-    # known-live backend — dryrun never produces these and key-less postiz is not live. A FATAL AuthError
-    # halts (symmetry with publish_due); any other hiccup must not wedge the pass. `fanops resolve` stays
-    # the manual escape hatch (e.g. a Postiz post genuinely absent from its page -> 'unknown', parked).
-    if cfg.is_live_backend and cfg.poster_backend in ("rest", "mcp", "postiz"):
+    # ledger flock (same contention fix as publish #89). C1: gated on is_live_backend ALONE (now per-channel
+    # readiness, not the retired global poster_backend) — reconcile_due resolves each post's provider via
+    # effective_provider (H1) and skips dryrun/provider-less posts, so the old `poster_backend in (...)`
+    # clause (dryrun under the FANOPS_LIVE-only shape -> reconciler silently OFF) is dropped. A FATAL
+    # AuthError halts (symmetry with publish_due); any other hiccup must not wedge the pass. `fanops resolve`
+    # stays the manual escape hatch (e.g. a Postiz post genuinely absent from its page -> 'unknown', parked).
+    if cfg.is_live_backend:
         try:
             reconcile_due(cfg)
         except AuthError:

@@ -143,7 +143,9 @@ def test_pull_default_binding_requires_key(tmp_path, monkeypatch):
     # The default (non-injected) path actually wires BlotatoMetricsClient, which needs a key. Slice-5: the
     # per-post router builds a client ONLY for backends that have pollable posts, so the key is demanded
     # when there IS something to fetch (a published post) — the real contract, not an empty-ledger no-op.
-    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    # H1: the no-override channel resolves via effective_provider, so it needs a LIVE legacy global to
+    # bridge to Blotato (rest) — a dryrun global would now correctly SKIP the post (no client, no key).
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, submission_id="s1"))
