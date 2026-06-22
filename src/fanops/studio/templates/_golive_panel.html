@@ -3,7 +3,7 @@
    see readiness, flip dryrun<->live. The API key is WRITE-ONLY: never rendered (status.key_set is a
    bool); autoescape stays on (no |safe). Each form swaps the whole panel (outerHTML) so the mode
    banner + checks update after every action. #}
-<div id="golive-panel">
+<div id="golive-panel" aria-live="polite">
   {% if status.is_live %}
     <div class="banner live">● LIVE ({{ status.mode }}) — reviewed posts publish to REAL accounts</div>
   {% else %}

@@ -279,6 +279,14 @@ def create_app(cfg: Config) -> Flask:
         # bucket; re-render the whole bucket (the #schedule-body outerHTML swap drops the now-absent row).
         return _schedule_panel(actions.clear_time(cfg, post_id))
 
+    @app.post("/schedule/publish/<post_id>")
+    def do_schedule_publish(post_id):
+        # Phase 1 (bug fix): ship ONE approved post from the Schedule bucket via the SAME poster path as
+        # /publish/now, then RE-RENDER the bucket so the shipped post (no longer queued) drops out of the
+        # actionable list. Distinct from /publish/now (Publish tab), which returns a one-off result fragment
+        # into a per-row span and left the shipped post stale in the bucket until a manual refresh.
+        return _schedule_panel(actions.publish_now(cfg, post_id, confirmed=bool(request.form.get("confirm"))))
+
     @app.get("/lift")
     def lift():
         led = Ledger.load(cfg); accts = Accounts.load(cfg); account = _account_arg()

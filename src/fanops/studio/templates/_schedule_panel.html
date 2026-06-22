@@ -5,11 +5,11 @@
    P5: an account chip row scopes the bucket; the "All" view runs a per-account header (groups) over the
    account-then-time-sorted rows; every panel-re-rendering form carries account=active in its POST URL so
    the htmx swap re-applies the same scope (R1). Publish now returns a one-off result, so it is NOT threaded. #}
-<div id="schedule-body">
+<div id="schedule-body" aria-live="polite">
   {% include "_account_filter.html" %}
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}{% if result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s) onto a fresh cadence.{% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time | localdt }}.{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
+      {% if result.ok %}{% if result.detail.state is defined and result.detail.state == 'published' %}Published — shipped {{ result.detail.post_id }}.{% elif result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s) onto a fresh cadence.{% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time | localdt }}.{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
   {% if approved_total %}
@@ -45,7 +45,7 @@
         <form hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <button type="submit">Clear time</button>
         </form>
-        <form hx-post="{{ url_for('do_publish_now', post_id=r.post_id) }}" hx-target="#res-s-{{ r.post_id }}" hx-swap="innerHTML">
+        <form hx-post="{{ url_for('do_schedule_publish', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           {% if backend is defined and backend != 'dryrun' %}
             <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> publish to the REAL account ({{ backend }})</label>
           {% endif %}
@@ -54,7 +54,6 @@
         <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <button type="submit">Send back to Review</button>
         </form>
-        <span id="res-s-{{ r.post_id }}"></span>
         {% else %}<span class="ro">—</span>{% endif %}
       </td>
     </tr>
