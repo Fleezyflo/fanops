@@ -66,16 +66,16 @@ def test_moment_prompt_hook_bans_narration_and_embeds_fewshot_priors():
     assert "maybe your favorite artist copied too" in low  # real few-shot prior (contrarian + identity)
     assert "the line you'll send to one person" in low     # real few-shot prior (open loop + self-relevance)
 
-def test_moment_prompt_treats_target_as_a_floor_and_forbids_zero_on_content():
-    # Real-run diagnosis (2026-06-18): sum_targets=52 but sum_actual=42 — the model NEVER exceeded
-    # target and undershot 9 sources (2 of them, 18s & 27s WITH content, returned ZERO). Root cause:
-    # the prompt's soft 'return fewer ONLY if...' + 'empty list is valid' permission. The fix frames
-    # the target as a FLOOR for substantive sources and forbids an empty list unless the footage is
-    # genuinely dead (no usable spoken/musical content) — without forcing 2-6s fragments.
+def test_moment_prompt_target_is_a_ceiling_but_forbids_zero_on_content():
+    # The pick count is a CEILING ("up to N", never a quota — operator decision 2026-06-22): the model
+    # returns FEWER when the source honestly lacks that many strong moments and is told NOT to pad to the
+    # number. ORTHOGONAL guard kept: real spoken/musical content still MUST yield >=1 clip (an empty list
+    # is allowed ONLY for genuinely dead footage) — the anti-zero-clip fix is independent of the cap.
     p = moment_prompt({"duration": 42.0, "transcript": [{"start": 1.0, "end": 3.0, "text": "x"}],
                        "signal_peaks": [], "language": "en", "guidance": ""}).lower()
-    assert "dead footage" in p                    # the ONLY justification for an empty list
-    assert "do not undershoot" in p or "do not under-shoot" in p   # target is a floor, not a ceiling-with-escape
+    assert "dead footage" in p                    # forbid-zero kept: the ONLY justification for an empty list
+    assert "ceiling" in p and "up to" in p        # the count is an UPPER bound, not a floor/quota
+    assert "undershoot" not in p                  # the old FLOOR framing (forced quota) is gone
 
 def test_moment_prompt_targets_12_to_22_seconds():
     # The clip-length fix: 12-22s windows (loosened from 15-20 so more moments qualify), not 3-4s.
@@ -85,7 +85,7 @@ def test_moment_prompt_targets_12_to_22_seconds():
     assert "second" in p.lower()
     assert ">= 0.5 seconds" not in p           # the old fragment-floor rule is gone
 
-def test_target_pick_count_is_proportional_with_floor():
+def test_target_pick_count_is_proportional_capped_at_30():
     from fanops.prompts import _target_pick_count
     assert _target_pick_count(0.0) == 0        # unprobed -> no target (let the model decide)
     assert _target_pick_count(9.0) == 1        # short source -> one whole-source pick
@@ -94,8 +94,9 @@ def test_target_pick_count_is_proportional_with_floor():
     assert _target_pick_count(36.0) == 2
     assert _target_pick_count(45.0) == 3
     assert _target_pick_count(60.0) == 4
-    assert _target_pick_count(90.0) == 5       # well under the cap of 6
-    assert _target_pick_count(300.0) == 6      # cap holds
+    assert _target_pick_count(90.0) == 5       # proportional, well under the cap
+    assert _target_pick_count(300.0) == 18     # ~5min -> 18 (no longer clamped to the old 6)
+    assert _target_pick_count(700.0) == 30     # long source -> the 30 CEILING holds (a max, never forced)
 
 def test_moment_prompt_short_source_demands_one_whole_pick():
     p = moment_prompt({"duration": 10.0, "transcript": [], "signal_peaks": [],

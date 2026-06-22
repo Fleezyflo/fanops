@@ -312,19 +312,19 @@ class Config:
 
     @property
     def asr_model(self) -> str:
-        # The faster-whisper (CTranslate2) model — the proven music/rap accuracy winner over turbo
-        # (clean Arabic where turbo gave gibberish). Default "large-v3"; int8 makes it practical on
-        # CPU. Override FANOPS_ASR_MODEL with a smaller fw model (e.g. "medium") on a slow host.
+        # The faster-whisper (CTranslate2) model. Default "medium" — fast enough to transcribe a long
+        # (~26min) source within the whisper timeout on CPU, while still strong on music/rap EN+AR. Pin
+        # FANOPS_ASR_MODEL="large-v3" for max accuracy on a fast host, or "small" on a slow one.
         v = os.getenv("FANOPS_ASR_MODEL")
-        return v.strip() if v and v.strip() else "large-v3"
+        return v.strip() if v and v.strip() else "medium"
 
     @property
     def asr_language(self) -> str:
-        # "" = auto-detect (handles EN+AR per clip; proven equal to pinning, just slower). Pin e.g.
-        # "ar" via FANOPS_ASR_LANGUAGE only for a single-language account where the ~3x decode
-        # speedup is worth losing English clips.
+        # Default "en,ar" — a comma list PINS the candidate languages: the runner enables faster-whisper
+        # per-segment detection (multilingual) so English directing lines AND Arabic verses in the SAME
+        # source both transcribe. A SINGLE value (e.g. "ar") forces one language; "" = unconstrained auto.
         v = os.getenv("FANOPS_ASR_LANGUAGE")
-        return v.strip() if v and v.strip() else ""
+        return v.strip() if v and v.strip() else "en,ar"
 
     @property
     def isolate_vocals(self) -> bool:
@@ -387,13 +387,13 @@ class Config:
 
     @property
     def cast_pick_budget(self) -> int:
-        # Per-account max moments cast per pass (Face 3, budget mode). DEFAULT 3, CLAMPED >= 1 (a 0 budget casts
+        # Per-account max moments cast per pass (Face 3, budget mode). DEFAULT 6, CLAMPED >= 1 (a 0 budget casts
         # nothing; the concurrent_workers clamp precedent). A non-int env falls back to the default, never
         # crashing a run. BYPASSED entirely when cast_exclusive is ON (exclusive routing has no count cap).
         try:
-            v = int(os.getenv("FANOPS_CAST_PICK_BUDGET", "3"))
+            v = int(os.getenv("FANOPS_CAST_PICK_BUDGET", "6"))
         except ValueError:
-            return 3
+            return 6
         return v if v >= 1 else 1
 
     @property

@@ -172,19 +172,19 @@ def test_isolate_vocals_defaults_on_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
     assert Config(root=tmp_path).isolate_vocals is True
 
-def test_asr_model_defaults_large_v3_and_respects_env(monkeypatch, tmp_path):
-    # The faster-whisper model — the proven music/rap accuracy winner over turbo. Default large-v3
-    # (int8 makes it practical on CPU). Override picks a smaller fw model on a slow host.
+def test_asr_model_defaults_medium_and_respects_env(monkeypatch, tmp_path):
+    # Default "medium" — fast enough to transcribe a long (~26min) source within the whisper timeout on
+    # CPU. Override pins large-v3 (max accuracy) on a fast host.
     monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
-    assert Config(root=tmp_path).asr_model == "large-v3"
-    monkeypatch.setenv("FANOPS_ASR_MODEL", " medium ")
     assert Config(root=tmp_path).asr_model == "medium"
+    monkeypatch.setenv("FANOPS_ASR_MODEL", " large-v3 ")
+    assert Config(root=tmp_path).asr_model == "large-v3"
 
-def test_asr_language_defaults_auto_and_respects_env(monkeypatch, tmp_path):
-    # "" = auto-detect (handles EN+AR per clip; proven equal to pinning, just slower). An operator
-    # with a single-language account can pin e.g. "ar" for the ~3x decode speedup.
+def test_asr_language_defaults_en_ar_and_respects_env(monkeypatch, tmp_path):
+    # Default "en,ar" — pins BOTH candidates (the runner detects per segment, handling mixed EN+AR in
+    # one source). An operator can pin a single language e.g. "ar" for the ~3x decode speedup.
     monkeypatch.delenv("FANOPS_ASR_LANGUAGE", raising=False)
-    assert Config(root=tmp_path).asr_language == ""
+    assert Config(root=tmp_path).asr_language == "en,ar"
     monkeypatch.setenv("FANOPS_ASR_LANGUAGE", "ar")
     assert Config(root=tmp_path).asr_language == "ar"
 

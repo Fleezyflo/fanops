@@ -45,10 +45,15 @@ def _word(w) -> dict:
 
 def transcribe_to_json(audio: str, out_dir: str, model: str, language: str | None) -> str:
     """Transcribe `audio` with faster-whisper and write whisper-shaped JSON to
-    <out_dir>/<audio-stem>.json; return that path. language "" / None -> auto-detect (handles EN+AR
-    per clip; proven equal to pinning, just slower). word_timestamps drive the overlay's sync."""
+    <out_dir>/<audio-stem>.json; return that path. A comma-list `language` (e.g. "en,ar") PINS multiple
+    candidates -> per-segment detection (multilingual=True), so EN directing lines + AR verses in ONE
+    source both transcribe; a single value forces that language; ""/None -> unconstrained auto-detect.
+    word_timestamps drive the overlay's sync."""
     wm = _load_model(model)
-    segments, info = wm.transcribe(audio, language=(language or None), word_timestamps=True, task="transcribe")
+    langs = [x for x in (language or "").replace(",", " ").split() if x]
+    multi = len(langs) > 1                                # >1 candidate -> per-segment language detection
+    segments, info = wm.transcribe(audio, language=(None if multi else (langs[0] if langs else None)),
+                                   multilingual=multi, word_timestamps=True, task="transcribe")
     out = []
     for s in segments:                                   # faster-whisper yields segments lazily
         seg = {"start": float(s.start), "end": float(s.end), "text": s.text}

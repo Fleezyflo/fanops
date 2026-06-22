@@ -29,7 +29,8 @@ def _brief_fence(guidance) -> str:
 # Clip-length band lives in fanops.bands (ONE home shared with clip.fit_window). A source below the
 # band floor becomes one whole-source clip; the band midpoint sets how many clips a long source
 # should yield. The per-source profile rides in the request payload as `clip_profile`.
-_MAX_TARGET_PICKS = 6
+_MAX_TARGET_PICKS = 30   # CEILING only (the prompt frames it as "up to N", never a quota): a long source
+                         # can yield up to 30 strong clips; a short one yields proportionally fewer.
 
 def _target_pick_count(duration: float, band: Band = TALK) -> int:
     """How many non-overlapping clips to AIM for, by source length and content BAND. <=0 (unprobed)
@@ -155,10 +156,11 @@ def moment_prompt(payload: dict) -> str:
     band = band_for(payload.get("clip_profile"))
     lo, hi = int(band.lo), int(band.hi)
     target = _target_pick_count(duration, band)
-    aim = (f"  - TARGET {target} non-overlapping clip(s) for this ~{duration:.0f}s source — treat it as "
-           "a FLOOR, not a ceiling. Spread them across the timeline; picks MUST NOT overlap. DO NOT "
-           "UNDERSHOOT: hit the target unless the source genuinely lacks that many distinct moments. "
-           "You MAY exceed it if there are more strong moments. Never pad with weak 2-6s fragments.\n"
+    aim = (f"  - Pick UP TO {target} non-overlapping clips from this ~{duration:.0f}s source — {target} is a "
+           "hard CEILING, NOT a quota to fill. Include EVERY genuinely strong, distinct moment (don't be "
+           "stingy), but STOP at the ceiling and return FEWER when the source honestly lacks that many. "
+           "Spread across the timeline; picks MUST NOT overlap. NEVER pad with weak 2-6s fragments to hit a "
+           "number — strong-and-fewer beats weak-and-many.\n"
            ) if target else ""
     short = (f"  - SHORT SOURCE: this source is under {band.lo:.0f}s, so return EXACTLY ONE "
              "pick covering the whole source (start=0, end=SOURCE DURATION). NEVER return an empty "
