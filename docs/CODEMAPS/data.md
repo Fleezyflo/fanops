@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-19 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle (SCHEMA_VERSION=3, born-awaiting_approval, day-bucket archive) -->
+<!-- Generated: 2026-06-19 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle + Account-First (SCHEMA_VERSION=5, born-awaiting_approval, day-bucket archive, batches map) -->
 # FanOps Data
 
 No database. ONE JSON ledger + operator-editable control files, all under the data tree.
@@ -26,13 +26,17 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 - Writes: tmp file + `os.replace` (atomic). Reads in Studio are lock-free (atomic replace
   guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log` + `stitch_plans`
-  (M3 structural-hooks). Versioned: `SCHEMA_VERSION=3` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the
-  empty `stitch_plans` map; v2→v3 `_migrate_v3_created_at` backfills `created_at` — Source from file mtime, Post
-  from a tz-aware `scheduled_time` else the migration stamp; idempotent, never raises, does NOT backfill
+  (M3 structural-hooks) + `batches` (Account-First: named, account-targeted ingest groups). Versioned:
+  `SCHEMA_VERSION=5` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
+  v2→v3 `_migrate_v3_created_at` backfills `created_at` — Source from file mtime, Post from a tz-aware
+  `scheduled_time` else the migration stamp; v3→v4 `_migrate_v4_metrics_series` back-fills ONE 'legacy'-tagged
+  metrics_series row per post that already carries metrics; v4→v5 the additive `{**raw, "batches": raw.get(
+  "batches", {})}` lambda injects the empty `batches` map; all idempotent, never raise, do NOT backfill
   `published_at` — old ledgers load clean, proven on the real 51-post ledger); a NEWER on-disk version →
   `_NewerSchema` refuses to load (exit 2) rather than silently drop fields. New OPTIONAL entity fields
-  (Moment.{hook_strategy, intro_matches}, StitchPlan.*, Source.created_at, Post.{created_at,published_at}) ride
-  pydantic defaults. Inner dicts of variant_streaks/tag_log remain untyped (known gap).
+  (Moment.{hook_strategy, intro_matches, affinities}, StitchPlan.*, Source.{created_at, batch_id}, Post.
+  {created_at, published_at, batch_id, variant_hook}, Batch.*) ride pydantic defaults. Inner dicts of
+  variant_streaks/tag_log remain untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
 
