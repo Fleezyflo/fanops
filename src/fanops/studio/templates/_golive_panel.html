@@ -248,4 +248,40 @@
       <p class="muted">GO LIVE on Postiz first, then validate the learning loop with one throwaway post.</p>
     {% endif %}
   </section>
+
+  <section class="golive-step">
+    <h3>6 · Advanced learning</h3>
+    <p class="muted">A/B hook-learning strategies. All default <strong>OFF</strong> — these set intent; the loop
+      only acts once learning is validated on real metrics (Step 5). Safe to leave off.</p>
+    <div class="learning-toggles">
+      <div class="account-hooks">
+        <p class="muted"><strong>Learning loop</strong> — pick a per-account hook leader from measured lift. Master switch for the three strategies below.</p>
+        <form hx-post="{{ url_for('do_golive_learning') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+          {% if status.variant_learning %}<span class="ok">● ON</span><button type="submit" name="on" value="">Turn off</button>
+          {% else %}<span class="muted">○ off</span><button type="submit" name="on" value="1">Turn on</button>{% endif %}
+        </form>
+      </div>
+      <div class="account-hooks">
+        <p class="muted"><strong>Amplify</strong> — a sustained proven winner auto-amplifies its source moment guidance (amplify-only, never retire).</p>
+        <form hx-post="{{ url_for('do_golive_amplify') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+          {% if status.variant_amplify %}<span class="ok">● ON</span><button type="submit" name="on" value="">Turn off</button>
+          {% else %}<span class="muted">○ off</span><button type="submit" name="on" value="1">Turn on</button>{% endif %}
+        </form>
+      </div>
+      <div class="account-hooks">
+        <p class="muted"><strong>UCB ranking</strong> — deterministic UCB1 explore/exploit leader pick instead of the raw mean.</p>
+        <form hx-post="{{ url_for('do_golive_ucb') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+          {% if status.variant_ucb %}<span class="ok">● ON</span><button type="submit" name="on" value="">Turn off</button>
+          {% else %}<span class="muted">○ off</span><button type="submit" name="on" value="1">Turn on</button>{% endif %}
+        </form>
+      </div>
+      <div class="account-hooks">
+        <p class="muted"><strong>Cross-account transfer</strong> — seed a cold account's hook pool with hooks proven on donor accounts.</p>
+        <form hx-post="{{ url_for('do_golive_transfer') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+          {% if status.variant_transfer %}<span class="ok">● ON</span><button type="submit" name="on" value="">Turn off</button>
+          {% else %}<span class="muted">○ off</span><button type="submit" name="on" value="1">Turn on</button>{% endif %}
+        </form>
+      </div>
+    </div>
+  </section>
 </div>

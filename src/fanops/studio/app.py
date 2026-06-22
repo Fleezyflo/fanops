@@ -663,6 +663,27 @@ def create_app(cfg: Config) -> Flask:
         # Phase 2: set the clip-length band (FANOPS_CLIP_PROFILE = talk|song); validated in the setter.
         return _golive_panel(golive.set_clip_profile(cfg, request.form.get("profile", "")))
 
+    @app.post("/golive/learning")
+    def do_golive_learning():
+        # Phase 6: toggle the A/B learning master switch (FANOPS_VARIANT_LEARNING) — explicit "1"==on. Intent
+        # only; the apply paths stay learning_validated-frozen (ON does NOT unfreeze learning).
+        return _golive_panel(golive.set_variant_learning(cfg, request.form.get("on") == "1"))
+
+    @app.post("/golive/amplify")
+    def do_golive_amplify():
+        # Phase 6: toggle variant-driven amplify (FANOPS_VARIANT_AMPLIFY) — explicit "1"==on.
+        return _golive_panel(golive.set_variant_amplify(cfg, request.form.get("on") == "1"))
+
+    @app.post("/golive/ucb")
+    def do_golive_ucb():
+        # Phase 6: toggle UCB1 variant ranking (FANOPS_VARIANT_UCB) — explicit "1"==on.
+        return _golive_panel(golive.set_variant_ucb(cfg, request.form.get("on") == "1"))
+
+    @app.post("/golive/transfer")
+    def do_golive_transfer():
+        # Phase 6: toggle cross-account hook transfer (FANOPS_VARIANT_TRANSFER) — explicit "1"==on.
+        return _golive_panel(golive.set_variant_transfer(cfg, request.form.get("on") == "1"))
+
     @app.post("/golive/account/persona")
     def do_golive_account_persona():
         # Phase 3: set/clear an existing account's persona (was add-time only -> accounts.json hand-edit).

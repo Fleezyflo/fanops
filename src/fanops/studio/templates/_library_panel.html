@@ -19,15 +19,21 @@
     <button type="submit">Add third-party asset</button>
   </form>
 
+  {# P6: each asset shows its human filename + just-enough technicals (duration, resolution) to recognize
+     it, with the state and opaque id demoted to muted context. #}
+  {% macro asset_li(s) %}<li class="asset-row"><span class="asset-name">{{ s.name }}</span>
+    <span class="muted asset-tech">{% if s.duration %}{{ '%.0f'|format(s.duration) }}s{% endif %}{% if s.width and s.height %} · {{ s.width }}×{{ s.height }}{% endif %} · {{ s.state }}</span>
+    <span class="ro asset-id">{{ s.id }}</span></li>{% endmacro %}
+
   <h3>Native <span class="muted">({{ catalog.native|length }})</span></h3>
   <ul class="asset-list">
-    {% for s in catalog.native %}<li>{{ s.id }} <span class="muted">· {{ s.state }}</span></li>{% endfor %}
+    {% for s in catalog.native %}{{ asset_li(s) }}{% endfor %}
     {% if not catalog.native %}<li class="empty">none yet</li>{% endif %}
   </ul>
 
   <h3>Third-party <span class="muted">({{ catalog.third_party|length }})</span></h3>
   <ul class="asset-list">
-    {% for s in catalog.third_party %}<li>{{ s.id }} <span class="muted">· {{ s.state }}</span></li>{% endfor %}
+    {% for s in catalog.third_party %}{{ asset_li(s) }}{% endfor %}
     {% if not catalog.third_party %}<li class="empty">none yet</li>{% endif %}
   </ul>
 </div>
