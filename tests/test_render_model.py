@@ -4,7 +4,6 @@
 # `renders` map (additive, byte-for-byte the v1->v2 stitch_plans / v4->v5 batches injection — NO row
 # backfill, the ledger is NEVER wiped). Old ledgers load with renders={} and render_id None.
 import json
-import pytest
 from fanops.config import Config
 from fanops.models import Render, RenderState, Post, Platform
 from fanops.ledger import Ledger, SCHEMA_VERSION
