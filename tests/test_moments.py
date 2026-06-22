@@ -194,6 +194,56 @@ def test_ingest_rejects_mechanical_dup_hook_to_clean_clip(tmp_path):
     led = ingest_moments(led, cfg, "src_1")
     assert led.moments_of("src_1")[0].hook is None          # exact dup -> clean clip, not burned twice
 
+def test_ingest_rejects_third_person_hook_to_clean_clip(tmp_path):
+    # M1a: a third-person scene-narration hook (recaps the artist to no one, no viewer address) is the
+    # operator's "hooks come back in third person" defect. narration_signature is the mechanical gate
+    # (high precision: only clear third-person-pronoun recaps), applied at ingest like is_weak_hook.
+    # The stripped hook is PRESERVED into hook_removed (operator can see what was rejected in Review).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moments", "src_1")
+    response_path(cfg, "moments", "src_1").write_text(MomentDecision(
+        source_id="src_1", request_id=rid,
+        picks=[MomentPick(start=14.0, end=18.5, reason="punchline", signal_score=0.6,
+                          hook="he switches to Arabic when it gets personal")]
+    ).model_dump_json())
+    led = ingest_moments(led, cfg, "src_1")
+    m = led.moments_of("src_1")[0]
+    assert m.hook is None                                              # third-person recap -> clean clip
+    assert m.hook_removed == "he switches to Arabic when it gets personal"   # preserved for review
+
+def test_ingest_keeps_viewer_pov_hook(tmp_path):
+    # The third-person gate is HIGH PRECISION — it must NOT over-fire on a viewer-POV hook ('you'll').
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moments", "src_1")
+    response_path(cfg, "moments", "src_1").write_text(MomentDecision(
+        source_id="src_1", request_id=rid,
+        picks=[MomentPick(start=14.0, end=18.5, reason="punchline", signal_score=0.6,
+                          hook="the part you'll replay")]
+    ).model_dump_json())
+    led = ingest_moments(led, cfg, "src_1")
+    assert led.moments_of("src_1")[0].hook == "the part you'll replay"   # viewer-POV ships
+
+def test_ingest_rejects_third_person_per_account_hook_falls_back(tmp_path):
+    # M1a covers the PER-ACCOUNT hooks too (they ship on-screen under creative_variation). A third-person
+    # persona hook is dropped from hooks_by_persona -> that handle falls back to the shared (floored) hook
+    # at crosspost. A viewer-POV persona hook is kept.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moments", "src_1")
+    response_path(cfg, "moments", "src_1").write_text(MomentDecision(
+        source_id="src_1", request_id=rid,
+        picks=[MomentPick(start=14.0, end=18.5, reason="punchline", signal_score=0.6,
+                          hook="the part you'll replay",
+                          hooks_by_persona={"@a": "you won't expect the switch",
+                                            "@b": "he flips the whole beat"})]
+    ).model_dump_json())
+    led = ingest_moments(led, cfg, "src_1")
+    hbp = led.moments_of("src_1")[0].hooks_by_persona
+    assert hbp.get("@a") == "you won't expect the switch"   # viewer-POV kept
+    assert "@b" not in hbp                                   # third-person dropped -> falls back to shared
+
 def test_ingest_all_invalid_marks_source_error(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
