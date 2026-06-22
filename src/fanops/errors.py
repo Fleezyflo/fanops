@@ -41,6 +41,13 @@ class PostizAuthError(AuthError):
     the key into stdout/ledger/run.log."""
 
 
+class ZernioAuthError(AuthError):
+    """A Zernio authentication failure (bad/missing ZERNIO_API_KEY, HTTP 401) from the hosted Zernio
+    scheduler backend (publishes TikTok without the operator passing TikTok app review — Zernio owns the
+    app). Same fatal semantics as the others (halt the queue by TYPE), different operator message (check
+    ZERNIO_API_KEY). Body WITHHELD so the Bearer key never lands in stdout/ledger/run.log."""
+
+
 class ToolchainMissingError(Exception):
     """A required media binary (ffprobe/ffmpeg/whisper) is absent from PATH at a point where the
     work CANNOT be deferred to a per-unit error state — specifically ingest (`ingest_drops` runs

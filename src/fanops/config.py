@@ -53,8 +53,11 @@ _STAGE = {
 
 # The recognized poster backends. An unknown/typo'd FANOPS_POSTER resolves to dryrun (W4) — see
 # poster_backend. dryrun = posts nothing; postiz = free self-hosted; rest/mcp = Blotato (being retired).
-PosterBackend = Literal["dryrun", "postiz", "rest", "mcp"]
-_VALID_BACKENDS = frozenset({"dryrun", "postiz", "rest", "mcp"})
+PosterBackend = Literal["dryrun", "postiz", "zernio", "rest", "mcp"]
+_VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio", "rest", "mcp"})
+# Live (real-posting) backends: a per-account backend override pointing at one of these is a real
+# "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
+_LIVE_BACKENDS = frozenset({"postiz", "zernio", "rest", "mcp"})
 
 # Per-gate model tier (llm_model_for): the `moments` gate is the CREATIVE VISION hook AUTHOR (Phase 1 —
 # it SEES source frames and writes the on-screen retention hook, the watch-through driver) -> opus.
@@ -156,6 +159,23 @@ class Config:
         return v.strip() if v and v.strip() else None
 
     @property
+    def zernio_url(self) -> str | None:
+        # Base URL of the Zernio API. Zernio is HOSTED (not self-hosted like Postiz), so this defaults
+        # to the public endpoint; ZERNIO_API_URL overrides it (parity with the docs' env var, e.g. a
+        # regional host or a test double). The poster trims a trailing slash.
+        v = (os.getenv("ZERNIO_API_URL") or "").strip()
+        return v or "https://zernio.com/api/v1"
+
+    @property
+    def zernio_api_key(self) -> str | None:
+        # Zernio API key (Settings > API Keys; sk_ + 64 hex), sent as `Authorization: Bearer <key>`.
+        # WRITE-ONLY — never logged/echoed (mirrors postiz_api_key). is_live_backend is True for a zernio
+        # backend WITH this key. Distinct from POSTIZ/BLOTATO keys — they coexist (per-account routing
+        # can run IG via Postiz AND TikTok via Zernio at once).
+        v = os.getenv("ZERNIO_API_KEY")
+        return v.strip() if v and v.strip() else None
+
+    @property
     def meta_graph_token(self) -> str | None:
         # Meta Graph API access token (IG Business) for the M4 hashtag TREND sampling. WRITE-ONLY —
         # never logged/echoed (mirrors postiz_api_key); meta_graph sends it as the access_token param.
@@ -203,8 +223,16 @@ class Config:
         # learn/reconcile passes — the Blotato status reconciler (pipeline.py) further restricts itself
         # to rest/mcp, and the speculative actuators stay frozen by learning_validated until cutover.
         b = self.poster_backend
-        if b == "postiz": return bool(self.postiz_api_key)
-        if b in ("rest", "mcp"): return bool(self.blotato_api_key)
+        return self.backend_has_creds(b)
+
+    def backend_has_creds(self, backend: str) -> bool:
+        # Does THIS backend have the credential to post live? Per-account routing (Zernio slice 2) asks
+        # this about a per-post backend that may differ from the global poster_backend, so the live check
+        # is one reusable home keyed by backend name (not just self.poster_backend). postiz->POSTIZ_API_KEY,
+        # zernio->ZERNIO_API_KEY, rest/mcp(Blotato)->BLOTATO_API_KEY; dryrun/unknown -> never live.
+        if backend == "postiz": return bool(self.postiz_api_key)
+        if backend == "zernio": return bool(self.zernio_api_key)
+        if backend in ("rest", "mcp"): return bool(self.blotato_api_key)
         return False                                    # dryrun / anything unrecognized
 
     @property
