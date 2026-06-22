@@ -122,6 +122,8 @@ class ScheduleRow:
                                            # index=0), set ONLY for editable rows; read-only past rows carry None.
     batch_id: Optional[str] = None         # Face 5: denormalized Post.batch_id (None == ungrouped)
     batch_title: Optional[str] = None      # Batch.name via led.get_batch (None when unbatched/dangling)
+    caption: str = ""                      # P5: the post's caption, shown as a Schedule column so the
+                                           # operator reads WHAT each scheduled row ships without opening it
 
 
 @dataclass
@@ -434,7 +436,8 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             platform=p.platform.value, clip_id=p.parent_id, state=state, imminent=imm,
             editable=editable, integration_id=p.account_id,
             suggested_time=suggest_time(cfg, p, now=now) if editable else None,   # P1: only editable rows
-            batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id)))      # Face 5: batch legibility
+            batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),       # Face 5: batch legibility
+            caption=p.caption))                                                   # P5: caption column
 
     def _key(r: ScheduleRow):
         if not r.scheduled_time:

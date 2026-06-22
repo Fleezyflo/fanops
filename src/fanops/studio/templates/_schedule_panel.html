@@ -23,11 +23,12 @@
   {% for acct, acct_rows in (groups if groups else [('', rows)]) %}
   {% if not active and groups %}<h3 class="day-head">{{ acct }}</h3>{% endif %}
   <table>
-    <tr><th>Time</th><th>Account</th><th>Integration</th><th>State</th><th><span class="vh">Actions</span></th></tr>
+    <tr><th>Time</th><th>Account</th><th>Caption</th><th>Integration</th><th>State</th><th><span class="vh">Actions</span></th></tr>
     {% for r in acct_rows %}
     <tr>
       <td>{{ r.scheduled_time | localdt or 'unscheduled' }}{% if r.imminent %} <span class="badge {{ 'shipped' if r.state != 'queued' else '' }}">{{ 'shipped' if r.state != 'queued' else 'now' }}</span>{% endif %}</td>
       <td>{{ r.account }} <span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %}</td>
+      <td class="schedule-caption" title="{{ r.caption }}">{{ r.caption or '—' }}</td>
       <td class="muted">{{ r.integration_id or '—' }}</td>
       <td>{{ r.state }}</td>
       <td>

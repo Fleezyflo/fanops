@@ -42,6 +42,11 @@
        accounts" (a moment with no cast affinity reaches every account). Non-interactive spans, group aria-label. #}
     {% if card.affinities %}<div class="meta cast-affinity" aria-label="cast to {{ card.affinities|join(', ') }}">cast to {% for h in card.affinities %}<span class="chip ro">{{ h }}</span>{% endfor %}</div>{% else %}<div class="meta cast-affinity muted">all accounts</div>{% endif %}
 
+    {# P5: lineage context so the operator knows WHICH source + WHERE in it this clip came from, plus an
+       optional transcript peek (collapsed) — the data was already on the card, just never surfaced. #}
+    <div class="meta clip-lineage"><span class="ro">from</span> {{ card.source_name }} <span class="ro">·</span> {{ card.moment_window }}s</div>
+    {% if card.transcript_excerpt %}<details class="clip-transcript"><summary>Transcript</summary><p class="meta">{{ card.transcript_excerpt }}</p></details>{% endif %}
+
     {% if card.hook_removed %}
       <div class="meta hook-removed" title="the model wrote this hook but it was auto-removed (duplicate or shared-opening template); this clip is running CLEAN. Restore it from the surface below.">
         <span aria-hidden="true">✎</span> hook removed — <span class="hook-removed-text">{{ card.hook_removed }}</span>
@@ -62,6 +67,9 @@
           {% if card.bucket == 'editable' %}<label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}" aria-label="select {{ s.account }} {{ s.platform }} for approval"></label>{% endif %}
           <span class="surface-name">{{ s.account }} <span class="muted">{{ s.platform }}</span></span>
           {% if s.imminent %}<span class="badge {{ 'shipped' if s.state != 'queued' else '' }}">{{ 'shipped' if s.state != 'queued' else 'shipping now' }}</span>{% endif %}
+          {# P5: per-surface reject — drop just THIS account's post (one id via hx-vals), without ticking the
+             batch checkbox set. Same route as the bulk reject; the swap re-renders the scoped worklist. #}
+          {% if card.bucket == 'editable' %}<button type="button" class="surface-reject" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none)) }}" hx-vals='{"ids": "{{ s.post_id }}"}' hx-target="#review-body" hx-swap="outerHTML" aria-label="reject {{ s.account }} {{ s.platform }}">Reject</button>{% endif %}
         </div>
         {% if s.editable %}
           <div class="ro surface-caption">{{ s.caption }}</div>
