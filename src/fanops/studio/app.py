@@ -663,6 +663,16 @@ def create_app(cfg: Config) -> Flask:
         # Phase 2: set the clip-length band (FANOPS_CLIP_PROFILE = talk|song); validated in the setter.
         return _golive_panel(golive.set_clip_profile(cfg, request.form.get("profile", "")))
 
+    @app.post("/golive/account/persona")
+    def do_golive_account_persona():
+        # Phase 3: set/clear an existing account's persona (was add-time only -> accounts.json hand-edit).
+        return _golive_panel(golive.set_persona(cfg, request.form.get("handle", ""), request.form.get("persona", "")))
+
+    @app.post("/golive/account/promote")
+    def do_golive_account_promote():
+        # Phase 3: promote a demoted/planned account back to active (inverse of demote — no longer one-way).
+        return _golive_panel(golive.promote_account(cfg, request.form.get("handle", "")))
+
     @app.post("/golive/account/remove")
     def do_golive_account_remove():
         # Remove an account from the UI (no JSON hand-edit) — clears a placeholder like @TBD-1; re-render the panel.

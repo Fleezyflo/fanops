@@ -243,6 +243,24 @@ def set_tag_lean(cfg: Config, handle: str, lean: str) -> str:
     return handle
 
 
+def set_persona(cfg: Config, handle: str, persona: str) -> str:
+    """Set or clear ONE account's persona atomically (the Go-Live persona editor). A blank persona CLEARS it
+    (-> ""). Preserves every sibling, unknown field, and the account's other fields; scans ALL rows (dup-handle
+    safety, mirrors set_tag_lean/set_status). Unknown handle -> KeyError."""
+    persona = (persona or "").strip()
+    p = cfg.accounts_path
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        found = False
+        for a in accounts:
+            if isinstance(a, dict) and a.get("handle") == handle:
+                a["persona"] = persona; found = True
+        if not found:
+            raise KeyError(handle)
+        _write_accounts_atomic(p, raw)
+    return handle
+
+
 def remove_account(cfg: Config, handle: str) -> str:
     """Remove ONE account from accounts.json atomically (the Go-Live REMOVE control — clears a placeholder
     like @TBD-1 that the UI couldn't delete before, only hand-editing JSON could). Drops only the matching

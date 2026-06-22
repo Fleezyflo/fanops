@@ -115,6 +115,12 @@
               </select></label>
             <button type="submit">Set lean</button>
           </form>
+          <form class="persona-edit" hx-post="{{ url_for('do_golive_account_persona') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+            <input type="hidden" name="handle" value="{{ a.handle }}">
+            <label class="persona-pick">persona
+              <textarea name="persona" rows="2" aria-label="Persona for {{ a.handle }}" placeholder="What this account clips + its hook angle">{{ a.persona or '' }}</textarea></label>
+            <button type="submit">Save persona</button>
+          </form>
           <form hx-post="{{ url_for('do_golive_account_demote') }}" hx-target="#golive-panel" hx-swap="outerHTML"
                 hx-confirm="Demote {{ a.handle }} to planned? It stops publishing but keeps its row.">
             <input type="hidden" name="handle" value="{{ a.handle }}">
@@ -127,6 +133,18 @@
           </form>
         </div>
         {% endfor %}
+        {% if status.demoted %}
+        <div class="account-row meta demoted-accounts">
+          <p class="muted">Demoted (planned) accounts — not publishing. Promote to re-activate (a demote is no longer one-way).</p>
+          {% for a in status.demoted %}
+          <span><strong>{{ a.handle }}</strong> <span class="muted">demoted</span></span>
+          <form hx-post="{{ url_for('do_golive_account_promote') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+            <input type="hidden" name="handle" value="{{ a.handle }}">
+            <button type="submit">Promote to active</button>
+          </form>
+          {% endfor %}
+        </div>
+        {% endif %}
       </div>
       <div class="account-hooks">
         <p class="muted">Per-account on-screen hooks: each account burns its OWN persona-flavored hook in the
