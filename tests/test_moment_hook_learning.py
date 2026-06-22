@@ -6,8 +6,10 @@ from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Source, SourceState
 from fanops.accounts import Accounts, Account, AccountStatus
 from fanops.moment_hook_learning import proven_hook_styles
-from fanops.moments import request_moments
-from fanops.prompts import moment_prompt
+from fanops.moments import request_moments, ingest_moments, request_moment_hooks
+from fanops.models import MomentDecision, MomentPick
+from fanops.agentstep import response_path, latest_request_id
+from fanops.prompts import moment_hook_prompt
 
 
 def _vpost(led, pid, account, hook, lift, platform=Platform.instagram):
@@ -73,36 +75,48 @@ def test_proven_hook_styles_uses_ucb_when_variant_ucb_on(tmp_path, monkeypatch, 
     assert out == ["UCB_WIN"] and ucb.called and not bh.called
 
 
-# ---- C3: moment_prompt renders the STYLE block; absent/empty -> byte-identical ----
-_BASE = {"duration": 30.0, "language": "en", "transcript": [], "signal_peaks": []}
+# ---- C3: the HOOK prompt renders the STYLE block; absent/empty -> byte-identical ----
+# M1b: the learned hook STYLE rides the PASS-2 hook author (moment_hook_prompt), not the pick prompt.
+_HBASE = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "",
+          "language": "en", "guidance": "", "frames": [], "signal_peaks": []}
 
-def test_moment_prompt_renders_learned_hooks_block():
-    withh = moment_prompt({**_BASE, "learned_hooks": ["WIN_A"]})
+def test_moment_hook_prompt_renders_learned_hooks_block():
+    withh = moment_hook_prompt({**_HBASE, "learned_hooks": ["WIN_A"]})
     assert "WIN_A" in withh and "do NOT copy verbatim" in withh
-    assert "WIN_A" not in moment_prompt(_BASE)
+    assert "WIN_A" not in moment_hook_prompt(_HBASE)
 
-def test_moment_prompt_absent_or_empty_learned_hooks_is_byte_identical():
-    base = moment_prompt(_BASE)
-    assert moment_prompt({**_BASE, "learned_hooks": []}) == base
-    assert moment_prompt({**_BASE, "learned_hooks": None}) == base
+def test_moment_hook_prompt_absent_or_empty_learned_hooks_is_byte_identical():
+    base = moment_hook_prompt(_HBASE)
+    assert moment_hook_prompt({**_HBASE, "learned_hooks": []}) == base
+    assert moment_hook_prompt({**_HBASE, "learned_hooks": None}) == base
 
 
-# ---- C5: request_moments injects the learned_hooks KEY; off/None -> no key (byte-identical) ----
-def test_request_moments_injects_learned_hooks_key(tmp_path, monkeypatch):
+# ---- C5: request_moment_hooks injects the learned_hooks KEY; off/None -> no key (byte-identical) ----
+def _pick_and_request_hooks(led, cfg, accounts=None, sid="s1"):
+    """Drive PASS 1 (pick) then open the PASS-2 hook gate, where learned hook styles ride."""
+    led = request_moments(led, cfg, sid)
+    rid = latest_request_id(cfg, "moments", sid)
+    response_path(cfg, "moments", sid).write_text(MomentDecision(
+        source_id=sid, request_id=rid,
+        picks=[MomentPick(start=10.0, end=28.0, reason="r")]).model_dump_json())
+    led = ingest_moments(led, cfg, sid)
+    return request_moment_hooks(led, cfg, sid, accounts=accounts)
+
+def test_request_moment_hooks_injects_learned_hooks_key(tmp_path, monkeypatch):
     _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _gated_winner(led, "@a", "WIN_A"); _signalled_source(led)
-    led = request_moments(led, cfg, "s1", accounts=_accts(cfg, ("@a", [Platform.instagram])))
-    payload = json.loads(request_path(cfg, "moments", "s1").read_text())
+    led = _pick_and_request_hooks(led, cfg, accounts=_accts(cfg, ("@a", [Platform.instagram])))
+    payload = json.loads(request_path(cfg, "moment_hooks", "s1.10.00-28.00").read_text())
     assert payload["learned_hooks"] == ["WIN_A"]
     assert "guidance" in payload                            # base guidance key untouched (learned_hooks is separate)
 
-def test_request_moments_no_key_when_flag_off(tmp_path, monkeypatch):
+def test_request_moment_hooks_no_key_when_flag_off(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_MOMENT_HOOK_LEARNING", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "@a", "WIN_A"); _signalled_source(led)
-    led = request_moments(led, cfg, "s1", accounts=_accts(cfg, ("@a", [Platform.instagram])))
-    assert "learned_hooks" not in json.loads(request_path(cfg, "moments", "s1").read_text())
+    led = _pick_and_request_hooks(led, cfg, accounts=_accts(cfg, ("@a", [Platform.instagram])))
+    assert "learned_hooks" not in json.loads(request_path(cfg, "moment_hooks", "s1.10.00-28.00").read_text())
 
-def test_request_moments_no_key_when_accounts_none(tmp_path, monkeypatch):
+def test_request_moment_hooks_no_key_when_accounts_none(tmp_path, monkeypatch):
     _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg); _signalled_source(led)
-    led = request_moments(led, cfg, "s1")                   # accounts=None default
-    assert "learned_hooks" not in json.loads(request_path(cfg, "moments", "s1").read_text())
+    led = _pick_and_request_hooks(led, cfg)                  # accounts=None default
+    assert "learned_hooks" not in json.loads(request_path(cfg, "moment_hooks", "s1.10.00-28.00").read_text())
