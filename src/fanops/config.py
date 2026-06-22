@@ -419,6 +419,15 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def frame_seeing_hook(self) -> bool:
+        # M1b: TWO-PASS frame-seeing hook author. OFF (default) = today's single moment gate (the author
+        # sees a whole-source frame SURVEY). ON = pass 1 picks the windows, then pass 2 authors each hook
+        # from THAT window's keyframes (grounded in the clip's real opening, the operator's #1 ask). The
+        # core gate every clip flows through must not change unconditionally -> opt-in, byte-identical-OFF.
+        v = (os.getenv("FANOPS_FRAME_SEEING_HOOK") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def impact_cut(self) -> bool:
         # M4 structural-hooks: the impact-cut PRODUCER (suggest plans for router-reserved moments + render
         # operator-approved plans into stitch_draft clips). Per-format gate, DEFAULT OFF (the PRD risk-row

@@ -63,6 +63,18 @@ def test_hook_router_opt_in(monkeypatch, tmp_path):
         monkeypatch.setenv("FANOPS_HOOK_ROUTER", on)
         assert Config(root=tmp_path).hook_router is True
 
+def test_frame_seeing_hook_default_off(monkeypatch, tmp_path):
+    # M1b: the two-pass frame-seeing hook author is opt-in, default OFF -> the moment gate stays the
+    # current single pass (byte-identical) until the operator turns it on. The core gate every clip flows
+    # through must not change unconditionally (house rule).
+    monkeypatch.delenv("FANOPS_FRAME_SEEING_HOOK", raising=False)
+    assert Config(root=tmp_path).frame_seeing_hook is False
+
+def test_frame_seeing_hook_opt_in(monkeypatch, tmp_path):
+    for on in ("1", "true", "yes", "on"):
+        monkeypatch.setenv("FANOPS_FRAME_SEEING_HOOK", on)
+        assert Config(root=tmp_path).frame_seeing_hook is True
+
 def test_impact_cut_default_off(monkeypatch, tmp_path):
     # M4 structural-hooks: impact-cut producer is a per-format gate, default OFF (non-regression)
     monkeypatch.delenv("FANOPS_IMPACT_CUT", raising=False)
