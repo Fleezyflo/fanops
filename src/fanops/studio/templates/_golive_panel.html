@@ -275,6 +275,9 @@
 
   <section class="golive-step">
     <h3>4 · Readiness</h3>
+    <div class="deps-live" hx-get="{{ url_for('do_golive_health') }}" hx-trigger="load" hx-target="this" hx-swap="innerHTML">
+      <p class="muted">checking system dependencies…</p>
+    </div>
     <ul class="checks">
       {% for c in status.checks %}
         <li class="{{ 'ok' if c.ok else 'err' }}">{{ '✓' if c.ok else '✗' }} {{ c.label }}{% if not c.ok and c.hint %} — <span class="muted">{{ c.hint }}</span>{% endif %}</li>

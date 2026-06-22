@@ -655,8 +655,15 @@ def _dispatch(cfg: Config, args) -> int:
         # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
         # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
         from fanops.studio.app import create_app
+        from fanops.health import ensure_up, system_health
+        # Launch the WHOLE system, not just the UI: bring up any down dependency the system knows how to
+        # start (Docker daemon, Postiz compose) BEFORE serving — so nothing sits silently off (Issue 1).
+        for line in ensure_up(cfg):
+            print(f"  {line}")
         app = create_app(cfg)
         print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
+        for d in system_health(cfg):                       # the live dependency verdict at launch — visible, not buried
+            print(f"  [{'ok  ' if d.ok else 'DOWN'}] {d.name}: {d.detail}")
         # debug EXPLICITLY off (stage-5 audit): a stray FLASK_DEBUG=1 in the operator's env would
         # otherwise enable the Werkzeug interactive debugger — arbitrary code exec on the cockpit.
         app.run(host=args.host, port=args.port, debug=False)

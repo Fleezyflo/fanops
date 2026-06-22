@@ -97,3 +97,19 @@ def test_adopt_route_ignores_unticked_rows(tmp_path, monkeypatch):
         "provider__0": "zernio", "id__0": "z_1", "platform__0": "tiktok", "handle__0": "@skip"})
     assert r.status_code == 200
     assert json.loads(cfg.accounts_path.read_text())["accounts"] == []
+
+
+def test_golive_health_route_renders_dependency_strip(tmp_path, monkeypatch):
+    # Issue 1: /golive/health renders the live dependency strip. system_health is mocked (hermetic — no
+    # real Docker/network); a DOWN dependency must be shown, not hidden.
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    import fanops.health as health
+    monkeypatch.setattr(health, "system_health", lambda c: [
+        health.DepHealth("docker", True, "daemon up"),
+        health.DepHealth("postiz", False, "unreachable"),
+        health.DepHealth("zernio", True, "reachable")])
+    r = _client(cfg).get("/golive/health")
+    assert r.status_code == 200
+    body = r.data.decode()
+    assert "docker" in body and "postiz" in body and "zernio" in body
+    assert "unreachable" in body                          # the down dependency is surfaced, not buried

@@ -739,6 +739,14 @@ def create_app(cfg: Config) -> Flask:
                  "persona": request.form.get(f"persona__{i}", "")} for i in request.form.getlist("adopt")]
         return _golive_panel(golive.adopt_channels(cfg, sels, confirmed=request.form.get("confirm") == "1"))
 
+    @app.get("/golive/health")
+    def do_golive_health():
+        # Issue 1: live dependency verdicts (Docker / Postiz / Zernio), loaded on-demand via htmx so the
+        # network/subprocess probes run ONLY when the tab is viewed — never in the golive_status read-model
+        # (which the whole test suite calls). A down dependency is visible here, not buried in a later error.
+        from fanops.health import system_health
+        return render_template("_golive_health.html", health=system_health(cfg))
+
     @app.post("/golive/map")
     def do_golive_map():
         # Batch per-CHANNEL map: one <select name="map__<handle>__<platform>"> per channel, submitted
