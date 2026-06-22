@@ -10,9 +10,10 @@ THREE load-bearing invariants:
   1. DUAL-WRITE — every config change writes BOTH the .env (durable across restarts) AND os.environ
      (so THIS running Studio reflects it immediately; Config.load_dotenv ran once at startup, but the
      properties read os.getenv live). Writing only .env would silently not take effect until a restart.
-  2. go_live is the ONLY setter of FANOPS_POSTER=postiz, gated on creds-present + accounts-valid + an
-     explicit confirm — so a stray POST can never flip the system live. go_dryrun (the safe direction)
-     needs no confirm.
+  2. go_live is the ONLY setter of FANOPS_LIVE=1 (the global live/dryrun switch — NOT a backend pick;
+     the publish provider is per-channel, M3), gated on ≥1 active channel having a provider whose creds
+     are present + an explicit confirm — so a stray POST can never flip the system live. go_dryrun (the
+     safe direction, writes FANOPS_LIVE=0) needs no confirm.
   3. The POSTIZ_API_KEY is NEVER echoed, logged, or returned in an ActionResult — only a boolean
      "set". set_postiz_config tests the key by calling Postiz; it never hands it back."""
 from __future__ import annotations
@@ -381,38 +382,42 @@ def set_persona(cfg: Config, handle: str, persona: str) -> ActionResult:
 
 
 def go_live(cfg: Config, confirmed: bool = False) -> ActionResult:
-    """Flip the poster to postiz (LIVE) — the ONLY setter of FANOPS_POSTER=postiz. Gated, in order:
-    (1) POSTIZ_URL + POSTIZ_API_KEY present (checked DIRECTLY, not via doctor — doctor only emits the
-    postiz check once the backend is already postiz, and we're still on dryrun here), (2) accounts.json
-    valid with every active account mapped to an id, (3) an explicit confirm (the final human gate).
-    Any failing gate refuses with the specific reason and leaves the backend on dryrun. On success the
-    switch is dual-written so it takes effect immediately AND survives a restart."""
-    missing = [k for k, v in (("POSTIZ_URL", cfg.postiz_url), ("POSTIZ_API_KEY", cfg.postiz_api_key)) if v is None]
-    if missing:
-        return ActionResult(ok=False, error="not ready — set " + " + ".join(missing)
-                            + " first (Connect Postiz above).")
+    """Flip the GLOBAL switch to LIVE (FANOPS_LIVE=1) — the operator's yes/no, NOT a backend pick: each
+    channel publishes via its own provider (M3). The ONLY setter of FANOPS_LIVE=1. Gated, in order:
+    (1) accounts.json valid (malformed/empty-id accounts -> clean error, not 500), (2) ≥1 ACTIVE channel
+    has a provider whose creds are present (explicit accounts.json provider, else the legacy FANOPS_POSTER
+    bridge) — flipping live with zero publishable channels would post nothing, so it's refused with a
+    fix-it message, (3) an explicit confirm (the final human gate). Any failing gate leaves the system on
+    dryrun. On success the switch is dual-written so it takes effect immediately AND survives a restart.
+    Does NOT write FANOPS_POSTER — the per-channel provider is the source of truth."""
     try:
-        problems = Accounts.load(cfg).validate()         # malformed/empty-id accounts -> clean error, not 500
+        accounts = Accounts.load(cfg)
+        problems = accounts.validate()                   # malformed/empty-id accounts -> clean error, not 500
     except Exception as exc:
         return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
     if problems:
         return ActionResult(ok=False, error="not ready — accounts.json: " + "; ".join(problems))
+    ready = accounts.live_ready_channels()
+    if not ready:
+        return ActionResult(ok=False, error="not ready — no active channel has a provider with creds. Connect "
+                            "a provider (Postiz/Zernio) and route at least one channel to it, then try again.")
     if not confirmed:
         return ActionResult(ok=False, error="GO LIVE publishes to REAL accounts — tick the confirm box, "
                             "then click again.")
-    err = _dual_write(cfg, "FANOPS_POSTER", "postiz")
+    err = _dual_write(cfg, "FANOPS_LIVE", "1")
     if err:
         return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"mode": "postiz", "live": True})
+    return ActionResult(ok=True, detail={"live": True, "mode": "live", "ready": len(ready)})
 
 
 def go_dryrun(cfg: Config) -> ActionResult:
-    """Flip back to dryrun (writes payloads, posts nothing) — the SAFE direction, always allowed, no
-    confirm. Dual-written so it takes effect immediately and persists."""
-    err = _dual_write(cfg, "FANOPS_POSTER", "dryrun")
+    """Flip the GLOBAL switch back to dryrun (FANOPS_LIVE=0 — writes payloads, posts nothing) — the SAFE
+    direction, always allowed, no confirm. Dual-written so it takes effect immediately and persists. Does
+    NOT touch FANOPS_POSTER or any per-channel provider — only the global live/dryrun state."""
+    err = _dual_write(cfg, "FANOPS_LIVE", "0")
     if err:
         return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"mode": "dryrun", "live": False})
+    return ActionResult(ok=True, detail={"live": False, "mode": "dryrun"})
 
 
 def validate_learning(cfg: Config, *, integration_id: Optional[str] = None, confirmed: bool = False) -> ActionResult:
@@ -422,8 +427,10 @@ def validate_learning(cfg: Config, *, integration_id: Optional[str] = None, conf
     integration_id must be one the operator mapped (never auto-pick a real channel) → explicit confirm.
     NEVER 500s; the POSTIZ_API_KEY is never echoed (fixed-string auth errors). A missing metrics row is
     surfaced as 'retry later' (Postiz analytics lag), not a failure."""
-    if not (cfg.poster_backend == "postiz" and cfg.postiz_api_key):
-        return ActionResult(ok=False, error="connect Postiz + GO LIVE first — Validate runs the Postiz cutover.")
+    if not cfg.is_live:                                   # M3: live-vs-dryrun is the switch, not a backend pick
+        return ActionResult(ok=False, error="GO LIVE first — Validate runs the Postiz cutover (a real throwaway post).")
+    if not cfg.postiz_api_key:                            # Validate is Postiz-specific (lists/posts to a Postiz channel)
+        return ActionResult(ok=False, error="connect Postiz first — Validate probes a Postiz channel (set POSTIZ_API_KEY).")
     integration_id = (integration_id or "").strip()
     try:
         known = {i.id for i in postiz.postiz_list_integrations(cfg)}
