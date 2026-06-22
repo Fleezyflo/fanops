@@ -17,7 +17,7 @@ from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
-from fanops.casting import cast_moments
+from fanops.casting import request_moment_casting, ingest_moment_casting
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
                                   prewarm_approved_stitches, approved_disabled_count)
 from fanops.intro_match import request_intro_match, ingest_intro_match
@@ -244,14 +244,25 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                 led = route_moments(led, cfg)
             except Exception as e:
                 log("router", "-", "error", err=str(e)[:120])
-        # Account-First Studio casting (Face 3, opt-in, default OFF): assign per-account moment affinities
-        # BEFORE the render loop — a pure ledger annotation (no render/LLM; the batch target is resolved
-        # per-moment inside cast_moments). Fail-open; OFF -> affinities stay [] -> render/fan-out byte-identical.
+        # M1 (Option C) per-account moment SELECTION (opt-in, default OFF): an LLM gate chooses, per account,
+        # that account's OWN set of moments from the decided pool, writing Moment.affinities BEFORE the render
+        # loop. The crosspost affinity gate then fans a cast moment ONLY to its accounts. request is write-once;
+        # ingest applies the selection once the responder answers (a no-op until then — a cast moment waits one
+        # convergence cycle, exactly like moments->hooks->captions). Per-source quarantine, fail-open; OFF -> no
+        # gate, affinities stay [] -> render/fan-out byte-identical. NB: the LLM gate is now the SOLE production
+        # selector — account_casting ON therefore requires an LLM responder (manual mode leaves affinities []
+        # until a human answers). casting.cast_moments (the token-overlap heuristic) is no longer wired here; it
+        # is retained as a tested standalone selector, not a pipeline fallback.
         if cfg.account_casting:
-            try:
-                led = cast_moments(led, cfg, accts)
-            except Exception as e:
-                log("casting", "-", "error", err=str(e)[:120])
+            for s in list(led.sources.values()):
+                if not any(m.parent_id == s.id and m.state is MomentState.decided
+                           for m in led.moments.values()):
+                    continue
+                try:
+                    led = request_moment_casting(led, cfg, s.id, accts)
+                    led = ingest_moment_casting(led, cfg, s.id, accts)
+                except Exception as e:
+                    log("casting", s.id, "error", err=str(e)[:120])
         for m in list(led.moments.values()):
             if m.state is MomentState.decided:
                 try:

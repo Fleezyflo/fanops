@@ -372,6 +372,23 @@ class MomentHookDecision(BaseModel):
     hook: Optional[str] = None      # the window-grounded on-screen RETENTION hook; None/"" -> this pick ships CLEAN (valid)
     hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own window-grounded hook
 
+# M1 (Option C — per-account moment SELECTION): an agent gate that, seeing the source's DECIDED moments +
+# each active account's persona, chooses per account that account's OWN set of moments. The decision writes
+# Moment.affinities, which the EXISTING crosspost affinity gate already honors (a cast moment fans ONLY to
+# its accounts). GENEROUS — no count cap (unlike the heuristic cast_moments budget); overlap allowed (a
+# moment can suit several personas). Gate key = source_id (one selection gate per source, like the moments gate).
+class MomentCastingRequest(BaseModel):
+    source_id: str
+    request_id: str
+    moments: list[dict] = Field(default_factory=list)   # [{moment_id, reason, hook, transcript_excerpt, signal_score, start, end}]
+    personas: list[dict] = Field(default_factory=list)  # [{handle, persona}] active fan accounts to cast for
+    language: Optional[str] = None
+    guidance: str = ""
+
+class MomentCastingDecision(BaseModel):
+    request_id: str
+    selections: dict[str, list[str]] = Field(default_factory=dict)   # handle -> [moment_id,...] that account's OWN moments
+
 class CaptionRequest(BaseModel):
     clip_id: str
     request_id: str
