@@ -12,6 +12,7 @@ from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
+from fanops.hookscore import narration_signature
 from fanops.keyframes import extract_keyframes
 from fanops.log import get_logger
 from fanops.control import load_guidance
@@ -137,8 +138,12 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         h = (pick.hook or "").strip()
         hook = sanitize_generated_text(h) if h else None
         hook_removed = None
-        if hook and is_weak_hook(hook, used, cluster_scope=cluster_used):
-            hook_removed = hook         # PRESERVE the stripped hook (dup/template) — the operator restores it in Review
+        # M1a: reject KNOWN-mechanical slop (is_weak_hook) OR a THIRD-PERSON scene-narration recap
+        # (narration_signature — high-precision: only a clear third-person-pronoun line with NO viewer
+        # address; viewer-POV/imperative hooks pass). Third-person is the operator's "hooks come back in
+        # third person" defect; it is mechanical and deterministic, so it belongs on this floor.
+        if hook and (is_weak_hook(hook, used, cluster_scope=cluster_used) or narration_signature(hook)):
+            hook_removed = hook         # PRESERVE the stripped hook (dup/template/third-person) — operator restores it in Review
             hook = None                 # ...the clip still renders CLEAN by default (today's behavior unchanged)
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())   # feed-wide dup set + this-decision cluster set
@@ -146,7 +151,11 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         # as the base hook (em-dash/quote burn-safety); a blank/empty one drops out -> that handle falls
         # back to the shared `hook` at crosspost. No cross-clip dedup here: these are per-account variants
         # of ONE clip, not cross-video repeats.
-        hbp = {h: s for h, ph in (pick.hooks_by_persona or {}).items() if (s := sanitize_generated_text(ph))}
+        # M1a: a per-account hook is rejected the same way for THIRD-PERSON (narration_signature) — a
+        # dropped handle falls back to the shared `hook` at crosspost (hooks_by_persona.get(h) or m.hook).
+        # No cross-clip dedup here (these are per-account variants of ONE clip, not cross-video repeats).
+        hbp = {h: s for h, ph in (pick.hooks_by_persona or {}).items()
+               if (s := sanitize_generated_text(ph)) and not narration_signature(s)}
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.decided,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
