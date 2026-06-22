@@ -20,13 +20,14 @@ import os
 from typing import Optional
 
 from fanops import cutover
-from fanops.config import Config
+from fanops.config import Config, _LIVE_BACKENDS
 from fanops.accounts import (Accounts, write_integration, add_account as _accounts_add_account,
                              set_status as _accounts_set_status, remove_account as _accounts_remove_account,
-                             set_tag_lean as _accounts_set_tag_lean, set_persona as _accounts_set_persona)
+                             set_tag_lean as _accounts_set_tag_lean, set_persona as _accounts_set_persona,
+                             set_backend as _accounts_set_backend)
 from fanops.autopilot import set_env_var
-from fanops.errors import CutoverError, PostizAuthError
-from fanops.post import postiz
+from fanops.errors import CutoverError, PostizAuthError, ZernioAuthError
+from fanops.post import postiz, zernio
 from fanops.studio.actions import ActionResult
 
 
@@ -88,6 +89,70 @@ def refresh_integrations(cfg: Config) -> ActionResult:
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not list Postiz integrations: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"integrations": integrations})
+
+
+# ── Zernio (slice 4): a SECOND scheduler backend, key-only (hosted) — connect + per-account routing ────
+def set_zernio_config(cfg: Config, key: str) -> ActionResult:
+    """Connect Zernio: durably set ZERNIO_API_KEY, then test it against the live API. Zernio is HOSTED
+    (no URL to set, unlike Postiz). The key is write-only — tested, NEVER returned or logged (the result
+    exposes no key). A blank key is rejected with NO write (there is nothing else to configure)."""
+    key = (key or "").strip()
+    if not key:
+        return ActionResult(ok=False, error="enter your Zernio API key (Settings > API Keys).")
+    err = _dual_write(cfg, "ZERNIO_API_KEY", key)        # write-only: stored, never echoed back
+    if err:
+        return ActionResult(ok=False, error=err)
+    try:
+        reachable = zernio.zernio_check_auth(cfg)
+    except ZernioAuthError:
+        # Fixed message (no str(exc)) so the key can never leak through the exception text. The key WAS
+        # dual-written, so tell the operator it's saved (re-enter to correct), still no echo.
+        return ActionResult(ok=False, error="Zernio auth failed — check your ZERNIO_API_KEY (the test "
+                            "request was rejected; key saved — re-enter to correct).")
+    if not reachable:
+        return ActionResult(ok=False, error="Saved ZERNIO_API_KEY but could not reach Zernio — try again.")
+    return ActionResult(ok=True, detail={"key_set": cfg.zernio_api_key is not None, "auth": "ok"})
+
+
+def refresh_zernio_accounts(cfg: Config) -> ActionResult:
+    """Fetch the operator's connected Zernio accounts so the routing UI can show which TikTok _ids exist
+    (no hand-pasting). Auth failure -> FATAL + ZERNIO_API_KEY; any other failure -> a clean one-line error."""
+    try:
+        accounts = zernio.zernio_list_accounts(cfg)
+    except ZernioAuthError:
+        return ActionResult(ok=False, error="FATAL auth failure — check ZERNIO_API_KEY.")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not list Zernio accounts: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"accounts": accounts})
+
+
+def set_account_backend(cfg: Config, handle: str, platform: str, backend: str, confirmed: bool = False) -> ActionResult:
+    """Route ONE (handle, platform) channel to a poster BACKEND from the Go-Live tab. Setting it to a LIVE
+    backend (postiz/zernio/rest/mcp) is a per-account 'go live' — GATED, mirroring go_live: (1) that
+    backend's creds must be present, (2) an explicit confirm. A blank / 'default' backend CLEARS the
+    override (back to the global FANOPS_POSTER) and needs neither. Unknown handle / platform / backend ->
+    a clean one-line error, never a 500."""
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=False, error="no account selected")
+    bk = (backend or "").strip().lower()
+    is_live = bk in _LIVE_BACKENDS
+    if is_live:
+        if not cfg.backend_has_creds(bk):                # name the right key per backend
+            need = {"zernio": "ZERNIO_API_KEY", "postiz": "POSTIZ_API_KEY"}.get(bk, "the backend's API key")
+            return ActionResult(ok=False, error=f"not ready — connect {bk} first (set {need}).")
+        if not confirmed:
+            return ActionResult(ok=False, error=f"routing {handle}'s {platform} to {bk} publishes to the "
+                                "REAL account — tick the confirm box, then click again.")
+    try:
+        _accounts_set_backend(cfg, handle, platform, bk)
+    except KeyError:
+        return ActionResult(ok=False, error=f"no such account: {handle}")
+    except ValueError as exc:                            # unknown platform / backend
+        return ActionResult(ok=False, error=str(exc))
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not route {handle}: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"handle": handle, "platform": platform, "backend": bk or "default"})
 
 
 def add_account(cfg: Config, handle: str, platforms: list, persona: str = "", tag_lean: str = "") -> ActionResult:

@@ -684,6 +684,19 @@ def create_app(cfg: Config) -> Flask:
         # Phase 6: toggle cross-account hook transfer (FANOPS_VARIANT_TRANSFER) — explicit "1"==on.
         return _golive_panel(golive.set_variant_transfer(cfg, request.form.get("on") == "1"))
 
+    @app.post("/golive/zernio-config")
+    def do_golive_zernio_config():
+        # Zernio slice 4: connect Zernio (key only, hosted) — dual-writes ZERNIO_API_KEY + tests it.
+        return _golive_panel(golive.set_zernio_config(cfg, request.form.get("key", "")))
+
+    @app.post("/golive/account/backend")
+    def do_golive_account_backend():
+        # Zernio slice 4: route ONE (handle, platform) channel to a backend. A LIVE backend is gated
+        # (creds + confirm) in the setter — the per-account 'go live'. confirm box -> confirmed=True.
+        return _golive_panel(golive.set_account_backend(
+            cfg, request.form.get("handle", ""), request.form.get("platform", ""),
+            request.form.get("backend", ""), confirmed=request.form.get("confirm") == "1"))
+
     @app.post("/golive/account/persona")
     def do_golive_account_persona():
         # Phase 3: set/clear an existing account's persona (was add-time only -> accounts.json hand-edit).

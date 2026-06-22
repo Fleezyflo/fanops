@@ -38,6 +38,18 @@
                placeholder="{{ '•••••••• (set — leave blank to keep)' if status.key_set else 'paste your Postiz public API key' }}"></label>
       <button type="submit" class="primary">Save &amp; test</button>
     </form>
+    <div class="scheduler-zernio">
+      <p class="muted"><strong>Or connect Zernio</strong> — a hosted scheduler used to publish <strong>TikTok</strong>
+        without passing TikTok app review (Zernio owns the app). Connect your TikTok accounts inside Zernio's own
+        dashboard, then paste your Zernio API key here. Key only (hosted) — stored write-only, tested, never shown.
+        {% if status.zernio_key_set %}<span class="ok">● connected</span>{% else %}<span class="muted">○ not connected</span>{% endif %}</p>
+      <form hx-post="{{ url_for('do_golive_zernio_config') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        <label>Zernio API key
+          <input type="password" name="key"
+                 placeholder="{{ '•••••••• (set — re-enter to replace)' if status.zernio_key_set else 'paste your Zernio API key (sk_…)' }}"></label>
+        <button type="submit">Save &amp; test</button>
+      </form>
+    </div>
   </section>
 
   <section class="golive-step">
@@ -100,6 +112,26 @@
         </table>
         <button type="submit">Save channel mappings</button>
       </form>
+      <div class="channel-backends">
+        <p class="muted"><strong>Scheduler per channel</strong> — which backend publishes each channel.
+          <em>default</em> = the global. Routing a channel to a LIVE backend (Postiz / Zernio) needs that
+          scheduler connected above + a confirm — it's a per-account go-live. Lets IG publish via Postiz while
+          TikTok publishes via Zernio at once.</p>
+        {% for a in status.accounts %}{% for ch in a.channels %}
+        <form class="channel-backend-row meta" hx-post="{{ url_for('do_golive_account_backend') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+          <input type="hidden" name="handle" value="{{ a.handle }}">
+          <input type="hidden" name="platform" value="{{ ch.platform }}">
+          <span><strong>{{ a.handle }}</strong> <span class="muted">{{ ch.platform }}</span> → <span class="ro">{{ ch.backend or 'default' }}</span></span>
+          <label class="backend-pick">backend
+            <select name="backend" aria-label="Scheduler backend for {{ a.handle }} {{ ch.platform }}">
+              <option value="default" {{ 'selected' if not ch.backend else '' }}>default (global)</option>
+              {% for b in ['postiz', 'zernio', 'dryrun'] %}<option value="{{ b }}" {{ 'selected' if b == ch.backend else '' }}>{{ b }}</option>{% endfor %}
+            </select></label>
+          <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> publish to the REAL account</label>
+          <button type="submit">Set backend</button>
+        </form>
+        {% endfor %}{% endfor %}
+      </div>
       <div class="account-manage">
         <p class="muted">Set each account's tag lean (persona differentiation), or demote/remove it. Demote stops
           publishing but keeps the row + history; remove clears a placeholder.</p>
