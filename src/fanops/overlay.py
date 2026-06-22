@@ -340,8 +340,11 @@ def burn_hook_only(base_clip_path: str, out_path: str, hook: str, *,
     # swept in the SAME finally (a crash before os.replace leaves only the temp, never a half-written
     # out_path). Best-effort: a missing/locked file never masks the result.
     try:
+        # -f mp4 is REQUIRED: the atomic temp ends in ".part", and ffmpeg infers the muxer from the
+        # output extension — an unknown ".part" extension makes it fail to pick a format (every burn would
+        # fail-open to a hookless base copy). Force the mp4 muxer explicitly so the temp name is irrelevant.
         cmd = ["ffmpeg", "-y", "-i", base_clip_path, "-vf", subtitles_vf(ass_path),
-               "-c:v", "libx264", "-c:a", "copy", "-movflags", "+faststart", tmp]
+               "-c:v", "libx264", "-c:a", "copy", "-movflags", "+faststart", "-f", "mp4", tmp]
         try:
             r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
