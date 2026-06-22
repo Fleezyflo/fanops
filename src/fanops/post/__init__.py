@@ -10,8 +10,11 @@ from fanops.ledger import Ledger
 class Poster(Protocol):
     def publish(self, led: Ledger, post_id: str) -> Ledger: ...
 
-def get_poster(cfg: Config) -> "Poster":
-    backend = cfg.poster_backend
+def get_poster(cfg: Config, backend: str | None = None) -> "Poster":
+    # `backend` defaults to the global cfg.poster_backend (back-compat: existing callers pass nothing ->
+    # byte-identical). Zernio slice 2 passes an explicit per-account backend so one publish_due run can
+    # send IG through Postiz and TikTok through Zernio at once.
+    backend = backend or cfg.poster_backend
     if backend == "rest":
         from fanops.post.blotato_rest import BlotatoRestPoster
         return BlotatoRestPoster(cfg)
@@ -27,11 +30,12 @@ def get_poster(cfg: Config) -> "Poster":
     from fanops.post.dryrun import DryRunPoster
     return DryRunPoster(cfg)
 
-def get_media_uploader(cfg: Config) -> Callable[[Config, Path], str]:
-    """Return the (cfg, Path) -> hosted-URL function for the active backend. dryrun -> file:// (no
-    network); postiz -> Postiz upload (uploads.postiz.com); rest/mcp -> Blotato presign. Lazy imports
-    keep the core importable without optional deps and avoid an import cycle with media.py."""
-    backend = cfg.poster_backend
+def get_media_uploader(cfg: Config, backend: str | None = None) -> Callable[[Config, Path], str]:
+    """Return the (cfg, Path) -> hosted-URL function for `backend` (defaults to the global
+    cfg.poster_backend — back-compat). dryrun -> file:// (no network); postiz -> Postiz upload
+    (uploads.postiz.com); rest/mcp -> Blotato presign. (zernio's uploader is wired in slice 3.) Lazy
+    imports keep the core importable without optional deps and avoid an import cycle with media.py."""
+    backend = backend or cfg.poster_backend
     if backend == "postiz":
         from fanops.post.postiz import postiz_upload_media
         return postiz_upload_media
