@@ -42,7 +42,8 @@
         <span class="muted">duration {{ '%.1f'|format(g.duration or 0.0) }}s{% if g.language %}, {{ g.language }}{% endif %}</span>
         {% if g.transcript %}
           <details open><summary>transcript ({{ g.transcript | length }} segments) — click a line to fill a pick</summary>
-            <ol class="transcript">{% for seg in g.transcript %}<li class="seg"
+            <ol class="transcript">{% for seg in g.transcript %}<li class="seg" tabindex="0" role="button"
+                 aria-label="fill a pick with {{ '%.1f'|format(seg.start or 0.0) }} to {{ '%.1f'|format(seg.end or 0.0) }} seconds"
                  data-start="{{ '%.2f'|format(seg.start or 0.0) }}" data-end="{{ '%.2f'|format(seg.end or 0.0) }}">
               <span class="muted">{{ '%.1f'|format(seg.start or 0.0) }}–{{ '%.1f'|format(seg.end or 0.0) }}</span>
               {{ seg.text or '' }}</li>{% endfor %}</ol>
@@ -67,10 +68,11 @@
   {% if not rows %}<div class="empty">Nothing waiting on you. Prepare clips in the Make tab to produce decisions.</div>{% endif %}
 
   <script>
-  // Progressive enhancement (Track C): click a transcript line to fill the first empty pick row in
-  // the SAME card with that segment's start/end, then focus its reason. No-JS still works by typing.
-  document.addEventListener('click', function (e) {
-    var seg = e.target.closest('.seg'); if (!seg) return;
+  // Progressive enhancement (Track C): activate a transcript line (CLICK or, for keyboard users, Enter/
+  // Space on the focused .seg) to fill the first empty pick row in the SAME card with that segment's
+  // start/end, then focus its reason. No-JS still works by typing. P6: the .seg is tabindex=0 role=button,
+  // so this is reachable without a mouse.
+  function fillFromSeg(seg) {
     var card = seg.closest('.card'); if (!card) return;
     var rows = card.querySelectorAll('.pick-row');
     for (var i = 0; i < rows.length; i++) {
@@ -82,6 +84,15 @@
         break;
       }
     }
+  }
+  document.addEventListener('click', function (e) {
+    var seg = e.target.closest('.seg'); if (seg) fillFromSeg(seg);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var seg = e.target.closest('.seg'); if (!seg) return;
+    e.preventDefault();            // Space would otherwise scroll the page
+    fillFromSeg(seg);
   });
   </script>
 {% endblock %}

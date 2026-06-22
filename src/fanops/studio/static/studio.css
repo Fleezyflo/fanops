@@ -363,6 +363,19 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 /* Schedule caption cell — truncate to keep the table scannable; full text on hover (title attr) */
 .schedule-caption { max-width:22rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
 
+/* ── P6: learning toggles + library legibility ──────────────────────────── */
+.learning-toggles { display:grid; gap:var(--s-3); }
+.learning-toggles .account-hooks { margin-top:0; }
+/* Library asset rows — filename leads, technicals + id demote to context */
+.asset-list { list-style:none; padding:0; margin:.4rem 0 var(--s-4); display:grid; gap:.3rem; }
+.asset-row { display:flex; align-items:baseline; flex-wrap:wrap; gap:.5rem; padding:.5rem .75rem;
+  background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r-sm); }
+.asset-name { font:600 var(--t-base) var(--sans); color:var(--ink); letter-spacing:-.01em; }
+.asset-tech { font-size:var(--t-meta); }
+.asset-id { margin-left:auto; font:var(--t-eyebrow) var(--mono); }
+/* keyboard focus ring on a transcript segment (P6: segs are now tabbable role=button) */
+.seg:focus-visible { outline:none; box-shadow:var(--ring); background:var(--accent-dim); }
+
 /* ── Motion safety ──────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; } }
 

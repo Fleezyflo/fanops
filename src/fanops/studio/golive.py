@@ -190,6 +190,47 @@ def set_clip_profile(cfg: Config, profile: str) -> ActionResult:
     return ActionResult(ok=True, detail={"clip_profile": profile})
 
 
+# ── Advanced learning levers (Phase 6) ──────────────────────────────────────────────────────────────
+# Four default-OFF INTENT flags for the A/B learning loop, surfaced from env-only into the Go-Live tab.
+# These set operator intent; the apply paths stay learning_validated-frozen (a flag ON does NOT unfreeze
+# learning — that gate is auto-stamped from real non-degraded live metrics). Each dual-writes (.env + os.
+# environ) so it takes effect without a restart; a durable-write failure -> clean error (never a 500).
+def set_variant_learning(cfg: Config, on: bool) -> ActionResult:
+    """Toggle the A/B hook-learning loop master switch (FANOPS_VARIANT_LEARNING). OFF (default) = no variant
+    leader is ever selected; ON = the loop MAY act once learning_validated unfreezes it. Intent only."""
+    err = _dual_write(cfg, "FANOPS_VARIANT_LEARNING", "1" if on else "0")
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"variant_learning": bool(on)})
+
+
+def set_variant_amplify(cfg: Config, on: bool) -> ActionResult:
+    """Toggle variant-driven AMPLIFY (FANOPS_VARIANT_AMPLIFY) — a SUSTAINED proven winner auto-amplifies its
+    source moment-guidance. Amplify-only (never retire), streak-gated, validation-frozen. Default OFF."""
+    err = _dual_write(cfg, "FANOPS_VARIANT_AMPLIFY", "1" if on else "0")
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"variant_amplify": bool(on)})
+
+
+def set_variant_ucb(cfg: Config, on: bool) -> ActionResult:
+    """Toggle UCB1 variant ranking (FANOPS_VARIANT_UCB) — replace the raw-mean leader pick with a deterministic
+    UCB1 explore/exploit rank (amplify floor unchanged). Default OFF."""
+    err = _dual_write(cfg, "FANOPS_VARIANT_UCB", "1" if on else "0")
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"variant_ucb": bool(on)})
+
+
+def set_variant_transfer(cfg: Config, on: bool) -> ActionResult:
+    """Toggle cross-account hook TRANSFER (FANOPS_VARIANT_TRANSFER) — seed a cold account's variant pool with
+    hooks proven on donor accounts. Default OFF."""
+    err = _dual_write(cfg, "FANOPS_VARIANT_TRANSFER", "1" if on else "0")
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"variant_transfer": bool(on)})
+
+
 def map_account(cfg: Config, handle: str, platform: str, integration_id: str) -> ActionResult:
     """Map ONE (handle, platform) channel to its Postiz integration id, persisted atomically to
     accounts.json (the key non-technical win — replaces hand-editing JSON). A handle's Instagram and

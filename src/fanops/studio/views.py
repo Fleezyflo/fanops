@@ -157,6 +157,12 @@ class GoLiveStatus:
     cast_pick_budget: int = 3          # budget-mode moments/account/run (FANOPS_CAST_PICK_BUDGET); bypassed when cast_exclusive
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
     demoted: list = field(default_factory=list)   # Phase 3: planned/demoted accounts (promotable) — golive_accounts lists only active()
+    # Phase 6: A/B learning-loop INTENT flags (default OFF). ON sets intent only — the apply paths stay
+    # learning_validated-frozen, so a flag here NEVER unfreezes learning (that gate auto-stamps on real metrics).
+    variant_learning: bool = False     # FANOPS_VARIANT_LEARNING — the loop master switch
+    variant_amplify: bool = False      # FANOPS_VARIANT_AMPLIFY — a sustained winner auto-amplifies its source
+    variant_ucb: bool = False          # FANOPS_VARIANT_UCB — deterministic UCB1 explore/exploit rank
+    variant_transfer: bool = False     # FANOPS_VARIANT_TRANSFER — seed a cold account from proven donors
 
 
 @dataclass
@@ -709,6 +715,7 @@ def asset_catalog(cfg: Config) -> dict:
     try:                                             # whole body guarded: a torn row must not 500 either
         led = Ledger.load(cfg)
         rows = [{"id": s.id, "origin_kind": s.origin_kind, "state": s.state.value,
+                 "name": Path(s.source_path).name if s.source_path else s.id,   # P6: human filename, not the opaque id
                  "duration": s.duration, "width": s.width, "height": s.height} for s in led.sources.values()]
         return {"native": [r for r in rows if r["origin_kind"] == "native"],
                 "third_party": [r for r in rows if r["origin_kind"] == "third_party"]}
@@ -864,7 +871,9 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         cast_exclusive=cfg.cast_exclusive,             # exclusive routing toggle state (volume governor)
         cast_pick_budget=cfg.cast_pick_budget,         # budget-mode pick count
         clip_profile=cfg.clip_profile,                 # clip-length band (talk/song)
-        demoted=golive_demoted_accounts(cfg))          # Phase 3: promotable planned accounts
+        demoted=golive_demoted_accounts(cfg),          # Phase 3: promotable planned accounts
+        variant_learning=cfg.variant_learning,         # Phase 6: A/B learning-loop intent flags (default OFF)
+        variant_amplify=cfg.variant_amplify, variant_ucb=cfg.variant_ucb, variant_transfer=cfg.variant_transfer)
 
 
 def gate_rows(cfg: Config) -> list[dict]:
