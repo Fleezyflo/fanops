@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, NamedTuple
 from pydantic import BaseModel, Field
-from fanops.config import Config, _VALID_BACKENDS
+from fanops.config import Config, _VALID_BACKENDS, _LIVE_BACKENDS
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform
 from fanops.hashtags import TAG_LEANS                 # the valid per-account tag_lean names (persona diff)
@@ -92,6 +92,21 @@ class Accounts:
         for a in self.accounts:
             if a.handle == handle:
                 return a.backends.get(platform.value) if platform else None
+        return None
+
+    def effective_provider(self, handle: str, platform: Optional[Platform] = None) -> Optional[str]:
+        """The provider that publishes THIS (handle, platform) channel — the publish source of truth (M3):
+        the explicit per-channel provider in accounts.json (`backends`), else a BACK-COMPAT bridge to the
+        legacy global FANOPS_POSTER (read-only) so the running deployment never goes dark. None when there
+        is no explicit provider AND no LIVE legacy global to bridge from -> the publish layer SKIPS the post
+        (never silently global-defaults, never fails). The bridge fires ONLY while FANOPS_POSTER names a live
+        backend; a NEW deployment (go_live writes FANOPS_LIVE, not FANOPS_POSTER) has none, so an explicit
+        provider is REQUIRED there. Retires with the legacy var."""
+        explicit = self.resolve_backend(handle, platform)
+        if explicit:
+            return explicit
+        if self.cfg.poster_backend in _LIVE_BACKENDS:
+            return self.cfg.poster_backend                       # legacy bridge: keep the running channels live
         return None
 
     def validate(self) -> list[str]:
