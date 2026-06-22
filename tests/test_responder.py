@@ -240,3 +240,42 @@ def test_llm_responder_double_timeout_leaves_gate_pending_not_raise(tmp_path, mo
     n = LlmResponder(cfg, model=always_timeout).answer_pending(cfg)   # must NOT raise
     assert n == 0                                          # not answered
     assert not response_path(cfg, "moments", "src_1").exists()   # gate stays pending (visible via log)
+
+# --- M1b: the moment_hooks gate (pass 2 — the frame-seeing hook AUTHOR) -----------------------------
+def test_moment_hooks_model_passes_window_frames_as_images(mocker):
+    # The whole point of the split: the HOOK pass is a vision call grounded in the PICKED WINDOW's
+    # frames. The responder must attach moment_hooks `frames` as images (same plumbing as the pick pass).
+    from fanops.responder import _default_claude_model
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, None))
+    _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
+                                           "start": 1.0, "end": 5.0, "frames": ["/k/w0.jpg", "/k/w1.jpg"]})
+    assert spy.call_args.kwargs.get("images") == ["/k/w0.jpg", "/k/w1.jpg"]
+
+def test_moment_hooks_gate_pins_opus(mocker, tmp_path):
+    # The hook author is the CREATIVE vision gate -> opus (the watch-through driver), like the old
+    # single-pass moments gate. (The pick pass also stays opus; the cost is owned, see plan D5.)
+    cfg = Config(root=tmp_path)
+    meta = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, "claude-opus-4-x"))
+    from fanops.responder import _default_claude_model
+    _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
+                                           "start": 1.0, "end": 5.0}, cfg=cfg)
+    assert meta.call_args.kwargs["model"] == "opus"
+
+def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
+    # End-to-end gate round-trip: a moment_hooks request is answered into a schema-valid
+    # MomentHookDecision. Correlation is by the gate KEY (source.token), so NO source_id injection.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    key = "src_1.14.00-21.00"
+    write_request(cfg, kind="moment_hooks", key=key,
+                  payload={"source_id": "src_1", "moment_id": "m1", "token": "14.00-21.00",
+                           "start": 14.0, "end": 21.0, "reason": "punchline",
+                           "transcript_excerpt": "they slept on me", "frames": []})
+    def fake_model(kind, payload):
+        return {"hook": "the line you replay", "hooks_by_persona": {"@a": "for who you can't get over"}}
+    n = LlmResponder(cfg, model=fake_model).answer_pending(cfg)
+    assert n == 1
+    data = json.loads(response_path(cfg, "moment_hooks", key).read_text())
+    assert data["hook"] == "the line you replay" and data["hooks_by_persona"]["@a"] and "request_id" in data

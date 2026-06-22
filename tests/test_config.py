@@ -63,6 +63,7 @@ def test_hook_router_opt_in(monkeypatch, tmp_path):
         monkeypatch.setenv("FANOPS_HOOK_ROUTER", on)
         assert Config(root=tmp_path).hook_router is True
 
+
 def test_impact_cut_default_off(monkeypatch, tmp_path):
     # M4 structural-hooks: impact-cut producer is a per-format gate, default OFF (non-regression)
     monkeypatch.delenv("FANOPS_IMPACT_CUT", raising=False)

@@ -12,7 +12,12 @@ from fanops.ids import content_id
 
 class SourceState(str, Enum):
     catalogued = "catalogued"; transcribed = "transcribed"; signalled = "signalled"
-    moments_requested = "moments_requested"; moments_decided = "moments_decided"
+    moments_requested = "moments_requested"
+    picks_decided = "picks_decided"   # M1b (frame-seeing two-pass): pass-1 picks reconciled into `picked`
+                                      # moments; the per-pick `moment_hooks` gates are now in flight. Pass-2
+                                      # (ingest_moment_hooks) promotes the source to moments_decided once
+                                      # every picked moment's hook has landed (or decided clean on a valid null).
+    moments_decided = "moments_decided"
     moments_empty = "moments_empty"   # V2 M1/F8: the model returned [] (nothing worth posting) — VISIBLE
                                       # + re-runnable (retry-source), NOT a silent moments_decided. Non-
                                       # terminal: a prior good moment set is preserved (no cascade-delete).
@@ -20,6 +25,10 @@ class SourceState(str, Enum):
     error = "error"
 
 class MomentState(str, Enum):
+    picked = "picked"   # M1b: a moment is BORN here in pass-1 (window chosen, hook NOT yet authored). It is
+                        # NOT renderable — the render loop (pipeline + prewarm) keys on `decided`, so a picked
+                        # moment naturally waits for its frame-seeing hook. ingest_moment_hooks promotes
+                        # picked -> decided once the per-pick moment_hooks gate lands (hook, or a valid clean null).
     decided = "decided"; clipped = "clipped"; retired = "retired"; error = "error"
 
 class ClipState(str, Enum):
@@ -280,13 +289,15 @@ class MomentRequest(BaseModel):
     personas: list[dict] = Field(default_factory=list)   # [{handle, persona}] active fan accounts -> per-handle hooks_by_persona. Absent/[] -> no per-account hooks (byte-identical to today).
 
 class MomentPick(BaseModel):
+    # M1b (frame-seeing two-pass): the PICK pass chooses WINDOWS only. Hook authoring moved to the
+    # per-pick `moment_hooks` gate (MomentHookDecision), which sees the picked WINDOW's frames — the
+    # author can no longer write a hook for footage it never saw. (Pydantic ignores any vestigial `hook`
+    # field an old response still carries, so a stale answer never breaks the load.)
     start: float
     end: float
     reason: str
     transcript_excerpt: str = ""
     signal_score: float = 0.0
-    hook: Optional[str] = None      # on-screen RETENTION hook (curiosity-gap, NOT a transcript quote); None -> derive a default
-    hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own frame-grounded hook; {} -> fall back to `hook` (old responses omit it)
 
     @field_validator("start", "end")
     @classmethod
@@ -299,6 +310,32 @@ class MomentDecision(BaseModel):
     source_id: str
     request_id: str
     picks: list[MomentPick] = Field(default_factory=list)
+
+# M1b pass-2: ONE per-pick frame-seeing hook gate. The request carries the PICKED WINDOW + frames
+# extracted over that window (clip.fit_window), so the author writes a hook grounded in the exact
+# footage the clip opens on — the operator's #1 ask. Gate key = moment_hooks__{source_id}.{token},
+# so N picks -> N independent gates; correlation is by the gate KEY (filename), not a body field.
+class MomentHookRequest(BaseModel):
+    source_id: str
+    moment_id: str
+    token: str                                      # the pick's content token (start-end), echoes the gate key
+    request_id: str
+    start: float
+    end: float
+    reason: str = ""
+    transcript_excerpt: str = ""
+    signal_score: float = 0.0
+    language: Optional[str] = None
+    guidance: str = ""
+    clip_profile: str = "talk"
+    frames: list[str] = Field(default_factory=list)        # stills over the PICKED WINDOW (the author's eyes); [] -> text-only
+    signal_peaks: list[dict] = Field(default_factory=list)  # window-scoped energy transients (the _hook_decision AUDIO step)
+    personas: list[dict] = Field(default_factory=list)      # [{handle, persona}] -> hooks_by_persona; [] -> no per-account hooks
+
+class MomentHookDecision(BaseModel):
+    request_id: str
+    hook: Optional[str] = None      # the window-grounded on-screen RETENTION hook; None/"" -> this pick ships CLEAN (valid)
+    hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own window-grounded hook
 
 class CaptionRequest(BaseModel):
     clip_id: str

@@ -5,7 +5,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.pipeline import advance
 from fanops.agentstep import request_path, response_path, latest_request_id
-from fanops.models import MomentDecision, CaptionSet
+from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
 from fanops.transcribe import _cached_models, _resolve_model, real_transcript_signal
 
 pytestmark = pytest.mark.integration
@@ -100,14 +100,23 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     joined = " ".join(seg["text"].lower() for seg in req["transcript"])
     assert "anymore" in joined, f"expected the spoken tail in the transcript, got: {req['transcript']}"
 
-    # answer via the LLM responder with a fake model (still proves the responder path)
+    # answer the PICK gate (pass 1) with a written MomentDecision
     rid = latest_request_id(cfg, "moments", src_id)
     response_path(cfg, "moments", src_id).write_text(MomentDecision(
         source_id=src_id, request_id=rid,
         picks=[{"start": 0.0, "end": 4.0, "reason": "the line", "transcript_excerpt": "they slept on me"}]
     ).model_dump_json())
 
-    # pass 2: real ffmpeg cut + reframe -> request captions
+    # M1b: ingesting the pick lands picks_decided + opens the per-pick frame-seeing hook gate (real
+    # ffmpeg extracts the window stills) — NO clip renders yet (render keys on `decided`).
+    s = advance(cfg, base_time="2026-06-02T18:00:00Z")
+    assert s["clips"] == 0 and s["awaiting"]["moment_hooks"] >= 1
+    hook_key = f"{src_id}.0.00-4.00"
+    hrid = latest_request_id(cfg, "moment_hooks", hook_key)
+    response_path(cfg, "moment_hooks", hook_key).write_text(
+        MomentHookDecision(request_id=hrid, hook="wait for the line").model_dump_json())
+
+    # answering the hook gate promotes the moment to decided -> real ffmpeg cut + reframe -> request captions
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
     assert s["clips"] >= 1
     led = Ledger.load(cfg)

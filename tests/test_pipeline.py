@@ -50,7 +50,7 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
         {"handle": "@a", "account_id": "98432", "platforms": ["instagram", "tiktok"], "status": "active"}]}))
     _put(cfg.inbox / "raw.mp4", b"V")
     _ff(mocker)
-    from fanops.models import MomentDecision, MomentPick, CaptionSet, CaptionItem
+    from fanops.models import MomentDecision, MomentPick, MomentHookDecision, CaptionSet, CaptionItem
     from fanops.agentstep import response_path, latest_request_id
 
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
@@ -63,6 +63,17 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
         picks=[MomentPick(start=14.0, end=18.0, reason="punchline",
                           transcript_excerpt="they slept on me")]).model_dump_json())
 
+    # M1b: answering the PICK gate lands picks_decided + opens the per-pick frame-seeing hook gate —
+    # nothing renders yet (the hook is still owed; render keys on `decided`).
+    s = advance(cfg, base_time="2026-06-02T18:00:00Z")
+    assert s["awaiting"]["moment_hooks"] == 1 and s["clips"] == 0
+
+    hook_key = f"{src_id}.14.00-18.00"
+    hrid = latest_request_id(cfg, "moment_hooks", hook_key)
+    response_path(cfg, "moment_hooks", hook_key).write_text(
+        MomentHookDecision(request_id=hrid, hook="wait for the beat switch").model_dump_json())
+
+    # answering the hook gate promotes the moment to decided -> the clip renders, captions are requested.
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
     assert s["moments"] == 1 and s["clips"] >= 1 and s["awaiting"]["captions"] == 1
 

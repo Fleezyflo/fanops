@@ -59,10 +59,12 @@ _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio", "rest", "mcp"})
 # "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
 _LIVE_BACKENDS = frozenset({"postiz", "zernio", "rest", "mcp"})
 
-# Per-gate model tier (llm_model_for): the `moments` gate is the CREATIVE VISION hook AUTHOR (Phase 1 —
-# it SEES source frames and writes the on-screen retention hook, the watch-through driver) -> opus.
-# `captions` (hashtags only) stays MECHANICAL -> sonnet. FANOPS_LLM_MODEL overrides all.
-_GATE_MODEL_DEFAULTS = {"moments": "opus", "captions": "sonnet"}
+# Per-gate model tier (llm_model_for): M1b splits the moment gate. `moments` (pass 1) chooses the
+# WINDOWS; `moment_hooks` (pass 2) is the CREATIVE VISION hook AUTHOR — it SEES the picked window's
+# frames and writes the on-screen retention hook (the watch-through driver). BOTH -> opus (picking
+# quality unchanged + the hook is the operator's #1 ask). `captions` (hashtags only) stays MECHANICAL
+# -> sonnet. FANOPS_LLM_MODEL overrides all.
+_GATE_MODEL_DEFAULTS = {"moments": "opus", "moment_hooks": "opus", "captions": "sonnet"}
 
 class Config:
     def __init__(self, root: Path | str | None = None):
@@ -368,13 +370,12 @@ class Config:
 
     @property
     def creative_variation(self) -> bool:
-        # Per-account creative variation (v1, observe-only): with this ON, each active account
-        # gets a genuinely different caption + burned-in on-screen hook per clip. DEFAULT OFF
-        # (opt-in) — the OPPOSITE of burn_subs — because it adds a per-account ffmpeg pass and is
-        # an A/B experiment, not a baseline behavior. Only the explicit on-words enable it; unset,
-        # empty, or anything else stays OFF (today's shared-clip behavior).
+        # Per-account creative variation: each active account gets a genuinely different caption +
+        # burned-in on-screen hook per clip. PENDING the default-off sweep (2026-06-22): flipping this ON
+        # interacts with the approve-with-hook restore flow + the render burn site, so it lands as part of
+        # the methodical sweep (default-on + reworked restore), not a bare flag flip.
         v = (os.getenv("FANOPS_CREATIVE_VARIATION") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return v in ("1", "true", "yes", "on")          # (sweep target: flip to default-ON)
 
     @property
     def account_casting(self) -> bool:

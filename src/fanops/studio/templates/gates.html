@@ -7,7 +7,31 @@
     caption is. Answer them here, then Prepare again in the Make tab to apply them.</p>
 
   {% set moments = rows | selectattr('kind','equalto','moments') | list %}
+  {% set moment_hooks = rows | selectattr('kind','equalto','moment_hooks') | list %}
   {% set captions = rows | selectattr('kind','equalto','captions') | list %}
+
+  {% if moment_hooks %}
+    <h3>Hooks ({{ moment_hooks | length }})</h3>
+    <p class="muted">The on-screen hook for ONE already-picked clip — write it for the window shown
+      (frames from this exact clip are attached for the autonomous author). Leave blank to ship clean.</p>
+    {% for g in moment_hooks %}
+      <div class="card">
+        <strong>clip {{ '%.1f'|format(g.start or 0.0) }}–{{ '%.1f'|format(g.end or 0.0) }}s</strong>
+        <span class="muted">{{ g.key }}{% if g.language %}, {{ g.language }}{% endif %}</span>
+        {% if g.reason %}<p class="muted">why: {{ g.reason }}</p>{% endif %}
+        {% if g.transcript_excerpt %}<p class="muted">“{{ g.transcript_excerpt }}”</p>{% endif %}
+        <form hx-post="{{ url_for('do_answer_gate', kind='moment_hooks', key=g.key) }}"
+              hx-target="#result-{{ g.key }}" hx-swap="innerHTML">
+          <input name="hook" placeholder="on-screen retention hook (≤6 words; blank = clean clip)" size="48">
+          {% for p in g.personas %}
+            <input name="persona_hook__{{ p.handle }}" placeholder="{{ p.handle }} hook (optional)" size="40">
+          {% endfor %}
+          <button type="submit">Answer hook</button>
+        </form>
+        <div id="result-{{ g.key }}"></div>
+      </div>
+    {% endfor %}
+  {% endif %}
 
   {% if captions %}
     <h3>Captions ({{ captions | length }})</h3>

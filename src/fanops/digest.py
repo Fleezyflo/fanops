@@ -203,6 +203,7 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     # ECC fix #16: compute the pending-gate lists ONCE (was 4 pending() filesystem scans producing
     # two byte-identical sections). Both sections below reuse this single read.
     gates = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +
+             [f"- moment_hooks: {k}" for k in pending(cfg, kind="moment_hooks")] +
              [f"- captions: {k}" for k in pending(cfg, kind="captions")])
     if gates:
         out.append("\n## Awaiting agent (request written, no response yet)\n"

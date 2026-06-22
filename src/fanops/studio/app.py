@@ -84,6 +84,13 @@ def _parse_gate_form(kind: str, form) -> dict:
                 continue                            # skip blank rows
             picks.append({"start": s, "end": e, "reason": r})
         return {"picks": picks}
+    if kind == "moment_hooks":
+        # M1b: the manual frame-seeing hook answer — one shared hook (blank -> null -> clean clip) plus
+        # any per-account hooks the operator typed (persona_hook__<handle>). A blank persona field drops.
+        hook = (form.get("hook") or "").strip()
+        hbp = {k[len("persona_hook__"):]: v.strip() for k in form
+               if k.startswith("persona_hook__") and (v := (form.get(k) or "")).strip()}
+        return {"hook": hook or None, "hooks_by_persona": hbp}
     return {}
 
 

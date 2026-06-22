@@ -12,16 +12,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
-from fanops.models import MomentDecision, CaptionSet
+from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
 from fanops.agentstep import pending, request_path, response_path, latest_request_id
 from fanops.llm import claude_json_meta, LlmTimeoutError
-from fanops.prompts import moment_prompt, caption_prompt
+from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
 
-# Two agent gates: `moments` (the vision hook AUTHOR — sees source frames) and `captions` (text-only).
-_SCHEMA = {"moments": MomentDecision, "captions": CaptionSet}
-_PROMPT = {"moments": moment_prompt, "captions": caption_prompt}
+# Three agent gates (M1b frame-seeing two-pass): `moments` (pass 1 — pick the WINDOWS, sees whole-source
+# frames), `moment_hooks` (pass 2 — the vision hook AUTHOR, sees the PICKED WINDOW's frames), and
+# `captions` (text-only hashtags). Both vision gates attach their `frames` as images (see below).
+_SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
+_PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}
+_VISION_GATES = ("moments", "moment_hooks")   # gates whose payload carries top-level `frames` to attach as images
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg
@@ -38,7 +41,7 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
     the brief fingerprint) so every creative output is traceable to the exact model + brief that produced
     it (M1/F10). cfg=None (the legacy test path) keeps the old behavior: no pin, no provenance."""
     schema = _SCHEMA[kind].model_json_schema()
-    images = (payload.get("frames") or None) if kind == "moments" else None   # Phase 1: author SEES source stills
+    images = (payload.get("frames") or None) if kind in _VISION_GATES else None   # M1b: pick pass SEES source stills; hook pass SEES the picked WINDOW's stills
     prompt = _PROMPT[kind](payload)
     out, answered = claude_json_meta(prompt, schema, images=images,
                                      model=(cfg.llm_model_for(kind) if cfg else None))

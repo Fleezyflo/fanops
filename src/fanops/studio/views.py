@@ -706,6 +706,7 @@ def pipeline_status(cfg: Config) -> dict:
         "published": len(led.posts_in_state(PostState.published)),
         "holds": sum(1 for c in led.clips.values() if c.held),
         "pending_moments": len(pending(cfg, kind="moments")),
+        "pending_moment_hooks": len(pending(cfg, kind="moment_hooks")),
         "pending_captions": len(pending(cfg, kind="captions")),
         "backend": cfg.poster_backend,
         "accounts": [a.handle for a in Accounts.load(cfg).active()],   # Account-First: Run-form batch-target options
@@ -905,7 +906,7 @@ def gate_rows(cfg: Config) -> list[dict]:
     A torn/unreadable request file is skipped (fail-open) rather than 500-ing the tab."""
     from fanops.agentstep import pending, request_path
     rows: list[dict] = []
-    for kind in ("moments", "captions"):
+    for kind in ("moments", "moment_hooks", "captions"):
         for key in pending(cfg, kind=kind):
             try:
                 payload = json.loads(request_path(cfg, kind, key).read_text())
