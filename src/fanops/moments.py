@@ -10,7 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for
+from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, discard_gate
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
 from fanops.hookscore import narration_signature
@@ -178,6 +178,11 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     # OLD reason/window/frames). Discard them BEFORE reconcile so every reconciled pick re-authors fresh.
     # (Only on the reconcile path — the empty/error paths preserve prior moments AND their valid hooks.)
     discard_gates_for(cfg, "moment_hooks", f"{source_id}.")
+    # M1 (Option C): a new pick decision SUPERSEDES the prior per-source moment_casting selection too — its
+    # moment ids/windows changed, so the stale per-account affinities must not be re-applied (and the new
+    # moments must get a FRESH selection). The casting gate is keyed on source_id (one per source), so a
+    # single discard suffices. Without this, request_moment_casting's write-once guard would skip re-asking.
+    discard_gate(cfg, "moment_casting", source_id)
     led.reconcile_moments(source_id, keep)          # upsert + cascade-delete dropped lineages
     led.set_source_state(source_id, SourceState.picks_decided)   # M1b: picks reconciled; hook gates next
     return led

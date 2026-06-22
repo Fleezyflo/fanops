@@ -249,8 +249,10 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # loop. The crosspost affinity gate then fans a cast moment ONLY to its accounts. request is write-once;
         # ingest applies the selection once the responder answers (a no-op until then — a cast moment waits one
         # convergence cycle, exactly like moments->hooks->captions). Per-source quarantine, fail-open; OFF -> no
-        # gate, affinities stay [] -> render/fan-out byte-identical. (casting.cast_moments remains the
-        # deterministic token-overlap fallback for non-LLM operation; the LLM gate is the default selector.)
+        # gate, affinities stay [] -> render/fan-out byte-identical. NB: the LLM gate is now the SOLE production
+        # selector — account_casting ON therefore requires an LLM responder (manual mode leaves affinities []
+        # until a human answers). casting.cast_moments (the token-overlap heuristic) is no longer wired here; it
+        # is retained as a tested standalone selector, not a pipeline fallback.
         if cfg.account_casting:
             for s in list(led.sources.values()):
                 if not any(m.parent_id == s.id and m.state is MomentState.decided

@@ -118,6 +118,26 @@ def test_ingest_only_casts_decided_moments(tmp_path):
     assert led.moments["m_picked"].affinities == []
 
 
+# ---- re-decision discards the stale gate (amplify/re-pick safety) ----
+def test_re_decision_discards_casting_gate(tmp_path):
+    # A NEW pick decision (amplify/re-pick) reconciles the moment set; the prior per-source casting gate
+    # must be DISCARDED so a fresh selection fires (else surviving moments keep stale affinities and new
+    # moments never cast). Mirrors the moment_hooks discard in ingest_moments.
+    from fanops.moments import request_moments, ingest_moments
+    from fanops.models import MomentPick, MomentDecision
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, [_acct("@a", "guitar")])
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg)); led.save()
+    assert latest_request_id(cfg, "moment_casting", "src_1") is not None
+    led = request_moments(Ledger.load(cfg), cfg, "src_1")
+    rid = latest_request_id(cfg, "moments", "src_1")
+    response_path(cfg, "moments", "src_1").write_text(
+        MomentDecision(source_id="src_1", request_id=rid,
+                       picks=[MomentPick(start=1.0, end=8.0, reason="fresh window")]).model_dump_json())
+    ingest_moments(Ledger.load(cfg), cfg, "src_1")
+    assert latest_request_id(cfg, "moment_casting", "src_1") is None   # discarded -> a fresh selection will fire
+
+
 # ---- wiring: responder dispatch + prompt ----
 def test_responder_answers_casting_gate(tmp_path):
     # the responder is wired (_SCHEMA/_PROMPT registered): a fake model answers the moment_casting gate, then
