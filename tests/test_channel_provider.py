@@ -53,6 +53,46 @@ def test_effective_provider_none_when_global_not_live(tmp_path, monkeypatch):
     assert Accounts.load(Config(root=tmp_path)).effective_provider("@ig", Platform.instagram) is None
 
 
+def test_effective_provider_no_bridge_for_platform_global_does_not_serve(tmp_path, monkeypatch):
+    # H2: the legacy FANOPS_POSTER bridge is platform-AWARE. postiz (this system's IG poster) must NOT
+    # bridge a provider-less TikTok channel -> None (else it publishes to the wrong provider/integration
+    # or burns the post). The TikTok channel must declare its own provider (e.g. zernio) instead.
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    _accounts(tmp_path, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"], "status": "active"}])
+    assert Accounts.load(Config(root=tmp_path)).effective_provider("@tk", Platform.tiktok) is None
+
+
+def test_effective_provider_bridge_serves_its_own_platform(tmp_path, monkeypatch):
+    # the platform-aware bridge still fires for a platform the global DOES serve (zernio->tiktok), so the
+    # H2 narrowing never strands a channel the legacy global legitimately published.
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    _accounts(tmp_path, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"], "status": "active"}])
+    assert Accounts.load(Config(root=tmp_path)).effective_provider("@tk", Platform.tiktok) == "zernio"
+
+
+# ---- C1: is_live_backend keys off PER-CHANNEL readiness, not the retired global poster_backend ----
+def test_is_live_backend_true_when_a_channel_is_ready_without_global_poster(tmp_path, monkeypatch):
+    # go_live writes FANOPS_LIVE (NOT FANOPS_POSTER); a channel routed postiz w/ key is LIVE-READY, so the
+    # learn/reconcile gate must be TRUE even though the global poster_backend is dryrun (C1).
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("POSTIZ_API_KEY", "sk")
+    _accounts(tmp_path, [{"handle": "@ig", "platforms": ["instagram"], "status": "active",
+                          "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}])
+    assert Config(root=tmp_path).is_live_backend is True
+
+
+def test_is_live_backend_false_when_live_but_no_ready_channel(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_LIVE", "1")                     # live switch on, but no provider/key anywhere
+    _accounts(tmp_path, [{"handle": "@ig", "platforms": ["instagram"], "status": "active",
+                          "integrations": {"instagram": "ig_1"}}])
+    assert Config(root=tmp_path).is_live_backend is False
+
+
+def test_is_live_backend_legacy_global_unchanged(tmp_path, monkeypatch):
+    # byte-identical legacy path: a live global poster WITH its key is live, no accounts.json required.
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "sk")
+    assert Config(root=tmp_path).is_live_backend is True
+
+
 # ---------------------------------------------------------------- publish gating ----
 def test_publish_due_skips_live_channel_with_no_provider(tmp_path, monkeypatch, mocker):
     # FANOPS_LIVE=1 but the channel has no provider and no legacy live global -> SKIP (breadcrumb), the post
@@ -96,3 +136,44 @@ def test_publish_post_no_provider_returns_none(tmp_path, monkeypatch, mocker):
     gp = mocker.patch("fanops.post.run.get_poster")
     assert publish_post(cfg, "p1") is None
     gp.assert_not_called()
+
+
+# ---- H1: track/reconcile READ paths route via effective_provider, not `resolve_backend or global` ----
+def _submitted(led, pid, handle, platform, sub, acct_id="x"):
+    led.add_post(Post(id=pid, parent_id="c", account=handle, account_id=acct_id, platform=platform,
+                      caption="c", state=PostState.submitted, submission_id=sub))
+
+
+def test_metrics_routing_uses_effective_provider_skips_none(tmp_path, monkeypatch, mocker):
+    # live, FANOPS_POSTER unset: a zernio-routed channel pulls metrics from the ZERNIO client; a channel
+    # with no provider is SKIPPED (never the dryrun/global client -> never silently starves a live post).
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    _accounts(tmp_path, [{"handle": "@tk", "platforms": ["tiktok"], "status": "active",
+                          "backends": {"tiktok": "zernio"}, "integrations": {"tiktok": "z1"}},
+                         {"handle": "@ig", "platforms": ["instagram"], "status": "active",
+                          "integrations": {"instagram": "i1"}}])   # no provider -> skipped
+    cfg = Config(root=tmp_path)
+    from fanops import track
+    seen = []
+    mocker.patch.object(track, "_metrics_client_for",
+                        side_effect=lambda c, b, ids: (seen.append((b, tuple(ids))), (lambda w="30d": []))[1])
+    posts = [Post(id="p1", parent_id="c", account="@tk", account_id="z1", platform=Platform.tiktok,
+                  caption="c", state=PostState.published, submission_id="s1"),
+             Post(id="p2", parent_id="c", account="@ig", account_id="i1", platform=Platform.instagram,
+                  caption="c", state=PostState.published, submission_id="s2")]
+    track._default_list_posts(cfg, posts=posts)()
+    assert seen == [("zernio", ("s1",))]                  # ONLY the zernio channel; the provider-less IG post skipped
+
+
+def test_reconcile_routing_uses_effective_provider_skips_none(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    _accounts(tmp_path, [{"handle": "@tk", "platforms": ["tiktok"], "status": "active",
+                          "backends": {"tiktok": "zernio"}, "integrations": {"tiktok": "z1"}},
+                         {"handle": "@ig", "platforms": ["instagram"], "status": "active",
+                          "integrations": {"instagram": "i1"}}])   # no provider -> skipped
+    cfg = Config(root=tmp_path)
+    from fanops.reconcile import _reconcilable_routing
+    with Ledger.transaction(cfg) as led:
+        _submitted(led, "p1", "@tk", Platform.tiktok, "s1", acct_id="z1")
+        _submitted(led, "p2", "@ig", Platform.instagram, "s2", acct_id="i1")
+    assert _reconcilable_routing(cfg, Ledger.load(cfg)) == {"s1": "zernio"}   # p2 skipped, NOT dryrun-defaulted

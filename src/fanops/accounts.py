@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, NamedTuple
 from pydantic import BaseModel, Field
-from fanops.config import Config, _VALID_BACKENDS, _LIVE_BACKENDS
+from fanops.config import Config, _VALID_BACKENDS, _LIVE_BACKENDS, _BACKEND_PLATFORMS
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform
 from fanops.hashtags import TAG_LEANS                 # the valid per-account tag_lean names (persona diff)
@@ -105,7 +105,11 @@ class Accounts:
         explicit = self.resolve_backend(handle, platform)
         if explicit:
             return explicit
-        if self.cfg.poster_backend in _LIVE_BACKENDS:
+        g = self.cfg.poster_backend
+        # H2: the legacy bridge is platform-AWARE — only fall back to the global when it actually SERVES
+        # this platform (a provider-less TikTok channel must not bridge to an IG-wired Postiz global). A
+        # platform-less (legacy handle-only) lookup keeps the old behavior — can't check, so bridge if live.
+        if g in _LIVE_BACKENDS and (platform is None or platform.value in _BACKEND_PLATFORMS.get(g, frozenset())):
             return self.cfg.poster_backend                       # legacy bridge: keep the running channels live
         return None
 

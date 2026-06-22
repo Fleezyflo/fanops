@@ -70,8 +70,12 @@ def _reconcilable_routing(cfg: Config, led: Optional[Ledger]) -> dict[str, str]:
     from fanops.accounts import load_accounts_safe
     accounts, err = load_accounts_safe(cfg)
     if err: get_logger(cfg)("backend_route", "accounts", "load_failed_global_fallback", err=err)
-    return {p.submission_id: (accounts.resolve_backend(p.account, p.platform) or cfg.poster_backend)
-            for p in led.posts.values() if p.state in _RECONCILABLE and p.submission_id}
+    # H1: per-channel provider (effective_provider), NOT `resolve_backend or global` — so a live channel's
+    # status polls hit ITS provider (zernio/postiz) even when FANOPS_POSTER is unset. A post whose channel
+    # has no provider is SKIPPED (never dryrun-routed -> never silently stranded against the wrong client).
+    return {p.submission_id: prov
+            for p in led.posts.values() if p.state in _RECONCILABLE and p.submission_id
+            and (prov := accounts.effective_provider(p.account, p.platform))}
 
 
 def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:

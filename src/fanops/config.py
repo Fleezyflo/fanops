@@ -59,6 +59,19 @@ _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio", "rest", "mcp"})
 # "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
 _LIVE_BACKENDS = frozenset({"postiz", "zernio", "rest", "mcp"})
 
+# Which PLATFORMS each live backend serves in THIS deployment. Used ONLY to bound the legacy
+# FANOPS_POSTER bridge (accounts.effective_provider): a provider-less channel never falls back to a
+# global that doesn't post its platform (H2 — e.g. a TikTok channel must not bridge to the IG-wired
+# Postiz global, which would publish to the wrong provider/integration or burn the post). The explicit
+# per-channel `backends` override ALWAYS wins first, so this only narrows the back-compat fallback;
+# Blotato (rest/mcp) historically served every platform.
+_BACKEND_PLATFORMS = {
+    "postiz": frozenset({"instagram"}),
+    "zernio": frozenset({"tiktok"}),
+    "rest":   frozenset({"instagram", "tiktok", "youtube", "facebook", "twitter"}),
+    "mcp":    frozenset({"instagram", "tiktok", "youtube", "facebook", "twitter"}),
+}
+
 # Per-gate model tier (llm_model_for): M1b splits the moment gate. `moments` (pass 1) chooses the
 # WINDOWS; `moment_hooks` (pass 2) is the CREATIVE VISION hook AUTHOR — it SEES the picked window's
 # frames and writes the on-screen retention hook (the watch-through driver). BOTH -> opus (picking
@@ -241,9 +254,19 @@ class Config:
         # learn/reconcile passes — the Blotato status reconciler (pipeline.py) further restricts itself
         # to rest/mcp, and the speculative actuators stay frozen by learning_validated until cutover.
         # M2: "live" now flows from the is_live switch (FANOPS_LIVE, or the legacy FANOPS_POSTER derivation)
-        # AND the global backend has its key. Byte-identical when FANOPS_LIVE is unset (is_live then ==
-        # "poster_backend is a live backend").
-        return self.is_live and self.backend_has_creds(self.poster_backend)
+        # AND a backend has its key. Byte-identical when a live GLOBAL poster is configured (legacy path).
+        # C1: go_live writes FANOPS_LIVE but NOT FANOPS_POSTER, so poster_backend is dryrun while channels
+        # publish live — keying solely off the global silently froze the learn/reconcile passes. Fall
+        # through to PER-CHANNEL readiness so this gate tracks what ACTUALLY publishes.
+        if not self.is_live:
+            return False
+        if self.backend_has_creds(self.poster_backend):
+            return True                                 # legacy single-global deployment (byte-identical)
+        from fanops.accounts import load_accounts_safe  # lazy: config<->accounts circular import
+        accounts, err = load_accounts_safe(self)
+        if err:
+            return False                                # torn registry + no global creds -> not provably live
+        return bool(accounts.live_ready_channels())
 
     def backend_has_creds(self, backend: str) -> bool:
         # Does THIS backend have the credential to post live? Per-account routing (Zernio slice 2) asks
