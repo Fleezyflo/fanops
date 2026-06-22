@@ -3,7 +3,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Clip, Post, Moment, MomentState, SourceState, Platform,
                            MomentDecision, MomentPick, MomentHookDecision, PostState)
-from fanops.agentstep import response_path, request_path, latest_request_id
+from fanops.agentstep import response_path, request_path, latest_request_id, pending
 from fanops.moments import (request_moments, ingest_moments, request_moment_hooks,
                             ingest_moment_hooks, validate_pick, _drop_overlaps)
 
@@ -365,6 +365,75 @@ def test_cross_source_shared_opener_survives(tmp_path):
     m = led.moments_of("src_1")[0]
     assert m.hook == "wait for the final verse"              # SURVIVES — feed-wide openers don't cluster it
     assert m.hook_removed is None
+
+# --- M1b adversarial-review fixes: re-pick gate hygiene + atomic ingest + honest window frames ---------
+def test_redecide_discards_stale_hook_gates(tmp_path):
+    # CRITICAL (review): a re-decision (amplify) that re-picks the SAME window must NOT reuse the prior
+    # pick's hook — it was authored against the OLD reason/window/frames. ingest_moments discards the
+    # source's stale moment_hooks gates so request_moment_hooks re-authors fresh against the new decision.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="OLD reason")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.00": "hook for the OLD context"})
+    assert led.moments_of("src_1")[0].hook == "hook for the OLD context"
+    # amplify-style re-decision: SAME window, NEW reason -> moment upserts in place, resets to picked
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="NEW reason")])
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.picked and m.hook is None and m.reason == "NEW reason"
+    # the stale hook gate is GONE -> a FRESH gate is opened, pending an answer (the stale one is not reused)
+    led = request_moment_hooks(led, cfg, "src_1")
+    assert "src_1.14.00-18.00" in pending(cfg, kind="moment_hooks")
+    led = ingest_moment_hooks(led, cfg, "src_1")
+    assert led.moments_of("src_1")[0].state is MomentState.picked and led.moments_of("src_1")[0].hook is None
+
+def test_ingest_moment_hooks_is_atomic_per_source(tmp_path):
+    # review: hooks ingest ATOMICALLY per source (every pick's gate answered) so the cross-clip/cluster
+    # dedup is order-independent. With ONE pick still pending, NO pick of the source promotes.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=120.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=10.0, end=24.0, reason="a"),
+                         MomentPick(start=40.0, end=54.0, reason="b")])
+    led = request_moment_hooks(led, cfg, "src_1")
+    key = "src_1.10.00-24.00"                                   # answer ONLY the first pick's gate
+    rid = latest_request_id(cfg, "moment_hooks", key)
+    response_path(cfg, "moment_hooks", key).write_text(
+        MomentHookDecision(request_id=rid, hook="the first hook").model_dump_json())
+    led = ingest_moment_hooks(led, cfg, "src_1")
+    assert all(m.state is MomentState.picked for m in led.moments_of("src_1"))   # atomic: neither promotes
+    assert led.sources["src_1"].state is SourceState.picks_decided
+
+def test_cross_pass_exact_dup_stripped_not_burned_twice(tmp_path):
+    # review (under-dedup bug): two same-source picks with the SAME hook must not BOTH ship it. Atomic
+    # ingest sees both -> the later (start-order) is stripped, exactly like the old single-pass loop.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=120.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=10.0, end=24.0, reason="a"),
+                         MomentPick(start=40.0, end=54.0, reason="b")])
+    led = _decide_hooks(led, cfg, "src_1",
+                        {"10.00-24.00": "wait for the drop", "40.00-54.00": "wait for the drop"})
+    hooks = sorted((m.start, m.hook) for m in led.moments_of("src_1"))
+    assert hooks[0][1] == "wait for the drop"        # first (start-order) keeps it
+    assert hooks[1][1] is None                        # exact dup stripped (never burned twice)
+
+def test_window_frames_empty_no_whole_source_fallback(tmp_path, mocker):
+    # review: when the picked-WINDOW frame probe yields nothing, the author gets [] (honest text-only),
+    # NOT whole-source frames — the hook prompt asserts the stills ARE this clip's window, so substituting
+    # out-of-window footage would mislead the author. extract_keyframes is called exactly ONCE (no fallback).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
+    (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
+    spy = mocker.patch("fanops.moments.extract_keyframes", return_value=[])   # window probe yields nothing
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="r")])
+    spy.reset_mock()                                   # measure ONLY the hook pass (pick pass also probes)
+    led = request_moment_hooks(led, cfg, "src_1")
+    assert spy.call_count == 1                          # ONE window probe, no whole-source fallback
+    assert spy.call_args.args[1] == 14.0               # ...and it was the WINDOW (start=14), never 0.0..duration
+    payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-18.00").read_text())
+    assert payload["frames"] == []                     # honest text-only, not wrong footage
 
 def test_within_source_template_cluster_still_strips_surplus(tmp_path):
     # The floor STILL fires when ONE decision goes templated: 4 picks all opening "wait for the X" -> the

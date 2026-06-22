@@ -77,6 +77,27 @@ def read_response(cfg: Config, kind: str, key: str, model: Type[T]) -> T | None:
     except ValidationError:
         return None
 
+def discard_gate(cfg: Config, kind: str, key: str) -> None:
+    """Remove a gate's request+response files so a SUPERSEDED decision's stale answer can never be
+    re-applied to a unit re-created under the same content-addressed key (the two-pass amplify hazard:
+    a same-token re-pick would otherwise reuse the prior pick's hook). Idempotent — missing files are fine."""
+    for p in (request_path(cfg, kind, key), response_path(cfg, kind, key)):
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+
+def discard_gates_for(cfg: Config, kind: str, key_prefix: str) -> int:
+    """Discard every gate of `kind` whose key starts with `key_prefix` — e.g. all of a source's per-pick
+    `moment_hooks__{source_id}.{token}` gates when its pick decision is superseded. The trailing '.' in a
+    `{source_id}.` prefix is a literal in the glob, so `source_1.` never matches `source_12.*`. Returns
+    the count cleared."""
+    n = 0
+    for req in sorted(_dir(cfg).glob(f"{kind}__{key_prefix}*.request.json")):
+        discard_gate(cfg, kind, req.name[len(kind) + 2:-len(".request.json")])
+        n += 1
+    return n
+
 def pending(cfg: Config, *, kind: str) -> list[str]:
     out = []
     for req in sorted(_dir(cfg).glob(f"{kind}__*.request.json")):

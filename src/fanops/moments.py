@@ -10,7 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, read_response, latest_request_id
+from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
 from fanops.hookscore import narration_signature
@@ -45,17 +45,17 @@ def _window_frames(cfg: Config, src, start: float, end: float) -> list[str]:
     """PASS 2 — stills over the PICKED+FITTED window [start,end], the HOOK author's eyes for THIS exact
     clip's opening (the operator's #1 ask: SEE the footage you ride the hook for). The window is the same
     fit_window the renderer cuts, so the frames match what the clip actually opens on (snap/visual-start
-    drift accepted). Fail-open: no real source / unprobed -> []; if window extraction yields nothing,
-    fall back to a whole-source survey + a breadcrumb (never a silent text-only revert)."""
+    drift accepted). Fail-open: no real source / unprobed / a window probe that yields nothing -> [] +
+    a breadcrumb -> the author writes text-only (degraded but HONEST). We deliberately do NOT substitute
+    whole-source frames: the hook prompt asserts the attached stills ARE this clip's window, so feeding
+    footage from OUTSIDE the window would actively mislead the author (review finding)."""
     if not (src.source_path and os.path.exists(src.source_path) and (src.duration or 0) > 0):
         return []
     frames = extract_keyframes(src.source_path, start, end, count=_HOOK_FRAME_COUNT,
                                out_dir=cfg.agent_io / "keyframes" / src.id)
-    if not frames:                                  # window probe failed -> the author still gets eyes
+    if not frames:                                  # window probe yielded nothing -> honest text-only
         get_logger(cfg)("source", src.id, "hook_window_frames_empty", warn=True,
                         window=f"{start:.2f}-{end:.2f}")
-        frames = extract_keyframes(src.source_path, 0.0, src.duration, count=_HOOK_FRAME_COUNT,
-                                   out_dir=cfg.agent_io / "keyframes" / src.id)
     return frames
 
 def _token(pick: MomentPick) -> str:
@@ -171,6 +171,13 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
             get_logger(cfg)("source", source_id, "zero_moments", warn=True)
             led.set_source_state(source_id, SourceState.moments_empty)
         return led
+    # CRITICAL (review): a NEW pick decision SUPERSEDES the prior per-pick hook gates. Moment ids are
+    # content-addressed on the token, so a same-window re-pick (amplify) UPSERTS in place and resets to
+    # `picked`; without clearing the prior moment_hooks gate files, request_moment_hooks' write-once guard
+    # would skip re-authoring and ingest_moment_hooks would re-apply the STALE hook (authored against the
+    # OLD reason/window/frames). Discard them BEFORE reconcile so every reconciled pick re-authors fresh.
+    # (Only on the reconcile path — the empty/error paths preserve prior moments AND their valid hooks.)
+    discard_gates_for(cfg, "moment_hooks", f"{source_id}.")
     led.reconcile_moments(source_id, keep)          # upsert + cascade-delete dropped lineages
     led.set_source_state(source_id, SourceState.picks_decided)   # M1b: picks reconciled; hook gates next
     return led
@@ -215,34 +222,41 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     return led
 
 def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
-    """M1b PASS 2 ingest — apply each landed window-grounded hook to its `picked` moment and promote it to
-    `decided`. The is_weak_hook + narration_signature floor (and hook_removed preservation + per-account
-    hooks_by_persona filtering) that used to live in ingest_moments runs HERE now, on the window-grounded
-    hooks. A pick whose gate hasn't answered yet stays `picked` (re-checked next pass, VISIBLE in the
-    awaiting count — never a silent wedge). A gate that VALIDATES with hook=null decides that pick CLEAN
-    (the author's honest 'no hook beats slop'). The source lands `moments_decided` once no pick is left
-    `picked`."""
-    # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks (an EXACT repeat reads like a bot).
-    # The opening-template CLUSTER scope is THIS source's already-decided hooks only — a templated batch
-    # is a single-decision tell; the same opener across DIFFERENT videos is not (else it over-strips).
-    used = {(m.hook or "").strip().lower() for m in led.moments.values()
-            if m.hook and m.parent_id != source_id}
-    cluster_used = {(m.hook or "").strip().lower() for m in led.moments.values()
-                    if m.hook and m.parent_id == source_id and m.state is not MomentState.picked}
+    """M1b PASS 2 ingest — apply the window-grounded hooks to a source's `picked` moments and promote them
+    to `decided`. ATOMIC PER SOURCE (review fix): we wait until EVERY pick's gate has a valid answer, then
+    author all of them in ONE deterministic (start,end)-ordered pass — exactly like the old single-pass
+    ingest_moments. Doing it incrementally (a pick promotes the instant its own gate lands) made the
+    cross-clip + opening-template dedup ORDER-DEPENDENT (an exact dup could ship twice, or a different
+    pick get stripped, by pure response-arrival order). While any pick is still pending the source stays
+    `picks_decided` (VISIBLE in awaiting.moment_hooks — never a silent wedge). A gate that VALIDATES with
+    hook=null decides that pick CLEAN (the author's honest 'no hook beats slop')."""
     picked = sorted([m for m in led.moments.values()
                      if m.parent_id == source_id and m.state is MomentState.picked],
-                    key=lambda m: (m.start, m.end))   # stable order == the pick order (deterministic cluster dedup)
+                    key=lambda m: (m.start, m.end))   # stable pick order -> deterministic dedup
+    if not picked:
+        return led
+    # ATOMIC: gather every pick's decision first; if ANY hasn't landed (read_response None), wait — no
+    # partial promotion, so the dedup below always sees the WHOLE source at once (order-independent).
+    decisions: dict[str, MomentHookDecision] = {}
     for m in picked:
-        key = f"{source_id}.{m.content_token}"
-        dec = read_response(cfg, "moment_hooks", key, MomentHookDecision)
+        dec = read_response(cfg, "moment_hooks", f"{source_id}.{m.content_token}", MomentHookDecision)
         if dec is None:
-            continue                                # pending / corrupt / stale -> leave picked (re-checked)
+            return led                              # not all hooks in yet -> leave the source picks_decided
+        decisions[m.id] = dec
+    # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks (an EXACT repeat reads like a bot);
+    # `cluster_used` (the opening-template scope) starts empty and accumulates within THIS atomic pass —
+    # byte-identical to the old single-pass loop. Both grow as we accept hooks in pick order.
+    used = {(m.hook or "").strip().lower() for m in led.moments.values()
+            if m.hook and m.parent_id != source_id}
+    cluster_used: set[str] = set()
+    for m in picked:
+        dec = decisions[m.id]
         h = (dec.hook or "").strip()
         hook = sanitize_generated_text(h) if h else None
         hook_removed = None
-        # Reject KNOWN-mechanical slop (is_weak_hook) OR a THIRD-PERSON scene-narration recap
-        # (narration_signature — high precision; viewer-POV/imperative pass). The stripped hook is
-        # PRESERVED on hook_removed so Review can show it + let the operator restore it.
+        # Reject KNOWN-mechanical slop (is_weak_hook: exact cross/within-source dup, opening-template
+        # cluster) OR a THIRD-PERSON scene-narration recap (narration_signature — high precision;
+        # viewer-POV/imperative pass). The stripped hook is PRESERVED so Review can restore it.
         if hook and (is_weak_hook(hook, used, cluster_scope=cluster_used) or narration_signature(hook)):
             hook_removed = hook
             hook = None                             # ...the clip still ships CLEAN by default
@@ -256,7 +270,5 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
                                                  "hooks_by_persona": hbp,
                                                  "state": MomentState.decided})
-    if not any(m.parent_id == source_id and m.state is MomentState.picked
-               for m in led.moments.values()):
-        led.set_source_state(source_id, SourceState.moments_decided)   # every pick's hook landed
+    led.set_source_state(source_id, SourceState.moments_decided)   # every pick's hook landed atomically
     return led
