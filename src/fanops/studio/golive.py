@@ -152,6 +152,44 @@ def set_account_casting(cfg: Config, on: bool) -> ActionResult:
     return ActionResult(ok=True, detail={"account_casting": bool(on)})
 
 
+def set_cast_exclusive(cfg: Config, on: bool) -> ActionResult:
+    """Toggle EXCLUSIVE routing (FANOPS_CAST_EXCLUSIVE) from the Go-Live tab — on top of account_casting, route
+    each moment to its SINGLE best-fit account and DROP a moment that fits no persona (no count budget), instead
+    of the budget-mode fan-to-all. Decouples post volume from file-count x accounts. Dual-written; default OFF.
+    Twin of set_account_casting; only meaningful while casting is ON (the UI gates it)."""
+    err = _dual_write(cfg, "FANOPS_CAST_EXCLUSIVE", "1" if on else "0")
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"cast_exclusive": bool(on)})
+
+
+def set_cast_pick_budget(cfg: Config, value) -> ActionResult:
+    """Set FANOPS_CAST_PICK_BUDGET (budget-mode moments per account per run) from the Go-Live tab. Parses an int,
+    CLAMPS >= 1 (mirrors cfg.cast_pick_budget — a 0 budget casts nothing), and never crashes on a bad input — a
+    non-int is a clean error with NO write (bypassed entirely when cast_exclusive is ON)."""
+    try:
+        n = int(str(value).strip())
+    except (ValueError, TypeError):
+        return ActionResult(ok=False, error=f"pick budget must be a whole number (got {value!r})")
+    n = max(1, n)                                        # clamp, mirroring the config default's >=1 guard
+    err = _dual_write(cfg, "FANOPS_CAST_PICK_BUDGET", str(n))
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"cast_pick_budget": n})
+
+
+def set_clip_profile(cfg: Config, profile: str) -> ActionResult:
+    """Set FANOPS_CLIP_PROFILE (clip-length band) from the Go-Live tab — 'talk' (tight 12-22s) or 'song' (wider
+    18-35s, fewer/longer picks). Validates the value (unknown -> clean error, never silently mis-set); dual-written."""
+    profile = (profile or "").strip().lower()
+    if profile not in ("talk", "song"):
+        return ActionResult(ok=False, error=f"clip profile must be 'talk' or 'song' (got {profile!r})")
+    err = _dual_write(cfg, "FANOPS_CLIP_PROFILE", profile)
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"clip_profile": profile})
+
+
 def map_account(cfg: Config, handle: str, platform: str, integration_id: str) -> ActionResult:
     """Map ONE (handle, platform) channel to its Postiz integration id, persisted atomically to
     accounts.json (the key non-technical win — replaces hand-editing JSON). A handle's Instagram and

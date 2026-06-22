@@ -4,6 +4,8 @@
    buttons gather the checked ones scoped to #review-body. Re-rendered standalone by /posts/approve|reject. #}
 <div id="review-body" data-awaiting="{{ awaiting_total|default(0) }}" aria-live="polite">
   {% include "_account_filter.html" %}
+  {# Phase 2: when casting is ON, explain WHY accounts carry distinct/fewer posts (config lives in Go Live). #}
+  {% if cast_state and cast_state.casting %}<p class="meta cast-state">Casting ON — {{ 'exclusive routing (each moment → its best-fit account)' if cast_state.exclusive else 'budget ' ~ cast_state.budget ~ ' moments per account' }} · clip {{ cast_state.profile }}</p>{% endif %}
   {% if active_batch|default(none) %}<div class="meta batch-scope">Showing one batch — <a href="{{ url_for('review', account=active) }}">show all batches</a></div>{% endif %}
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">

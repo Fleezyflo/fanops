@@ -159,7 +159,11 @@ def create_app(cfg: Config) -> Flask:
         # header shows a clearable "Filtering @x" indicator. Nav-level propagation, NOT a chip-row relocation:
         # the per-surface chip rows + their R1 htmx-swap scope preservation + live counts are untouched. None
         # (no filter / a partial swap with no request args) -> url_for drops the param -> byte-identical nav.
-        return {"nav_account": _account_arg()}
+        # Phase 2: also inject the read-only casting/volume state GLOBALLY so the Run + Review surfaces can
+        # show how this run is configured (the levers live in Go-Live; their EFFECT was invisible elsewhere).
+        return {"nav_account": _account_arg(),
+                "cast_state": {"casting": cfg.account_casting, "exclusive": cfg.cast_exclusive,
+                               "budget": cfg.cast_pick_budget, "profile": cfg.clip_profile}}
 
     @app.get("/")
     def index():
@@ -643,6 +647,21 @@ def create_app(cfg: Config) -> Flask:
         # "1"==on (NOT bool(str) — bool("0") is True; the off button sends value=""). Works in dryrun or live
         # (changes which posts are BORN, not whether they publish).
         return _golive_panel(golive.set_account_casting(cfg, request.form.get("on") == "1"))
+
+    @app.post("/golive/cast-exclusive")
+    def do_golive_cast_exclusive():
+        # Phase 2: toggle EXCLUSIVE routing (FANOPS_CAST_EXCLUSIVE) on top of casting — explicit "1"==on.
+        return _golive_panel(golive.set_cast_exclusive(cfg, request.form.get("on") == "1"))
+
+    @app.post("/golive/cast-budget")
+    def do_golive_cast_budget():
+        # Phase 2: set the budget-mode pick count (FANOPS_CAST_PICK_BUDGET); validated/clamped in the setter.
+        return _golive_panel(golive.set_cast_pick_budget(cfg, request.form.get("budget", "")))
+
+    @app.post("/golive/clip-profile")
+    def do_golive_clip_profile():
+        # Phase 2: set the clip-length band (FANOPS_CLIP_PROFILE = talk|song); validated in the setter.
+        return _golive_panel(golive.set_clip_profile(cfg, request.form.get("profile", "")))
 
     @app.post("/golive/account/remove")
     def do_golive_account_remove():
