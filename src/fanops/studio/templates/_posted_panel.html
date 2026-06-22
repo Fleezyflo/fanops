@@ -5,7 +5,7 @@
    retention/reach breakdown from post.metrics (the LATEST snapshot) so one account's curve reads without
    arithmetic across interleaved rows. The reuse/crosspost forms carry account=active so the htmx swap keeps
    scope (R1). NB: `accounts` (the cross-account picker options) is distinct from the chip universe. #}
-<div id="posted-body">
+<div id="posted-body" aria-live="polite">
   {% include "_account_filter.html" %}
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">

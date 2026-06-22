@@ -7,7 +7,7 @@
 /* ── Tokens ─────────────────────────────────────────────────────────────── */
 :root {
   --bg:oklch(15% 0.012 280); --surface-1:oklch(19.5% 0.014 280); --surface-2:oklch(24% 0.016 280); --surface-3:oklch(28% 0.018 280);
-  --ink:oklch(96% 0.005 280); --muted:oklch(70% 0.02 280); --faint:oklch(62% 0.02 280);
+  --ink:oklch(96% 0.005 280); --muted:oklch(70% 0.02 280); --faint:oklch(66% 0.02 280);  /* faint 62->66%: clears WCAG AA 4.5:1 even on the brightest card (surface-3) */
   --line:oklch(31% 0.014 280); --line-bright:oklch(40% 0.02 280);
   --accent:oklch(72% 0.16 292); --accent-bright:oklch(80% 0.15 292); --accent-dim:oklch(72% 0.16 292 / .14); --accent-ink:oklch(18% 0.03 292);
   --ok:oklch(76% 0.16 152); --warn:oklch(83% 0.13 78); --danger:oklch(70% 0.21 25); --danger-dim:oklch(70% 0.21 25 / .12); --info:oklch(70% 0.15 250);
@@ -45,7 +45,7 @@ header.nav { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; paddin
   background:oklch(17% 0.013 280 / .82); -webkit-backdrop-filter:blur(14px) saturate(1.3); backdrop-filter:blur(14px) saturate(1.3);
   border-bottom:1px solid var(--line); position:sticky; top:0; z-index:50; }
 .nav-brand { font:600 1.02rem var(--sans); letter-spacing:-.01em; margin:0 .6rem 0 0; padding-left:.2rem;
-  display:inline-flex; align-items:center; gap:.5rem; color:var(--ink); }
+  display:inline-flex; align-items:center; gap:.5rem; color:var(--ink); text-decoration:none; }
 .nav-brand::before { content:""; width:.7rem; height:.7rem; border-radius:3px; background:linear-gradient(135deg,var(--accent-bright),var(--info)); box-shadow:0 0 12px var(--accent-dim); }
 .nav-brand::after { display:none; }
 .nav-primary { display:flex; gap:.2rem; align-items:center; }
@@ -123,6 +123,8 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 .surface-edit label { font-size:var(--t-meta); color:var(--muted); font-weight:500; }
 .snooze button { font-size:var(--t-eyebrow); }
 .vh { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+/* skip-to-content: hidden (.vh) until keyboard focus reveals it as a real, visible target (WCAG 2.4.1) */
+.skip-nav:focus { position:fixed; left:.6rem; top:.6rem; width:auto; height:auto; padding:.5rem .85rem; margin:0; clip:auto; overflow:visible; white-space:normal; z-index:200; background:var(--accent); color:var(--accent-ink); border-radius:var(--r-sm); box-shadow:var(--elev-2); }
 
 /* per-account preview switcher: pure-CSS radio tabs (no JS). The .stab radios are .vh (focusable, not
    shown); a label-tab toggles which .surface-panel is visible. Positional nth (bounded 1-4 accounts) so

@@ -707,6 +707,8 @@ def crosspost_all_to_account(cfg: Config, source_account: str, target_account: s
     no existing render makes each clip pay an ffmpeg render (600s-bound) under its own short lock — N clips
     serialize N renders. Not a deadlock (per-clip lock, released between clips) and mirrors crosspost_clips;
     the common same-aspect reuse returns instantly. Operator-gated, single-operator Studio."""
+    if source_account == target_account:                 # bulk backfill is CROSS-account; same->same is a no-op
+        return ActionResult(ok=False, error=f"source and target are the same account ({source_account}) — pick a different target")
     led = Ledger.load(cfg)
     clip_ids = sorted({p.parent_id for p in led.posts.values() if p.account == source_account})
     if not clip_ids:
