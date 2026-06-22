@@ -58,6 +58,26 @@ def test_lean_pools_are_subset_of_vetted():
         assert all(t in VETTED for t in pool), f"{name} pool has a non-vetted tag"
 
 
+def test_leans_are_disjoint_flavor_vocabularies():
+    # M3 (the operator's complaint: personas barely differentiate hashtags). The lean pools must draw
+    # from GENUINELY DIFFERENT flavor vocabularies, not the same few tags reordered — so two personas
+    # produce visibly different lines, not the same 14 shuffled.
+    from fanops.hashtags import _LEANS
+    pools = list(_LEANS.values())
+    for i in range(len(pools)):
+        for j in range(i + 1, len(pools)):
+            assert set(pools[i]).isdisjoint(pools[j]), "lean pools overlap -> personas look the same"
+
+
+def test_leaned_account_keeps_a_platform_discovery_tag():
+    # M3 bug: a non-viral lean (e.g. 'tasteful') ate all 4 slots with flavor tags and LOST its platform
+    # discovery tag (#fyp/#reels/#foryou/#viral) — a real reach loss. Guarantee one discovery tag survives.
+    from fanops.hashtags import _DISCOVERY, _DISCOVERY_DEFAULT
+    disc = set(_DISCOVERY[Platform.tiktok]) | set(_DISCOVERY_DEFAULT)
+    out = vet_hashtags(None, Platform.tiktok, "en", lean="tasteful")
+    assert any(t in disc for t in out), f"a leaned account lost its discovery tag: {out}"
+
+
 def test_tag_leans_matches_pools():
     from fanops.hashtags import _LEANS, TAG_LEANS
     assert TAG_LEANS == frozenset(_LEANS)           # one source of truth, no drift
