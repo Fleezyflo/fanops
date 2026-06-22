@@ -323,29 +323,34 @@ def burn_hook_only(base_clip_path: str, out_path: str, hook: str, *,
     the hook was burned, False if it FAILED OPEN (no text filter or empty hook) — in which case
     out_path is a byte copy of the base clip (the caller still gets a usable per-account file).
     Cheap second pass for per-account creative variation: the base reframe+subtitle render is done
-    once; this adds one account's hook."""
+    once; this adds one account's hook. ATOMIC: ffmpeg/copy write a `.part` sibling and we os.replace
+    it onto out_path only on success — a crash mid-write never leaves a PARTIAL mp4 at out_path (the
+    serve route would otherwise stream a truncated file). os.replace is atomic on POSIX."""
+    tmp = out_path + ".part"
+    def _fail_open() -> bool:                            # byte copy -> usable file, no hook (still atomic)
+        shutil.copyfile(base_clip_path, tmp); os.replace(tmp, out_path); return False
     if not hook or not hook.strip() or not ffmpeg_has_textfilter():
-        shutil.copyfile(base_clip_path, out_path)        # fail-open: usable file, no hook
-        return False
+        return _fail_open()
     # hook-only ass: no subtitle segments, hook over the first 2.5s of the (already-cut) base clip.
     ass_text = build_ass([], hook=hook, clip_start=0.0, clip_end=2.5, width=width, height=height, font=font)
     ass_path = str(Path(out_path).with_suffix(".ass"))
     write_ass(ass_text, ass_path)
     # ECC fix #8: the intermediate .ass is a render artifact, not an output — unlink it in a finally
-    # so a failed/hung ffmpeg doesn't leave an orphan beside every per-account variant (unbounded
-    # accumulation on high-volume runs). Best-effort: a missing/locked file never masks the result.
+    # so a failed/hung ffmpeg doesn't leave an orphan beside every per-account variant. The `.part` is
+    # swept in the SAME finally (a crash before os.replace leaves only the temp, never a half-written
+    # out_path). Best-effort: a missing/locked file never masks the result.
     try:
         cmd = ["ffmpeg", "-y", "-i", base_clip_path, "-vf", subtitles_vf(ass_path),
-               "-c:v", "libx264", "-c:a", "copy", "-movflags", "+faststart", out_path]
+               "-c:v", "libx264", "-c:a", "copy", "-movflags", "+faststart", tmp]
         try:
             r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-            shutil.copyfile(base_clip_path, out_path)    # ffmpeg vanished or hung: fail-open
-            return False
-        if r.returncode != 0 or not Path(out_path).exists():
-            shutil.copyfile(base_clip_path, out_path)
-            return False
+            return _fail_open()                          # ffmpeg vanished or hung: fail-open
+        if r.returncode != 0 or not Path(tmp).exists():
+            return _fail_open()
+        os.replace(tmp, out_path)                        # atomic publish of the burned render
         return True
     finally:
-        try: os.unlink(ass_path)
-        except OSError: pass
+        for _p in (ass_path, tmp):
+            try: os.unlink(_p)
+            except OSError: pass
