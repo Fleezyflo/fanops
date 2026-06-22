@@ -85,6 +85,40 @@ def test_moment_pick_rejects_non_finite_timestamps():
         with pytest.raises(ValidationError):
             MomentPick(start=0.0, end=bad, reason="r")
 
+# ---- M1b (frame-seeing two-pass): pick gate / hook gate split ----
+def test_moment_state_has_picked():
+    # a moment is BORN `picked` in pass-1 (window chosen, hook NOT yet authored) — NOT renderable;
+    # pass-2 (moment_hooks) promotes it to `decided`. Render keys on `decided`, so a picked moment waits.
+    assert MomentState.picked.value == "picked"
+
+def test_source_state_has_picks_decided():
+    # pass-1 reconciled picks into `picked` moments; the per-pick hook gates are now in flight.
+    assert SourceState.picks_decided.value == "picks_decided"
+
+def test_moment_pick_is_pick_only_no_hook_fields():
+    # the pick pass chooses WINDOWS only; hook authoring moved to the frame-seeing moment_hooks gate.
+    assert "hook" not in MomentPick.model_fields
+    assert "hooks_by_persona" not in MomentPick.model_fields
+    p = MomentPick(start=14.0, end=21.0, reason="bar lands, beat drops")
+    assert not hasattr(p, "hook")
+
+def test_moment_hook_decision_carries_hook_and_personas():
+    from fanops.models import MomentHookDecision
+    d = MomentHookDecision(request_id="r1", hook="the line you replay",
+                           hooks_by_persona={"@a": "for who you can't get over"})
+    assert d.hook == "the line you replay" and d.hooks_by_persona["@a"]
+    # a CLEAN pick: the author legitimately returns no hook (better clean than slop) — still valid.
+    d2 = MomentHookDecision(request_id="r2")
+    assert d2.hook is None and d2.hooks_by_persona == {}
+
+def test_moment_hook_request_carries_window_and_frames():
+    from fanops.models import MomentHookRequest
+    r = MomentHookRequest(source_id="src_1", moment_id="moment_x", token="14.00-21.00",
+                          request_id="r1", start=14.0, end=21.0, reason="bar lands",
+                          transcript_excerpt="they slept on me", frames=["/k/a.jpg"],
+                          personas=[{"handle": "@a", "persona": "underground"}])
+    assert r.frames == ["/k/a.jpg"] and r.start == 14.0 and r.moment_id == "moment_x"
+
 def test_caption_item_has_optional_hook():
     from fanops.models import CaptionItem
     item = CaptionItem(surface="@a/instagram", caption="x", hashtags=[], language="en", hook="WATCH THIS")
