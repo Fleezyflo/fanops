@@ -793,6 +793,56 @@ def pending_stitch_drafts(cfg: Config) -> list:
         return []
 
 
+@dataclass
+class PersonaCard:
+    """A2: one first-class Persona for the Personas page — its editable fields + curated corpus + the
+    accounts currently linked to it (so the operator sees a persona's blast radius). NO secret."""
+    id: str
+    name: str
+    voice: str
+    tag_lean: Optional[str]
+    corpus: list                       # the per-persona reach-vetted hashtag pool (B1)
+    intake: dict                       # genre/language/reference_accounts/notes (seeds B3 research)
+    linked_handles: list               # accounts whose persona_id points at this persona
+
+
+@dataclass
+class PersonaAccountLink:
+    """A2: one account row for the Personas "connect" section — its current persona link (or None), so
+    the operator can connect/disconnect each account to a persona from a dropdown."""
+    handle: str
+    persona_id: Optional[str]
+
+
+@dataclass
+class PersonasPage:
+    personas: list                     # PersonaCard
+    accounts: list                     # PersonaAccountLink
+
+
+def personas_page(cfg: Config) -> "PersonasPage":
+    """The Personas-page read-model: every persona as a card (with its linked account handles) + every
+    account's current persona link (for the connect dropdown). Fail-open: a corrupt personas.json /
+    accounts.json -> an EMPTY page (the surface never 500s), mirroring golive_accounts."""
+    try:
+        from fanops.personas import Personas   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
+        reg = Personas.load(cfg)
+        accts = Accounts.load(cfg).accounts
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("personas", "-", "read_error", err=str(exc)[:160])
+        return PersonasPage(personas=[], accounts=[])
+    by_pid: dict = {}
+    for a in accts:
+        if getattr(a, "persona_id", None):
+            by_pid.setdefault(a.persona_id, []).append(a.handle)
+    cards = [PersonaCard(id=p.id, name=p.name, voice=p.voice, tag_lean=p.tag_lean,
+                         corpus=list(p.hashtag_corpus), intake=dict(p.intake),
+                         linked_handles=by_pid.get(p.id, [])) for p in reg.all()]
+    links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
+    return PersonasPage(personas=cards, accounts=links)
+
+
 def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
     """The active accounts as a per-channel read-model, SHARED by golive_status + home_status so the two
     surfaces never drift on what "connected" means. One GoLiveChannel per platform; integration_id is the

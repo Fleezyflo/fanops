@@ -16,6 +16,7 @@ from fanops.ledger import Ledger
 from fanops.models import Platform, PostState, LIFT_SCORE
 from fanops.discover import make_thumbnail        # reuse the cheap one-frame ffmpeg extractor for clip posters
 from fanops.studio import views, actions, golive
+from fanops.studio import personas as studio_personas   # A2: the Personas-page actions (create/edit/connect)
 from fanops.hashtags import TAG_LEANS            # the add-account lean picker options (no drift from the engine)
 from fanops.timeutil import local_input_to_utc_z, to_local_display, to_local_input  # local-time rendering at the web boundary
 
@@ -642,6 +643,55 @@ def create_app(cfg: Config) -> Flask:
         if not result.ok:
             return render_template("_result.html", result=result)
         return ""                                        # released -> card vanishes from the held bucket
+
+    # ── A2: the Personas page — personas become editable/addable/connectable in the browser ───────────
+    @app.get("/personas")
+    def personas_view():
+        # First-class personas (voice/tag_lean/corpus/intake) — list, add via intake, edit, connect to
+        # accounts. nav_account is injected globally but the page is account-agnostic (it lists ALL).
+        return render_template("personas.html", page=views.personas_page(cfg), tag_leans=_TAG_LEANS,
+                               result=None, tab="personas")
+
+    def _personas_panel(result=None):
+        # Re-render the panel with FRESH personas_page after an action (htmx swaps #personas-panel).
+        return render_template("_personas_panel.html", page=views.personas_page(cfg), tag_leans=_TAG_LEANS,
+                               result=result, tab="personas")
+
+    @app.post("/personas/add")
+    def do_personas_add():
+        return _personas_panel(studio_personas.create_persona(
+            cfg, request.form.get("name", ""), request.form.get("voice", ""), request.form.get("tag_lean", ""),
+            request.form.get("genre", ""), request.form.get("language", ""),
+            request.form.get("refs", ""), request.form.get("notes", "")))
+
+    @app.post("/personas/edit")
+    def do_personas_edit():
+        return _personas_panel(studio_personas.edit_persona(
+            cfg, request.form.get("id", ""), request.form.get("name", ""), request.form.get("voice", ""),
+            request.form.get("tag_lean", ""), request.form.get("genre", ""), request.form.get("language", ""),
+            request.form.get("refs", ""), request.form.get("notes", "")))
+
+    @app.post("/personas/delete")
+    def do_personas_delete():
+        return _personas_panel(studio_personas.delete_persona(cfg, request.form.get("id", "")))
+
+    @app.post("/personas/corpus/add")
+    def do_personas_corpus_add():
+        return _personas_panel(studio_personas.add_corpus_tag(cfg, request.form.get("id", ""), request.form.get("tag", "")))
+
+    @app.post("/personas/corpus/remove")
+    def do_personas_corpus_remove():
+        return _personas_panel(studio_personas.remove_corpus_tag(cfg, request.form.get("id", ""), request.form.get("tag", "")))
+
+    @app.post("/personas/connect")
+    def do_personas_connect():
+        # Connect/disconnect ONE account to a persona (blank persona_id disconnects). Re-render the panel.
+        return _personas_panel(studio_personas.connect_account(cfg, request.form.get("handle", ""), request.form.get("persona_id", "")))
+
+    @app.post("/personas/migrate")
+    def do_personas_migrate():
+        # One-click: lift inline account persona strings into first-class Persona records + link (idempotent).
+        return _personas_panel(studio_personas.run_migration(cfg))
 
     @app.get("/golive")
     def golive_view():
