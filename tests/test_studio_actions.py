@@ -249,6 +249,34 @@ def test_crosspost_to_account_mints_awaiting(tmp_path):
     assert p.account == "@b" and p.account_id == "ig_b" and p.created_at
     assert led.clips["clip_0"].state is ClipState.queued          # clip state UNCHANGED (no pipeline re-open)
 
+def test_crosspost_to_account_inherits_clip_batch_lineage(tmp_path):
+    # AUDIT M2: a cross-account reuse post must inherit its clip's ingest-batch lineage (Source.batch_id), so
+    # it groups + approves with its batched siblings. Born batch_id=None it showed in the ?batch= drill-in (the
+    # Review card derives bid from a batched sibling) but approve_account(batch=Y) silently SKIPPED it. The
+    # batch targets @a (NOT @b) — reuse fans freely; the post still belongs to the clip's source-batch lineage.
+    from fanops.studio.actions import crosspost_to_account, approve_account
+    from fanops.models import Batch
+    import json
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]}))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", batch_id="batch_y"))
+        led.add_batch(Batch(id="batch_y", name="launch", target_accounts=["@a"]))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                              state=MomentState.clipped))
+        cpath = cfg.clips / "c0.mp4"; cpath.write_bytes(b"\x00")
+        led.add_clip(Clip(id="clip_0", parent_id="mom_1", path=str(cpath), aspect=Fmt.r9x16, state=ClipState.queued))
+    r = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
+    assert r.ok
+    p = Ledger.load(cfg).posts[r.detail["post_id"]]
+    assert p.batch_id == "batch_y"                               # inherits the clip's source-batch lineage
+    res = approve_account(cfg, "@b", batch="batch_y", now=NOW)   # the batch-scoped approve now clears it...
+    assert res.detail["approved"] == 1                           # ...instead of silently under-approving
+    assert Ledger.load(cfg).posts[r.detail["post_id"]].state is PostState.queued
+
 def test_crosspost_to_account_no_collision_and_already_exists(tmp_path):
     from fanops.studio.actions import crosspost_to_account
     cfg = Config(root=tmp_path)
