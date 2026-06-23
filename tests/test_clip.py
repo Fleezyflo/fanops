@@ -1,10 +1,19 @@
 import subprocess
+import pytest
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt
 from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for, fit_window, snap_window
 from fanops import overlay
+
+
+@pytest.fixture(autouse=True)
+def _cv_off(monkeypatch):
+    # M3d: creative_variation now DEFAULTS ON, but render_moment burns the MOMENT hook into the SHARED clip
+    # only on the OFF path (ON -> hook=None, per-surface hooks own the burn at crosspost). This file tests
+    # that shared-clip render path, so pin OFF; an ON-path test would set FANOPS_CREATIVE_VARIATION=1 itself.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
 
 
 def _vf_of(cmd: list[str]) -> str:

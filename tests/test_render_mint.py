@@ -98,7 +98,7 @@ def test_render_filed_under_batch_source_dirs(tmp_path, monkeypatch, mocker):
 
 # ---- default-safe: cv OFF and hookless are byte-identical (no renders) ----
 def test_cv_off_mints_no_renders(tmp_path, monkeypatch, mocker):
-    monkeypatch.delenv("FANOPS_CREATIVE_VARIATION", raising=False); _mock_burn(mocker)
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); _mock_burn(mocker)   # M3d: default flipped ON — pin OFF to prove the OFF path still mints nothing
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)

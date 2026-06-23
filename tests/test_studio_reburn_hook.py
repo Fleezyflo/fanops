@@ -84,8 +84,9 @@ def test_reburn_hook_burn_failed_warns_not_rollback(tmp_path, monkeypatch, mocke
     assert res.ok is True and res.detail["hook_burned"] is False
     assert Ledger.load(cfg).posts["p_edit"].variant_hook == "NEW HOOK"
 
-def test_reburn_rejected_when_variation_off(tmp_path, mocker):
-    # no FANOPS_CREATIVE_VARIATION (conftest strips it) -> per-surface hooks don't exist -> reject.
+def test_reburn_rejected_when_variation_off(tmp_path, mocker, monkeypatch):
+    # M3d: creative_variation now DEFAULTS ON, so pin it OFF here -> per-surface hooks don't exist -> reject.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
     cfg = Config(root=tmp_path); _seed(cfg)
     burn = mocker.patch("fanops.overlay.burn_hook_only", return_value=True)
     res = reburn_hook(cfg, "p_edit", "NEW HOOK")
