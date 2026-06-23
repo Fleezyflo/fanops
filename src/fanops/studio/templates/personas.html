@@ -1,0 +1,10 @@
+{# src/fanops/studio/templates/personas.html — the Personas tab: personas are a first-class thing you
+   add (via an intake), edit, curate hashtags for, and connect to accounts — no JSON hand-editing. #}
+{% extends "base.html" %}
+{% block title %}Personas{% endblock %}
+{% block body %}
+  <h2>Personas</h2>
+  <p class="muted">A persona is a reusable voice + hashtag corpus you connect to one or more accounts.
+    Edit it once and every linked account follows. Conduct an intake to seed a new one.</p>
+  {% include "_personas_panel.html" %}
+{% endblock %}

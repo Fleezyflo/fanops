@@ -13,7 +13,7 @@
   {# Primary flow: Make → Review → Publish → Results. Everything else (Footage, Schedule, Gates,
      Go Live) is a diagnostic/utility surface, demoted into the Advanced group so it never competes
      with the everyday path. Routes are unchanged; only the grouping + active-state mapping moved. #}
-  {% set advanced = ['footage','library','stitches','schedule','gates','golive'] %}
+  {% set advanced = ['footage','library','stitches','schedule','gates','personas','golive'] %}
   <header class="nav">
     {# brand is a LINK home, NOT a heading — frees the page's own <h1> to be the top heading (WCAG 1.3.1). #}
     <a class="nav-brand" href="{{ url_for('index') }}">FanOps Studio</a>
@@ -36,6 +36,7 @@
         <a href="{{ url_for('stitches', account=nav_account) }}" class="{{ 'active' if tab=='stitches' else '' }}">Stitch approvals</a>
         <a href="{{ url_for('schedule', account=nav_account) }}" class="{{ 'active' if tab=='schedule' else '' }}">Schedule</a>
         <a href="{{ url_for('gates', account=nav_account) }}" class="{{ 'active' if tab=='gates' else '' }}">Processing decisions</a>
+        <a href="{{ url_for('personas_view', account=nav_account) }}" class="{{ 'active' if tab=='personas' else '' }}">Personas</a>
         <a href="{{ url_for('golive_view', account=nav_account) }}" class="{{ 'active' if tab=='golive' else '' }}">Go Live &amp; connect</a>
       </div>
     </details>
