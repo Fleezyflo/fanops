@@ -19,9 +19,9 @@ def _moment(led, mid, *, reason="r", hook=None, signal=0.0, transcript="", batch
                           hook=hook, signal_score=signal, transcript_excerpt=transcript, state=MomentState.decided))
 
 
-def test_config_casting_flags_default_off_and_budget_six(tmp_path):
+def test_config_casting_flags_default_on_and_budget_six(tmp_path):
     c = Config(root=tmp_path)
-    assert c.account_casting is False and c.cast_pick_budget == 6
+    assert c.account_casting is True and c.cast_pick_budget == 6   # per-account selection defaults ON now
 
 def test_persona_fit_score_is_deterministic_total_order():
     m1 = Moment(id="m1", parent_id="s", start=0, end=7, reason="guitar riff solo", signal_score=1.0)
