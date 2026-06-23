@@ -88,6 +88,23 @@ def test_publish_youtube_title_falls_back_to_artist(tmp_path, monkeypatch, mocke
     PostizPoster(cfg).publish(led, "p1")
     assert cap["json"]["posts"][0]["settings"]["title"] == "Moh Flow"
 
+def test_publish_youtube_title_floor_when_artist_too_short(tmp_path, monkeypatch, mocker):
+    # CRITICAL guard: a 1-char FANOPS_ARTIST_NAME + no hook must NOT emit a title Postiz's @MinLength(2)
+    # would 422 (a silent post-death). build_postiz_payload floors any sub-2-char title.
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_ARTIST_NAME", "X")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(_yt_post(variant_hook=None))
+    cap = _mock_post_ok(mocker)
+    PostizPoster(cfg).publish(led, "p1")
+    assert len(cap["json"]["posts"][0]["settings"]["title"]) >= 2   # never sub-2 -> never a 422
+
+def test_youtube_payload_floors_empty_title():
+    # a direct caller passing no title for youtube still gets a VALID (>=2) title, never {"title": ""}
+    p = build_postiz_payload(integration_id="yt", platform="youtube", content="d",
+                             media_urls=[], scheduled_time=None, title=None, hashtags=None)
+    assert len(p["posts"][0]["settings"]["title"]) >= 2
+
 def test_publish_instagram_still_stub(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

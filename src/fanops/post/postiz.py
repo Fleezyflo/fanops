@@ -28,6 +28,7 @@ from fanops.text import safe_public_url
 _log = logging.getLogger("fanops.post.postiz")
 _MAX_RETRIES = 4
 _PUBLIC = "/public/v1"
+_YOUTUBE_TITLE_FLOOR = "New clip"   # YouTube REQUIRES a 2-100 char title; last-resort so no caller ever emits an invalid one
 
 
 class PostizIntegration(NamedTuple):
@@ -116,7 +117,9 @@ def build_postiz_payload(*, integration_id: str, platform: str, content: str,
     # is the per-account hook (the caller passes it, clamped to 100 here); hashtags map to tags.
     images = [_postiz_image(u) for u in (media_urls or []) if u]
     if platform == "youtube":
-        settings = {"__type": "youtube", "title": (title or "")[:100], "type": "public",
+        yt_title = (title or "").strip()[:100]
+        if len(yt_title) < 2: yt_title = _YOUTUBE_TITLE_FLOOR   # never emit a title Postiz's @MinLength(2) would 422
+        settings = {"__type": "youtube", "title": yt_title, "type": "public",
                     "selfDeclaredMadeForKids": "no"}
         tags = _youtube_tags(hashtags)
         if tags: settings["tags"] = tags
