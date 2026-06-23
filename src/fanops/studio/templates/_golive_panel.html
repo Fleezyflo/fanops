@@ -240,23 +240,12 @@
           {% endif %}
         </form>
         {% if status.account_casting %}
-        <form hx-post="{{ url_for('do_golive_cast_exclusive') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-          {% if status.cast_exclusive %}
-            <span class="ok">● Exclusive routing — each moment → its single best-fit account; poor-fit dropped (volume = number of moments)</span>
-            <button type="submit" name="on" value="">Use budget mode instead</button>
-          {% else %}
-            <span class="muted">○ Budget mode — each account gets its top-N moments; the rest fan to all accounts</span>
-            <button type="submit" name="on" value="1">Switch to exclusive routing (the flood fix)</button>
-          {% endif %}
-        </form>
-        {% if not status.cast_exclusive %}
         <form hx-post="{{ url_for('do_golive_cast_budget') }}" hx-target="#golive-panel" hx-swap="outerHTML">
           <label>Moments per account / run
             <input type="number" name="budget" min="1" value="{{ status.cast_pick_budget }}" aria-label="Pick budget: moments per account per run">
           </label>
           <button type="submit">Set budget</button>
         </form>
-        {% endif %}
         {% endif %}
         <form hx-post="{{ url_for('do_golive_clip_profile') }}" hx-target="#golive-panel" hx-swap="outerHTML">
           <label>Clip length

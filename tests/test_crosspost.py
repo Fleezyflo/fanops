@@ -309,24 +309,9 @@ def test_crosspost_affinity_ignored_when_casting_off(tmp_path, mocker, monkeypat
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert {p.account for p in led.posts.values()} == {"@a", "@b"} and len(led.posts) == 4   # cast ignored when OFF
 
-def test_crosspost_exclusive_suppresses_uncast_moment(tmp_path, mocker, monkeypatch):
-    # Exclusive routing (FANOPS_CAST_EXCLUSIVE): a moment that fit NO persona (affinities==[]) is DROPPED —
-    # no post born for ANY surface (the flood fix), with a cast_dropped breadcrumb so the drop is never silent.
+def test_crosspost_cast_moment_fans_only_to_its_account(tmp_path, mocker, monkeypatch):
+    # The affinity gate (Face 3): a CAST moment (affinities==['@a']) fans ONLY to @a, never to @b.
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
-    monkeypatch.setenv("FANOPS_CAST_EXCLUSIVE", "1")
-    cfg = Config(root=tmp_path)
-    led = _two_accounts_clip(cfg, source_batch_id=None)
-    led.moments["mom_1"].affinities = []              # casting evaluated it and it fit nobody
-    _fake_ffmpeg(mocker)
-    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert len(led.posts) == 0                        # suppressed, NOT fanned to all
-    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "cast_dropped" in log                      # the drop left a breadcrumb
-
-def test_crosspost_exclusive_routes_cast_moment_to_its_account(tmp_path, mocker, monkeypatch):
-    # Exclusive + a routed moment (affinities==['@a']) still fans ONLY to @a — exclusivity preserved.
-    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
-    monkeypatch.setenv("FANOPS_CAST_EXCLUSIVE", "1")
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id=None)
     led.moments["mom_1"].affinities = ["@a"]
@@ -334,19 +319,16 @@ def test_crosspost_exclusive_routes_cast_moment_to_its_account(tmp_path, mocker,
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
 
-def test_crosspost_non_exclusive_uncast_still_fans_to_all(tmp_path, mocker, monkeypatch):
-    # Regression: casting ON but exclusive OFF keeps the existing budget-mode contract — an uncast ([])
-    # moment fans to ALL surfaces (byte-identical to the shipped Face 3 behavior; only EXCLUSIVE suppresses).
+def test_crosspost_uncast_moment_fans_to_all(tmp_path, mocker, monkeypatch):
+    # An UNCAST moment (affinities==[]) — casting evaluated it but assigned no one — falls through and fans to
+    # ALL surfaces (the only routing now; byte-identical to the shipped Face 3 budget-mode behavior).
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
-    monkeypatch.delenv("FANOPS_CAST_EXCLUSIVE", raising=False)
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id=None)
     led.moments["mom_1"].affinities = []
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert len(led.posts) == 4                        # uncast fans to all when NOT exclusive
-    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "cast_dropped" not in log                  # no drop in non-exclusive mode
+    assert len(led.posts) == 4                        # uncast fans to all
 
 
 def test_crosspost_two_clips_same_surface_do_not_collide_on_time(tmp_path, mocker):

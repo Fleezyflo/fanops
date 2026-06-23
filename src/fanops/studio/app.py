@@ -190,7 +190,7 @@ def create_app(cfg: Config) -> Flask:
         # (per-surface hooks own the burn then, and approve_with_hook refuses) — the choice is an OFF-mode flow.
         return {"nav_account": _account_arg(), "compact": _compact_arg(),
                 "creative_variation": cfg.creative_variation,
-                "cast_state": {"casting": cfg.account_casting, "exclusive": cfg.cast_exclusive,
+                "cast_state": {"casting": cfg.account_casting,
                                "budget": cfg.cast_pick_budget, "profile": cfg.clip_profile}}
 
     @app.get("/")
@@ -688,11 +688,6 @@ def create_app(cfg: Config) -> Flask:
         # "1"==on (NOT bool(str) — bool("0") is True; the off button sends value=""). Works in dryrun or live
         # (changes which posts are BORN, not whether they publish).
         return _golive_panel(golive.set_account_casting(cfg, request.form.get("on") == "1"))
-
-    @app.post("/golive/cast-exclusive")
-    def do_golive_cast_exclusive():
-        # Phase 2: toggle EXCLUSIVE routing (FANOPS_CAST_EXCLUSIVE) on top of casting — explicit "1"==on.
-        return _golive_panel(golive.set_cast_exclusive(cfg, request.form.get("on") == "1"))
 
     @app.post("/golive/cast-budget")
     def do_golive_cast_budget():

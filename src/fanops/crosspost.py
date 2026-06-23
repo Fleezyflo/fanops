@@ -112,15 +112,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 get_logger(cfg)("crosspost", clip.id, "batch_target_skip",
                                 surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
                 continue   # batch targets a specific account set; this surface isn't in it (no post born)
-            if cfg.account_casting and m is not None:
-                if m.affinities:
-                    if surf.account not in m.affinities:
-                        continue   # affinity gate (Face 3): a cast moment fans ONLY to its accounts.
-                elif cfg.cast_exclusive:
-                    continue   # EXCLUSIVE routing: a moment that fit NO persona is DROPPED (suppressed), not
-                               # fanned to all — the per-clip cast_dropped breadcrumb is logged after the loop.
-                # else (uncast + non-exclusive): fall through -> fans to all (shipped Face 3 budget-mode behavior).
-                # A2: the whole block is gated on cfg.account_casting so flag-OFF IGNORES persisted affinities.
+            if cfg.account_casting and m is not None and m.affinities and surf.account not in m.affinities:
+                continue   # affinity gate (Face 3): a cast moment fans ONLY to its accounts; an UNCAST moment
+                           # (affinities==[]) falls through -> fans to all. Gated on account_casting so flag-OFF
+                           # IGNORES persisted affinities (A2).
             # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
             # platform's hard cap, SKIP this surface only (conservative — the clip can still post
             # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown
@@ -238,9 +233,5 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                   # surfaces become no Post). Silent when tgt==[] (unbatched/ALL-sentinel) -> byte-identical fan-out.
             get_logger(cfg)("crosspost", clip.id, "batch_target_summary",
                             skipped=n_skipped, kept=len(surfaces) - n_skipped, batch=src_batch)
-        if cfg.account_casting and cfg.cast_exclusive and m is not None and not m.affinities:
-            # EXCLUSIVE drop: this clip's moment fit no active persona -> it produced NO post on any surface.
-            # The suppressed clip leaves no Post, so this is the ONLY trace — never a silent drop (audit: no_silent_caps).
-            get_logger(cfg)("crosspost", clip.id, "cast_dropped", moment=moment_id, reason="no_persona_fit")
         led.set_clip_state(clip.id, ClipState.queued)
     return led
