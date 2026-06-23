@@ -230,3 +230,111 @@ def test_approve_as_is_untimed_gets_suggestion_not_now(tmp_path):
     assert r.ok
     pu = Ledger.load(cfg).posts["p_untimed"]
     assert pu.state is PostState.queued and parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso
+
+
+# ---- M3b: bulk approve at two scopes — all-accounts-of-a-moment + one-account-across-the-video ----
+def _seed_two_accounts(cfg):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}]}))
+
+def _awaiting(led, pid, *, clip="clip_1", acct="@a", aid="1", batch=None, when=_FUTURE):
+    led.add_post(Post(id=pid, parent_id=clip, account=acct, account_id=aid, platform=Platform.instagram,
+                      caption="x", state=PostState.awaiting_approval, scheduled_time=when, batch_id=batch))
+
+def _seed_review_lineage(cfg):     # two clips on one moment so the route tests render real cards
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        for cid in ("clip_1", "clip_2"):
+            led.add_clip(Clip(id=cid, parent_id="mom_1", path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+
+def test_approve_clip_approves_all_surfaces_of_one_moment(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
+        _awaiting(led, "p_other", clip="clip_2", acct="@a", aid="1")
+    r = actions.approve_clip(cfg, "clip_1", now=_NOW)
+    assert r.ok and r.detail["approved"] == 2 and r.detail["clip_id"] == "clip_1"   # detail carries the scope
+    led = Ledger.load(cfg)
+    assert led.posts["p_a"].state is PostState.queued and led.posts["p_b"].state is PostState.queued
+    assert led.posts["p_other"].state is PostState.awaiting_approval   # a DIFFERENT moment is untouched
+
+def test_approve_clip_noop_when_no_awaiting(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
+    r = actions.approve_clip(cfg, "clip_nope", now=_NOW)
+    assert r.ok and r.detail["approved"] == 0
+
+def test_approve_account_approves_one_account_across_clips(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a1", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_a2", clip="clip_2", acct="@a", aid="1")
+        _awaiting(led, "p_b1", clip="clip_1", acct="@b", aid="2")
+    r = actions.approve_account(cfg, "@a", now=_NOW)
+    assert r.ok and r.detail["approved"] == 2
+    led = Ledger.load(cfg)
+    assert led.posts["p_a1"].state is PostState.queued and led.posts["p_a2"].state is PostState.queued
+    assert led.posts["p_b1"].state is PostState.awaiting_approval     # a DIFFERENT account is untouched
+
+def test_approve_account_scoped_to_batch(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_b1", clip="clip_1", acct="@a", aid="1", batch="B1")
+        _awaiting(led, "p_b2", clip="clip_2", acct="@a", aid="1", batch="B2")
+    r = actions.approve_account(cfg, "@a", batch="B1", now=_NOW)
+    assert r.ok and r.detail["approved"] == 1
+    led = Ledger.load(cfg)
+    assert led.posts["p_b1"].state is PostState.queued
+    assert led.posts["p_b2"].state is PostState.awaiting_approval     # the OTHER batch is untouched
+
+def test_approve_account_blank_handle_is_noop(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
+    r = actions.approve_account(cfg, "", now=_NOW)
+    assert r.ok and r.detail["approved"] == 0                          # no target -> clean no-op, never a 500
+
+def test_approve_account_untimed_gets_suggestion_not_now(tmp_path):
+    from fanops.timeutil import iso_z, parse_iso
+    cfg = Config(root=tmp_path); now = _approval_now(); now_iso = iso_z(now); _seed_two_accounts(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_u", acct="@a", aid="1", when=None)
+    r = actions.approve_account(cfg, "@a", now=now)
+    assert r.ok
+    pu = Ledger.load(cfg).posts["p_u"]
+    assert pu.state is PostState.queued and parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso
+
+def test_post_approve_clip_route_approves_all_accounts(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
+    r = _client(cfg).post("/posts/approve-clip/clip_1")
+    assert r.status_code == 200
+    led = Ledger.load(cfg)
+    assert led.posts["p_a"].state is PostState.queued and led.posts["p_b"].state is PostState.queued
+
+def test_post_approve_account_route_scopes_to_filter(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a1", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_a2", clip="clip_2", acct="@a", aid="1")
+        _awaiting(led, "p_b1", clip="clip_1", acct="@b", aid="2")
+    r = _client(cfg).post("/posts/approve-account?account=@a")
+    assert r.status_code == 200
+    led = Ledger.load(cfg)
+    assert led.posts["p_a1"].state is PostState.queued and led.posts["p_a2"].state is PostState.queued
+    assert led.posts["p_b1"].state is PostState.awaiting_approval     # the @b surface is NOT in scope
+
+def test_review_renders_bulk_approve_buttons(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
+    html = _client(cfg).get("/review").data
+    assert b"approve-clip/clip_1" in html                              # per-card "approve all accounts of this moment"
+    # the one-account-across-the-video button appears only when an account filter is active
+    html_a = _client(cfg).get("/review?account=@a").data
+    assert b"approve-account" in html_a and b"Approve all @a" in html_a

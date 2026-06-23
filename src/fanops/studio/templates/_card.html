@@ -99,6 +99,12 @@
       </div>
     {% endif %}
 
+    {% if card.bucket == 'editable' and card.surfaces and not card.hook_removed %}
+      {# M3b 'all accounts of this moment': approve every surface of this card in one click (the removed-hook
+         choice above already covers approval when a hook was stripped, so this only shows otherwise). #}
+      <button type="button" class="primary card-approve-all" hx-post="{{ url_for('do_approve_clip', clip_id=card.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all accounts</button>
+    {% endif %}
+
     {% if card.bucket == 'editable' and card.surfaces %}
       <form class="snooze" hx-post="{{ url_for('do_snooze', clip_id=card.clip_id) }}" hx-target="#card-{{ card.clip_id }}" hx-swap="afterend">
         <button type="submit">Snooze</button>
