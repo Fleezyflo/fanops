@@ -18,6 +18,18 @@
     </div>
   {% endif %}
 
+  {% if result and result.ok and result.detail and result.detail.proposals is defined %}
+    {# B3: the bootstrap research proposals — reach-best tags this persona lacks, one click each to add. #}
+    <div class="research-result">
+      <strong>Proposed for {{ result.detail.persona }}</strong> (reach-ranked — add the ones that fit):
+      {% for t in result.detail.proposals %}
+        <button type="button" class="chip tag add"
+          hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML"
+          hx-vals='{{ {"id": result.detail.persona, "tag": t} | tojson }}'>+ {{ t }}</button>
+      {% else %}<span class="muted">corpus already covers the reach-vetted set</span>{% endfor %}
+    </div>
+  {% endif %}
+
   {% if result and result.ok and result.detail and result.detail.recommend %}
     {# B2: a recommended tag's live Graph metrics + a one-click Add-to-corpus (the curation evidence step). #}
     <div class="recommend-result">
@@ -68,13 +80,17 @@
         {% if p.voice %}<p class="persona-voice">{{ p.voice }}</p>{% endif %}
 
         <div class="persona-corpus">
-          <span class="muted">Corpus ({{ p.corpus|length }}):</span>
+          <span class="muted">Corpus ({{ p.corpus|length }}, reach-ranked):</span>
           {% for t in p.corpus %}
-            <span class="chip tag">{{ t }}
+            <span class="chip tag{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if t in p.reach_tags %}<span class="reach" title="high reach — own-reach + Graph trends">★</span>{% endif %}
               <button type="button" title="remove {{ t }}" class="chip-x"
                 hx-post="{{ url_for('do_personas_corpus_remove') }}" hx-target="#personas-panel" hx-swap="outerHTML"
                 hx-vals='{{ {"id": p.id, "tag": t} | tojson }}'>×</button></span>
           {% else %}<span class="muted">empty</span>{% endfor %}
+          <form class="inline" hx-post="{{ url_for('do_personas_research') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+            <input type="hidden" name="id" value="{{ p.id }}">
+            <button type="submit" title="propose the reach-best tags this persona is missing">Research corpus</button>
+          </form>
           <form class="inline" hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
             <input type="hidden" name="id" value="{{ p.id }}">
             <input type="text" name="tag" placeholder="#tag" size="12">

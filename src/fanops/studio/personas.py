@@ -149,6 +149,23 @@ def recommend_tag(cfg: Config, pid: str, tag: str) -> ActionResult:
                                          "engagement": m.get("engagement"), "recommend": True})
 
 
+def research_corpus(cfg: Config, pid: str) -> ActionResult:
+    """B3: propose the reach-best hashtags this persona doesn't yet carry (the bootstrap "research my
+    corpus" step) — grounded in the reach store (own-reach + Graph trends) + the persona's lean flavor.
+    Returns the ordered proposals in detail; the panel renders them with one-click Add. Unknown id ->
+    a clean one-line error."""
+    pid = (pid or "").strip()
+    if not pid:
+        return ActionResult(ok=False, error="no persona selected")
+    try:
+        proposals = core.research_corpus(cfg, pid)
+    except KeyError:
+        return ActionResult(ok=False, error=f"no such persona: {pid}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"research failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"persona": pid, "proposals": proposals})
+
+
 def run_migration(cfg: Config) -> ActionResult:
     """One-click: lift every account's inline persona string into a first-class Persona and link it
     (idempotent). The bridge from the brief-seeded persona strings to editable, connectable records."""
