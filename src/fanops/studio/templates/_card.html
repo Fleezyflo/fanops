@@ -71,6 +71,15 @@
              batch checkbox set. Same route as the bulk reject; the swap re-renders the scoped worklist. #}
           {% if card.bucket == 'editable' %}<button type="button" class="surface-reject" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none)) }}" hx-vals='{"ids": "{{ s.post_id }}"}' hx-target="#review-body" hx-swap="outerHTML" aria-label="reject {{ s.account }} {{ s.platform }}">Reject</button>{% endif %}
         </div>
+        {# M3a: the per-account differentiation at a glance — its clip LENGTH band, a CUT marker when it is a
+           genuine per-account cut (not a shared clip with a hook stamped on), and the account's pinned FRAMING. #}
+        {% if s.length_label or s.is_account_cut or s.framing %}
+          <div class="meta surface-spec" aria-label="{{ s.account }} clip spec">
+            {% if s.length_label %}<span class="chip ro" title="clip length band">{{ s.length_label }}</span>{% endif %}
+            {% if s.is_account_cut %}<span class="chip ro cut" title="a real per-account cut at this account's own length and framing">✂ cut</span>{% endif %}
+            {% if s.framing %}<span class="chip ro" title="vertical crop framing">{{ s.framing }}</span>{% endif %}
+          </div>
+        {% endif %}
         {% if s.editable %}
           <div class="ro surface-caption">{{ s.caption }}</div>
           <details class="surface-editor"><summary>Edit</summary>{% include "_surface_edit.html" %}</details>

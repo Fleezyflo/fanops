@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("flask")    # Studio is an optional [studio] extra — skip cleanly when Flask is absent
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
+from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt, Render, RenderState
 
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
 def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -71,3 +71,27 @@ def test_preview_tab_a11y(tmp_path):
     # each account tab carries an accessible name referencing the account (aria-label or visible label text)
     assert "markmakmouly" in html and "perca.late" in html
     assert 'aria-label="show markmakmouly' in html or 'aria-label="preview markmakmouly' in html
+
+def test_card_shows_per_account_length_cut_and_framing(tmp_path):
+    # M3a: the operator SEES the per-account differentiation — clip LENGTH band, a CUT marker for a genuine
+    # per-account cut, and the pinned FRAMING — rendered on the surface in the Review HTML.
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@long", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "clip_profile": "long", "framing": "top"}]}))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    r = cfg.clips / "r.mp4"; r.write_bytes(b"\x00\x00\x00\x18ftypmp42CUT")
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(r), aspect=Fmt.r9x16, state=ClipState.queued))
+    led.add_render(Render(id="r1", clip_id="clip_1", account="@long", surface_key="@long/instagram",
+                          hook_text="H", path=str(r), state=RenderState.rendered, is_account_cut=True))
+    led.add_post(Post(id="p_long", parent_id="clip_1", account="@long", account_id="1", platform=Platform.instagram,
+                      caption="c", state=PostState.awaiting_approval, render_id="r1", clip_profile="long",
+                      scheduled_time=_z(NOW + timedelta(hours=5)))); led.save()
+    html = _client(cfg).get("/review").data.decode()
+    assert "28–45s" in html                                    # the long band length label
+    assert "a real per-account cut" in html                    # the cut chip (title) — genuine per-account render
+    assert "vertical crop framing" in html and ">top<" in html  # the pinned framing chip
