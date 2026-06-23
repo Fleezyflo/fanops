@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from fanops.models import MomentState, MomentCastingRequest, MomentCastingDecision, SelectionFact, SelectionMethod
 from fanops.variant_transfer import _persona_tokens
+from fanops.personas import casting_directive
 from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.control import load_guidance
 from fanops.ids import child_id
@@ -97,8 +98,8 @@ def request_moment_casting(led, cfg, source_id, accounts):
     decided = sorted([m for m in led.moments.values()
                       if m.parent_id == source_id and m.state is MomentState.decided],
                      key=lambda m: (m.start, m.end))
-    personas = [{"handle": a.handle, "persona": a.persona}
-                for a in accounts.active() if getattr(a, "persona", None)]
+    personas = [{"handle": a.handle, "persona": instr, "clip_count": a.clip_count}   # the CASTING directive + per-account clip ceiling
+                for a in accounts.active() if (instr := casting_directive(a))]
     if not decided or not personas: return led        # nothing to cast / no persona to differentiate -> no gate
     if latest_request_id(cfg, "moment_casting", source_id) is not None:
         return led                                    # write-ONCE: never re-stamp an in-flight gate

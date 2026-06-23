@@ -26,6 +26,7 @@ from fanops.variant_learning import ucb_rank
 # (the amplify/delete path stays blind to it; the isolation tests enforce it). Bound at module scope
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
+from fanops.personas import caption_directive
 from fanops.hashtags import vet_hashtags, load_store
 from fanops.log import get_logger
 from fanops.control import load_guidance
@@ -183,7 +184,7 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     # Per-surface persona (the UI-set fan voice) + tag_lean (the persona-differentiation tag knob). Both
     # ride the payload so they survive to ingest (which reads the request back). Absent registry / None
     # value -> no key (byte-identical to before). The lean steers vet_hashtags at ingest, NOT the prompt.
-    personas = {a.handle: a.persona for a in accounts.accounts} if accounts is not None else {}
+    personas = {a.handle: caption_directive(a) for a in accounts.accounts} if accounts is not None else {}
     leans = {a.handle: a.tag_lean for a in accounts.accounts} if accounts is not None else {}
     # B1: the per-persona curated corpus (hydrated onto the account from its linked Persona). Rides the
     # payload so it survives to ingest (-> vet_hashtags floats it ahead of the lean) AND the prompt shows
