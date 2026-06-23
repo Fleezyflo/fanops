@@ -59,8 +59,6 @@
         {%- elif result.detail and result.detail.removed is defined %} removed {{ result.detail.removed }}
         {%- elif result.detail and result.detail.handle %} connected {{ result.detail.handle }}{% if result.detail.persona_id %} → {{ result.detail.persona_id }}{% else %} (disconnected){% endif %}
         {%- elif result.detail and result.detail.created is defined and result.detail.linked is defined %} migrated {{ result.detail.created|length }} new, linked {{ result.detail.linked|length }}
-        {%- elif result.detail and result.detail.locked %} locked brief for {{ result.detail.locked }}
-        {%- elif result.detail and result.detail.strategy is defined %} strategy ready for {{ result.detail.persona }} — review + lock below
         {%- else %} done{% endif %}
       {% else %}✗ {{ result.error }}{% endif %}
     </div>
@@ -85,29 +83,6 @@
       <strong>{{ result.detail.tag }}</strong> — {{ result.detail.engagement }} engagement on Instagram's top media.
       <button type="button" hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML"
         hx-vals='{{ {"id": result.detail.persona, "tag": result.detail.tag} | tojson }}'>Add to corpus</button>
-    </div>
-  {% endif %}
-
-  {% if result and result.ok and result.detail and result.detail.strategy is defined %}
-    {# M2 SEE -> LOCK: the live strategy check — what this persona's config aims to produce (one full-model
-       call; an inaccurate vibe-check, NOT a per-clip run). The operator reviews the objectives, edits the
-       composed brief if they like, then LOCKS it — an EXPLICIT save; nothing here auto-writes. #}
-    <div class="strategy-result">
-      <strong>Strategy for {{ result.detail.persona }}</strong>
-      <span class="muted">— what this config aims to produce (a vibe-check, not the real per-clip run)</span>
-      <dl class="strategy-objectives">
-        <dt>Clips</dt><dd>{{ result.detail.strategy.clipping_objective }}</dd>
-        <dt>Hook</dt><dd>{{ result.detail.strategy.hook_objective }}</dd>
-        <dt>Caption</dt><dd>{{ result.detail.strategy.caption_objective }}</dd>
-        <dt>Audience</dt><dd>{{ result.detail.strategy.audience }}</dd>
-        <dt>Strategy</dt><dd>{{ result.detail.strategy.strategy }}</dd>
-      </dl>
-      <form hx-post="{{ url_for('do_personas_lock') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-        <input type="hidden" name="id" value="{{ result.detail.persona }}">
-        <label class="block">Lock this as the persona's brief (edit before locking if you like — it then rides into casting/hook/caption)
-          <textarea name="brief" rows="3">{{ result.detail.brief }}</textarea></label>
-        <button type="submit" class="primary">Lock as brief</button>
-      </form>
     </div>
   {% endif %}
 
@@ -156,15 +131,11 @@
           {% if p.hook_text %}<p class="persona-instruction"><span class="muted">hook →</span> {{ p.hook_text }}</p>{% endif %}
           {% if p.caption_text %}<p class="persona-instruction"><span class="muted">caption →</span> {{ p.caption_text }}</p>{% endif %}
         </div>
-        {% if p.brief %}<p class="persona-brief" title="the LOCKED strategy this persona runs against downstream — composed into the AI instruction"><span class="muted">locked brief →</span> {{ p.brief }}</p>{% endif %}
+        {% if p.brief %}<p class="persona-brief" title="freeform direction this persona runs against downstream — composed into the AI instruction"><span class="muted">brief →</span> {{ p.brief }}</p>{% endif %}
         {% if p.clip_profile or p.framing %}<p class="muted persona-cut">cut: {% if p.clip_profile %}{{ p.clip_profile }} length{% endif %}{% if p.clip_profile and p.framing %}, {% endif %}{% if p.framing %}{{ p.framing }} framing{% endif %}</p>{% endif %}
-        {# M2 TRANSPARENCY: what the config DETERMINISTICALLY produces — the resolved clip length band + the
+        {# TRANSPARENCY: what the config DETERMINISTICALLY produces — the resolved clip length band + the
            lead hashtags (lean+corpus over the reach store; the tag step the caption LLM never sees). #}
         <p class="muted persona-produces" title="derived from the same resolvers the pipeline runs">produces: ~{{ p.length_band }} clips{% if p.clip_count %} · up to {{ p.clip_count }} per drop{% endif %}{% if p.lead_tags %} · lead tags {{ p.lead_tags|join(' ') }}{% endif %}</p>
-        <form class="inline persona-strategy" hx-post="{{ url_for('do_personas_strategy') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-          <input type="hidden" name="id" value="{{ p.id }}">
-          <button type="submit" title="ask the model what this persona's config will come out to — one call, an inaccurate vibe-check to sanity-check the definition before locking it">Strategy check</button>
-        </form>
 
         <div class="persona-corpus">
           <span class="muted">Corpus ({{ p.corpus|length }}, reach-ranked):</span>
@@ -209,8 +180,8 @@
               <label class="block">Notes <input type="text" name="notes" value="{{ p.intake.get('notes', '') }}" size="40"></label>
             </fieldset>
             {{ lever_fields(levers, p) }}
-            <label class="block">Locked brief
-              <textarea name="brief" rows="2" placeholder="(optional) the operator-approved strategy this persona runs against — set it here or via Strategy check">{{ p.brief }}</textarea></label>
+            <label class="block">Brief
+              <textarea name="brief" rows="2" placeholder="(optional) freeform direction this persona runs against — composed into the AI instruction after the voice">{{ p.brief }}</textarea></label>
             <button type="submit" class="primary">Save</button>
             <button type="button" class="danger"
               hx-post="{{ url_for('do_personas_delete') }}" hx-target="#personas-panel" hx-swap="outerHTML"
