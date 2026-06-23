@@ -6,11 +6,29 @@
 # target, and stamps Moment.affinities. crosspost then fans a cast moment ONLY to its accounts.
 # C1-safe: reads persona + signal_score, writes ONLY affinities — never touches amplify/retire/cascade/track.
 from __future__ import annotations
-from fanops.models import MomentState, MomentCastingRequest, MomentCastingDecision
+from datetime import datetime, timezone
+from fanops.models import MomentState, MomentCastingRequest, MomentCastingDecision, SelectionFact, SelectionMethod
 from fanops.variant_transfer import _persona_tokens
 from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.control import load_guidance
+from fanops.ids import child_id
+from fanops.timeutil import iso_z
 from fanops.log import get_logger
+
+
+def _record_fact(led, m, handle, *, method, overlap=None, signal=None, rank=None) -> None:
+    """M4: persist the DURABLE selection fact for (moment, account) — the audit trail of WHO got WHAT and WHY.
+    BEST-EFFORT (own try/except): a fact-write error must NEVER lose the casting (affinities are already set);
+    the fact is the record, not the decision. Content-addressed one-per-(moment, account) -> a re-cast overwrites."""
+    try:
+        src = led.sources.get(m.parent_id)
+        led.add_selection_fact(SelectionFact(
+            id=child_id("selfact", m.id, handle), moment_id=m.id, account=handle, method=method,
+            reason=(m.reason or ""), overlap=overlap, signal=signal, rank=rank,
+            source_id=m.parent_id, batch_id=getattr(src, "batch_id", None),
+            created_at=iso_z(datetime.now(timezone.utc))))
+    except Exception:
+        pass
 
 
 def persona_fit_score(persona, moment) -> tuple:
@@ -59,13 +77,19 @@ def cast_moments(led, cfg, accounts, *, account_target=None):
                 best = max(cands, key=lambda a: (fit[a.handle], a.handle))   # ties on overlap -> by handle (deterministic)
                 if fit[best.handle] > 0:
                     led.moments[m.id].affinities = [best.handle]   # else leave [] -> dropped at crosspost
+                    _record_fact(led, m, best.handle, method=SelectionMethod.heuristic,
+                                 overlap=fit[best.handle], signal=m.signal_score, rank=0)   # M4: the durable why
             return led
         assign = {}
         for a in active:
-            eligible = [m for m in pool if a.handle in allowed(m)]
-            eligible.sort(key=lambda m: persona_fit_score(a.persona, m), reverse=True)
-            for m in eligible[:budget]:
+            # score each eligible moment ONCE (persona_fit_score = (overlap, signal, id); total order, no ties),
+            # sort desc, take the budget. score[0] is reused as the fact's `overlap` (no double-compute).
+            scored = sorted(((persona_fit_score(a.persona, m), m) for m in pool if a.handle in allowed(m)),
+                            key=lambda t: t[0], reverse=True)
+            for rank, (score, m) in enumerate(scored[:budget]):
                 assign.setdefault(m.id, set()).add(a.handle)
+                _record_fact(led, m, a.handle, method=SelectionMethod.heuristic,
+                             overlap=score[0], signal=m.signal_score, rank=rank)   # M4: the durable why + pick rank
         for mid, handles in assign.items():
             led.moments[mid].affinities = sorted(handles)
         return led
@@ -126,6 +150,8 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
                 add.setdefault(mid, set()).add(handle)
         for mid, handles in add.items():
             led.moments[mid].affinities = sorted(set(led.moments[mid].affinities) | handles)
+            for handle in handles:                        # M4: durable fact per LLM-selected (account, moment) —
+                _record_fact(led, led.moments[mid], handle, method=SelectionMethod.llm)   # no heuristic score/rank
         return led
     except Exception as e:
         try: get_logger(cfg)("casting", source_id, "error", err=str(e)[:120])
