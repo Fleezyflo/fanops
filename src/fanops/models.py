@@ -87,7 +87,7 @@ class Fmt(str, Enum):
 
 # Which aspect each platform wants (FIX F20 — was one-aspect-for-all).
 PLATFORM_ASPECT = {
-    Platform.tiktok: Fmt.r9x16, Platform.instagram: Fmt.r9x16, Platform.youtube: Fmt.r16x9,
+    Platform.tiktok: Fmt.r9x16, Platform.instagram: Fmt.r9x16, Platform.youtube: Fmt.r9x16,  # youtube=Shorts (9:16); was 16:9 long-form
     Platform.facebook: Fmt.r1x1, Platform.twitter: Fmt.r16x9,
 }
 
@@ -97,7 +97,7 @@ PLATFORM_ASPECT = {
 # crosspost time a clip whose PLAYABLE duration (its moment window, end - start — Clip has no
 # duration field) exceeds the cap for a platform is SKIPPED for THAT surface only (it can still
 # post to platforms whose cap it satisfies). Values are the real short-form ceilings:
-#   instagram (Reels) 90s · tiktok 600s (10 min) · youtube (Shorts) 60s · twitter 140s ·
+#   instagram (Reels) 90s · tiktok 600s (10 min) · youtube (Shorts) 180s · twitter 140s ·
 #   facebook (Reels) 90s.
 # A platform with no meaningful short-form cap may be OMITTED here -> no clamp for it.
 # Enforcement is FAIL-OPEN on unknown duration: if the window is 0/None/unmeasurable (or the
@@ -106,7 +106,7 @@ PLATFORM_ASPECT = {
 PLATFORM_MAX_SECONDS = {
     Platform.instagram: 90,
     Platform.tiktok: 600,
-    Platform.youtube: 60,
+    Platform.youtube: 180,   # Shorts ceiling (3 min); was 60s (pre-Oct-2024 rule)
     Platform.twitter: 140,
     Platform.facebook: 90,
 }

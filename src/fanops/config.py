@@ -72,7 +72,7 @@ FRAMING_NAMES = frozenset({"top", "center"})
 # per-channel `backends` override ALWAYS wins first, so this only narrows the back-compat fallback;
 # Blotato (rest/mcp) historically served every platform.
 _BACKEND_PLATFORMS = {
-    "postiz": frozenset({"instagram"}),
+    "postiz": frozenset({"instagram", "youtube"}),
     "zernio": frozenset({"tiktok"}),
     "rest":   frozenset({"instagram", "tiktok", "youtube", "facebook", "twitter"}),
     "mcp":    frozenset({"instagram", "tiktok", "youtube", "facebook", "twitter"}),

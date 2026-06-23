@@ -331,13 +331,14 @@ def test_crosspost_to_account_rejects_over_cap(tmp_path):
     assert not Ledger.load(cfg).posts                           # nothing minted
 
 def test_crosspost_to_account_aspect_correct(tmp_path):
-    # cross-post to YouTube (16:9) when both a 9:16 and a 16:9 render exist -> the minted post binds the
-    # 16:9 clip + aspect (via _clip_for_aspect), NOT the 9:16 input. No render needed (16:9 reusable).
+    # cross-post to a 16:9 surface (twitter) when both a 9:16 and a 16:9 render exist -> the minted post
+    # binds the 16:9 clip + aspect (via _clip_for_aspect), NOT the 9:16 input. No render needed (16:9
+    # reusable). (youtube is now 9:16 Shorts; twitter is the surviving 16:9 surface for this case.)
     from fanops.studio.actions import crosspost_to_account
     cfg = Config(root=tmp_path)
-    _seed_xacct(cfg, accounts=[{"handle": "@b", "account_id": "yt_b", "platforms": ["youtube"], "status": "active"}],
+    _seed_xacct(cfg, accounts=[{"handle": "@b", "account_id": "tw_b", "platforms": ["twitter"], "status": "active"}],
                 ig_caption=False, window=(0.0, 30.0), aspects=(Fmt.r9x16, Fmt.r16x9))
-    r = crosspost_to_account(cfg, "clip_0", "@b", "youtube", now=NOW)   # clip_0 is the 9:16; YT wants 16:9
+    r = crosspost_to_account(cfg, "clip_0", "@b", "twitter", now=NOW)   # clip_0 is the 9:16; twitter wants 16:9
     assert r.ok
     p = Ledger.load(cfg).posts[r.detail["post_id"]]
     assert p.aspect is Fmt.r16x9 and p.parent_id == "clip_1"    # bound the 16:9 render, not the 9:16 input

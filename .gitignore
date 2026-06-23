@@ -61,3 +61,6 @@ coverage.json
 # superseded plans (kept on disk, not tracked)
 2026-05-31-fanops-real-build.md
 2026-05-31-mohflow-fanops.md
+
+# Google OAuth client secret downloads (never commit)
+client_secret_*.json
