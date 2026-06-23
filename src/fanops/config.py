@@ -59,6 +59,12 @@ _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio", "rest", "mcp"})
 # "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
 _LIVE_BACKENDS = frozenset({"postiz", "zernio", "rest", "mcp"})
 
+# M2 per-account FRAMING values (Account.framing): the vertical crop bias for the account's render CUT.
+# "top" -> head-safe upper-third crop (reframe_filter top_bias=True), "center" -> default centred crop.
+# The strict WRITE boundary (set_framing/add_account refuse anything else); resolve_top_bias maps these to
+# the bool top_bias, falling back to the GLOBAL aware_reframe for None/blank/unknown (validate-or-default).
+FRAMING_NAMES = frozenset({"top", "center"})
+
 # Which PLATFORMS each live backend serves in THIS deployment. Used ONLY to bound the legacy
 # FANOPS_POSTER bridge (accounts.effective_provider): a provider-less channel never falls back to a
 # global that doesn't post its platform (H2 — e.g. a TikTok channel must not bridge to the IG-wired
@@ -336,6 +342,20 @@ class Config:
         a None/blank override, or a non-str -> the global profile (byte-identical to today's single-knob path)."""
         prof = getattr(account, "clip_profile", None)
         return prof.strip() if isinstance(prof, str) and prof.strip() else self.clip_profile
+
+    def resolve_top_bias(self, account=None) -> bool:
+        """Whether THIS account's render CUT biases the vertical crop toward the upper third (head-safe) —
+        its own Account.framing when pinned ("top" -> True, "center" -> False), else the GLOBAL aware_reframe
+        (FANOPS_AWARE_REFRAME). The M2 per-account FRAMING seam: an account pins its crop independent of the
+        single global knob (so @top ships head-safe while the rest inherit the default), and a render whose
+        framing differs from the global is cut as its OWN per-account file. Duck-typed (reads `account.framing`)
+        so config never imports accounts — that would be a cycle (accounts imports config). A None account, a
+        None/blank/unknown framing -> the global aware_reframe (validate-or-default; byte-identical to today)."""
+        fr = getattr(account, "framing", None)
+        fr = fr.strip().lower() if isinstance(fr, str) else None
+        if fr == "top": return True
+        if fr == "center": return False
+        return self.aware_reframe
 
     @property
     def visual_start(self) -> bool:

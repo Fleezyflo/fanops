@@ -149,21 +149,31 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
             # handle (m.hooks_by_persona[handle]) — falling back to the shared moment hook. The blind
             # caption gate no longer authors a shipped hook. m guarded defensively (None -> no hook).
             hook_v = (m.hooks_by_persona.get(surf.account) or m.hook) if m is not None else None
-            # M2: resolve THIS account's own LENGTH band. When it differs from the global band, the account's
-            # Render is a real per-account CUT (its own length — @short 8-15s, @long 28-45s off the SAME
-            # moment), content-addressed with a band tag so two accounts sharing one hook but cut to different
-            # lengths never collide on one file. Same band -> the shared-clip burn path + un-tagged id
-            # (byte-identical to today). did_cut gates the provenance stamp (only a real cut claims its length).
-            acct_profile = cfg.resolve_clip_profile(acct_by_handle.get(surf.account))
+            # M2: resolve THIS account's own LENGTH band AND vertical-crop framing. When either differs from
+            # the global, the account's Render is a real per-account CUT (its own length — @short 8-15s,
+            # @long 28-45s — AND its own crop — @top head-safe vs centred — off the SAME moment),
+            # content-addressed with band/frame tags so two accounts sharing one hook but cut to a different
+            # length OR crop never collide on one file. Neither differs -> the shared-clip burn path + un-tagged
+            # id (byte-identical to today). did_cut gates the provenance stamp (only a real cut claims its length).
+            acct = acct_by_handle.get(surf.account)
+            acct_profile = cfg.resolve_clip_profile(acct)
             acct_band = band_for(acct_profile)
-            wants_cut = bool(hook_v) and acct_band != band_for(cfg.clip_profile)
+            acct_top_bias = cfg.resolve_top_bias(acct)
+            band_differs = acct_band != band_for(cfg.clip_profile)
+            frame_differs = acct_top_bias != cfg.aware_reframe
+            wants_cut = bool(hook_v) and (band_differs or frame_differs)
             did_cut = False
             if cfg.creative_variation and hook_v:
                 variant_key = skey
                 variant_hook = hook_v
-                # content-address by (clip, hook[, band]): identical hooks on this aspect-clip share ONE render;
-                # a per-account band adds a tag so @short and @long don't dedup onto one (wrong-length) file.
-                token = f"{hook_v}\x1fband:{acct_band.lo:g}-{acct_band.hi:g}" if wants_cut else hook_v
+                # content-address by (clip, hook[, band][, frame]): identical hooks on this aspect-clip share
+                # ONE render; a per-account band and/or framing each add a tag so @short/@long (length) and
+                # @top/@center (crop) never dedup onto one (wrong) file. Neither differs -> the bare hook =
+                # today's un-tagged id, byte-identical. Band tag stays first so a band-only id is unchanged from M2b.
+                tag = [hook_v]
+                if band_differs: tag.append(f"band:{acct_band.lo:g}-{acct_band.hi:g}")
+                if frame_differs: tag.append(f"frame:{'top' if acct_top_bias else 'center'}")
+                token = "\x1f".join(tag)
                 render_id = child_id("render", target_clip.id, token)
                 if led.get_render(render_id) is None:
                     tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080),
@@ -171,9 +181,9 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                     src_id = src.id if src is not None else None
                     vpath = cfg.render_path(src_batch, src_id, render_id, aspect)   # filed under clips/{batch}/{src}/
                     produced = False
-                    if wants_cut:                                  # a real per-account CUT from the source at the account band
+                    if wants_cut:                                  # a real per-account CUT: the account's own length AND framing
                         produced = render_account_cut(led, cfg, moment_id, aspect=aspect, profile=acct_profile,
-                                                       hook=hook_v, out_path=vpath, top_bias=cfg.aware_reframe)
+                                                       hook=hook_v, out_path=vpath, top_bias=acct_top_bias)
                         if not produced:                           # the cut failed -> fell back to the GLOBAL-length shared burn.
                             get_logger(cfg)("crosspost", target_clip.id, "account_cut_failed",   # never a SILENT wrong-length ship
                                             surface=f"{surf.account}/{surf.platform.value}", profile=acct_profile)
