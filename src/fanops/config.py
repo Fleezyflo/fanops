@@ -249,11 +249,14 @@ class Config:
 
     @property
     def hashtag_trends(self) -> bool:
-        # M4 opt-in: sample LIVE Meta Graph hashtag trends during `hashtags refresh`. DEFAULT OFF —
-        # own-reach ranking needs no token; trends need a wired Meta app + the 30/7-day budget. Only the
-        # explicit on-words enable it; off -> own-reach-only refresh, today's behavior. Mirrors burn_subs.
+        # B2 (2026-06-23): the Graph API is now ON BY DEFAULT — sample LIVE Meta Graph hashtag trends during
+        # `hashtags refresh`. FAIL-OPEN: without META_GRAPH_TOKEN + META_IG_USER_ID, sample_trends no-ops and
+        # the refresh is own-reach-only (byte-identical to the old default-OFF output), so default-ON is safe
+        # on a deployment with no Meta app. Only the explicit OFF-words disable it (operator escape hatch).
+        # NB: this gates the BACKGROUND refresh sampling only; the on-demand operator lookup (meta_graph.
+        # tag_metrics) is gated by creds + budget, never this flag. Mirrors creative_variation's default-ON shape.
         v = (os.getenv("FANOPS_HASHTAG_TRENDS") or "").strip().lower()
-        return v in {"1", "true", "yes", "on"}
+        return v not in {"0", "false", "no", "off"}     # DEFAULT ON; only explicit off-words disable it
 
     @property
     def require_full_objective(self) -> bool:

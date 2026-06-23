@@ -18,6 +18,15 @@
     </div>
   {% endif %}
 
+  {% if result and result.ok and result.detail and result.detail.recommend %}
+    {# B2: a recommended tag's live Graph metrics + a one-click Add-to-corpus (the curation evidence step). #}
+    <div class="recommend-result">
+      <strong>{{ result.detail.tag }}</strong> — {{ result.detail.engagement }} engagement on Instagram's top media.
+      <button type="button" hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML"
+        hx-vals='{{ {"id": result.detail.persona, "tag": result.detail.tag} | tojson }}'>Add to corpus</button>
+    </div>
+  {% endif %}
+
   <section class="persona-step">
     <h3>Add a persona</h3>
     <p class="muted">Name it, write its voice, pick a hashtag lean, and capture the intake (genre,
@@ -70,6 +79,11 @@
             <input type="hidden" name="id" value="{{ p.id }}">
             <input type="text" name="tag" placeholder="#tag" size="12">
             <button type="submit">Add tag</button>
+          </form>
+          <form class="inline" hx-post="{{ url_for('do_personas_recommend') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+            <input type="hidden" name="id" value="{{ p.id }}">
+            <input type="text" name="tag" placeholder="#candidate" size="12">
+            <button type="submit" title="look up this tag's live Instagram reach via the Graph API">Check reach</button>
           </form>
         </div>
 

@@ -131,6 +131,34 @@ def record_query(cfg: Config, tag: str, *, now: datetime | None = None) -> None:
     except OSError:
         pass
 
+def tag_metrics(cfg: Config, tag: str, *, get=None, now: datetime | None = None) -> dict:
+    """B2: ON-DEMAND live Graph metrics for ONE hashtag the operator wants to RECOMMEND into a persona's
+    corpus — the evidence behind a curation decision. Resolves the hashtag node + sums top_media engagement
+    (the same signal sample_trends uses), spending ONE ig_hashtag_search budget slot. Returns a plain dict
+    the Studio renders: {tag, resolved, engagement?, sampled_at?, error?}. SAME discipline as sample_trends:
+    FAIL-OPEN on creds/transport (resolved False + a reason, never raises); FAIL-CLOSED + LOUD on an
+    unreadable budget (resolved False); refuses when the 30/7-day budget is exhausted. The token is never
+    echoed. Operator-initiated, so it is NOT gated by FANOPS_HASHTAG_TRENDS (that gates the background
+    refresh sampling) — only by creds + budget."""
+    now = now or _now()
+    h = tag if (tag or "").startswith("#") else f"#{(tag or '').strip()}"
+    h = h.strip().lower()
+    if not h.lstrip("#"):                                # a bare "#" / blank -> reject BEFORE spending a budget slot
+        return {"tag": h, "resolved": False, "error": "enter a valid hashtag"}
+    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+        return {"tag": h, "resolved": False, "error": "Graph not configured — set META_GRAPH_TOKEN + META_IG_USER_ID"}
+    remaining = budget_remaining(cfg, now=now)
+    if remaining is None:
+        return {"tag": h, "resolved": False, "error": "trend budget unreadable — refusing the query (fail-closed)"}
+    if remaining <= 0:
+        return {"tag": h, "resolved": False, "error": "trend budget exhausted (Meta's 30-searches / 7-day cap) — retry later"}
+    score = trend_score(cfg, h, get=get)                 # resolves the node + sums top_media engagement
+    record_query(cfg, h, now=now)                        # spend one slot (Meta counts unique searches per 7-day window)
+    if score is None:
+        return {"tag": h, "resolved": False, "error": "did not resolve on Instagram — no such hashtag, or no recent public media"}
+    return {"tag": h, "resolved": True, "engagement": score, "sampled_at": now.isoformat()}
+
+
 def sample_trends(cfg: Config, candidates: list[str], *, get=None, now: datetime | None = None) -> dict:
     """Spend the 30/7-day budget sampling trend scores for `candidates` (in order). Returns {tag: score}
     for the tags actually sampled. FAIL-OPEN on creds/transport (no token -> {}; a per-tag failure is
