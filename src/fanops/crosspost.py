@@ -63,6 +63,25 @@ def _clip_for_aspect(led: Ledger, cfg: Config, moment_id: str, aspect: Fmt):
     led, clip = render_moment(led, cfg, moment_id, aspect=aspect)   # rebind led (was discarded as led2)
     return clip
 
+def account_render_spec(cfg: Config, *, clip, hook: str, acct):
+    """The per-account Render IDENTITY (content-addressed id) + cut decision for (clip, hook, account).
+    SINGLE SOURCE so the crosspost mint (below) AND the Studio re-burn (actions.reburn_hook) compute the SAME
+    render_id and the SAME cut/burn choice — they MUST NOT drift (audit H1: a re-burn that recomputed a
+    bare-hook id silently reverted the M2 per-account length/framing CUT). Pure (no I/O). acct may be None
+    (removed/unknown handle) -> the global defaults -> a bare-hook id + no cut (byte-identical to the shared
+    clip). content-addresses by (clip, hook[, band][, frame]); the band tag stays first so a band-only id is
+    unchanged from M2b. Returns (render_id, wants_cut, profile, top_bias)."""
+    profile = cfg.resolve_clip_profile(acct)
+    band = band_for(profile)
+    top_bias = cfg.resolve_top_bias(acct)
+    band_differs = band != band_for(cfg.clip_profile)
+    frame_differs = top_bias != cfg.aware_reframe
+    wants_cut = bool(hook) and (band_differs or frame_differs)
+    tag = [hook]
+    if band_differs: tag.append(f"band:{band.lo:g}-{band.hi:g}")
+    if frame_differs: tag.append(f"frame:{'top' if top_bias else 'center'}")
+    return child_id("render", clip.id, "\x1f".join(tag)), wants_cut, profile, top_bias
+
 def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: str) -> Ledger:
     base = _parse(base_time)
     date_str = base.date().isoformat()
@@ -156,25 +175,17 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
             # length OR crop never collide on one file. Neither differs -> the shared-clip burn path + un-tagged
             # id (byte-identical to today). did_cut gates the provenance stamp (only a real cut claims its length).
             acct = acct_by_handle.get(surf.account)
-            acct_profile = cfg.resolve_clip_profile(acct)
-            acct_band = band_for(acct_profile)
-            acct_top_bias = cfg.resolve_top_bias(acct)
-            band_differs = acct_band != band_for(cfg.clip_profile)
-            frame_differs = acct_top_bias != cfg.aware_reframe
-            wants_cut = bool(hook_v) and (band_differs or frame_differs)
+            acct_profile = cfg.clip_profile          # global default; a real per-account cut overwrites it below
             did_cut = False
             if cfg.creative_variation and hook_v:
                 variant_key = skey
                 variant_hook = hook_v
-                # content-address by (clip, hook[, band][, frame]): identical hooks on this aspect-clip share
-                # ONE render; a per-account band and/or framing each add a tag so @short/@long (length) and
-                # @top/@center (crop) never dedup onto one (wrong) file. Neither differs -> the bare hook =
-                # today's un-tagged id, byte-identical. Band tag stays first so a band-only id is unchanged from M2b.
-                tag = [hook_v]
-                if band_differs: tag.append(f"band:{acct_band.lo:g}-{acct_band.hi:g}")
-                if frame_differs: tag.append(f"frame:{'top' if acct_top_bias else 'center'}")
-                token = "\x1f".join(tag)
-                render_id = child_id("render", target_clip.id, token)
+                # The render IDENTITY (content-addressed id) + cut/burn decision come from the SINGLE shared
+                # source account_render_spec, so the Studio re-burn (actions.reburn_hook) computes the SAME id
+                # + cut and can never drift (audit H1). Neither band nor frame differs -> bare-hook id, today's
+                # behavior byte-identical. Identical hooks on this aspect-clip dedup to ONE render/file.
+                render_id, wants_cut, acct_profile, acct_top_bias = account_render_spec(
+                    cfg, clip=target_clip, hook=hook_v, acct=acct)
                 if led.get_render(render_id) is None:
                     tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080),
                               Fmt.r16x9: (1920, 1080)}.get(aspect, (1080, 1920))
@@ -188,8 +199,11 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                             get_logger(cfg)("crosspost", target_clip.id, "account_cut_failed",   # never a SILENT wrong-length ship
                                             surface=f"{surf.account}/{surf.platform.value}", profile=acct_profile)
                     if not produced:                               # default band OR a failed cut -> shared-clip burn (vpath always exists)
-                        overlay.burn_hook_only(target_clip.path, vpath, hook_v, width=tw, height=th,
-                                               font=cfg.subtitle_font)   # atomic + fail-open: vpath always exists
+                        burned = overlay.burn_hook_only(target_clip.path, vpath, hook_v, width=tw, height=th,
+                                                        font=cfg.subtitle_font)   # atomic + fail-open: vpath always exists
+                        if not burned:                             # AUDIT M1: capture the fail-open — a hookless ship leaves a breadcrumb
+                            get_logger(cfg)("crosspost", target_clip.id, "hook_burn_failed",   # the F9 signal the OFF path emitted
+                                            surface=f"{surf.account}/{surf.platform.value}")
                     did_cut = produced
                     led.add_render(Render(id=render_id, clip_id=target_clip.id, account=surf.account,
                                           surface_key=skey, hook_text=hook_v, path=vpath,
