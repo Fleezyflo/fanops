@@ -62,8 +62,14 @@ class Account(BaseModel):
     hook_angle: Optional[str] = None
     hook_tone: Optional[str] = None
     brief: str = ""                        # M2 LOCK: the persona's operator-approved strategy, HYDRATED from the
-                                           # linked Persona; compose_persona_instruction appends it after the voice so it
+                                           # linked Persona; the directive compilers append it after the voice so it
                                            # rides into the real casting/hook/caption prompts. Empty -> byte-identical.
+    # M3 DIRECTIVE ENGINE: the per-dimension OVERRIDE text + the per-persona clip budget, HYDRATED from the
+    # linked Persona. Empty/None -> the lever-compiled default / the global cast budget (byte-identical when unset).
+    casting_directive: str = ""
+    hook_directive: str = ""
+    caption_directive: str = ""
+    clip_count: Optional[int] = None
     # Per-platform poster ids keyed by Platform.value (e.g. {"instagram": "ig_1", "tiktok": "tk_9"}).
     # A handle's Instagram and TikTok are DIFFERENT Postiz integrations, so each (handle, platform) must
     # resolve to its OWN id. ADDITIVE: empty on a legacy account, which then resolves via account_id —
@@ -219,6 +225,10 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         if per.clip_profile: acc.clip_profile = per.clip_profile
         if per.framing: acc.framing = per.framing
         acc.brief = getattr(per, "brief", "") or ""   # M2: the persona owns the locked brief (empty -> compose ignores it)
+        acc.casting_directive = getattr(per, "casting_directive", "") or ""   # M3: per-dimension override text (empty -> lever-compiled default)
+        acc.hook_directive = getattr(per, "hook_directive", "") or ""
+        acc.caption_directive = getattr(per, "caption_directive", "") or ""
+        acc.clip_count = getattr(per, "clip_count", None)                     # M3: per-persona clip budget (None -> global)
 
 
 def link_persona(cfg: Config, handle: str, persona_id: str) -> str:

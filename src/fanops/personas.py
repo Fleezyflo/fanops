@@ -59,6 +59,15 @@ class Persona(BaseModel):
                                                   # anchor. compose appends it after `voice` so the real casting/hook/caption
                                                   # prompts run against the agreed DEFINITION. Free text; ONLY a deliberate Save
                                                   # writes it (a strategy check NEVER auto-locks). Empty -> byte-identical.
+    # M3 DIRECTIVE ENGINE: the structured levers above compile into a SUBSTANTIVE per-dimension instruction
+    # (casting/hook/caption) injected into THAT dimension's real prompt — not a glued adjective. The operator
+    # can OVERRIDE the compiled text per persona (these fields); a non-empty override is used VERBATIM, else
+    # the lever-compiled clauses are used, else the bare voice (the firewall). Empty -> byte-identical.
+    casting_directive: str = ""                   # override for "which moments to clip" (else compiled from content_focus+energy)
+    hook_directive: str = ""                      # override for the on-screen hook brief (else compiled from hook_angle+hook_tone)
+    caption_directive: str = ""                   # override for the caption angle (else the voice; tags stay deterministic)
+    clip_count: Optional[int] = None              # per-persona CLIP BUDGET (deterministic): how many of its best-fit moments this
+                                                  # account gets. None -> the global cfg.cast_pick_budget (byte-identical when unset)
 
 
 class Personas:
@@ -91,28 +100,94 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s).strip("-")
 
 
-def compose_persona_instruction(p) -> str:
-    """The lever ENGINE's composer — render a persona/account's SET levers into the SINGLE instruction
-    string the pipeline's casting/hook/caption prompts read (the value interpolated as each surface's
-    `persona`). PURE + duck-typed (reads .voice OR .persona, .content_focus, .energy, .hook_angle,
-    .hook_tone) so it serves a Persona OR a hydrated Account. THE FIREWALL: with NO levers AND no locked
-    brief set it returns the bare voice VERBATIM, so every existing persona's payload stays byte-identical;
-    only-levers -> the composed body; both -> "body. voice". The LOCKED `brief` (M2) appends as a freeform
-    tail AFTER the voice (voice, then the agreed strategy) — empty brief -> byte-identical. clip_profile/
-    framing are NOT in the text (they drive the deterministic CUT, not the prompt)."""
+# THE DIRECTIVE ENGINE (M3). Each structured lever value compiles into a SUBSTANTIVE instruction CLAUSE the
+# pipeline's prompt actually acts on — real selection/hook language, NOT a glued adjective ("favors moments:
+# punchlines"). content_focus + energy -> the CASTING directive; hook_angle + hook_tone -> the HOOK directive.
+# These clauses are the curated DEFAULT; a persona may OVERRIDE the compiled text per dimension (the operator
+# owns the words). clip_profile/framing/tag_lean/corpus stay deterministic (cut + hashtags), NOT in this text.
+_FOCUS_CLAUSE = {
+    "punchlines": "moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line",
+    "emotional": "moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels",
+    "hype": "the highest-energy hype moments — the hardest delivery, the beat drop, the room going up",
+    "storytelling": "moments that tell a story or reveal something — an origin, a turn, a payoff",
+    "visual": "visually arresting moments — a strong scene, motion, or setting, not audio alone",
+    "bold-statement": "a bold or contrarian statement that stops the scroll",
+}
+_ENERGY_CLAUSE = {
+    "low": "Favor calmer, more introspective moments over loud ones.",
+    "medium": "",
+    "high": "Strongly prefer peak-intensity moments; skip calm, low-energy passages.",
+}
+_ANGLE_CLAUSE = {
+    "curiosity": "open a curiosity gap the viewer has to close",
+    "challenge": "dare or challenge the viewer to react",
+    "emotional": "name the high-arousal feeling the clip gives the viewer",
+    "result-first": "open on the payoff, then reveal how it got there",
+    "fomo": "carry genuine scarcity — a one-time, leaked, or unreleased drop",
+}
+_TONE_CLAUSE = {
+    "aggressive": "Write it hard and confrontational.",
+    "restrained": "Write it understated and quietly confident.",
+    "playful": "Write it playful, a little cheeky.",
+}
+
+
+def _base_voice(p) -> str:
+    """The persona's freeform base: the voice, then the LOCKED brief (M2) appended after it. Duck-typed
+    (reads .voice OR the hydrated account's .persona). Empty brief -> just the voice (the firewall floor)."""
     voice = (getattr(p, "voice", None) or getattr(p, "persona", None) or "").strip()
     brief = (getattr(p, "brief", None) or "").strip()
+    return ". ".join(s for s in (voice, brief) if s)
+
+
+def _join(voice: str, body: str) -> str:
+    """voice + compiled directive body. Either empty -> the other (the firewall: no body -> bare voice)."""
+    if voice and body: return f"{voice} {body}"
+    return voice or body
+
+
+def casting_directive(p) -> str:
+    """WHICH MOMENTS this account clips for — the substantive instruction injected into the casting prompt's
+    per-account slot. Override (Persona.casting_directive) wins VERBATIM; else compiled from content_focus +
+    energy into real selection language; else the bare voice. THE FIREWALL: no levers + no override -> the
+    bare voice, byte-identical to today. Duck-typed (Persona or hydrated Account)."""
+    override = (getattr(p, "casting_directive", None) or "").strip()
+    if override: return override
     parts: list[str] = []
-    cf = [s for x in (getattr(p, "content_focus", None) or []) if (s := str(x).strip())]
-    if cf: parts.append("favors moments: " + ", ".join(cf))
-    for label, val in (("energy", getattr(p, "energy", None)), ("hook angle", getattr(p, "hook_angle", None)),
-                       ("hook tone", getattr(p, "hook_tone", None))):
-        v = (val or "").strip()
-        if v: parts.append(f"{label} {v}")
-    body = "; ".join(parts)
-    freeform = ". ".join(s for s in (voice, brief) if s)     # voice, then the LOCKED brief (M2); both empty -> ""
-    if body and freeform: return f"{body}. {freeform}"
-    return freeform or body
+    foc = [_FOCUS_CLAUSE[c] for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
+    if foc: parts.append("Clip for this account: " + "; ".join(foc) + ".")
+    e = _ENERGY_CLAUSE.get((getattr(p, "energy", None) or "").strip().lower(), "")
+    if e: parts.append(e)
+    return _join(_base_voice(p), " ".join(parts).strip())
+
+
+def hook_directive(p) -> str:
+    """The ON-SCREEN HOOK brief for this account — injected into the hook prompt's per-account slot. Override
+    (Persona.hook_directive) wins VERBATIM; else compiled from hook_angle + hook_tone; else the bare voice
+    (firewall). Duck-typed."""
+    override = (getattr(p, "hook_directive", None) or "").strip()
+    if override: return override
+    parts: list[str] = []
+    a = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
+    if a: parts.append("For the on-screen hook, " + a + ".")
+    t = _TONE_CLAUSE.get((getattr(p, "hook_tone", None) or "").strip().lower(), "")
+    if t: parts.append(t)
+    return _join(_base_voice(p), " ".join(parts).strip())
+
+
+def caption_directive(p) -> str:
+    """The CAPTION angle for this account — injected into the caption prompt's per-surface slot. Override
+    (Persona.caption_directive) wins VERBATIM; else the bare voice (tag_lean/corpus drive the hashtags
+    deterministically elsewhere, so the caption directive is purely the voice/angle). Duck-typed; firewall-safe."""
+    override = (getattr(p, "caption_directive", None) or "").strip()
+    return override or _base_voice(p)
+
+
+def compose_persona_instruction(p) -> str:
+    """Back-compat alias + the human-facing 'what the AI reads' summary: the CASTING directive (the primary
+    'which moments' instruction). The hook/caption surfaces read their own directive (hook_directive /
+    caption_directive); this stays the headline for the card + the strategy check. Firewall floor: bare voice."""
+    return casting_directive(p)
 
 
 def persona_facts(cfg: Config, p) -> dict:
@@ -143,6 +218,20 @@ def _enum_or_none(v, names, label) -> Optional[str]:
     if v and v not in names:
         raise ValueError(f"unknown {label}: {v!r}")
     return v or None
+
+
+def _clip_count_or_none(v) -> Optional[int]:
+    """Normalize the per-persona clip budget: a positive int, or None when blank/None. A non-numeric or
+    non-positive value raises (the write boundary — never persist a budget that silently disables casting)."""
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"clip_count must be a whole number: {v!r}")
+    if n <= 0:
+        raise ValueError(f"clip_count must be positive: {n}")
+    return n
 
 
 def _norm_focus(content_focus) -> list[str]:
@@ -200,7 +289,9 @@ _UNSET = object()
 def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
                 intake: Optional[dict] = None, id: str = "", *, content_focus=None,
                 energy: str = "", hook_angle: str = "", hook_tone: str = "",
-                clip_profile: str = "", framing: str = "", brief: str = "") -> str:
+                clip_profile: str = "", framing: str = "", brief: str = "",
+                casting_directive: str = "", hook_directive: str = "", caption_directive: str = "",
+                clip_count=None) -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
     duplicate id and a blank name (never write a record that won't reload). Validates tag_lean AND every
     lever-engine field against its vocabulary. Returns the id; raises ValueError on bad input."""
@@ -219,6 +310,7 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
     tone_v = _enum_or_none(hook_tone, HOOK_TONES, "hook_tone")
     prof_v = _enum_or_none(clip_profile, PROFILE_NAMES, "clip_profile")
     fr_v = _enum_or_none(framing, FRAMING_NAMES, "framing")
+    count_v = _clip_count_or_none(clip_count)
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
@@ -227,14 +319,17 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""), "tag_lean": lean or None,
                       "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
                       "energy": energy_v, "hook_angle": angle_v, "hook_tone": tone_v,
-                      "clip_profile": prof_v, "framing": fr_v, "brief": str(brief or "")})
+                      "clip_profile": prof_v, "framing": fr_v, "brief": str(brief or ""),
+                      "casting_directive": str(casting_directive or ""), "hook_directive": str(hook_directive or ""),
+                      "caption_directive": str(caption_directive or ""), "clip_count": count_v})
         _write_atomic(p, raw)
     return pid
 
 
 def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean=_UNSET, intake=_UNSET,
                    content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET, hook_tone=_UNSET,
-                   clip_profile=_UNSET, framing=_UNSET, brief=_UNSET) -> str:
+                   clip_profile=_UNSET, framing=_UNSET, brief=_UNSET, casting_directive=_UNSET,
+                   hook_directive=_UNSET, caption_directive=_UNSET, clip_count=_UNSET) -> str:
     """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; tag_lean=""
     CLEARS the lean (-> None) and likewise each lever clears on "". Validates tag_lean + every passed lever
     against its vocabulary BEFORE the lock (never write a typo). Unknown id -> KeyError."""
@@ -248,6 +343,7 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean
     _tone = _enum_or_none(hook_tone, HOOK_TONES, "hook_tone") if hook_tone is not _UNSET else _UNSET
     _prof = _enum_or_none(clip_profile, PROFILE_NAMES, "clip_profile") if clip_profile is not _UNSET else _UNSET
     _fr = _enum_or_none(framing, FRAMING_NAMES, "framing") if framing is not _UNSET else _UNSET
+    _count = _clip_count_or_none(clip_count) if clip_count is not _UNSET else _UNSET
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
@@ -268,6 +364,10 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean
                 if _prof is not _UNSET: d["clip_profile"] = _prof
                 if _fr is not _UNSET: d["framing"] = _fr
                 if brief is not _UNSET: d["brief"] = str(brief or "")
+                if casting_directive is not _UNSET: d["casting_directive"] = str(casting_directive or "")
+                if hook_directive is not _UNSET: d["hook_directive"] = str(hook_directive or "")
+                if caption_directive is not _UNSET: d["caption_directive"] = str(caption_directive or "")
+                if _count is not _UNSET: d["clip_count"] = _count
                 found = True
         if not found:
             raise KeyError(pid)

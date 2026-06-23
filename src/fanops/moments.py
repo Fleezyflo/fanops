@@ -20,7 +20,7 @@ from fanops.clip import fit_window
 from fanops.log import get_logger
 from fanops.control import load_guidance
 from fanops.moment_hook_learning import proven_hook_styles
-from fanops.personas import compose_persona_instruction
+from fanops.personas import hook_directive
 import os
 
 # M1b PASS 1: how many SOURCE stills the PICK author gets — a whole-source survey (a picking aid: judge
@@ -198,8 +198,8 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     src = led.sources[source_id]
     # Per-account voices reach the frame-seeing hook author so IT writes each handle's on-screen hook
     # (the root fix). Only accounts WITH a persona ride along; none -> [] -> no per-persona prompt block.
-    personas = ([{"handle": a.handle, "persona": instr}        # the lever ENGINE's composed instruction (no levers -> bare voice)
-                 for a in accounts.accounts if (instr := compose_persona_instruction(a))]
+    personas = ([{"handle": a.handle, "persona": instr}        # the HOOK directive (hook_angle/hook_tone + voice; no levers -> bare voice)
+                 for a in accounts.accounts if (instr := hook_directive(a))]
                 if accounts is not None else [])
     # P4(c): cross-surface union of gated winning hook STYLES (the SAME signal caption uses). [] when the
     # flag is off / accounts is None / on any scorer error (fail-open).

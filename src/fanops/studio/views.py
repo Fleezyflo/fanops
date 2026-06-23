@@ -814,12 +814,20 @@ class PersonaCard:
     hook_tone: Optional[str] = None
     clip_profile: Optional[str] = None
     framing: Optional[str] = None
-    instruction: str = ""
+    instruction: str = ""              # the COMPILED casting directive (the headline "AI reads ->")
     # M2: the LOCKED brief + the TRANSPARENCY facts (length band + lead tags) derived from the REAL resolvers
     # — so the operator sees, on the card, exactly what the config produces and what definition is frozen.
     brief: str = ""
     length_band: str = ""
     lead_tags: list = field(default_factory=list)
+    # M3 DIRECTIVE ENGINE: the COMPILED per-dimension directive the LLM actually reads (so the operator sees
+    # exactly what each lever produces) + the raw OVERRIDE text (pre-fills the edit boxes) + the clip ceiling.
+    hook_text: str = ""
+    caption_text: str = ""
+    casting_override: str = ""
+    hook_override: str = ""
+    caption_override: str = ""
+    clip_count: Optional[int] = None
 
 
 @dataclass
@@ -842,7 +850,8 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     connect dropdown). Fail-open: a corrupt personas.json / accounts.json -> an EMPTY page (the surface
     never 500s), mirroring golive_accounts. `led` is injectable (tests); else loaded lock-free."""
     try:
-        from fanops.personas import Personas, compose_persona_instruction, persona_facts   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
+        from fanops.personas import (Personas, compose_persona_instruction, persona_facts,   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
+                                     hook_directive, caption_directive)
         reg = Personas.load(cfg)
         accts = Accounts.load(cfg).accounts
     except Exception as exc:
@@ -879,7 +888,12 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          content_focus=list(p.content_focus), energy=p.energy, hook_angle=p.hook_angle,
                          hook_tone=p.hook_tone, clip_profile=p.clip_profile, framing=p.framing,
                          instruction=compose_persona_instruction(p), brief=getattr(p, "brief", "") or "",
-                         length_band=(facts := persona_facts(cfg, p))["length_band"], lead_tags=facts["lead_tags"])
+                         length_band=(facts := persona_facts(cfg, p))["length_band"], lead_tags=facts["lead_tags"],
+                         hook_text=hook_directive(p), caption_text=caption_directive(p),
+                         casting_override=getattr(p, "casting_directive", "") or "",
+                         hook_override=getattr(p, "hook_directive", "") or "",
+                         caption_override=getattr(p, "caption_directive", "") or "",
+                         clip_count=getattr(p, "clip_count", None))
              for p in reg.all()]
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)

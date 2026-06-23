@@ -671,7 +671,9 @@ def create_app(cfg: Config) -> Flask:
             request.form.get("refs", ""), request.form.get("notes", ""),
             content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
             hook_angle=request.form.get("hook_angle", ""), hook_tone=request.form.get("hook_tone", ""),
-            clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", "")))
+            clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", ""),
+            casting_directive=request.form.get("casting_directive", ""), hook_directive=request.form.get("hook_directive", ""),
+            caption_directive=request.form.get("caption_directive", ""), clip_count=request.form.get("clip_count", "")))
 
     @app.post("/personas/edit")
     def do_personas_edit():
@@ -682,7 +684,9 @@ def create_app(cfg: Config) -> Flask:
             content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
             hook_angle=request.form.get("hook_angle", ""), hook_tone=request.form.get("hook_tone", ""),
             clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", ""),
-            brief=request.form.get("brief", "")))
+            brief=request.form.get("brief", ""),
+            casting_directive=request.form.get("casting_directive", ""), hook_directive=request.form.get("hook_directive", ""),
+            caption_directive=request.form.get("caption_directive", ""), clip_count=request.form.get("clip_count", "")))
 
     @app.post("/personas/strategy")
     def do_personas_strategy():

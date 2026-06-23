@@ -34,6 +34,18 @@
       <select name="hook_tone"><option value="">— any —</option>
         {% for h in levers.hook_tone %}<option value="{{ h }}" {{ 'selected' if p and p.hook_tone == h else '' }}>{{ h }}</option>{% endfor %}
       </select></label>
+    <label>Clips per drop
+      <input type="number" name="clip_count" min="1" size="4" placeholder="all that fit"
+        title="how many clips this account gets per source (blank = no ceiling)" value="{{ p.clip_count if p and p.clip_count else '' }}"></label>
+  </fieldset>
+  <fieldset class="directives">
+    <legend>Directive overrides — blank = use the compiled default above</legend>
+    <label class="block">Clips directive
+      <textarea name="casting_directive" rows="2" placeholder="(compiled from Clips + Energy above)">{{ p.casting_override if p else '' }}</textarea></label>
+    <label class="block">Hook directive
+      <textarea name="hook_directive" rows="2" placeholder="(compiled from Hook angle + tone above)">{{ p.hook_override if p else '' }}</textarea></label>
+    <label class="block">Caption directive
+      <textarea name="caption_directive" rows="2" placeholder="(the persona voice; hashtags stay deterministic)">{{ p.caption_override if p else '' }}</textarea></label>
   </fieldset>
 {% endmacro %}
 <div id="personas-panel" aria-live="polite">
@@ -139,12 +151,16 @@
           {% else %}<span class="muted">· not connected</span>{% endif %}
         </header>
         {% if p.voice %}<p class="persona-voice">{{ p.voice }}</p>{% endif %}
-        {% if p.instruction %}<p class="persona-instruction" title="the EXACT instruction the AI reads when casting moments, writing hooks and captions for this persona"><span class="muted">AI reads →</span> {{ p.instruction }}</p>{% endif %}
+        <div class="persona-directives" title="the EXACT instruction each lever compiles into for this persona — what the AI reads per dimension">
+          {% if p.instruction %}<p class="persona-instruction"><span class="muted">clips →</span> {{ p.instruction }}</p>{% endif %}
+          {% if p.hook_text %}<p class="persona-instruction"><span class="muted">hook →</span> {{ p.hook_text }}</p>{% endif %}
+          {% if p.caption_text %}<p class="persona-instruction"><span class="muted">caption →</span> {{ p.caption_text }}</p>{% endif %}
+        </div>
         {% if p.brief %}<p class="persona-brief" title="the LOCKED strategy this persona runs against downstream — composed into the AI instruction"><span class="muted">locked brief →</span> {{ p.brief }}</p>{% endif %}
         {% if p.clip_profile or p.framing %}<p class="muted persona-cut">cut: {% if p.clip_profile %}{{ p.clip_profile }} length{% endif %}{% if p.clip_profile and p.framing %}, {% endif %}{% if p.framing %}{{ p.framing }} framing{% endif %}</p>{% endif %}
         {# M2 TRANSPARENCY: what the config DETERMINISTICALLY produces — the resolved clip length band + the
            lead hashtags (lean+corpus over the reach store; the tag step the caption LLM never sees). #}
-        <p class="muted persona-produces" title="derived from the same resolvers the pipeline runs">produces: ~{{ p.length_band }} clips{% if p.lead_tags %} · lead tags {{ p.lead_tags|join(' ') }}{% endif %}</p>
+        <p class="muted persona-produces" title="derived from the same resolvers the pipeline runs">produces: ~{{ p.length_band }} clips{% if p.clip_count %} · up to {{ p.clip_count }} per drop{% endif %}{% if p.lead_tags %} · lead tags {{ p.lead_tags|join(' ') }}{% endif %}</p>
         <form class="inline persona-strategy" hx-post="{{ url_for('do_personas_strategy') }}" hx-target="#personas-panel" hx-swap="outerHTML">
           <input type="hidden" name="id" value="{{ p.id }}">
           <button type="submit" title="ask the model what this persona's config will come out to — one call, an inaccurate vibe-check to sanity-check the definition before locking it">Strategy check</button>

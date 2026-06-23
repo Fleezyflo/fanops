@@ -31,15 +31,18 @@ def _intake(genre: str = "", language: str = "", refs: str = "", notes: str = ""
 def create_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
                    genre: str = "", language: str = "", refs: str = "", notes: str = "",
                    content_focus=None, energy: str = "", hook_angle: str = "", hook_tone: str = "",
-                   clip_profile: str = "", framing: str = "") -> ActionResult:
+                   clip_profile: str = "", framing: str = "", casting_directive: str = "",
+                   hook_directive: str = "", caption_directive: str = "", clip_count="") -> ActionResult:
     """Create a NEW persona from the intake form + the lever engine. Validates a non-blank name, a known
     tag_lean, and every lever value at the A1 write boundary; a duplicate id / bad lean / unknown lever /
-    blank name -> a clean one-line error, never a 500."""
+    bad clip_count / blank name -> a clean one-line error, never a 500."""
     try:
         pid = core.add_persona(cfg, name=name, voice=voice, tag_lean=tag_lean,
                                intake=_intake(genre, language, refs, notes),
                                content_focus=content_focus, energy=energy, hook_angle=hook_angle,
-                               hook_tone=hook_tone, clip_profile=clip_profile, framing=framing)
+                               hook_tone=hook_tone, clip_profile=clip_profile, framing=framing,
+                               casting_directive=casting_directive, hook_directive=hook_directive,
+                               caption_directive=caption_directive, clip_count=clip_count)
     except ValueError as exc:                            # blank name / unknown lean or lever / duplicate id
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
@@ -50,7 +53,8 @@ def create_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
 def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "", tag_lean: str = "",
                  genre: str = "", language: str = "", refs: str = "", notes: str = "",
                  content_focus=None, energy: str = "", hook_angle: str = "", hook_tone: str = "",
-                 clip_profile: str = "", framing: str = "", brief: str = "") -> ActionResult:
+                 clip_profile: str = "", framing: str = "", brief: str = "", casting_directive: str = "",
+                 hook_directive: str = "", caption_directive: str = "", clip_count="") -> ActionResult:
     """Save edits to a persona (name/voice/tag_lean + the full intake + every lever + the locked brief). The
     edit form is AUTHORITATIVE: an unchecked/blank lever CLEARS it, and the brief textarea is pre-filled so a
     Save preserves it (emptying it clears the lock). Unknown id / bad lean / unknown lever / blank name -> a
@@ -62,7 +66,9 @@ def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "", tag_lea
         core.update_persona(cfg, pid, name=name, voice=voice, tag_lean=tag_lean,
                             intake=_intake(genre, language, refs, notes),
                             content_focus=(content_focus or []), energy=energy, hook_angle=hook_angle,
-                            hook_tone=hook_tone, clip_profile=clip_profile, framing=framing, brief=brief)
+                            hook_tone=hook_tone, clip_profile=clip_profile, framing=framing, brief=brief,
+                            casting_directive=casting_directive, hook_directive=hook_directive,
+                            caption_directive=caption_directive, clip_count=clip_count)
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
     except ValueError as exc:                            # unknown lean or lever / blank name
