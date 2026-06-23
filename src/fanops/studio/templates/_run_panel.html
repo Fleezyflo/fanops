@@ -2,7 +2,7 @@
 <div id="run-panel" aria-live="polite">
   <h2>Make clips</h2>
   {# Phase 2: read-only echo of the casting/volume config (the levers live in Go Live → Routing/casting). #}
-  {% if cast_state %}<p class="meta cast-state">Routing: {% if cast_state.casting %}casting ON — {{ 'exclusive (1 moment → best account, poor-fit dropped)' if cast_state.exclusive else 'budget ' ~ cast_state.budget ~ ' per account' }}{% else %}casting off (every account gets every moment){% endif %} · clip profile <strong>{{ cast_state.profile }}</strong></p>{% endif %}
+  {% if cast_state %}<p class="meta cast-state">Routing: {% if cast_state.casting %}casting ON — {{ cast_state.budget }} moments per account{% else %}casting off (every account gets every moment){% endif %} · clip profile <strong>{{ cast_state.profile }}</strong></p>{% endif %}
   <p class="muted">Add a video, then let the system cut clips and write captions. They land in
     <strong>Review</strong>.</p>
 

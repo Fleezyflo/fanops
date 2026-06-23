@@ -80,57 +80,6 @@ def test_cast_moments_fail_open(tmp_path, mocker):
     assert out.moments["m0"].affinities == []
 
 
-# ---- exclusive routing (FANOPS_CAST_EXCLUSIVE): each moment -> single best-fit account; drop poor-fit ----
-
-def test_config_cast_exclusive_default_off_and_env_on(tmp_path, monkeypatch):
-    assert Config(root=tmp_path).cast_exclusive is False          # opt-in; unset -> off (byte-identical default)
-    monkeypatch.setenv("FANOPS_CAST_EXCLUSIVE", "1")
-    assert Config(root=tmp_path).cast_exclusive is True
-
-def test_exclusive_routes_each_moment_to_single_best_fit_account(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CAST_EXCLUSIVE", "1")
-    cfg = Config(root=tmp_path)
-    _accounts(cfg, [_acct("@guit", "guitar riff melody"), _acct("@drum", "drums beat rhythm", aid="2")])
-    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4"))
-    _moment(led, "m_g", reason="guitar riff", signal=1.0)         # fits @guit only
-    _moment(led, "m_d", reason="drums beat", signal=1.0)          # fits @drum only
-    led = cast_moments(led, cfg, Accounts.load(cfg))
-    assert led.moments["m_g"].affinities == ["@guit"]            # routed to its single best fit, not both
-    assert led.moments["m_d"].affinities == ["@drum"]
-
-def test_exclusive_drops_moment_fitting_no_persona(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CAST_EXCLUSIVE", "1")
-    cfg = Config(root=tmp_path)
-    _accounts(cfg, [_acct("@guit", "guitar riff melody"), _acct("@drum", "drums beat rhythm", aid="2")])
-    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4"))
-    _moment(led, "m_none", reason="qwerty zxcvb", signal=5.0)     # zero token overlap with EITHER persona
-    led = cast_moments(led, cfg, Accounts.load(cfg))
-    assert led.moments["m_none"].affinities == []                # fits nobody -> dropped (suppressed at crosspost)
-
-def test_exclusive_ignores_pick_budget(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CAST_EXCLUSIVE", "1")
-    monkeypatch.setenv("FANOPS_CAST_PICK_BUDGET", "1")            # budget mode would cap @guit at 1
-    cfg = Config(root=tmp_path); _accounts(cfg, [_acct("@guit", "guitar")])
-    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4"))
-    for i in range(3): _moment(led, f"m{i}", reason="guitar", signal=float(i))
-    led = cast_moments(led, cfg, Accounts.load(cfg))
-    cast = {m.id for m in led.moments.values() if m.affinities == ["@guit"]}
-    assert cast == {"m0", "m1", "m2"}                            # ALL routed (no count cap in exclusive mode)
-
-def test_exclusive_respects_batch_target(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CAST_EXCLUSIVE", "1")
-    cfg = Config(root=tmp_path)
-    _accounts(cfg, [_acct("@guit", "guitar"), _acct("@drum", "drums", aid="2")])
-    led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path="/s.mp4", batch_id="batch_d"))
-    led.add_batch(Batch(id="batch_d", name="d", target_accounts=["@drum"]))   # batch targets @drum only
-    _moment(led, "m_g", reason="guitar", signal=1.0)            # content fits @guit, but batch excludes @guit
-    led = cast_moments(led, cfg, Accounts.load(cfg))
-    # within the allowed set ({@drum}) only @drum can claim it, but "drums" persona has ZERO overlap with
-    # "guitar" -> dropped. Never @guit (outside the batch target), and not force-assigned to a zero-fit @drum.
-    assert led.moments["m_g"].affinities == []
-
-
 # ---- M4b: casting WRITES the durable selection FACTS (which account got which moment + WHY) ----
 def test_cast_moments_writes_heuristic_selection_facts(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_CAST_PICK_BUDGET", "2")
@@ -146,22 +95,3 @@ def test_cast_moments_writes_heuristic_selection_facts(tmp_path, monkeypatch):
     assert f.overlap >= 1 and f.signal == 2.0 and f.rank == 0      # the fit signal + best-pick rank
     assert facts["m1"].rank == 1                                   # second pick by signal
     assert f.source_id == "src_1" and f.batch_id == "b1" and f.created_at is not None   # lineage + audit timestamp
-
-def test_cast_moments_exclusive_writes_facts(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CAST_EXCLUSIVE", "1")
-    cfg = Config(root=tmp_path); _accounts(cfg, [_acct("@guit", "guitar"), _acct("@drum", "drums", aid="2")])
-    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4"))
-    _moment(led, "m_g", reason="guitar riff", signal=1.0)
-    led = cast_moments(led, cfg, Accounts.load(cfg))
-    facts = led.selection_facts_of_moment("m_g")
-    assert len(facts) == 1 and facts[0].account == "@guit"
-    assert facts[0].method == "heuristic" and facts[0].rank == 0 and facts[0].overlap >= 1
-
-def test_cast_moments_uncast_moment_has_no_fact(tmp_path, monkeypatch):
-    # exclusive drop: a moment fitting nobody is uncast AND records no selection fact (nothing was selected)
-    monkeypatch.setenv("FANOPS_CAST_EXCLUSIVE", "1")
-    cfg = Config(root=tmp_path); _accounts(cfg, [_acct("@guit", "guitar")])
-    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4"))
-    _moment(led, "m_none", reason="qwerty zxcvb", signal=5.0)      # zero overlap -> dropped
-    led = cast_moments(led, cfg, Accounts.load(cfg))
-    assert led.moments["m_none"].affinities == [] and led.selection_facts_of_moment("m_none") == []

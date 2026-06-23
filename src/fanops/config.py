@@ -458,26 +458,12 @@ class Config:
     def cast_pick_budget(self) -> int:
         # Per-account max moments cast per pass (Face 3, budget mode). DEFAULT 6, CLAMPED >= 1 (a 0 budget casts
         # nothing; the concurrent_workers clamp precedent). A non-int env falls back to the default, never
-        # crashing a run. BYPASSED entirely when cast_exclusive is ON (exclusive routing has no count cap).
+        # crashing a run.
         try:
             v = int(os.getenv("FANOPS_CAST_PICK_BUDGET", "6"))
         except ValueError:
             return 6
         return v if v >= 1 else 1
-
-    @property
-    def cast_exclusive(self) -> bool:
-        # Account-First Studio — EXCLUSIVE routing (on top of account_casting). ON -> each decided moment is
-        # routed to its SINGLE best persona-fit account (no count budget — cast_pick_budget is bypassed), and a
-        # moment that fits NO active persona is DROPPED (crosspost suppresses the uncast instead of fanning it to
-        # all). This decouples post volume from file-count x accounts (volume == #moments-routed) and makes each
-        # account's clips genuinely distinct. DEFAULT OFF (opt-in; the budget-mode fan-out is the default).
-        # FAILURE MODE: cast_moments fails open (returns moments uncast on any internal error). In exclusive mode
-        # an all-uncast pass SUPPRESSES every post (a zero-post run) instead of budget-mode's degraded fan-to-all.
-        # The distinct `casting/-/error` log event is the signal (each suppressed clip also logs `cast_dropped`).
-        # unset/empty/other -> False (byte-identical to the shipped Face 3 path).
-        v = (os.getenv("FANOPS_CAST_EXCLUSIVE") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
     def hook_router(self) -> bool:

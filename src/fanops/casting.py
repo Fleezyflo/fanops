@@ -61,25 +61,6 @@ def cast_moments(led, cfg, accounts, *, account_target=None):
             b = led.get_batch(bid) if bid else None
             bt = b.target_accounts if b is not None else None
             return (set(bt) if bt else active_handles) & active_handles   # [] target == ALL active
-        if cfg.cast_exclusive:
-            # EXCLUSIVE routing: each moment -> its SINGLE best persona-fit account (no budget). A moment whose
-            # best fit has ZERO token overlap with every allowed persona is left UNCAST ([]) -> crosspost
-            # suppresses it (the drop). The WITHIN-account ranking key is the full persona_fit_score tuple
-            # (overlap, signal_score, id); the CROSS-account key here is (overlap, handle) — signal_score and id
-            # are IDENTICAL for every account scoring the SAME moment, so overlap is the only discriminant
-            # (adding signal_score to this key would be inert). Score each candidate ONCE (cache in `fit`), then
-            # pick + threshold on the cached value (no double-compute, no divergence risk).
-            for m in pool:
-                cands = [a for a in active if a.handle in allowed(m)]
-                if not cands:
-                    continue                              # batch target excludes all active -> leave uncast
-                fit = {a.handle: persona_fit_score(a.persona, m)[0] for a in cands}
-                best = max(cands, key=lambda a: (fit[a.handle], a.handle))   # ties on overlap -> by handle (deterministic)
-                if fit[best.handle] > 0:
-                    led.moments[m.id].affinities = [best.handle]   # else leave [] -> dropped at crosspost
-                    _record_fact(led, m, best.handle, method=SelectionMethod.heuristic,
-                                 overlap=fit[best.handle], signal=m.signal_score, rank=0)   # M4: the durable why
-            return led
         assign = {}
         for a in active:
             # score each eligible moment ONCE (persona_fit_score = (overlap, signal, id); total order, no ties),

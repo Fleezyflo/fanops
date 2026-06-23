@@ -230,21 +230,10 @@ def set_account_casting(cfg: Config, on: bool) -> ActionResult:
     return ActionResult(ok=True, detail={"account_casting": bool(on)})
 
 
-def set_cast_exclusive(cfg: Config, on: bool) -> ActionResult:
-    """Toggle EXCLUSIVE routing (FANOPS_CAST_EXCLUSIVE) from the Go-Live tab — on top of account_casting, route
-    each moment to its SINGLE best-fit account and DROP a moment that fits no persona (no count budget), instead
-    of the budget-mode fan-to-all. Decouples post volume from file-count x accounts. Dual-written; default OFF.
-    Twin of set_account_casting; only meaningful while casting is ON (the UI gates it)."""
-    err = _dual_write(cfg, "FANOPS_CAST_EXCLUSIVE", "1" if on else "0")
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"cast_exclusive": bool(on)})
-
-
 def set_cast_pick_budget(cfg: Config, value) -> ActionResult:
-    """Set FANOPS_CAST_PICK_BUDGET (budget-mode moments per account per run) from the Go-Live tab. Parses an int,
-    CLAMPS >= 1 (mirrors cfg.cast_pick_budget — a 0 budget casts nothing), and never crashes on a bad input — a
-    non-int is a clean error with NO write (bypassed entirely when cast_exclusive is ON)."""
+    """Set FANOPS_CAST_PICK_BUDGET (moments per account per run) from the Go-Live tab. Parses an int, CLAMPS >= 1
+    (mirrors cfg.cast_pick_budget — a 0 budget casts nothing), and never crashes on a bad input — a non-int is a
+    clean error with NO write."""
     try:
         n = int(str(value).strip())
     except (ValueError, TypeError):
