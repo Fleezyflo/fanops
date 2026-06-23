@@ -129,6 +129,26 @@ def connect_account(cfg: Config, handle: str, persona_id: str) -> ActionResult:
     return ActionResult(ok=True, detail={"handle": handle, "persona_id": pid or None})
 
 
+def recommend_tag(cfg: Config, pid: str, tag: str) -> ActionResult:
+    """B2: fetch a hashtag's live Graph metrics so the operator can SEE its reach before adding it to a
+    persona's corpus. Validates the persona exists + a non-blank tag; returns the metrics in detail (the
+    panel shows engagement + an 'Add to corpus' button). Does NOT add — adding is a separate confirmed
+    step (add_corpus_tag). A Graph miss / no creds / exhausted budget -> a clean one-line error, never 500."""
+    pid = (pid or "").strip(); tag = (tag or "").strip()
+    if not pid:
+        return ActionResult(ok=False, error="no persona selected")
+    if not tag:
+        return ActionResult(ok=False, error="enter a hashtag to check")
+    if core.Personas.load(cfg).get(pid) is None:
+        return ActionResult(ok=False, error=f"no such persona: {pid}")
+    from fanops.meta_graph import tag_metrics             # function-local so a missing Meta app never breaks import
+    m = tag_metrics(cfg, tag)
+    if not m.get("resolved"):
+        return ActionResult(ok=False, error=m.get("error") or "could not fetch metrics for that tag")
+    return ActionResult(ok=True, detail={"persona": pid, "tag": m["tag"],
+                                         "engagement": m.get("engagement"), "recommend": True})
+
+
 def run_migration(cfg: Config) -> ActionResult:
     """One-click: lift every account's inline persona string into a first-class Persona and link it
     (idempotent). The bridge from the brief-seeded persona strings to editable, connectable records."""

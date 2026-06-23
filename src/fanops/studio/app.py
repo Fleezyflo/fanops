@@ -683,6 +683,12 @@ def create_app(cfg: Config) -> Flask:
     def do_personas_corpus_remove():
         return _personas_panel(studio_personas.remove_corpus_tag(cfg, request.form.get("id", ""), request.form.get("tag", "")))
 
+    @app.post("/personas/recommend")
+    def do_personas_recommend():
+        # B2: look up a candidate tag's live Graph metrics (engagement) so the operator can decide before
+        # adding it to the corpus. The panel renders the metrics + an Add button; no add happens here.
+        return _personas_panel(studio_personas.recommend_tag(cfg, request.form.get("id", ""), request.form.get("tag", "")))
+
     @app.post("/personas/connect")
     def do_personas_connect():
         # Connect/disconnect ONE account to a persona (blank persona_id disconnects). Re-render the panel.

@@ -94,16 +94,17 @@ def _trend_router(score_by_id):
         return _Resp(404, None)
     return get
 
-def test_refresh_store_trends_off_by_default_skips_meta(tmp_path, monkeypatch):
-    # FANOPS_HASHTAG_TRENDS unset -> own-reach only; meta_graph.sample_trends never called.
+def test_refresh_store_trends_on_by_default_failopen_without_creds(tmp_path, monkeypatch):
+    # B2: FANOPS_HASHTAG_TRENDS now DEFAULTS ON (the Graph API is on by default). Without Meta creds,
+    # sample_trends no-ops -> the store is own-reach-only, byte-identical to the old default-OFF output.
+    # Default-ON is safe without a token (fail-open).
     monkeypatch.delenv("FANOPS_HASHTAG_TRENDS", raising=False)
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _analyzed_post(led, "p1", ["#owned"], 5000); _pass_doctor(cfg)
-    called = {"n": 0}
-    import fanops.meta_graph as mg
-    monkeypatch.setattr(mg, "sample_trends", lambda *a, **k: called.__setitem__("n", called["n"] + 1) or {})
     out = refresh_store(led, cfg)
-    assert out["written"] is True and called["n"] == 0          # default OFF -> no Meta calls
+    assert out["written"] is True and out.get("trend_sampled", 0) == 0   # no creds -> no trend sampling
+    assert json.loads(cfg.hashtags_path.read_text())["tags"][0] == "#owned"   # own-reach only, byte-identical
 
 def test_refresh_store_blends_trending_tag_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_HASHTAG_TRENDS", "1")
