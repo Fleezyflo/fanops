@@ -260,6 +260,19 @@ def create_app(cfg: Config) -> Flask:
         # the hook. One click per card; mirrors do_approve_with_hook's panel re-render.
         return _review_panel(actions.approve_as_is(cfg, clip_id))
 
+    @app.post("/posts/approve-clip/<clip_id>")
+    def do_approve_clip(clip_id):
+        # M3b 'all accounts of this moment': approve every awaiting surface of ONE clip in one click (no hook
+        # semantics — the generic per-card bulk approve). Re-render the worklist so the card leaves it.
+        return _review_panel(actions.approve_clip(cfg, clip_id))
+
+    @app.post("/posts/approve-account")
+    def do_approve_account():
+        # M3b 'this account across the whole video': approve every awaiting post of the ACTIVE account filter
+        # (?account=), scoped to the active batch (?batch=). The target IS the filter — the button only shows
+        # under an active account filter. Re-render stays scoped (R1) so the now-empty view reflects the approve.
+        return _review_panel(actions.approve_account(cfg, _account_arg(), batch=_batch_arg()))
+
     def _schedule_panel(result=None, *, full=False):
         led = Ledger.load(cfg); now = datetime.now(timezone.utc); account = _account_arg(); batch = _batch_arg()
         rows_full = views.schedule_rows(led, cfg, now=now)                            # universe for chips (account-only)

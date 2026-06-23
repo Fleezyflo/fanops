@@ -25,6 +25,9 @@
         <div class="approve-bar meta">Tick the posts you want live, then approve — they move to the Schedule. Reject discards.
           <button type="button" class="primary" hx-post="{{ url_for('do_approve_posts', account=active, batch=active_batch|default(none)) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Approve selected</button>
           <button type="button" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none)) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
+          {# M3b 'this account across the whole video': clear a persona's whole run at once. Only under an active
+             account filter (the target IS the filter); scoped to the active batch when one is open. #}
+          {% if active %}<button type="button" class="primary approve-account" hx-post="{{ url_for('do_approve_account', account=active, batch=active_batch|default(none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all {{ active }}</button>{% endif %}
         </div>
       {% endif %}
       {% if key == 'editable' %}

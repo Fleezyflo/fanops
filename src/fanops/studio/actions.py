@@ -873,17 +873,15 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
         return ActionResult(ok=False, error=f"approve-with-hook failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"approved": approved, "clip_id": clip_id, "hook": bool(removed)})
 
-def approve_as_is(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
-    """The 'ship it clean' half of the removed-hook choice: one-click approve EVERY awaiting_approval post of
-    a clip WITHOUT restoring the auto-removed hook. Scoped to one clip so the operator clicks once instead of
-    ticking each surface; mirrors approve_posts otherwise. hook_removed stays on the moment as a record (the
-    choice re-applies to any future repost). One transaction, idempotent, never a 500."""
-    now = _now(now); now_iso = iso_z(now)
-    approved = 0
+def _approve_matching(cfg: Config, pred, *, now: Optional[datetime] = None, detail: Optional[dict] = None) -> ActionResult:
+    """Approve EVERY awaiting_approval post matching `pred` in ONE transaction (the shared spine for the
+    scoped bulk-approve actions). One `now` stamp for the whole batch so approve_post's stale-schedule bump
+    is consistent; P1 strictly-future suggestion per post (never machine-guns to now). Idempotent, never a
+    500. `detail` is merged into the result (e.g. {"clip_id": ...} / {"account": ...})."""
+    now = _now(now); now_iso = iso_z(now); approved = 0
     try:
         with Ledger.transaction(cfg) as led:
-            ids = [p.id for p in led.posts.values()
-                   if p.parent_id == clip_id and p.state is PostState.awaiting_approval]
+            ids = [p.id for p in led.posts.values() if p.state is PostState.awaiting_approval and pred(p)]
             for pid in ids:                                  # P1: untimed/stale post -> a strictly-future suggestion (not now)
                 post = led.posts.get(pid)
                 sugg = suggest_time(cfg, post, now=now) if post is not None else None
@@ -891,7 +889,34 @@ def approve_as_is(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) 
             approved = len(ids)
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"approved": approved, "clip_id": clip_id, "hook": False})
+    return ActionResult(ok=True, detail={**(detail or {}), "approved": approved})
+
+def approve_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """M3b 'all accounts of this moment': one-click approve EVERY awaiting_approval surface of ONE clip, so
+    the operator approves a whole moment's per-account set without ticking each box. Idempotent, never a 500."""
+    return _approve_matching(cfg, lambda p: p.parent_id == clip_id, now=now, detail={"clip_id": clip_id})
+
+def approve_account(cfg: Config, handle: str, *, batch: Optional[str] = None,
+                    now: Optional[datetime] = None) -> ActionResult:
+    """M3b 'this account across the whole video': one-click approve EVERY awaiting_approval post of ONE account
+    (optionally scoped to the active batch — Post.batch_id), so the operator clears a persona's whole run at
+    once. A blank handle -> clean no-op (the button only shows under an active account filter). Idempotent,
+    never a 500."""
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=True, detail={"account": None, "approved": 0})
+    return _approve_matching(cfg, lambda p: p.account == handle and (batch is None or p.batch_id == batch),
+                             now=now, detail={"account": handle, "batch": batch})
+
+def approve_as_is(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """The 'ship it clean' half of the removed-hook choice: one-click approve EVERY awaiting_approval post of
+    a clip WITHOUT restoring the auto-removed hook. Functionally identical to approve_clip (a clip with no
+    hook_removed has nothing to restore) — delegates to it and records the no-hook choice. hook_removed stays
+    on the moment as a record (the choice re-applies to any future repost). Idempotent, never a 500."""
+    r = approve_clip(cfg, clip_id, now=now)
+    if not r.ok:
+        return r
+    return ActionResult(ok=True, detail={**r.detail, "hook": False})
 
 def approve_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
     """M3 operator approval (multi-select): suggested -> approved for each selected stitch_plan in ONE
