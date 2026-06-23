@@ -118,3 +118,48 @@ def test_hookless_moment_mints_no_render(tmp_path, monkeypatch, mocker):
     assert led.renders == {}
     p = next(iter(led.posts.values()))
     assert p.render_id is None and p.media_urls == []
+
+
+# ---- AUDIT M1: a failed shared-clip burn leaves a breadcrumb (the ON mint no longer discards the return) ----
+def test_burn_failure_emits_hook_burn_failed_breadcrumb(tmp_path, monkeypatch, mocker):
+    # On a default-band account the per-account hook burns onto the shared clip; if that burn FAILS (degraded
+    # ffmpeg / no text filter) the hookless ship MUST leave a breadcrumb. The OFF path flagged this via
+    # hook_burn_failed; the default-ON mint previously discarded burn_hook_only's return and shipped silent.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _seed_clip(led, cfg, hooks_by_persona={"@a": "h"}, surfaces=("@a/instagram",)); led.save()
+    mocker.patch("fanops.overlay.burn_hook_only", return_value=False)     # burn fails (no libass)
+    _run(cfg)
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "hook_burn_failed" in log and "@a/instagram" in log
+
+def test_successful_burn_emits_no_hook_burn_failed(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1"); _mock_burn(mocker)   # burn succeeds
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _seed_clip(led, cfg, hooks_by_persona={"@a": "h"}, surfaces=("@a/instagram",)); led.save()
+    _run(cfg)
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "hook_burn_failed" not in log                                 # no false breadcrumb on success
+
+
+# ---- account_render_spec: the SINGLE source of the render id + cut decision (crosspost == reburn) ----
+def test_account_render_spec_bare_for_default_tagged_for_override(tmp_path):
+    from fanops.crosspost import account_render_spec
+    from fanops.ids import child_id
+    from fanops.bands import band_for
+    from fanops.models import Clip, Fmt
+    cfg = Config(root=tmp_path)
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/x.mp4", aspect=Fmt.r9x16)
+    class _A:                                                            # duck-typed account
+        def __init__(self, **kw): self.__dict__.update(kw)
+    rid0, cut0, prof0, top0 = account_render_spec(cfg, clip=clip, hook="H", acct=None)
+    assert cut0 is False and prof0 == cfg.clip_profile                   # None acct -> global defaults, no cut
+    assert rid0 == child_id("render", "clip_1", "H")                     # bare-hook id (byte-identical to shared)
+    rid1, cut1, prof1, _ = account_render_spec(cfg, clip=clip, hook="H", acct=_A(clip_profile="short"))
+    b = band_for("short")
+    assert cut1 is True and prof1 == "short"                             # override -> wants a cut
+    assert rid1 == child_id("render", "clip_1", f"H\x1fband:{b.lo:g}-{b.hi:g}") and rid1 != rid0   # band-tagged, distinct
