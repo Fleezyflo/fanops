@@ -698,6 +698,10 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
             if clip.held or led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id):
                 return ActionResult(ok=False, error=f"clip {clip_id} is held/retired — not eligible for cross-post")
             m = led.moments.get(clip.parent_id)
+            source = led.sources.get(m.parent_id) if m is not None else None
+            src_batch = source.batch_id if source is not None else None   # AUDIT M2: inherit the clip's ingest-batch
+            # lineage (like repost_post) so the reuse post groups + approves with its batched siblings — a None-batch
+            # post showed in the ?batch= drill-in (card derives bid from a sibling) but approve_account silently skipped it.
             clip_dur = (m.end - m.start) if m is not None else None
             max_secs = PLATFORM_MAX_SECONDS.get(plat)
             if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
@@ -716,7 +720,7 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
                               account=surf.account, account_id=surf.account_id, platform=surf.platform,
                               caption=caption, hashtags=hashtags, aspect=aspect, scheduled_time=None,
                               created_at=iso_z(now), submission_id=f"fanops_{_hash('idemp', pid)}",
-                              clip_profile=cfg.clip_profile))
+                              clip_profile=cfg.clip_profile, batch_id=src_batch))
     except Exception as exc:
         return ActionResult(ok=False, error=f"cross-post failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": pid, "clip_id": clip_id, "already_exists": False,
