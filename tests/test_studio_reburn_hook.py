@@ -3,14 +3,21 @@
 # (overlay.burn_hook_only) onto the SAME deterministic variant path /media serves, then flips
 # Post.variant_hook + Post.media_urls ONLY (carried by repost_post — survives 'Post again'). It NEVER
 # writes clip.meta_captions['hook'] (dead key). Gated on creative_variation; fail-open (warn, no rollback).
+import json
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt,
                            PLATFORM_ASPECT)
+from fanops.accounts import Accounts
 from fanops.ids import child_id
 from fanops.studio.actions import reburn_hook
 from fanops.studio.app import _media_path_for_post
+
+
+def _accounts(cfg, accts):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": accts}))
 
 NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 FUTURE = "2099-01-01T00:00:00Z"        # stays editable (not imminent) under real wall-clock too
@@ -105,6 +112,33 @@ def test_reburn_unknown_post(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _seed(cfg)
     res = reburn_hook(cfg, "nope", "NEW HOOK")
     assert res.ok is False and "no such post" in (res.error or "").lower()
+
+
+# ---- AUDIT H1: re-burn of an OVERRIDE account preserves the per-account CUT (no silent revert) ----
+def test_reburn_override_account_preserves_per_account_cut(tmp_path, monkeypatch, mocker):
+    # For an OVERRIDE account (its own clip_profile/framing differs from global), editing the on-screen hook
+    # must RE-CUT the source at the account's band+crop — NOT silently revert to a bare-hook, global-length,
+    # centred shared-clip burn. The reburn render_id MUST equal the crosspost mint's tagged id (single source:
+    # account_render_spec), so the post keeps pointing at its own length/framing. Reachable because
+    # creative_variation defaults ON. Default accounts are byte-identical (covered by the bare-hook tests above).
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    cfg = Config(root=tmp_path); _seed(cfg)
+    _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
+                     "status": "active", "clip_profile": "short"}])     # band 8-15s != global talk 12-22s -> a CUT
+    cut = mocker.patch("fanops.clip.render_account_cut", return_value=True)
+    burn = mocker.patch("fanops.overlay.burn_hook_only", return_value=True)
+    res = reburn_hook(cfg, "p_edit", "NEW HOOK")
+    assert res.ok is True
+    led = Ledger.load(cfg); p = led.posts["p_edit"]
+    from fanops.crosspost import account_render_spec
+    acct = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    exp_rid, wants_cut, _, _ = account_render_spec(cfg, clip=led.clips["clip_1"], hook="NEW HOOK", acct=acct)
+    assert wants_cut is True                                            # sanity: this account genuinely wants a cut
+    assert p.render_id == exp_rid                                       # parity with the crosspost mint id (band-tagged)
+    assert exp_rid != child_id("render", "clip_1", "NEW HOOK")          # NOT the bare-hook id (the H1 bug)
+    cut.assert_called_once()                                            # the per-account CUT ran...
+    burn.assert_not_called()                                           # ...NOT the global shared-clip burn
+    assert led.get_render(exp_rid).is_account_cut is True               # provenance truthful
 
 
 # ---- route ----
