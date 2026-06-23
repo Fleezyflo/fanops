@@ -268,6 +268,11 @@ class Render(BaseModel):
                                                 # legacy render — they reload fine, no migration).
 
 
+class SelectionMethod(str, Enum):
+    heuristic = "heuristic"   # persona_fit_score (token overlap + signal) picked it
+    llm = "llm"               # the moment_casting LLM gate selected it
+
+
 class SelectionFact(BaseModel):
     # M4: the DURABLE audit record of the selector — WHICH account got WHICH moment and WHY. Casting writes
     # only Moment.affinities (handles), which is NON-durable (reset to [] on each re-decision) and carries no
@@ -279,7 +284,7 @@ class SelectionFact(BaseModel):
     id: str                                     # child_id("selfact", moment_id, account)
     moment_id: str
     account: str                                # the handle this moment was selected FOR
-    method: str = "heuristic"                   # how it was chosen: "heuristic" (persona_fit_score) | "llm" (moment_casting gate)
+    method: SelectionMethod = SelectionMethod.heuristic   # how it was chosen (validated enum: heuristic | llm)
     reason: str = ""                            # human-readable WHY — the moment's editorial reason (audit context)
     overlap: Optional[int] = None               # heuristic: persona-token ∩ moment-corpus count (the fit signal); None for llm
     signal: Optional[float] = None              # the moment's signal_score at selection time

@@ -22,12 +22,13 @@ def test_selection_fact_defaults():
 def test_add_get_selection_fact_round_trips(tmp_path):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
-        led.add_selection_fact(_fact("m1", "@a", method="heuristic", overlap=3, signal=2.0, rank=0,
+        led.add_selection_fact(_fact("m1", "@a", method="llm", overlap=3, signal=2.0, rank=0,
                                      reason="guitar solo", source_id="src_1", batch_id="b1"))
     led = Ledger.load(cfg)
     f = led.get_selection_fact(child_id("selfact", "m1", "@a"))
     assert f is not None and f.account == "@a" and f.overlap == 3 and f.reason == "guitar solo"
     assert f.source_id == "src_1" and f.batch_id == "b1" and f.rank == 0
+    assert f.method == "llm"                                    # the SelectionMethod enum round-trips through save/load
 
 def test_add_selection_fact_overwrites_on_recast(tmp_path):
     # one fact per (moment, account); a re-cast UPDATES the why (latest selection wins), NOT a growing history

@@ -200,11 +200,11 @@ class Ledger:
                                               # operator-approval spine. Empty until a format (M4+) emits one.
         self.batches: dict[str, Batch] = {}   # Account-First Studio: named, account-targeted ingest groups
                                               # (5th id->unit map; additive). Empty until a named ingest mints one.
-        self.selection_facts: dict[str, SelectionFact] = {}   # M4: durable per-(moment, account) selection audit
-                                              # (7th id->unit map; additive). Empty until casting writes one (M4b).
         self.renders: dict[str, Render] = {}  # per-account Render foundation: the per-account shippable artifacts
                                               # (6th id->unit map; additive). Empty until crosspost mints one under
                                               # creative_variation. Content-addressed by (clip_id, hook_text).
+        self.selection_facts: dict[str, SelectionFact] = {}   # M4: durable per-(moment, account) selection audit
+                                              # (7th id->unit map; additive). Empty until casting writes one (M4b).
 
     @classmethod
     def load(cls, cfg: Config) -> "Ledger":
