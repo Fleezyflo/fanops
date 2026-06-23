@@ -206,6 +206,34 @@ def test_same_hook_different_framing_distinct_renders(tmp_path, monkeypatch, moc
     rids = {p.render_id for p in led.posts.values()}
     assert len(rids) == 2 and len(led.renders) == 2            # @top frame-tagged; @c un-tagged -> distinct
 
+def test_framing_top_account_no_cut_when_global_on(tmp_path, monkeypatch, mocker):
+    # mirror of the center+global-off case: an account pinning top while the global is ON resolves to the
+    # SAME framing -> NO cut, un-tagged id (byte-identical). Guards the symmetric no-divergence path.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")             # global ON
+    cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [_acct("@top", framing="top")])
+    led = Ledger.load(cfg)
+    _seed_clip(led, cfg, hooks_by_persona={"@top": "H"}, surfaces=("@top/instagram",)); led.save()
+    led = _run(cfg)
+    assert cut_calls == [] and len(burn_calls) == 1            # top == global-on -> no divergence
+    assert next(iter(led.posts.values())).render_id == child_id("render", "clip_1", "H")
+
+def test_framing_center_account_cut_when_global_on(tmp_path, monkeypatch, mocker):
+    # the global=ON mirror of the primary case: an account pinning center while the global biases top
+    # diverges -> a real per-account CUT at top_bias=False (the account's centred crop wins).
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")             # global ON
+    cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [_acct("@c", framing="center")])
+    led = Ledger.load(cfg)
+    _seed_clip(led, cfg, hooks_by_persona={"@c": "H"}, surfaces=("@c/instagram",)); led.save()
+    led = _run(cfg)
+    assert len(cut_calls) == 1 and cut_calls[0]["top_bias"] is False   # center overrides global-on top
+    assert burn_calls == []
+
 def test_band_and_framing_compose_in_render_id(tmp_path, monkeypatch, mocker):
     # @bandonly differs in band only; @both differs in band AND framing -> distinct ids despite same hook+band.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
