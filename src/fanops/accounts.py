@@ -15,6 +15,7 @@ from fanops.config import Config, _VALID_BACKENDS, _LIVE_BACKENDS, _BACKEND_PLAT
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform
 from fanops.hashtags import TAG_LEANS                 # the valid per-account tag_lean names (persona diff)
+from fanops.bands import PROFILE_NAMES                # the valid per-account clip_profile names (M2 length tier)
 
 class AccountStatus(str, Enum):
     planned = "planned"; warming = "warming"; active = "active"; retired = "retired"
@@ -30,6 +31,12 @@ class Account(BaseModel):
     tag_lean: Optional[str] = None         # persona TAG knob: tasteful|underground|bold (None -> no lean).
                                            # Additive (empty on legacy rows). An unknown value reloads fine
                                            # and is inert (vet_hashtags treats it as no-lean) — fail-open.
+    clip_profile: Optional[str] = None     # M2 per-account LENGTH tier: short|medium|long (or legacy talk|song).
+                                           # None -> Config.resolve_clip_profile falls back to the GLOBAL
+                                           # FANOPS_CLIP_PROFILE (byte-identical to today). Additive (empty on
+                                           # legacy rows); an unknown value reloads fine and band_for defaults
+                                           # it to TALK downstream — fail-open. set_clip_profile is the strict
+                                           # WRITE boundary (refuses anything not in bands.PROFILE_NAMES).
     # Per-platform poster ids keyed by Platform.value (e.g. {"instagram": "ig_1", "tiktok": "tk_9"}).
     # A handle's Instagram and TikTok are DIFFERENT Postiz integrations, so each (handle, platform) must
     # resolve to its OWN id. ADDITIVE: empty on a legacy account, which then resolves via account_id —
@@ -267,7 +274,8 @@ def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
 
 
 def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
-                status: str = "active", access: str = "postiz", tag_lean: str = "") -> str:
+                status: str = "active", access: str = "postiz", tag_lean: str = "",
+                clip_profile: str = "") -> str:
     """Onboard a BRAND-NEW account into accounts.json atomically — so the Go-Live tab adds an account
     WITHOUT the operator hand-editing JSON. Validates at this control-file boundary: a non-blank handle,
     every platform a known Platform value, and (when given) a known tag_lean (never write an account that
@@ -286,6 +294,9 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
     lean = (tag_lean or "").strip().lower()
     if lean and lean not in TAG_LEANS:
         raise ValueError(f"unknown tag_lean: {tag_lean!r}")
+    prof = (clip_profile or "").strip().lower()
+    if prof and prof not in PROFILE_NAMES:
+        raise ValueError(f"unknown clip_profile: {clip_profile!r}")
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
@@ -293,7 +304,8 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
             raise ValueError(f"duplicate handle {handle} (already exists)")
         accounts.append({"handle": handle, "account_id": "", "platforms": plats,
                          "status": str(status), "access": str(access),
-                         "persona": persona or "", "tag_lean": lean or None, "integrations": {}})
+                         "persona": persona or "", "tag_lean": lean or None,
+                         "clip_profile": prof or None, "integrations": {}})
         _write_accounts_atomic(p, raw)
     return handle
 
@@ -378,6 +390,29 @@ def set_tag_lean(cfg: Config, handle: str, lean: str) -> str:
         for a in accounts:
             if isinstance(a, dict) and a.get("handle") == handle:
                 a["tag_lean"] = lean or None; found = True
+        if not found:
+            raise KeyError(handle)
+        _write_accounts_atomic(p, raw)
+    return handle
+
+
+def set_clip_profile(cfg: Config, handle: str, profile: str) -> str:
+    """Set or clear ONE account's clip_profile atomically (the M2 per-account LENGTH control). A blank
+    profile CLEARS it (-> None -> resolve_clip_profile falls back to the global FANOPS_CLIP_PROFILE).
+    Validates a non-blank profile at the control-file boundary (must be a known bands.PROFILE_NAMES value
+    — never write a profile that only band_for's default would catch); preserves every sibling, unknown
+    field, and the account's own other fields; scans ALL rows (dup-handle safety, mirrors set_tag_lean).
+    Unknown handle -> KeyError."""
+    profile = (profile or "").strip().lower()
+    if profile and profile not in PROFILE_NAMES:
+        raise ValueError(f"unknown clip_profile: {profile!r} (valid: {', '.join(sorted(PROFILE_NAMES))})")
+    p = cfg.accounts_path
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        found = False
+        for a in accounts:
+            if isinstance(a, dict) and a.get("handle") == handle:
+                a["clip_profile"] = profile or None; found = True
         if not found:
             raise KeyError(handle)
         _write_accounts_atomic(p, raw)

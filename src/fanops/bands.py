@@ -26,6 +26,10 @@ MEDIUM = Band(16.0, 26.0)   # default-ish watchable unit
 LONG = Band(28.0, 45.0)     # a full section / longer watch
 
 _PROFILES = {"talk": TALK, "song": SONG, "short": SHORT, "medium": MEDIUM, "long": LONG}
+PROFILE_NAMES = frozenset(_PROFILES)    # the validatable set: accounts.set_clip_profile / add_account
+                                        # refuse any profile not in here, so a per-account override never
+                                        # silently resolves to the TALK default downstream (validate-or-default
+                                        # is the LOAD posture; the WRITE boundary is strict — never persist junk).
 
 def band_for(profile: str | None) -> Band:
     """Resolve a content-type profile name to its Band. Unknown/empty/None -> TALK (the safe default,
