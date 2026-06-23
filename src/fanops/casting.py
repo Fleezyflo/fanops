@@ -138,3 +138,22 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
         try: get_logger(cfg)("casting", source_id, "error", err=str(e)[:120])
         except Exception: pass
         return led
+
+
+# ---- M5: caption scoping. The AFFINITY gate as ONE shared predicate so crosspost (the enforcement gate)
+# and the caption-request scoper can never drift (the H1 lesson). Both pure, no I/O. ----
+def affinity_admits(cfg, moment, account) -> bool:
+    """Admit `account` for `moment` under the affinity rule. True when casting is OFF (flag-OFF IGNORES
+    persisted affinities — invariant A2), OR the moment is uncast (affinities==[] -> fan to all), OR the
+    account is in the cast set. Equivalent to the negation of the crosspost affinity gate."""
+    if not cfg.account_casting: return True
+    if moment is None or not moment.affinities: return True
+    return account in moment.affinities
+
+def scoped_caption_surfaces(cfg, moment, surfaces):
+    """M5: the surfaces a clip's captions are REQUESTED for — the affinity-admitted subset. Returns the full
+    list unchanged when casting is OFF or the moment is uncast (byte-identical / fan-to-all). Within a
+    decision cycle this is a SUPERSET of the crosspost survivors (which narrow further by batch target), so
+    every minted post has a caption; a post-captioning re-cast SWAP is backstopped by crosspost's cap-is-None
+    skip. `surfaces` is an iterable of Surface; returns the (account, platform) tuples request_captions wants."""
+    return [(s.account, s.platform) for s in surfaces if affinity_admits(cfg, moment, s.account)]
