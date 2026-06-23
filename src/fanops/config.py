@@ -327,6 +327,16 @@ class Config:
         v = os.getenv("FANOPS_CLIP_PROFILE")
         return v.strip() if v and v.strip() else "talk"
 
+    def resolve_clip_profile(self, account=None) -> str:
+        """The clip-length profile (bands.band_for) for THIS account — its own Account.clip_profile when set,
+        else the GLOBAL clip_profile (FANOPS_CLIP_PROFILE). This is the M2 per-account length seam: a render
+        cut keys its band on resolve_clip_profile(account) instead of the one global knob, so @short ships
+        8-15s clips while @long ships 28-45s off the SAME moment. Duck-typed (reads `account.clip_profile`)
+        so config never imports accounts — that would be a cycle (accounts imports config). A None account,
+        a None/blank override, or a non-str -> the global profile (byte-identical to today's single-knob path)."""
+        prof = getattr(account, "clip_profile", None)
+        return prof.strip() if isinstance(prof, str) and prof.strip() else self.clip_profile
+
     @property
     def visual_start(self) -> bool:
         # P1 strongest-frame cut start (clip.pick_visual_start): refine the cut entry onto the strongest
