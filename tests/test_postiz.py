@@ -8,7 +8,8 @@ from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState
 from fanops.post.postiz import (PostizPoster, build_postiz_payload, postiz_upload_media,
-                                postiz_list_integrations, postiz_check_auth, PostizIntegration)
+                                postiz_list_integrations, postiz_check_auth, PostizIntegration,
+                                _extract_postiz_id)
 from fanops.post import get_poster, get_media_uploader
 
 
@@ -148,6 +149,46 @@ def test_publish_429_exhausted_marks_failed(tmp_path, monkeypatch, mocker):
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.failed
 
+def test_publish_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):
+    # audit gap: only 429-EXHAUSTION was covered. A 429 is rejected pre-processing (not posted), so the
+    # retry is safe — a transient 429 followed by a 2xx must land SUBMITTED, not failed. Mock sleep.
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    mocker.patch("fanops.post.postiz.time.sleep")
+    mocker.patch("fanops.post.postiz.requests.post",
+                 side_effect=[_R(429, {}, text="rate"), _R(201, {"id": "postiz_9"})])
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert led.posts["p1"].state is PostState.submitted and led.posts["p1"].submission_id == "postiz_9"
+
+def test_publish_leg_drives_real_postiz_poster_not_dryrun(tmp_path, monkeypatch, mocker):
+    # audit gap: the E2E publish leg runs through DryRunPoster (stamps submitted unconditionally). This drives
+    # the REAL publish leg (_publish_one: claim -> network -> finalize) through PostizPoster with a MOCKED
+    # network — proving a 201 maps queued -> PUBLISHED + submission_id end-to-end, no real post.
+    from fanops.post.run import _publish_one
+    cfg = _cfg(tmp_path, monkeypatch)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="intg_1", platform=Platform.instagram,
+                          caption="fire", media_urls=["https://uploads.postiz.com/x.mp4"],   # already uploaded -> no media network
+                          state=PostState.queued))
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_1"}))
+    final = _publish_one(cfg, "p1", "postiz")
+    led = Ledger.load(cfg)
+    assert final == "published" and led.posts["p1"].state is PostState.published   # the REAL poster ran, not DryRun
+    assert led.posts["p1"].submission_id == "postiz_1"
+
+
+# ---- _extract_postiz_id (audit gap: key-precedence + nested posts[0].id + list body untested) ----
+def test_extract_postiz_id_key_precedence():
+    assert _extract_postiz_id({"id": "A", "postId": "B", "submissionId": "C"}) == "A"   # id wins
+    assert _extract_postiz_id({"postId": "B", "submissionId": "C"}) == "B"              # then postId
+    assert _extract_postiz_id({"submissionId": "C"}) == "C"                             # then submissionId
+
+def test_extract_postiz_id_nested_and_list_and_absent():
+    assert _extract_postiz_id({"posts": [{"id": "nested"}]}) == "nested"   # nested posts[0].id
+    assert _extract_postiz_id([{"id": "first"}, {"id": "second"}]) == "first"   # top-level list -> [0]
+    assert _extract_postiz_id({"id": 123}) is None        # non-str id ignored
+    assert _extract_postiz_id({"nope": "x"}) is None      # no recognizable key
+    assert _extract_postiz_id([]) is None and _extract_postiz_id("nope") is None   # empty list / non-dict
+
 
 # ---- construction guards ----
 def test_missing_key_raises_typed_auth(tmp_path, monkeypatch):
@@ -238,6 +279,17 @@ def test_list_integrations_401_typed_redacted(tmp_path, monkeypatch, mocker):
     with pytest.raises(PostizAuthError) as ei:
         postiz_list_integrations(cfg)
     assert "SENTINEL" not in str(ei.value)
+
+def test_list_integrations_non_401_redacts_key(tmp_path, monkeypatch, mocker):
+    # audit (same key-echo class as the publish-path redaction): a NON-401 integrations error body that
+    # reflects the key must NOT leak it into the RuntimeError (-> Studio Go-Live panel / operator terminal).
+    cfg = _cfg(tmp_path, monkeypatch)
+    monkeypatch.setenv("POSTIZ_API_KEY", "SECRET-POSTIZ-KEY")
+    mocker.patch("fanops.post.postiz.requests.get",
+                 return_value=_R(500, {}, text="rejected Authorization=SECRET-POSTIZ-KEY"))
+    with pytest.raises(RuntimeError) as ei:
+        postiz_list_integrations(cfg)
+    assert "SECRET-POSTIZ-KEY" not in str(ei.value) and "500" in str(ei.value)
 
 def test_list_integrations_5xx_raises_runtime(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch)

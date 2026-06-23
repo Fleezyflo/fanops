@@ -46,6 +46,11 @@ def cmd_status(cfg: Config) -> int:
           f"posts={len(led.posts)} "
           # V2 M1/F8: sources the model produced ZERO picks for — actionable (retry-source), never silent.
           f"moments_empty={len(led.sources_in_state(SourceState.moments_empty))} "
+          # Audit: a source parked SourceState.error (e.g. a TRANSIENT whisper model-download/network failure)
+          # is NOT auto-retried by design (the pipeline picks up only `catalogued` — auto-retry would loop on a
+          # genuinely-broken source). Surface the count so the operator SEES it and runs `retry-source <id>`
+          # (the existing operator-gated recovery, which flips error -> catalogued + forces a re-transcribe).
+          f"sources_error={len(led.sources_in_state(SourceState.error))} "
           # post-approval gate: posts waiting on the operator's review (headless operators see them here,
           # not only in the Studio). rejected = operator-discarded.
           f"awaiting_approval={len(led.posts_in_state(PostState.awaiting_approval))} "

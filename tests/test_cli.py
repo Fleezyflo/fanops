@@ -131,6 +131,20 @@ def test_status_surfaces_moments_empty(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and "moments_empty=1" in out
 
+def test_status_surfaces_error_sources(tmp_path, monkeypatch, capsys):
+    # Audit: a source parked SourceState.error (e.g. a transient whisper model-download failure) is NOT
+    # auto-retried by design — `fanops status` must surface it so the operator knows to run retry-source.
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/x.mp4", state=SourceState.error,
+                          error_reason="whisper produced no JSON (rc=1): connection error fetching model"))
+    led.save()
+    rc = main(["status"])
+    assert rc == 0 and "sources_error=1" in capsys.readouterr().out
+
 def test_retry_source_re_runs_a_moments_empty_source(tmp_path, monkeypatch):
     # V2 M1/F8 + audit H7 (guard): a moments_empty source (model produced nothing) MUST stay
     # re-runnable. retry-source resets it to catalogued so the next run re-transcribes + re-requests.

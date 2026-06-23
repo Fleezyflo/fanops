@@ -2,6 +2,7 @@
 posts nothing. Active until Blotato is connected."""
 from __future__ import annotations
 import json
+import os
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import PostState
@@ -18,7 +19,10 @@ class DryRunPoster:
             media_urls=post.media_urls, scheduled_time=post.scheduled_time,
             extra_target=default_target_fields(post.platform.value, artist_name=self.cfg.artist_name))
         self.cfg.scheduled.mkdir(parents=True, exist_ok=True)
-        (self.cfg.scheduled / f"{post_id}.json").write_text(json.dumps(payload, indent=2))
+        pp = self.cfg.scheduled / f"{post_id}.json"
+        pp.write_text(json.dumps(payload, indent=2))
+        try: os.chmod(pp, 0o600)            # owner-only at rest (audit): dryrun payloads carry caption/media/target
+        except OSError: pass
         # Stamp a synthetic submission_id so dryrun emulates the real posters (rest/mcp set this
         # from Blotato's postSubmissionId). Without it, track.py — which binds metrics rows by
         # submission_id — can never reach a dryrun post, so classify/amplify/retire never fire and

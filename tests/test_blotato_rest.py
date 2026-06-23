@@ -31,6 +31,19 @@ def test_4xx_marks_failed_not_analyzed(tmp_path, monkeypatch, mocker):
     assert led.posts["p2"].state is PostState.failed       # FIX F22: failed, not analyzed
     assert "422" in (led.posts["p2"].error_reason or "")
 
+def test_5xx_error_reason_redacts_the_api_key(tmp_path, monkeypatch, mocker):
+    # stage-5 audit: a 5xx body that REFLECTS the presented key must NOT leak it into the ledger's
+    # post.error_reason (which also reaches stderr/run.log). Redacted to ***; the status stays.
+    monkeypatch.setenv("BLOTATO_API_KEY", "SECRET-BLOTATO-KEY")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p5", parent_id="c", account="@a", account_id="1", platform=Platform.tiktok,
+                      caption="x", media_urls=["https://h/v.mp4"], state=PostState.queued))
+    mocker.patch("fanops.post.blotato_rest.requests.post",
+                 return_value=_R(500, {"error": "rejected header blotato-api-key=SECRET-BLOTATO-KEY"}))
+    led = BlotatoRestPoster(cfg).publish(led, "p5")
+    er = led.posts["p5"].error_reason or ""
+    assert "SECRET-BLOTATO-KEY" not in er and "500" in er   # key scrubbed, status preserved
+
 def test_401_raises_loudly(tmp_path, monkeypatch, mocker):
     # AUDIT H8: a 401 raises the TYPED BlotatoAuthError (so run.py can halt by type, not by a
     # fragile "401" substring match). Still loud — a bad key must halt, not silently fail.

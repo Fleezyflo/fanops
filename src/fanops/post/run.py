@@ -5,6 +5,7 @@ resume (FIX F11). Media is ensured ONCE PER CLIP (FIX F44). Failed submit -> Pos
 (retryable), never analyzed (FIX F22). Held/retired clips never reach here (crosspost skips)."""
 from __future__ import annotations
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
@@ -44,7 +45,10 @@ def _archive_published(cfg: Config, post: Post) -> None:
                # forever — even after the Render entity + its file are GC-swept from the live ledger.
                "render_id": post.render_id, "variant_hook": post.variant_hook,
                "media": (post.media_urls[0] if post.media_urls else None)}
-        (d / f"{post.id}.json").write_text(json.dumps(rec, indent=2, ensure_ascii=False))
+        ap = d / f"{post.id}.json"
+        ap.write_text(json.dumps(rec, indent=2, ensure_ascii=False))
+        try: os.chmod(ap, 0o600)            # owner-only at rest (audit): the published archive carries caption/url/hook
+        except OSError: pass
     except Exception as exc:
         try: get_logger(cfg)("publish", post.id, "archive_error", err=str(exc)[:160])
         except Exception: pass

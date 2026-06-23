@@ -336,6 +336,43 @@ def test_decide_hooks_rejects_third_person_per_account_hook_falls_back(tmp_path)
     assert hbp.get("@a") == "you won't expect the switch"   # viewer-POV kept
     assert "@b" not in hbp                                   # third-person dropped -> falls back to shared
 
+def test_decide_hooks_rejects_off_brand_hook_to_clean_clip(tmp_path):
+    # HIGH (audit): the BURNED on-screen hook must get the SAME brand-risk screen EN/AR captions get
+    # (brand_risk_flag). A viewer-POV hook (passes the weak/narration floor) that trips the off-brand
+    # bravado guardrail ("sorry") is stripped to a clean clip; the stripped text is PRESERVED for Review.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "sorry but you'll replay this part"})
+    m = led.moments_of("src_1")[0]
+    assert m.hook is None                                              # off-brand -> clean clip, not burned
+    assert m.hook_removed == "sorry but you'll replay this part"       # preserved for Review
+
+def test_decide_hooks_rejects_off_brand_per_account_hook_falls_back(tmp_path):
+    # The per-account hooks ride the SAME brand-risk gate: an off-brand persona hook is dropped from
+    # hooks_by_persona -> that handle falls back to the shared (gated) hook at crosspost.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1",
+                        {"14.00-18.50": ("the part you'll replay",
+                                         {"@a": "you won't expect the switch",
+                                          "@b": "please stream this, link in bio"})})
+    hbp = led.moments_of("src_1")[0].hooks_by_persona
+    assert hbp.get("@a") == "you won't expect the switch"   # clean kept
+    assert "@b" not in hbp                                   # off-brand dropped -> falls back to shared
+
+def test_decide_hooks_brand_risk_honors_tuning_override(tmp_path):
+    # The hook gate honors the SAME tuning.json offbrand override as captions: clearing both lists
+    # disables it, so a would-be-flagged hook ships (operator owns the guardrail vocabulary).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    (cfg.control / "tuning.json").write_text('{"offbrand_en": [], "offbrand_ar": []}')
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "sorry but you'll replay this part"})
+    assert led.moments_of("src_1")[0].hook == "sorry but you'll replay this part"   # override cleared -> ships
+
 def test_decide_hooks_preserves_stripped_hook_for_operator_review(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     led.add_source(Source(id="src_other", source_path="/o.mp4", duration=30.0, state=SourceState.moments_decided))
