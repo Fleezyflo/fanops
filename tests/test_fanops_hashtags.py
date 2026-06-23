@@ -29,6 +29,17 @@ def test_rank_tags_by_reach_orders_by_mean_reach_per_post(tmp_path):
     assert ranked[0] == "#hiphop"                              # higher mean reach ranks first
     assert "#bars" in ranked
 
+def test_tag_reach_means_computes_mean_per_tag(tmp_path):
+    # B4 (closed loop): the mean reach-per-post per tag, surfaced next to each curated corpus tag.
+    from fanops.fanops_hashtags import tag_reach_means
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _analyzed_post(led, "p1", ["#bars"], 1000)
+    _analyzed_post(led, "p2", ["#bars"], 3000)                 # #bars mean = 2000
+    _analyzed_post(led, "p3", ["#rap"], 500)
+    means = tag_reach_means(led)
+    assert means["#bars"] == 2000.0 and means["#rap"] == 500.0
+
+
 def test_rank_tags_by_reach_ignores_non_numeric_reach_and_unanalyzed(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _analyzed_post(led, "p1", ["#rap"], 500)
