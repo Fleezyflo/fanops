@@ -159,3 +159,170 @@ def test_personas_panel_renders_lever_controls(tmp_path):
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert 'name="content_focus"' in html and 'name="hook_angle"' in html   # the lever controls render
     assert "AI reads" in html                                                # the composed-instruction line
+
+
+# ======================================================================================
+# M2 — SEE & LOCK (the wrapper): a live strategy check, a LOCKED brief that steers the
+# real prompts, and a transparency breakdown derived from the SAME resolvers the pipeline
+# uses. THE FIREWALL EXTENDS: the new `brief` field defaults empty, so a persona with no
+# brief composes EXACTLY as before (every M1 firewall test still holds).
+# ======================================================================================
+
+# ---- Task 7: LOCK — the brief composes into the instruction; empty brief is byte-identical ----
+def test_compose_empty_brief_is_byte_identical():
+    assert compose_persona_instruction(Persona(id="p", voice="bold fan")) == "bold fan"   # brief default "" -> firewall holds
+
+def test_compose_appends_locked_brief_after_voice():
+    out = compose_persona_instruction(Persona(id="p", voice="a devoted fan", brief="Clip the lyrical moments; reach heads who care about wordplay."))
+    assert "a devoted fan" in out and "Clip the lyrical moments" in out
+    assert out.index("a devoted fan") < out.index("Clip the lyrical moments")   # voice first, locked brief after
+
+def test_compose_brief_with_levers_and_voice():
+    out = compose_persona_instruction(Persona(id="p", voice="v", brief="B", content_focus=["hype"], energy="high"))
+    assert out.startswith("favors moments: hype") and out.endswith("v. B")   # body. voice. brief
+
+def test_compose_brief_only():
+    assert compose_persona_instruction(Persona(id="p", brief="just the locked strategy")) == "just the locked strategy"
+
+def test_update_persona_brief_roundtrips_and_clears(tmp_path):
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="P", voice="v")
+    update_persona(cfg, "p", brief="locked strategy text")
+    assert Personas.load(cfg).get("p").brief == "locked strategy text"
+    update_persona(cfg, "p", brief="")                          # blank CLEARS (authoritative form)
+    assert Personas.load(cfg).get("p").brief == ""
+
+def test_hydrate_brief_onto_linked_account(tmp_path):
+    cfg = Config(root=tmp_path)
+    _write(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                  "persona_id": "curator"}],
+           [{"id": "curator", "voice": "tasteful", "brief": "clip artistry; reach crate-diggers"}])
+    a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
+    assert "clip artistry" in compose_persona_instruction(a)    # the locked brief rides downstream via the account
+
+def test_lock_brief_drives_casting_payload(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                       "persona": "bold fan", "persona_id": "p"}])
+    cfg.personas_path.write_text(json.dumps({"personas": [
+        {"id": "p", "voice": "bold fan", "brief": "clip the hardest punchlines for hype kids"}]}))
+    request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    payload = json.loads(request_path(cfg, "moment_casting", "src_1").read_text())
+    assert "clip the hardest punchlines" in payload["personas"][0]["persona"]
+
+
+# ---- Task 6: live strategy check — injected model, fail-open, writes NOTHING ----
+def _fixture_strategy(prompt, schema):
+    return {"clipping_objective": "cut the wordplay-dense bars", "hook_objective": "curiosity on the punchline",
+            "caption_objective": "lyrical-scene hashtags", "audience": "hip-hop heads who replay bars",
+            "strategy": "lean into craft, not hype"}
+
+def test_persona_strategy_prompt_briefs_the_agent():
+    from fanops.prompts import persona_strategy_prompt
+    out = persona_strategy_prompt({"project": "FanOps brief here", "persona": "favors moments: punchlines. a devoted fan",
+                                   "facts": {"length_band": "8-15s", "framing": "top", "lead_tags": ["#bars"]}})
+    low = out.lower()
+    assert "fan account" in low and "same" in low and "different" in low      # the repost-to-different-audiences framing
+    assert "hook" in low and "caption" in low and "moment" in low             # the three downstream jobs
+    assert "favors moments: punchlines. a devoted fan" in out                 # THIS persona's composed instruction
+
+def test_persona_strategy_renders_objectives(tmp_path):
+    from fanops.studio import personas as sp
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="Curator", voice="tasteful crate-digger", clip_profile="short")
+    r = sp.persona_strategy(cfg, "curator", model=_fixture_strategy)
+    assert r.ok and r.detail["strategy"]["clipping_objective"] == "cut the wordplay-dense bars"
+    assert r.detail["brief"]                                                   # a composed lock-ready brief string is offered
+
+def test_persona_strategy_does_not_autowrite_brief(tmp_path):
+    from fanops.studio import personas as sp
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="Curator", voice="v")
+    sp.persona_strategy(cfg, "curator", model=_fixture_strategy)              # SEE, don't lock
+    assert Personas.load(cfg).get("curator").brief == ""                      # the strategy is NEVER auto-written
+
+def test_persona_strategy_fail_open_on_llm_error(tmp_path):
+    from fanops.studio import personas as sp
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="Curator", voice="v")
+    def _boom(prompt, schema): raise RuntimeError("claude exploded")
+    r = sp.persona_strategy(cfg, "curator", model=_boom)
+    assert r.ok is False and r.error                                          # fail-open notice, no 500
+    assert Personas.load(cfg).get("curator").brief == ""                      # nothing written
+
+def test_persona_strategy_unknown_persona_is_clean_error(tmp_path):
+    from fanops.studio import personas as sp
+    cfg = Config(root=tmp_path)
+    called = []
+    r = sp.persona_strategy(cfg, "nope", model=lambda p, s: called.append(1) or {})
+    assert r.ok is False and r.error and not called                           # rejected before any model call
+
+def test_lock_brief_persists(tmp_path):
+    from fanops.studio import personas as sp
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="Curator", voice="v")
+    r = sp.lock_brief(cfg, "curator", "the operator-approved strategy")
+    assert r.ok and Personas.load(cfg).get("curator").brief == "the operator-approved strategy"
+
+def test_lock_brief_unknown_persona_is_clean_error(tmp_path):
+    from fanops.studio import personas as sp
+    cfg = Config(root=tmp_path)
+    r = sp.lock_brief(cfg, "nope", "x")
+    assert r.ok is False and r.error
+
+
+# ---- Task 8: transparency — facts derived from the REAL resolvers (length band + lead tags) ----
+def test_persona_facts_resolve_from_real_resolvers(tmp_path):
+    from fanops.personas import persona_facts
+    cfg = Config(root=tmp_path)
+    f = persona_facts(cfg, Persona(id="p", clip_profile="short", framing="top", tag_lean="tasteful",
+                                   hashtag_corpus=["#myscene"]))
+    assert f["length_band"] == "8-15s"          # bands.band_for(short) == SHORT(8,15) — the SAME resolver the pipeline uses
+    assert f["framing"] == "top"
+    assert "#myscene" in f["lead_tags"]         # vet_hashtags floats the curated corpus to the lead
+
+def test_persona_facts_default_length_when_unset(tmp_path):
+    from fanops.personas import persona_facts
+    cfg = Config(root=tmp_path)
+    f = persona_facts(cfg, Persona(id="p", voice="v"))
+    assert f["length_band"] == "12-22s" and f["framing"] is None     # band_for(None) -> TALK default (pipeline-faithful)
+
+def test_personas_page_exposes_facts_and_brief(tmp_path):
+    from fanops.studio import views
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="P", voice="v", clip_profile="long", brief="locked strategy")
+    card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
+    assert card.length_band == "28-45s" and card.brief == "locked strategy"
+    assert isinstance(card.lead_tags, list)
+
+def test_personas_panel_renders_strategy_and_lock_controls(tmp_path):
+    from fanops.studio.app import create_app
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="P", voice="v", clip_profile="short")
+    app = create_app(cfg); app.config.update(TESTING=True)
+    html = app.test_client().get("/personas").get_data(as_text=True)
+    assert "/personas/strategy" in html          # the [Strategy check] control is on the card (rendered action URL)
+    assert "8-15s" in html                       # the resolved length band is shown (transparency)
+
+def test_strategy_route_renders_objectives_and_lock_form(tmp_path, monkeypatch):
+    # Drive the FULL HTTP -> handler -> template path with claude stubbed, so the strategy-RESULT block
+    # (objectives + lock form) is actually rendered (the GET test only hits the always-on card controls).
+    from fanops.studio.app import create_app
+    import fanops.llm as llm
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="P", voice="v")
+    monkeypatch.setattr(llm, "claude_json", _fixture_strategy)   # function-local import resolves this at call time
+    app = create_app(cfg); app.config.update(TESTING=True)
+    html = app.test_client().post("/personas/strategy", data={"id": "p"}).get_data(as_text=True)
+    assert "cut the wordplay-dense bars" in html and "lean into craft, not hype" in html   # rendered objectives
+    assert "/personas/lock" in html and "Lock as brief" in html                            # the lock form
+    assert Personas.load(cfg).get("p").brief == ""                                          # SEE only — nothing locked yet
+
+def test_lock_route_persists_and_card_shows_locked_brief(tmp_path):
+    from fanops.studio.app import create_app
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="P", voice="v")
+    app = create_app(cfg); app.config.update(TESTING=True)
+    html = app.test_client().post("/personas/lock", data={"id": "p", "brief": "the approved strategy"}).get_data(as_text=True)
+    assert "locked brief" in html and "the approved strategy" in html       # the card now shows the locked brief
+    assert Personas.load(cfg).get("p").brief == "the approved strategy"

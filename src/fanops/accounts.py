@@ -61,6 +61,9 @@ class Account(BaseModel):
     energy: Optional[str] = None
     hook_angle: Optional[str] = None
     hook_tone: Optional[str] = None
+    brief: str = ""                        # M2 LOCK: the persona's operator-approved strategy, HYDRATED from the
+                                           # linked Persona; compose_persona_instruction appends it after the voice so it
+                                           # rides into the real casting/hook/caption prompts. Empty -> byte-identical.
     # Per-platform poster ids keyed by Platform.value (e.g. {"instagram": "ig_1", "tiktok": "tk_9"}).
     # A handle's Instagram and TikTok are DIFFERENT Postiz integrations, so each (handle, platform) must
     # resolve to its OWN id. ADDITIVE: empty on a legacy account, which then resolves via account_id —
@@ -215,6 +218,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.hook_tone = per.hook_tone
         if per.clip_profile: acc.clip_profile = per.clip_profile
         if per.framing: acc.framing = per.framing
+        acc.brief = getattr(per, "brief", "") or ""   # M2: the persona owns the locked brief (empty -> compose ignores it)
 
 
 def link_persona(cfg: Config, handle: str, persona_id: str) -> str:

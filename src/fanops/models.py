@@ -460,3 +460,16 @@ class IntroMatchItem(BaseModel):
 class IntroMatchDecision(BaseModel):
     request_id: str
     items: list[IntroMatchItem] = Field(default_factory=list)
+
+# M2 SEE: the persona STRATEGY check (personas.persona_strategy via the synchronous claude_json). Given the
+# project brief + a persona's composed lever instruction + its deterministic facts, the model returns the
+# STRATEGIC objective of each downstream surface (NOT pre-canned answer categories — the operator's correction:
+# "the question shouldn't tell him what clip types"; these are strategic dimensions, the model fills them freely)
+# so the operator SEES "what this config will come out to" before locking it. Pure read — never written to the
+# ledger; the operator LOCKS an approved strategy into Persona.brief as a separate, explicit step.
+class PersonaStrategy(BaseModel):
+    clipping_objective: str = ""        # what moments this persona should clip, and WHY (the casting objective)
+    hook_objective: str = ""            # what the on-screen hook should achieve for this persona's audience
+    caption_objective: str = ""         # what the caption/hashtags should do for this persona
+    audience: str = ""                  # who this persona is FOR (the audience it reaches)
+    strategy: str = ""                  # the one-paragraph overall strategy tying the above together

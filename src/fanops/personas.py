@@ -55,6 +55,10 @@ class Persona(BaseModel):
     hook_tone: Optional[str] = None               # on-screen hook tone: aggressive|restrained|playful (HOOK_TONES)
     clip_profile: Optional[str] = None            # per-account LENGTH tier (bands.PROFILE_NAMES) — hydrates onto the account
     framing: Optional[str] = None                 # per-account vertical CROP bias (config.FRAMING_NAMES) — hydrates onto the account
+    brief: str = ""                               # M2 LOCK: an operator-APPROVED strategy frozen as the persona's downstream
+                                                  # anchor. compose appends it after `voice` so the real casting/hook/caption
+                                                  # prompts run against the agreed DEFINITION. Free text; ONLY a deliberate Save
+                                                  # writes it (a strategy check NEVER auto-locks). Empty -> byte-identical.
 
 
 class Personas:
@@ -91,11 +95,13 @@ def compose_persona_instruction(p) -> str:
     """The lever ENGINE's composer — render a persona/account's SET levers into the SINGLE instruction
     string the pipeline's casting/hook/caption prompts read (the value interpolated as each surface's
     `persona`). PURE + duck-typed (reads .voice OR .persona, .content_focus, .energy, .hook_angle,
-    .hook_tone) so it serves a Persona OR a hydrated Account. THE FIREWALL: with NO levers set it returns
-    the bare voice VERBATIM, so every existing persona's payload stays byte-identical; only-levers -> the
-    composed body; both -> "body. voice". clip_profile/framing are NOT in the text (they drive the
-    deterministic CUT, not the prompt)."""
+    .hook_tone) so it serves a Persona OR a hydrated Account. THE FIREWALL: with NO levers AND no locked
+    brief set it returns the bare voice VERBATIM, so every existing persona's payload stays byte-identical;
+    only-levers -> the composed body; both -> "body. voice". The LOCKED `brief` (M2) appends as a freeform
+    tail AFTER the voice (voice, then the agreed strategy) — empty brief -> byte-identical. clip_profile/
+    framing are NOT in the text (they drive the deterministic CUT, not the prompt)."""
     voice = (getattr(p, "voice", None) or getattr(p, "persona", None) or "").strip()
+    brief = (getattr(p, "brief", None) or "").strip()
     parts: list[str] = []
     cf = [s for x in (getattr(p, "content_focus", None) or []) if (s := str(x).strip())]
     if cf: parts.append("favors moments: " + ", ".join(cf))
@@ -104,8 +110,30 @@ def compose_persona_instruction(p) -> str:
         v = (val or "").strip()
         if v: parts.append(f"{label} {v}")
     body = "; ".join(parts)
-    if voice and body: return f"{body}. {voice}"
-    return voice or body
+    freeform = ". ".join(s for s in (voice, brief) if s)     # voice, then the LOCKED brief (M2); both empty -> ""
+    if body and freeform: return f"{body}. {freeform}"
+    return freeform or body
+
+
+def persona_facts(cfg: Config, p) -> dict:
+    """The TRANSPARENCY read (M2 Task 8) — "what this persona produces", derived from the EXACT resolvers the
+    pipeline calls (never a re-encoded copy that could drift): the clip LENGTH band (bands.band_for on the
+    resolved profile — the same call moment_pick_prompt makes), the FRAMING, and the deterministic LEAD
+    hashtags (hashtags.vet_hashtags with this persona's lean + curated corpus over the live reach store). The
+    lean/corpus are a DETERMINISTIC post-step (not shown to the caption LLM), so this is the only place the
+    operator sees their effect. PURE read; FAIL-OPEN to the frozen floor when no store/creds. Duck-typed
+    (serves a Persona OR a hydrated Account)."""
+    from fanops.bands import band_for
+    from fanops.hashtags import vet_hashtags, load_store
+    from fanops.models import Platform
+    band = band_for(getattr(p, "clip_profile", None))
+    try:
+        store = load_store(cfg)
+    except Exception:
+        store = None
+    lead = vet_hashtags([], Platform.instagram, lean=getattr(p, "tag_lean", None),
+                        corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store)
+    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": getattr(p, "framing", None), "lead_tags": lead}
 
 
 def _enum_or_none(v, names, label) -> Optional[str]:
@@ -172,7 +200,7 @@ _UNSET = object()
 def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
                 intake: Optional[dict] = None, id: str = "", *, content_focus=None,
                 energy: str = "", hook_angle: str = "", hook_tone: str = "",
-                clip_profile: str = "", framing: str = "") -> str:
+                clip_profile: str = "", framing: str = "", brief: str = "") -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
     duplicate id and a blank name (never write a record that won't reload). Validates tag_lean AND every
     lever-engine field against its vocabulary. Returns the id; raises ValueError on bad input."""
@@ -199,14 +227,14 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""), "tag_lean": lean or None,
                       "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
                       "energy": energy_v, "hook_angle": angle_v, "hook_tone": tone_v,
-                      "clip_profile": prof_v, "framing": fr_v})
+                      "clip_profile": prof_v, "framing": fr_v, "brief": str(brief or "")})
         _write_atomic(p, raw)
     return pid
 
 
 def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean=_UNSET, intake=_UNSET,
                    content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET, hook_tone=_UNSET,
-                   clip_profile=_UNSET, framing=_UNSET) -> str:
+                   clip_profile=_UNSET, framing=_UNSET, brief=_UNSET) -> str:
     """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; tag_lean=""
     CLEARS the lean (-> None) and likewise each lever clears on "". Validates tag_lean + every passed lever
     against its vocabulary BEFORE the lock (never write a typo). Unknown id -> KeyError."""
@@ -239,6 +267,7 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean
                 if _tone is not _UNSET: d["hook_tone"] = _tone
                 if _prof is not _UNSET: d["clip_profile"] = _prof
                 if _fr is not _UNSET: d["framing"] = _fr
+                if brief is not _UNSET: d["brief"] = str(brief or "")
                 found = True
         if not found:
             raise KeyError(pid)

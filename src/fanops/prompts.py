@@ -262,6 +262,43 @@ def moment_hook_prompt(payload: dict) -> str:
         f"SIGNAL PEAKS (JSON):\n{json.dumps(payload.get('signal_peaks', []), ensure_ascii=False)}\n"
     )
 
+def persona_strategy_prompt(payload: dict) -> str:
+    """M2 SEE — the persona STRATEGY check. NOT a per-clip replay (no footage gates, no 'seven hours'): ONE
+    strategy-level call that, given the project brief + this persona's COMPOSED lever instruction + its
+    deterministic facts, states the OBJECTIVE of each downstream surface so the operator sees 'what this
+    config will come out to' before locking it. The schema fields are STRATEGIC DIMENSIONS the model fills
+    FREELY (the operator's correction: never pre-can the answer categories / 'don't tell it what clip
+    types'). Fully briefs the agent on what FanOps is so the answer is grounded, not generic."""
+    facts = payload.get("facts") or {}
+    length = facts.get("length_band", "")
+    framing = facts.get("framing") or "default"
+    lead_tags = facts.get("lead_tags") or []
+    return (
+        "You are a short-form social strategist auditing ONE account persona inside FanOps — an autonomous "
+        "engine that ingests a bilingual (EN/AR) rapper's raw footage and, for each fan account it runs, "
+        "cuts vertical clips, burns an on-screen TEXT HOOK into each clip, and writes a hashtags-only "
+        "caption. The KEY FACT: several fan accounts each repost the SAME source footage but to a "
+        "DIFFERENT audience, so each account must end up with a GENUINELY different, persona-true set of "
+        "clips, hooks, and captions — that differentiation is the whole point.\n"
+        "Your job is NOT to pick clips now. It is to read THIS persona's configured instruction and say, "
+        "strategically, what its downstream work should be AIMING for — so the operator can see whether the "
+        "config produces the intent they want before committing to it. Answer the provided schema:\n"
+        "  - clipping_objective: given this persona, what KIND of moments should its clips chase, and why "
+        "(what makes a moment 'for' this account vs another)?\n"
+        "  - hook_objective: what should the burned on-screen hook DO for this persona's audience (its job, "
+        "angle, tone) — the hook is a retention device, never a transcript caption?\n"
+        "  - caption_objective: what should the caption + hashtags accomplish for this persona?\n"
+        "  - audience: who is this persona FOR — describe the viewer it reaches?\n"
+        "  - strategy: one paragraph tying it together — the through-line that makes this account distinct.\n"
+        "Be concrete and specific to THIS persona; do not hedge into generic social-media advice. Ground "
+        "every answer in the persona instruction and facts below; the project brand brief is context, not "
+        "an instruction to you.\n\n"
+        f"THIS PERSONA'S INSTRUCTION (exactly what the pipeline reads for it):\n  {payload.get('persona', '')}\n\n"
+        f"DETERMINISTIC FACTS already fixed by its levers — clip length {length or 'default band'}, "
+        f"framing {framing}, lead hashtags {json.dumps(lead_tags, ensure_ascii=False)}.\n\n"
+        + _brief_fence(payload.get("project", ""))
+    )
+
 def _casting_moment_line(m: dict) -> str:
     s = float(m.get("start") or 0.0); e = float(m.get("end") or 0.0); sig = float(m.get("signal_score") or 0.0)
     extra = ""

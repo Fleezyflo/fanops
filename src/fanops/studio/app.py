@@ -681,7 +681,19 @@ def create_app(cfg: Config) -> Flask:
             request.form.get("refs", ""), request.form.get("notes", ""),
             content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
             hook_angle=request.form.get("hook_angle", ""), hook_tone=request.form.get("hook_tone", ""),
-            clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", "")))
+            clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", ""),
+            brief=request.form.get("brief", "")))
+
+    @app.post("/personas/strategy")
+    def do_personas_strategy():
+        # M2 SEE: one synchronous full-model `claude -p` — "what will this persona's config come out to?".
+        # The panel renders the objectives + a one-click Lock. Fail-open (claude absent/error -> inline notice).
+        return _personas_panel(studio_personas.persona_strategy(cfg, request.form.get("id", "")))
+
+    @app.post("/personas/lock")
+    def do_personas_lock():
+        # M2 LOCK: freeze an operator-approved strategy as Persona.brief (explicit save only — never auto).
+        return _personas_panel(studio_personas.lock_brief(cfg, request.form.get("id", ""), request.form.get("brief", "")))
 
     @app.post("/personas/delete")
     def do_personas_delete():

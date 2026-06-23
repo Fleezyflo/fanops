@@ -815,6 +815,11 @@ class PersonaCard:
     clip_profile: Optional[str] = None
     framing: Optional[str] = None
     instruction: str = ""
+    # M2: the LOCKED brief + the TRANSPARENCY facts (length band + lead tags) derived from the REAL resolvers
+    # — so the operator sees, on the card, exactly what the config produces and what definition is frozen.
+    brief: str = ""
+    length_band: str = ""
+    lead_tags: list = field(default_factory=list)
 
 
 @dataclass
@@ -837,7 +842,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     connect dropdown). Fail-open: a corrupt personas.json / accounts.json -> an EMPTY page (the surface
     never 500s), mirroring golive_accounts. `led` is injectable (tests); else loaded lock-free."""
     try:
-        from fanops.personas import Personas, compose_persona_instruction   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
+        from fanops.personas import Personas, compose_persona_instruction, persona_facts   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
         reg = Personas.load(cfg)
         accts = Accounts.load(cfg).accounts
     except Exception as exc:
@@ -873,7 +878,8 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
                          content_focus=list(p.content_focus), energy=p.energy, hook_angle=p.hook_angle,
                          hook_tone=p.hook_tone, clip_profile=p.clip_profile, framing=p.framing,
-                         instruction=compose_persona_instruction(p))
+                         instruction=compose_persona_instruction(p), brief=getattr(p, "brief", "") or "",
+                         length_band=(facts := persona_facts(cfg, p))["length_band"], lead_tags=facts["lead_tags"])
              for p in reg.all()]
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)
