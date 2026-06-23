@@ -6,7 +6,10 @@
   {% include "_account_filter.html" %}
   {# Phase 2: when casting is ON, explain WHY accounts carry distinct/fewer posts (config lives in Go Live). #}
   {% if cast_state and cast_state.casting %}<p class="meta cast-state">Casting ON — {{ 'exclusive routing (each moment → its best-fit account)' if cast_state.exclusive else 'budget ' ~ cast_state.budget ~ ' moments per account' }} · clip {{ cast_state.profile }}</p>{% endif %}
-  {% if active_batch|default(none) %}<div class="meta batch-scope">Showing one batch — <a href="{{ url_for('review', account=active) }}">show all batches</a></div>{% endif %}
+  {% if active_batch|default(none) %}<div class="meta batch-scope">Showing one batch — <a href="{{ url_for('review', account=active, compact=(1 if compact else none)) }}">show all batches</a></div>{% endif %}
+  {# M3c: flip between the full per-account video view and the dense, scannable compact list. A GET link
+     (mirrors the account/batch filter pattern); compact rides the action/pagination URLs so it persists. #}
+  <div class="meta view-toggle">{% if compact %}<a class="button" href="{{ url_for('review', account=active, batch=active_batch|default(none)) }}">Full view</a>{% else %}<a class="button" href="{{ url_for('review', account=active, batch=active_batch|default(none), compact=1) }}">Compact view</a>{% endif %}</div>
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
       {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }} post(s){% if result.detail.hook %} with the hook restored{% endif %} — now in the Schedule.{% elif result.detail.rejected is defined %}Rejected {{ result.detail.rejected }} post(s).{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
@@ -23,11 +26,11 @@
       <h3>{{ label }} ({{ group|length }})</h3>
       {% if key == 'editable' %}
         <div class="approve-bar meta">Tick the posts you want live, then approve — they move to the Schedule. Reject discards.
-          <button type="button" class="primary" hx-post="{{ url_for('do_approve_posts', account=active, batch=active_batch|default(none)) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Approve selected</button>
-          <button type="button" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none)) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
+          <button type="button" class="primary" hx-post="{{ url_for('do_approve_posts', account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Approve selected</button>
+          <button type="button" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
           {# M3b 'this account across the whole video': clear a persona's whole run at once. Only under an active
              account filter (the target IS the filter); scoped to the active batch when one is open. #}
-          {% if active %}<button type="button" class="primary approve-account" hx-post="{{ url_for('do_approve_account', account=active, batch=active_batch|default(none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all {{ active }}</button>{% endif %}
+          {% if active %}<button type="button" class="primary approve-account" hx-post="{{ url_for('do_approve_account', account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all {{ active }}</button>{% endif %}
         </div>
       {% endif %}
       {% if key == 'editable' %}
@@ -40,7 +43,7 @@
           <summary>{{ batch_title }} ({{ bcards|length }}){% if batch_id and bcards[0].batch_targets %} <span class="muted batch-targets">→ {{ bcards[0].batch_targets|join(', ') }}</span>{% endif %}{% if batch_id and bcards[0].batch_state %} <span class="muted">· {{ bcards[0].batch_state }}</span>{% endif %}{% if batch_id %} <span class="muted">· {{ bcards[0].batch_created or '—' }}</span>{% endif %}</summary>
           {% if batch_id %}<div class="batch-meta meta">{% if bcards[0].batch_excluded %}<span class="batch-excluded">{{ bcards[0].batch_excluded }} account(s) excluded by batch target</span>{% if active_batch|default(none) != batch_id %} · {% endif %}{% endif %}{% if active_batch|default(none) != batch_id %}<a href="{{ url_for('review', batch=batch_id, account=active) }}">open just this batch</a>{% endif %}</div>{% endif %}
           {% set ns = namespace(day=None) %}
-          <div class="clip-grid">
+          <div class="clip-grid{{ ' compact' if compact else '' }}">
             {% for card in bcards %}
               {% if card.day != ns.day %}<h4 class="day-head">{{ card.day or 'undated' }}</h4>{% set ns.day = card.day %}{% endif %}
               {% include "_card.html" %}
@@ -49,7 +52,7 @@
         </details>
         {% endfor %}
       {% else %}
-      <div class="clip-grid">
+      <div class="clip-grid{{ ' compact' if compact else '' }}">
         {% for card in group %}{% include "_card.html" %}{% endfor %}
       </div>
       {% endif %}
@@ -59,12 +62,12 @@
     <div class="grid-more meta">
       Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
       {% if page.next_offset is not none %}
-        <a class="button" href="{{ url_for('review', offset=page.next_offset, account=active, batch=active_batch|default(none)) }}">Show more</a>
+        <a class="button" href="{{ url_for('review', offset=page.next_offset, account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}">Show more</a>
       {% endif %}
       {% if page.offset > 0 %}
-        <a class="button" href="{{ url_for('review', account=active, batch=active_batch|default(none)) }}">Back to start</a>
+        <a class="button" href="{{ url_for('review', account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}">Back to start</a>
       {% endif %}
     </div>
   {% endif %}
-  {% if not cards %}{% if active %}<div class="empty">No work for {{ active }} — <a href="{{ url_for('review') }}">clear the filter</a> to see all accounts.</div>{% else %}<div class="empty">No footage yet — add videos in the Make tab to begin.</div>{% endif %}{% endif %}
+  {% if not cards %}{% if active %}<div class="empty">No work for {{ active }} — <a href="{{ url_for('review', compact=(1 if compact else none)) }}">clear the filter</a> to see all accounts.</div>{% else %}<div class="empty">No footage yet — add videos in the Make tab to begin.</div>{% endif %}{% endif %}
 </div>

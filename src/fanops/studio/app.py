@@ -145,6 +145,12 @@ def create_app(cfg: Config) -> Flask:
         v = (request.args.get("batch") or "").strip()
         return v or None
 
+    def _compact_arg() -> bool:
+        # M3c: the dense, video-less Review list mode from ?compact=. Read from request.args so it rides the
+        # action/pagination URLs (templates carry compact=1) AND the htmx POST URL — so a mutation re-render
+        # stays compact (R1). Truthy-words only; absent/blank/anything else -> False (the full video view).
+        return (request.args.get("compact") or "").strip().lower() in ("1", "true", "yes", "on")
+
     def _with_active(counts, active):
         # The chip UNIVERSE = the accounts present in the (unfiltered) list, PLUS the active filter itself, so
         # an account whose last item just left the list still shows its (active) chip — the filter stays
@@ -177,7 +183,10 @@ def create_app(cfg: Config) -> Flask:
         # (no filter / a partial swap with no request args) -> url_for drops the param -> byte-identical nav.
         # Phase 2: also inject the read-only casting/volume state GLOBALLY so the Run + Review surfaces can
         # show how this run is configured (the levers live in Go-Live; their EFFECT was invisible elsewhere).
-        return {"nav_account": _account_arg(),
+        # M3c: inject `compact` GLOBALLY so the Review templates + their shared includes (_card.html,
+        # _account_filter.html) all see it without per-render plumbing, and url_for(..., compact=(1 if compact
+        # else none)) drops the param everywhere it's off -> byte-identical on every non-compact / non-Review surface.
+        return {"nav_account": _account_arg(), "compact": _compact_arg(),
                 "cast_state": {"casting": cfg.account_casting, "exclusive": cfg.cast_exclusive,
                                "budget": cfg.cast_pick_budget, "profile": cfg.clip_profile}}
 

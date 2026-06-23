@@ -4,7 +4,10 @@
    (checkbox / caption / edit / result sink) is UNCHANGED — all accounts stay visible+selectable for batch
    approve. A post-less prepared/held card (no surfaces) keeps the single shared preview. Safe by default:
    variation OFF -> media_url serves the base clip + no hook line, so every account shows the same video. #}
-<div class="card clip-card" id="card-{{ card.clip_id }}">
+<div class="card clip-card{{ ' compact' if compact else '' }}" id="card-{{ card.clip_id }}">
+  {# M3c: compact mode drops the heavy per-account <video> switcher for a dense, scannable list (the operator
+     flips to Full view to preview a clip). The control body below stays — bulk approve still works compactly. #}
+  {% if not compact %}
   {% if card.surfaces %}
   <div class="surface-switch">
     {# radios FIRST (the pure-CSS toggle): :nth-of-type(N):checked ~ shows the Nth video panel + tab #}
@@ -33,6 +36,7 @@
     {% if card.bucket == 'held' %}<span class="badge held-badge">HELD</span>{% endif %}
     <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=card.clip_id) }}" src="{{ card.preview_url }}" aria-label="{{ card.label }} preview"></video>
   </div>
+  {% endif %}
   {% endif %}
 
   <div class="clip-body">
@@ -69,7 +73,7 @@
           {% if s.imminent %}<span class="badge {{ 'shipped' if s.state != 'queued' else '' }}">{{ 'shipped' if s.state != 'queued' else 'shipping now' }}</span>{% endif %}
           {# P5: per-surface reject — drop just THIS account's post (one id via hx-vals), without ticking the
              batch checkbox set. Same route as the bulk reject; the swap re-renders the scoped worklist. #}
-          {% if card.bucket == 'editable' %}<button type="button" class="surface-reject" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none)) }}" hx-vals='{"ids": "{{ s.post_id }}"}' hx-target="#review-body" hx-swap="outerHTML" aria-label="reject {{ s.account }} {{ s.platform }}">Reject</button>{% endif %}
+          {% if card.bucket == 'editable' %}<button type="button" class="surface-reject" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}" hx-vals='{"ids": "{{ s.post_id }}"}' hx-target="#review-body" hx-swap="outerHTML" aria-label="reject {{ s.account }} {{ s.platform }}">Reject</button>{% endif %}
         </div>
         {# M3a: the per-account differentiation at a glance — its clip LENGTH band, a CUT marker when it is a
            genuine per-account cut (not a shared clip with a hook stamped on), and the account's pinned FRAMING. #}
@@ -80,7 +84,11 @@
             {% if s.framing %}<span class="chip ro" title="vertical crop framing">{{ s.framing }}</span>{% endif %}
           </div>
         {% endif %}
-        {% if s.editable %}
+        {% if compact %}
+          {# compact: the preview (which carried the hook) is hidden, so show the on-screen hook inline; the
+             full caption + inline editor are a Full-view concern (compact is for scanning + bulk approve). #}
+          {% if s.variant_hook %}<div class="surface-hook compact-hook" title="the on-screen hook burned into {{ s.account }}'s video">✦ {{ s.variant_hook }}</div>{% endif %}
+        {% elif s.editable %}
           <div class="ro surface-caption">{{ s.caption }}</div>
           <details class="surface-editor"><summary>Edit</summary>{% include "_surface_edit.html" %}</details>
         {% else %}
@@ -94,15 +102,15 @@
       {# removed-hook choice (slice 2): one click to ship WITH the restored hook burned in, or clean as-is. #}
       <div class="hook-choice meta">
         <span class="muted">Hook was auto-removed. Approve with it burned in, or ship clean.</span>
-        <button type="button" class="primary" hx-post="{{ url_for('do_approve_with_hook', clip_id=card.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve with hook ✎</button>
-        <button type="button" hx-post="{{ url_for('do_approve_as_is', clip_id=card.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve as-is (no hook)</button>
+        <button type="button" class="primary" hx-post="{{ url_for('do_approve_with_hook', clip_id=card.clip_id, account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve with hook ✎</button>
+        <button type="button" hx-post="{{ url_for('do_approve_as_is', clip_id=card.clip_id, account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve as-is (no hook)</button>
       </div>
     {% endif %}
 
     {% if card.bucket == 'editable' and card.surfaces and not card.hook_removed %}
       {# M3b 'all accounts of this moment': approve every surface of this card in one click (the removed-hook
          choice above already covers approval when a hook was stripped, so this only shows otherwise). #}
-      <button type="button" class="primary card-approve-all" hx-post="{{ url_for('do_approve_clip', clip_id=card.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all accounts</button>
+      <button type="button" class="primary card-approve-all" hx-post="{{ url_for('do_approve_clip', clip_id=card.clip_id, account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all accounts</button>
     {% endif %}
 
     {% if card.bucket == 'editable' and card.surfaces %}

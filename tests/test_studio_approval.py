@@ -338,3 +338,51 @@ def test_review_renders_bulk_approve_buttons(tmp_path):
     # the one-account-across-the-video button appears only when an account filter is active
     html_a = _client(cfg).get("/review?account=@a").data
     assert b"approve-account" in html_a and b"Approve all @a" in html_a
+
+
+# ---- M3c: compact list mode — a dense, video-less worklist for scanning rich per-account sets ----
+def test_compact_view_omits_video_players(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
+    full = _client(cfg).get("/review").data
+    compact = _client(cfg).get("/review?compact=1").data
+    assert b"<video" in full                       # the default view shows the per-account video switcher
+    assert b"<video" not in compact                # compact drops the heavy players for a scannable list
+
+def test_compact_view_keeps_bulk_approve(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
+    html = _client(cfg).get("/review?compact=1").data
+    assert b'name="ids"' in html and b"Approve selected" in html       # bulk approve still works in compact
+    assert b"approve-clip/clip_1" in html                              # per-card approve-all still present
+    assert b'value="p_a"' in html and b"@a" in html and b"@b" in html  # every surface is still listed + selectable
+
+def test_compact_action_urls_carry_compact(tmp_path):
+    # the mode must PERSIST: action/pagination URLs carry compact=1 so a click doesn't bounce back to full.
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+    html = _client(cfg).get("/review?compact=1").data
+    assert b"compact=1" in html                                        # carried into the body's action URLs
+
+def test_compact_persists_across_approve_rerender(tmp_path):
+    # the htmx re-render after an approve stays compact (the action URL carries compact -> _review_panel reads it)
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_b", clip="clip_2", acct="@a", aid="1")       # a 2nd card survives after approving clip_1
+    r = _client(cfg).post("/posts/approve-clip/clip_1?compact=1")
+    assert r.status_code == 200 and b"<video" not in r.data           # the re-render stayed compact
+
+def test_compact_toggle_links_both_ways(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+    full = _client(cfg).get("/review").data
+    compact = _client(cfg).get("/review?compact=1").data
+    assert b"compact=1" in full and b"Compact" in full                # the full view offers a way INTO compact
+    assert b"Full" in compact                                         # the compact view offers a way back to full

@@ -122,6 +122,15 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 .surface-edit form { display:grid; gap:.4rem; margin:0; }
 .surface-edit label { font-size:var(--t-meta); color:var(--muted); font-weight:500; }
 .snooze button { font-size:var(--t-eyebrow); }
+/* M3a: the per-account spec chips (length · cut · framing) — a tight inline row under the surface head */
+.surface-spec { display:flex; flex-wrap:wrap; gap:.3rem; align-items:center; }
+.surface-spec .chip.cut { border-color:var(--accent-bright); color:var(--accent-bright); }
+/* M3c compact mode: a dense, video-less single-column list for scanning rich per-account sets at scale */
+.view-toggle { display:flex; justify-content:flex-end; }
+.clip-grid.compact { grid-template-columns:1fr; gap:.5rem; }
+.clip-card.compact .clip-body { padding:.5rem var(--s-3); gap:.3rem; }
+.clip-card.compact .surface { margin-top:.3rem; padding-top:.35rem; }
+.clip-card.compact .compact-hook { font-size:var(--t-meta); color:var(--accent-bright); }
 .vh { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
 /* skip-to-content: hidden (.vh) until keyboard focus reveals it as a real, visible target (WCAG 2.4.1) */
 .skip-nav:focus { position:fixed; left:.6rem; top:.6rem; width:auto; height:auto; padding:.5rem .85rem; margin:0; clip:auto; overflow:visible; white-space:normal; z-index:200; background:var(--accent); color:var(--accent-ink); border-radius:var(--r-sm); box-shadow:var(--elev-2); }
