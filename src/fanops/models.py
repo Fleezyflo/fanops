@@ -268,6 +268,32 @@ class Render(BaseModel):
                                                 # legacy render — they reload fine, no migration).
 
 
+class SelectionMethod(str, Enum):
+    heuristic = "heuristic"   # persona_fit_score (token overlap + signal) picked it
+    llm = "llm"               # the moment_casting LLM gate selected it
+
+
+class SelectionFact(BaseModel):
+    # M4: the DURABLE audit record of the selector — WHICH account got WHICH moment and WHY. Casting writes
+    # only Moment.affinities (handles), which is NON-durable (reset to [] on each re-decision) and carries no
+    # "why" — the persona_fit_score (overlap, signal) and the LLM choice were computed-and-discarded. A
+    # SelectionFact persists that decision + its reasoning. CONTENT-ADDRESSED one-per-(moment, account):
+    # child_id("selfact", moment_id, account) so a re-cast OVERWRITES (the CURRENT durable selection, not a
+    # growing history). Additive top-level `selection_facts` map (v6->v7); old ledgers load with {} — nothing
+    # writes facts until casting does (M4b), so the OFF/baseline shape is byte-identical.
+    id: str                                     # child_id("selfact", moment_id, account)
+    moment_id: str
+    account: str                                # the handle this moment was selected FOR
+    method: SelectionMethod = SelectionMethod.heuristic   # how it was chosen (validated enum: heuristic | llm)
+    reason: str = ""                            # human-readable WHY — the moment's editorial reason (audit context)
+    overlap: Optional[int] = None               # heuristic: persona-token ∩ moment-corpus count (the fit signal); None for llm
+    signal: Optional[float] = None              # the moment's signal_score at selection time
+    rank: Optional[int] = None                  # rank within the account's selected set (0 = best fit); None for llm
+    source_id: Optional[str] = None             # lineage (the moment's source) — direct per-account/source audit
+    batch_id: Optional[str] = None              # lineage (the ingest batch) — direct per-account/batch audit
+    created_at: Optional[str] = None            # wall-clock ISO-Z when cast (audit timestamp); None when untimed/legacy
+
+
 # ---- M3 (structural-hooks): the stitch_plan entity — the operator-approval spine ----
 class StitchState(str, Enum):
     suggested = "suggested"; approved = "approved"; in_use = "in_use"   # lifecycle

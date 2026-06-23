@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
-from fanops.models import (Source, Moment, Clip, Post, Render, StitchPlan, StitchState, Batch,
+from fanops.models import (Source, Moment, Clip, Post, Render, SelectionFact, StitchPlan, StitchState, Batch,
                            SourceState, MomentState, ClipState, PostState)
 
 
@@ -75,7 +75,7 @@ def _migrate_v4_metrics_series(raw: dict) -> dict:
     return out
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
 # v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
@@ -86,13 +86,17 @@ SCHEMA_VERSION = 6
 # v5 -> v6 (per-account Render foundation): inject the new top-level renders map (additive; render_id rides
 # the pydantic default on Post, so NO row backfill — same injection shape). The Render entity is the
 # per-account shippable artifact; old ledgers load with renders={} and render_id None (byte-identical).
+# v6 -> v7 (M4 filing/naming/tracking): inject the new top-level selection_facts map (additive; the durable
+# audit record of WHICH account got WHICH moment and WHY — Moment.affinities is non-durable). NO row backfill
+# (nothing wrote facts pre-v7); old ledgers load with selection_facts={} — same injection shape as v5/v6.
 # Additive + idempotent + never-raising. The ledger is NEVER wiped — every migration is copy-on-write.
 _MIGRATIONS = {1: lambda raw: raw,
                2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})},
                3: _migrate_v3_created_at,
                4: _migrate_v4_metrics_series,
                5: lambda raw: {**raw, "batches": raw.get("batches", {})},
-               6: lambda raw: {**raw, "renders": raw.get("renders", {})}}
+               6: lambda raw: {**raw, "renders": raw.get("renders", {})},
+               7: lambda raw: {**raw, "selection_facts": raw.get("selection_facts", {})}}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
@@ -199,6 +203,8 @@ class Ledger:
         self.renders: dict[str, Render] = {}  # per-account Render foundation: the per-account shippable artifacts
                                               # (6th id->unit map; additive). Empty until crosspost mints one under
                                               # creative_variation. Content-addressed by (clip_id, hook_text).
+        self.selection_facts: dict[str, SelectionFact] = {}   # M4: durable per-(moment, account) selection audit
+                                              # (7th id->unit map; additive). Empty until casting writes one (M4b).
 
     @classmethod
     def load(cls, cfg: Config) -> "Ledger":
@@ -225,6 +231,7 @@ class Ledger:
                 led.stitch_plans = {k: StitchPlan(**v) for k, v in raw.get("stitch_plans", {}).items()}
                 led.batches = {k: Batch(**v) for k, v in raw.get("batches", {}).items()}
                 led.renders = {k: Render(**v) for k, v in raw.get("renders", {}).items()}
+                led.selection_facts = {k: SelectionFact(**v) for k, v in raw.get("selection_facts", {}).items()}
             except ControlFileError:
                 raise                                  # _NewerSchema / _migrate gap: pass through, unreworded
             except Exception as e:
@@ -270,6 +277,7 @@ class Ledger:
             "stitch_plans": {k: v.model_dump() for k, v in self.stitch_plans.items()},
             "batches": {k: v.model_dump() for k, v in self.batches.items()},
             "renders": {k: v.model_dump() for k, v in self.renders.items()},
+            "selection_facts": {k: v.model_dump() for k, v in self.selection_facts.items()},
         }
         self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
@@ -292,6 +300,8 @@ class Ledger:
     def add_post(self, p: Post) -> None: self.posts.setdefault(p.id, p)
     def add_render(self, r: Render) -> None: self.renders.setdefault(r.id, r)   # first-write-wins (content-addressed dedup)
     def get_render(self, rid: str): return self.renders.get(rid)
+    def add_selection_fact(self, f: SelectionFact) -> None: self.selection_facts[f.id] = f   # M4: OVERWRITE — a re-cast updates the why (latest selection wins; NOT render's content-dedup)
+    def get_selection_fact(self, fid: str): return self.selection_facts.get(fid)
 
     # ---- typed state setters (FIX F65 — no cross-unit scan) ----
     # ECC fix #10: immutable update (model_copy + dict reassignment) instead of in-place `.state =`.
@@ -344,6 +354,16 @@ class Ledger:
         return [c for c in self.clips.values() if c.parent_id == moment_id]
     def posts_of(self, clip_id: str) -> list[Post]:
         return [p for p in self.posts.values() if p.parent_id == clip_id]
+    # M4 'account index': account-keyed accessors — the per-account direct-lookup API (a scan today; the ledger
+    # is small enough that an indexed cache would be speculative, so these stay simple scans with a clean name).
+    def posts_of_account(self, handle: str) -> list[Post]:
+        return [p for p in self.posts.values() if p.account == handle]
+    def renders_of_account(self, handle: str) -> list[Render]:
+        return [r for r in self.renders.values() if r.account == handle]
+    def selection_facts_of_account(self, handle: str) -> list[SelectionFact]:
+        return [f for f in self.selection_facts.values() if f.account == handle]
+    def selection_facts_of_moment(self, moment_id: str) -> list[SelectionFact]:
+        return [f for f in self.selection_facts.values() if f.moment_id == moment_id]
 
     # ---- reconcile (FIX F08/F32): upsert keep-set, cascade-delete the rest for this source ----
     def reconcile_moments(self, source_id: str, keep: dict[str, Moment]) -> None:
