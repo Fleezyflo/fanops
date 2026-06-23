@@ -357,6 +357,9 @@ def caption_prompt(payload: dict) -> str:
         "fine. Anything beyond 4 or off-menu is dropped by the system, so pick well.\n"
         "  - Honor each surface's `persona` when present — it sets the fan angle/voice for that "
         "account (e.g. which sub-scene to lean into within the menu).\n"
+        "  - When a surface carries a `corpus` (its curated, reach-vetted tag pool), PREFER the tags in "
+        "that surface's `corpus` for that surface — they are its hand-picked, account-specific tags; fill "
+        "any remaining slots (up to 4) from the menu above.\n"
         # ROOT FIX: the caption gate is HASHTAGS ONLY now — the on-screen hook is authored by the frame-
         # seeing MOMENT gate (hooks_by_persona), never this blind text-only gate. The per-surface
         # hook/axis/rationale ask was removed. The dormant variation machinery (coherent_variation +

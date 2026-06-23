@@ -49,6 +49,10 @@ class Account(BaseModel):
                                            # value reloads fine and resolve_top_bias ignores it (-> global) —
                                            # fail-open. set_framing is the strict WRITE boundary (refuses
                                            # anything not in config.FRAMING_NAMES).
+    hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona curated hashtag pool, HYDRATED in
+                                           # memory from the linked Persona at load (never stored on the account row —
+                                           # personas.json owns it). Empty on an unlinked account -> vet_hashtags(corpus=[])
+                                           # is byte-identical to today. The caption path floats these ahead of the lean.
     # Per-platform poster ids keyed by Platform.value (e.g. {"instagram": "ig_1", "tiktok": "tk_9"}).
     # A handle's Instagram and TikTok are DIFFERENT Postiz integrations, so each (handle, platform) must
     # resolve to its OWN id. ADDITIVE: empty on a legacy account, which then resolves via account_id —
@@ -194,6 +198,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         if per.voice:
             acc.persona = per.voice                  # the persona owns the voice (empty voice -> keep inline)
         acc.tag_lean = per.tag_lean                  # the persona owns the lean (may be None -> clears inline)
+        acc.hashtag_corpus = list(per.hashtag_corpus)   # B1: the persona owns the curated corpus (the caption path reads it)
 
 
 def link_persona(cfg: Config, handle: str, persona_id: str) -> str:

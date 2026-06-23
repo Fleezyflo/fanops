@@ -185,6 +185,10 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     # value -> no key (byte-identical to before). The lean steers vet_hashtags at ingest, NOT the prompt.
     personas = {a.handle: a.persona for a in accounts.accounts} if accounts is not None else {}
     leans = {a.handle: a.tag_lean for a in accounts.accounts} if accounts is not None else {}
+    # B1: the per-persona curated corpus (hydrated onto the account from its linked Persona). Rides the
+    # payload so it survives to ingest (-> vet_hashtags floats it ahead of the lean) AND the prompt shows
+    # it. Empty corpus -> no key (byte-identical to before B1).
+    corpora = {a.handle: list(getattr(a, "hashtag_corpus", []) or []) for a in accounts.accounts} if accounts is not None else {}
     payload = {
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
@@ -192,7 +196,8 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         "guidance": load_guidance(cfg),
         "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value,
                       **({"persona": pv} if (pv := personas.get(acct)) else {}),
-                      **({"tag_lean": lv} if (lv := leans.get(acct)) else {})}
+                      **({"tag_lean": lv} if (lv := leans.get(acct)) else {}),
+                      **({"corpus": cv} if (cv := corpora.get(acct)) else {})}
                      for acct, plat in surfaces],
         # variation v2: only present when a surface crossed the trust gate -> OFF/below-gate keeps
         # the payload byte-identical to pre-v2 (caption_prompt renders this block when present).
@@ -217,6 +222,8 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     requested = {s["surface"] for s in req.get("surfaces", [])}
     # persona differentiation: the per-surface tag_lean the request carried (None when absent) -> vet_hashtags.
     surface_lean = {s["surface"]: s.get("tag_lean") for s in req.get("surfaces", [])}
+    # B1: the per-surface curated corpus the request carried (absent when empty) -> vet_hashtags floats it first.
+    surface_corpus = {s["surface"]: s.get("corpus") for s in req.get("surfaces", [])}
     # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
     # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
     # logic so a typo'd-but-present caption is not mislabelled "missing".
@@ -255,7 +262,8 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         plat = _platform_of(item.surface)
         tags = vet_hashtags(item.hashtags or _tags_in(item.caption), plat,
                             src.language if src else None, store=load_store(cfg),   # M4: live store when present
-                            lean=surface_lean.get(item.surface))                    # persona diff: per-account lean
+                            lean=surface_lean.get(item.surface),                    # persona diff: per-account lean
+                            corpus=surface_corpus.get(item.surface))                # B1: per-persona curated pool leads
         clip.meta_captions[item.surface] = {"caption": " ".join(tags), "hashtags": tags,
                                             # finding #3: keep the model's RAW tag picks (verbatim, before
                                             # the vet filter) so Studio can show picked-vs-vetted, not just
@@ -279,7 +287,8 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     for surface in sorted(missing):
         plat = _platform_of(surface)
         tags = vet_hashtags(None, plat, src.language if src else None, store=load_store(cfg),
-                            lean=surface_lean.get(surface))    # seed-fallback still honors the account's lean
+                            lean=surface_lean.get(surface),    # seed-fallback still honors the account's lean
+                            corpus=surface_corpus.get(surface))   # B1: ...and its curated corpus leads the seed too
         clip.meta_captions[surface] = {"caption": " ".join(tags), "hashtags": tags,
                                        "hashtags_raw": [], "hook": None, "axis": None,
                                        "rationale": None, "fallback": True}
