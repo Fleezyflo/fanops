@@ -165,3 +165,18 @@ def test_moment_casting_prompt_builds():
 def _req_path(cfg, source_id):
     from fanops.agentstep import request_path
     return request_path(cfg, "moment_casting", source_id)
+
+
+# ---- M4b: the LLM gate's selection lands a durable selection FACT (method=llm) ----
+def test_ingest_writes_llm_selection_facts(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, [_acct("@a", "guitar"), _acct("@b", "drums", aid="2")])
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    led = _respond_and_ingest(led, cfg, {"@a": ["m0", "m1"], "@b": ["m2"]})
+    fa = {f.moment_id: f for f in led.selection_facts_of_account("@a")}
+    assert set(fa) == {"m0", "m1"}                                # one fact per LLM-selected (account, moment)
+    assert fa["m0"].method == "llm" and fa["m0"].reason == "r"    # the moment's editorial reason is the WHY
+    assert fa["m0"].overlap is None and fa["m0"].rank is None and fa["m0"].signal is None   # LLM-chosen: no heuristic score
+    assert fa["m0"].source_id == "src_1" and fa["m0"].created_at is not None
+    fb = led.selection_facts_of_account("@b")
+    assert len(fb) == 1 and fb[0].moment_id == "m2" and fb[0].method == "llm"
