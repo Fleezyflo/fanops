@@ -9,7 +9,7 @@ import mimetypes
 from pathlib import Path
 import requests
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError
+from fanops.errors import BlotatoAuthError, redact
 from fanops.ledger import Ledger
 from fanops.post.blotato_base import BASE_URL
 
@@ -54,7 +54,7 @@ def upload_media(cfg: Config, path: Path) -> str:
         # resp.text would leak the credential into all three.
         raise BlotatoAuthError("Blotato 401 on media presign — check BLOTATO_API_KEY (response body withheld)")
     if resp.status_code >= 300:
-        raise RuntimeError(f"Blotato presign failed ({resp.status_code}): {(resp.text or '')[:300]}")
+        raise RuntimeError(f"Blotato presign failed ({resp.status_code}): {redact(resp.text, key, limit=300)}")
     presign = resp.json()
     if "presignedUrl" not in presign or "publicUrl" not in presign:
         raise RuntimeError(f"Blotato presign response missing presignedUrl/publicUrl; got keys {sorted(presign)}")
@@ -67,7 +67,7 @@ def upload_media(cfg: Config, path: Path) -> str:
         put = requests.put(presign["presignedUrl"], data=fh,
                            headers={"Content-Type": ctype}, timeout=_put_timeout_for(size))
     if put.status_code >= 300:
-        raise RuntimeError(f"Blotato media PUT failed ({put.status_code}): {(put.text or '')[:300]}")
+        raise RuntimeError(f"Blotato media PUT failed ({put.status_code}): {redact(put.text, key, limit=300)}")
     return presign["publicUrl"]
 
 def ensure_clip_media(led: Ledger, cfg: Config, clip_id: str) -> str:

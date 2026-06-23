@@ -6,7 +6,7 @@
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import SelectionFact, Post, Render, Platform, PostState, RenderState
+from fanops.models import SelectionFact, Post, Platform, PostState
 from fanops.ids import child_id
 
 
@@ -50,19 +50,17 @@ def test_selection_facts_of_account_and_moment(tmp_path):
     assert {f.moment_id for f in led.selection_facts_of_account("@a")} == {"m1", "m2"}   # account-keyed lookup
     assert {f.account for f in led.selection_facts_of_moment("m1")} == {"@a", "@b"}      # moment-keyed lookup
 
-def test_posts_and_renders_of_account(tmp_path):
-    # the account-keyed accessors the plan calls the 'account index' — direct per-account lookups (scans today)
+def test_posts_of_account(tmp_path):
+    # the account-keyed accessor the plan calls the 'account index' — direct per-account lookup (a scan today).
+    # (renders_of_account was removed — zero callers + under-reported cross-account-reused renders.)
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p_a", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval))
         led.add_post(Post(id="p_b", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval))
-        led.add_render(Render(id="r_a", clip_id="c1", account="@a", surface_key="@a/instagram", path="/r.mp4",
-                             state=RenderState.rendered))
     led = Ledger.load(cfg)
     assert {p.id for p in led.posts_of_account("@a")} == {"p_a"}
-    assert {r.id for r in led.renders_of_account("@a")} == {"r_a"}
 
 def test_v6_ledger_migrates_to_v7_injecting_selection_facts(tmp_path):
     # additive v6->v7: a v6 ledger (no selection_facts key) loads with an empty map, no row lost, idempotent

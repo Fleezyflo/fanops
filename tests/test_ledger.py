@@ -1,5 +1,8 @@
 # tests/test_ledger.py
 import json
+import os
+import sys
+import pytest
 from fanops.config import Config
 from fanops.models import Source, Moment, Clip, Post, PostState, SourceState, ClipState, Platform
 from fanops.ledger import Ledger
@@ -7,6 +10,14 @@ from fanops.ledger import Ledger
 def test_empty(tmp_path):
     led = Ledger.load(Config(root=tmp_path))
     assert led.sources == {} and led.moments == {} and led.clips == {} and led.posts == {}
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode bits")
+def test_ledger_written_owner_only(tmp_path):
+    # audit: ledger.json carries captions/URLs/submission ids (+ now-redacted error reasons) — it must
+    # NOT be group/world-readable at rest. The atomic tmp is chmod'd 0600 before the replace.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/x.mp4", sha256="d")); led.save()
+    assert os.stat(cfg.ledger_path).st_mode & 0o077 == 0      # no group/other access
 
 def test_roundtrip(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

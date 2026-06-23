@@ -265,7 +265,14 @@ class Ledger:
         already holds it; flock is per-fd, so a nested acquire on a NEW fd from the same process
         would block against our own held lock and, under the LOCK_NB+timeout loop, raise
         LockBusyError after the timeout — a self-inflicted failure). Atomic write preserved
-        (tmp + os.replace)."""
+        (tmp + os.replace).
+
+        PERF (audit, accepted tradeoff — do NOT 'fix' to incremental writes): this dumps the WHOLE
+        ledger every transaction (O(all-time records)). That is DELIBERATE — the atomic whole-file
+        tmp+replace under a single flock is exactly what closes the B4 lost-update window; an
+        append-only/partial-write scheme would trade that correctness away. The working-set size is
+        bounded instead by `fanops gc --keep-days` (cfg.gc_keep_days), which prunes aged records — so
+        the file stays small in practice. Revisit only if a real, measured ledger ever outgrows GC."""
         doc = {
             "schema_version": SCHEMA_VERSION,          # stamp the on-disk shape (Phase 4a)
             "sources": {k: v.model_dump() for k, v in self.sources.items()},
@@ -282,7 +289,9 @@ class Ledger:
         self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(doc, indent=2, default=str))
-        os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic on POSIX
+        try: os.chmod(tmp, 0o600)            # owner-only at rest (audit): the ledger carries captions/URLs/submission ids
+        except OSError: pass                 # best-effort — a non-POSIX FS must never break persistence
+        os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic on POSIX (the 0600 mode rides the replace)
 
     def save(self) -> None:
         """Standalone save for callers OUTSIDE a transaction (e.g. cmd_ingest, cmd_gc). Acquires
@@ -358,8 +367,10 @@ class Ledger:
     # is small enough that an indexed cache would be speculative, so these stay simple scans with a clean name).
     def posts_of_account(self, handle: str) -> list[Post]:
         return [p for p in self.posts.values() if p.account == handle]
-    def renders_of_account(self, handle: str) -> list[Render]:
-        return [r for r in self.renders.values() if r.account == handle]
+    # NB: a per-account `renders_of_account` was removed (audit) — it had ZERO production callers and
+    # under-reported a render shared via cross-account REUSE (a reused render keeps its origin `account`,
+    # so a naive `r.account == handle` scan misses it). Re-add a CORRECT (surface-keyed) version if a
+    # consumer ever needs it; don't resurrect the buggy scan.
     def selection_facts_of_account(self, handle: str) -> list[SelectionFact]:
         return [f for f in self.selection_facts.values() if f.account == handle]
     def selection_facts_of_moment(self, moment_id: str) -> list[SelectionFact]:

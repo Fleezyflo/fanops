@@ -31,6 +31,19 @@ def test_list_posts_non_2xx_raises(tmp_path, monkeypatch, mocker):
     with pytest.raises(RuntimeError, match="500"):
         BlotatoMetricsClient(cfg).list_posts()
 
+def test_non_401_error_body_redacts_the_api_key(tmp_path, monkeypatch, mocker):
+    # stage-5 audit: a NON-401 error body that REFLECTS the presented key (a 5xx/proxy/WAF debug page)
+    # must NOT leak it into the RuntimeError that lands in error_reason -> ledger/stderr/run.log. The key
+    # is scrubbed to ***; the diagnosable status is preserved. (The 401 path already withholds the body.)
+    import pytest
+    monkeypatch.setenv("BLOTATO_API_KEY", "SECRET-BLOTATO-KEY")
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_R(500, {"error": "rejected header blotato-api-key=SECRET-BLOTATO-KEY"}))
+    with pytest.raises(RuntimeError) as ei:
+        BlotatoMetricsClient(cfg).list_posts()
+    assert "SECRET-BLOTATO-KEY" not in str(ei.value) and "***" in str(ei.value) and "500" in str(ei.value)
+
 class _RBadJson:
     # a 200 whose body is NOT JSON (HTML error page from a misconfigured proxy)
     def __init__(s, c, text): s.status_code = c; s.text = text

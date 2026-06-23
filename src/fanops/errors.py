@@ -76,6 +76,18 @@ class CutoverError(Exception):
     chain) — it only ever means the operator's manual go-live probe needs a different input."""
 
 
+def redact(text: "str | None", *secrets: "str | None", limit: int = 200) -> str:
+    """Scrub secret values (API keys) out of an external response body BEFORE it lands in a ledger
+    error_reason / stderr / run.log, THEN truncate. The 401 paths already WITHHOLD the body entirely;
+    this defends the NON-401 echoes — a 5xx/429/4xx debug or WAF page can reflect the presented key
+    (stage-5 audit follow-up). Redact-then-truncate so a key straddling the cut is still scrubbed."""
+    out = text or ""
+    for s in secrets:
+        if s:
+            out = out.replace(s, "***")
+    return out[:limit]
+
+
 def reason(exc: Exception) -> str:
     """Condense a parse/validation error into one operator-readable line.
     json.JSONDecodeError already stringifies tidily; pydantic's ValidationError is

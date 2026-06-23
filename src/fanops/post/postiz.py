@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import NamedTuple
 import requests
 from fanops.config import Config
-from fanops.errors import PostizAuthError
+from fanops.errors import PostizAuthError, redact
 from fanops.ledger import Ledger
 from fanops.models import Platform, PostState
 from fanops.text import safe_public_url
@@ -165,7 +165,7 @@ def postiz_list_integrations(cfg: Config) -> list[PostizIntegration]:
     if resp.status_code == 401:
         raise PostizAuthError("Postiz 401 on integrations — check POSTIZ_API_KEY (response body withheld)")
     if resp.status_code >= 300:
-        raise RuntimeError(f"Postiz integrations failed ({resp.status_code}): {(resp.text or '')[:200]}")
+        raise RuntimeError(f"Postiz integrations failed ({resp.status_code}): {redact(resp.text, cfg.postiz_api_key)}")
     body = resp.json()
     items = body.get("integrations") if isinstance(body, dict) else body
     if not isinstance(items, list):

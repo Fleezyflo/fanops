@@ -13,7 +13,7 @@ from typing import Optional
 from urllib.parse import quote
 import requests
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError, PostizAuthError, ZernioAuthError
+from fanops.errors import BlotatoAuthError, PostizAuthError, ZernioAuthError, redact
 from fanops.post.blotato_base import BASE_URL
 from fanops.post.postiz import _base, _key
 from fanops.post.zernio import _base as _zbase, _key as _zkey
@@ -29,7 +29,15 @@ def _raise_for_auth(resp) -> None:
     if resp.status_code == 401:
         raise BlotatoAuthError("Blotato 401 unauthorized — check BLOTATO_API_KEY (response body withheld)")
 
-def _json_or_raise(resp, label: str):
+def _safe(cfg, text, limit: int = 200) -> str:
+    # Scrub EVERY provider key from an external body before it lands in error_reason/stderr/run.log
+    # (stage-5 audit follow-up: the 401 paths withhold the body, but the non-401 echoes still embed it,
+    # and a 5xx/proxy/WAF page can reflect the presented key). cfg may be None (legacy callers) -> no-op.
+    if cfg is None:
+        return (text or "")[:limit]
+    return redact(text, cfg.blotato_api_key, cfg.postiz_api_key, cfg.zernio_api_key, limit=limit)
+
+def _json_or_raise(resp, label: str, cfg=None):
     # ECC fix #4: a 200 with a non-JSON body (HTML error page from a misconfigured proxy) made
     # resp.json() raise a raw JSONDecodeError that propagated out of pull_metrics and aborted the
     # WHOLE pass — every post lost its metrics. Convert it to a diagnosable RuntimeError the callers
@@ -37,7 +45,7 @@ def _json_or_raise(resp, label: str):
     try:
         return resp.json()
     except ValueError:
-        raise RuntimeError(f"{label}: non-JSON {resp.status_code} response: {(resp.text or '')[:200]}")
+        raise RuntimeError(f"{label}: non-JSON {resp.status_code} response: {_safe(cfg, resp.text)}")
 
 class BlotatoMetricsClient:
     def __init__(self, cfg: Config):
@@ -52,8 +60,8 @@ class BlotatoMetricsClient:
                             params={"window": window}, timeout=30)
         _raise_for_auth(resp)
         if resp.status_code not in (200, 201):
-            raise RuntimeError(f"blotato metrics {resp.status_code}: {resp.text[:200]}")
-        data = _json_or_raise(resp, "blotato metrics")
+            raise RuntimeError(f"blotato metrics {resp.status_code}: {_safe(self.cfg, resp.text)}")
+        data = _json_or_raise(resp, "blotato metrics", self.cfg)
         if isinstance(data, list):
             return data
         return data.get("items", [])
@@ -75,8 +83,8 @@ class BlotatoStatusClient:
         resp = requests.get(f"{BASE_URL}/posts/{submission_id}", headers=self.headers, timeout=30)
         _raise_for_auth(resp)
         if resp.status_code not in (200, 201):
-            raise RuntimeError(f"blotato status {resp.status_code}: {resp.text[:200]}")
-        return _json_or_raise(resp, "blotato status")
+            raise RuntimeError(f"blotato status {resp.status_code}: {_safe(self.cfg, resp.text)}")
+        return _json_or_raise(resp, "blotato status", self.cfg)
 
 
 # ---- Postiz metrics (M2) — the FREE backend's read client. Postiz analytics is PER-POST
@@ -135,8 +143,8 @@ class PostizMetricsClient:
         if resp.status_code == 401:
             raise PostizAuthError("Postiz 401 on analytics — check POSTIZ_API_KEY (response body withheld)")
         if resp.status_code >= 300:
-            raise RuntimeError(f"postiz analytics {resp.status_code}: {(resp.text or '')[:200]}")
-        arr = _json_or_raise(resp, "postiz analytics")
+            raise RuntimeError(f"postiz analytics {resp.status_code}: {_safe(self.cfg, resp.text)}")
+        arr = _json_or_raise(resp, "postiz analytics", self.cfg)
         labels = [str(it.get("label", "")) for it in arr if isinstance(it, dict)] if isinstance(arr, list) else []
         return _map_analytics(arr), labels
 
@@ -204,8 +212,8 @@ class PostizStatusClient:
         if resp.status_code == 401:
             raise PostizAuthError("Postiz 401 on posts list — check POSTIZ_API_KEY (response body withheld)")
         if resp.status_code >= 300:
-            raise RuntimeError(f"postiz posts {resp.status_code}: {(resp.text or '')[:200]}")
-        body = _json_or_raise(resp, "postiz posts")
+            raise RuntimeError(f"postiz posts {resp.status_code}: {_safe(self.cfg, resp.text)}")
+        body = _json_or_raise(resp, "postiz posts", self.cfg)
         rows = body.get("posts", []) if isinstance(body, dict) else (body if isinstance(body, list) else [])
         row = next((r for r in rows if isinstance(r, dict) and r.get("id") == submission_id), None)
         if row is None:
@@ -303,8 +311,8 @@ class ZernioMetricsClient:
         if resp.status_code == 401:
             raise ZernioAuthError("Zernio 401 on analytics — check ZERNIO_API_KEY (response body withheld)")
         if resp.status_code >= 300:
-            raise RuntimeError(f"zernio analytics {resp.status_code}: {(resp.text or '')[:200]}")
-        body = _json_or_raise(resp, "zernio analytics")
+            raise RuntimeError(f"zernio analytics {resp.status_code}: {_safe(self.cfg, resp.text)}")
+        body = _json_or_raise(resp, "zernio analytics", self.cfg)
         return _map_zernio_analytics(body), _zernio_raw_labels(body)
 
     def list_posts(self, window: str = "30d") -> list[dict]:
@@ -370,8 +378,8 @@ class ZernioStatusClient:
         if resp.status_code == 401:
             raise ZernioAuthError("Zernio 401 on post status — check ZERNIO_API_KEY (response body withheld)")
         if resp.status_code >= 300:
-            raise RuntimeError(f"zernio status {resp.status_code}: {(resp.text or '')[:200]}")
-        body = _json_or_raise(resp, "zernio status")
+            raise RuntimeError(f"zernio status {resp.status_code}: {_safe(self.cfg, resp.text)}")
+        body = _json_or_raise(resp, "zernio status", self.cfg)
         status = _ZERNIO_STATE_MAP.get(_extract_zernio_state(body).strip().lower(), "scheduled")
         out = {"status": status}
         if status == "published":

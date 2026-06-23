@@ -47,6 +47,19 @@ def test_matching_response_validates(tmp_path):
     dec = read_response(cfg, "moments", "src_1", MomentDecision)
     assert isinstance(dec, MomentDecision) and dec.picks[0].end == 8.0
 
+def test_write_response_is_atomic_and_roundtrips(tmp_path):
+    # audit (LOW): the responder now writes answers via write_response (temp + os.replace) so a concurrent
+    # reader never sees a torn file. Round-trips through read_response and leaves no .tmp sibling behind.
+    from fanops.agentstep import write_response
+    cfg = Config(root=tmp_path)
+    rid = write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    write_response(cfg, "moments", "src_1", json.dumps({
+        "source_id": "src_1", "request_id": rid,
+        "picks": [{"start": 0.0, "end": 5.0, "reason": "r"}]}))
+    dec = read_response(cfg, "moments", "src_1", MomentDecision)
+    assert isinstance(dec, MomentDecision) and dec.picks[0].end == 5.0
+    assert not list(response_path(cfg, "moments", "src_1").parent.glob("*.tmp"))   # no torn temp left behind
+
 def test_rewrite_invalidates_prior_response(tmp_path):
     cfg = Config(root=tmp_path)
     rid1 = write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})

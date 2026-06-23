@@ -13,7 +13,7 @@ from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
 from fanops.models import MomentDecision, MomentHookDecision, MomentCastingDecision, CaptionSet
-from fanops.agentstep import pending, request_path, response_path, latest_request_id
+from fanops.agentstep import pending, request_path, write_response, latest_request_id
 from fanops.llm import claude_json_meta, LlmTimeoutError
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, moment_casting_prompt, caption_prompt
 from fanops.control import guidance_sha
@@ -98,7 +98,7 @@ class LlmResponder:
             if kind == "moments":           # MomentDecision requires source_id; the GATE is
                 out["source_id"] = payload.get("source_id")   # authoritative (review Issue A) — gate wins, not the model
             obj = model_cls(**out)          # decision (a): validate; ValidationError -> pending + log
-            response_path(cfg, kind, key).write_text(obj.model_dump_json(indent=2))
+            write_response(cfg, kind, key, obj.model_dump_json(indent=2))   # ATOMIC (audit): no torn-read window for a concurrent reader
             return True
         except ValidationError as e:        # present-but-invalid: log "invalid", gate stays pending
             log("responder", f"{kind}:{key}", "invalid", err=str(e)[:160])

@@ -32,7 +32,7 @@ import random
 import time
 import requests
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError
+from fanops.errors import BlotatoAuthError, redact
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.post.payload import build_blotato_payload, default_target_fields
@@ -113,7 +113,7 @@ class BlotatoRestPoster:
                     # re-queueable => double-post to a real fan account). The client token from D1 is
                     # PRESERVED (do NOT clear submission_id) so reconcile can still poll the post.
                     post.state = PostState.needs_reconcile
-                    post.error_reason = f"2xx but no recognizable submission id: {resp.text[:200]}"
+                    post.error_reason = f"2xx but no recognizable submission id: {redact(resp.text, self.cfg.blotato_api_key)}"
                     return led
                 post.state = PostState.submitted
                 post.submission_id = sid
@@ -126,7 +126,7 @@ class BlotatoRestPoster:
                 # Ambiguous: Blotato may have created the post before the 5xx. No idempotency key
                 # exists, so DO NOT re-POST (double-publish risk) — park for reconcile, capturing a
                 # postSubmissionId from the body if present (AUDIT H4) so reconcile can poll it.
-                self._reconcile(post, f"blotato {resp.status_code}: {resp.text[:160]}", resp=resp)
+                self._reconcile(post, f"blotato {resp.status_code}: {redact(resp.text, self.cfg.blotato_api_key, limit=160)}", resp=resp)
                 return led
             if resp.status_code == 429:
                 # Jitter the backoff so many surfaces rate-limited at once don't retry in lockstep
@@ -136,5 +136,5 @@ class BlotatoRestPoster:
         # Loop exhausted: only the 429 path reaches here (5xx/network return early). All attempts
         # were rate-limited -> the post was never created -> failed (re-queueable), not reconcile.
         post.state = PostState.failed
-        post.error_reason = f"blotato {getattr(last,'status_code','?')}: {getattr(last,'text','')[:200]}"
+        post.error_reason = f"blotato {getattr(last,'status_code','?')}: {redact(getattr(last,'text',''), self.cfg.blotato_api_key)}"
         return led

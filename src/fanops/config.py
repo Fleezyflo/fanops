@@ -454,8 +454,8 @@ class Config:
     def account_casting(self) -> bool:
         # Account-First Studio: per-account MOMENT casting (Face 3). ON -> each active account is cast up to
         # cast_pick_budget of its best persona-fit moments (bounded by the batch target); crosspost then fans
-        # a cast moment ONLY to its accounts. DEFAULT OFF (opt-in, mirrors creative_variation) — a fan-out-
-        # changing selection layer ships behind a kill-switch; unset/empty/other stays OFF (today's behavior).
+        # a cast moment ONLY to its accounts. DEFAULT ON (per-account selection is the system's purpose,
+        # mirrors creative_variation) — set FANOPS_ACCOUNT_CASTING=0 to restore the legacy fan-to-all path.
         v = (os.getenv("FANOPS_ACCOUNT_CASTING") or "").strip().lower()
         return v not in ("0", "false", "no", "off")     # DEFAULT ON (per-account selection is the wanted path); explicit off-words disable
 

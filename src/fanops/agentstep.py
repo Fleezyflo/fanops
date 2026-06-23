@@ -58,6 +58,18 @@ def write_request(cfg: Config, *, kind: str, key: str, payload: dict) -> str:
         rp.unlink()
     return rid
 
+def write_response(cfg: Config, kind: str, key: str, json_text: str) -> None:
+    """Persist a gate ANSWER ATOMICALLY (temp + os.replace — the same write_request/ledger pattern), so a
+    concurrent reader (pending()/read_response) never sees a TORN response. The request_id match in
+    read_response stays the real safety net (a stale answer is never applied); this removes the torn-READ
+    window on the answer file itself, which the old plain write_text left open under overlapping passes."""
+    rp = response_path(cfg, kind, key)
+    tmp = rp.with_suffix(".json.tmp")
+    tmp.write_text(json_text)
+    try: os.chmod(tmp, 0o600)            # owner-only at rest (audit): the answer carries hook/caption/casting content
+    except OSError: pass                 # best-effort — never break the gate on a perms quirk
+    os.replace(str(tmp), str(rp))
+
 def read_response(cfg: Config, kind: str, key: str, model: Type[T]) -> T | None:
     rp = response_path(cfg, kind, key)
     if not rp.exists():

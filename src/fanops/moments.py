@@ -251,6 +251,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks (an EXACT repeat reads like a bot);
     # `cluster_used` (the opening-template scope) starts empty and accumulates within THIS atomic pass —
     # byte-identical to the old single-pass loop. Both grow as we accept hooks in pick order.
+    from fanops.caption import brand_risk_flag    # function-local: the ONE off-brand guardrail captions use (no module cycle)
     used = {(m.hook or "").strip().lower() for m in led.moments.values()
             if m.hook and m.parent_id != source_id}
     cluster_used: set[str] = set()
@@ -262,7 +263,8 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         # Reject KNOWN-mechanical slop (is_weak_hook: exact cross/within-source dup, opening-template
         # cluster) OR a THIRD-PERSON scene-narration recap (narration_signature — high precision;
         # viewer-POV/imperative pass). The stripped hook is PRESERVED so Review can restore it.
-        if hook and (is_weak_hook(hook, used, cluster_scope=cluster_used) or narration_signature(hook)):
+        if hook and (is_weak_hook(hook, used, cluster_scope=cluster_used) or narration_signature(hook)
+                     or brand_risk_flag(hook, cfg)):   # HIGH (audit): the burned hook gets the SAME brand-risk screen captions get
             hook_removed = hook
             hook = None                             # ...the clip still ships CLEAN by default
         if hook:
@@ -271,7 +273,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         # dropped handle falls back to the shared `hook` at crosspost. No cross-clip dedup (these are
         # per-account variants of ONE clip).
         hbp = {hh: s for hh, ph in (dec.hooks_by_persona or {}).items()
-               if (s := sanitize_generated_text(ph)) and not narration_signature(s)}
+               if (s := sanitize_generated_text(ph)) and not narration_signature(s) and not brand_risk_flag(s, cfg)}
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
                                                  "hooks_by_persona": hbp,
                                                  "state": MomentState.decided})

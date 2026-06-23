@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import NamedTuple
 import requests
 from fanops.config import Config
-from fanops.errors import ZernioAuthError
+from fanops.errors import ZernioAuthError, redact
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.text import safe_public_url
@@ -136,7 +136,7 @@ def zernio_list_accounts(cfg: Config) -> list[ZernioAccount]:
     if resp.status_code == 401:
         raise ZernioAuthError("Zernio 401 on accounts — check ZERNIO_API_KEY (response body withheld)")
     if resp.status_code >= 300:
-        raise RuntimeError(f"Zernio accounts failed ({resp.status_code}): {(resp.text or '')[:200]}")
+        raise RuntimeError(f"Zernio accounts failed ({resp.status_code}): {redact(resp.text, cfg.zernio_api_key)}")
     body = resp.json()
     items = body.get("accounts") if isinstance(body, dict) else body
     if not isinstance(items, list):
