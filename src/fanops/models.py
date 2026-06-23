@@ -279,8 +279,11 @@ class SelectionFact(BaseModel):
     # "why" — the persona_fit_score (overlap, signal) and the LLM choice were computed-and-discarded. A
     # SelectionFact persists that decision + its reasoning. CONTENT-ADDRESSED one-per-(moment, account):
     # child_id("selfact", moment_id, account) so a re-cast OVERWRITES (the CURRENT durable selection, not a
-    # growing history). Additive top-level `selection_facts` map (v6->v7); old ledgers load with {} — nothing
-    # writes facts until casting does (M4b), so the OFF/baseline shape is byte-identical.
+    # growing history). Facts reflect selections AS MADE — superseded on a RE-CAST, NOT on a moment re-decision:
+    # a re-decided-but-not-yet-recast moment keeps its last fact (affinities — NOT facts — is the live crosspost
+    # gate, so a stale fact never causes a phantom post; it is audit context only). Additive top-level
+    # `selection_facts` map (v6->v7); old ledgers load with {} — nothing writes facts until casting does (M4b),
+    # so the OFF/baseline shape is byte-identical.
     id: str                                     # child_id("selfact", moment_id, account)
     moment_id: str
     account: str                                # the handle this moment was selected FOR
