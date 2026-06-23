@@ -11,6 +11,7 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, ClipState, PostState, StitchState
+from fanops.bands import band_for                     # M3a: resolve a per-account clip_profile -> its length band (seconds)
 from fanops.timeutil import parse_iso
 
 IMMINENT_THRESHOLD_MINUTES = 5     # spec §4: a post within this of now (or past) is edit-disabled
@@ -71,6 +72,13 @@ class SurfacePost:
                                            # index=0), set ONLY for editable surfaces; read-only rows carry None.
     variant_hook: Optional[str] = None     # persona-differentiation: the per-account on-screen hook burned into
                                            # this surface's media (crosspost burn_hook_only). None when creative_variation is OFF.
+    # M3a — "review at scale": surface the per-account differentiation so the operator SEES it on the card.
+    length_label: Optional[str] = None     # the clip LENGTH band as seconds, e.g. "28–45s", from Post.clip_profile
+                                           # (M2b/M2c stamp). None when no profile (legacy/absent).
+    is_account_cut: bool = False           # True iff this surface's Render is a REAL per-account CUT (its own band/
+                                           # framing) — vs a hook-stamped shared clip. Read from Render.is_account_cut.
+    framing: Optional[str] = None          # the account's PINNED vertical crop ("top"/"center"), or None when it
+                                           # inherits the global. Shows the operator's deliberate per-account choice.
 
 
 @dataclass
@@ -278,25 +286,41 @@ def _lineage_for_clip(led: Ledger, clip):
     excerpt = mom.transcript_excerpt if mom else None
     return source_name, label, moment_window, reason, language, excerpt
 
-def _surface(post, *, persona, now: datetime, cfg: Config) -> SurfacePost:
+def _length_label(profile: Optional[str]) -> Optional[str]:
+    """The clip-length band of `profile` as an operator-facing seconds string (e.g. "long" -> "28–45s").
+    None for a missing/blank profile — band_for is NOT guessed from None (which would mislabel as the
+    talk default). En dash mirrors moment_window."""
+    if not (isinstance(profile, str) and profile.strip()):
+        return None
+    b = band_for(profile)
+    return f"{int(b.lo)}–{int(b.hi)}s"
+
+def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=None) -> SurfacePost:
     state = post.state.value
     # an awaiting_approval post is GATED — it cannot ship until approved, so it is never "imminent"
     # (no false "shipping now" badge) and is always editable (edit/regenerate/reschedule before approving).
     awaiting = post.state is PostState.awaiting_approval
     imm = False if awaiting else _imminent(post.scheduled_time, now)
     editable = awaiting or (state == PostState.queued.value and not imm)
+    # M3a: the per-account differentiation, surfaced. is_account_cut is the TRUTH on the Render (a failed cut
+    # fell back to a shared burn and stays False); framing is the account's own pinned crop (None = inherits global).
+    r = led.renders.get(post.render_id) if getattr(post, "render_id", None) else None
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=post.caption, hashtags=list(post.hashtags or []),
         scheduled_time=post.scheduled_time, media_url=f"/media/{post.id}",
         state=state, imminent=imm, editable=editable,
         suggested_time=suggest_time(cfg, post, now=now) if editable else None,   # P1: only editable surfaces
-        variant_hook=getattr(post, "variant_hook", None))   # persona on-screen hook (None when variation OFF)
+        variant_hook=getattr(post, "variant_hook", None),   # persona on-screen hook (None when variation OFF)
+        length_label=_length_label(getattr(post, "clip_profile", None)),
+        is_account_cut=bool(r and getattr(r, "is_account_cut", False)),
+        framing=(getattr(acct, "framing", None) or None))
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
-          active_handles: frozenset = frozenset()) -> ReviewCard:
+          active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
-    surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg)
+    accts = acct_by_handle or {}
+    surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account))
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed + affinities (clip -> moment)
     # Face 4: the REAL Batch this card belongs to — Post.batch_id (all posts on one clip share the lineage,
@@ -342,6 +366,7 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     post-less card (prepared/held, surfaces == []) has no surface on any account -> excluded under any
     non-None filter, present under None (byte-identical default)."""
     personas = _personas(accounts)
+    acct_by_handle = {a.handle: a for a in accounts.accounts}         # M3a: per-surface framing lookup by handle
     active_handles = frozenset(a.handle for a in accounts.active())   # B4: active universe for the excluded-count
     cards: list[ReviewCard] = []
     queued_by_clip: dict[str, list] = {}
@@ -364,7 +389,7 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     for clip_id, posts in queued_by_clip.items():
         clip = led.clips.get(clip_id)
         if clip is not None and not clip.held:        # a held clip belongs ONLY in the held bucket
-            editable_cards.append(_card(led, clip, posts, "editable", cfg, personas, now, active_handles))
+            editable_cards.append(_card(led, clip, posts, "editable", cfg, personas, now, active_handles, acct_by_handle))
     # editable cards: day-sorted (newest ingest day first, 'undated' last) so _review_body.html can emit a
     # running day-header across the paginated slice WITHOUT touching pagination (content-lifecycle Phase 3 H8).
     for c in editable_cards: c.day = _card_day(led, c)
@@ -376,13 +401,13 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
             continue
         clip = led.clips.get(clip_id)
         if clip is not None and not clip.held:        # (same rule for the recent/shipped bucket)
-            cards.append(_card(led, clip, posts, "recent", cfg, personas, now, active_handles))
+            cards.append(_card(led, clip, posts, "recent", cfg, personas, now, active_handles, acct_by_handle))
     clips_with_posts = {p.parent_id for p in led.posts.values()}
     for clip in led.clips.values():
         if clip.held:
-            cards.append(_card(led, clip, [], "held", cfg, personas, now, active_handles))
+            cards.append(_card(led, clip, [], "held", cfg, personas, now, active_handles, acct_by_handle))
         elif clip.id not in clips_with_posts and clip.state in PREPARABLE_STATES:
-            cards.append(_card(led, clip, [], "prepared", cfg, personas, now, active_handles))
+            cards.append(_card(led, clip, [], "prepared", cfg, personas, now, active_handles, acct_by_handle))
     if account is not None:        # P5: keep a card iff a SURFACE matches (post-less cards have none -> dropped)
         cards = [c for c in cards if any(s.account == account for s in c.surfaces)]
     if batch is not None:          # B2: drill into ONE batch — keep cards whose denormalized Batch.id matches
@@ -407,7 +432,8 @@ def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: date
     p = led.posts.get(post_id)
     if p is None:
         return None
-    return _surface(p, persona=_personas(accounts).get(p.account), now=now, cfg=cfg)
+    acct = next((a for a in accounts.accounts if a.handle == p.account), None)
+    return _surface(p, persona=_personas(accounts).get(p.account), now=now, cfg=cfg, led=led, acct=acct)
 
 
 def _batch_title(led: Ledger, bid: Optional[str]) -> Optional[str]:

@@ -435,7 +435,7 @@ def test_surfacepost_carries_suggested_time(tmp_path):
     # an awaiting (editable) surface carries a strictly-future suggestion on its read-model.
     from fanops.studio.views import _surface
     cfg = Config(root=tmp_path)
-    s = _surface(_post(), persona=None, now=NOW, cfg=cfg)
+    s = _surface(_post(), persona=None, now=NOW, cfg=cfg, led=Ledger.load(cfg))
     assert s.suggested_time is not None and parse_iso(s.suggested_time) > NOW
 
 def test_schedulerow_carries_suggested_time(tmp_path):
@@ -455,7 +455,7 @@ def test_suggested_time_with_broken_clip_lineage_still_renders(tmp_path):
     # is missing from the ledger still builds the read-model with a suggestion; no crash.
     from fanops.studio.views import _surface
     cfg = Config(root=tmp_path)
-    s = _surface(_post(parent_id="ghost_clip"), persona=None, now=NOW, cfg=cfg)
+    s = _surface(_post(parent_id="ghost_clip"), persona=None, now=NOW, cfg=cfg, led=Ledger.load(cfg))
     assert s.suggested_time is not None and parse_iso(s.suggested_time) > NOW
 
 
