@@ -45,8 +45,10 @@ fomo
 2. **Max 4 hashtags. Hard.** More than 4 is forbidden. Enforced in code
    ([hashtags.py](../../../src/fanops/hashtags.py) `vet_hashtags`), not by asking
    the model nicely. General guides say "use 20–30" — ignored; the operator rule wins.
-3. **Hashtags come from the reach-vetted set, ranked by real post volume.** Not
-   words the model chooses. The set + counts are below, sourced.
+3. **Hashtags come from the reach-vetted FLOOR + live-discovered, operator-curated tags** —
+   never words the model invents. The frozen set (below) is the cold-start FLOOR, not the
+   ceiling: per-persona corpora curated from live Graph **co-occurrence discovery** join the
+   membership and lead selection (Part 3). The frozen counts below are a class ranking, sourced.
 
 ---
 
@@ -193,15 +195,23 @@ The lifecycle is now explicit, per-persona, and closed-loop. Top to bottom:
    **`hashtag_corpus`** (the per-persona pool), and `intake` (genre/language/reference
    accounts). Accounts link via `Account.persona_id`; the persona's voice/lean/corpus
    **hydrate** the account at load. Edited entirely in the Studio **Personas** tab.
-2. **Where corpus tags come from — three sources, all visible in the Personas tab:**
-   - **Bootstrap research** (`personas.research_corpus`) proposes the reach-best tags a
-     persona lacks, drawn from the reach-ranked store (own-reach + Graph trends) + the
-     lean flavor. One click to add each.
-   - **Operator recommend** (`meta_graph.tag_metrics`): type any candidate tag → the
-     **Meta Graph API** returns its live IG reach (top-media engagement), one
-     `ig_hashtag_search` budget slot (30 / 7 days) → Add to corpus. This is how a NICHE
-     tag the frozen set never had enters the pool, with evidence.
-   - **The frozen reach-vetted set** (Part 2) is always the floor.
+2. **Where corpus tags come from — four sources, all visible in the Personas tab:**
+   - **Live co-occurrence discovery** (`personas.discover_corpus` → `meta_graph.discover_candidates`):
+     the **Research corpus** button resolves the persona's category seeds (corpus + lean pool +
+     intake genre), reads each seed's live `top_media`, and harvests the hashtags those
+     *currently-winning* posts use alongside it — ranked by co-occurrence count. This is the only
+     Graph-native way to surface a tag the system has **never named** (IG has no trending-by-topic
+     endpoint); the harvest is budget-free (one `ig_hashtag_search` slot per seed, the caption read
+     is free). FAIL-OPEN to the offline re-rank below without Meta creds. The periodic equivalent is
+     `fanops hashtags discover` (reports per persona; never writes the menu).
+   - **Offline bootstrap re-rank** (`personas.research_corpus`) — the fallback: the reach-best tags a
+     persona lacks from the reach store + lean flavor (instant, no Graph call).
+   - **Operator recommend** (`meta_graph.tag_metrics`): type any candidate tag → the **Meta Graph API**
+     returns its live IG reach (top-media engagement), one `ig_hashtag_search` budget slot (30 / 7 days)
+     → Add to corpus. Per-tag evidence behind a curation decision.
+   - **The frozen reach-vetted set** (Part 2) is the cold-start FLOOR only.
+   Every source PROPOSES; the operator ACCEPTS into the corpus (the curation gate). Discovery never
+   auto-writes a tag into a caption — a discovered tag ships only after the operator adds it.
 3. **Selection** ([hashtags.py](../../../src/fanops/hashtags.py) `vet_hashtags`): at caption
    ingest, the linked persona's `corpus` JOINS the vetted membership (a curated tag the
    frozen set doesn't know now SURVIVES) and is the **priority pool** — it leads the ≤4,

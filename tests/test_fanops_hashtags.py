@@ -135,3 +135,26 @@ def test_refresh_store_trends_fail_open_without_token(tmp_path, monkeypatch):
     _analyzed_post(led, "p1", ["#owned"], 5000); _pass_doctor(cfg)
     out = refresh_store(led, cfg, get=_trend_router(900))
     assert out["written"] is True and out.get("trend_sampled", 0) == 0
+
+
+# --- M4 (live discovery): `hashtags discover` reports fresh per-persona tags, NEVER writes the caption menu.
+# Auto-absorbing unvetted discoveries into the global menu was DROPPED: an engagement floor admits generic
+# spam (#love rides viral posts) and rejects niche tags, and it would bypass the operator's curation gate.
+# Curation stays operator-gated in the Studio; the closed loop is discover -> accept -> own-reach feedback.
+def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch, capsys):
+    from fanops.fanops_hashtags import cmd_hashtags_discover
+    from fanops import personas as P
+    cfg = Config(root=tmp_path)
+    P.add_persona(cfg, name="Curator", id="curator", tag_lean="underground")
+    monkeypatch.setattr("fanops.personas.discover_corpus",
+                        lambda c, pid, **k: [{"tag": "#detroitrap", "count": 9}])
+    rc = cmd_hashtags_discover(cfg)
+    out = capsys.readouterr().out
+    assert rc == 0 and "#detroitrap" in out and "curator" in out
+    assert not cfg.hashtags_path.exists()                      # discovery NEVER writes the caption menu
+
+
+def test_cmd_hashtags_discover_no_personas(tmp_path, capsys):
+    from fanops.fanops_hashtags import cmd_hashtags_discover
+    rc = cmd_hashtags_discover(Config(root=tmp_path))
+    assert rc == 0 and "no personas" in capsys.readouterr().out.lower()

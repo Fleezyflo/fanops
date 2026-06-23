@@ -19,14 +19,15 @@
   {% endif %}
 
   {% if result and result.ok and result.detail and result.detail.proposals is defined %}
-    {# B3: the bootstrap research proposals — reach-best tags this persona lacks, one click each to add. #}
+    {# M3: LIVE discovery proposals — tags the category's currently-winning posts use that this persona
+       lacks, each with its evidence (co-occurrence count; measured reach when present). One click to add. #}
     <div class="research-result">
-      <strong>Proposed for {{ result.detail.persona }}</strong> (reach-ranked — add the ones that fit):
-      {% for t in result.detail.proposals %}
+      <strong>Discovered for {{ result.detail.persona }}</strong> (from live top posts — add the ones that fit):
+      {% for p in result.detail.proposals %}
         <button type="button" class="chip tag add"
           hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML"
-          hx-vals='{{ {"id": result.detail.persona, "tag": t} | tojson }}'>+ {{ t }}</button>
-      {% else %}<span class="muted">corpus already covers the reach-vetted set</span>{% endfor %}
+          hx-vals='{{ {"id": result.detail.persona, "tag": p.tag} | tojson }}'>+ {{ p.tag }}{% if p.count %}<span class="reach-n"> · {{ p.count | int }} posts</span>{% endif %}{% if p.measured_engagement %}<span class="reach-n"> · {{ (p.measured_engagement / 1000) | round(1) }}k</span>{% endif %}</button>
+      {% else %}<span class="muted">no fresh tags found — corpus covers the live winners</span>{% endfor %}
     </div>
   {% endif %}
 
