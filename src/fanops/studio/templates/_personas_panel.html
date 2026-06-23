@@ -2,6 +2,40 @@
    (#personas-panel). Add a persona via intake, edit it, curate its hashtag corpus, connect accounts.
    Every form swaps the whole panel (outerHTML) so the list + result update after each action.
    Autoescape stays on (no |safe) — persona voice/intake are operator free text. #}
+{% macro lever_fields(levers, p=None) %}
+  {# The lever ENGINE controls — one per persona characteristic. Shared by the Add + Edit forms; `p` is the
+     PersonaCard when editing (pre-selects current values), None when adding. Names match the route parsing. #}
+  <fieldset class="levers">
+    <legend>Levers — how this persona shapes the work</legend>
+    <div class="lever-group">
+      <span class="lever-label">Clips · favors moments</span>
+      {% for c in levers.content_focus %}
+        <label class="chk"><input type="checkbox" name="content_focus" value="{{ c }}"
+          {{ 'checked' if p and c in p.content_focus else '' }}> {{ c }}</label>
+      {% endfor %}
+    </div>
+    <label>Energy
+      <select name="energy"><option value="">— any —</option>
+        {% for e in levers.energy %}<option value="{{ e }}" {{ 'selected' if p and p.energy == e else '' }}>{{ e }}</option>{% endfor %}
+      </select></label>
+    <label>Clip length
+      <select name="clip_profile"><option value="">— global —</option>
+        {% for c in levers.clip_profile %}<option value="{{ c }}" {{ 'selected' if p and p.clip_profile == c else '' }}>{{ c }}</option>{% endfor %}
+      </select></label>
+    <label>Framing
+      <select name="framing"><option value="">— global —</option>
+        {% for f in levers.framing %}<option value="{{ f }}" {{ 'selected' if p and p.framing == f else '' }}>{{ f }}</option>{% endfor %}
+      </select></label>
+    <label>Hook angle
+      <select name="hook_angle"><option value="">— any —</option>
+        {% for h in levers.hook_angle %}<option value="{{ h }}" {{ 'selected' if p and p.hook_angle == h else '' }}>{{ h }}</option>{% endfor %}
+      </select></label>
+    <label>Hook tone
+      <select name="hook_tone"><option value="">— any —</option>
+        {% for h in levers.hook_tone %}<option value="{{ h }}" {{ 'selected' if p and p.hook_tone == h else '' }}>{{ h }}</option>{% endfor %}
+      </select></label>
+  </fieldset>
+{% endmacro %}
 <div id="personas-panel" aria-live="polite">
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
@@ -60,6 +94,7 @@
         <label>Reference accounts <input type="text" name="refs" placeholder="@a, @b" size="20"></label>
         <label class="block">Notes <input type="text" name="notes" placeholder="optional" size="40"></label>
       </fieldset>
+      {{ lever_fields(levers) }}
       <button type="submit" class="primary">Add persona</button>
     </form>
   </section>
@@ -79,6 +114,8 @@
           {% else %}<span class="muted">· not connected</span>{% endif %}
         </header>
         {% if p.voice %}<p class="persona-voice">{{ p.voice }}</p>{% endif %}
+        {% if p.instruction %}<p class="persona-instruction" title="the EXACT instruction the AI reads when casting moments, writing hooks and captions for this persona"><span class="muted">AI reads →</span> {{ p.instruction }}</p>{% endif %}
+        {% if p.clip_profile or p.framing %}<p class="muted persona-cut">cut: {% if p.clip_profile %}{{ p.clip_profile }} length{% endif %}{% if p.clip_profile and p.framing %}, {% endif %}{% if p.framing %}{{ p.framing }} framing{% endif %}</p>{% endif %}
 
         <div class="persona-corpus">
           <span class="muted">Corpus ({{ p.corpus|length }}, reach-ranked):</span>
@@ -122,6 +159,7 @@
               <label>Reference accounts <input type="text" name="refs" value="{{ p.intake.get('reference_accounts', []) | join(', ') }}" size="20"></label>
               <label class="block">Notes <input type="text" name="notes" value="{{ p.intake.get('notes', '') }}" size="40"></label>
             </fieldset>
+            {{ lever_fields(levers, p) }}
             <button type="submit" class="primary">Save</button>
             <button type="button" class="danger"
               hx-post="{{ url_for('do_personas_delete') }}" hx-target="#personas-panel" hx-swap="outerHTML"

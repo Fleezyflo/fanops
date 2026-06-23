@@ -806,6 +806,15 @@ class PersonaCard:
     linked_handles: list               # accounts whose persona_id points at this persona
     reach_tags: list = field(default_factory=list)   # B3: corpus tags present in the reach store (own-reach+trends) -> flag high-reach
     reach_means: dict = field(default_factory=dict)  # B4 (closed loop): {corpus tag -> measured mean reach} over analyzed posts
+    # Lever engine: the per-characteristic levers + the COMPOSED instruction the pipeline will read
+    # ("what the AI will read") — so the operator sees their config's exact downstream effect on the card.
+    content_focus: list = field(default_factory=list)
+    energy: Optional[str] = None
+    hook_angle: Optional[str] = None
+    hook_tone: Optional[str] = None
+    clip_profile: Optional[str] = None
+    framing: Optional[str] = None
+    instruction: str = ""
 
 
 @dataclass
@@ -828,7 +837,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     connect dropdown). Fail-open: a corrupt personas.json / accounts.json -> an EMPTY page (the surface
     never 500s), mirroring golive_accounts. `led` is injectable (tests); else loaded lock-free."""
     try:
-        from fanops.personas import Personas   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
+        from fanops.personas import Personas, compose_persona_instruction   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
         reg = Personas.load(cfg)
         accts = Accounts.load(cfg).accounts
     except Exception as exc:
@@ -861,7 +870,10 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          corpus=_ranked(p.hashtag_corpus), intake=dict(p.intake),
                          linked_handles=by_pid.get(p.id, []),
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set],
-                         reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means})
+                         reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
+                         content_focus=list(p.content_focus), energy=p.energy, hook_angle=p.hook_angle,
+                         hook_tone=p.hook_tone, clip_profile=p.clip_profile, framing=p.framing,
+                         instruction=compose_persona_instruction(p))
              for p in reg.all()]
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)

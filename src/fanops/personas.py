@@ -21,11 +21,22 @@ import tempfile
 from contextlib import contextmanager
 from typing import Optional
 from pydantic import BaseModel, Field
-from fanops.config import Config
+from fanops.config import Config, FRAMING_NAMES
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.hashtags import TAG_LEANS, _norm
+from fanops.bands import PROFILE_NAMES
 
 _CORPUS_CAP = 40                # max curated tags per persona — keeps captions/budget bounded (cap, not a target)
+
+# The lever-engine vocabularies (the validated control surface — one lever per persona characteristic). Each
+# is the WRITE boundary for its lever: add/update_persona refuses an unknown value (never write a typo that
+# reloads as a silent no-op), and compose_persona_instruction renders the SET levers into the single
+# instruction the casting/hook/caption prompts read. clip_profile/framing reuse the Account validators
+# (bands.PROFILE_NAMES / config.FRAMING_NAMES) so a persona pins the SAME deterministic CUT an account can.
+CONTENT_FOCUS = frozenset({"punchlines", "emotional", "hype", "storytelling", "visual", "bold-statement"})
+ENERGY_LEVELS = frozenset({"low", "medium", "high"})
+HOOK_ANGLES = frozenset({"curiosity", "challenge", "emotional", "result-first", "fomo"})
+HOOK_TONES = frozenset({"aggressive", "restrained", "playful"})
 
 
 class Persona(BaseModel):
@@ -35,6 +46,15 @@ class Persona(BaseModel):
     tag_lean: Optional[str] = None                # persona TAG knob: tasteful|underground|bold (None -> no lean)
     hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona reach-vetted pool
     intake: dict = Field(default_factory=dict)    # free-form intake (genre/language/reference accounts) — seeds B3 research
+    # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
+    # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
+    # compose returns the bare `voice` (byte-identical). Validated at the write boundary (add/update_persona).
+    content_focus: list[str] = Field(default_factory=list)   # which moment KINDS to favor (casting): CONTENT_FOCUS
+    energy: Optional[str] = None                  # clip energy: low|medium|high (ENERGY_LEVELS)
+    hook_angle: Optional[str] = None              # on-screen hook strategy: curiosity|challenge|... (HOOK_ANGLES)
+    hook_tone: Optional[str] = None               # on-screen hook tone: aggressive|restrained|playful (HOOK_TONES)
+    clip_profile: Optional[str] = None            # per-account LENGTH tier (bands.PROFILE_NAMES) — hydrates onto the account
+    framing: Optional[str] = None                 # per-account vertical CROP bias (config.FRAMING_NAMES) — hydrates onto the account
 
 
 class Personas:
@@ -65,6 +85,50 @@ def _slug(s: str) -> str:
     """A stable id from a name/handle: lowercase, drop a leading '@', non-alphanumerics -> single '-'."""
     s = (s or "").strip().lower().lstrip("@")
     return re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+
+
+def compose_persona_instruction(p) -> str:
+    """The lever ENGINE's composer — render a persona/account's SET levers into the SINGLE instruction
+    string the pipeline's casting/hook/caption prompts read (the value interpolated as each surface's
+    `persona`). PURE + duck-typed (reads .voice OR .persona, .content_focus, .energy, .hook_angle,
+    .hook_tone) so it serves a Persona OR a hydrated Account. THE FIREWALL: with NO levers set it returns
+    the bare voice VERBATIM, so every existing persona's payload stays byte-identical; only-levers -> the
+    composed body; both -> "body. voice". clip_profile/framing are NOT in the text (they drive the
+    deterministic CUT, not the prompt)."""
+    voice = (getattr(p, "voice", None) or getattr(p, "persona", None) or "").strip()
+    parts: list[str] = []
+    cf = [s for x in (getattr(p, "content_focus", None) or []) if (s := str(x).strip())]
+    if cf: parts.append("favors moments: " + ", ".join(cf))
+    for label, val in (("energy", getattr(p, "energy", None)), ("hook angle", getattr(p, "hook_angle", None)),
+                       ("hook tone", getattr(p, "hook_tone", None))):
+        v = (val or "").strip()
+        if v: parts.append(f"{label} {v}")
+    body = "; ".join(parts)
+    if voice and body: return f"{body}. {voice}"
+    return voice or body
+
+
+def _enum_or_none(v, names, label) -> Optional[str]:
+    """Normalize an optional enum lever to lowercase-or-None; raise on an unknown non-empty value (the write
+    boundary — never persist a lever that won't reload / would be a silent typo)."""
+    v = (v or "").strip().lower()
+    if v and v not in names:
+        raise ValueError(f"unknown {label}: {v!r}")
+    return v or None
+
+
+def _norm_focus(content_focus) -> list[str]:
+    """Normalize + validate content_focus (the multi-select moment-kind lever): lowercase, deduped, each in
+    CONTENT_FOCUS. A None/non-list -> []. An unknown kind raises (mirrors the enum levers)."""
+    seq = content_focus if isinstance(content_focus, (list, tuple)) else []
+    out: list[str] = []; seen: set[str] = set()
+    for c in seq:
+        s = str(c).strip().lower()
+        if not s or s in seen: continue
+        if s not in CONTENT_FOCUS:
+            raise ValueError(f"unknown content_focus: {s!r}")
+        seen.add(s); out.append(s)
+    return out
 
 
 def _load_raw(p) -> tuple[dict, list]:
@@ -106,10 +170,12 @@ _UNSET = object()
 
 
 def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
-                intake: Optional[dict] = None, id: str = "") -> str:
+                intake: Optional[dict] = None, id: str = "", *, content_focus=None,
+                energy: str = "", hook_angle: str = "", hook_tone: str = "",
+                clip_profile: str = "", framing: str = "") -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
-    duplicate id and a blank name (never write a record that won't reload). Validates tag_lean against
-    TAG_LEANS. Returns the id; raises ValueError on bad input."""
+    duplicate id and a blank name (never write a record that won't reload). Validates tag_lean AND every
+    lever-engine field against its vocabulary. Returns the id; raises ValueError on bad input."""
     nm = (name or "").strip()
     if not nm:
         raise ValueError("persona name is required")
@@ -119,25 +185,41 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
     lean = (tag_lean or "").strip().lower()
     if lean and lean not in TAG_LEANS:
         raise ValueError(f"unknown tag_lean: {tag_lean!r}")
+    focus = _norm_focus(content_focus)
+    energy_v = _enum_or_none(energy, ENERGY_LEVELS, "energy")
+    angle_v = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle")
+    tone_v = _enum_or_none(hook_tone, HOOK_TONES, "hook_tone")
+    prof_v = _enum_or_none(clip_profile, PROFILE_NAMES, "clip_profile")
+    fr_v = _enum_or_none(framing, FRAMING_NAMES, "framing")
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
         if any(isinstance(d, dict) and d.get("id") == pid for d in plist):
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""), "tag_lean": lean or None,
-                      "hashtag_corpus": [], "intake": dict(intake or {})})
+                      "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
+                      "energy": energy_v, "hook_angle": angle_v, "hook_tone": tone_v,
+                      "clip_profile": prof_v, "framing": fr_v})
         _write_atomic(p, raw)
     return pid
 
 
-def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET,
-                   tag_lean=_UNSET, intake=_UNSET) -> str:
-    """Edit a persona's fields atomically (the A2 edit form). Only the fields passed change; tag_lean=""
-    CLEARS the lean (-> None). Validates a non-blank tag_lean against TAG_LEANS. Unknown id -> KeyError."""
+def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean=_UNSET, intake=_UNSET,
+                   content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET, hook_tone=_UNSET,
+                   clip_profile=_UNSET, framing=_UNSET) -> str:
+    """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; tag_lean=""
+    CLEARS the lean (-> None) and likewise each lever clears on "". Validates tag_lean + every passed lever
+    against its vocabulary BEFORE the lock (never write a typo). Unknown id -> KeyError."""
     if tag_lean is not _UNSET:
         _l = (tag_lean or "").strip().lower()
         if _l and _l not in TAG_LEANS:
             raise ValueError(f"unknown tag_lean: {tag_lean!r}")
+    _focus = _norm_focus(content_focus) if content_focus is not _UNSET else _UNSET
+    _energy = _enum_or_none(energy, ENERGY_LEVELS, "energy") if energy is not _UNSET else _UNSET
+    _angle = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle") if hook_angle is not _UNSET else _UNSET
+    _tone = _enum_or_none(hook_tone, HOOK_TONES, "hook_tone") if hook_tone is not _UNSET else _UNSET
+    _prof = _enum_or_none(clip_profile, PROFILE_NAMES, "clip_profile") if clip_profile is not _UNSET else _UNSET
+    _fr = _enum_or_none(framing, FRAMING_NAMES, "framing") if framing is not _UNSET else _UNSET
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
@@ -151,6 +233,12 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET,
                 if voice is not _UNSET: d["voice"] = str(voice or "")
                 if tag_lean is not _UNSET: d["tag_lean"] = ((tag_lean or "").strip().lower() or None)
                 if intake is not _UNSET: d["intake"] = dict(intake or {})
+                if _focus is not _UNSET: d["content_focus"] = _focus
+                if _energy is not _UNSET: d["energy"] = _energy
+                if _angle is not _UNSET: d["hook_angle"] = _angle
+                if _tone is not _UNSET: d["hook_tone"] = _tone
+                if _prof is not _UNSET: d["clip_profile"] = _prof
+                if _fr is not _UNSET: d["framing"] = _fr
                 found = True
         if not found:
             raise KeyError(pid)

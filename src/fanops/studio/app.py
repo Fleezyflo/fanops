@@ -18,10 +18,16 @@ from fanops.discover import make_thumbnail        # reuse the cheap one-frame ff
 from fanops.studio import views, actions, golive
 from fanops.studio import personas as studio_personas   # A2: the Personas-page actions (create/edit/connect)
 from fanops.hashtags import TAG_LEANS            # the add-account lean picker options (no drift from the engine)
+from fanops.personas import CONTENT_FOCUS, HOOK_ANGLES, HOOK_TONES   # the lever-engine picker options (energy/profile/framing ordered below)
 from fanops.timeutil import local_input_to_utc_z, to_local_display, to_local_input  # local-time rendering at the web boundary
 
 _ALL_PLATFORMS = [p.value for p in Platform]    # the add-account form's platform checkboxes (no enum drift)
 _TAG_LEANS = sorted(TAG_LEANS)                  # add-account lean picker options (sourced from the engine)
+# Lever-engine picker options for the Personas tab, sourced from the engine vocabularies (no drift). Ordered
+# lists kept readable (energy low->high, profile short->long->legacy) rather than alphabetized.
+_LEVERS = {"content_focus": sorted(CONTENT_FOCUS), "energy": ["low", "medium", "high"],
+           "hook_angle": sorted(HOOK_ANGLES), "hook_tone": sorted(HOOK_TONES),
+           "clip_profile": ["short", "medium", "long", "talk", "song"], "framing": ["top", "center"]}
 _MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024      # 2 GiB upload cap — a long raw clip fits; an abusive body is refused (DoS)
 
 _HERE = Path(__file__).resolve().parent
@@ -650,26 +656,32 @@ def create_app(cfg: Config) -> Flask:
         # First-class personas (voice/tag_lean/corpus/intake) — list, add via intake, edit, connect to
         # accounts. nav_account is injected globally but the page is account-agnostic (it lists ALL).
         return render_template("personas.html", page=views.personas_page(cfg), tag_leans=_TAG_LEANS,
-                               result=None, tab="personas")
+                               levers=_LEVERS, result=None, tab="personas")
 
     def _personas_panel(result=None):
         # Re-render the panel with FRESH personas_page after an action (htmx swaps #personas-panel).
         return render_template("_personas_panel.html", page=views.personas_page(cfg), tag_leans=_TAG_LEANS,
-                               result=result, tab="personas")
+                               levers=_LEVERS, result=result, tab="personas")
 
     @app.post("/personas/add")
     def do_personas_add():
         return _personas_panel(studio_personas.create_persona(
             cfg, request.form.get("name", ""), request.form.get("voice", ""), request.form.get("tag_lean", ""),
             request.form.get("genre", ""), request.form.get("language", ""),
-            request.form.get("refs", ""), request.form.get("notes", "")))
+            request.form.get("refs", ""), request.form.get("notes", ""),
+            content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
+            hook_angle=request.form.get("hook_angle", ""), hook_tone=request.form.get("hook_tone", ""),
+            clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", "")))
 
     @app.post("/personas/edit")
     def do_personas_edit():
         return _personas_panel(studio_personas.edit_persona(
             cfg, request.form.get("id", ""), request.form.get("name", ""), request.form.get("voice", ""),
             request.form.get("tag_lean", ""), request.form.get("genre", ""), request.form.get("language", ""),
-            request.form.get("refs", ""), request.form.get("notes", "")))
+            request.form.get("refs", ""), request.form.get("notes", ""),
+            content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
+            hook_angle=request.form.get("hook_angle", ""), hook_tone=request.form.get("hook_tone", ""),
+            clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", "")))
 
     @app.post("/personas/delete")
     def do_personas_delete():
