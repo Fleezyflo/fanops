@@ -5,17 +5,14 @@
 # selection, not a growing history). Old ledgers load with selection_facts={} (byte-identical).
 import json
 from fanops.config import Config
-from fanops.ledger import Ledger, SCHEMA_VERSION
-from fanops.models import SelectionFact, Source, Post, Render, Platform, PostState, RenderState
+from fanops.ledger import Ledger
+from fanops.models import SelectionFact, Post, Render, Platform, PostState, RenderState
 from fanops.ids import child_id
 
 
 def _fact(moment_id, account, **extra):
     return SelectionFact(id=child_id("selfact", moment_id, account), moment_id=moment_id, account=account, **extra)
 
-
-def test_schema_version_is_7():
-    assert SCHEMA_VERSION == 7
 
 def test_selection_fact_defaults():
     f = _fact("m1", "@a")
