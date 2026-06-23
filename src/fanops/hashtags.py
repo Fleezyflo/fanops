@@ -84,7 +84,8 @@ def _composition(platform: Platform, language: str | None) -> list[str]:
     return _MEGA[:1] + _RELEVANCE[:1] + lang_slot + disc[:1] + _MEGA[1:] + _RELEVANCE[1:] + disc[1:]
 
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
-                 max_tags: int = 4, *, store: list[str] | None = None, lean: str | None = None) -> list[str]:
+                 max_tags: int = 4, *, store: list[str] | None = None, lean: str | None = None,
+                 corpus: list[str] | None = None) -> list[str]:
     """Return at most `max_tags` reach-vetted hashtags. Keeps the model's VETTED tags (reach-ordered),
     then backfills the balanced default until full. Drops every non-vetted word, dedupes case/'#'
     variants, hard-caps the count. Deterministic; never empty (the default always fills). With a live
@@ -92,19 +93,31 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     the frozen composition is the last-resort fill. store=None -> today's frozen behavior, byte-identical.
     `lean` (persona differentiation) floats that account's pool ahead of the frozen rank for BOTH the kept
     tags and the backfill; an Arabic clip keeps a language tag as a floor so the lean can't displace its
-    region reach. lean=None / unknown -> empty pool -> byte-identical (no language floor, frozen rank)."""
-    vetted = set(store) if store else VETTED
-    base_rank = {t: i for i, t in enumerate(store)} if store else _RANK
+    region reach. lean=None / unknown -> empty pool -> byte-identical (no language floor, frozen rank).
+    `corpus` (B1: the per-persona curated pool) JOINS the vetted membership (so a curated tag the frozen
+    set / store doesn't know SURVIVES) and floats AHEAD of the lean pool — the operator's pool wins. The
+    corpus order is the curation order. corpus=None/empty -> byte-identical (no membership change, no float)."""
+    corpus_norm: list[str] = []; _cseen: set[str] = set()
+    for t in (corpus or []):                                         # normalize + dedupe the curated pool
+        n = _norm(t) if isinstance(t, str) else ""
+        if n and n not in _cseen: _cseen.add(n); corpus_norm.append(n)
+    vetted = (set(store) if store else set(VETTED)) | set(corpus_norm)   # corpus joins the membership gate
+    base_rank = {t: i for i, t in enumerate(store)} if store else dict(_RANK)
     pool = _LEANS.get((lean or "").strip().lower(), [])              # unknown/None lean -> [] -> byte-identical
-    rank = {**base_rank, **{t: i - len(pool) for i, t in enumerate(pool)}}   # lean tags float to the front
+    rank = {**base_rank, **{t: i - len(pool) for i, t in enumerate(pool)},   # lean tags float ahead of the frozen rank
+            **{t: i - len(pool) - len(corpus_norm) for i, t in enumerate(corpus_norm)}}   # corpus floats ahead of the lean
     lang_floor = _ARABIC[:1] if (pool and (language or "").strip().lower().startswith("ar")) else []
     seen: set[str] = set()
     kept: list[str] = []
+    for h in corpus_norm:                           # B1: seed the WHOLE curated corpus first (the reach-sort + the final
+        if h not in seen: seen.add(h); kept.append(h)   # [:max_tags] truncate cap it) — so a corpus AR tag past the cap
+                                                    # stays eligible for the lean's AR-floor promotion below, not dropped early
+    # NB: kept may exceed max_tags here (corpus + model picks); the sort + cap below enforce the bound.
     for t in (tags or []):                          # honour the model's choices, but ONLY vetted ones
         h = _norm(t)
         if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
-    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (lean pool, own-reach store, or frozen rank)
+    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, then lean pool, own-reach store, or frozen rank)
     # Arabic floor under a lean: GUARANTEE one region tag survives the cap even when the model already filled
     # all max_tags slots (a flavor lean must not strip AR reach). Reserve the LAST slot for it (lean tags keep
     # the lead). No lean -> lang_floor empty -> floor None -> skipped -> byte-identical.
@@ -117,7 +130,7 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     # (leaned only) -> no-lean backfill is byte-identical. An AR clip's region floor still wins the reserved
     # last slot above, so AR accounts prioritise region reach over discovery (acceptable).
     disc_floor = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)[:1] if pool else []
-    for h in pool + disc_floor + (store or []) + _composition(platform, language):   # lean, discovery floor, store, default
+    for h in corpus_norm + pool + disc_floor + (store or []) + _composition(platform, language):   # corpus, lean, discovery floor, store, default
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)
