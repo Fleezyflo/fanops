@@ -683,6 +683,12 @@ def create_app(cfg: Config) -> Flask:
     def do_personas_corpus_remove():
         return _personas_panel(studio_personas.remove_corpus_tag(cfg, request.form.get("id", ""), request.form.get("tag", "")))
 
+    @app.post("/personas/research")
+    def do_personas_research():
+        # B3: propose the reach-best hashtags this persona lacks (bootstrap research) -> the panel renders
+        # them with one-click Add. Grounded in the reach store + the persona's lean; instant + budget-free.
+        return _personas_panel(studio_personas.research_corpus(cfg, request.form.get("id", "")))
+
     @app.post("/personas/recommend")
     def do_personas_recommend():
         # B2: look up a candidate tag's live Graph metrics (engagement) so the operator can decide before

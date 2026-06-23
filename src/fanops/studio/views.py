@@ -801,9 +801,10 @@ class PersonaCard:
     name: str
     voice: str
     tag_lean: Optional[str]
-    corpus: list                       # the per-persona reach-vetted hashtag pool (B1)
+    corpus: list                       # the per-persona reach-vetted hashtag pool (B1), DISPLAYED reach-first (B3)
     intake: dict                       # genre/language/reference_accounts/notes (seeds B3 research)
     linked_handles: list               # accounts whose persona_id points at this persona
+    reach_tags: list = field(default_factory=list)   # B3: corpus tags present in the reach store (own-reach+trends) -> flag high-reach
 
 
 @dataclass
@@ -836,9 +837,19 @@ def personas_page(cfg: Config) -> "PersonasPage":
     for a in accts:
         if getattr(a, "persona_id", None):
             by_pid.setdefault(a.persona_id, []).append(a.handle)
+    # B3: surface each corpus REACH-RANKED (the store blends own-reach + Graph trends) and flag the
+    # high-reach (store-present) tags. No store -> insertion order preserved, reach_tags empty (no signal yet).
+    from fanops.hashtags import vetted_menu, load_store, _norm
+    store = load_store(cfg)
+    rank = {t: i for i, t in enumerate(vetted_menu(store))}
+    store_set = {_norm(t) for t in (store or [])}
+    def _ranked(corpus):
+        return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
     cards = [PersonaCard(id=p.id, name=p.name, voice=p.voice, tag_lean=p.tag_lean,
-                         corpus=list(p.hashtag_corpus), intake=dict(p.intake),
-                         linked_handles=by_pid.get(p.id, [])) for p in reg.all()]
+                         corpus=_ranked(p.hashtag_corpus), intake=dict(p.intake),
+                         linked_handles=by_pid.get(p.id, []),
+                         reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set])
+             for p in reg.all()]
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)
 

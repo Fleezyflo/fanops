@@ -221,6 +221,28 @@ def delete_persona(cfg: Config, pid: str) -> str:
     return pid
 
 
+def research_corpus(cfg: Config, pid: str, *, limit: int = 8) -> list[str]:
+    """B3: propose the reach-best hashtags this persona doesn't yet carry — the bootstrap "research my
+    corpus" step. Grounded in the reach-ranked store (own-reach + Graph trends, default-ON) PLUS the
+    persona's lean flavor pool, minus its current corpus. INSTANT + budget-free: the store already encodes
+    the Graph signal (refresh_store blends it), so no per-candidate Graph call is spent here. The persona's
+    flavor leads, then the reach-ranked universe. Returns an ordered list of candidate tags (most-reach
+    first) the operator accepts into the corpus. Unknown id -> KeyError."""
+    from fanops.hashtags import vetted_menu, load_store, _LEANS   # _norm already imported at module scope
+    per = Personas.load(cfg).get(pid)
+    if per is None:
+        raise KeyError(pid)
+    have = {_norm(t) for t in per.hashtag_corpus if isinstance(t, str)}
+    lean_pool = _LEANS.get((per.tag_lean or "").strip().lower(), [])     # flavor leads
+    ranked = vetted_menu(load_store(cfg))                                # store (own-reach+trends) else frozen reach-order
+    out: list[str] = []; seen: set[str] = set()
+    for t in lean_pool + ranked:
+        n = _norm(t)
+        if n and n not in have and n not in seen:
+            seen.add(n); out.append(n)
+    return out[:limit]
+
+
 def migrate_from_accounts(cfg: Config) -> dict:
     """Lift each account's inline persona string into a first-class Persona and LINK it (set persona_id),
     so the brief-seeded personas become editable + connectable. IDEMPOTENT: an account already linked is
