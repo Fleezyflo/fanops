@@ -216,7 +216,7 @@
       </div>
       <div class="account-hooks">
         <p class="muted">Per-account on-screen hooks: each account burns its OWN persona-flavored hook in the
-          clip's first seconds. Default OFF — every account shows the same shared hook.</p>
+          clip's first seconds. Default ON — turn OFF to make every account show the same shared hook.</p>
         <form hx-post="{{ url_for('do_golive_hooks') }}" hx-target="#golive-panel" hx-swap="outerHTML">
           {% if status.creative_variation %}
             <span class="ok">● ON — accounts get distinct on-screen hooks</span>

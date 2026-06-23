@@ -208,9 +208,10 @@ def set_account_lean(cfg: Config, handle: str, lean: str) -> ActionResult:
 
 def set_per_account_hooks(cfg: Config, on: bool) -> ActionResult:
     """Toggle per-account on-screen hooks (FANOPS_CREATIVE_VARIATION) from the Go-Live tab — the gate that
-    burns each account's OWN persona-flavored on-screen hook (default OFF = the shared moment hook on every
-    surface). Dual-written so it takes effect immediately AND persists. Works in dryrun OR live (it changes
-    how clips render per account, not whether they publish). A durable-write failure -> clean error."""
+    burns each account's OWN persona-flavored on-screen hook (M3d: default ON; turning it OFF restores the
+    legacy shared moment hook on every surface). Dual-written so it takes effect immediately AND persists.
+    Works in dryrun OR live (it changes how clips render per account, not whether they publish). A
+    durable-write failure -> clean error."""
     err = _dual_write(cfg, "FANOPS_CREATIVE_VARIATION", "1" if on else "0")
     if err:
         return ActionResult(ok=False, error=err)
