@@ -14,13 +14,17 @@ on the publish path. Two design rules, both load-bearing:
      app). Meta deprecated hashtag media_count, so the trend signal is engagement summed over top_media."""
 from __future__ import annotations
 import json
+import re
 from datetime import datetime, timedelta, timezone
 import requests
 from fanops.config import Config
 from fanops.log import get_logger
+from fanops.hashtags import _norm
 
 _BUDGET_LIMIT = 30                  # Meta: 30 UNIQUE hashtags per IG user per rolling 7 days
 _BUDGET_WINDOW_DAYS = 7
+_TAG_RE = re.compile(r"#[0-9A-Za-z_؀-ۿ]+")   # a hashtag in a caption: Latin + Arabic-block letters
+_HARVEST_CAP = 5000                 # upper bound on distinct co-tags per harvest — a guard against a pathological/mocked top_media response (untrusted UGC); unreachable under Meta's own caption+page limits
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -200,3 +204,82 @@ def sample_trends(cfg: Config, candidates: list[str], *, get=None, now: datetime
     if deferred:
         log("hashtags", "trends", "budget_exhausted", sampled=len(scores), deferred=deferred)
     return scores
+
+
+def harvest_cooccurring(cfg: Config, seed_tags: list[str], *, get=None, now: datetime | None = None) -> dict[str, dict]:
+    """M1 (live discovery): resolve each category SEED tag, read its live top_media, and tally the hashtags
+    those currently-winning posts use ALONGSIDE the seed — the only Graph-native way to DISCOVER tags we have
+    never named (IG has no trending-by-topic endpoint). Returns {co_tag: {"count": int, "host_engagement":
+    float}} with the seeds themselves EXCLUDED. SAME discipline as sample_trends: FAIL-OPEN on no creds ({});
+    FAIL-CLOSED + LOUD on an unreadable budget; a per-seed transport/resolve failure is skipped. The seed
+    RESOLUTION spends one ig_hashtag_search slot (top_media reads are free); a duplicate normalized seed
+    resolves once. Re-resolving a within-window seed is budget-NEUTRAL (Meta counts UNIQUE searches) and
+    yields fresh top_media — which is what a periodic discovery run wants, so in-window seeds are NOT skipped."""
+    now = now or _now()
+    log = get_logger(cfg)
+    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+        return {}
+    remaining = budget_remaining(cfg, now=now)
+    if remaining is None:
+        log("hashtags", "discover", "budget_unreadable", note="refusing harvest (fail-closed)")
+        return {}
+    seeds: list[str] = []; sseen: set[str] = set()
+    for s in seed_tags:                                  # normalize + dedupe the seeds (so a seed resolves once)
+        n = _norm(s) if isinstance(s, str) else ""
+        if n and n not in sseen: sseen.add(n); seeds.append(n)
+    out: dict[str, dict] = {}; deferred = 0
+    for seed in seeds:
+        if remaining <= 0:
+            deferred += 1; continue
+        hid = hashtag_id(cfg, seed, get=get)
+        record_query(cfg, seed, now=now); remaining -= 1     # the ONE budget cost (per unique seed ATTEMPTED — Meta charges the search whether or not the tag resolves)
+        if hid is None:
+            continue
+        body = _graph_get(cfg, f"{hid}/top_media",
+                          {"user_id": cfg.meta_ig_user_id, "fields": "caption,like_count,comments_count"}, get=get)
+        data = body.get("data") if body else None
+        if not isinstance(data, list):
+            continue
+        for m in data:
+            if not isinstance(m, dict):
+                continue
+            eng = 0.0
+            for k in ("like_count", "comments_count"):
+                v = m.get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    eng += float(v)
+            for raw in _TAG_RE.findall(m.get("caption") or ""):
+                t = _norm(raw)
+                if not t or t in sseen:                       # exclude the seeds themselves
+                    continue
+                if t not in out and len(out) >= _HARVEST_CAP:
+                    continue                                  # cap DISTINCT tags (untrusted-UGC guard); already-seen tags still tally
+                agg = out.setdefault(t, {"count": 0, "host_engagement": 0.0})
+                agg["count"] += 1; agg["host_engagement"] += eng
+    if deferred:
+        log("hashtags", "discover", "budget_exhausted", harvested=len(out), deferred=deferred)
+    return out
+
+
+def discover_candidates(cfg: Config, seeds: list[str], *, known=(), measure_k: int = 0,
+                        get=None, now: datetime | None = None) -> list[dict]:
+    """M2: rank the co-occurrence harvest, DROP the tags we already know (VETTED ∪ store ∪ corpus, passed
+    in `known`), and OPTIONALLY measure the top `measure_k` novel tags' own reach within budget. Returns
+    ordered proposals [{"tag","count","host_engagement","measured_engagement"?,"sampled_at"?}], most-relevant
+    first (by co-occurrence count, then host engagement). The FREE harvest is the primary signal; measurement
+    is the only extra budget cost beyond seed resolution, hard-capped by BOTH measure_k AND a live
+    budget_remaining re-check, so it never overspends Meta's 30/7-day window. No creds -> [] (harvest no-ops)."""
+    now = now or _now()
+    known_n = {_norm(t) for t in known if isinstance(t, str)}
+    harvested = harvest_cooccurring(cfg, seeds, get=get, now=now)
+    ranked = sorted(((t, d) for t, d in harvested.items() if t not in known_n),
+                    key=lambda kv: (kv[1]["count"], kv[1]["host_engagement"]), reverse=True)
+    out = [{"tag": t, "count": d["count"], "host_engagement": d["host_engagement"]} for t, d in ranked]
+    for cand in out[:max(0, measure_k)]:                 # measure only the top-K, budget permitting
+        if (budget_remaining(cfg, now=now) or 0) <= 0:
+            break
+        s = trend_score(cfg, cand["tag"], get=get)       # resolve + sum top_media engagement (spends 1 slot)
+        record_query(cfg, cand["tag"], now=now)
+        if s is not None:
+            cand["measured_engagement"] = s; cand["sampled_at"] = now.isoformat()
+    return out

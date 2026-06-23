@@ -150,15 +150,16 @@ def recommend_tag(cfg: Config, pid: str, tag: str) -> ActionResult:
 
 
 def research_corpus(cfg: Config, pid: str) -> ActionResult:
-    """B3: propose the reach-best hashtags this persona doesn't yet carry (the bootstrap "research my
-    corpus" step) — grounded in the reach store (own-reach + Graph trends) + the persona's lean flavor.
-    Returns the ordered proposals in detail; the panel renders them with one-click Add. Unknown id ->
-    a clean one-line error."""
+    """M3: LIVE discovery — propose the hashtags the category's currently-winning posts use that this
+    persona doesn't yet carry (Graph co-occurrence harvest), each with its co-occurrence evidence; the
+    panel renders them with one-click Add. FAIL-OPEN: no Meta creds / nothing fresh -> the offline
+    research_corpus re-rank (wrapped as dicts inside core.discover_corpus). Unknown id -> a clean
+    one-line error, never a 500."""
     pid = (pid or "").strip()
     if not pid:
         return ActionResult(ok=False, error="no persona selected")
     try:
-        proposals = core.research_corpus(cfg, pid)
+        proposals = core.discover_corpus(cfg, pid)
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
     except Exception as exc:

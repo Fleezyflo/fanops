@@ -99,3 +99,31 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
     else:
         print(f"hashtags refresh SKIPPED: learn-doctor verdict={r.get('verdict')!r} — run `fanops learn doctor`; reach is unreliable until PASS.")
     return 0
+
+
+def cmd_hashtags_discover(cfg: Config) -> int:
+    """`fanops hashtags discover` — run LIVE Graph co-occurrence discovery for EVERY persona and REPORT the
+    fresh hashtags their categories' currently-winning posts use. The periodic "what's new in our niches"
+    check (schedule it via launchd/cron). READ-ONLY w.r.t. the caption path: it proposes, it NEVER writes the
+    menu — curation stays operator-gated in the Studio Personas tab (closed loop: discover -> operator accepts
+    into a corpus -> own-reach feedback re-ranks the menu). Needs Meta creds; without them each persona reports
+    nothing (fail-open). Always exits 0."""
+    from fanops.personas import Personas, discover_corpus
+    try:
+        personas = Personas.load(cfg).all()
+    except Exception as exc:
+        print(f"hashtags discover SKIPPED: personas.json unreadable ({exc})"); return 0
+    if not personas:
+        print("hashtags discover: no personas — add one in the Studio Personas tab first."); return 0
+    for per in personas:
+        try:
+            props = discover_corpus(cfg, per.id)
+        except Exception as exc:
+            print(f"  {per.id}: discovery error ({exc})"); continue
+        if props:
+            tags = ", ".join(p["tag"] + (f"({p['count']})" if p.get("count") else "") for p in props)
+            print(f"  {per.id}: {len(props)} fresh — {tags}")
+        else:
+            print(f"  {per.id}: no fresh tags (corpus covers the live winners, or no Meta creds)")
+    print("review + curate in the Studio Personas tab → Research corpus (nothing was written to the menu).")
+    return 0

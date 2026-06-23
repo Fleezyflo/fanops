@@ -243,6 +243,34 @@ def research_corpus(cfg: Config, pid: str, *, limit: int = 8) -> list[str]:
     return out[:limit]
 
 
+def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0, get=None) -> list[dict]:
+    """M3: LIVE per-persona discovery — the upgrade from research_corpus's re-rank-what-we-know to
+    finding tags we have never named. Seeds the Graph co-occurrence harvest from the persona's category
+    (its corpus + lean flavor pool + intake `genre`), DROPS what we already know (VETTED ∪ reach store ∪
+    corpus), and returns evidence-carrying proposals [{"tag","count","host_engagement",...}] reach-relevant
+    first. FAIL-OPEN: no creds / nothing fresh / any Graph error -> today's offline research_corpus re-rank,
+    wrapped as evidence-less {"tag": ...} dicts so the caller has ONE shape. measure_k defaults 0 (the free
+    co-occurrence COUNT is the operator's evidence; per-tag reach stays the explicit 'Check reach' action) —
+    the global refresh passes measure_k>0 to gate the menu on measured reach. Unknown id -> KeyError."""
+    from fanops.hashtags import load_store, _LEANS, VETTED
+    from fanops.meta_graph import discover_candidates
+    per = Personas.load(cfg).get(pid)
+    if per is None:
+        raise KeyError(pid)
+    corpus = [_norm(t) for t in per.hashtag_corpus if isinstance(t, str)]
+    genre_seeds = [_norm("#" + w) for w in (per.intake.get("genre") or "").split() if w.strip()]   # `or ""`: a hand-edited "genre": null must not seed "#none"
+    seeds = list(dict.fromkeys(corpus + _LEANS.get((per.tag_lean or "").strip().lower(), []) + genre_seeds))
+    store = load_store(cfg) or []
+    known = set(VETTED) | set(store) | set(corpus)
+    try:
+        cands = discover_candidates(cfg, seeds, known=known, measure_k=measure_k, get=get)
+    except Exception:                                    # any Graph/transport error -> offline fallback
+        cands = []
+    if cands:
+        return cands[:limit]
+    return [{"tag": t} for t in research_corpus(cfg, pid, limit=limit)]   # FAIL-OPEN to the offline re-rank
+
+
 def migrate_from_accounts(cfg: Config) -> dict:
     """Lift each account's inline persona string into a first-class Persona and LINK it (set persona_id),
     so the brief-seeded personas become editable + connectable. IDEMPOTENT: an account already linked is
