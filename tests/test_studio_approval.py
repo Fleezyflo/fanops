@@ -258,7 +258,7 @@ def test_approve_clip_approves_all_surfaces_of_one_moment(tmp_path):
         _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
         _awaiting(led, "p_other", clip="clip_2", acct="@a", aid="1")
     r = actions.approve_clip(cfg, "clip_1", now=_NOW)
-    assert r.ok and r.detail["approved"] == 2
+    assert r.ok and r.detail["approved"] == 2 and r.detail["clip_id"] == "clip_1"   # detail carries the scope
     led = Ledger.load(cfg)
     assert led.posts["p_a"].state is PostState.queued and led.posts["p_b"].state is PostState.queued
     assert led.posts["p_other"].state is PostState.awaiting_approval   # a DIFFERENT moment is untouched
