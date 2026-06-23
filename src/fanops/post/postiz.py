@@ -22,7 +22,7 @@ import requests
 from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
-from fanops.models import PostState
+from fanops.models import Platform, PostState
 from fanops.text import safe_public_url
 
 _log = logging.getLogger("fanops.post.postiz")
@@ -92,17 +92,40 @@ def _postiz_image(u: str) -> dict:
         mid, mpath = u.split("|", 1); return {"id": mid, "path": mpath}
     return {"path": u} if u.startswith("http") else {"id": u}
 
+def _youtube_tags(hashtags) -> list[dict]:
+    # YouTube tags are bare keywords — strip a leading '#', dedupe, drop empties. Postiz's
+    # @IsYoutubeTagsLength caps the total label length (~500); stop before it so a long hashtag list
+    # can't 422 the whole post. Best-effort SEO, never load-bearing.
+    out, used = [], 0
+    for h in (hashtags or []):
+        t = (h or "").lstrip("#").strip()
+        if not t or any(t == o["label"] for o in out): continue
+        if used + len(t) > 480: break
+        out.append({"value": t, "label": t}); used += len(t)
+    return out
+
 def build_postiz_payload(*, integration_id: str, platform: str, content: str,
-                         media_urls: list[str], scheduled_time: str | None) -> dict:
+                         media_urls: list[str], scheduled_time: str | None,
+                         title: str | None = None, hashtags: list[str] | None = None) -> dict:
     # image[] references media ALREADY uploaded to Postiz — this version requires BOTH the upload's
-    # `id` AND its public `path`. postiz_upload_media returns them joined "id|path"; _postiz_image
-    # splits them. type=schedule with the post's own date — Postiz schedules it (a past date posts
-    # ~now). __type names the platform; post_type is REQUIRED, one of "post"/"story" (feed/reel vs story).
+    # `id` AND its public `path`. postiz_upload_media returns them joined "id|path"; _postiz_image splits
+    # them. type=schedule with the post's own date — Postiz schedules it (a past date posts ~now).
+    # settings is Postiz's per-platform discriminated union (keyed on __type). Most platforms REQUIRE
+    # post_type ("post"/"story"); YOUTUBE is the exception — YoutubeSettingsDto has NO post_type and
+    # REQUIRES title (2-100) + type (privacy). The post content becomes the video DESCRIPTION; the title
+    # is the per-account hook (the caller passes it, clamped to 100 here); hashtags map to tags.
     images = [_postiz_image(u) for u in (media_urls or []) if u]
+    if platform == "youtube":
+        settings = {"__type": "youtube", "title": (title or "")[:100], "type": "public",
+                    "selfDeclaredMadeForKids": "no"}
+        tags = _youtube_tags(hashtags)
+        if tags: settings["tags"] = tags
+    else:
+        settings = {"__type": platform, "post_type": "post"}
     return {"type": "schedule", "date": scheduled_time, "shortLink": False, "tags": [],
             "posts": [{"integration": {"id": integration_id},
                        "value": [{"content": content, "image": images}],
-                       "settings": {"__type": platform, "post_type": "post"}}]}
+                       "settings": settings}]}
 
 
 def postiz_upload_media(cfg: Config, path: Path) -> str:
@@ -185,11 +208,20 @@ class PostizPoster:
         self.base = _base(cfg)
         self.headers = {"Authorization": _key(cfg), "Content-Type": "application/json"}
 
+    def _youtube_title(self, post) -> str:
+        # YouTube REQUIRES a 2-100 char title (Postiz rejects an empty one — there is NO content fallback).
+        # Reuse the per-account burned hook (Post.variant_hook); floor to the artist name when a surface has
+        # no hook (creative_variation OFF / weak-hook-stripped). build_postiz_payload clamps the 100 ceiling.
+        t = (post.variant_hook or "").strip()
+        return t if len(t) >= 2 else self.cfg.artist_name
+
     def publish(self, led: Ledger, post_id: str) -> Ledger:
         post = led.posts[post_id]
+        title = self._youtube_title(post) if post.platform is Platform.youtube else None
         payload = build_postiz_payload(integration_id=post.account_id, platform=post.platform.value,
                                        content=post.caption, media_urls=post.media_urls,
-                                       scheduled_time=post.scheduled_time)
+                                       scheduled_time=post.scheduled_time,
+                                       title=title, hashtags=post.hashtags)
         delay, last = 1.0, None
         for _ in range(_MAX_RETRIES):
             try:

@@ -16,7 +16,8 @@ def _captioned(led, cfg, mocker):
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", state=MomentState.clipped))
-    # one already-rendered 9:16 clip; crosspost will render 16:9 on demand for youtube
+    # one already-rendered 9:16 clip (instagram/youtube/tiktok reuse it now that youtube=Shorts 9:16;
+    # a 16:9 surface like twitter renders 16:9 on demand)
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
     clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": ["#x"]},
@@ -97,9 +98,9 @@ def test_crosspost_fans_out_with_right_aspect_and_account_id(tmp_path, mocker):
     # account_id is the resolved NUMERIC id, not the handle (FIX F06)
     assert all(p.account_id == "98432" for p in posts)
     assert all(p.account == "@a" for p in posts)
-    # right aspect per platform (FIX F20): IG 9:16, YouTube 16:9
+    # right aspect per platform (FIX F20): IG 9:16, YouTube 9:16 (Shorts — was 16:9 long-form)
     assert by_plat[Platform.instagram].aspect is Fmt.r9x16
-    assert by_plat[Platform.youtube].aspect is Fmt.r16x9
+    assert by_plat[Platform.youtube].aspect is Fmt.r9x16
     # staggered
     assert by_plat[Platform.instagram].scheduled_time != by_plat[Platform.youtube].scheduled_time
 
@@ -352,30 +353,32 @@ def test_crosspost_two_clips_same_surface_do_not_collide_on_time(tmp_path, mocke
     assert len(times) == 2, "two clips on the same surface collided on the same scheduled_time"
 
 def test_crosspost_renders_missing_aspect_on_demand(tmp_path, mocker):
-    # Only a 9:16 clip exists; youtube needs 16:9 -> a NEW clip is created (rendered, file exists).
+    # Only a 9:16 clip exists; twitter needs 16:9 -> a NEW clip is created (rendered, file exists).
+    # (youtube is now 9:16 Shorts and would reuse the clip; twitter is the surviving 16:9 surface.)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["youtube"], "status": "active"}])
-    led = Ledger.load(cfg); _captioned(led, cfg, mocker)   # seeds one 9:16 clip + meta for @a/youtube
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["twitter"], "status": "active"}])
+    led = Ledger.load(cfg); _captioned(led, cfg, mocker)   # seeds one 9:16 clip
+    led.clips["clip_1"].meta_captions["@a/twitter"] = {"caption": "tw cap", "hashtags": []}
     assert len(led.clips) == 1
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     # a 16:9 clip was rendered on demand
     aspects = {c.aspect for c in led.clips.values()}
     assert Fmt.r16x9 in aspects and len(led.clips) == 2
-    yt_post = next(p for p in led.posts.values() if p.platform is Platform.youtube)
-    assert yt_post.parent_id != "clip_1"                    # points at the new 16:9 clip
-    assert led.clips[yt_post.parent_id].state is ClipState.rendered
+    tw_post = next(p for p in led.posts.values() if p.platform is Platform.twitter)
+    assert tw_post.parent_id != "clip_1"                    # points at the new 16:9 clip
+    assert led.clips[tw_post.parent_id].state is ClipState.rendered
 
 def test_crosspost_does_not_reuse_error_clip_and_no_post_for_failed_render(tmp_path, mocker):
     # FIX: a failed on-demand render must NOT yield a post pointing at a dangling file,
     # and the error clip must not be reused as a render target.
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["youtube"], "status": "active"}])
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["twitter"], "status": "active"}])
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/c_9x16.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
-    clip.meta_captions = {"@a/youtube": {"caption": "yt", "hashtags": []}}
+    clip.meta_captions = {"@a/twitter": {"caption": "tw", "hashtags": []}}    # twitter=16:9 -> on-demand render
     led.add_clip(clip)
     # ffmpeg FAILS for the on-demand 16:9 render (returncode 1, no output file written)
     def failing_run(cmd, **kw):
@@ -406,23 +409,24 @@ def test_crossposted_post_gets_a_client_token_submission_id(tmp_path, mocker):
 def test_crosspost_skips_surface_when_clip_exceeds_platform_max(tmp_path, mocker):
     # AUDIT (g): per-surface duration clamp. A clip's PLAYABLE duration is its MOMENT window
     # (end - start), NOT a Clip field (Clip has no .duration). A 120s window is OVER the
-    # youtube cap (60s) but UNDER tiktok's (600s). The over-cap surface must get NO queued post
+    # instagram cap (90s) but UNDER tiktok's (600s). The over-cap surface must get NO queued post
     # while the under-cap surface still posts — per-surface SKIP, not all-or-nothing-wedged.
+    # (youtube's cap is now 180s for Shorts, so instagram is the over-cap surface at 120s.)
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1",
-                          "platforms": ["tiktok", "youtube"], "status": "active"}])
+                          "platforms": ["tiktok", "instagram"], "status": "active"}])
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, duration=300.0))
-    # 120s window: > youtube cap (60), < tiktok cap (600)
+    # 120s window: > instagram cap (90), < tiktok cap (600)
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-120", start=0.0, end=120.0,
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
     # captions present for BOTH surfaces so a post would otherwise be created for each
     clip.meta_captions = {"@a/tiktok": {"caption": "tt cap", "hashtags": []},
-                          "@a/youtube": {"caption": "yt cap", "hashtags": []}}
+                          "@a/instagram": {"caption": "ig cap", "hashtags": []}}
     led.add_clip(clip)
-    def fake_run(cmd, **kw):   # satisfy the on-demand 16:9 render for youtube
+    def fake_run(cmd, **kw):   # both surfaces are 9:16 (reuse the clip); harmless render stub
         from pathlib import Path
         # a FLAG last-arg (e.g. the `ffmpeg -filters` capability probe) is NOT an output path —
         # writing it would drop a junk `-filters` file into the repo root on every suite run
@@ -433,7 +437,7 @@ def test_crosspost_skips_surface_when_clip_exceeds_platform_max(tmp_path, mocker
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     plats = {p.platform for p in led.posts.values()}
-    assert Platform.youtube not in plats, "over-cap surface (youtube 60s) must be skipped for a 120s clip"
+    assert Platform.instagram not in plats, "over-cap surface (instagram 90s) must be skipped for a 120s clip"
     assert Platform.tiktok in plats, "under-cap surface (tiktok 600s) must still post — per-surface, not all-or-nothing"
 
 
