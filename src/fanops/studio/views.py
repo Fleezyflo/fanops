@@ -805,6 +805,7 @@ class PersonaCard:
     intake: dict                       # genre/language/reference_accounts/notes (seeds B3 research)
     linked_handles: list               # accounts whose persona_id points at this persona
     reach_tags: list = field(default_factory=list)   # B3: corpus tags present in the reach store (own-reach+trends) -> flag high-reach
+    reach_means: dict = field(default_factory=dict)  # B4 (closed loop): {corpus tag -> measured mean reach} over analyzed posts
 
 
 @dataclass
@@ -821,10 +822,11 @@ class PersonasPage:
     accounts: list                     # PersonaAccountLink
 
 
-def personas_page(cfg: Config) -> "PersonasPage":
-    """The Personas-page read-model: every persona as a card (with its linked account handles) + every
-    account's current persona link (for the connect dropdown). Fail-open: a corrupt personas.json /
-    accounts.json -> an EMPTY page (the surface never 500s), mirroring golive_accounts."""
+def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage":
+    """The Personas-page read-model: every persona as a card (with its linked account handles + corpus
+    reach-ranked + each curated tag's MEASURED reach) + every account's current persona link (for the
+    connect dropdown). Fail-open: a corrupt personas.json / accounts.json -> an EMPTY page (the surface
+    never 500s), mirroring golive_accounts. `led` is injectable (tests); else loaded lock-free."""
     try:
         from fanops.personas import Personas   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
         reg = Personas.load(cfg)
@@ -843,12 +845,23 @@ def personas_page(cfg: Config) -> "PersonasPage":
     store = load_store(cfg)
     rank = {t: i for i, t in enumerate(vetted_menu(store))}
     store_set = {_norm(t) for t in (store or [])}
+    # B4 (closed loop): the MEASURED mean reach per tag over analyzed posts, shown next to each curated
+    # tag. Fail-open — a missing/torn ledger leaves reach_means empty (the page still renders).
+    means: dict = {}
+    try:
+        from fanops.fanops_hashtags import tag_reach_means
+        means = tag_reach_means(led if led is not None else Ledger.load(cfg))
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("personas", "-", "reach_means_error", err=str(exc)[:160])   # observable, still fail-open
+        means = {}
     def _ranked(corpus):
         return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
     cards = [PersonaCard(id=p.id, name=p.name, voice=p.voice, tag_lean=p.tag_lean,
                          corpus=_ranked(p.hashtag_corpus), intake=dict(p.intake),
                          linked_handles=by_pid.get(p.id, []),
-                         reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set])
+                         reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set],
+                         reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means})
              for p in reg.all()]
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)

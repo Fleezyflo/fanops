@@ -31,8 +31,9 @@ def _doctor_verdict(cfg: Config):
         return None
 
 
-def rank_tags_by_reach(led: Ledger) -> list[str]:
-    """Tags ordered by mean reach-per-post (desc) over ANALYZED posts. H2: read reach + hashtags off the
+def tag_reach_means(led: Ledger) -> dict[str, float]:
+    """{tag: mean reach-per-post} over ANALYZED posts (the closed-loop reach signal B4 surfaces next to
+    each curated corpus tag, and the order rank_tags_by_reach sorts on). H2: read reach + hashtags off the
     SAME Post — no join. A post without a numeric `reach` or with no hashtags contributes nothing. Pure."""
     totals: dict[str, list[float]] = {}              # tag -> [reach_sum, post_count]
     for p in led.posts.values():
@@ -47,7 +48,13 @@ def rank_tags_by_reach(led: Ledger) -> list[str]:
                 continue
             agg = totals.setdefault(h, [0.0, 0.0])
             agg[0] += float(reach); agg[1] += 1
-    return [t for t, _ in sorted(totals.items(), key=lambda kv: kv[1][0] / kv[1][1], reverse=True)]
+    return {t: s / c for t, (s, c) in totals.items() if c}
+
+
+def rank_tags_by_reach(led: Ledger) -> list[str]:
+    """Tags ordered by mean reach-per-post (desc) over ANALYZED posts — the reach-ranked store seed. Pure."""
+    means = tag_reach_means(led)
+    return [t for t, _ in sorted(means.items(), key=lambda kv: kv[1], reverse=True)]
 
 
 def refresh_store(led: Ledger, cfg: Config, *, get=None, now=None) -> dict:

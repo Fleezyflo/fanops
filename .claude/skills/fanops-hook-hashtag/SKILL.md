@@ -184,16 +184,58 @@ language purity). The hard cap is 4 regardless.
 
 ---
 
+## Part 3 — The hashtag LIFECYCLE (where every posted tag comes from)
+
+The lifecycle is now explicit, per-persona, and closed-loop. Top to bottom:
+
+1. **A persona owns a curated corpus.** A `Persona` ([personas.py](../../../src/fanops/personas.py))
+   is a first-class record in `00_control/personas.json` — `voice`, `tag_lean`, a
+   **`hashtag_corpus`** (the per-persona pool), and `intake` (genre/language/reference
+   accounts). Accounts link via `Account.persona_id`; the persona's voice/lean/corpus
+   **hydrate** the account at load. Edited entirely in the Studio **Personas** tab.
+2. **Where corpus tags come from — three sources, all visible in the Personas tab:**
+   - **Bootstrap research** (`personas.research_corpus`) proposes the reach-best tags a
+     persona lacks, drawn from the reach-ranked store (own-reach + Graph trends) + the
+     lean flavor. One click to add each.
+   - **Operator recommend** (`meta_graph.tag_metrics`): type any candidate tag → the
+     **Meta Graph API** returns its live IG reach (top-media engagement), one
+     `ig_hashtag_search` budget slot (30 / 7 days) → Add to corpus. This is how a NICHE
+     tag the frozen set never had enters the pool, with evidence.
+   - **The frozen reach-vetted set** (Part 2) is always the floor.
+3. **Selection** ([hashtags.py](../../../src/fanops/hashtags.py) `vet_hashtags`): at caption
+   ingest, the linked persona's `corpus` JOINS the vetted membership (a curated tag the
+   frozen set doesn't know now SURVIVES) and is the **priority pool** — it leads the ≤4,
+   then the lean, then the reach order. Hard cap 4, deterministic, never empty.
+4. **Presentation to the model** (`caption_prompt`): each surface's `corpus` rides the
+   payload + a rule tells the model to prefer it; the deterministic gate guarantees the
+   corpus leads regardless.
+5. **Post → publish → reach** (own-reach measured from analyzed posts) feeds back:
+   `fanops_hashtags.tag_reach_means` / `rank_tags_by_reach` rank tags by measured reach;
+   `refresh_store` blends own-reach + live Graph trends into the reach-ranked store
+   (`FANOPS_HASHTAG_TRENDS` **defaults ON**, fail-open without a Meta token).
+6. **Surfaced (closed loop):** the Personas tab renders each corpus **reach-ranked**, flags
+   high-reach (store-present) tags ★, and shows each curated tag's **measured mean reach** —
+   so a curation decision is backed by what actually earned reach.
+
 ## Wiring (where this lives in the engine)
 
+- [personas.py](../../../src/fanops/personas.py) — the `Persona` entity + registry + the
+  curated `hashtag_corpus` writers + `research_corpus` (bootstrap proposal). Accounts link
+  via `Account.persona_id`; the corpus hydrates onto the account at load.
 - [hashtags.py](../../../src/fanops/hashtags.py) — the vetted set as code constants
-  (seeded from the table above) + `vet_hashtags(tags, platform, language, max=4)`:
-  restricts to the vetted set, reach-orders, caps at 4. The **hard enforcement** —
-  whatever the model returns is filtered through this.
+  (seeded from the table above) + `vet_hashtags(tags, platform, language, max=4, *, store, lean, corpus)`:
+  the corpus joins the membership + leads, then restricts to the vetted set, reach-orders,
+  caps at 4. The **hard enforcement** — whatever the model returns is filtered through this.
+- [meta_graph.py](../../../src/fanops/meta_graph.py) `tag_metrics` — on-demand live IG reach
+  for ONE tag (the operator-recommend evidence), budget-bounded; `sample_trends` feeds the store.
+- [fanops_hashtags.py](../../../src/fanops/fanops_hashtags.py) — `tag_reach_means` /
+  `rank_tags_by_reach` (the closed-loop reach signal) + `refresh_store` (own-reach + Graph trends).
+- [studio/personas.py](../../../src/fanops/studio/personas.py) — the Studio **Personas** tab
+  actions (add/edit/connect, curate corpus, recommend, research).
 - [prompts.py](../../../src/fanops/prompts.py) `hookedit_prompt` — retention patterns
   above; the artist-hype mandate is removed.
 - [prompts.py](../../../src/fanops/prompts.py) `caption_prompt` — the model picks ≤4
-  FROM the vetted set; it does not invent tags.
+  FROM the vetted set / the surface's corpus; it does not invent tags.
 
 ## Sources
 
