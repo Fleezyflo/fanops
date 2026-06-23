@@ -34,7 +34,7 @@ import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
+from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt, Render, RenderState
 from fanops.studio.views import review_buckets
 from fanops.timeutil import parse_iso
 
@@ -530,3 +530,46 @@ def test_home_batches_fail_open(tmp_path, monkeypatch):
     def _boom(c): raise RuntimeError("torn")
     monkeypatch.setattr(Ledger, "load", _boom)
     assert home_batches(cfg) == []
+
+
+# ---------------------------------------------------------------- M3a: per-account length/cut/framing on the card ----
+def test_review_surface_carries_per_account_length_cut_and_framing(tmp_path):
+    # M3a "review at scale": each Review surface shows the account's clip LENGTH band, whether it is a real
+    # per-account CUT (M2b/M2c), and its pinned FRAMING — so the operator SEES the per-account differentiation.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [
+        {"handle": "@long", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "clip_profile": "long", "framing": "top"},
+        {"handle": "@a", "account_id": "2", "platforms": ["instagram"], "status": "active"},
+    ])
+    led = Ledger.load(cfg); _lineage(led)
+    # @long: a REAL per-account cut (render is_account_cut=True), post stamped its own length profile
+    led.add_render(Render(id="r_long", clip_id="clip_1", account="@long", surface_key="@long/instagram",
+                          hook_text="H", path="/clips/r_long.mp4", state=RenderState.rendered, is_account_cut=True))
+    led.add_post(Post(id="p_long", parent_id="clip_1", account="@long", account_id="1",
+                      platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
+                      render_id="r_long", clip_profile="long", scheduled_time=_z(NOW + timedelta(hours=3))))
+    # @a: no render (shared-clip burn), the GLOBAL length, no pinned framing
+    led.add_post(Post(id="p_a", parent_id="clip_1", account="@a", account_id="2",
+                      platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
+                      clip_profile="talk", scheduled_time=_z(NOW + timedelta(hours=3))))
+    cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
+    sp = {s.post_id: s for c in cards for s in c.surfaces}
+    assert sp["p_long"].length_label == "28–45s"        # long band, en dash + 's' (mirrors moment_window)
+    assert sp["p_long"].is_account_cut is True           # the render records a genuine per-account cut
+    assert sp["p_long"].framing == "top"                 # the account's pinned crop, surfaced for the operator
+    assert sp["p_a"].length_label == "12–22s"            # global talk band
+    assert sp["p_a"].is_account_cut is False             # shared-clip burn, not a per-account cut
+    assert sp["p_a"].framing is None                     # no pinned framing -> nothing shown
+
+def test_review_surface_length_label_absent_when_no_profile(tmp_path):
+    # defensive: a legacy post with no clip_profile -> no length label (band_for is not guessed from None)
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="p_x", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
+                      clip_profile=None, scheduled_time=_z(NOW + timedelta(hours=3))))
+    cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
+    sp = [s for c in cards for s in c.surfaces if s.post_id == "p_x"][0]
+    assert sp.length_label is None and sp.is_account_cut is False
