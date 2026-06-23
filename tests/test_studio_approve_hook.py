@@ -8,11 +8,20 @@ was auto-stripped (Moment.hook_removed set, slice 1) can be approved two ways:
 render_moment is patched at fanops.clip.render_moment (the action imports it locally, house style) so no
 ffmpeg runs; the fake mimics render_moment's real reset (state->rendered, meta_captions wiped) so the
 state/captions RESTORE is genuinely exercised."""
+import pytest
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
 from fanops.studio.actions import approve_with_hook, approve_as_is
+
+
+@pytest.fixture(autouse=True)
+def _cv_off(monkeypatch):
+    # M3d: creative_variation now DEFAULTS ON, but the approve-with-hook MOMENT-restore flow is an OFF-mode
+    # feature (when ON, per-surface hooks own the burn and the action refuses). This file tests that OFF flow,
+    # so pin OFF; the one test asserting the ON refusal sets FANOPS_CREATIVE_VARIATION=1 itself (it overrides).
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
 
 NOW = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc)
 REMOVED = "made it and lost everything"

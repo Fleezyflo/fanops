@@ -196,16 +196,21 @@ def test_subtitle_font_default_and_override(monkeypatch, tmp_path):
     assert Config(root=tmp_path).subtitle_font == "X"
 
 
-def test_creative_variation_defaults_off_and_respects_env(tmp_path, monkeypatch):
+def test_creative_variation_defaults_on_and_respects_explicit_off(tmp_path, monkeypatch):
+    # M3d: per-account variation now DEFAULTS ON — per-account hooks/renders ship by default (the whole
+    # point of the per-account build). The OFF code path is retained (§7 firewall): only the explicit
+    # off-words disable it, so an operator can still pin the legacy fan-to-all single-clip behavior.
     from fanops.config import Config
     monkeypatch.delenv("FANOPS_CREATIVE_VARIATION", raising=False)
-    assert Config(root=tmp_path).creative_variation is False           # default OFF (opt-in)
+    assert Config(root=tmp_path).creative_variation is True             # default ON (the flip)
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
+    assert Config(root=tmp_path).creative_variation is False            # explicit off-word disables it
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "off")
+    assert Config(root=tmp_path).creative_variation is False
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     assert Config(root=tmp_path).creative_variation is True
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "true")
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "")                 # blank -> default ON
     assert Config(root=tmp_path).creative_variation is True
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
-    assert Config(root=tmp_path).creative_variation is False
 
 
 def test_variant_learning_defaults_off(monkeypatch, tmp_path):

@@ -213,7 +213,8 @@ def test_approve_posts_untimed_gets_suggestion_not_now(tmp_path):
     assert parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso   # a strictly-future suggestion, not now
     assert led.posts["p_future"].scheduled_time == far          # operator's future time preserved across the batch
 
-def test_approve_with_hook_untimed_gets_suggestion_not_now(tmp_path):
+def test_approve_with_hook_untimed_gets_suggestion_not_now(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")        # M3d: approve_with_hook is the OFF-mode moment-restore flow
     from fanops.timeutil import iso_z, parse_iso
     cfg = Config(root=tmp_path); now = _approval_now(); now_iso = iso_z(now)
     _seed_review(cfg, pid="p_untimed", when=None)               # clip has NO hook_removed -> clean approve path
@@ -386,3 +387,33 @@ def test_compact_toggle_links_both_ways(tmp_path):
     compact = _client(cfg).get("/review?compact=1").data
     assert b"compact=1" in full and b"Compact" in full                # the full view offers a way INTO compact
     assert b"Full" in compact                                         # the compact view offers a way back to full
+
+
+# ---- M3d: creative_variation default-ON hides the OFF-mode removed-hook restore choice ----
+def _seed_removed_hook_review(cfg):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="drop", state=MomentState.clipped, hook_removed="a stripped hook"))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE))
+
+def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypatch):
+    # default ON: per-surface hooks own the burn + approve_with_hook refuses, so the moment-restore choice
+    # is HIDDEN; the generic 'Approve all accounts' is the approve path instead.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
+    html = _client(cfg).get("/review").data
+    assert b"Approve with hook" not in html and b"hook removed" not in html
+    assert b"Approve all accounts" in html
+
+def test_review_shows_hook_choice_when_creative_variation_off(tmp_path, monkeypatch):
+    # pinned OFF: the shared clip ships clean with the stripped hook, so the restore badge + choice show.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
+    cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
+    html = _client(cfg).get("/review").data
+    assert b"Approve with hook" in html and b"hook removed" in html

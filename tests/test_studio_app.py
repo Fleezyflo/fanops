@@ -295,9 +295,10 @@ def test_crosspost_all_route_bulk(tmp_path):
     awaiting = [p for p in Ledger.load(cfg).posts.values() if p.state is PostState.awaiting_approval and p.account == "@b"]
     assert len(awaiting) == 1
 
-def test_review_renders_removed_hook_badge(tmp_path):
+def test_review_renders_removed_hook_badge(tmp_path, monkeypatch):
     # slice 1: a moment whose hook was stripped surfaces a "hook removed" badge + the text in /review,
     # so the operator SEES the hook that was killed (the clip itself still ran clean).
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")   # M3d: the badge is OFF-mode (hidden when per-surface hooks own the burn)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
@@ -328,15 +329,17 @@ def _seed_removed_hook(cfg):
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
 
 
-def test_review_renders_both_hook_choice_buttons(tmp_path):
+def test_review_renders_both_hook_choice_buttons(tmp_path, monkeypatch):
     # slice 2: the removed-hook card offers BOTH one-click choices.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")   # M3d: the restore choice is OFF-mode only (hidden when ON)
     cfg = Config(root=tmp_path); _seed_removed_hook(cfg)
     r = _client(cfg).get("/review")
     assert r.status_code == 200
     assert b"Approve with hook" in r.data and b"Approve as-is" in r.data
 
 
-def test_approve_with_hook_route_restores_and_approves(tmp_path, mocker):
+def test_approve_with_hook_route_restores_and_approves(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")   # M3d: the moment-restore flow is OFF-mode (ON -> per-surface hooks own the burn)
     cfg = Config(root=tmp_path); _seed_removed_hook(cfg)
     def _fake(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
         c = next(c for c in led.clips.values() if c.parent_id == moment_id and c.aspect is aspect)

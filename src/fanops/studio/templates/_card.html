@@ -51,7 +51,10 @@
     <div class="meta clip-lineage"><span class="ro">from</span> {{ card.source_name }} <span class="ro">·</span> {{ card.moment_window }}s</div>
     {% if card.transcript_excerpt %}<details class="clip-transcript"><summary>Transcript</summary><p class="meta">{{ card.transcript_excerpt }}</p></details>{% endif %}
 
-    {% if card.hook_removed %}
+    {# M3d: the shared-moment hook-removed badge + restore choice are an OFF-mode flow. When creative_variation
+       is ON (default), per-surface hooks own the burn (the clip is NOT running clean), so the badge would
+       mislead and approve_with_hook refuses — hide it. #}
+    {% if card.hook_removed and not creative_variation %}
       <div class="meta hook-removed" title="the model wrote this hook but it was auto-removed (duplicate or shared-opening template); this clip is running CLEAN. Restore it from the surface below.">
         <span aria-hidden="true">✎</span> hook removed — <span class="hook-removed-text">{{ card.hook_removed }}</span>
       </div>
@@ -98,7 +101,10 @@
       </div>
     {% endfor %}
 
-    {% if card.bucket == 'editable' and card.hook_removed and card.surfaces %}
+    {# M3d: the removed-hook restore choice is OFF-mode only (approve_with_hook refuses when creative_variation
+       is ON, where per-surface hooks own the burn). Gate on `not creative_variation`. #}
+    {% set hook_choice = card.bucket == 'editable' and card.hook_removed and card.surfaces and not creative_variation %}
+    {% if hook_choice %}
       {# removed-hook choice (slice 2): one click to ship WITH the restored hook burned in, or clean as-is. #}
       <div class="hook-choice meta">
         <span class="muted">Hook was auto-removed. Approve with it burned in, or ship clean.</span>
@@ -107,9 +113,9 @@
       </div>
     {% endif %}
 
-    {% if card.bucket == 'editable' and card.surfaces and not card.hook_removed %}
-      {# M3b 'all accounts of this moment': approve every surface of this card in one click (the removed-hook
-         choice above already covers approval when a hook was stripped, so this only shows otherwise). #}
+    {% if card.bucket == 'editable' and card.surfaces and not hook_choice %}
+      {# M3b 'all accounts of this moment': approve every surface of this card in one click. Shown whenever the
+         OFF-mode removed-hook choice above is NOT (so under ON, where the choice is hidden, this is the approve). #}
       <button type="button" class="primary card-approve-all" hx-post="{{ url_for('do_approve_clip', clip_id=card.clip_id, account=active, batch=active_batch|default(none), compact=(1 if compact else none)) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all accounts</button>
     {% endif %}
 

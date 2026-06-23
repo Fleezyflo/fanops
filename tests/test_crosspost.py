@@ -653,6 +653,7 @@ def test_crosspost_logs_skipped_surface_missing_caption(tmp_path, mocker):
 def test_crosspost_stamps_creative_provenance_onto_post(tmp_path, mocker, monkeypatch):
     # P1 T3b: the Post carries the attribution key P3 aggregates reach by —
     # first_frame_kind + cut_seconds (clip), clip_profile (the global video-type knob, stamped here).
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")   # M3d: this tests post provenance on the OFF (shared-clip) path; a fake clip path isn't readable for an ON render
     monkeypatch.setenv("FANOPS_CLIP_PROFILE", "song")
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1",

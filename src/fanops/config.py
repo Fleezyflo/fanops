@@ -436,11 +436,14 @@ class Config:
     @property
     def creative_variation(self) -> bool:
         # Per-account creative variation: each active account gets a genuinely different caption +
-        # burned-in on-screen hook per clip. PENDING the default-off sweep (2026-06-22): flipping this ON
-        # interacts with the approve-with-hook restore flow + the render burn site, so it lands as part of
-        # the methodical sweep (default-on + reworked restore), not a bare flag flip.
+        # burned-in on-screen hook per clip (+ its own length/framing cut under M2). M3d (2026-06-23):
+        # DEFAULT ON — per-account differentiation is the system's purpose, not an opt-in. The OFF code
+        # path is RETAINED (§7 firewall: only the default resolution flipped) so an operator can pin the
+        # legacy fan-to-all single-clip behavior with FANOPS_CREATIVE_VARIATION=0. The approve-with-hook
+        # moment-restore flow is an OFF-mode feature (per-surface hooks own the burn when ON) — Review
+        # hides that choice while ON. Mirrors visual_start/isolate_vocals' default-ON shape.
         v = (os.getenv("FANOPS_CREATIVE_VARIATION") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # (sweep target: flip to default-ON)
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON; only explicit off-words disable it
 
     @property
     def account_casting(self) -> bool:
