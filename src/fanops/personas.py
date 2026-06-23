@@ -190,6 +190,103 @@ def compose_persona_instruction(p) -> str:
     return casting_directive(p)
 
 
+def lever_catalog() -> list[dict]:
+    """EXPOSE THE LEVERS — the operator-facing catalog of every persona lever and what each option DOES,
+    sourced from the SAME engine constants the compilers/resolvers use (the clause maps above, bands.band_for,
+    hashtags._LEANS), so the effect the operator reads is EXACTLY what the pipeline acts on (zero drift; a
+    parity test forbids divergence). Pure, ordered (the editor + the reference render it). Each lever:
+    {key, label, kind, stage, does, options:[{value, effect}]}; clip_count/corpus have no enumerated options."""
+    from fanops.bands import band_for
+    from fanops.hashtags import _LEANS
+    # An ORDERED display list (PROFILE_NAMES is a frozenset, no order). The coverage test asserts this set ==
+    # PROFILE_NAMES, so adding a band to bands.py fails the test until it is added here — keep the order, don't
+    # "fix" this to PROFILE_NAMES (that would lose the short->long->legacy reading order).
+    _profiles = ["short", "medium", "long", "talk", "song"]
+    return [
+        {"key": "content_focus", "label": "Clips · favors moments", "kind": "multi", "stage": "casting",
+         "does": "which KINDS of moments this account clips for (injected into the casting prompt)",
+         "options": [{"value": k, "effect": v} for k, v in _FOCUS_CLAUSE.items()]},
+        {"key": "energy", "label": "Energy", "kind": "select", "stage": "casting",
+         "does": "biases moment selection toward calm or peak-intensity",
+         "options": [{"value": k, "effect": (v or "no change — any energy")} for k, v in _ENERGY_CLAUSE.items()]},
+        {"key": "hook_angle", "label": "Hook angle", "kind": "select", "stage": "hook",
+         "does": "the strategy of the burned on-screen hook (injected into the hook prompt)",
+         "options": [{"value": k, "effect": v} for k, v in _ANGLE_CLAUSE.items()]},
+        {"key": "hook_tone", "label": "Hook tone", "kind": "select", "stage": "hook",
+         "does": "the voice of the burned on-screen hook",
+         "options": [{"value": k, "effect": v} for k, v in _TONE_CLAUSE.items()]},
+        {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
+         "does": "the deterministic cut-length band (the cut, not the prompt)",
+         "options": [{"value": n, "effect": f"{band_for(n).lo:g}-{band_for(n).hi:g}s cuts"} for n in _profiles]},
+        {"key": "framing", "label": "Framing", "kind": "select", "stage": "cut",
+         "does": "the deterministic vertical crop",
+         "options": [{"value": "top", "effect": "head-safe upper-third crop"},
+                     {"value": "center", "effect": "centered crop"}]},
+        {"key": "tag_lean", "label": "Tag lean", "kind": "select", "stage": "caption",
+         "does": "floats a flavor pool to the front of the caption hashtags (deterministic, not in the prompt)",
+         "options": [{"value": k, "effect": "leads with " + " ".join(v)} for k, v in _LEANS.items()]},
+        {"key": "clip_count", "label": "Clips per drop", "kind": "int", "stage": "casting",
+         "does": "how many best-fit moments this account gets per source (blank = the global budget)", "options": []},
+        {"key": "hashtag_corpus", "label": "Corpus", "kind": "tags", "stage": "caption",
+         "does": "your curated tags LEAD the caption hashtags, ahead of the lean pool", "options": []},
+    ]
+
+
+def _casting_fragments(p) -> list[dict]:
+    """The casting directive's pieces, each tagged with the lever that produced it — reconstructed from the
+    SAME clause maps casting_directive() uses (the authoritative TEXT still comes from the compiler)."""
+    frags: list[dict] = []
+    voice = _base_voice(p)
+    if voice: frags.append({"source": "voice", "text": voice})
+    foc = [c for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
+    if foc: frags.append({"source": "content_focus", "text": "Clip for this account: " + "; ".join(_FOCUS_CLAUSE[c] for c in foc) + "."})
+    e = _ENERGY_CLAUSE.get((getattr(p, "energy", None) or "").strip().lower(), "")
+    if e: frags.append({"source": "energy", "text": e})
+    return frags
+
+
+def _hook_fragments(p) -> list[dict]:
+    frags: list[dict] = []
+    voice = _base_voice(p)
+    if voice: frags.append({"source": "voice", "text": voice})
+    a = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
+    if a: frags.append({"source": "hook_angle", "text": "For the on-screen hook, " + a + "."})
+    t = _TONE_CLAUSE.get((getattr(p, "hook_tone", None) or "").strip().lower(), "")
+    if t: frags.append({"source": "hook_tone", "text": t})
+    return frags
+
+
+def compose_breakdown(cfg: Config, p) -> dict:
+    """THE LIVE COMPOSED TRANSLATION — what this persona compiles to RIGHT NOW: the exact casting/hook/caption
+    directives the pipeline will read, the deterministic cut band + framing, and the lead hashtags, each
+    decomposed to the lever that produced it, with the engine's REAL precedence surfaced (an override SHADOWS
+    its structured levers; energy=medium is a no-op). The `text` of each dimension is the compiler's own output
+    (parity — the panel can't drift); the fragments reconstruct the assembly for provenance. Pure read; the
+    cut/tags reuse the same band_for / persona_facts resolvers the pipeline runs. Duck-typed (Persona/Account)."""
+    from fanops.bands import band_for
+    cast_override = (getattr(p, "casting_directive", None) or "").strip()
+    hook_override = (getattr(p, "hook_directive", None) or "").strip()
+    cap_override = (getattr(p, "caption_directive", None) or "").strip()
+    casting = {"text": casting_directive(p), "override": bool(cast_override),
+               "fragments": ([{"source": "override", "text": cast_override}] if cast_override else _casting_fragments(p)),
+               "shadowed": (["content_focus", "energy"] if cast_override else [])}
+    hook = {"text": hook_directive(p), "override": bool(hook_override),
+            "fragments": ([{"source": "override", "text": hook_override}] if hook_override else _hook_fragments(p)),
+            "shadowed": (["hook_angle", "hook_tone"] if hook_override else [])}
+    caption = {"text": caption_directive(p), "override": bool(cap_override)}
+    prof = (getattr(p, "clip_profile", None) or "").strip()
+    band = band_for(prof)
+    cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": (getattr(p, "framing", None) or None),
+           "source": ("persona" if prof else "global")}
+    facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
+    tags = {"lead": facts["lead_tags"], "lean": getattr(p, "tag_lean", None),
+            "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
+    noops: list[str] = []
+    if (getattr(p, "energy", None) or "").strip().lower() == "medium" and not cast_override:
+        noops.append("energy=medium has no effect on selection")
+    return {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
+
+
 def persona_facts(cfg: Config, p) -> dict:
     """The TRANSPARENCY read (M2 Task 8) — "what this persona produces", derived from the EXACT resolvers the
     pipeline calls (never a re-encoded copy that could drift): the clip LENGTH band (bands.band_for on the

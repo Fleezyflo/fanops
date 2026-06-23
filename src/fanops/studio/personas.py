@@ -28,6 +28,54 @@ def _intake(genre: str = "", language: str = "", refs: str = "", notes: str = ""
     return out
 
 
+def preview_compose(cfg: Config, form) -> ActionResult:
+    """LIVE TRANSLATION — given the in-progress (UNSAVED) editor form, return what the persona compiles to
+    (core.compose_breakdown): the exact casting/hook/caption directives + cut + lead tags, decomposed to the
+    lever, with override-shadow + no-op flags. Builds a TRANSIENT Persona from the form — it NEVER calls the
+    persisting writers, so personas.json is untouched. An existing persona's curated corpus (not a form field)
+    is merged in by `id` so the lead tags are accurate. A bad lever value / clip_count -> a clean one-line
+    error, never a 500. `form` is a Werkzeug MultiDict (or any object with .get/.getlist)."""
+    try:
+        from fanops.bands import PROFILE_NAMES
+        from fanops.config import FRAMING_NAMES
+        from fanops.hashtags import TAG_LEANS
+        from fanops.personas import (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, HOOK_TONES,
+                                     _clip_count_or_none)
+
+        def _enum(value, allowed, label):
+            v = (value or "").strip()
+            if v and v not in allowed: raise ValueError(f"unknown {label}: {v}")
+            return v or None
+
+        pid = (form.get("id") or "").strip()
+        corpus: list = []
+        if pid:                                          # an existing persona keeps its curated corpus (not a form field)
+            try:
+                saved = core.Personas.load(cfg).get(pid)
+                if saved is not None: corpus = list(saved.hashtag_corpus)
+            except Exception:
+                corpus = []
+        focus = [c for c in form.getlist("content_focus") if c]
+        for c in focus:
+            if c not in CONTENT_FOCUS: raise ValueError(f"unknown content_focus: {c}")
+        per = core.Persona(
+            id=(pid or "preview"), voice=form.get("voice", ""), brief=form.get("brief", ""),
+            tag_lean=_enum(form.get("tag_lean"), TAG_LEANS, "tag_lean"), hashtag_corpus=corpus,
+            content_focus=focus, energy=_enum(form.get("energy"), ENERGY_LEVELS, "energy"),
+            hook_angle=_enum(form.get("hook_angle"), HOOK_ANGLES, "hook_angle"),
+            hook_tone=_enum(form.get("hook_tone"), HOOK_TONES, "hook_tone"),
+            clip_profile=_enum(form.get("clip_profile"), PROFILE_NAMES, "clip_profile"),
+            framing=_enum(form.get("framing"), FRAMING_NAMES, "framing"),
+            casting_directive=form.get("casting_directive", ""), hook_directive=form.get("hook_directive", ""),
+            caption_directive=form.get("caption_directive", ""),
+            clip_count=_clip_count_or_none(form.get("clip_count", "")))
+    except ValueError as exc:
+        return ActionResult(ok=False, error=str(exc))
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not compose: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail=core.compose_breakdown(cfg, per))
+
+
 def create_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
                    genre: str = "", language: str = "", refs: str = "", notes: str = "",
                    content_focus=None, energy: str = "", hook_angle: str = "", hook_tone: str = "",

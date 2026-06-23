@@ -1,0 +1,39 @@
+{# _persona_compose.html — the LIVE composed translation of the in-progress persona (POST /personas/compose).
+   Shows the EXACT casting/hook/caption directives the pipeline will read + the deterministic cut + lead
+   hashtags, each fragment traced to the lever that produced it, with the engine's real precedence (an
+   override shadows its levers; energy=medium is a no-op) surfaced. Autoescape stays on (engine text as text). #}
+{% if result and result.ok and result.detail %}
+  {% set d = result.detail %}
+  <div class="compose-grid">
+    <div class="compose-row">
+      <span class="compose-tag">CASTING</span>
+      <span class="compose-text">{{ d.casting.text or '—' }}</span>
+      {% if d.casting.fragments %}<span class="compose-prov">{% for f in d.casting.fragments %}<span class="frag" title="{{ f.text }}">← {{ f.source }}</span> {% endfor %}</span>{% endif %}
+    </div>
+    <div class="compose-row">
+      <span class="compose-tag">HOOK</span>
+      <span class="compose-text">{{ d.hook.text or '—' }}</span>
+      {% if d.hook.fragments %}<span class="compose-prov">{% for f in d.hook.fragments %}<span class="frag" title="{{ f.text }}">← {{ f.source }}</span> {% endfor %}</span>{% endif %}
+    </div>
+    <div class="compose-row">
+      <span class="compose-tag">CAPTION</span>
+      <span class="compose-text">{{ d.caption.text or '—' }}</span>
+      <span class="muted">(hashtags are deterministic, not in this text)</span>
+    </div>
+    <div class="compose-row">
+      <span class="compose-tag">CUT</span>
+      <span class="compose-text">{{ d.cut.band }}{% if d.cut.framing %}, {{ d.cut.framing }} crop{% endif %}</span>
+      <span class="muted">(set by {{ d.cut.source }})</span>
+    </div>
+    <div class="compose-row">
+      <span class="compose-tag">HASHTAGS</span>
+      <span class="compose-text">{{ d.tags.lead | join(' ') if d.tags.lead else '—' }}</span>
+      {% if d.tags.lean %}<span class="muted">(lean: {{ d.tags.lean }})</span>{% endif %}
+    </div>
+  </div>
+  {% if d.casting.override %}<p class="compose-warn">⚠ clips override is set → content_focus / energy are not used</p>{% endif %}
+  {% if d.hook.override %}<p class="compose-warn">⚠ hook override is set → hook_angle / hook_tone are not used</p>{% endif %}
+  {% for n in d.noops %}<p class="compose-warn">⚠ {{ n }}</p>{% endfor %}
+{% elif result and not result.ok %}
+  <p class="compose-warn">✗ {{ result.error }}</p>
+{% endif %}

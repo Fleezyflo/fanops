@@ -2,51 +2,76 @@
    (#personas-panel). Add a persona via intake, edit it, curate its hashtag corpus, connect accounts.
    Every form swaps the whole panel (outerHTML) so the list + result update after each action.
    Autoescape stays on (no |safe) — persona voice/intake are operator free text. #}
-{% macro lever_fields(levers, p=None) %}
-  {# The lever ENGINE controls — one per persona characteristic. Shared by the Add + Edit forms; `p` is the
-     PersonaCard when editing (pre-selects current values), None when adding. Names match the route parsing. #}
-  <fieldset class="levers">
-    <legend>Levers — how this persona shapes the work</legend>
-    <div class="lever-group">
-      <span class="lever-label">Clips · favors moments</span>
-      {% for c in levers.content_focus %}
-        <label class="chk"><input type="checkbox" name="content_focus" value="{{ c }}"
-          {{ 'checked' if p and c in p.content_focus else '' }}> {{ c }}</label>
-      {% endfor %}
-    </div>
-    <label>Energy
-      <select name="energy"><option value="">— any —</option>
-        {% for e in levers.energy %}<option value="{{ e }}" {{ 'selected' if p and p.energy == e else '' }}>{{ e }}</option>{% endfor %}
-      </select></label>
-    <label>Clip length
-      <select name="clip_profile"><option value="">— global —</option>
-        {% for c in levers.clip_profile %}<option value="{{ c }}" {{ 'selected' if p and p.clip_profile == c else '' }}>{{ c }}</option>{% endfor %}
-      </select></label>
-    <label>Framing
-      <select name="framing"><option value="">— global —</option>
-        {% for f in levers.framing %}<option value="{{ f }}" {{ 'selected' if p and p.framing == f else '' }}>{{ f }}</option>{% endfor %}
-      </select></label>
-    <label>Hook angle
-      <select name="hook_angle"><option value="">— any —</option>
-        {% for h in levers.hook_angle %}<option value="{{ h }}" {{ 'selected' if p and p.hook_angle == h else '' }}>{{ h }}</option>{% endfor %}
-      </select></label>
-    <label>Hook tone
-      <select name="hook_tone"><option value="">— any —</option>
-        {% for h in levers.hook_tone %}<option value="{{ h }}" {{ 'selected' if p and p.hook_tone == h else '' }}>{{ h }}</option>{% endfor %}
-      </select></label>
-    <label>Clips per drop
-      <input type="number" name="clip_count" min="1" size="4" placeholder="all that fit"
-        title="how many clips this account gets per source (blank = no ceiling)" value="{{ p.clip_count if p and p.clip_count else '' }}"></label>
-  </fieldset>
-  <fieldset class="directives">
-    <legend>Directive overrides — blank = use the compiled default above</legend>
-    <label class="block">Clips directive
-      <textarea name="casting_directive" rows="2" placeholder="(compiled from Clips + Energy above)">{{ p.casting_override if p else '' }}</textarea></label>
-    <label class="block">Hook directive
-      <textarea name="hook_directive" rows="2" placeholder="(compiled from Hook angle + tone above)">{{ p.hook_override if p else '' }}</textarea></label>
-    <label class="block">Caption directive
-      <textarea name="caption_directive" rows="2" placeholder="(the persona voice; hashtags stay deterministic)">{{ p.caption_override if p else '' }}</textarea></label>
-  </fieldset>
+{% macro lever_fields(levers, effects, p=None) %}
+  {# The lever ENGINE controls — one per persona characteristic, each option ANNOTATED with what it does (from
+     the engine, via `effects`). Shared by the Add + Edit forms; `p` is the PersonaCard when editing. Names
+     match the route parsing. The whole block triggers the LIVE compose panel on any change (htmx). #}
+  {# cid scopes the compose target per-form. '__add__' for the Add form: underscores never appear in a persona
+     slug (_slug emits only [a-z0-9-]), so it can NEVER collide with an Edit form's persona id. #}
+  {% set cid = p.id if p else '__add__' %}
+  <div class="lever-config"
+       hx-post="{{ url_for('do_personas_compose') }}"
+       hx-trigger="change delay:50ms, keyup changed delay:400ms"
+       hx-include="closest form" hx-target="#persona-compose-{{ cid }}" hx-swap="innerHTML">
+    <fieldset class="levers">
+      <legend>Levers — each option shows what it does (from the engine)</legend>
+      <div class="lever-group">
+        <span class="lever-label">Clips · favors moments</span>
+        {% for c in levers.content_focus %}
+          <label class="chk" title="{{ effects.content_focus[c] }}"><input type="checkbox" name="content_focus" value="{{ c }}"
+            {{ 'checked' if p and c in p.content_focus else '' }}> {{ c }} <span class="lever-effect muted">— {{ effects.content_focus[c] }}</span></label>
+        {% endfor %}
+      </div>
+      <label>Energy
+        <select name="energy"><option value="">— any —</option>
+          {% for e in levers.energy %}<option value="{{ e }}" title="{{ effects.energy[e] }}" {{ 'selected' if p and p.energy == e else '' }}>{{ e }} — {{ effects.energy[e] }}</option>{% endfor %}
+        </select></label>
+      <label>Clip length
+        <select name="clip_profile"><option value="">— global —</option>
+          {% for c in levers.clip_profile %}<option value="{{ c }}" title="{{ effects.clip_profile[c] }}" {{ 'selected' if p and p.clip_profile == c else '' }}>{{ c }} — {{ effects.clip_profile[c] }}</option>{% endfor %}
+        </select></label>
+      <label>Framing
+        <select name="framing"><option value="">— global —</option>
+          {% for f in levers.framing %}<option value="{{ f }}" title="{{ effects.framing[f] }}" {{ 'selected' if p and p.framing == f else '' }}>{{ f }} — {{ effects.framing[f] }}</option>{% endfor %}
+        </select></label>
+      <label>Hook angle
+        <select name="hook_angle"><option value="">— any —</option>
+          {% for h in levers.hook_angle %}<option value="{{ h }}" title="{{ effects.hook_angle[h] }}" {{ 'selected' if p and p.hook_angle == h else '' }}>{{ h }} — {{ effects.hook_angle[h] }}</option>{% endfor %}
+        </select></label>
+      <label>Hook tone
+        <select name="hook_tone"><option value="">— any —</option>
+          {% for h in levers.hook_tone %}<option value="{{ h }}" title="{{ effects.hook_tone[h] }}" {{ 'selected' if p and p.hook_tone == h else '' }}>{{ h }} — {{ effects.hook_tone[h] }}</option>{% endfor %}
+        </select></label>
+      <label>Clips per drop
+        <input type="number" name="clip_count" min="1" size="4" placeholder="all that fit"
+          title="how many clips this account gets per source (blank = no ceiling)" value="{{ p.clip_count if p and p.clip_count else '' }}"></label>
+    </fieldset>
+    <fieldset class="directives">
+      <legend>Directive overrides — blank = use the compiled default above (a set override SHADOWS its levers)</legend>
+      <label class="block">Clips directive
+        <textarea name="casting_directive" rows="2" placeholder="(compiled from Clips + Energy above)">{{ p.casting_override if p else '' }}</textarea></label>
+      <label class="block">Hook directive
+        <textarea name="hook_directive" rows="2" placeholder="(compiled from Hook angle + tone above)">{{ p.hook_override if p else '' }}</textarea></label>
+      <label class="block">Caption directive
+        <textarea name="caption_directive" rows="2" placeholder="(the persona voice; hashtags stay deterministic)">{{ p.caption_override if p else '' }}</textarea></label>
+    </fieldset>
+  </div>
+  <div id="persona-compose-{{ cid }}" class="persona-compose" aria-live="polite">
+    <p class="muted">change a lever above to see exactly what this persona compiles to →</p>
+  </div>
+{% endmacro %}
+
+{% macro levers_reference(lever_ref) %}
+  {# "What are the levers?" — the full code-derived catalog: every lever and what each option equals. #}
+  <details class="levers-reference">
+    <summary>Levers reference — what every lever does</summary>
+    {% for lever in lever_ref %}
+      <div class="lever-ref-item">
+        <strong>{{ lever.label }}</strong> <span class="muted">· {{ lever.stage }} · {{ lever.does }}</span>
+        {% if lever.options %}<ul>{% for o in lever.options %}<li><code>{{ o.value }}</code> — {{ o.effect }}</li>{% endfor %}</ul>{% endif %}
+      </div>
+    {% endfor %}
+  </details>
 {% endmacro %}
 <div id="personas-panel" aria-live="polite">
   {% if result %}
@@ -86,6 +111,8 @@
     </div>
   {% endif %}
 
+  {{ levers_reference(lever_ref) }}
+
   <section class="persona-step">
     <h3>Add a persona</h3>
     <p class="muted">Name it, write its voice, pick a hashtag lean, and capture the intake (genre,
@@ -106,7 +133,7 @@
         <label>Reference accounts <input type="text" name="refs" placeholder="@a, @b" size="20"></label>
         <label class="block">Notes <input type="text" name="notes" placeholder="optional" size="40"></label>
       </fieldset>
-      {{ lever_fields(levers) }}
+      {{ lever_fields(levers, effects) }}
       <button type="submit" class="primary">Add persona</button>
     </form>
   </section>
@@ -179,7 +206,7 @@
               <label>Reference accounts <input type="text" name="refs" value="{{ p.intake.get('reference_accounts', []) | join(', ') }}" size="20"></label>
               <label class="block">Notes <input type="text" name="notes" value="{{ p.intake.get('notes', '') }}" size="40"></label>
             </fieldset>
-            {{ lever_fields(levers, p) }}
+            {{ lever_fields(levers, effects, p) }}
             <label class="block">Brief
               <textarea name="brief" rows="2" placeholder="(optional) freeform direction this persona runs against — composed into the AI instruction after the voice">{{ p.brief }}</textarea></label>
             <button type="submit" class="primary">Save</button>
