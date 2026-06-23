@@ -260,6 +260,12 @@ class Render(BaseModel):
     state: RenderState = RenderState.rendered
     batch_id: Optional[str] = None              # denormalized from the source at mint (filing + archive lineage)
     source_id: Optional[str] = None             # denormalized from the moment's source at mint (filing path)
+    is_account_cut: bool = False                # M2: True iff this render is a REAL per-account CUT at the
+                                                # account's own length band (render_account_cut succeeded), vs a
+                                                # hook burned onto the global-band shared clip. The truthful
+                                                # source for Post.clip_profile provenance + the M3/M4 "this is a
+                                                # per-account 28-45s cut" UI label. Additive (False on every
+                                                # legacy render — they reload fine, no migration).
 
 
 # ---- M3 (structural-hooks): the stitch_plan entity — the operator-approval spine ----

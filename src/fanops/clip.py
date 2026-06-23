@@ -435,6 +435,8 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
     NO moment (the shared Clip owns the moment anchor — §4 of the per-account plan). Mirrors render_moment's
     window math (fit_window + snap + visual-start) so the per-account cut opens on the same strong frame the
     shared clip does. The hook .ass is 0-based (build_ass(clip_start=0) — the -ss output is 0-based)."""
+    ass_path = None
+    tmp = str(out_path) + ".part"
     try:
         m = led.moments[moment_id]
         src = led.sources[m.parent_id]
@@ -444,7 +446,6 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
             cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
         tw, th = _TARGETS[aspect.value]
-        ass_path = None
         extra_vf = None
         if (hook or "").strip() and overlay.ffmpeg_has_textfilter():
             # hook-only .ass, 0-based over the cut output's first min(2.5, len) seconds (build_ass uses
@@ -455,23 +456,24 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
                 ass_path = str(Path(out_path).with_suffix(".ass"))
                 overlay.write_ass(ass_text, ass_path)
                 extra_vf = overlay.subtitles_vf(ass_path)
-        tmp = str(out_path) + ".part"
         cmd = ffmpeg_clip_cmd(src.source_path, tmp, cs, ce, aspect.value,
                               src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf, top_bias=top_bias)
         try:
             r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
             return False                                      # ffmpeg absent/hung -> fail-open to the shared burn
-        finally:
-            if ass_path:
-                try: os.unlink(ass_path)                      # the .ass is a render artifact, never an output
-                except OSError: pass
         if r.returncode != 0 or not Path(tmp).exists():
-            try: os.unlink(tmp)
-            except OSError: pass
-            return False
+            return False                                      # ffmpeg failed -> fail-open (tmp swept in finally)
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         os.replace(tmp, out_path)                             # atomic publish — never a half-written per-account file
         return True
     except Exception:
         return False                                          # fail-open by contract: a clip is never blocked on its variant
+    finally:
+        # sweep BOTH render artifacts on EVERY exit path (success, fail-open return, or a raise before the
+        # subprocess) — the .ass is never an output, and the .part is consumed by os.replace on success (its
+        # unlink then no-ops) but survives every failure. Mirrors overlay.burn_hook_only's atomic-temp finally.
+        for _p in (ass_path, tmp):
+            if _p:
+                try: os.unlink(_p)
+                except OSError: pass

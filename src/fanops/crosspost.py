@@ -183,9 +183,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                     did_cut = produced
                     led.add_render(Render(id=render_id, clip_id=target_clip.id, account=surf.account,
                                           surface_key=skey, hook_text=hook_v, path=vpath,
-                                          state=RenderState.rendered, batch_id=src_batch, source_id=src_id))
+                                          state=RenderState.rendered, batch_id=src_batch, source_id=src_id,
+                                          is_account_cut=produced))   # truthful: a failed cut fell back to the shared burn
                 else:
-                    did_cut = wants_cut                            # an already-minted per-account render IS a cut
+                    did_cut = led.get_render(render_id).is_account_cut   # read the TRUTH (a prior failed cut stays False)
                 media_urls = [f"file://{led.get_render(render_id).path}"]
             led.add_post(Post(
                 # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator

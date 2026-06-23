@@ -6,7 +6,6 @@
 # account at the global band is byte-identical to today (shared-clip burn_hook_only, un-tagged id).
 import json
 from pathlib import Path
-import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, Moment, Source, ClipState, MomentState, Fmt
@@ -101,6 +100,17 @@ def test_cut_fail_open_on_nonzero_rc(tmp_path, mocker, monkeypatch):
     out = str(cfg.clips / "r.9x16.mp4")
     assert render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out) is False
     assert not Path(out).exists() and not Path(out + ".part").exists()
+    assert not Path(out).with_suffix(".ass").exists()       # the .ass render artifact is swept on failure (no leak)
+
+def test_cut_success_leaves_no_artifacts(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = _src_moment(cfg)
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
+    out = str(cfg.clips / "r.9x16.mp4")
+    assert render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out) is True
+    assert Path(out).exists() and not Path(out + ".part").exists() and not Path(out).with_suffix(".ass").exists()
 
 
 # ---------------------------------------------------------------- crosspost wiring (integration) ----
@@ -210,4 +220,38 @@ def test_per_account_cut_fail_open_falls_back_to_shared_burn(tmp_path, monkeypat
     assert len(cut_calls) == 1 and len(burn_calls) == 1           # tried the cut, fell back to the shared burn
     r = next(iter(led.renders.values()))
     assert Path(r.path).exists()                                  # Render.path invariant: a usable file always exists
-    assert next(iter(led.posts.values())).render_id              # the post still points at a render
+    p = next(iter(led.posts.values()))
+    assert p.render_id and r.is_account_cut is False              # the render records it is NOT a real cut (fell back)
+    assert p.clip_profile == "talk"                              # PROVENANCE TRUTH: shipped the global-band burn, not "long"
+
+def test_successful_cut_records_is_account_cut(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    _patch_cut(mocker, returns=True); _patch_burn(mocker)
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [_acct("@long", "1", clip_profile="long")])
+    led = Ledger.load(cfg)
+    _seed_clip(led, cfg, hooks_by_persona={"@long": "H"}, surfaces=("@long/instagram",)); led.save()
+    led = _run(cfg)
+    assert next(iter(led.renders.values())).is_account_cut is True
+
+def test_dedup_hit_reads_truth_not_intent(tmp_path, monkeypatch, mocker):
+    # one account on TWO 9:16 platforms (ig+tiktok) -> SAME band-tagged render id -> the 2nd surface DEDUP-hits.
+    # With the cut FAILING, BOTH posts must read the render's is_account_cut=False and stamp the global profile —
+    # never the "long" lie just because the id was band-tagged (the reviewer's MEDIUM).
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    _patch_cut(mocker, returns=False); _patch_burn(mocker)
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [_acct("@long", "1", clip_profile="long")])
+    led = Ledger.load(cfg)
+    led_obj = led
+    led_obj.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
+    led_obj.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                              state=MomentState.clipped, hooks_by_persona={"@long": "H"}))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
+    clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
+    clip.meta_captions = {s: {"caption": "c", "hashtags": []} for s in ("@long/instagram", "@long/tiktok")}
+    led_obj.add_clip(clip); led_obj.save()
+    led = _run(cfg)
+    assert len(led.renders) == 1                                  # both surfaces share the one (failed-cut) render
+    assert {p.clip_profile for p in led.posts.values()} == {"talk"}   # neither post lies about the length
