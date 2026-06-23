@@ -297,10 +297,11 @@ def test_crosspost_affinity_skips_off_affinity_surfaces(tmp_path, mocker, monkey
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
 
-def test_crosspost_affinity_ignored_when_casting_off(tmp_path, mocker):
-    # A2 (kill-switch): casting OFF (the default — conftest strips the flag) IGNORES persisted affinities and
-    # fans to ALL surfaces, even on a ledger already cast in a prior pass. "Off" is fully off — the crosspost
-    # affinity skip is gated on cfg.account_casting, not just on the presence of m.affinities.
+def test_crosspost_affinity_ignored_when_casting_off(tmp_path, mocker, monkeypatch):
+    # A2 (kill-switch): casting OFF (now an EXPLICIT off-word — the flag DEFAULTS ON) IGNORES persisted
+    # affinities and fans to ALL surfaces, even on a ledger already cast in a prior pass. "Off" is fully off —
+    # the crosspost affinity skip is gated on cfg.account_casting, not just on the presence of m.affinities.
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id=None)
     led.moments["mom_1"].affinities = ["@a"]          # a prior cast pass stamped this

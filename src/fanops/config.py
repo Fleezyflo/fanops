@@ -419,7 +419,7 @@ class Config:
         # a cast moment ONLY to its accounts. DEFAULT OFF (opt-in, mirrors creative_variation) — a fan-out-
         # changing selection layer ships behind a kill-switch; unset/empty/other stays OFF (today's behavior).
         v = (os.getenv("FANOPS_ACCOUNT_CASTING") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON (per-account selection is the wanted path); explicit off-words disable
 
     @property
     def cast_pick_budget(self) -> int:

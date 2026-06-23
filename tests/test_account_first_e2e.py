@@ -44,8 +44,9 @@ def _fake_ffmpeg(mocker):
 
 def test_account_first_batch_to_queued_only_targeted_account(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")            # belt-and-braces over the autouse strip; never live
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")        # casting now DEFAULTS ON; pin OFF to isolate the batch-target path
     cfg = Config(root=tmp_path); _seed_accounts(cfg); _fake_ffmpeg(mocker)
-    assert cfg.account_casting is False                      # the casting-OFF byte-identical default is the path under test
+    assert cfg.account_casting is False                      # casting explicitly OFF: batch-targeting is what's under test here
 
     # 1) a named batch targeting ONLY @a (the lever: this ingest is for @a, not "everything for everything")
     led = Ledger.load(cfg)

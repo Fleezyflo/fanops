@@ -574,9 +574,9 @@ def test_set_account_casting_dual_writes_both_directions(tmp_path, monkeypatch):
 def test_golive_status_reflects_account_casting(tmp_path, monkeypatch):
     from fanops.studio import views
     cfg = _clean(monkeypatch, tmp_path)
-    assert views.golive_status(cfg).account_casting is False                  # default OFF
-    golive.set_account_casting(cfg, True)
-    assert views.golive_status(cfg).account_casting is True                   # mirrors the flag after a toggle
+    assert views.golive_status(cfg).account_casting is True                   # default ON (per-account selection)
+    golive.set_account_casting(cfg, False)
+    assert views.golive_status(cfg).account_casting is False                  # mirrors the flag after a toggle
 
 
 # ---- Phase 2: casting / volume levers (exclusive routing, pick budget, clip profile) ----
