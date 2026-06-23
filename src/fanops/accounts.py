@@ -28,6 +28,12 @@ class Account(BaseModel):
     status: AccountStatus = AccountStatus.planned
     access: str = "blotato"                # METHOD, never a credential
     persona: Optional[str] = None
+    persona_id: Optional[str] = None       # A1: link to a first-class Persona (personas.json). When set AND it
+                                           # resolves, the linked persona's voice/tag_lean HYDRATE this account
+                                           # in memory at load (_hydrate_from_personas), so the persona is the
+                                           # source of truth and an edit takes effect on next load. Additive:
+                                           # None / a dangling id -> the inline persona/tag_lean below stand
+                                           # (byte-identical to today) — fail-open, never crashes a load.
     tag_lean: Optional[str] = None         # persona TAG knob: tasteful|underground|bold (None -> no lean).
                                            # Additive (empty on legacy rows). An unknown value reloads fine
                                            # and is inert (vet_hashtags treats it as no-lean) — fail-open.
@@ -78,6 +84,7 @@ class Accounts:
                 # Hand-edit typo (the documented "paste account_id, set status:active" step).
                 # Clear one-liner instead of a raw traceback.
                 raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
+        _hydrate_from_personas(a, cfg)               # A1: linked accounts read their persona's voice/tag_lean
         return a
 
     def active(self) -> list[Account]:
@@ -165,6 +172,48 @@ class Accounts:
         # shared account_id fallback — so a multi-platform handle posts each platform to its own channel.
         return [Surface(a.handle, a.integrations.get(p.value) or a.account_id, p)
                 for a in self.active() for p in a.platforms]
+
+
+def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
+    """A1: override each LINKED account's persona/tag_lean IN MEMORY from its Persona (the source of truth
+    once linked), so every consumer reading a.persona / a.tag_lean sees the persona's value and an operator
+    edit takes effect on the next load — with ZERO consumer rewiring. FAIL-OPEN: no personas.json, a
+    dangling persona_id, or any error leaves the account's inline values exactly as today (byte-identical
+    when unlinked). The personas import is lazy (personas imports accounts in migrate -> avoid a cycle)."""
+    if not any(getattr(acc, "persona_id", None) for acc in accts.accounts):
+        return                                       # no links -> no work, no personas.json read at all
+    try:
+        from fanops.personas import Personas
+        reg = Personas.load(cfg)
+    except Exception:
+        return                                       # corrupt/absent personas.json -> inline values stand
+    for acc in accts.accounts:
+        per = reg.get(getattr(acc, "persona_id", None))
+        if per is None:
+            continue                                 # dangling id -> inline values stand
+        if per.voice:
+            acc.persona = per.voice                  # the persona owns the voice (empty voice -> keep inline)
+        acc.tag_lean = per.tag_lean                  # the persona owns the lean (may be None -> clears inline)
+
+
+def link_persona(cfg: Config, handle: str, persona_id: str) -> str:
+    """Link ONE account to a first-class Persona (set persona_id) atomically — the A2 connect control. A
+    BLANK persona_id CLEARS the link (-> the account's inline persona/tag_lean stand again). Scans ALL
+    rows (dup-handle safety, mirrors set_tag_lean); preserves every sibling + unknown field. Unknown
+    handle -> KeyError (caller -> clean ActionResult). Does NOT validate the id exists (a dangling link
+    fails open at load) — the Studio resolves the id from the live registry before calling."""
+    pid = (persona_id or "").strip()
+    p = cfg.accounts_path
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        found = False
+        for a in accounts:
+            if isinstance(a, dict) and a.get("handle") == handle:
+                a["persona_id"] = pid or None; found = True
+        if not found:
+            raise KeyError(handle)
+        _write_accounts_atomic(p, raw)
+    return handle
 
 
 def load_accounts_safe(cfg: Config) -> tuple["Accounts", Optional[str]]:

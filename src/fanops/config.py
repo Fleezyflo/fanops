@@ -97,6 +97,8 @@ class Config:
         self.digest_path = self.control / "ledger_digest.md"
         self.accounts_path = self.control / "accounts.json"
         self.accounts_lock_path = self.control / "accounts.lock"   # serializes the accounts.json read-modify-write mutators
+        self.personas_path = self.control / "personas.json"   # A1 first-class personas (voice/tag_lean/corpus/intake); absent -> inline Account.persona stands
+        self.personas_lock_path = self.control / "personas.lock"   # serializes the personas.json read-modify-write mutators
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
         self.hashtags_path = self.control / "hashtags.json"  # M4 dynamic reach-ranked tag store; absent -> frozen pools
