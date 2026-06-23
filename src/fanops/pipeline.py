@@ -17,7 +17,7 @@ from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
-from fanops.casting import request_moment_casting, ingest_moment_casting
+from fanops.casting import request_moment_casting, ingest_moment_casting, scoped_caption_surfaces
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
                                   prewarm_approved_stitches, approved_disabled_count)
 from fanops.intro_match import request_intro_match, ingest_intro_match
@@ -269,10 +269,14 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                     led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
                     for clip in clips:
                         if clip.state is not ClipState.rendered: continue   # a failed-aspect clip (ClipState.error) must not be laundered into a phantom captioned post with a dangling mp4
-                        # Affinity scoping happens at CROSSPOST (intent = Moment.affinities + Batch.target_accounts),
-                        # NOT here — caption requests stay unscoped, so no later face reads meta_captions as casting intent.
+                        # M5: scope the caption request to the affinity-admitted surfaces. Casting OFF / an
+                        # uncast moment -> all surfaces (byte-identical). Within a decision cycle this is a
+                        # SUPERSET of the crosspost survivors (which narrow further by batch target), so every
+                        # minted post has a caption; a post-captioning RE-DECISION swap is caught by crosspost's
+                        # cap-is-None skip. Crosspost stays the SOLE casting-intent gate; meta_captions is never
+                        # read as casting intent.
                         led = request_captions(led, cfg, clip.id,
-                                               [(s.account, s.platform) for s in accts.surfaces()],
+                                               scoped_caption_surfaces(cfg, m, accts.surfaces()),
                                                accounts=accts)
                 except Exception as e:
                     led.moments[m.id].state = MomentState.error

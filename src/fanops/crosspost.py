@@ -17,6 +17,7 @@ from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 from fanops.timeutil import parse_iso as _parse, iso_z
+from fanops.casting import affinity_admits   # M5: the shared affinity gate (crosspost + caption scoper)
 from fanops.log import get_logger
 
 # Staggering constants. _STEP_MIN is the fixed per-index spacing; _JITTER_MAX is the bounded
@@ -112,10 +113,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 get_logger(cfg)("crosspost", clip.id, "batch_target_skip",
                                 surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
                 continue   # batch targets a specific account set; this surface isn't in it (no post born)
-            if cfg.account_casting and m is not None and m.affinities and surf.account not in m.affinities:
-                continue   # affinity gate (Face 3): a cast moment fans ONLY to its accounts; an UNCAST moment
-                           # (affinities==[]) falls through -> fans to all. Gated on account_casting so flag-OFF
-                           # IGNORES persisted affinities (A2).
+            if not affinity_admits(cfg, m, surf.account):
+                continue   # affinity gate (Face 3) via the M5 shared predicate so caption-scoping can't drift:
+                           # a cast moment fans ONLY to its accounts; an UNCAST moment (affinities==[]) fans to
+                           # all; flag-OFF IGNORES persisted affinities (A2). See casting.affinity_admits.
             # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
             # platform's hard cap, SKIP this surface only (conservative — the clip can still post
             # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown

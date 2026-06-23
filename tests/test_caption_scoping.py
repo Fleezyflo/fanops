@@ -6,7 +6,7 @@
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import (Source, Moment, Clip, Batch, ClipState, MomentState, Platform, Fmt,
+from fanops.models import (Source, Moment, Clip, ClipState, MomentState, Fmt,
                            CaptionSet, CaptionItem)
 from fanops.accounts import Accounts
 from fanops.casting import affinity_admits, scoped_caption_surfaces
@@ -113,7 +113,10 @@ def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, m
                           "@a/youtube": {"caption": "a", "hashtags": []}}
     led.add_clip(clip)
     _fake_ffmpeg(mocker)
+    logfn = mocker.patch("fanops.crosspost.get_logger").return_value       # capture the run-log breadcrumbs
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     # @a skipped by the affinity gate (not in [@b]); @b admitted but uncaptioned -> the cap-is-None net skips it.
     assert led.posts == {}                                                  # safe degradation: no post, no crash
     assert "clip_1" in led.clips                                            # the clip survives intact
+    skipped = {c.kwargs.get("surface") for c in logfn.call_args_list if c.args[2:3] == ("skipped_surface",)}
+    assert skipped == {"@b/instagram", "@b/youtube"}                        # the swap is TRACED, never silent
