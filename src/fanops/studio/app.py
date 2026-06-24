@@ -748,6 +748,16 @@ def create_app(cfg: Config) -> Flask:
         return render_template("_personas_panel.html", page=views.personas_page(cfg), tag_leans=_TAG_LEANS,
                                levers=_LEVERS, effects=_LEVER_EFFECTS, lever_ref=_LEVER_REF, result=result, tab="personas")
 
+    @app.get("/personas/drawer/<pid>")
+    def do_personas_drawer(pid):
+        # Slice 3: render the focused persona's levers as a slide-out DRAWER body (htmx swaps it into the
+        # body-level #persona-drawer mount). Levers are visible here — no nested collapse. Save/Delete reuse
+        # /personas/edit + /personas/delete (re-render #personas-panel). Fail-open: an unknown id renders a
+        # clean "not found" dialog (p=None), never a 404/500 (htmx would swap an error page into the mount).
+        card = next((c for c in views.personas_page(cfg).personas if c.id == pid), None)
+        return render_template("_persona_drawer.html", p=card, tag_leans=_TAG_LEANS,
+                               levers=_LEVERS, effects=_LEVER_EFFECTS)
+
     @app.post("/personas/compose")
     def do_personas_compose():
         # LIVE TRANSLATION: recompute what the in-progress (unsaved) persona compiles to from the posted form

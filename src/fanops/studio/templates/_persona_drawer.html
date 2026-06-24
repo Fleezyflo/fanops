@@ -1,0 +1,53 @@
+{# _persona_drawer.html — Slice 3: the persona editor as a slide-out modal DIALOG body (htmx-swapped into the
+   body-level #persona-drawer mount). The levers are ALWAYS visible here — no nested collapse — which is the
+   whole point of the drawer: one click from the card to every lever. Save/Delete reuse the proven
+   /personas/edit + /personas/delete routes (they re-render #personas-panel; drawer.js auto-closes on that
+   swap). Close clears the mount. drawer.js owns the a11y a modal needs and CSS can't (focus-trap/ESC/inert/
+   focus-return). Autoescape stays on — persona voice/intake/brief are operator free text. #}
+{% from "_persona_levers.html" import lever_fields %}
+{% if p %}
+<div class="drawer-dialog" role="dialog" aria-modal="true" aria-labelledby="persona-drawer-heading">
+  <header class="drawer-head">
+    <h2 id="persona-drawer-heading" tabindex="-1">Edit {{ p.name }} <span class="muted">{{ p.id }}</span></h2>
+    <button type="button" class="drawer-close" data-drawer-close aria-label="Close persona editor">×</button>
+  </header>
+  {% if p.linked_handles %}<p class="muted drawer-blast">Edits reach {{ p.linked_handles|join(', ') }}.</p>
+  {% else %}<p class="muted drawer-blast">Not connected to any account yet.</p>{% endif %}
+  <form hx-post="{{ url_for('do_personas_edit') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+    <input type="hidden" name="id" value="{{ p.id }}">
+    <label>Name <input type="text" name="name" value="{{ p.name }}" size="22"></label>
+    <label>Tag lean
+      <select name="tag_lean">
+        <option value="" {{ 'selected' if not p.tag_lean else '' }}>— none —</option>
+        {% for l in tag_leans %}<option value="{{ l }}" {{ 'selected' if p.tag_lean == l else '' }}>{{ l }}</option>{% endfor %}
+      </select></label>
+    <label class="block">Voice <textarea name="voice" rows="2">{{ p.voice }}</textarea></label>
+    <fieldset class="intake">
+      <legend>Intake</legend>
+      <label>Genre <input type="text" name="genre" value="{{ p.intake.get('genre', '') }}" size="14"></label>
+      <label>Language <input type="text" name="language" value="{{ p.intake.get('language', '') }}" size="8"></label>
+      <label>Reference accounts <input type="text" name="refs" value="{{ p.intake.get('reference_accounts', []) | join(', ') }}" size="20"></label>
+      <label class="block">Notes <input type="text" name="notes" value="{{ p.intake.get('notes', '') }}" size="40"></label>
+    </fieldset>
+    {{ lever_fields(levers, effects, p) }}
+    <label class="block">Brief
+      <textarea name="brief" rows="2" placeholder="(optional) freeform direction this persona runs against — composed into the AI instruction after the voice">{{ p.brief }}</textarea></label>
+    <div class="drawer-actions">
+      <button type="submit" class="primary">Save</button>
+      <button type="button" class="danger"
+        hx-post="{{ url_for('do_personas_delete') }}" hx-target="#personas-panel" hx-swap="outerHTML"
+        hx-vals='{{ {"id": p.id} | tojson }}'
+        hx-confirm="Delete persona {{ p.name }}? Linked accounts fall back to their inline persona.">Delete</button>
+      <button type="button" class="ghost" data-drawer-close>Close</button>
+    </div>
+  </form>
+</div>
+{% else %}
+<div class="drawer-dialog drawer-missing" role="dialog" aria-modal="true" aria-labelledby="persona-drawer-heading">
+  <header class="drawer-head">
+    <h2 id="persona-drawer-heading" tabindex="-1">Persona not found</h2>
+    <button type="button" class="drawer-close" data-drawer-close aria-label="Close">×</button>
+  </header>
+  <p class="muted">That persona no longer exists — it may have been deleted. Close this and pick another.</p>
+</div>
+{% endif %}

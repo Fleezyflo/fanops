@@ -352,6 +352,30 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .demoted-accounts { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-top:.5rem; padding-top:.5rem; border-top:1px solid var(--line); }
 .demoted-accounts p { flex-basis:100%; margin:0; }
 
+/* ── Persona drawer (Slice 3) — the levers as a slide-out modal dialog ─────── */
+/* Closed = off-canvas + visibility:hidden (out of the AT tree AND the tab order); .open (set by drawer.js)
+   slides it in. drawer.js owns focus-trap/ESC/inert/focus-return; the global reduced-motion rule below already
+   neutralises the slide (transition-duration:.01ms). The mount is body-level so inert(rail+workspace) is safe. */
+.persona-edit-open { font-size:var(--t-meta); }
+.drawer-backdrop { position:fixed; inset:0; background:oklch(0% 0 0 / .55); z-index:60; }
+.drawer-backdrop[hidden] { display:none; }
+.drawer { position:fixed; top:0; right:0; height:100vh; width:clamp(20rem,32vw,30rem); z-index:70;
+  background:linear-gradient(180deg,var(--surface-2),var(--surface-1)); border-left:1px solid var(--line-bright);
+  box-shadow:var(--elev-2); overflow-y:auto; padding:var(--s-4);
+  visibility:hidden; transform:translateX(100%); transition:transform var(--dur-slow) var(--ease), visibility var(--dur-slow); }
+.drawer.open { visibility:visible; transform:translateX(0); }
+.drawer-dialog { display:grid; gap:var(--s-3); }
+.drawer-dialog form { display:grid; gap:.5rem; margin:0; }
+.drawer-head { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--s-3); }
+.drawer-head h2 { margin:0; font:600 var(--t-lg) var(--sans); letter-spacing:-.01em; }
+.drawer-head h2:focus-visible { outline:none; box-shadow:var(--ring); border-radius:var(--r-sm); }
+.drawer-close { font-size:1.3rem; line-height:1; padding:.1rem .55rem; background:transparent; border:1px solid var(--line); color:var(--muted); }
+.drawer-close:hover { color:var(--ink); border-color:var(--line-bright); }
+.drawer-blast { margin:0; font-size:var(--t-meta); }
+.drawer-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:var(--s-2); padding-top:var(--s-3); border-top:1px solid var(--line); }
+button.ghost { background:transparent; border-color:var(--line); color:var(--muted); }
+button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
+
 /* ── P5: Review density + Schedule caption ──────────────────────────────── */
 /* clip lineage line (source + moment window) + collapsed transcript peek on a Review card */
 .clip-lineage { margin:.15rem 0; font-size:var(--t-eyebrow); }
@@ -405,6 +429,7 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
   .status > span { flex:1 1 6rem; }
   .matrix-scroll { max-height:none; }   /* tiny screens: let the page scroll the grid rather than a stubby viewport */
   .matrix-col, .matrix-cell { min-width:9rem; }
+  .drawer { width:100vw; }              /* the slide-out takes the full phone width */
 }
 @media (min-width:1440px) { main { max-width:1280px; } }
 
