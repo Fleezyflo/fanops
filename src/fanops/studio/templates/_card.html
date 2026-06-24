@@ -84,7 +84,10 @@
            into ordered "value ← why" chips: length←persona/account, framing←account, ✂ cut / ⚠ shared-cut
            (the shared-cut WARN is gated on creative_variation), ⚠ shared-hook, cast←picked-for. [] for an
            undifferentiated surface (the OFF firewall) -> the whole row stays absent, byte-identical. #}
-        {% set spec_chips = provenance_chips(s, creative_variation=creative_variation) %}
+        {# the shared-cut WARN is an EDITABLE-worklist signal (an actionable fallback before approval) — never on a
+           recent/held card you can't change. Pass the bucket-gated flag so the macro suppresses it off the worklist,
+           preserving the pre-S4 `creative_variation and bucket=='editable'` gate; every other cause chip is unaffected. #}
+        {% set spec_chips = provenance_chips(s, creative_variation=(creative_variation and card.bucket == 'editable')) %}
         {% if spec_chips %}
           <div class="meta surface-spec" aria-label="{{ s.account }} clip spec">{{ cause_chips(spec_chips) }}</div>
         {% endif %}

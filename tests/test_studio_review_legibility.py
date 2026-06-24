@@ -128,8 +128,87 @@ def _seed_legacy(cfg):
 
 
 def test_off_firewall_no_cause_chips(tmp_path, monkeypatch):
+    # a STRICTLY legacy account (no pins, no persona) under both flags OFF: the differentiation row is fully absent,
+    # exactly as before S4. (A pinned account under OFF is a DIFFERENT contract — see the next test.)
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path); _seed_legacy(cfg)
     html = _client(cfg).get("/review?view=list").data.decode()
     assert 'class="cause"' not in html                     # no attribution markers on a legacy surface
     assert "surface-spec" not in html                      # the whole differentiation chip row stays absent
+
+
+def _seed_pin_only(cfg):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "clip_profile": "long"}]}))
+    cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s", source_path="/v.mp4"))
+        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.awaiting_approval, clip_profile="long"))
+
+
+def test_off_with_pin_shows_cause_additively(tmp_path, monkeypatch):
+    # the HONEST contract (not "byte-identical"): an account that PINS clip_profile already showed a length chip
+    # pre-S4; S4 ADDITIVELY attributes it. The length band stays visible AND now carries its cause — a true fact
+    # (the account pins long) independent of the differentiation flags. No NEW chip type, no shipped-artifact change.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = Config(root=tmp_path); _seed_pin_only(cfg)
+    html = _client(cfg).get("/review?view=list").data.decode()
+    assert "28–45s" in html                                # the length chip is still visible (existing behavior)
+    assert "@a long" in html and 'class="cause"' in html   # S4's additive attribution: the account pins long
+    assert "shared-cut" not in html                        # but no per-account-cut WARN under OFF (firewall holds)
+
+
+def _seed_recent_no_cut(cfg):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "clip_profile": "long"}]}))
+    cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s", source_path="/v.mp4"))
+        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.published, clip_profile="long", scheduled_time=NOW.isoformat()))
+
+
+def test_shared_cut_warn_suppressed_off_the_editable_worklist(tmp_path):
+    # audit HIGH: a SHIPPED (recent) card with no per-account cut, creative_variation ON. The ⚠ shared-cut WARN is
+    # an editable-worklist signal (act before approval) — it must NOT appear on a recent card you can't change.
+    cfg = Config(root=tmp_path); _seed_recent_no_cut(cfg)          # creative_variation defaults ON
+    html = _client(cfg).get("/review").data.decode()
+    assert "28–45s" in html                                # the recent card's length chip still renders
+    assert "shared-cut" not in html                        # the bucket gate suppresses the actionable warn here
+
+
+def _seed_editable_no_cut(cfg):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "clip_profile": "long"}]}))
+    cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s", source_path="/v.mp4"))
+        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.awaiting_approval, clip_profile="long"))
+
+
+def test_shared_cut_warn_still_fires_on_editable_card(tmp_path):
+    # the gate's other half: on the EDITABLE worklist (?view=list cards) under creative_variation ON, a surface
+    # with no per-account cut DOES show the actionable ⚠ shared-cut — the warn isn't gone, just scoped.
+    cfg = Config(root=tmp_path); _seed_editable_no_cut(cfg)        # creative_variation defaults ON
+    html = _client(cfg).get("/review?view=list").data.decode()
+    assert "shared-cut" in html                            # fires where it's actionable
+
+
+def test_pivot_off_firewall_no_shared_cut_warn(tmp_path, monkeypatch):
+    # audit LOW: the account-pivot (?view=account) hand-rolled shared-cut chip lacked the creative_variation gate,
+    # so under OFF every non-cut surface wrongly warned. S4 gates it — under OFF the warn is absent.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = Config(root=tmp_path); _seed_editable_no_cut(cfg)
+    html = _client(cfg).get("/review?view=account&account=@a").data.decode()
+    assert "shared-cut" not in html                        # a shared cut under OFF is expected, never a warning
