@@ -142,6 +142,9 @@ def create_app(cfg: Config) -> Flask:
     # S3: the Make tab's "do this next" projection (pipeline_status counts -> {key,label,hint}). A Jinja GLOBAL so
     # _run_next.html reads it off the `status` BOTH render paths already pass — no handler change. Pure + fail-open.
     app.jinja_env.globals["run_next_step"] = views.run_next_step
+    # S6: proportional micro-bar width (value vs the column peak from metric_peaks). Jinja GLOBAL so the
+    # Posted/Results tables read it directly off the `peaks` dict the routes pass. Pure + fail-safe.
+    app.jinja_env.globals["bar_pct"] = views.bar_pct
 
     def _time_arg() -> str:
         # The datetime-local control submits naive LOCAL; convert to canonical UTC before the action sees it.
@@ -457,13 +460,15 @@ def create_app(cfg: Config) -> Flask:
     def lift():
         led = Ledger.load(cfg); accts = Accounts.load(cfg); account = _account_arg()
         view = views.lift_rows(led, cfg, accts, account=account)
+        views.lineage_stats(view.variant_rows)            # S6: rank which hook won within each clip's lineage
+        peaks = views.metric_peaks(view.variant_rows)     # S6: micro-bar normalisation over the shown variants
         # Chip universe from a CHEAP post scan (the same analyzed-variant predicate lift_rows uses), so we
         # call lift_rows ONCE — building an unfiltered view just for chips would re-run its per-row gate I/O.
         vcounts = Counter(p.account for p in led.posts.values()
                           if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics)
         chips = {"chip_accounts": _with_active(vcounts, account), "chip_counts": dict(vcounts),
                  "chip_route": "lift", "chip_total": sum(vcounts.values()), "active": account}
-        return render_template("lift.html", view=view, tab="lift", **chips)
+        return render_template("lift.html", view=view, peaks=peaks, tab="lift", **chips)
 
     def _posted_panel(result=None, *, full=False):
         led = Ledger.load(cfg); account = _account_arg(); batch = _batch_arg()
@@ -471,12 +476,16 @@ def create_app(cfg: Config) -> Flask:
         rows = (views.posted_library(led, cfg, account=account, batch=batch)
                 if (account or batch) else rows_full)
         rollup = views.posted_batch_rollup(rows) if batch else None     # Face 5: full scoped (pre-slice) per-batch summary
+        views.lineage_stats(rows)                         # S6: rank repost/crosspost siblings within the filtered set
         page = views.paginate(rows, _offset_arg())
         groups = views.group_posted_by_day(page.items)    # content-lifecycle Phase 3: publish-day buckets (over the slice)
+        peaks = views.metric_peaks(rows)                  # S6: normalise micro-bars over the FULL filtered set (same
+                                                          # denominator as lineage_stats) so a bar is a STABLE reference
+                                                          # across pages — a saves=10 row reads the same width on any page
         accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
         return render_template("posted.html" if full else "_posted_panel.html", rows=page.items, groups=groups,
-                               page=page, rollup=rollup, active_batch=batch, accounts=accounts, result=result,
-                               tab="posted", **_row_chips(rows_full, "posted", account))
+                               page=page, rollup=rollup, peaks=peaks, active_batch=batch, accounts=accounts,
+                               result=result, tab="posted", **_row_chips(rows_full, "posted", account))
 
     @app.get("/posted")
     def posted():

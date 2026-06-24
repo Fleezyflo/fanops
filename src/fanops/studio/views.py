@@ -236,6 +236,10 @@ class LiftRow:
     shares: Optional[float] = None          # post.metrics (LATEST snapshot — NOT metrics_series). Absent -> None.
     retention: Optional[float] = None
     reach: Optional[float] = None
+    clip_id: Optional[str] = None           # S6: the parent clip — the join key lineage_stats groups variants on
+    sibling_count: Optional[int] = None     # S6 lineage (see PostedRow): stamped by lineage_stats, additive/None.
+    rank: Optional[int] = None
+    delta_vs_best: Optional[float] = None
 
 
 @dataclass
@@ -843,6 +847,10 @@ class PostedRow:
     batch_title: Optional[str] = None    # Batch.name via led.get_batch (None when unbatched/dangling)
     variant_hook: Optional[str] = None   # Render foundation: the per-account on-screen hook (mirror of
                                          # Render.hook_text) so lift can be traced back to WHICH hook shipped
+    # S6 lineage: additive, default-None, stamped by lineage_stats AFTER the rows are built (no extra I/O).
+    sibling_count: Optional[int] = None  # how many shipped rows share this clip_id (the repost/crosspost lineage)
+    rank: Optional[int] = None           # competition rank by lift within the lineage (1 = winner; ties share 1)
+    delta_vs_best: Optional[float] = None  # lift_score - best-sibling lift (0.0 for the winner; negative otherwise)
 
 
 def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, batch: Optional[str] = None) -> list[PostedRow]:
@@ -880,6 +888,58 @@ def posted_batch_rollup(rows) -> Optional[dict]:
     lifts = [r.lift_score for r in rows if r.lift_score is not None]
     return {"posted": len(rows), "with_lift": len(lifts),
             "mean_lift": (sum(lifts) / len(lifts)) if lifts else None}
+
+
+_BAR_METRICS = ("saves", "shares", "retention", "reach")
+
+
+def lineage_stats(rows) -> None:
+    """S6 — IN-PLACE annotate each row (PostedRow/LiftRow) with sibling_count / rank / delta_vs_best so the
+    operator reads 'this hook BEAT that hook'. Groups by clip_id (the durable key a repost/crosspost shares
+    with its origin) and ranks by lift_score desc within the group (COMPETITION ranking — tied bests both
+    read rank 1). A falsy clip_id is skipped (no join key -> untouched). An unmeasured sibling (lift None)
+    still counts toward sibling_count but keeps rank/delta None (can't rank what wasn't measured). Pure over
+    the already-built list — NO ledger read, reads ONLY clip_id+lift (so it is FANOPS_CREATIVE_VARIATION-
+    independent: a shared clip across accounts is a real lineage in either mode). Fail-open: any error leaves
+    the additive fields at their None defaults. Ranks within whatever filtered set is passed in."""
+    try:
+        groups: dict = {}
+        for r in rows:
+            cid = getattr(r, "clip_id", None)
+            if cid: groups.setdefault(cid, []).append(r)
+        for sibs in groups.values():
+            n = len(sibs)
+            for r in sibs: r.sibling_count = n
+            measured = [r for r in sibs if isinstance(getattr(r, "lift_score", None), (int, float))
+                        and not isinstance(r.lift_score, bool)]
+            if not measured: continue
+            best = max(r.lift_score for r in measured)
+            for r in measured:
+                r.rank = 1 + sum(1 for o in measured if o.lift_score > r.lift_score)
+                r.delta_vs_best = round(r.lift_score - best, 4)
+    except Exception:
+        pass
+
+
+def metric_peaks(rows) -> dict:
+    """S6 — the column max of each breakdown metric (saves/shares/retention/reach) across the row list, so a
+    per-row micro-bar can be drawn PROPORTIONAL to the visible peak. A metric absent on every row -> None (no
+    bar). Pure, fail-open (non-numeric values are ignored, never raise)."""
+    peaks: dict = {}
+    for k in _BAR_METRICS:
+        vals = [v for v in (getattr(r, k, None) for r in rows)
+                if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        peaks[k] = max(vals) if vals else None
+    return peaks
+
+
+def bar_pct(value, peak) -> int:
+    """S6 — a 0..100 bar width for `value` against the column `peak` (from metric_peaks). 0 when either is
+    missing or peak<=0; clamped to [0,100]. Fail-safe — never raises into a template."""
+    try:
+        if value is None or peak is None or peak <= 0: return 0
+        return max(0, min(100, round(float(value) / float(peak) * 100)))
+    except (TypeError, ValueError): return 0
 
 
 def group_posted_by_day(rows: list) -> list:
@@ -950,7 +1010,7 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None, *,
                 lift_missing=p.metrics.get("lift_missing_keys") or None,
                 scheduled_time=p.scheduled_time, saves=p.metrics.get("saves"),
                 shares=p.metrics.get("shares"), retention=p.metrics.get("retention"),
-                reach=p.metrics.get("reach")))
+                reach=p.metrics.get("reach"), clip_id=p.parent_id))
 
     amplify_present = cfg.variant_amplify
     amplify_rows: list[LiftRow] = []
