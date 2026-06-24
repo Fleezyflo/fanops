@@ -1,43 +1,22 @@
-{# src/fanops/studio/templates/_card.html — one moment. The PREVIEW is now a per-account switcher: each
-   surface (account) shows its OWN burned-hook video + hook text, selectable by pure-CSS radio tabs (no JS),
-   so persona differentiation is visible instead of one shared clip. The per-surface CONTROL list below
-   (checkbox / caption / edit / result sink) is UNCHANGED — all accounts stay visible+selectable for batch
-   approve. A post-less prepared/held card (no surfaces) keeps the single shared preview. Safe by default:
-   variation OFF -> media_url serves the base clip + no hook line, so every account shows the same video. #}
+{# src/fanops/studio/templates/_card.html — content-first Review (slice 1). One moment per card: the MASTER /
+   source clip plays on the LEFT (ONE player, never a per-account burned video), and each account that has this
+   moment gets its OWN COLUMN on the RIGHT showing its on-screen HOOK + CAPTION as text + its clip spec +
+   approve/reject. The operator watches the master, reads what each account would post, then approves — the
+   per-account hook is burned on approval (slice 2). Compact mode is the dense, video-less scan/bulk-approve
+   list (UNCHANGED — the master player + the per-account columns are a Full-view concern). A post-less
+   prepared/held card shows the master + its state, no columns. Safe by default: creative_variation OFF ->
+   no variant_hook line, the master is the shared clip, the data shape is byte-identical. #}
 {% from "_prov.html" import cause_chips %}
 <div class="card clip-card{{ ' compact' if compact else '' }}" id="card-{{ card.clip_id }}">
-  {# M3c: compact mode drops the heavy per-account <video> switcher for a dense, scannable list (the operator
-     flips to Full view to preview a clip). The control body below stays — bulk approve still works compactly. #}
+  {# the MASTER/source clip on the left — the operator watches THIS, not a per-account burn (which doesn't exist
+     until approval). Compact drops it (the dense list is for scanning + bulk approve, not previewing). #}
   {% if not compact %}
-  {% if card.surfaces %}
-  <div class="surface-switch">
-    {# radios FIRST (the pure-CSS toggle): :nth-of-type(N):checked ~ shows the Nth video panel + tab #}
-    {% for s in card.surfaces %}
-    <input class="stab vh" type="radio" name="preview-{{ card.clip_id }}" id="tab-{{ s.post_id }}"{% if loop.first %} checked{% endif %} aria-label="show {{ s.account }} {{ s.platform }} preview">
-    {% endfor %}
-    {% if card.surfaces|length > 1 %}
-    <div class="surface-tabs" role="group" aria-label="{{ card.label }} account previews">
-      {% for s in card.surfaces %}<label class="surface-tab" for="tab-{{ s.post_id }}">{{ s.account }} <span class="muted">{{ s.platform }}</span></label>{% endfor %}
-    </div>
-    {% endif %}
-    <div class="surface-panels">
-      {% for s in card.surfaces %}
-      <div class="surface-panel">
-        <div class="clip-frame">
-          {% if card.bucket == 'held' %}<span class="badge held-badge">HELD</span>{% endif %}
-          <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=card.clip_id) }}" src="{{ s.media_url }}" aria-label="{{ s.account }} {{ s.platform }} clip"></video>
-        </div>
-        {% if s.variant_hook %}<div class="surface-hook" title="the on-screen hook burned into {{ s.account }}'s video">✦ {{ s.variant_hook }}</div>{% endif %}
-      </div>
-      {% endfor %}
+  <div class="moment-master">
+    <div class="clip-frame">
+      {% if card.bucket == 'held' %}<span class="badge held-badge">HELD</span>{% endif %}
+      <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=card.clip_id) }}" src="{{ card.preview_url }}" aria-label="{{ card.label }} source clip"></video>
     </div>
   </div>
-  {% else %}
-  <div class="clip-frame">
-    {% if card.bucket == 'held' %}<span class="badge held-badge">HELD</span>{% endif %}
-    <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=card.clip_id) }}" src="{{ card.preview_url }}" aria-label="{{ card.label }} preview"></video>
-  </div>
-  {% endif %}
   {% endif %}
 
   <div class="clip-body">
@@ -69,8 +48,13 @@
       <div class="meta clip-state">Produced — not yet posted</div>
     {% endif %}
 
-    {% for s in card.surfaces %}
-      <div class="surface">
+    {# per-account columns: each account that has this moment shows its hook + caption (as TEXT — the burn lands
+       on approval) + its clip spec + the per-surface checkbox/reject. Full view lays them side by side; compact
+       stacks them dense. #}
+    {% if card.surfaces %}
+    <div class="surface-cols">
+      {% for s in card.surfaces %}
+      <div class="surface surface-col"{% if not compact %} role="group" aria-label="{{ s.account }} {{ s.platform }} review column"{% endif %}>
         <div class="surface-head">
           {% if card.bucket == 'editable' %}<label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}" aria-label="select {{ s.account }} {{ s.platform }} for approval"></label>{% endif %}
           <span class="surface-name">{{ s.account }} <span class="muted">{{ s.platform }}</span></span>
@@ -81,29 +65,27 @@
         </div>
         {# S4: the per-account differentiation at a glance, now WITH its cause — rendered by the shared S2 _prov
            cause_chip macro (ONE renderer, no parallel hand-rolled chips). provenance_chips projects the surface
-           into ordered "value ← why" chips: length←persona/account, framing←account, ✂ cut / ⚠ shared-cut
-           (the shared-cut WARN is gated on creative_variation), ⚠ shared-hook, cast←picked-for. [] for an
-           undifferentiated surface (the OFF firewall) -> the whole row stays absent, byte-identical. #}
-        {# the shared-cut WARN is an EDITABLE-worklist signal (an actionable fallback before approval) — never on a
-           recent/held card you can't change. Pass the bucket-gated flag so the macro suppresses it off the worklist,
-           preserving the pre-S4 `creative_variation and bucket=='editable'` gate; every other cause chip is unaffected. #}
+           into ordered "value ← why" chips. [] for an undifferentiated surface (the OFF firewall) -> absent. #}
         {% set spec_chips = provenance_chips(s, creative_variation=(creative_variation and card.bucket == 'editable')) %}
         {% if spec_chips %}
           <div class="meta surface-spec" aria-label="{{ s.account }} clip spec">{{ cause_chips(spec_chips) }}</div>
         {% endif %}
         {% if compact %}
-          {# compact: the preview (which carried the hook) is hidden, so show the on-screen hook inline; the
-             full caption + inline editor are a Full-view concern (compact is for scanning + bulk approve). #}
-          {% if s.variant_hook %}<div class="surface-hook compact-hook" title="the on-screen hook burned into {{ s.account }}'s video">✦ {{ s.variant_hook }}</div>{% endif %}
-        {% elif s.editable %}
-          <div class="ro surface-caption">{{ s.caption }}</div>
-          <details class="surface-editor"><summary>Edit</summary>{% include "_surface_edit.html" %}</details>
+          {# compact: the master preview is hidden, so show the on-screen hook inline; the full caption + inline
+             editor are a Full-view concern (compact is for scanning + bulk approve). #}
+          {% if s.variant_hook %}<div class="surface-hook compact-hook" title="the on-screen hook that burns into {{ s.account }}'s clip on approval">✦ {{ s.variant_hook }}</div>{% endif %}
         {% else %}
+          {# full: the on-screen hook + the caption shown as TEXT next to the master, so the operator reads exactly
+             what each account would post; the editor (caption / re-burn / reschedule) stays one click away. #}
+          {% if s.variant_hook %}<div class="surface-hook" title="the on-screen hook that burns into {{ s.account }}'s clip on approval">✦ {{ s.variant_hook }}</div>{% endif %}
           <div class="ro surface-caption">{{ s.caption }}</div>
+          {% if s.editable %}<details class="surface-editor"><summary>Edit</summary>{% include "_surface_edit.html" %}</details>{% endif %}
         {% endif %}
         <div id="res-{{ s.post_id }}"></div>
       </div>
-    {% endfor %}
+      {% endfor %}
+    </div>
+    {% endif %}
 
     {# M3d: the removed-hook restore choice is OFF-mode only (approve_with_hook refuses when creative_variation
        is ON, where per-surface hooks own the burn). Gate on `not creative_variation`. #}

@@ -1,6 +1,7 @@
-# tests/test_studio_review_preview.py — the Review card must show PER-ACCOUNT video + burned hook so
-# persona differentiation is visible (not one shared clip with caption-only rows). RED until the card
-# switcher + SurfacePost.variant_hook land.
+# tests/test_studio_review_preview.py — content-first Review: the card shows ONE MASTER/source clip on the
+# left and each account's HOOK + CAPTION as TEXT in a per-account column on the right (the operator watches
+# the master, reads what each account would post, then burns on approval). Supersedes the old per-account
+# burned-video switcher — the burn is deferred to approval, so there is no per-account video at review time.
 import json
 from datetime import datetime, timezone, timedelta
 import pytest
@@ -46,31 +47,34 @@ def _seed_personas(cfg, *, hooks=True, two_clips=False):
                           media_urls=[f"file://{va}"], variant_hook="SECOND CARD"))
     led.save()
 
-def test_card_renders_per_account_media(tmp_path):
+def test_card_renders_master_clip_and_per_account_text(tmp_path):
     cfg = Config(root=tmp_path); _seed_personas(cfg)
     html = _client(cfg).get("/review?view=list").data.decode()
-    # each account's OWN video is addressable in the card (not just one shared /clips/{id})
-    assert "/media/p_mark" in html and "/media/p_perc" in html
-    # each burned hook text is shown so the operator can compare personas
+    # ONE master/source clip player per card (left), NOT a per-account burned video each
+    assert "/clips/clip_1" in html
+    assert html.count("<video") == 1
+    assert "/media/p_mark" not in html and "/media/p_perc" not in html   # per-account video previews dropped
+    # each account's hook + caption shown as TEXT (right columns) so personas compare side by side
     assert "WATCH THE CRAFT" in html and "RAW BARS NO POLISH" in html
+    assert "#marktag" in html and "#perctag" in html
 
 def test_card_degrades_when_no_variant(tmp_path):
     cfg = Config(root=tmp_path); _seed_personas(cfg, hooks=False)
     html = _client(cfg).get("/review?view=list").data.decode()
-    assert "/media/p_mark" in html and "/media/p_perc" in html   # still per-post (serves base clip), no crash
+    assert "/clips/clip_1" in html                                # master clip still shown (no per-account media)
     assert "WATCH THE CRAFT" not in html                          # no hook line when nothing was burned
 
-def test_preview_tabs_unique_per_card(tmp_path):
+def test_each_card_shows_its_own_master(tmp_path):
     cfg = Config(root=tmp_path); _seed_personas(cfg, two_clips=True)
     html = _client(cfg).get("/review?view=list").data.decode()
-    assert "preview-clip_1" in html and "preview-clip_2" in html  # per-card radio group name -> no cross-toggle
+    assert "/clips/clip_1" in html and "/clips/clip_2" in html    # each card players its OWN master clip
+    assert "card-clip_1" in html and "card-clip_2" in html        # distinct card containers
 
-def test_preview_tab_a11y(tmp_path):
+def test_per_account_column_a11y(tmp_path):
     cfg = Config(root=tmp_path); _seed_personas(cfg)
     html = _client(cfg).get("/review?view=list").data.decode()
-    # each account tab carries an accessible name referencing the account (aria-label or visible label text)
-    assert "markmakmouly" in html and "perca.late" in html
-    assert 'aria-label="show markmakmouly' in html or 'aria-label="preview markmakmouly' in html
+    # each account column is an accessibly-named group referencing its account
+    assert 'aria-label="markmakmouly instagram' in html and 'aria-label="perca.late instagram' in html
 
 def test_card_shows_per_account_length_cut_and_framing(tmp_path):
     # M3a: the operator SEES the per-account differentiation — clip LENGTH band, a CUT marker for a genuine
