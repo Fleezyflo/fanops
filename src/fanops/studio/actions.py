@@ -4,9 +4,7 @@ its existence + state(queued) + not-imminent guard + mutation INSIDE the lock, o
 freshly-loaded ledger — mirroring the CLI recovery verbs (cli.py:285,298) so it cannot lose-update
 against a concurrent cron `fanops run`. Reads/normalization that can fail happen OUTSIDE the lock."""
 from __future__ import annotations
-import copy
 import os
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Sequence
@@ -24,41 +22,12 @@ from fanops.ids import child_id, surface_key, _hash
 from fanops import overlay
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent, suggest_time
+from fanops.studio.actions_common import ActionResult, _now, _inherit_captions  # noqa: F401
 
 SNOOZE_DAYS = 365
 _GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
 _VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}   # the has_video_stream subset of MEDIA_EXT
 if not (_VIDEO_EXT <= MEDIA_EXT): raise ValueError("_VIDEO_EXT drifted out of ingest.MEDIA_EXT")  # import-time drift guard (not assert — survives -O)
-
-def _inherit_captions(meta: dict | None) -> dict:
-    """DEEP-copy a sibling clip's meta_captions for an inheriting clip (release_stitches / approve_with_hook).
-    A shallow dict()/model_copy shares the inner {caption,hashtags} dicts, so a later in-place edit to one
-    clip's caption would silently corrupt the other — defended here (latent today; captions are replaced, not
-    mutated in place — but this makes it structural)."""
-    return copy.deepcopy(meta or {})
-
-
-@dataclass(frozen=True)
-class ActionResult:
-    """The outcome of one Studio action — frozen so a result can't be mutated after construction (every
-    action returns a fresh one; no call site reassigns ok/error/detail). Construct directly or via the
-    success()/failure() factories."""
-    ok: bool
-    error: Optional[str] = None
-    detail: Optional[dict] = None
-
-    @classmethod
-    def success(cls, detail: Optional[dict] = None) -> "ActionResult":
-        return cls(ok=True, detail=detail)
-
-    @classmethod
-    def failure(cls, error: str) -> "ActionResult":
-        return cls(ok=False, error=error)
-
-
-def _now(now: Optional[datetime]) -> datetime:
-    return now if now is not None else datetime.now(timezone.utc)
-
 
 def _normalize_z(new_time: str) -> str:
     """Parse an ISO time, COERCE naive -> UTC (iso_z would otherwise treat naive as LOCAL time),
