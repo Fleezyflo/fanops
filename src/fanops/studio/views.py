@@ -367,6 +367,92 @@ def _card_day(led: Ledger, card: ReviewCard) -> str:
     try: return parse_iso(ca).date().isoformat()
     except (ValueError, TypeError, AttributeError): return "undated"
 
+# ── Slice 2: the moment × account MATRIX (per source) ─────────────────────────
+# Rows = a source's moments; columns = the (handle, platform) CHANNELS that actually have posts; a cell =
+# that channel's lead post for that moment. The cell EXISTS iff a post exists — "cast" is POST existence,
+# NOT live Moment.affinities (which reset on re-decision, so they'd make the grid disagree with reality).
+@dataclass
+class MatrixCell:
+    channel: str; account: str; platform: str
+    post_ids: list                 # ALL posts on this channel for this moment (reposts stack) — row/col approve uses these
+    lead_post_id: str              # the collapsed representative (prefer awaiting, then most-recent created_at, then id)
+    state: str; hook: Optional[str]; length_label: Optional[str]; framing: Optional[str]
+    is_account_cut: bool; hook_source: Optional[str]
+    preview_url: str; thumb_url: str; multiplicity: int
+
+@dataclass
+class MatrixRow:
+    moment_id: str; window: str; reason: Optional[str]; hook: Optional[str]
+    affinities: list               # advisory context ONLY — never drives the "—" cells
+    cells: dict                    # channel_key -> MatrixCell | None (None = uncast → renders "—")
+
+@dataclass
+class MatrixView:
+    source_id: str; source_name: str
+    columns: list                  # [(channel_key, handle, platform)] in account-then-platform order
+    rows: list                     # [MatrixRow]
+
+_CH = "\x1f"                       # channel-key separator (handle\x1fplatform); unit-sep, never appears in a handle
+
+def _source_label(src) -> str:
+    if src is None: return ""
+    name = Path(src.source_path).name if getattr(src, "source_path", None) else ""
+    return name or src.id
+
+def source_choices(led: Ledger) -> list:
+    """Sources that HAVE moments (a catalogued-but-unclipped source has no grid), newest first (created_at
+    desc, id asc tiebreak). From led.sources/moments — NOT review cards — so a moments-but-no-cards source stays pickable."""
+    have = {m.parent_id for m in led.moments.values()}
+    srcs = sorted((s for s in led.sources.values() if s.id in have), key=lambda s: s.id)
+    srcs = sorted(srcs, key=lambda s: (s.created_at or ""), reverse=True)   # stable → created_at desc, id asc
+    return [(s.id, _source_label(s)) for s in srcs]
+
+def _pick_lead(posts: list):
+    """Deterministic cell representative over reposts/ties: prefer awaiting, then most-recent created_at, then highest id."""
+    return max(posts, key=lambda p: (p.state is PostState.awaiting_approval, p.created_at or "", p.id))
+
+def _state_matches(post, state: Optional[str]) -> bool:
+    if not state: return True
+    return post.state.value == state or (state == "awaiting" and post.state is PostState.awaiting_approval)
+
+def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: str, now: datetime,
+                  state: Optional[str] = None) -> MatrixView:
+    """Per-source grid built from ONE-PASS bucket maps (O(M+C+P), never the nested-accessor quadratic).
+    Reuses _surface() for the hook/length/framing/is_account_cut/hook_source truth (which already guards
+    render_id=None). A 0-moment source short-circuits to an empty view (the guided empty state)."""
+    src = led.sources.get(source_id)
+    moments = sorted([m for m in led.moments.values() if m.parent_id == source_id], key=lambda m: m.start)
+    if not moments: return MatrixView(source_id=source_id, source_name=_source_label(src), columns=[], rows=[])
+    clips_by_moment: dict = {}
+    for c in led.clips.values(): clips_by_moment.setdefault(c.parent_id, []).append(c)
+    posts_by_clip: dict = {}
+    for p in led.posts.values(): posts_by_clip.setdefault(p.parent_id, []).append(p)
+    acct_by_handle = {a.handle: a for a in accounts.accounts}
+    col_rank = {a.handle: i for i, a in enumerate(accounts.accounts)}
+    channels: dict = {}; rows = []
+    for m in moments:
+        mposts = [p for c in clips_by_moment.get(m.id, []) for p in posts_by_clip.get(c.id, [])]
+        mposts = [p for p in mposts if _state_matches(p, state)]
+        by_channel: dict = {}
+        for p in mposts:
+            key = f"{p.account}{_CH}{p.platform.value}"
+            by_channel.setdefault(key, []).append(p); channels[key] = (p.account, p.platform.value)
+        cells: dict = {}
+        for key, plist in by_channel.items():
+            lead = _pick_lead(plist)
+            sp = _surface(lead, persona=None, now=now, cfg=cfg, led=led, acct=acct_by_handle.get(lead.account))
+            cells[key] = MatrixCell(channel=key, account=lead.account, platform=lead.platform.value,
+                                    post_ids=[p.id for p in plist], lead_post_id=lead.id, state=sp.state,
+                                    hook=sp.variant_hook, length_label=sp.length_label, framing=sp.framing,
+                                    is_account_cut=sp.is_account_cut, hook_source=sp.hook_source,
+                                    preview_url=f"/clips/{lead.parent_id}", thumb_url=f"/clip-thumb/{lead.parent_id}",
+                                    multiplicity=len(plist))
+        rows.append(MatrixRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
+                              hook=m.hook, affinities=list(getattr(m, "affinities", None) or []), cells=cells))
+    cols = sorted(channels.items(), key=lambda kv: (col_rank.get(kv[1][0], 999), kv[1][1]))
+    return MatrixView(source_id=source_id, source_name=_source_label(src),
+                      columns=[(k, h, pf) for k, (h, pf) in cols], rows=rows)
+
 # Phase 4: the ?state= filter maps an operator-facing state word to its ReviewCard.bucket. 'awaiting' is the
 # primary worklist state (editable cards); 'approved' surfaces have LEFT Review for the Schedule, so it maps to
 # the read-only 'recent' (already-shipped) bucket that Review still shows. An unknown word never reaches here
