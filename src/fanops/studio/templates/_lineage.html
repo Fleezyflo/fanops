@@ -1,0 +1,21 @@
+{# src/fanops/studio/templates/_lineage.html — S6 shared macros for the Posted & Results tables, so one
+   clip's reposts/crossposts read as a ranked lineage instead of disconnected rows. Fed by views.lineage_stats
+   (sibling_count/rank/delta_vs_best) + views.bar_pct(value, peak). All three are pure/fail-open; a singleton
+   lineage (sibling_count <= 1) shows NOTHING (byte-identical to pre-S6 for the common one-post-per-clip case). #}
+
+{% macro lineage(row) %}
+{%- if row.sibling_count and row.sibling_count > 1 -%}
+{%- if row.rank == 1 %}<span class="chip ok win" title="Best lift among {{ row.sibling_count }} posts of this clip">★ winner</span>{% endif -%}
+<span class="chip ro lineage-chip" title="This clip shipped {{ row.sibling_count }} times (reposts + cross-posts)">↻ {{ row.sibling_count }} in lineage</span>
+{%- endif -%}
+{% endmacro %}
+
+{% macro lineage_delta(row) %}
+{%- if row.sibling_count and row.sibling_count > 1 and row.delta_vs_best is not none and row.delta_vs_best != 0 -%}
+<span class="meta delta-best" title="Lift gap to the best post of this clip">Δ {{ '%.2f'|format(row.delta_vs_best) }} vs best</span>
+{%- endif -%}
+{% endmacro %}
+
+{% macro metric(value, peak) %}
+{%- if value is none -%}—{%- else -%}{{ value }}<div class="bar metric-bar" style="width: {{ bar_pct(value, peak) }}%"></div>{%- endif -%}
+{% endmacro %}

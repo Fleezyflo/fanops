@@ -1,8 +1,11 @@
 {# src/fanops/studio/templates/lift.html — Results: per-variant lift + amplify streaks. P5: an account chip
    row scopes the read; each variant row shows P1's operator-set time (When) next to the raw saves/shares/
    retention/reach breakdown from post.metrics (the LATEST snapshot — NOT P3's metrics_series, NOT a cadence),
-   so the operator reads one account's curve without arithmetic across interleaved rows. Absent metric -> "—". #}
+   so the operator reads one account's curve without arithmetic across interleaved rows. Absent metric -> "—".
+   S6: lineage_stats ranks which hook won within each clip's lineage (winner ★ + Δ vs best); metric_peaks/
+   bar_pct draw a proportional micro-bar. Pure read-model — learning stays frozen. #}
 {% extends "base.html" %}
+{% from "_lineage.html" import lineage, lineage_delta, metric %}
 {% block title %}Lift{% endblock %}
 {% block body %}
   <h2>Results</h2>
@@ -14,15 +17,15 @@
       <tr><th>Hook</th><th>Account/Platform</th><th>When</th><th>Lift</th><th>Saves</th><th>Shares</th><th>Retention</th><th>Reach</th><th>Loop state</th></tr>
       {% for r in view.variant_rows %}
       <tr>
-        <td>{{ r.variant_hook }}</td>
+        <td>{{ r.variant_hook }} {{ lineage(r) }}</td>
         <td>{{ r.account }}/{{ r.platform }}</td>
         <td class="muted">{{ r.scheduled_time | localdt or '—' }}</td>
-        <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> {{ '%.1f'|format(r.lift_score) }}
+        <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> {{ '%.1f'|format(r.lift_score) }} {{ lineage_delta(r) }}
             {% if r.lift_degraded %}<span class="badge degraded" title="Partial objective — a primary metric was not returned by the backend, so this lift is reach/shares-weighted, not the full saves/retention objective.">DEGRADED{% if r.lift_missing %} · missing {{ r.lift_missing|join(', ') }}{% endif %}</span>{% endif %}</td>
-        <td>{{ r.saves if r.saves is not none else '—' }}</td>
-        <td>{{ r.shares if r.shares is not none else '—' }}</td>
-        <td>{{ r.retention if r.retention is not none else '—' }}</td>
-        <td>{{ r.reach if r.reach is not none else '—' }}</td>
+        <td>{{ metric(r.saves, peaks.saves) }}</td>
+        <td>{{ metric(r.shares, peaks.shares) }}</td>
+        <td>{{ metric(r.retention, peaks.retention) }}</td>
+        <td>{{ metric(r.reach, peaks.reach) }}</td>
         <td class="ro">{{ r.loop_state }}</td>
       </tr>
       {% endfor %}

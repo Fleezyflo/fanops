@@ -4,7 +4,10 @@
    scopes the library (day-grouping is preserved within the scope); each row shows the raw saves/shares/
    retention/reach breakdown from post.metrics (the LATEST snapshot) so one account's curve reads without
    arithmetic across interleaved rows. The reuse/crosspost forms carry account=active so the htmx swap keeps
-   scope (R1). NB: `accounts` (the cross-account picker options) is distinct from the chip universe. #}
+   scope (R1). NB: `accounts` (the cross-account picker options) is distinct from the chip universe.
+   S6: lineage_stats ranks each clip's reposts/crossposts (winner ★ + delta), metric_peaks/bar_pct draw a
+   proportional micro-bar; both are pure read-model annotations — they unfreeze no learning. #}
+{% from "_lineage.html" import lineage, lineage_delta, metric %}
 <div id="posted-body" aria-live="polite">
   {% include "_account_filter.html" %}
   {% if result %}
@@ -37,12 +40,12 @@
     <tr>
       <td>{{ (r.published_at or r.scheduled_time) | localdt or '—' }}</td>
       <td>{{ r.account }} <span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %}</td>
-      <td class="muted" title="on-screen hook">{% if r.variant_hook %}✦ {{ r.variant_hook }}{% else %}—{% endif %}</td>
-      <td>{{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }}</td>
-      <td>{{ r.saves if r.saves is not none else '—' }}</td>
-      <td>{{ r.shares if r.shares is not none else '—' }}</td>
-      <td>{{ r.retention if r.retention is not none else '—' }}</td>
-      <td>{{ r.reach if r.reach is not none else '—' }}</td>
+      <td class="muted" title="on-screen hook">{% if r.variant_hook %}✦ {{ r.variant_hook }}{% else %}—{% endif %} {{ lineage(r) }}</td>
+      <td>{{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }} {{ lineage_delta(r) }}</td>
+      <td>{{ metric(r.saves, peaks.saves) }}</td>
+      <td>{{ metric(r.shares, peaks.shares) }}</td>
+      <td>{{ metric(r.retention, peaks.retention) }}</td>
+      <td>{{ metric(r.reach, peaks.reach) }}</td>
       <td>{% if r.public_url %}<a href="{{ r.public_url }}" target="_blank" rel="noopener">{{ r.public_url }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td>
         <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active) }}" hx-target="#posted-body" hx-swap="outerHTML">

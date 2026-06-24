@@ -501,6 +501,11 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .chip.ok { color:var(--ok); border-color:var(--ok); }
 .chip.warn { color:var(--warn); border-color:var(--warn); }
 .chip .cause { font-style:normal; color:var(--faint); font-size:var(--t-eyebrow); margin-left:.1rem; }
+/* Lineage (S6) — winner star, "N in lineage" chip, muted Δ-vs-best, and the proportional metric micro-bar. */
+.chip.win { color:var(--ok); border-color:var(--ok); background:oklch(76% 0.16 152 / .1); }
+.lineage-chip { margin-left:.25rem; }
+.delta-best { display:inline-block; margin-left:.35rem; color:var(--faint); font-size:var(--t-eyebrow); font-variant-numeric:tabular-nums; }
+.metric-bar { display:block; height:5px; margin:.2rem 0 0; min-width:0; box-shadow:none; opacity:.85; }
 
 /* Workflow spine (Slice 1) — the Make→Review→Schedule→Posted through-line atop every workflow surface: a
    self-explaining stepper (you-are-here + per-stage count) + the single next-action CTA, so the operator never
