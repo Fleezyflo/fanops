@@ -159,21 +159,31 @@ def test_core_cli_imports_with_flask_absent(monkeypatch, tmp_path):
         if name == "flask" or name.startswith("flask."):
             raise ImportError("flask blocked for test")
         return real_import(name, *a, **k)
-    for m in list(sys.modules):
-        if m == "flask" or m.startswith("flask.") or m.startswith("fanops.studio.app"):
+    # Snapshot every module this test evicts (flask + ALL studio app modules) AND fanops.cli (reloaded below)
+    # so the ORIGINALS go back at teardown. Without this, the popped modules silently re-import later against
+    # a DUPLICATED flask, leaving fanops.studio.app's `request` proxy bound to a different flask instance than
+    # the test client uses -> "Working outside of request context" in any later route test. monkeypatch undoes
+    # __import__ but NOT a raw sys.modules.pop, so restore it ourselves. (The fanops.studio.app prefix now also
+    # covers the app_routes_* sub-modules, which is exactly why this leak had to be plugged.)
+    evicted = {m: sys.modules[m] for m in list(sys.modules)
+               if m in ("flask", "fanops.cli") or m.startswith("flask.") or m.startswith("fanops.studio.app")}
+    try:
+        for m in evicted:
             sys.modules.pop(m, None)
-    monkeypatch.setattr(builtins, "__import__", blocked)
-    importlib.reload(importlib.import_module("fanops.cli"))   # must NOT raise
-    import fanops.cli as cli
-    # == 0, not `in (0,1,2)` (stage-6 audit): the tolerant assert accepted a CRASHING status verb;
-    # on a fresh root, status must actually succeed without Flask.
-    assert cli.main(["status"]) == 0
-    # ...and ONLY the studio verb needs Flask: this proves the import is lazy AND inside _dispatch
-    # (a module-top import would have already failed the reload above; this catches a top-of-app
-    # import that somehow still let the reload pass). The studio branch hits `from fanops.studio.app
-    # import create_app` -> blocked flask -> ImportError, which main() does not swallow.
-    with pytest.raises(ImportError, match="flask blocked"):
-        cli.main(["studio"])
+        monkeypatch.setattr(builtins, "__import__", blocked)
+        importlib.reload(importlib.import_module("fanops.cli"))   # must NOT raise
+        import fanops.cli as cli
+        # == 0, not `in (0,1,2)` (stage-6 audit): the tolerant assert accepted a CRASHING status verb;
+        # on a fresh root, status must actually succeed without Flask.
+        assert cli.main(["status"]) == 0
+        # ...and ONLY the studio verb needs Flask: this proves the import is lazy AND inside _dispatch
+        # (a module-top import would have already failed the reload above; this catches a top-of-app
+        # import that somehow still let the reload pass). The studio branch hits `from fanops.studio.app
+        # import create_app` -> blocked flask -> ImportError, which main() does not swallow.
+        with pytest.raises(ImportError, match="flask blocked"):
+            cli.main(["studio"])
+    finally:
+        sys.modules.update(evicted)        # put the originals back so later tests get a consistent flask/app
 
 # ---- M5.1: held-clip RELEASE route (UI twin of `fanops unhold`) ----
 def _seed_held(cfg, tmp_path):
