@@ -701,20 +701,23 @@ def _batch_title(led: Ledger, bid: Optional[str]) -> Optional[str]:
     return b.name if b is not None else None
 
 
-_SHIPPABLE_RENDER = (RenderState.rendered, RenderState.published, RenderState.analyzed)
+# non-terminal render states a shippable artifact can be in (mirrors crosspost._REUSABLE_CLIP_STATES philosophy;
+# `queued` is currently dead but allowed so a future staged-render path can't trip a false warn — never `retired`).
+_SHIPPABLE_RENDER = (RenderState.rendered, RenderState.queued, RenderState.published, RenderState.analyzed)
 
 def publish_readiness(led: Ledger, post) -> tuple[bool, str]:
     """S5: ADVISORY (ready, reason) for a single post, from already-loaded objects — NEVER a ledger write, NEVER
-    a publish gate. A post with a render ships that render: it must exist, be shippable, and its BURNED hook must
-    match the hook the operator sees (else 'drift'). A post with no render ships the shared clip: it must exist
-    and be in a reusable state (the SAME allowlist crosspost ships from — single source of truth, no drift).
-    Fail-open: any torn/odd shape -> (False, 'unverified'), never raises (the Studio invariant)."""
+    a publish gate. A post with a render ships that render: it must exist, be shippable, its file must be on disk,
+    and its BURNED hook must match the hook the operator sees (else 'drift'). A post with no render ships the
+    shared clip: it must exist, be in a reusable state (the SAME allowlist crosspost ships from — single source of
+    truth), and have its file on disk. Fail-open: any torn/odd shape -> (False, 'unverified'), never raises."""
     try:
         rid = getattr(post, "render_id", None)
         if rid:
             r = led.renders.get(rid)
             if r is None: return (False, "render record missing")
             if getattr(r, "state", None) not in _SHIPPABLE_RENDER: return (False, "render not finished")
+            if not (getattr(r, "path", None) and Path(r.path).exists()): return (False, "render file missing from disk")
             if (getattr(r, "hook_text", "") or "") != (getattr(post, "variant_hook", "") or ""):
                 return (False, "hook drift — the burned hook differs from the one shown")
             return (True, "ready — its own cut")
@@ -722,6 +725,7 @@ def publish_readiness(led: Ledger, post) -> tuple[bool, str]:
         clip = led.clips.get(getattr(post, "parent_id", None)) if getattr(post, "parent_id", None) else None
         if clip is None: return (False, "source clip missing")
         if clip.state not in _REUSABLE_CLIP_STATES: return (False, f"clip not shippable ({clip.state.value})")
+        if not (getattr(clip, "path", None) and Path(clip.path).exists()): return (False, "clip file missing from disk")
         return (True, "ready — shared clip")
     except Exception:
         return (False, "unverified")

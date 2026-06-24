@@ -84,6 +84,36 @@ def test_not_ready_when_clip_not_shippable(tmp_path):
     assert ready is False
 
 
+def test_ready_when_render_is_queued_state(tmp_path):
+    # audit LOW: RenderState.queued is a legit pre-ship state (mirrors ClipState.queued) -> shippable, not a warn
+    cfg = Config(root=tmp_path)
+    r = Render(id="r1", clip_id="c", account="@a", surface_key="@a/instagram", hook_text="H",
+               path=str(cfg.clips / "b.mp4"), state=RenderState.queued, is_account_cut=True)
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    ready, _ = views.publish_readiness(led, led.posts["p"])
+    assert ready is True
+
+
+def test_not_ready_when_render_file_absent(tmp_path):
+    # audit LOW: the chip must not say "ready" when the artifact file is gone — the publish would fail downstream
+    cfg = Config(root=tmp_path)
+    r = Render(id="r1", clip_id="c", account="@a", surface_key="@a/instagram", hook_text="H",
+               path=str(cfg.clips / "GONE.mp4"), state=RenderState.rendered, is_account_cut=True)  # no such file
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    ready, reason = views.publish_readiness(led, led.posts["p"])
+    assert ready is False and "disk" in reason.lower()
+
+
+def test_not_ready_when_shared_clip_file_absent(tmp_path):
+    # the shared-clip path gets the same honesty: a missing clip file is not "ready"
+    cfg = Config(root=tmp_path)
+    led = _led_with(cfg, clip_state=ClipState.queued)
+    # blow away the clip file on disk after the ledger was built
+    (cfg.clips / "b.mp4").unlink()
+    ready, reason = views.publish_readiness(led, led.posts["p"])
+    assert ready is False and "disk" in reason.lower()
+
+
 def test_publish_readiness_fail_open(tmp_path):
     class Weird: pass
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
