@@ -317,10 +317,12 @@ class ProvChip:                            # S2: one "value ← cause" chip (val
 
 
 def provenance_chips(surface, *, creative_variation: bool = False) -> list[ProvChip]:
-    """Pure projection: turn an already-built surface (SurfacePost, or the duck-compatible MatrixCell) into ordered
-    'value ← cause' chips. Returns [] for an undifferentiated surface — the OFF-firewall / legacy shape mints NO
-    chips. No ledger read; NEVER raises (a torn/odd surface degrades to whatever it could derive). Consumed by
-    S4/S7/S8; `creative_variation` gates the shared-cut WARN (a shared cut under OFF is expected, not a fallback)."""
+    """Pure projection: turn an already-built surface into ordered 'value ← cause' chips. Reads every field via
+    getattr, so any surface works — but the CAUSE phrases come only from SurfacePost's length_cause/framing_cause/
+    cast_cause; a surface lacking them (the MatrixCell, or any cause-less shape) yields BARE chips (value, no
+    attribution), and an undifferentiated surface mints NO chips at all (the OFF-firewall / legacy shape). No
+    ledger read; NEVER raises (a torn/odd surface degrades to whatever it could derive). Consumed by S4/S7/S8;
+    `creative_variation` gates the shared-cut WARN (a shared cut under OFF is expected, not a fallback)."""
     chips: list[ProvChip] = []
     try:
         if getattr(surface, "length_label", None):
@@ -354,8 +356,11 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     # attributes to the persona when the account is persona-linked, else the account's own pin, else None (global
     # inherited → value renders bare). framing names the account's pin. cast names the moment's pick for this account.
     prof = getattr(post, "clip_profile", None)
-    if prof and getattr(acct, "persona_id", None): length_cause = f"persona {prof}"
-    elif prof and getattr(acct, "clip_profile", None): length_cause = f"{post.account} {prof}"
+    # length attributes to the persona ONLY when the linked persona TRULY supplied the cut (persona_owns_profile,
+    # stamped at hydration) — a persona_id alone proves nothing (the account's own pin may stand). Else name the
+    # account ONLY when its pin actually EQUALS the post's stamped profile (a drifted pin must not be miscredited).
+    if prof and getattr(acct, "persona_id", None) and getattr(acct, "persona_owns_profile", False): length_cause = f"persona {prof}"
+    elif prof and getattr(acct, "clip_profile", None) == prof: length_cause = f"{post.account} {prof}"
     else: length_cause = None
     framing_cause = f"{post.account} {acct.framing}" if getattr(acct, "framing", None) else None
     cast_cause = f"picked for {post.account}" if (affinities and post.account in affinities) else None

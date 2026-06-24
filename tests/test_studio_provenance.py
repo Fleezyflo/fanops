@@ -71,13 +71,14 @@ def test_provenance_helper_never_raises():
 
 
 def test_surface_stamps_attribution_via_persona(tmp_path):
-    # a persona-linked account: length_cause names the PERSONA; framing_cause + cast_cause name the account
+    # a persona-linked account whose PERSONA supplies the profile (persona_owns_profile, stamped at hydration):
+    # length_cause names the PERSONA; framing_cause + cast_cause name the account
     cfg = Config(root=tmp_path)
     from fanops.ledger import Ledger
     from fanops.accounts import Account
     from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
-    acct = Account(handle="@a", account_id="1", persona_id="hype", clip_profile="long", framing="center")
+    acct = Account(handle="@a", account_id="1", persona_id="hype", clip_profile="long", framing="center", persona_owns_profile=True)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped, affinities=["@a"]))
@@ -86,6 +87,43 @@ def test_surface_stamps_attribution_via_persona(tmp_path):
     led = Ledger.load(cfg); post = led.posts["p"]
     sp = views._surface(post, persona="hype", now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=["@a"])
     assert sp.length_cause == "persona long" and sp.framing_cause == "@a center" and sp.cast_cause == "picked for @a"
+
+
+def test_surface_persona_link_without_owned_profile_names_account(tmp_path):
+    # the audit's MEDIUM-1: a persona-LINKED account whose persona supplies NO profile (persona_owns_profile
+    # False) but the ACCOUNT has its own pin -> the profile came from the account pin, NOT the persona. The
+    # chip must name the account ("@a long"), never falsely claim "persona long".
+    cfg = Config(root=tmp_path)
+    from fanops.ledger import Ledger
+    from fanops.accounts import Account
+    from fanops.models import Source, Clip, Post, Platform, PostState, ClipState, Fmt
+    cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
+    acct = Account(handle="@a", account_id="1", persona_id="hype", clip_profile="long")   # linked, but persona didn't own the cut
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s", source_path="/v.mp4"))
+        led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long"))
+    led = Ledger.load(cfg); post = led.posts["p"]
+    sp = views._surface(post, persona="hype", now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=())
+    assert sp.length_cause == "@a long"                                   # account-owned, not "persona long"
+
+
+def test_surface_mismatched_account_pin_yields_no_attribution(tmp_path):
+    # the audit's MEDIUM-2: the account pin DIFFERS from the post's stamped profile (config drifted after mint).
+    # Naming "@a long" when the account pins "short" is a false attribution -> the chip must render BARE (None).
+    cfg = Config(root=tmp_path)
+    from fanops.ledger import Ledger
+    from fanops.accounts import Account
+    from fanops.models import Source, Clip, Post, Platform, PostState, ClipState, Fmt
+    cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
+    acct = Account(handle="@a", account_id="1", clip_profile="short")     # account pins SHORT; post stamped LONG
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s", source_path="/v.mp4"))
+        led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long"))
+    led = Ledger.load(cfg); post = led.posts["p"]
+    sp = views._surface(post, persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=())
+    assert sp.length_cause is None                                        # pin != stamped profile -> no false credit
 
 
 def test_surface_attribution_is_account_when_no_persona(tmp_path):
