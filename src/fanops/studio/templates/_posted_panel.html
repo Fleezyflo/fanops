@@ -46,7 +46,7 @@
       <td>{{ metric(r.shares, peaks.shares) }}</td>
       <td>{{ metric(r.retention, peaks.retention) }}</td>
       <td>{{ metric(r.reach, peaks.reach) }}</td>
-      <td>{% if r.public_url %}<a href="{{ r.public_url }}" target="_blank" rel="noopener">{{ r.public_url }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td>{% if r.public_url %}<a class="live-link" href="{{ r.public_url }}" target="_blank" rel="noopener" title="Open the live {{ r.platform }} post in a new tab">View on {{ r.platform }} ↗</a>{% else %}<span class="muted" title="The live link fills in automatically once the post goes live and the next insights pull runs.">pending ⟳</span>{% endif %}</td>
       <td>
         <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active) }}" hx-target="#posted-body" hx-swap="outerHTML">
           <button type="submit">Post again</button>

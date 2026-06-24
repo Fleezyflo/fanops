@@ -72,14 +72,14 @@ def _extract_postiz_id(body) -> str | None:
 
 def _postiz_permalink(cfg: Config, post_id: str | None) -> str | None:
     """The single chokepoint for "what PUBLIC URL do we record for a published Postiz post" (P2) —
-    ships returning None, ALWAYS, today. Postiz's public API exposes NO social permalink and NO
-    dashboard URL on any response (GET /public/v1/posts -> {id, publishDate, state, integration,
-    content}, Context7-verified), and Postiz documents no stable public per-post page path. A *guessed*
-    dashboard link (e.g. {POSTIZ_URL}/.../{post_id}) would 404 on the operator's self-hosted calendar
-    UI — worse than None. So this stays None until/unless the route is VERIFIED against the operator's
-    Postiz version (integration checkpoint); flipping it on is then a one-line change that BOTH the
-    publish 2xx branch and the reconcile read pick up. NOT the IG/TikTok permalink. The true social URL
-    stays operator-settable via `fanops resolve <id> published --url <url>` / Studio mark-published."""
+    ships returning None, ALWAYS, today — and that is correct BY TIMING, not because Postiz never exposes a
+    URL: this is the PUBLISH-time read (the immediate 2xx for a freshly-SCHEDULED post), and a not-yet-live
+    post has no permalink to record. The real IG/TikTok permalink IS captured later by the reconcile READ
+    (metrics.py PostizStatusClient), which pulls a PUBLISHED row's `releaseURL` into public_url (verified
+    against the running instance 2026-06-21). So THIS publish-time chokepoint stays None (a *guessed*
+    dashboard link like {POSTIZ_URL}/.../{post_id} would 404 on the operator's calendar UI — worse than
+    None); `fanops resolve <id> published --url <url>` / Studio mark-published remain the manual fallback
+    for a post the reconcile read genuinely can't see (absent from its date-window page)."""
     if not post_id:                                  # no confirmed id -> never a link
         return None
     return None                                      # route unverified -> None (build the URL here once verified)

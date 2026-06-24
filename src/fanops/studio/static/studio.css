@@ -329,6 +329,13 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .day-head::before { content:none; }
 /* the «batch title» tag in Schedule/Posted table cells */
 .batch-tag { font-family:var(--serif); font-style:italic; }
+/* Posted "Link" cell: the live social-post permalink as a labeled pill affordance (click the post -> the
+   real IG/TikTok post), not a raw URL dump; the muted "pending ⟳" sibling reads when reconcile hasn't
+   captured public_url yet. */
+.live-link { display:inline-block; font:600 var(--t-meta) var(--sans); padding:.12rem .55rem; border-radius:var(--r-sm);
+  background:var(--accent-dim); color:var(--accent-bright); white-space:nowrap; transition:background var(--dur) var(--ease), color var(--dur) var(--ease); }
+.live-link:hover { background:var(--accent); color:var(--accent-ink); }
+.live-link:focus-visible { outline:none; box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--accent-bright); }
 /* cast-to affinity row on a Review card */
 .cast-affinity { display:flex; align-items:center; flex-wrap:wrap; gap:.3rem; margin:.3rem 0; }
 .chip { display:inline-flex; align-items:center; padding:.1rem .5rem; border:1px solid var(--line-bright); border-radius:var(--r-pill);

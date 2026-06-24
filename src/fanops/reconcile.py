@@ -21,9 +21,11 @@ Resolution:
 
 Backend-agnostic by design (P2). The poll is dispatched per backend in _default_get_status: Blotato
 (rest/mcp) over GET /v2/posts/{id}; Postiz over the DATE-WINDOWED GET /public/v1/posts `state` field
-(PostizStatusClient). The {status, publicUrl} dict and the state machine here are identical for both —
-only honesty boundary differs: Postiz exposes NO permalink on any response, so a reconciled Postiz post
-keeps public_url=None (the operator sets the real social URL via `fanops resolve <id> published --url`).
+(PostizStatusClient). The {status, publicUrl} dict and the state machine here are identical for both — a
+PUBLISHED Postiz row carries its real IG permalink in `releaseURL`, which PostizStatusClient surfaces as
+publicUrl (verified against the running instance 2026-06-21, metrics.py), so reconcile stamps a published
+Postiz post's public_url just like Blotato; `fanops resolve <id> published --url` is the manual fallback for
+a post genuinely absent from its date-window page (status 'unknown' -> left parked, never guessed).
 A FATAL auth failure from EITHER backend (the shared AuthError base) halts the pass; a single poll error
 is contained per-post (parked, never guessed failed). dryrun never reaches here (gated upstream)."""
 from __future__ import annotations

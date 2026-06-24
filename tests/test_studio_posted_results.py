@@ -188,3 +188,27 @@ def test_posted_micro_bars_normalise_over_full_filtered_set_not_the_page(tmp_pat
     html = _client(cfg).get("/posted").data.decode()
     assert 'class="bar metric-bar" style="width: 1%"' in html          # 10/1000 -> normalised to the global peak
     assert 'class="bar metric-bar" style="width: 100%"' not in html    # would appear if peaks came from the page
+
+
+# ── the live link is a clean, labeled affordance (click the post -> the real social post), not a raw URL
+#    dump; and an HONEST 'pending' state (not a dead dash) when the loop hasn't captured public_url yet ──
+def test_posted_link_is_a_labeled_affordance_not_a_raw_url(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_published(cfg, pid="p_live", lift=0.5)         # _seed_published sets public_url=https://insta/p_live
+    html = _client(cfg).get("/posted").data.decode()
+    assert 'href="https://insta/p_live"' in html         # still links to the real social post
+    assert 'target="_blank"' in html and 'rel="noopener"' in html
+    assert "View on instagram" in html                   # platform-labeled, clickable affordance
+    assert ">https://insta/p_live<" not in html          # the raw URL is NO LONGER the visible link text
+
+
+def test_posted_link_shows_honest_pending_when_url_absent(tmp_path):
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="clip_np", parent_id="m1", path="/c/clip_np.mp4", state=ClipState.published))
+        led.add_post(Post(id="p_nourl", parent_id="clip_np", account="@a", account_id="ig_1",
+                          platform=Platform.instagram, caption="fire", state=PostState.published,
+                          scheduled_time="2026-06-01T00:00:00Z", public_url=None, metrics={LIFT_SCORE: 0.5}))
+    html = _client(cfg).get("/posted").data.decode()
+    assert "pending" in html.lower()                     # honest 'the link will fill', not a bare dead '—'
+    assert "once the post goes live" in html.lower()     # explains the loop closes it automatically
