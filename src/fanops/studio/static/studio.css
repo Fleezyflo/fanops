@@ -407,13 +407,18 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .home-onboarding { margin:var(--s-4) 0; padding:var(--s-4); border:1px solid var(--line-bright); border-radius:var(--r-lg);
   background:linear-gradient(180deg,var(--surface-2),var(--surface-1)); box-shadow:var(--elev-1); }
 .home-onboarding h3 { margin-top:0; }
-.setup-steps { list-style:none; padding:0; margin:var(--s-3) 0 var(--s-2); display:grid; gap:var(--s-2); }
+.setup-steps { list-style:none; padding:0; margin:var(--s-3) 0 var(--s-2); display:grid; gap:var(--s-2); counter-reset:step; }
 .setup-steps .step { display:flex; align-items:baseline; gap:.5rem; padding:.4rem .55rem; border:1px solid transparent; border-radius:var(--r-sm); }
-.setup-steps .step.next { background:var(--accent-dim); border-color:var(--accent); }
-.setup-steps .step.todo { color:var(--muted); }
-.setup-steps .step-mark { flex:none; width:1.2rem; text-align:center; font-weight:700; }
-.setup-steps .step.done .step-mark { color:var(--ok); }
-.setup-steps .step.next .step-mark { color:var(--accent-bright); }
+/* S10: the orientation list is TEACHING, not a state ladder (the spine owns "what's next") — number the steps,
+   no done/next/todo marks. The number badge replaces the old step-mark glyph. */
+.setup-steps.teaching .step { counter-increment:step; }
+.setup-steps.teaching .step::before { content:counter(step); flex:none; width:1.4rem; height:1.4rem; display:inline-flex;
+  align-items:center; justify-content:center; border-radius:50%; background:var(--accent-dim); color:var(--accent-bright);
+  font:600 var(--t-eyebrow) var(--sans); }
+/* S10: a zero-result batch is a SILENT-FAIL outcome — give it a prominent list-level banner, not a faint glyph. */
+.batch-zero-summary { margin:.3rem 0 .6rem; padding:.5rem .75rem; border:1px solid var(--warn); border-left:3px solid var(--warn);
+  border-radius:var(--r-sm); background:oklch(83% 0.13 78 / .08); }
+.acct-post-count { font-variant-numeric:tabular-nums; }
 
 /* ── P5: Review density + Schedule caption ──────────────────────────────── */
 /* clip lineage line (source + moment window) + collapsed transcript peek on a Review card */
