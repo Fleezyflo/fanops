@@ -97,6 +97,24 @@ def test_persona_with_no_levers_still_renders_drawer(tmp_path):
     assert "Bare" in html
 
 
+def test_compose_panel_shows_produces_prose(tmp_path):
+    # S7: the live "compiles to" panel leads with a plain "Produces: …" sentence so the operator reads the
+    # OUTPUT (length/framing/hook/hashtags), not just the engineer-facing directive rows.
+    cfg = Config(root=tmp_path)
+    html = _client(cfg).post("/personas/compose", data={
+        "voice": "a devoted fan", "clip_profile": "short", "framing": "top",
+        "hook_angle": "curiosity", "tag_lean": "tasteful"}).get_data(as_text=True)
+    assert "produces-line" in html                       # the styled lead sentence is rendered
+    assert "curiosity hooks" in html and "top-framed" in html
+
+def test_compose_panel_empty_levers_keeps_the_grid_no_produces_line(tmp_path):
+    # an unconfigured persona still gets the live panel (the affordance), just no Produces lead (nothing to say).
+    cfg = Config(root=tmp_path)
+    html = _client(cfg).post("/personas/compose", data={"voice": "v"}).get_data(as_text=True)
+    assert "compose-grid" in html                         # the panel still renders
+    assert "produces-line" not in html                    # but no produces sentence when no dimension is set
+
+
 def test_drawer_lever_fields_persist_via_edit(tmp_path):
     # the WHOLE POINT of the drawer is surfacing the levers — prove a full lever submission round-trips and saves.
     cfg = Config(root=tmp_path)

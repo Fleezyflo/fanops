@@ -304,7 +304,10 @@ def compose_breakdown(cfg: Config, p) -> dict:
                "shadowed": (["content_focus", "energy"] if cast_override else [])}
     hook = {"text": hook_directive(p), "override": bool(hook_override),
             "fragments": ([{"source": "override", "text": hook_override}] if hook_override else _hook_fragments(p)),
-            "shadowed": (["hook_angle", "hook_tone"] if hook_override else [])}
+            "shadowed": (["hook_angle", "hook_tone"] if hook_override else []),
+            # S7: the EFFECTIVE structured angle — None when a freeform override shadows it (so produces_summary
+            # never names an angle that doesn't actually drive the hook).
+            "angle": (None if hook_override else (getattr(p, "hook_angle", None) or None))}
     caption = {"text": caption_directive(p), "override": bool(cap_override)}
     pin_prof = (getattr(p, "clip_profile", None) or "").strip()
     res_prof, res_fr = resolved_cut_spec(p)               # pin > derived > None — the SAME floor hydration applies
@@ -317,7 +320,32 @@ def compose_breakdown(cfg: Config, p) -> dict:
     noops: list[str] = []
     if (getattr(p, "energy", None) or "").strip().lower() == "medium" and not cast_override:
         noops.append("energy=medium has no effect on selection")
-    return {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
+    bd = {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
+    bd["produces"] = produces_summary(bd)                 # S7: the operator-facing OUTPUT lead, from this same detail
+    return bd
+
+
+def produces_summary(breakdown: dict) -> list[str]:
+    """S7 — the operator-facing "what this persona PRODUCES" lead: an ordered clause list distilled from the
+    SAME compose_breakdown detail (parity-guaranteed — no second resolver, so it can't drift from what the
+    pipeline runs), e.g. ['~8-15s clips', 'top-framed', 'curiosity hooks', '≤4 hashtags']. Each clause is shown
+    ONLY for a deliberately-configured dimension: a global cut, an unset framing/angle, and a floor-only
+    hashtag posture (no lean/corpus) are all SILENT — so an unconfigured persona yields []. Pure; reads only
+    the passed dict, never the disk."""
+    out: list[str] = []
+    cut = breakdown.get("cut") or {}
+    if cut.get("source") and cut.get("source") != "global" and cut.get("band"):
+        out.append(f"~{cut['band']} clips")
+    if cut.get("framing"):
+        out.append(f"{cut['framing']}-framed")
+    angle = (breakdown.get("hook") or {}).get("angle")
+    if angle:
+        out.append(f"{angle} hooks")
+    tags = breakdown.get("tags") or {}
+    lead = tags.get("lead") or []
+    if lead and (tags.get("lean") or tags.get("corpus")):   # a deliberate hashtag posture, not the cold-start floor
+        out.append(f"≤{len(lead)} hashtags")
+    return out
 
 
 def persona_facts(cfg: Config, p) -> dict:
