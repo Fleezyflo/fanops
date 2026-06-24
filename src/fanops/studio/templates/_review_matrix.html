@@ -40,10 +40,12 @@
           <td class="matrix-cell state-{{ cell.state }}">
             <label class="cell-pick"><input type="checkbox" name="ids" value="{{ cell.lead_post_id }}"><span class="vh">Approve {{ handle }} {{ platform }} — moment {{ row.window }}s</span></label>
             <a class="cell-hook" href="{{ cell.preview_url }}" aria-label="Preview {{ handle }} {{ platform }} — {{ cell.state }}{% if cell.multiplicity > 1 %}, {{ cell.multiplicity }} posts{% endif %}">{% if cell.hook %}{{ cell.hook }}{% else %}<span class="muted">no hook</span>{% endif %}</a>
-            <span class="cell-meta">{% if cell.length_label %}<span class="chip len">{{ cell.length_label }}</span>{% endif %}{% if cell.framing %}<span class="chip frame">{{ cell.framing }}</span>{% endif %}{% if cell.is_account_cut %}<span class="chip cut" title="this account's own cut">cut</span>{% else %}<span class="chip shared" title="shared moment clip">shared</span>{% endif %}{% if cell.multiplicity > 1 %}<span class="chip mult" title="{{ cell.multiplicity }} posts on this channel">×{{ cell.multiplicity }}</span>{% endif %}</span>
+            <span class="cell-meta">{% if cell.length_label %}<span class="chip len"{% if cell.length_cause %} title="{{ cell.length_cause }}"{% endif %}>{{ cell.length_label }}</span>{% endif %}{% if cell.framing %}<span class="chip frame"{% if cell.framing_cause %} title="{{ cell.framing_cause }}"{% endif %}>{{ cell.framing }}</span>{% endif %}{% if cell.is_account_cut %}<span class="chip cut" title="this account's own cut">cut</span>{% else %}<span class="chip shared" title="shared moment clip">shared</span>{% endif %}{% if cell.multiplicity > 1 %}<span class="chip mult" title="{{ cell.multiplicity }} posts on this channel">×{{ cell.multiplicity }}</span>{% endif %}</span>
           </td>
           {% else %}
-          <td class="matrix-cell empty" aria-label="{{ handle }} {{ platform }} — not cast for this moment">—</td>
+          {# S4: every empty "—" carries WHY (off-target | budget | no <platform>) in its aria-label + hover title. #}
+          {% set ereason = row.empty_reasons.get(key) %}
+          <td class="matrix-cell empty" aria-label="{{ handle }} {{ platform }} — {{ ereason or 'not cast for this moment' }}"{% if ereason %} title="{{ ereason }}"{% endif %}>—</td>
           {% endif %}
         {% endfor %}
       </tr>
