@@ -65,9 +65,13 @@ def test_home_links_to_golive(tmp_path):
     assert b"/golive" in _client(cfg).get("/").data        # onboarding CTA into the Go-Live connect flow
 
 def test_home_metrics_per_account(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)       # _seed births @a posts
+    # S10: an ACTIVE account's post count renders INLINE on its account row; the #home-metrics table is now
+    # only the orphan fallback (handles with history but no active account), so it is absent when @a is active.
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)       # _seed births @a posts (@a is an active account)
     html = _client(cfg).get("/").data.decode()
-    assert 'data-slot="metrics"' in html and 'data-metric="by-account"' in html and "@a" in html
+    assert 'data-slot="metrics"' in html                   # the section still exists (orphan fallback)
+    assert 'data-acct-count="@a"' in html                  # @a's count is inline on its account row
+    assert 'data-metric="by-account"' not in html          # no orphans -> no fallback table
 
 def test_home_batch_deep_link_and_zero_result(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
