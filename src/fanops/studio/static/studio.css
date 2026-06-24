@@ -486,6 +486,10 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .chip.cut { color:var(--ok); border-color:var(--ok); }
 .chip.shared { color:var(--faint); }
 .chip.mult { color:var(--accent-bright); border-color:var(--accent); }
+/* Provenance chips (S2) — "value ← why": tone maps to existing colour tokens; .cause is the muted WHY phrase. */
+.chip.ok { color:var(--ok); border-color:var(--ok); }
+.chip.warn { color:var(--warn); border-color:var(--warn); }
+.chip .cause { font-style:normal; color:var(--faint); font-size:var(--t-eyebrow); margin-left:.1rem; }
 
 /* Workflow spine (Slice 1) — the Make→Review→Schedule→Posted through-line atop every workflow surface: a
    self-explaining stepper (you-are-here + per-stage count) + the single next-action CTA, so the operator never

@@ -70,6 +70,11 @@ class Account(BaseModel):
     hook_directive: str = ""
     caption_directive: str = ""
     clip_count: Optional[int] = None
+    # Provenance (S2): True only when the LINKED persona actually supplied clip_profile (resolved_cut_spec
+    # returned a profile at hydration). HYDRATION-ONLY — never written back to accounts.json (set_* mutate the
+    # raw dict). Lets the Studio attribute a length to the persona vs the account's own pin truthfully; default
+    # False -> attribution falls to the account pin / global (byte-identical when unlinked or persona-cut-silent).
+    persona_owns_profile: bool = False
     # Per-platform poster ids keyed by Platform.value (e.g. {"instagram": "ig_1", "tiktok": "tk_9"}).
     # A handle's Instagram and TikTok are DIFFERENT Postiz integrations, so each (handle, platform) must
     # resolve to its OWN id. ADDITIVE: empty on a legacy account, which then resolves via account_id —
@@ -223,7 +228,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.hook_angle = per.hook_angle
         acc.hook_tone = per.hook_tone
         _prof, _fr = resolved_cut_spec(per)   # P2: pin wins; else derived from content_focus/energy; else None (global stands)
-        if _prof: acc.clip_profile = _prof
+        if _prof: acc.clip_profile = _prof; acc.persona_owns_profile = True   # S2 provenance: the persona TRULY owns the length
         if _fr: acc.framing = _fr
         acc.brief = getattr(per, "brief", "") or ""   # M2: the persona owns the locked brief (empty -> compose ignores it)
         acc.casting_directive = getattr(per, "casting_directive", "") or ""   # M3: per-dimension override text (empty -> lever-compiled default)

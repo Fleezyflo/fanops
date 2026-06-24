@@ -1,0 +1,11 @@
+{# _prov.html — S2: the reusable PROVENANCE chip. cause_chip(chip) renders ONE "value ← why" chip; cause_chips(chips)
+   loops a list. value = WHAT (the already-rendered label), cause = WHY (a short phrase, or None → the value renders
+   bare with no attribution), tone = ''|'ok'|'warn' → the existing chip colour tokens. title= carries the cause for
+   hover/AT. Consumed by S4/S7/S8 via {% from "_prov.html" import cause_chip %}; an empty provenance_chips() list
+   (the OFF-firewall / undifferentiated surface) renders nothing. Autoescape on — no |safe, cause/value are plain text. #}
+{% macro cause_chip(chip) -%}
+<span class="chip{% if chip.tone %} {{ chip.tone }}{% endif %}"{% if chip.cause %} title="{{ chip.cause }}"{% endif %}>{{ chip.value }}{% if chip.cause %} <i class="cause">{{ chip.cause }}</i>{% endif %}</span>
+{%- endmacro %}
+{% macro cause_chips(chips) -%}
+{% for c in chips %}{{ cause_chip(c) }}{% endfor %}
+{%- endmacro %}
