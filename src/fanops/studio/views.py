@@ -123,6 +123,9 @@ class ReviewCard:
     batch_state: Optional[str] = None    # B3: Batch.state.value (None when unbatched/stale)
     batch_created: Optional[str] = None  # B3: Batch.created_at (None -> rendered '—')
     batch_excluded: int = 0              # B4: active accounts NOT in a non-empty target (0 == ALL/none excluded)
+    batch_excluded_names: list[str] = field(default_factory=list)   # S4: the NAMED excluded handles (sorted) —
+                                         # the operator reads WHO the batch target drops, not just how many. []
+                                         # for an ALL-sentinel/none target (byte-identical to today's bare count).
     affinities: list[str] = field(default_factory=list)      # C3: Moment.affinities (cast reach; [] == all accounts)
     source_key: Optional[str] = None     # Phase 4: the STABLE source-scoping id (clip -> moment.parent_id = Source.id),
                                          # NOT the basename (two sources can share a filename). The ?source= filter
@@ -396,7 +399,9 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     b = led.get_batch(bid) if bid else None
     tgts = (b.target_accounts if b is not None else [])
     # B4: how many ACTIVE accounts a non-empty target excludes (the enforcement signal; 0 for ALL-sentinel/none).
-    excluded = len([h for h in active_handles if h not in tgts]) if tgts else 0
+    # S4: also NAME them (sorted, deterministic) — the count alone never told the operator WHO got dropped.
+    excluded_names = sorted(h for h in active_handles if h not in tgts) if tgts else []
+    excluded = len(excluded_names)
     return ReviewCard(
         clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name, label=label,
         moment_window=window, reason=reason, language=language, subtitles_burned=cfg.burn_subs,
@@ -406,6 +411,7 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         batch_id=bid, batch_title=(b.name if b is not None else None),
         batch_targets=tgts, batch_state=(b.state.value if b is not None else None),
         batch_created=(b.created_at if b is not None else None), batch_excluded=excluded,
+        batch_excluded_names=excluded_names,
         affinities=(getattr(mom, "affinities", None) or []), source_key=src_key)
 
 def _card_day(led: Ledger, card: ReviewCard) -> str:
@@ -431,12 +437,16 @@ class MatrixCell:
     state: str; hook: Optional[str]; length_label: Optional[str]; framing: Optional[str]
     is_account_cut: bool; hook_source: Optional[str]
     preview_url: str; thumb_url: str; multiplicity: int
+    length_cause: Optional[str] = None    # S4: WHY this length (persona/account), shown as the chip's hover title
+    framing_cause: Optional[str] = None   # S4: WHY this framing (the account's pin), as the chip's hover title
 
 @dataclass
 class MatrixRow:
     moment_id: str; window: str; reason: Optional[str]; hook: Optional[str]
     affinities: list               # advisory context ONLY — never drives the "—" cells
     cells: dict                    # channel_key -> MatrixCell | None (None = uncast → renders "—")
+    empty_reasons: dict = field(default_factory=dict)   # S4: channel_key -> WHY this cell is empty
+                                   # (off-target | budget | no <platform>); absent key == no derivable reason.
 
 @dataclass
 class MatrixView:
@@ -467,6 +477,18 @@ def _state_matches(post, state: Optional[str]) -> bool:
     if not state: return True
     return post.state.value == state or (state == "awaiting" and post.state is PostState.awaiting_approval)
 
+def _empty_cell_reason(handle: str, platform: str, *, targets, affinities, acct) -> Optional[str]:
+    """S4: WHY a (moment × channel) matrix cell is empty — deterministic precedence off-target > budget >
+    no-platform. off-target: a non-empty batch target excludes the handle (the enforcement SKIP births no post).
+    budget: the moment is cast (non-empty affinities) and this handle wasn't picked. no-platform: the account
+    isn't configured for this platform. None: in-scope, cast, on-platform → genuinely just not posted. Pure;
+    fail-open (a None/odd acct yields None, never raises) so a torn surface can't 500 the grid."""
+    if targets and handle not in targets: return "off-target"
+    if affinities and handle not in affinities: return "budget"
+    plats = {getattr(p, "value", p) for p in (getattr(acct, "platforms", None) or [])}
+    if plats and platform not in plats: return f"no {platform}"
+    return None
+
 def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: str, now: datetime,
                   state: Optional[str] = None) -> MatrixView:
     """Per-source grid built from ONE-PASS bucket maps (O(M+C+P), never the nested-accessor quadratic).
@@ -481,6 +503,10 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
     for p in led.posts.values(): posts_by_clip.setdefault(p.parent_id, []).append(p)
     acct_by_handle = {a.handle: a for a in accounts.accounts}
     col_rank = {a.handle: i for i, a in enumerate(accounts.accounts)}
+    # S4: the source-level batch target (denormalized on Source.batch_id) — fans an off-target reason to every
+    # empty cell of an excluded channel. Read fail-open; [] (ALL-sentinel / no batch) -> off-target never fires.
+    _batch = led.get_batch(getattr(src, "batch_id", None)) if getattr(src, "batch_id", None) else None
+    targets = list(_batch.target_accounts) if _batch is not None else []
     channels: dict = {}; rows = []
     for m in moments:
         mposts = [p for c in clips_by_moment.get(m.id, []) for p in posts_by_clip.get(c.id, [])]
@@ -498,12 +524,19 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
                                     hook=sp.variant_hook, length_label=sp.length_label, framing=sp.framing,
                                     is_account_cut=sp.is_account_cut, hook_source=sp.hook_source,
                                     preview_url=f"/clips/{lead.parent_id}", thumb_url=f"/clip-thumb/{lead.parent_id}",
-                                    multiplicity=len(plist))
+                                    multiplicity=len(plist), length_cause=sp.length_cause, framing_cause=sp.framing_cause)
         rows.append(MatrixRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
                               hook=m.hook, affinities=list(getattr(m, "affinities", None) or []), cells=cells))
     cols = sorted(channels.items(), key=lambda kv: (col_rank.get(kv[1][0], 999), kv[1][1]))
-    return MatrixView(source_id=source_id, source_name=_source_label(src),
-                      columns=[(k, h, pf) for k, (h, pf) in cols], rows=rows)
+    columns = [(k, h, pf) for k, (h, pf) in cols]
+    # S4: now the column set is known, give every empty "—" cell a reason (off-target > budget > no-platform).
+    for row in rows:
+        for key, handle, platform in columns:
+            if row.cells.get(key) is None:
+                reason = _empty_cell_reason(handle, platform, targets=targets,
+                                            affinities=row.affinities, acct=acct_by_handle.get(handle))
+                if reason: row.empty_reasons[key] = reason
+    return MatrixView(source_id=source_id, source_name=_source_label(src), columns=columns, rows=rows)
 
 # Phase 4: the ?state= filter maps an operator-facing state word to its ReviewCard.bucket. 'awaiting' is the
 # primary worklist state (editable cards); 'approved' surfaces have LEFT Review for the Schedule, so it maps to

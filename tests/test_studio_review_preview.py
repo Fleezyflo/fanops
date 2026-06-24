@@ -92,6 +92,8 @@ def test_card_shows_per_account_length_cut_and_framing(tmp_path):
                       caption="c", state=PostState.awaiting_approval, render_id="r1", clip_profile="long",
                       scheduled_time=_z(NOW + timedelta(hours=5)))); led.save()
     html = _client(cfg).get("/review?view=list").data.decode()
-    assert "28–45s" in html                                    # the long band length label
-    assert "a real per-account cut" in html                    # the cut chip (title) — genuine per-account render
-    assert "vertical crop framing" in html and ">top<" in html  # the pinned framing chip
+    # S4: the surface-spec now renders via the shared _prov cause_chip macro — each chip carries its WHY.
+    assert "28–45s" in html                                    # the long band length label (value)
+    assert "@long long" in html                                # length cause — the account pins long
+    assert "@long&#39;s own cut" in html                       # the cut chip's cause (genuine per-account render)
+    assert ">top " in html and "@long top" in html             # framing chip value + its cause

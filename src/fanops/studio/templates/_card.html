@@ -4,6 +4,7 @@
    (checkbox / caption / edit / result sink) is UNCHANGED — all accounts stay visible+selectable for batch
    approve. A post-less prepared/held card (no surfaces) keeps the single shared preview. Safe by default:
    variation OFF -> media_url serves the base clip + no hook line, so every account shows the same video. #}
+{% from "_prov.html" import cause_chips %}
 <div class="card clip-card{{ ' compact' if compact else '' }}" id="card-{{ card.clip_id }}">
   {# M3c: compact mode drops the heavy per-account <video> switcher for a dense, scannable list (the operator
      flips to Full view to preview a clip). The control body below stays — bulk approve still works compactly. #}
@@ -78,18 +79,14 @@
              batch checkbox set. Same route as the bulk reject; the swap re-renders the scoped worklist. #}
           {% if card.bucket == 'editable' %}<button type="button" class="surface-reject" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-vals='{"ids": "{{ s.post_id }}"}' hx-target="#review-body" hx-swap="outerHTML" aria-label="reject {{ s.account }} {{ s.platform }}">Reject</button>{% endif %}
         </div>
-        {# M3a: the per-account differentiation at a glance — its clip LENGTH band, a CUT marker when it is a
-           genuine per-account cut, the account's pinned FRAMING, plus Phase 4 FALLBACK badges (⚠ shared-cut when
-           a creative-variation run did NOT produce a real per-account cut; ⚠ shared-hook when the on-screen hook
-           fell back to the shared moment hook — Render.hook_source=='shared_fallback', read fail-open). #}
-        {% set show_shared_cut = creative_variation and card.bucket == 'editable' and not s.is_account_cut %}
-        {% if s.length_label or s.is_account_cut or s.framing or show_shared_cut or s.hook_source == 'shared_fallback' %}
-          <div class="meta surface-spec" aria-label="{{ s.account }} clip spec">
-            {% if s.length_label %}<span class="chip ro" title="clip length band">{{ s.length_label }}</span>{% endif %}
-            {% if s.is_account_cut %}<span class="chip ro cut" title="a real per-account cut at this account's own length and framing">✂ cut</span>{% elif show_shared_cut %}<span class="chip ro warn shared-cut" title="this surface fell back to a SHARED cut — not a real per-account clip">⚠ shared-cut</span>{% endif %}
-            {% if s.framing %}<span class="chip ro" title="vertical crop framing">{{ s.framing }}</span>{% endif %}
-            {% if s.hook_source == 'shared_fallback' %}<span class="chip ro warn shared-hook" title="this account's on-screen hook fell back to the SHARED moment hook — not its own">⚠ shared-hook</span>{% endif %}
-          </div>
+        {# S4: the per-account differentiation at a glance, now WITH its cause — rendered by the shared S2 _prov
+           cause_chip macro (ONE renderer, no parallel hand-rolled chips). provenance_chips projects the surface
+           into ordered "value ← why" chips: length←persona/account, framing←account, ✂ cut / ⚠ shared-cut
+           (the shared-cut WARN is gated on creative_variation), ⚠ shared-hook, cast←picked-for. [] for an
+           undifferentiated surface (the OFF firewall) -> the whole row stays absent, byte-identical. #}
+        {% set spec_chips = provenance_chips(s, creative_variation=creative_variation) %}
+        {% if spec_chips %}
+          <div class="meta surface-spec" aria-label="{{ s.account }} clip spec">{{ cause_chips(spec_chips) }}</div>
         {% endif %}
         {% if compact %}
           {# compact: the preview (which carried the hook) is hidden, so show the on-screen hook inline; the
