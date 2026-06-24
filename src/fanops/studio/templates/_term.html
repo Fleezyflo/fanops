@@ -1,0 +1,9 @@
+{# src/fanops/studio/templates/_term.html — S9: an inline, keyboard-accessible plain-language definition for an
+   insider term (moment / cast / lever / batch / surface / variant / integration). A NATIVE <details> disclosure
+   — focusable, toggles on Enter/Space, NO JavaScript. Placed ONCE at a term's first use per surface. Fail-soft:
+   an unknown key renders nothing (term_def -> None), so a typo never breaks a page. term_def is injected by the
+   _inject_terms context processor; autoescape stays on (the defs are plain text). #}
+{% macro term(key) %}
+{%- set d = term_def(key) -%}
+{%- if d %}<details class="term" data-term="{{ key }}"><summary aria-label="What does {{ key }} mean?">ⓘ</summary><span class="term-def"><strong>{{ key }}</strong> — {{ d }}</span></details>{% endif -%}
+{% endmacro %}

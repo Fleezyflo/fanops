@@ -3,6 +3,7 @@
    connect accounts. Every form swaps the whole panel (outerHTML) so the list + result update after each action.
    The lever macros live in _persona_levers.html (shared with the drawer). Autoescape stays on (no |safe). #}
 {% from "_persona_levers.html" import lever_fields, levers_reference %}
+{% from "_term.html" import term %}
 <div id="personas-panel" aria-live="polite">
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
@@ -41,6 +42,7 @@
     </div>
   {% endif %}
 
+  <p class="muted persona-levers-intro">Each persona's levers{{ term('lever') }} shape its clips, hooks and captions.</p>
   {{ levers_reference(lever_ref) }}
 
   <section class="persona-step">

@@ -46,6 +46,25 @@ def paginate(rows: list, offset: int, *, page_size: int = GRID_PAGE_SIZE) -> "Gr
 PREPARABLE_STATES = (ClipState.rendered, ClipState.captions_requested, ClipState.captioned, ClipState.queued)
 
 
+# S9 — the plain-language glossary for the insider terms the IA leans on. One frozen source of truth, rendered
+# inline (keyboard-accessible) at each term's first use per surface via the _term.html macro + term_def().
+TERM_DEFS = {
+    "moment": "a worth-clipping window in the source video",
+    "cast": "which accounts a moment is routed to (uncast = all)",
+    "lever": "a per-persona dial shaping its clips, hooks, captions",
+    "batch": "a named, account-targeted group of ingested footage",
+    "surface": "one account-on-one-platform destination for a clip",
+    "variant": "this account's own version of the clip (its hook/cut/caption)",
+    "integration": "the Postiz channel a handle+platform publishes through",
+}
+
+
+def term_def(key) -> Optional[str]:
+    """S9 — the plain-language definition for an insider term, or None for an unknown/non-string key (fail-soft:
+    a typo in a template never 500s a surface). Pure read over the frozen TERM_DEFS."""
+    return TERM_DEFS.get(key) if isinstance(key, str) else None
+
+
 def accounts_in(rows) -> list[str]:
     """Distinct, sorted account handles present in a built read-model list — the per-surface chip UNIVERSE,
     derived from the POSTS in that list (never Accounts.active(), so a retired account's history stays

@@ -1,9 +1,10 @@
 {# src/fanops/studio/templates/gates.html — Phase 3a: answer the moment/caption agent gates #}
 {% extends "base.html" %}
+{% from "_term.html" import term %}
 {% block title %}Gates{% endblock %}
 {% block body %}
   <h2>Processing decisions</h2>
-  <p class="muted">The two calls only judgment can make: which moments to clip, and what each post's
+  <p class="muted">The two calls only judgment can make: which moments{{ term('moment') }} to clip, and what each post's
     caption is. Answer them here, then Prepare again in the Make tab to apply them.</p>
 
   {% set moments = rows | selectattr('kind','equalto','moments') | list %}
@@ -35,6 +36,7 @@
 
   {% if captions %}
     <h3>Captions ({{ captions | length }})</h3>
+    <p class="muted">A caption per surface{{ term('surface') }} — one account-on-one-platform.</p>
     {% for g in captions %}
       <div class="card">
         <strong>clip {{ g.key }}</strong>
