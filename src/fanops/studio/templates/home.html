@@ -8,6 +8,30 @@
   {% if status.is_live %}<div class="banner live">● LIVE ({{ status.mode }}) — reviewed posts publish to REAL accounts</div>
   {% else %}<div class="banner dryrun">● DRYRUN ({{ status.mode }}) — writes payloads, posts nothing</div>{% endif %}
 
+  {# Slice 4 (guided setup): until the operator has BOTH accounts and footage, teach the path zero → first
+     reviewed clips. Each step is marked done/next from state; an established Home (both present) hides it. #}
+  {% if not status.accounts or not status.counts.sources %}
+  <section class="home-onboarding" aria-labelledby="get-started-h">
+    <h3 id="get-started-h">Get started</h3>
+    <p class="muted">Three steps from zero to your first per-account clips.</p>
+    <ol class="setup-steps">
+      <li data-step="connect" data-state="{{ 'done' if status.accounts else 'next' }}" class="step {{ 'done' if status.accounts else 'next' }}">
+        <span class="step-mark" aria-hidden="true">{{ '✓' if status.accounts else '→' }}</span>
+        <a href="{{ url_for('golive_view') }}">Connect an account</a>
+        <span class="muted">— link a handle + platform in Go Live.{% if status.accounts %} <span class="vh">Done.</span>{% endif %}</span></li>
+      <li data-step="make" data-state="{{ 'done' if status.counts.sources else ('next' if status.accounts else 'todo') }}" class="step {{ 'done' if status.counts.sources else ('next' if status.accounts else 'todo') }}">
+        <span class="step-mark" aria-hidden="true">{{ '✓' if status.counts.sources else ('→' if status.accounts else '·') }}</span>
+        <a href="{{ url_for('run_panel') }}">Make clips from a video</a>
+        <span class="muted">— upload footage in Make; it cuts clips + writes captions per account.</span></li>
+      <li data-step="review" data-state="todo" class="step todo">
+        <span class="step-mark" aria-hidden="true">·</span>
+        <a href="{{ url_for('review') }}">Review &amp; approve</a>
+        <span class="muted">— each account's clips land in the Review matrix; nothing ships until you approve.</span></li>
+    </ol>
+    <p class="meta">Tip: give each account a <a href="{{ url_for('personas_view') }}">persona</a> so its clip length, on-screen hook, and caption differ.</p>
+  </section>
+  {% endif %}
+
   <div class="count-strip meta">
     <span>Native sources <strong>{{ status.counts.sources }}</strong></span> ·
     <span data-count="batches">Batches <a href="{{ url_for('review') }}"><strong>{{ status.counts.batches if status.counts.batches is not none else '—' }}</strong></a></span> ·
