@@ -270,7 +270,7 @@ def test_run_advance_route(tmp_path):
 
 # ---- views.run_next_step (S3: the Make tab's one "do this next" affordance) ----
 def _st(**over):
-    base = dict(sources=0, third_party=0, clips=0, posts=0, published=0, holds=0, pending_moments=0,
+    base = dict(sources=0, third_party=0, clips=0, posts=0, awaiting=0, published=0, holds=0, pending_moments=0,
                 pending_moment_hooks=0, pending_captions=0, backend="dryrun", accounts=[])
     base.update(over); return base
 
@@ -301,12 +301,20 @@ def test_run_next_step_gate_counts_all_three_pending_kinds():
 
 def test_run_next_step_gate_precedes_review():
     # gates block mid-pipeline clips; answering them comes BEFORE reviewing finished posts (ladder order)
-    assert views.run_next_step(_st(sources=2, posts=4, pending_captions=1))["key"] == "gate"
+    n = views.run_next_step(_st(sources=2, awaiting=4, pending_captions=1))
+    assert n["key"] == "gate" and "4 post(s) are also waiting" in n["hint"]   # gate hint also flags review work
 
 
-def test_run_next_step_review_when_posts_ready():
-    n = views.run_next_step(_st(sources=2, posts=4))
+def test_run_next_step_review_counts_only_actionable_awaiting():
+    n = views.run_next_step(_st(sources=2, awaiting=4))
     assert n["key"] == "review" and "4" in n["label"]
+
+
+def test_run_next_step_prepare_when_all_posts_shipped():
+    # audit MEDIUM: posts exist but ALL are published (awaiting==0) -> the next move is 'run a pass', NOT a false
+    # "N post(s) ready" (the old len(posts) count made 'review' fire forever after the first post was ever minted).
+    n = views.run_next_step(_st(sources=2, posts=50, published=50, awaiting=0))
+    assert n["key"] == "prepare"
 
 
 def test_run_next_step_fail_open_on_empty_dict():
@@ -324,6 +332,8 @@ def test_run_route_shows_next_step_banner(tmp_path):
 def test_run_route_gate_explanation_visible(tmp_path, monkeypatch):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
+    # patch BEFORE create_app: the route closures reference views.pipeline_status at CALL time (late binding), so
+    # patching the module attr here means the live route uses this stub on the request — exercises real wiring.
     monkeypatch.setattr(views, "pipeline_status", lambda c: _st(sources=2, pending_moments=2))
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/run").data.decode()

@@ -988,6 +988,7 @@ def pipeline_status(cfg: Config) -> dict:
         "sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),  # M1: chain count = native only
         "third_party": sum(1 for s in led.sources.values() if s.origin_kind == "third_party"),
         "clips": len(led.clips), "posts": len(led.posts),
+        "awaiting": sum(1 for p in led.posts.values() if p.state is PostState.awaiting_approval),  # S3: ACTIONABLE
         "published": len(led.posts_in_state(PostState.published)),
         "holds": sum(1 for c in led.clips.values() if c.held),
         "pending_moments": len(pending(cfg, kind="moments")),
@@ -1010,18 +1011,21 @@ def run_next_step(status: dict) -> dict:
         except (TypeError, ValueError): return 0
     footage = _n("sources") + _n("third_party")
     gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_captions")
-    posts = _n("posts")
+    awaiting = _n("awaiting")               # ACTIONABLE posts (awaiting_approval) — NOT len(posts), which counts
+                                            # shipped/rejected too and would make 'review' fire forever after one post.
     if footage == 0:
         return {"key": "add", "label": "Add a video to begin",
                 "hint": "Choose a file above, or paste a link under More — then ingest it."}
     if gates:
-        return {"key": "gate", "label": f"Answer {gates} processing decision(s)",
-                "hint": "Some clips are paused waiting on a decision. Answer them, then run Prepare again to finish those clips."}
-    if posts == 0:
-        return {"key": "prepare", "label": "Run a pass",
-                "hint": "Cut clips and write captions for every account — they'll land in Review."}
-    return {"key": "review", "label": f"{posts} post(s) ready",
-            "hint": "Review and approve them in the Review tab — nothing ships until you do."}
+        hint = "Some clips are paused waiting on a decision. Answer them, then run Prepare again to finish those clips."
+        if awaiting: hint += f" ({awaiting} post(s) are also waiting in Review.)"
+        return {"key": "gate", "label": f"Answer {gates} processing decision(s)", "hint": hint}
+    if awaiting:
+        return {"key": "review", "label": f"{awaiting} post(s) ready",
+                "hint": "Review and approve them in the Review tab — nothing ships until you do."}
+    # footage exists, no gates, nothing awaiting review -> run a pass (cut the new footage, or produce more).
+    return {"key": "prepare", "label": "Run a pass",
+            "hint": "Cut clips and write captions for every account — they'll land in Review."}
 
 
 def asset_catalog(cfg: Config) -> dict:
