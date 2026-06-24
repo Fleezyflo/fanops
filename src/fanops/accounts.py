@@ -204,7 +204,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
     if not any(getattr(acc, "persona_id", None) for acc in accts.accounts):
         return                                       # no links -> no work, no personas.json read at all
     try:
-        from fanops.personas import Personas
+        from fanops.personas import Personas, resolved_cut_spec
         reg = Personas.load(cfg)
     except Exception:
         return                                       # corrupt/absent personas.json -> inline values stand
@@ -222,8 +222,9 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.energy = per.energy
         acc.hook_angle = per.hook_angle
         acc.hook_tone = per.hook_tone
-        if per.clip_profile: acc.clip_profile = per.clip_profile
-        if per.framing: acc.framing = per.framing
+        _prof, _fr = resolved_cut_spec(per)   # P2: pin wins; else derived from content_focus/energy; else None (global stands)
+        if _prof: acc.clip_profile = _prof
+        if _fr: acc.framing = _fr
         acc.brief = getattr(per, "brief", "") or ""   # M2: the persona owns the locked brief (empty -> compose ignores it)
         acc.casting_directive = getattr(per, "casting_directive", "") or ""   # M3: per-dimension override text (empty -> lever-compiled default)
         acc.hook_directive = getattr(per, "hook_directive", "") or ""

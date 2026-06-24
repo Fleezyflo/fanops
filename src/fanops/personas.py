@@ -132,6 +132,38 @@ _TONE_CLAUSE = {
 }
 
 
+# P2: DERIVE a per-account CUT default (length tier + framing) from the persona's already-set content_focus +
+# energy, so DEFINING a distinct persona IS defining a distinct CLIP — no hand-set clip_profile needed. The
+# wire (hydrate -> resolve_clip_profile/top_bias -> account_render_spec.wants_cut -> render_account_cut) is
+# already whole; this only supplies its inputs. content_focus -> length (a punchline is a quick rewatchable
+# unit; a story needs room), energy -> framing (high=center action, low=top head-safe). Priority ORDER below
+# is longer-bias-first, so a multi-focus persona derives deterministically (story+punchlines -> long).
+_FOCUS_PROFILE = {"storytelling": "long", "emotional": "medium", "visual": "medium",
+                  "punchlines": "short", "hype": "short", "bold-statement": "short"}
+_ENERGY_FRAMING = {"high": "center", "low": "top"}   # medium -> absent -> None (no opinion -> global crop)
+
+
+def derive_cut_spec(p):
+    """The CUT default a persona implies from its content_focus + energy — (clip_profile|None, framing|None).
+    content_focus picks the LENGTH (first match in _FOCUS_PROFILE's longer-bias-first order, so a multi-select
+    is deterministic); energy picks the FRAMING. Unmapped/empty on a dimension -> None (the account/global
+    default stands -> firewall-safe, byte-identical). Pure, duck-typed (Persona OR hydrated Account)."""
+    foc = list(getattr(p, "content_focus", None) or [])
+    profile = next((v for k, v in _FOCUS_PROFILE.items() if k in foc), None)   # longer-bias-first, order-independent
+    framing = _ENERGY_FRAMING.get((getattr(p, "energy", None) or "").strip().lower())
+    return profile, framing
+
+
+def resolved_cut_spec(p):
+    """The persona's EFFECTIVE cut spec = explicit pin OVER derived default OVER None (global). The ONE
+    function both hydration (accounts._hydrate_from_personas) and the operator UI (compose_breakdown.cut)
+    read, so the floor can't drift. A non-blank Persona.clip_profile/framing pin always wins. Pure."""
+    d_prof, d_fr = derive_cut_spec(p)
+    prof = (getattr(p, "clip_profile", None) or "").strip() or d_prof
+    fr = (getattr(p, "framing", None) or "").strip().lower() or d_fr
+    return (prof or None, fr or None)
+
+
 def _base_voice(p) -> str:
     """The persona's freeform base: the voice, then the LOCKED brief (M2) appended after it. Duck-typed
     (reads .voice OR the hydrated account's .persona). Empty brief -> just the voice (the firewall floor)."""
@@ -216,10 +248,10 @@ def lever_catalog() -> list[dict]:
          "does": "the voice of the burned on-screen hook",
          "options": [{"value": k, "effect": v} for k, v in _TONE_CLAUSE.items()]},
         {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
-         "does": "the deterministic cut-length band (the cut, not the prompt)",
+         "does": "the deterministic cut-length band (the cut, not the prompt); if unset, derived from content_focus",
          "options": [{"value": n, "effect": f"{band_for(n).lo:g}-{band_for(n).hi:g}s cuts"} for n in _profiles]},
         {"key": "framing", "label": "Framing", "kind": "select", "stage": "cut",
-         "does": "the deterministic vertical crop",
+         "does": "the deterministic vertical crop; if unset, derived from energy",
          "options": [{"value": "top", "effect": "head-safe upper-third crop"},
                      {"value": "center", "effect": "centered crop"}]},
         {"key": "tag_lean", "label": "Tag lean", "kind": "select", "stage": "caption",
@@ -274,10 +306,11 @@ def compose_breakdown(cfg: Config, p) -> dict:
             "fragments": ([{"source": "override", "text": hook_override}] if hook_override else _hook_fragments(p)),
             "shadowed": (["hook_angle", "hook_tone"] if hook_override else [])}
     caption = {"text": caption_directive(p), "override": bool(cap_override)}
-    prof = (getattr(p, "clip_profile", None) or "").strip()
-    band = band_for(prof)
-    cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": (getattr(p, "framing", None) or None),
-           "source": ("persona" if prof else "global")}
+    pin_prof = (getattr(p, "clip_profile", None) or "").strip()
+    res_prof, res_fr = resolved_cut_spec(p)               # pin > derived > None — the SAME floor hydration applies
+    band = band_for(res_prof or "")
+    cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": res_fr,
+           "source": ("persona" if pin_prof else ("derived" if res_prof else "global"))}
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
     tags = {"lead": facts["lead_tags"], "lean": getattr(p, "tag_lean", None),
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
