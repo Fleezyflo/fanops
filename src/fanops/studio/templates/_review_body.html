@@ -6,6 +6,7 @@
    an approve on page N re-renders page N (R1, scope-stable), and the compact param preserves 'ultra' vs '1'. #}
 {# Phase 4: the compact url param — 'ultra' (zero-<video>) > '1' (dense) > dropped. Rides every action/page URL. #}
 {% set compact_param = 'ultra' if ultra else (1 if compact else none) %}
+{% from "_term.html" import term %}
 <div id="review-body" data-awaiting="{{ awaiting_total|default(0) }}" aria-live="polite">
   {# Phase 4: the View toggle — Moments (the default moment-first cards) vs By account (the pivot: one account's
      entire run as a flat, scannable, progress-counted list). 'By account' needs an account; it's a GET link that
@@ -14,8 +15,8 @@
      By account (the pivot). active_view in (none,'matrix') => Matrix is active. GET links; ride the URL. #}
   <div class="meta view-toggle pivot-toggle">View:
     {% if active_view in (none, 'matrix') %}<span class="button active" aria-current="page">Matrix</span>{% else %}<a class="button" href="{{ url_for('review', view='matrix', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Matrix</a>{% endif %}
-    {% if active_view == 'list' %}<span class="button active" aria-current="page">Moments</span>{% else %}<a class="button" href="{{ url_for('review', view='list', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Moments</a>{% endif %}
-    {% if active_view == 'account' %}<span class="button active" aria-current="page">By account</span>{% else %}<a class="button" href="{{ url_for('review', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">By account</a>{% endif %}
+    {% if active_view == 'list' %}<span class="button active" aria-current="page">Moments</span>{% else %}<a class="button" href="{{ url_for('review', view='list', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Moments</a>{% endif %}{{ term('moment') }}
+    {% if active_view == 'account' %}<span class="button active" aria-current="page">By account</span>{% else %}<a class="button" href="{{ url_for('review', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">By account</a>{% endif %}{{ term('surface') }}
   </div>
   {% include "_account_filter.html" %}
   {% include "_source_filter.html" %}
@@ -23,8 +24,10 @@
   {% set states = [('', 'All'), ('awaiting', 'Awaiting'), ('approved', 'Approved'), ('held', 'Held'), ('prepared', 'Prepared')] %}
   <nav class="state-chips" aria-label="Filter by state">{% for sv, sl in states %}<a class="button{{ ' active' if active_state|default(none) == (sv or none) else '' }}"{% if active_state|default(none) == (sv or none) %} aria-current="page"{% endif %} href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=(sv or none), compact=compact_param) }}">{{ sl }}</a>{% endfor %}</nav>
   {# Phase 2: when casting is ON, explain WHY accounts carry distinct/fewer posts (config lives in Go Live). #}
-  {% if cast_state and cast_state.casting %}<p class="meta cast-state">Casting ON — {{ cast_state.budget }} moments per account · clip {{ cast_state.profile }}</p>{% endif %}
-  {% if active_batch|default(none) %}<div class="meta batch-scope">Showing one batch — <a href="{{ url_for('review', view=active_view|default(none), account=active, source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">show all batches</a></div>{% endif %}
+  {% if cast_state and cast_state.casting %}<p class="meta cast-state">Casting{{ term('cast') }} ON — {{ cast_state.budget }} moments per account · clip {{ cast_state.profile }}</p>{% endif %}
+  {# S9: when creative_variation is ON each account ships its own variant — define the term where that's true. #}
+  {% if creative_variation %}<p class="meta variant-state">Per-account variants{{ term('variant') }} on — each account burns its own hook/cut/caption.</p>{% endif %}
+  {% if active_batch|default(none) %}<div class="meta batch-scope">Showing one batch{{ term('batch') }} — <a href="{{ url_for('review', view=active_view|default(none), account=active, source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">show all batches</a></div>{% endif %}
   {# M3c/Phase 4: flip between full / compact / ultra-compact. A GET link (mirrors the account/batch filter
      pattern); the compact param rides the action/pagination URLs so it persists. #}
   <div class="meta view-toggle">{% if compact %}<a class="button" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none)) }}">Full view</a>{% else %}<a class="button" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=1) }}">Compact view</a>{% endif %}{% if not ultra %} <a class="button" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact='ultra') }}">Ultra-compact</a>{% else %} <span class="button active" aria-current="page">Ultra-compact</span>{% endif %}</div>

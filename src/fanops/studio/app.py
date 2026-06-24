@@ -145,6 +145,9 @@ def create_app(cfg: Config) -> Flask:
     # S6: proportional micro-bar width (value vs the column peak from metric_peaks). Jinja GLOBAL so the
     # Posted/Results tables read it directly off the `peaks` dict the routes pass. Pure + fail-safe.
     app.jinja_env.globals["bar_pct"] = views.bar_pct
+    # S9: the plain-language glossary lookup. A Jinja GLOBAL (not a context processor) so the _term.html macro —
+    # which is imported context-isolated via {% from %} — can resolve term_def() inside itself. Pure, fail-soft.
+    app.jinja_env.globals["term_def"] = views.term_def
 
     def _time_arg() -> str:
         # The datetime-local control submits naive LOCAL; convert to canonical UTC before the action sees it.
