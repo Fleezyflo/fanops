@@ -409,6 +409,9 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .surface-reject:hover { border-color:var(--danger); color:var(--danger); background:var(--danger-dim); transform:none; }
 /* Schedule caption cell — truncate to keep the table scannable; full text on hover (title attr) */
 .schedule-caption { max-width:22rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
+/* S5: the suggested-time rationale + the advisory publish-ready chip. */
+.why-suggested { margin:.15rem 0 .3rem; max-width:24rem; }
+.schedule-ready { margin-right:.4rem; }
 
 /* ── P6: learning toggles + library legibility ──────────────────────────── */
 .learning-toggles { display:grid; gap:var(--s-3); }

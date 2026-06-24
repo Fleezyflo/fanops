@@ -10,7 +10,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import LIFT_SCORE, ClipState, PostState, StitchState
+from fanops.models import LIFT_SCORE, ClipState, PostState, RenderState, StitchState
 from fanops.bands import band_for                     # M3a: resolve a per-account clip_profile -> its length band (seconds)
 from fanops.timeutil import parse_iso
 
@@ -152,6 +152,11 @@ class ScheduleRow:
                                            # operator reads WHAT each scheduled row ships without opening it
     variant_hook: Optional[str] = None     # Render foundation: the per-account on-screen hook (mirror of
                                            # Render.hook_text) so the operator SEES which hook each account ships
+    # S5: advisory publish-readiness + the suggested-time rationale, set ONLY on editable rows (read-only past
+    # rows carry None). NEVER gates publish — a warn is information, the operator can still ship.
+    ready: Optional[bool] = None           # True = the shippable artifact exists + coheres; False = a reason below
+    ready_reason: Optional[str] = None     # WHY (e.g. "ready — its own cut" | "hook drift …" | "render not finished")
+    why_suggested: Optional[str] = None    # one plain sentence explaining the suggested time (account/platform/lead)
 
 
 @dataclass
@@ -696,6 +701,41 @@ def _batch_title(led: Ledger, bid: Optional[str]) -> Optional[str]:
     return b.name if b is not None else None
 
 
+_SHIPPABLE_RENDER = (RenderState.rendered, RenderState.published, RenderState.analyzed)
+
+def publish_readiness(led: Ledger, post) -> tuple[bool, str]:
+    """S5: ADVISORY (ready, reason) for a single post, from already-loaded objects — NEVER a ledger write, NEVER
+    a publish gate. A post with a render ships that render: it must exist, be shippable, and its BURNED hook must
+    match the hook the operator sees (else 'drift'). A post with no render ships the shared clip: it must exist
+    and be in a reusable state (the SAME allowlist crosspost ships from — single source of truth, no drift).
+    Fail-open: any torn/odd shape -> (False, 'unverified'), never raises (the Studio invariant)."""
+    try:
+        rid = getattr(post, "render_id", None)
+        if rid:
+            r = led.renders.get(rid)
+            if r is None: return (False, "render record missing")
+            if getattr(r, "state", None) not in _SHIPPABLE_RENDER: return (False, "render not finished")
+            if (getattr(r, "hook_text", "") or "") != (getattr(post, "variant_hook", "") or ""):
+                return (False, "hook drift — the burned hook differs from the one shown")
+            return (True, "ready — its own cut")
+        from fanops.crosspost import _REUSABLE_CLIP_STATES        # the EXACT states crosspost will reuse a clip from
+        clip = led.clips.get(getattr(post, "parent_id", None)) if getattr(post, "parent_id", None) else None
+        if clip is None: return (False, "source clip missing")
+        if clip.state not in _REUSABLE_CLIP_STATES: return (False, f"clip not shippable ({clip.state.value})")
+        return (True, "ready — shared clip")
+    except Exception:
+        return (False, "unverified")
+
+
+def explain_suggested_time(cfg: Config, row) -> str:
+    """S5: one plain sentence for WHY the suggested time is what it is — the suggestion is fully deterministic
+    (suggest_time = the earliest strictly-future slot honoring the per-account/platform cadence + the lead
+    window), but it was printed bare. Pure; names the account, platform, and lead so the operator trusts it."""
+    lead = getattr(cfg, "publish_lead_minutes", 0)
+    return (f"The earliest safe slot for {getattr(row, 'account', '?')} on {getattr(row, 'platform', '?')} — "
+            f"a {lead}-minute lead from now, paced to its cadence so posts don't cluster.")
+
+
 def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
                   account: Optional[str] = None, batch: Optional[str] = None) -> list[ScheduleRow]:
     """Queued posts (the editable timeline) plus recent published/analyzed posts (read-only past),
@@ -722,14 +762,18 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
         imm = _imminent(p.scheduled_time, now)
         state = p.state.value
         editable = (state == PostState.queued.value and not imm)
-        rows.append(ScheduleRow(
+        row = ScheduleRow(
             post_id=p.id, scheduled_time=p.scheduled_time, account=p.account,
             platform=p.platform.value, clip_id=p.parent_id, state=state, imminent=imm,
             editable=editable, integration_id=p.account_id,
             suggested_time=suggest_time(cfg, p, now=now) if editable else None,   # P1: only editable rows
             batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),       # Face 5: batch legibility
             caption=p.caption,                                                    # P5: caption column
-            variant_hook=getattr(p, "variant_hook", None)))                       # Render: per-account hook column
+            variant_hook=getattr(p, "variant_hook", None))                        # Render: per-account hook column
+        if editable:                                                              # S5: advisory readiness + why (editable only)
+            row.ready, row.ready_reason = publish_readiness(led, p)
+            row.why_suggested = explain_suggested_time(cfg, row)
+        rows.append(row)
 
     def _key(r: ScheduleRow):
         if not r.scheduled_time:
