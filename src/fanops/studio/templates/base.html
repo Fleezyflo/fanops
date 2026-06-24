@@ -11,6 +11,7 @@
   <title>FanOps Studio — {% block title %}{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}">
   <script src="{{ url_for('static', filename='htmx.min.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='drawer.js') }}" defer></script>
 </head>
 <body>
   {%- macro rail_link(endpoint, key, label) -%}
@@ -58,5 +59,13 @@
       </main>
     </div>
   </div>
+  {# Slice 3: the persona slide-out drawer mounts HERE — body level, a sibling of .app-shell — so drawer.js can
+     `inert` the rail + workspace without disabling the drawer itself (a descendant of .workspace can't be the
+     modal). A plain <div> (NOT <aside>) + no aria-label: closed it's an empty, role-less, visibility:hidden node
+     — no ghost "complementary" landmark on every page. The dialog semantics (role/aria-modal/labelledby) live on
+     the swapped-in body, present only when open. The backdrop is decorative -> aria-hidden (still click-to-close;
+     inerting it would kill the click). The Personas card Edit buttons htmx-swap a dialog body in. #}
+  <div class="drawer-backdrop" data-drawer-close aria-hidden="true" hidden></div>
+  <div class="drawer" id="persona-drawer"></div>
 </body>
 </html>
