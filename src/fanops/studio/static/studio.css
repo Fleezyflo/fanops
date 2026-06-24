@@ -486,3 +486,27 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .chip.cut { color:var(--ok); border-color:var(--ok); }
 .chip.shared { color:var(--faint); }
 .chip.mult { color:var(--accent-bright); border-color:var(--accent); }
+
+/* Workflow spine (Slice 1) — the Make→Review→Schedule→Posted through-line atop every workflow surface: a
+   self-explaining stepper (you-are-here + per-stage count) + the single next-action CTA, so the operator never
+   guesses the path. Pure projection, no JS. The global prefers-reduced-motion rule already neutralises transitions. */
+.spine { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--s-2) var(--s-4); margin:0 0 var(--s-4); padding:.5rem .7rem; border:1px solid var(--line); border-radius:var(--r-lg); background:var(--surface-1); }
+.spine-steps { list-style:none; display:flex; flex-wrap:wrap; align-items:center; gap:.2rem; margin:0; padding:0; }
+.spine-step { display:flex; align-items:center; }
+.spine-step:not(:last-child)::after { content:""; width:1.1rem; height:1px; margin:0 .15rem; background:var(--line-bright); flex:none; }
+.spine-step > a { display:inline-flex; align-items:center; gap:.4rem; padding:.3rem .55rem; border-radius:var(--r-pill); color:var(--muted); font-size:var(--t-meta); font-weight:500; text-decoration:none; border:1px solid transparent; transition:color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.spine-step > a:hover { color:var(--ink); background:oklch(100% 0 0 / .05); }
+.spine-step > a:focus-visible { outline:none; box-shadow:var(--ring); }
+.spine-num { display:inline-flex; align-items:center; justify-content:center; width:1.3rem; height:1.3rem; border-radius:50%; font:600 var(--t-eyebrow) var(--mono); border:1px solid var(--line-bright); color:var(--faint); flex:none; }
+.spine-count { font:600 var(--t-eyebrow) var(--mono); padding:.02rem .4rem; border-radius:var(--r-pill); background:var(--surface-3); color:var(--muted); font-variant-numeric:tabular-nums; }
+.spine-step.done > a { color:var(--ink); }
+.spine-step.done .spine-num { border-color:var(--ok); color:var(--ok); }
+.spine-step.active > a { color:var(--ink); background:var(--accent-dim); border-color:var(--accent); }
+.spine-step.active .spine-num { border-color:var(--accent-bright); color:var(--accent-bright); box-shadow:0 0 8px var(--accent-dim); }
+.spine-step.active > a:focus-visible { box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--accent-bright); }  /* full-contrast ring over the active step's accent-dim bg (mirrors .rail-link.active:focus-visible) */
+.spine-next { display:inline-flex; align-items:center; gap:.4rem; padding:.4rem .8rem; border-radius:var(--r-pill); background:var(--accent); color:var(--accent-ink); font-size:var(--t-meta); font-weight:600; text-decoration:none; white-space:nowrap; transition:filter var(--dur) var(--ease); }
+.spine-next:hover { filter:brightness(1.08); }
+.spine-next:focus-visible { outline:none; box-shadow:var(--ring); }
+.spine-next-kicker { font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase; letter-spacing:.06em; opacity:.7; }
+.spine-next.caught-up { background:transparent; color:var(--ok); border:1px solid var(--ok); }
+@media (max-width:760px) { .spine { flex-direction:column; align-items:stretch; } .spine-next { justify-content:center; } }

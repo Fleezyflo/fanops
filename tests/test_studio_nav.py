@@ -28,7 +28,7 @@ def _client(cfg):
 # every full-page surface (route → label fragment in the rail). The whole point: NONE is hidden.
 FULL_PAGES = ["/", "/run", "/review", "/publish", "/lift", "/posted", "/candidates", "/library",
               "/stitches", "/schedule", "/gates", "/personas", "/golive"]
-RAIL_GROUPS = [b"Overview", b"Workflow", b"Insights", b"Setup"]
+RAIL_GROUPS = [b"Overview", b"Workflow", b"Insights", b"Tools", b"Setup"]
 
 def test_rail_landmark_present(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
@@ -84,3 +84,25 @@ def test_brand_and_skip_survive(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data
     assert b"nav-brand" in html and b"skip-nav" in html
+
+# S1 — de-junk "Setup": the four OPERATIONAL surfaces move into their own "Tools" group so "Setup" means
+# only "configure this account once". Links MOVE (never drop / never hide) — every surface stays one click.
+def test_tools_group_precedes_setup_group(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    html = _client(cfg).get("/").data.decode()
+    assert 'id="rg-tools"' in html and html.index('id="rg-tools"') < html.index('id="rg-setup"')  # operational Tools above one-time Setup
+
+def test_tools_group_holds_the_operational_surfaces(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    html = _client(cfg).get("/").data.decode()
+    tools = html[html.index('id="rg-tools"'):html.index('id="rg-setup"')]   # the Tools group's slice (it precedes Setup)
+    for path in ("/candidates", "/library", "/stitches", "/gates"):
+        assert f'href="{path}"' in tools, f"{path} not under Tools"
+
+def test_setup_group_is_only_personas_and_accounts(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    html = _client(cfg).get("/").data.decode()
+    setup = html[html.index('id="rg-setup"'):]                              # Setup is the last group → rest of the rail
+    assert 'href="/personas"' in setup and 'href="/golive"' in setup
+    for path in ("/candidates", "/library", "/stitches", "/gates"):
+        assert f'href="{path}"' not in setup, f"{path} should have left Setup for Tools"
