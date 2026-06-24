@@ -4,7 +4,7 @@
 import io
 from pathlib import Path
 from fanops.config import Config
-from fanops.studio import actions
+from fanops.studio import actions, actions_run
 
 
 class _Up:                                          # a minimal FileStorage stand-in for action-level tests
@@ -73,7 +73,7 @@ def test_save_uploads_and_ingest_chains_ingest_in_one_call(tmp_path, mocker):
     # run_ingest so the WIRING is asserted toolchain-independently; the real end-to-end is covered above.)
     cfg = Config(root=tmp_path)
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    spy = mocker.patch.object(actions, "run_ingest", return_value=actions.ActionResult(ok=True, detail={"sources": 1}))
+    spy = mocker.patch.object(actions_run, "run_ingest", return_value=actions.ActionResult(ok=True, detail={"sources": 1}))
     res = actions.save_uploads_and_ingest(cfg, [_Up("clip.mp4")])
     assert res.ok and res.detail["saved"] == ["clip.mp4"] and res.detail["sources"] == 1
     spy.assert_called_once()                                            # ingest auto-ran after the upload
@@ -82,7 +82,7 @@ def test_save_uploads_and_ingest_chains_ingest_in_one_call(tmp_path, mocker):
 def test_save_uploads_and_ingest_skips_ingest_when_nothing_saved(tmp_path, mocker):
     # a rejected upload (non-video) short-circuits — nothing landed, so no ingest pass is run.
     cfg = Config(root=tmp_path)
-    spy = mocker.patch.object(actions, "run_ingest")
+    spy = mocker.patch.object(actions_run, "run_ingest")
     res = actions.save_uploads_and_ingest(cfg, [_Up("notes.txt")])
     assert res.ok is False
     spy.assert_not_called()
@@ -92,7 +92,7 @@ def test_save_uploads_and_ingest_surfaces_ingest_failure_recoverably(tmp_path, m
     # not-fully-done (point at the manual 'Ingest inbox'), never lose the upload.
     cfg = Config(root=tmp_path)
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch.object(actions, "run_ingest", return_value=actions.ActionResult(ok=False, error="ingest boom"))
+    mocker.patch.object(actions_run, "run_ingest", return_value=actions.ActionResult(ok=False, error="ingest boom"))
     res = actions.save_uploads_and_ingest(cfg, [_Up("clip.mp4")])
     assert res.ok is False and "Ingest inbox" in (res.error or "")      # tells the operator how to retry
     assert (cfg.inbox / "clip.mp4").exists()                            # the upload survived the ingest failure
