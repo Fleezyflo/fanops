@@ -1,0 +1,9 @@
+{# _run_next.html — S3: the Make tab's single "do this next" banner. Pure projection of the pipeline counts via
+   the run_next_step(status) global (state-driven, never per-account-flag gated). The ladder is add → gate → run →
+   review; the gate step spells out the gate→clip link (answer the decisions, then Prepare again). Existing tokens
+   only — .run-next surface + .muted hint; the per-step class (run-next-add|gate|prepare|review) tints the rail. #}
+{% set step = run_next_step(status) %}
+<div class="run-next run-next-{{ step.key }}" aria-live="polite">
+  <p class="run-next-label"><span class="run-next-eyebrow">Next</span> {{ step.label }}{% if step.key == 'review' %} — <a href="{{ url_for('review') }}">open Review</a>{% endif %}</p>
+  <p class="run-next-hint muted">{{ step.hint }}</p>
+</div>

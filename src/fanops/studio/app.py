@@ -139,6 +139,9 @@ def create_app(cfg: Config) -> Flask:
     # GLOBAL so _card.html can render the surface-spec via the shared _prov cause_chip macro (one renderer, no
     # parallel hand-rolled chips). Pure + fail-open ([] for an undifferentiated surface -> the row stays absent).
     app.jinja_env.globals["provenance_chips"] = views.provenance_chips
+    # S3: the Make tab's "do this next" projection (pipeline_status counts -> {key,label,hint}). A Jinja GLOBAL so
+    # _run_next.html reads it off the `status` BOTH render paths already pass — no handler change. Pure + fail-open.
+    app.jinja_env.globals["run_next_step"] = views.run_next_step
 
     def _time_arg() -> str:
         # The datetime-local control submits naive LOCAL; convert to canonical UTC before the action sees it.

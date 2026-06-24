@@ -6,6 +6,9 @@
   <p class="muted">Add a video, then let the system cut clips and write captions. They land in
     <strong>Review</strong>.</p>
 
+  {# S3: the one "do this next" affordance — derived from the same `status` counts, updates on every panel swap. #}
+  {% include "_run_next.html" %}
+
   {% include "_run_status.html" %}
 
   {% if result %}
