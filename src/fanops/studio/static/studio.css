@@ -376,6 +376,18 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 button.ghost { background:transparent; border-color:var(--line); color:var(--muted); }
 button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 
+/* ── Home onboarding (Slice 4) — the guided first-run path; shown only until accounts + footage exist ─── */
+.home-onboarding { margin:var(--s-4) 0; padding:var(--s-4); border:1px solid var(--line-bright); border-radius:var(--r-lg);
+  background:linear-gradient(180deg,var(--surface-2),var(--surface-1)); box-shadow:var(--elev-1); }
+.home-onboarding h3 { margin-top:0; }
+.setup-steps { list-style:none; padding:0; margin:var(--s-3) 0 var(--s-2); display:grid; gap:var(--s-2); }
+.setup-steps .step { display:flex; align-items:baseline; gap:.5rem; padding:.4rem .55rem; border:1px solid transparent; border-radius:var(--r-sm); }
+.setup-steps .step.next { background:var(--accent-dim); border-color:var(--accent); }
+.setup-steps .step.todo { color:var(--muted); }
+.setup-steps .step-mark { flex:none; width:1.2rem; text-align:center; font-weight:700; }
+.setup-steps .step.done .step-mark { color:var(--ok); }
+.setup-steps .step.next .step-mark { color:var(--accent-bright); }
+
 /* ── P5: Review density + Schedule caption ──────────────────────────────── */
 /* clip lineage line (source + moment window) + collapsed transcript peek on a Review card */
 .clip-lineage { margin:.15rem 0; font-size:var(--t-eyebrow); }
