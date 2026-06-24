@@ -229,6 +229,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     # per-account CUT instead of silently reverting it to a bare-hook, global-length, centred shared clip.
     from fanops.crosspost import account_render_spec
     from fanops.clip import render_account_cut
+    from fanops.models import HookSource
     from fanops.accounts import Accounts
     acct = next((a for a in Accounts.load(cfg).accounts if a.handle == p.account), None)   # None -> global defaults
     rid, wants_cut, acct_profile, acct_top_bias = account_render_spec(cfg, clip=clip, hook=hook, acct=acct)
@@ -238,11 +239,14 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     source_id = src.id if src is not None else None
     skey = surface_key(p.account, p.platform.value)
     vpath = cfg.render_path(batch_id, source_id, rid, aspect)   # filed under clips/{batch}/{src}/; mkdirs
-    produced = False
+    produced, realized = False, None
     if wants_cut:                                       # override account: re-cut the SOURCE at its own band+crop (LOCK-FREE)
-        produced = render_account_cut(led, cfg, clip.parent_id, aspect=aspect, profile=acct_profile,
-                                      hook=hook, out_path=vpath, top_bias=acct_top_bias)
+        produced, realized = render_account_cut(led, cfg, clip.parent_id, aspect=aspect, profile=acct_profile,
+                                                hook=hook, out_path=vpath, top_bias=acct_top_bias)
     burned = produced
+    # P3: a re-burn supplies a LITERAL operator-typed hook -> it IS account-specific (per_account); there is no
+    # "shared fallback" on an explicit edit. Empty hook -> none. cut_seconds rides the same re-mint (anti-drift H1).
+    hook_source = HookSource.per_account if (hook or "").strip() else HookSource.none
     if not produced:                                    # default band/frame OR a failed cut -> shared-clip burn
         burned = overlay.burn_hook_only(clip.path, vpath, hook, width=tw, height=th,
                                         font=cfg.subtitle_font)   # LOCK-FREE; atomic + fail-open: vpath always exists
@@ -255,7 +259,8 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
         # is_account_cut mirrors the crosspost mint: truthful when an override account got its own cut.
         led2.add_render(Render(id=rid, clip_id=p2.parent_id, account=p2.account, surface_key=skey,
                                hook_text=hook, path=vpath, state=RenderState.rendered,
-                               batch_id=batch_id, source_id=source_id, is_account_cut=produced))
+                               batch_id=batch_id, source_id=source_id, is_account_cut=produced,
+                               hook_source=hook_source, cut_seconds=realized))   # P3: never stale on re-burn (H1 anti-drift)
         p2.render_id = rid                              # the authoritative pointer
         p2.variant_hook = hook                          # read-only mirror of Render.hook_text (carried by repost_post)
         p2.media_urls = [f"file://{vpath}"]
@@ -891,15 +896,21 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
         return ActionResult(ok=False, error=f"approve-with-hook failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"approved": approved, "clip_id": clip_id, "hook": bool(removed)})
 
-def _approve_matching(cfg: Config, pred, *, now: Optional[datetime] = None, detail: Optional[dict] = None) -> ActionResult:
-    """Approve EVERY awaiting_approval post matching `pred` in ONE transaction (the shared spine for the
+def _approve_matching(cfg: Config, pred=None, *, pred_for=None, now: Optional[datetime] = None,
+                      detail: Optional[dict] = None) -> ActionResult:
+    """Approve EVERY awaiting_approval post matching the predicate in ONE transaction (the shared spine for the
     scoped bulk-approve actions). One `now` stamp for the whole batch so approve_post's stale-schedule bump
     is consistent; P1 strictly-future suggestion per post (never machine-guns to now). Idempotent, never a
-    500. `detail` is merged into the result (e.g. {"clip_id": ...} / {"account": ...})."""
+    500. `detail` is merged into the result (e.g. {"clip_id": ...} / {"account": ...}).
+
+    Two predicate forms: `pred(p)` (post-only — the existing clip/account scope) OR `pred_for(led) -> pred`
+    when the predicate needs IN-LOCK ledger context (Phase 4 source scope walks clip -> moment.parent_id from
+    led.moments — built ONCE inside the transaction, never per-post I/O, off a fresh in-lock read)."""
     now = _now(now); now_iso = iso_z(now); approved = 0
     try:
         with Ledger.transaction(cfg) as led:
-            ids = [p.id for p in led.posts.values() if p.state is PostState.awaiting_approval and pred(p)]
+            p = pred_for(led) if pred_for is not None else pred
+            ids = [post.id for post in led.posts.values() if post.state is PostState.awaiting_approval and p(post)]
             for pid in ids:                                  # P1: untimed/stale post -> a strictly-future suggestion (not now)
                 post = led.posts.get(pid)
                 sugg = suggest_time(cfg, post, now=now) if post is not None else None
@@ -914,17 +925,30 @@ def approve_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -
     the operator approves a whole moment's per-account set without ticking each box. Idempotent, never a 500."""
     return _approve_matching(cfg, lambda p: p.parent_id == clip_id, now=now, detail={"clip_id": clip_id})
 
-def approve_account(cfg: Config, handle: str, *, batch: Optional[str] = None,
+def approve_account(cfg: Config, handle: str, *, batch: Optional[str] = None, source: Optional[str] = None,
                     now: Optional[datetime] = None) -> ActionResult:
-    """M3b 'this account across the whole video': one-click approve EVERY awaiting_approval post of ONE account
-    (optionally scoped to the active batch — Post.batch_id), so the operator clears a persona's whole run at
-    once. A blank handle -> clean no-op (the button only shows under an active account filter). Idempotent,
-    never a 500."""
+    """M3b/Phase 4 'this account across the whole video': one-click approve EVERY awaiting_approval post of ONE
+    account, scopable to a batch (Post.batch_id) AND a source (Phase 4: the stable Source.id via clip ->
+    moment.parent_id), so the operator clears a persona's run at account × batch × source granularity. A blank
+    handle -> clean no-op (the button only shows under an active account filter). Idempotent, never a 500.
+
+    The source scope walks lineage, which lives only on the in-lock ledger — so when `source` is set we build a
+    `clip_id -> source_id` map ONCE inside the transaction (pred_for) and close over it; a post whose clip has
+    broken lineage maps to a sentinel that matches NO source filter, so a scoped approve never over-approves on
+    a dangling clip. With no source scope this is byte-identical to before (the post-only predicate)."""
     handle = (handle or "").strip()
     if not handle:
         return ActionResult(ok=True, detail={"account": None, "approved": 0})
-    return _approve_matching(cfg, lambda p: p.account == handle and (batch is None or p.batch_id == batch),
-                             now=now, detail={"account": handle, "batch": batch})
+    det = {"account": handle, "batch": batch, "source": source}
+    if source is None:                          # byte-identical legacy path (post-only predicate, no lineage walk)
+        return _approve_matching(cfg, lambda p: p.account == handle and (batch is None or p.batch_id == batch),
+                                 now=now, detail=det)
+    def _pred_for(led):                         # Phase 4: build the clip -> source map ONCE from the in-lock ledger
+        src_of = {c.id: (m.parent_id if (m := led.moments.get(c.parent_id)) is not None else None)
+                  for c in led.clips.values()}
+        return lambda p: (p.account == handle and (batch is None or p.batch_id == batch)
+                          and src_of.get(p.parent_id) == source)   # dangling clip -> None != source -> excluded
+    return _approve_matching(cfg, pred_for=_pred_for, now=now, detail=det)
 
 def approve_as_is(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
     """The 'ship it clean' half of the removed-hook choice: one-click approve EVERY awaiting_approval post of

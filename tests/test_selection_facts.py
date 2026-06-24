@@ -5,7 +5,7 @@
 # selection, not a growing history). Old ledgers load with selection_facts={} (byte-identical).
 import json
 from fanops.config import Config
-from fanops.ledger import Ledger
+from fanops.ledger import Ledger, SCHEMA_VERSION
 from fanops.models import SelectionFact, Post, Platform, PostState
 from fanops.ids import child_id
 
@@ -77,4 +77,4 @@ def test_v6_ledger_migrates_to_v7_injecting_selection_facts(tmp_path):
     assert set(led.sources) == {"src_aaaaaaaaaaaa"}           # no row lost across the hop
     with Ledger.transaction(cfg):
         pass                                                  # re-save stamps the new version
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 7
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION

@@ -255,8 +255,15 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # is retained as a tested standalone selector, not a pipeline fallback.
         if cfg.account_casting:
             for s in list(led.sources.values()):
-                if not any(m.parent_id == s.id and m.state is MomentState.decided
-                           for m in led.moments.values()):
+                rel = [m for m in led.moments.values() if m.parent_id == s.id
+                       and m.state in (MomentState.decided, MomentState.clipped)]
+                # P1 backfill: process a source with DECIDED moments (the normal path) OR one stranded with
+                # CLIPPED-uncast moments (raced past the gate before the answer landed) — write-once keeps it
+                # idempotent (a source already cast has non-empty affinities -> skipped; one mid-flight has a
+                # request -> not re-stamped). OFF firewall: this whole block is account_casting-guarded.
+                has_decided = any(m.state is MomentState.decided for m in rel)
+                has_clipped_uncast = any(m.state is MomentState.clipped and not m.affinities for m in rel)
+                if not has_decided and not has_clipped_uncast:
                     continue
                 try:
                     led = request_moment_casting(led, cfg, s.id, accts)
@@ -395,6 +402,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
         # run` must see every one to know it has NOT converged.
         "awaiting": {"moments": len(pending(cfg, kind="moments")),
                      "moment_hooks": len(pending(cfg, kind="moment_hooks")),
+                     "moment_casting": len(pending(cfg, kind="moment_casting")),   # P1: the run loop must WAIT for casting
                      "captions": len(pending(cfg, kind="captions"))},
     }
     # digest is read-only reporting, built from the SAME post-publish snapshot, OUTSIDE the lock.

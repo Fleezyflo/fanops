@@ -44,8 +44,8 @@ def test_cut_grows_short_window_to_long_band(tmp_path, mocker, monkeypatch):
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
     out = str(cfg.clips / "r_long.9x16.mp4")
-    ok = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out)
-    assert ok is True and Path(out).exists()
+    ok, secs = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out)
+    assert ok is True and Path(out).exists() and secs == 28.0   # P3: returns the realized window seconds
     assert _to_of(captured["cmd"]) == "28.0"            # LONG floor 28 grows the 4s window (output-relative -to)
 
 def test_cut_grows_short_window_to_short_band(tmp_path, mocker, monkeypatch):
@@ -77,7 +77,7 @@ def test_cut_no_textfilter_still_cuts_without_hook(tmp_path, mocker, monkeypatch
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
     out = str(cfg.clips / "r.9x16.mp4")
-    ok = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out)
+    ok, _ = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out)
     assert ok is True and "subtitles" not in captured["cmd"][captured["cmd"].index("-vf") + 1]
 
 def test_cut_fail_open_on_ffmpeg_absent(tmp_path, mocker, monkeypatch):
@@ -86,8 +86,8 @@ def test_cut_fail_open_on_ffmpeg_absent(tmp_path, mocker, monkeypatch):
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     mocker.patch("fanops.clip.subprocess.run", side_effect=FileNotFoundError("ffmpeg gone"))
     out = str(cfg.clips / "r.9x16.mp4")
-    ok = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out)
-    assert ok is False and not Path(out).exists()       # never raises, never a partial file
+    ok, secs = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out)
+    assert ok is False and secs is None and not Path(out).exists()   # fail-open: never raises, never a partial file
 
 def test_cut_fail_open_on_nonzero_rc(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
@@ -98,7 +98,7 @@ def test_cut_fail_open_on_nonzero_rc(tmp_path, mocker, monkeypatch):
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=bad_run)
     out = str(cfg.clips / "r.9x16.mp4")
-    assert render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out) is False
+    assert render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out) == (False, None)
     assert not Path(out).exists() and not Path(out + ".part").exists()
     assert not Path(out).with_suffix(".ass").exists()       # the .ass render artifact is swept on failure (no leak)
 
@@ -109,7 +109,7 @@ def test_cut_success_leaves_no_artifacts(tmp_path, mocker, monkeypatch):
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
     out = str(cfg.clips / "r.9x16.mp4")
-    assert render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out) is True
+    assert render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out) == (True, 28.0)
     assert Path(out).exists() and not Path(out + ".part").exists() and not Path(out).with_suffix(".ass").exists()
 
 
@@ -139,7 +139,7 @@ def _patch_cut(mocker, *, returns=True):
         calls.append({"profile": profile, "hook": hook, "out_path": out_path, "top_bias": top_bias})
         if returns:
             Path(out_path).parent.mkdir(parents=True, exist_ok=True); Path(out_path).write_bytes(b"ACUT")
-        return returns
+        return (returns, 12.0 if returns else None)   # P3: (produced, realized_seconds)
     mocker.patch("fanops.crosspost.render_account_cut", side_effect=cut)
     return calls
 

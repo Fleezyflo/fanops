@@ -426,11 +426,12 @@ def render_aspects_for(led: Ledger, cfg: Config, moment_id: str, *,
 
 
 def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt, profile: str,
-                       hook: str, out_path: str, top_bias: bool = False) -> bool:
+                       hook: str, out_path: str, top_bias: bool = False) -> tuple[bool, float | None]:
     """M2: an override account's OWN per-account CUT. Cut the SOURCE at `profile`'s band (its own LENGTH —
     @short 8-15s, @long 28-45s off the SAME moment) and burn `hook` (top-third) in ONE ffmpeg pass, written
-    ATOMICALLY to out_path. Returns True on success, False FAIL-OPEN (any ffmpeg/parse failure) — the caller
-    then falls back to burn_hook_only on the shared clip, so the Render.path file always exists. Unlike
+    ATOMICALLY to out_path. Returns (True, realized_seconds=ce-cs) on success, (False, None) FAIL-OPEN (any
+    ffmpeg/parse failure) — the caller then falls back to burn_hook_only on the shared clip, so the
+    Render.path file always exists (P3: the realized seconds is recorded on Render.cut_seconds). Unlike
     render_moment this writes to an ARBITRARY path with a SPECIFIC hook + band, mints NO Clip, and advances
     NO moment (the shared Clip owns the moment anchor — §4 of the per-account plan). Mirrors render_moment's
     window math (fit_window + snap + visual-start) so the per-account cut opens on the same strong frame the
@@ -445,6 +446,7 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)
         if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
             cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
+        realized = ce - cs                                    # P3: the account cut's REALIZED window length (post snap+visual-start)
         tw, th = _TARGETS[aspect.value]
         extra_vf = None
         if (hook or "").strip() and overlay.ffmpeg_has_textfilter():
@@ -461,14 +463,14 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         try:
             r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-            return False                                      # ffmpeg absent/hung -> fail-open to the shared burn
+            return False, None                                # ffmpeg absent/hung -> fail-open to the shared burn
         if r.returncode != 0 or not Path(tmp).exists():
-            return False                                      # ffmpeg failed -> fail-open (tmp swept in finally)
+            return False, None                                # ffmpeg failed -> fail-open (tmp swept in finally)
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         os.replace(tmp, out_path)                             # atomic publish — never a half-written per-account file
-        return True
+        return True, realized
     except Exception:
-        return False                                          # fail-open by contract: a clip is never blocked on its variant
+        return False, None                                    # fail-open by contract: a clip is never blocked on its variant
     finally:
         # sweep BOTH render artifacts on EVERY exit path (success, fail-open return, or a raise before the
         # subprocess) — the .ass is never an output, and the .part is consumed by os.replace on success (its

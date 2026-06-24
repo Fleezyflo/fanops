@@ -138,7 +138,7 @@ def _patch_cut(mocker, *, returns=True):
         calls.append({"profile": profile, "hook": hook, "out_path": out_path, "top_bias": top_bias})
         if returns:
             Path(out_path).parent.mkdir(parents=True, exist_ok=True); Path(out_path).write_bytes(b"ACUT")
-        return returns
+        return (returns, 12.0 if returns else None)   # P3: (produced, realized_seconds)
     mocker.patch("fanops.crosspost.render_account_cut", side_effect=cut)
     return calls
 

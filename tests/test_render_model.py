@@ -14,8 +14,8 @@ def _write(cfg, raw):
     cfg.ledger_path.write_text(json.dumps(raw))
 
 
-def test_schema_version_is_seven():
-    assert SCHEMA_VERSION == 7
+def test_schema_version_is_eight():
+    assert SCHEMA_VERSION == 8
 
 
 # ---- the Render model: per-account artifact, content-addressed, lifecycle state ----
@@ -58,7 +58,7 @@ def test_render_round_trips_through_save_load(tmp_path):
         led.add_render(Render(id="render_x", clip_id="clip_1", account="@a", surface_key="@a|instagram",
                               hook_text="H", path="/clips/x.mp4", batch_id="b1", source_id="s1"))
     on_disk = json.loads(cfg.ledger_path.read_text())
-    assert on_disk["schema_version"] == 7 and "renders" in on_disk
+    assert on_disk["schema_version"] == SCHEMA_VERSION and "renders" in on_disk
     led2 = Ledger.load(cfg)
     r = led2.get_render("render_x")
     assert r is not None and r.hook_text == "H" and r.batch_id == "b1" and r.source_id == "s1"
@@ -78,7 +78,7 @@ def test_migration_v5_to_v6_injects_renders_and_keeps_rows(tmp_path):
     assert set(led.posts) == {"p1"} and led.posts["p1"].render_id is None   # row survives, render_id defaults
     with Ledger.transaction(cfg):                            # save re-stamps the current schema version
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 7
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
     # idempotent reload
     led2 = Ledger.load(cfg)
     assert led2.renders == {} and set(led2.posts) == {"p1"}

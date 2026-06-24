@@ -15,8 +15,8 @@ def _write(cfg, raw):
     cfg.ledger_path.write_text(json.dumps(raw))
 
 
-def test_schema_version_is_seven():
-    assert SCHEMA_VERSION == 7
+def test_schema_version_is_eight():
+    assert SCHEMA_VERSION == 8
 
 
 def test_migration_v2_to_v3_round_trip(tmp_path):
@@ -56,7 +56,7 @@ def test_migration_v2_to_v3_round_trip(tmp_path):
     # Save re-stamps schema_version to current; reload is a no-op (created_at unchanged = idempotent).
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 7
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
     led2 = Ledger.load(cfg)
     assert led2.posts["p_sched"].created_at == led.posts["p_sched"].created_at
     assert led2.sources["src_aaaaaaaaaaaa"].created_at == led.sources["src_aaaaaaaaaaaa"].created_at
@@ -85,7 +85,7 @@ def test_migration_v0_to_v5_full_chain(tmp_path):
     assert led.posts["p1"].metrics_series == []                    # no metrics -> no legacy row
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 7
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
 
 
 def test_migration_v0_source_missing_source_path_no_crash(tmp_path):
@@ -229,4 +229,4 @@ def test_migration_v4_to_v5_injects_empty_batches(tmp_path):
     assert led.selection_facts == {}                               # v6->v7 step injects the empty selection_facts map
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 7
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
