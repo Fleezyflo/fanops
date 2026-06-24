@@ -33,6 +33,12 @@ _LEVER_EFFECTS = {lv["key"]: {o["value"]: o["effect"] for o in lv["options"]} fo
 _LEVER_REF = _CATALOG
 _MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024      # 2 GiB upload cap — a long raw clip fits; an abusive body is refused (DoS)
 
+# Slice 1: which endpoints carry the workflow spine, mapping each to its stage key ('here'). `index` shows the
+# stepper with no active stage (None). Everything else (Setup/Insights/htmx partials/404) is skipped via the
+# sentinel — None is a real value here (Home), so it cannot double as "not a workflow page".
+_SPINE_SKIP = object()
+_SPINE_HERE = {"index": None, "run_panel": "make", "review": "review", "schedule": "schedule", "posted": "posted"}
+
 _HERE = Path(__file__).resolve().parent
 
 
@@ -240,6 +246,22 @@ def create_app(cfg: Config) -> Flask:
                 "creative_variation": cfg.creative_variation,
                 "cast_state": {"casting": cfg.account_casting,
                                "budget": cfg.cast_pick_budget, "profile": cfg.clip_profile}}
+
+    @app.context_processor
+    def _inject_spine():
+        # Slice 1: the workflow stepper (Make→Review→Schedule→Posted + one next-action CTA). Injected ONLY on the
+        # workflow surfaces (Home + Make/Review/Schedule/Posted); every other endpoint returns {} so `spine` is
+        # undefined and base.html renders nothing — no ledger read on Setup/Insights pages or htmx partial swaps.
+        # `index` maps to here=None (the spine shows the path but highlights no stage); a non-workflow / None
+        # endpoint (404, partial) hits the sentinel and is skipped. Reads home_status DIRECTLY (fail-open): this
+        # runs during error-page renders too, so it must NOT depend on flask.g / a request memo (an app-context
+        # access there 500s the error page). On Home that's one extra small lock-free counts read vs the route's —
+        # accepted over fragility; the read is zeroed-not-raised on a torn ledger so the spine never 500s a surface.
+        here = _SPINE_HERE.get(request.endpoint, _SPINE_SKIP)
+        if here is _SPINE_SKIP:
+            return {}
+        st = views.home_status(cfg)
+        return {"spine": views.build_spine(counts=st.counts, has_accounts=bool(st.accounts), here=here)}
 
     @app.get("/")
     def index():

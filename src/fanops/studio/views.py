@@ -1166,6 +1166,48 @@ def home_batches(cfg: Config) -> list[HomeBatch]:
         return []
 
 
+@dataclass
+class SpineStage:                      # Slice 1: one node of the workflow stepper
+    key: str                           # 'make' | 'review' | 'schedule' | 'posted'
+    label: str
+    endpoint: str                      # the rail endpoint this stage links to
+    count: int                         # the stage's headline number (sources/awaiting/scheduled/posted)
+    state: str                         # 'active' (you-are-here) | 'done' | 'todo'
+
+
+@dataclass
+class WorkflowSpine:                    # the whole through-line: the ordered path + the single next move
+    stages: list[SpineStage]           # always Make→Review→Schedule→Posted
+    next_label: Optional[str]          # the one next-action sentence ("Review 4 clips")
+    next_endpoint: Optional[str]       # where it points; None == "caught up", no CTA
+    here: Optional[str]                # the current stage key (from the active tab), else None
+
+
+_SPINE_ORDER = (("make", "Make", "run_panel"), ("review", "Review", "review"),
+                ("schedule", "Schedule", "schedule"), ("posted", "Posted", "posted"))
+
+
+def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str]) -> WorkflowSpine:
+    """Pure: turn the Home counts into the Make→Review→Schedule→Posted stepper. A stage is 'active' when it is
+    the current tab (`here`), else 'done' once there is output downstream of it, else 'todo'. The next-action
+    ladder is strict precondition→pending order: connect an account, then add footage, then clear the awaiting
+    worklist, then schedule the approved bucket, else caught-up (no CTA). No ledger, no I/O — trivially tested."""
+    src = int(counts.get("sources", 0)); awaiting = int(counts.get("awaiting", 0))
+    queued = int(counts.get("scheduled", 0)); posted = int(counts.get("posted", 0))
+    done = {"make": src > 0, "review": awaiting == 0 and (queued > 0 or posted > 0), "schedule": posted > 0, "posted": posted > 0}
+    nums = {"make": src, "review": awaiting, "schedule": queued, "posted": posted}
+    stages = [SpineStage(key=k, label=lbl, endpoint=ep, count=nums[k],
+                         state=("active" if k == here else ("done" if done[k] else "todo")))
+              for k, lbl, ep in _SPINE_ORDER]
+    if not has_accounts:               n = ("Connect an account to begin", "golive_view")
+    elif src == 0:                     n = ("Add footage to get started", "run_panel")
+    elif awaiting > 0:                 n = (f"Review {awaiting} clip{'s' if awaiting != 1 else ''}", "review")
+    elif queued > 0:                   n = (f"Schedule {queued} post{'s' if queued != 1 else ''}", "schedule")
+    elif posted > 0:                   n = ("You're all caught up", None)
+    else:                              n = ("Run a pass in Make", "run_panel")
+    return WorkflowSpine(stages=stages, next_label=n[0], next_endpoint=n[1], here=here)
+
+
 def golive_status(cfg: Config) -> GoLiveStatus:
     """Lock-free read-model for the Go-Live tab: the publish mode (dryrun/live), whether Postiz is
     configured (postiz_url is shown — it is NON-secret; key_set is a BOOL only, the key itself is never

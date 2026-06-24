@@ -1,0 +1,23 @@
+{# _spine.html — Slice 1: the workflow through-line. An ordered Make→Review→Schedule→Posted stepper that marks
+   the current stage (you-are-here, aria-current=step), dims done/todo, badges each stage's pending count, and
+   surfaces the ONE next action as a primary CTA. Pure projection of views.build_spine over the Home counts —
+   read-only, no mutation. Links carry nav_account so the stepper respects an active account filter (Face-4 spine).
+   Rendered only on the workflow surfaces (Home + Make/Review/Schedule/Posted) via the _inject_spine processor. #}
+<nav class="spine" data-spine{% if spine.here %} data-here="{{ spine.here }}"{% endif %} aria-label="Workflow progress">
+  <ol class="spine-steps">
+    {% for s in spine.stages %}
+    <li class="spine-step {{ s.state }}" data-stage="{{ s.key }}" data-state="{{ s.state }}">
+      <a href="{{ url_for(s.endpoint, account=nav_account) }}"{% if s.state == 'active' %} aria-current="step"{% endif %}>
+        <span class="spine-num" aria-hidden="true">{{ loop.index }}</span>
+        <span class="spine-label">{{ s.label }}</span>
+        {% if s.count %}<span class="spine-count" aria-hidden="true">{{ s.count }}</span><span class="vh">{{ s.count }} items</span>{% endif %}
+      </a>
+    </li>
+    {% endfor %}
+  </ol>
+  {% if spine.next_endpoint %}
+  <a class="spine-next" href="{{ url_for(spine.next_endpoint, account=nav_account) }}"><span class="spine-next-kicker">Next</span> {{ spine.next_label }} <span aria-hidden="true">→</span></a>
+  {% else %}
+  <span class="spine-next caught-up"><span aria-hidden="true">✓</span> {{ spine.next_label }}</span>
+  {% endif %}
+</nav>

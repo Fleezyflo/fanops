@@ -37,14 +37,17 @@
           </ul></li>
         <li class="rail-group"><p class="rail-group-label" id="rg-insights">Insights</p>
           <ul role="list" aria-labelledby="rg-insights"><li>{{ rail_link('lift','lift','Results') }}</li></ul></li>
-        <li class="rail-group"><p class="rail-group-label" id="rg-setup">Setup</p>
-          <ul role="list" aria-labelledby="rg-setup">
-            <li>{{ rail_link('personas_view','personas','Personas') }}</li>
-            <li>{{ rail_link('golive_view','golive','Accounts & Go Live') }}</li>
+        <li class="rail-group"><p class="rail-group-label" id="rg-tools">Tools</p>
+          <ul role="list" aria-labelledby="rg-tools">
             <li>{{ rail_link('candidates','footage','Footage intake') }}</li>
             <li>{{ rail_link('library','library','Asset library') }}</li>
             <li>{{ rail_link('stitches','stitches','Stitch approvals') }}</li>
             <li>{{ rail_link('gates','gates','Processing decisions') }}</li>
+          </ul></li>
+        <li class="rail-group"><p class="rail-group-label" id="rg-setup">Setup</p>
+          <ul role="list" aria-labelledby="rg-setup">
+            <li>{{ rail_link('personas_view','personas','Personas') }}</li>
+            <li>{{ rail_link('golive_view','golive','Accounts & Go Live') }}</li>
           </ul></li>
       </ul>
       {% if nav_account %}<div class="active-account" role="status">Filtering <strong>{{ nav_account }}</strong> — <a href="{{ request.path }}">show all accounts</a></div>{% endif %}
@@ -55,7 +58,7 @@
       <main id="main">
         <a class="skip-nav vh skip-to-nav" href="#rail-nav">Jump to navigation</a>
         <h1 class="vh">{{ self.title() }}</h1>
-        <div id="main-content" tabindex="-1">{% block body %}{% endblock %}</div>
+        <div id="main-content" tabindex="-1">{% if spine %}{% include "_spine.html" %}{% endif %}{% block body %}{% endblock %}</div>
       </main>
     </div>
   </div>
