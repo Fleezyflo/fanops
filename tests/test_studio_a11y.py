@@ -14,8 +14,8 @@ def _html(cfg, path="/"):
 
 def test_skip_nav_link_targets_main_landmark(tmp_path):
     h = _html(Config(root=tmp_path))
-    assert 'class="skip-nav' in h and 'href="#main"' in h     # skip link present...
-    assert 'id="main"' in h                                   # ...and its target landmark exists
+    assert 'class="skip-nav' in h and 'href="#main-content"' in h  # skip link lands PAST sticky chrome (cockpit rail)...
+    assert 'id="main-content"' in h and 'id="main"' in h           # ...the focusable landing + the <main> landmark both exist
 
 
 def test_brand_demoted_and_exactly_one_page_h1(tmp_path):
