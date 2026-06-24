@@ -5,7 +5,7 @@
 # real precedence (override wins, energy=medium is a no-op) surfaced. preview_compose() runs it on TRANSIENT
 # unsaved form values — never persists. Parity is the contract: what the operator SEES == what the engine RUNS.
 from fanops.config import Config
-from fanops.personas import (Persona, lever_catalog, compose_breakdown, casting_directive,
+from fanops.personas import (Persona, lever_catalog, compose_breakdown, produces_summary, casting_directive,
                              hook_directive, caption_directive, add_persona, Personas,
                              CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, HOOK_TONES,
                              _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE, _TONE_CLAUSE)
@@ -108,6 +108,54 @@ def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
     assert "#myscene" in d["tags"]["lead"]                        # corpus floats to the lead, like the pipeline
     d2 = compose_breakdown(cfg, Persona(id="q", voice="v"))
     assert d2["cut"]["source"] == "global"                        # unset profile → global, not persona
+
+
+# ---- produces_summary: the operator-facing "what this persona DROPS" lead (S7) ----
+def test_produces_summary_lists_configured_dimensions(tmp_path):
+    cfg = Config(root=tmp_path)
+    p = Persona(id="p", voice="v", clip_profile="short", framing="top", hook_angle="curiosity",
+                tag_lean="tasteful", hashtag_corpus=["#myscene"])
+    d = compose_breakdown(cfg, p)
+    clauses = produces_summary(d)
+    joined = " · ".join(clauses)
+    assert "8-15s" in joined and "clips" in joined                 # the LENGTH band, from the same cut resolver
+    assert "top-framed" in clauses                                  # the FRAMING
+    assert "curiosity hooks" in clauses                             # the hook ANGLE
+    assert any(c.startswith("≤") and "hashtag" in c for c in clauses)  # the hashtag count (lean/corpus is set)
+
+def test_produces_summary_unset_persona_is_empty(tmp_path):
+    # a bare persona configures NOTHING distinctive -> every dimension is silent (global cut, no framing/angle,
+    # no deliberate hashtag posture). The floor tags are not a persona-specific "produce".
+    cfg = Config(root=tmp_path)
+    assert produces_summary(compose_breakdown(cfg, Persona(id="q", voice="v"))) == []
+
+def test_produces_summary_hashtag_clause_needs_a_deliberate_posture(tmp_path):
+    # length/framing set but NO lean/corpus -> the hashtag clause stays silent (the floor isn't a choice);
+    # the other clauses still list.
+    cfg = Config(root=tmp_path)
+    clauses = produces_summary(compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="long", framing="center")))
+    assert "center-framed" in clauses and any("clips" in c for c in clauses)
+    assert not any("hashtag" in c for c in clauses)
+
+def test_produces_summary_is_embedded_in_breakdown_with_parity(tmp_path):
+    # compose_breakdown carries the SAME clause list under "produces" — no second resolver, can't drift (S7 additive).
+    cfg = Config(root=tmp_path)
+    d = compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="short", hook_angle="fomo", tag_lean="bold"))
+    assert d["produces"] == produces_summary(d)                     # parity: embedded == standalone
+    assert "angle" in d["hook"]                                     # the additive hook['angle'] key
+
+def test_produces_summary_skips_angle_when_hook_overridden(tmp_path):
+    # a freeform hook override SHADOWS the structured angle -> no "curiosity hooks" clause (it isn't what runs).
+    cfg = Config(root=tmp_path)
+    d = compose_breakdown(cfg, Persona(id="p", voice="v", hook_directive="my brief", hook_angle="curiosity"))
+    assert d["hook"]["angle"] is None
+    assert not any("hooks" in c for c in produces_summary(d))
+
+def test_produces_summary_is_pure_no_persistence(tmp_path):
+    cfg = Config(root=tmp_path)
+    d = compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="short"))
+    produces_summary(d); produces_summary(d)                        # idempotent, takes only the dict
+    assert not cfg.personas_path.exists()
 
 
 # ---- preview_compose: TRANSIENT, never persists ----

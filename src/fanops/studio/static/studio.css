@@ -384,6 +384,25 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 button.ghost { background:transparent; border-color:var(--line); color:var(--muted); }
 button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 
+/* ── Persona compose panel (S7) — the LIVE "compiles to" translation inside the drawer. Was unstyled; this
+   gives it a card surface, a plain-words "Produces" lead, tagged directive rows, and muted provenance frags. */
+.persona-compose { margin-top:var(--s-2); }
+.produces-line { margin:0 0 var(--s-2); padding:.45rem .65rem; border-left:3px solid var(--accent);
+  background:var(--accent-dim); border-radius:var(--r-sm); color:var(--ink); font-size:var(--t-meta); line-height:1.5; }
+.produces-eyebrow { font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase; letter-spacing:.1em;
+  color:var(--accent-bright); margin-right:.4rem; }
+.compose-grid { display:grid; gap:.35rem; padding:var(--s-3); background:var(--surface-1);
+  border:1px solid var(--line); border-radius:var(--r-md); }
+.compose-row { display:grid; grid-template-columns:5.5rem 1fr; gap:.5rem; align-items:baseline;
+  padding:.25rem 0; border-bottom:1px solid var(--line); }
+.compose-row:last-child { border-bottom:none; }
+.compose-tag { font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase; letter-spacing:.1em; color:var(--muted); }
+.compose-text { color:var(--ink); font-size:var(--t-meta); line-height:1.45; }
+.compose-prov { grid-column:2; display:flex; flex-wrap:wrap; gap:.3rem; margin-top:.1rem; }
+.compose-prov .frag { font-size:var(--t-eyebrow); color:var(--faint); border:1px solid var(--line); border-radius:var(--r-pill);
+  padding:.05rem .4rem; cursor:help; }
+.compose-warn { margin:.35rem 0 0; color:var(--warn); font-size:var(--t-meta); }
+
 /* ── Home onboarding (Slice 4) — the guided first-run path; shown only until accounts + footage exist ─── */
 .home-onboarding { margin:var(--s-4) 0; padding:var(--s-4); border:1px solid var(--line-bright); border-radius:var(--r-lg);
   background:linear-gradient(180deg,var(--surface-2),var(--surface-1)); box-shadow:var(--elev-1); }

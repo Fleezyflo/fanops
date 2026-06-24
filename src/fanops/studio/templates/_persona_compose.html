@@ -4,6 +4,9 @@
    override shadows its levers; energy=medium is a no-op) surfaced. Autoescape stays on (engine text as text). #}
 {% if result and result.ok and result.detail %}
   {% set d = result.detail %}
+  {# S7: lead with the OUTPUT in plain words — what this persona DROPS (length · framing · hook · hashtags) —
+     above the engineer-facing directive rows. Silent when no dimension is deliberately set. #}
+  {% if d.produces %}<p class="produces-line"><span class="produces-eyebrow">Produces</span> {{ d.produces | join(' · ') }}</p>{% endif %}
   <div class="compose-grid">
     <div class="compose-row">
       <span class="compose-tag">CASTING</span>
