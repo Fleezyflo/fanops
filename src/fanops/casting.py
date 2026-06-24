@@ -95,17 +95,20 @@ def request_moment_casting(led, cfg, source_id, accounts):
     moments, OR no persona-bearing active account -> heuristic territory / nothing to select). Returns led."""
     src = led.sources.get(source_id)
     if src is None: return led
-    decided = sorted([m for m in led.moments.values()
-                      if m.parent_id == source_id and m.state is MomentState.decided],
-                     key=lambda m: (m.start, m.end))
+    # P1: decided OR clipped-and-uncast — a stranded source whose moments raced decided->clipped before the
+    # casting answer landed gets ONE re-open here (write-once guard below makes it idempotent), so the gate is
+    # not permanently missed. affinities==[] keeps it to genuinely-uncast moments; a cast source never re-opens.
+    pool = sorted([m for m in led.moments.values()
+                   if m.parent_id == source_id and m.state in (MomentState.decided, MomentState.clipped)],
+                  key=lambda m: (m.start, m.end))
     personas = [{"handle": a.handle, "persona": instr, "clip_count": a.clip_count}   # the CASTING directive + per-account clip ceiling
                 for a in accounts.active() if (instr := casting_directive(a))]
-    if not decided or not personas: return led        # nothing to cast / no persona to differentiate -> no gate
+    if not pool or not personas: return led           # nothing to cast / no persona to differentiate -> no gate
     if latest_request_id(cfg, "moment_casting", source_id) is not None:
         return led                                    # write-ONCE: never re-stamp an in-flight gate
     moments = [{"moment_id": m.id, "reason": m.reason, "hook": m.hook or "",
                 "transcript_excerpt": m.transcript_excerpt, "signal_score": m.signal_score,
-                "start": m.start, "end": m.end} for m in decided]
+                "start": m.start, "end": m.end} for m in pool]
     payload = MomentCastingRequest(source_id=source_id, request_id="", moments=moments, personas=personas,
                                    language=src.language, guidance=load_guidance(cfg)).model_dump()
     payload.pop("request_id", None)
@@ -127,8 +130,11 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
             if handle not in active: continue          # an inactive/unknown handle never casts
             for mid in mids:
                 m = led.moments.get(mid)
-                if m is None or m.parent_id != source_id or m.state is not MomentState.decided:
-                    continue                           # foreign / unknown / not-yet-decided -> skip
+                if m is None or m.parent_id != source_id or m.state not in (MomentState.decided, MomentState.clipped):
+                    continue                           # foreign / unknown / not-yet-decided -> skip. P1: `clipped` is
+                                                       # ACCEPTED (a late answer still applies; affinity_admits reads
+                                                       # affinities, not state). `retired`/`error` are excluded by
+                                                       # enumeration AND independently dropped from crosspost's seed list.
                 add.setdefault(mid, set()).add(handle)
         for mid, handles in add.items():
             led.moments[mid].affinities = sorted(set(led.moments[mid].affinities) | handles)
@@ -139,6 +145,22 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
         try: get_logger(cfg)("casting", source_id, "error", err=str(e)[:120])
         except Exception: pass
         return led
+
+
+def casting_gate_pending(cfg, source_id) -> bool:
+    """P1: True iff casting is ON and this source's moment_casting gate is OPEN but UNANSWERED — the crosspost
+    fan-out must WAIT (else a post is minted fan-to-all BEFORE affinities land, and posts never un-mint). A
+    source with no gate (no personas / casting OFF / nothing to cast) returns False -> fan out now. Fail-open
+    to False (a probe glitch must never permanently strand a clip). Mirrors how the caption gate blocks
+    crosspost: a clip is fan-out-eligible only once its prerequisite gate has converged."""
+    try:
+        if not cfg.account_casting: return False
+        if latest_request_id(cfg, "moment_casting", source_id) is None: return False   # no gate -> nothing to wait for
+        return read_response(cfg, "moment_casting", source_id, MomentCastingDecision) is None
+    except Exception as e:
+        try: get_logger(cfg)("casting", source_id, "gate_probe_error", err=str(e)[:120])   # fail-open, but leave a trace
+        except Exception: pass
+        return False
 
 
 # ---- M5: caption scoping. The AFFINITY gate as ONE shared predicate so crosspost (the enforcement gate)

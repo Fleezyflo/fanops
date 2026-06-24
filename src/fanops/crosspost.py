@@ -17,7 +17,7 @@ from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 from fanops.timeutil import parse_iso as _parse, iso_z
-from fanops.casting import affinity_admits   # M5: the shared affinity gate (crosspost + caption scoper)
+from fanops.casting import affinity_admits, casting_gate_pending   # M5 shared affinity gate + P1 casting-pending wait
 from fanops.log import get_logger
 
 # Staggering constants. _STEP_MIN is the fixed per-index spacing; _JITTER_MAX is the bounded
@@ -104,6 +104,9 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         # moment->source lineage (m.parent_id == source id). A non-empty target_accounts HARD-bounds
         # which surfaces a post is born for (the casting-OFF enforcement path); empty/missing => no skip.
         src = led.sources.get(m.parent_id) if m is not None else None
+        if src is not None and casting_gate_pending(cfg, src.id):
+            get_logger(cfg)("crosspost", clip.id, "casting_pending_skip", source=src.id)
+            continue   # P1: casting answer not yet landed -> fan out NEXT pass (mirror: a clip waits for its caption gate)
         src_batch = src.batch_id if src is not None else None
         tgt = led.get_batch(src_batch).target_accounts if (src_batch and led.get_batch(src_batch)) else []
         n_skipped = 0   # T5: per-CLIP tally of batch-target exclusions (reset inside the clip loop, never bled across clips)
