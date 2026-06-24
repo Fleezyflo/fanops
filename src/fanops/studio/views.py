@@ -175,6 +175,8 @@ class GoLiveAccount:
     persona: Optional[str]
     channels: list[GoLiveChannel]    # one per platform this handle posts to
     tag_lean: Optional[str] = None   # persona-differentiation tag knob: tasteful|underground|bold (None -> none)
+    persona_id: Optional[str] = None # S8: the linked first-class Persona record id (Account.persona_id) — None
+                                     # when the account uses only inline text/lean. Drives the linked/no-persona badge.
 
 
 @dataclass
@@ -1299,6 +1301,7 @@ def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
     try:
         return [GoLiveAccount(
             handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
+            persona_id=getattr(a, "persona_id", None),     # S8: the linked first-class Persona (badge), additive
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "",
                                     backend=a.backends.get(p.value) or "")
@@ -1317,6 +1320,7 @@ def golive_demoted_accounts(cfg: Config) -> list:
     try:
         return [GoLiveAccount(
             handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
+            persona_id=getattr(a, "persona_id", None),     # S8: the linked first-class Persona (badge), additive
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "",
                                     backend=a.backends.get(p.value) or "")

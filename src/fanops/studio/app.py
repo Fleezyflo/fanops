@@ -867,13 +867,14 @@ def create_app(cfg: Config) -> Flask:
         # Milestone 5 (operator-gated): turn FanOps from dryrun into real Postiz publishing entirely in
         # the browser — add accounts, map each channel to its integration, see readiness, flip dryrun<->live.
         return render_template("golive.html", status=views.golive_status(cfg), result=None,
-                               all_platforms=_ALL_PLATFORMS, tag_leans=_TAG_LEANS, tab="golive")
+                               all_platforms=_ALL_PLATFORMS, tag_leans=_TAG_LEANS, effects=_LEVER_EFFECTS, tab="golive")
 
     def _golive_panel(result):
         # Re-render the panel with FRESH golive_status after an action (htmx swaps #golive-panel), so the
-        # mode banner + readiness checks update in place — mirrors _run_panel.
+        # mode banner + readiness checks update in place — mirrors _run_panel. S8: `effects` carries the
+        # engine-true _LEVER_EFFECTS so the clip-length bands render from the catalog, never a stale literal.
         return render_template("_golive_panel.html", status=views.golive_status(cfg), result=result,
-                               all_platforms=_ALL_PLATFORMS, tag_leans=_TAG_LEANS, tab="golive")
+                               all_platforms=_ALL_PLATFORMS, tag_leans=_TAG_LEANS, effects=_LEVER_EFFECTS, tab="golive")
 
     @app.post("/golive/config")
     def do_golive_config():

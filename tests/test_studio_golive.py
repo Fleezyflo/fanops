@@ -698,3 +698,49 @@ def test_post_golive_hooks_route_turns_on(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     r = _client(cfg).post("/golive/hooks", data={"on": "1"})
     assert r.status_code == 200 and cfg.creative_variation is True
+
+
+# ---- S8: make toggle EFFECTS legible (engine-sourced, not hardcoded) + account→persona link badge ----
+def test_golive_clip_length_bands_come_from_the_engine_not_literals(tmp_path, monkeypatch):
+    # the clip-length options must render the REAL bands from _LEVER_EFFECTS['clip_profile'] (the same
+    # lever_catalog the engine uses), so a band edit can never leave a stale hardcoded literal behind.
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    for band in ("8-15s cuts", "16-26s cuts", "28-45s cuts", "12-22s cuts", "18-35s cuts"):
+        assert band in html                              # every profile's engine-true band is rendered
+    assert "(8–15s)" not in html                    # the old hardcoded en-dash literal is GONE
+
+def test_golive_casting_effect_line_uses_the_real_budget(tmp_path, monkeypatch):
+    # casting ON: the effect line names the REAL FANOPS_CAST_PICK_BUDGET, not a hardcoded count.
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1"); monkeypatch.setenv("FANOPS_CAST_PICK_BUDGET", "7")
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "7 distinct moment" in html                   # engine-sourced: the live budget, not a literal
+
+def test_golive_persona_link_badge_linked_vs_none(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [
+        {"handle": "@linked", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona_id": "curator"},
+        {"handle": "@bare", "account_id": "2", "platforms": ["instagram"], "status": "active"},
+    ])
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "persona-linked" in html and "curator" in html   # the linked account names its persona
+    assert "no-persona" in html                              # the bare account is flagged unlinked
+
+def test_golive_accounts_read_model_carries_persona_id(tmp_path, monkeypatch):
+    from fanops.studio import views
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona_id": "curator"}])
+    accts = views.golive_status(cfg).accounts
+    assert accts[0].persona_id == "curator"              # additive default-None field populated from Account.persona_id
+
+def test_golive_off_renders_both_toggle_controls(tmp_path, monkeypatch):
+    # OFF-firewall sanity: CV + casting default ON, so to see the OFF affordance we set them explicitly to 0;
+    # BOTH toggle forms must still render their "Turn on" control (the change is additive, not a removal).
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "Turn on (per-account hooks)" in html and "Turn on (per-account casting)" in html

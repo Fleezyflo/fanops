@@ -173,7 +173,11 @@
           publishing but keeps the row + history; remove clears a placeholder.</p>
         {% for a in status.accounts %}
         <div class="account-row meta">
-          <span><strong>{{ a.handle }}</strong></span>
+          {# S8: the account→persona LINK state — a first-class Persona record (persona_id) drives the
+             voice/lean/corpus hydration; an unlinked account uses only inline text/lean. #}
+          <span><strong>{{ a.handle }}</strong>
+            {% if a.persona_id %}<span class="chip ok persona-linked" title="Linked to the '{{ a.persona_id }}' persona — its voice / lean / corpus hydrate this account">✦ persona: {{ a.persona_id }}</span>
+            {% else %}<span class="chip ro no-persona" title="No first-class persona linked — uses inline text / lean only">○ no persona</span>{% endif %}</span>
           <form hx-post="{{ url_for('do_golive_account_lean') }}" hx-target="#golive-panel" hx-swap="outerHTML">
             <input type="hidden" name="handle" value="{{ a.handle }}">
             <label class="lean-pick">lean
@@ -232,7 +236,8 @@
           Default: casting OFF (every account gets every moment).</p>
         <form hx-post="{{ url_for('do_golive_casting') }}" hx-target="#golive-panel" hx-swap="outerHTML">
           {% if status.account_casting %}
-            <span class="ok">● Casting ON — accounts get distinct moment sets</span>
+            {# S8: the effect names the REAL budget (status.cast_pick_budget), not a hardcoded count. #}
+            <span class="ok">● Casting ON — each account gets {{ status.cast_pick_budget }} distinct moment{{ 's' if status.cast_pick_budget != 1 else '' }} per run</span>
             <button type="submit" name="on" value="">Turn off (every account gets every moment)</button>
           {% else %}
             <span class="muted">○ Casting off — every account gets every moment</span>
@@ -249,12 +254,14 @@
         {% endif %}
         <form hx-post="{{ url_for('do_golive_clip_profile') }}" hx-target="#golive-panel" hx-swap="outerHTML">
           <label>Clip length
+            {# S8: the band copy comes from effects.clip_profile (the engine's lever_catalog), never a hardcoded
+               literal — a band edit in bands.py reaches this label with no template change. #}
             <select name="profile" aria-label="Clip-length profile">
-              <option value="short"{{ ' selected' if status.clip_profile == 'short' else '' }}>Short — quick punch (8–15s)</option>
-              <option value="medium"{{ ' selected' if status.clip_profile == 'medium' else '' }}>Medium — watchable (16–26s)</option>
-              <option value="long"{{ ' selected' if status.clip_profile == 'long' else '' }}>Long — full section (28–45s)</option>
-              <option value="talk"{{ ' selected' if status.clip_profile == 'talk' else '' }}>Talk — tight cuts (12–22s)</option>
-              <option value="song"{{ ' selected' if status.clip_profile == 'song' else '' }}>Song — wider, fewer/longer (18–35s)</option>
+              <option value="short"{{ ' selected' if status.clip_profile == 'short' else '' }}>Short — quick punch · {{ effects.clip_profile['short'] }}</option>
+              <option value="medium"{{ ' selected' if status.clip_profile == 'medium' else '' }}>Medium — watchable · {{ effects.clip_profile['medium'] }}</option>
+              <option value="long"{{ ' selected' if status.clip_profile == 'long' else '' }}>Long — full section · {{ effects.clip_profile['long'] }}</option>
+              <option value="talk"{{ ' selected' if status.clip_profile == 'talk' else '' }}>Talk — tight cuts · {{ effects.clip_profile['talk'] }}</option>
+              <option value="song"{{ ' selected' if status.clip_profile == 'song' else '' }}>Song — wider, fewer/longer · {{ effects.clip_profile['song'] }}</option>
             </select>
           </label>
           <button type="submit">Set profile</button>
