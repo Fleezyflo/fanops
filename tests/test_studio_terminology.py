@@ -1,8 +1,9 @@
 # tests/test_studio_terminology.py — S9: the seven insider terms that drive the IA (moment, cast, lever, batch,
 # surface, variant, integration) are defined inline, ONCE at first use per surface, via a native keyboard-
 # accessible <details> disclosure (no JS). views.TERM_DEFS is the frozen source of truth; term_def() is fail-soft;
-# the _term.html macro renders it; an _inject_terms context processor exposes term_def to every template. cast and
-# variant ride OFF-gated blocks, so they vanish when casting / creative_variation are off.
+# the _term.html macro renders it; term_def is a Jinja GLOBAL (jinja_env.globals) so the context-isolated
+# {% from %} macro can resolve it. cast and variant ride OFF-gated blocks, so they vanish when casting /
+# creative_variation are off.
 import json
 import pytest
 pytest.importorskip("flask")
