@@ -84,6 +84,11 @@ class SurfacePost:
     # signal; hook_source is the shared-hook signal — its value is the HookSource enum string ("shared_fallback"
     # under a shared-hook fallback, "per_account" for its own, "none"/None when no hook / no Render).
     hook_source: Optional[str] = None      # Render.hook_source.value (P3); None when no Render (fail-open dark badge).
+    # S2 provenance: the CAUSE of each derived value, stamped in _surface from the account/persona/affinities. Default
+    # None → provenance_chips emits the value BARE (the OFF-firewall / legacy shape mints no attribution at all).
+    length_cause: Optional[str] = None     # why this length ("persona long" | "@a long"); None = inherited global
+    framing_cause: Optional[str] = None    # why this framing ("@a center"); None = inherited global
+    cast_cause: Optional[str] = None       # why THIS account got it ("picked for @a"); None = uncast / fans to all
     day: Optional[str] = None              # Phase 4 pivot: the ingest day (clip -> moment -> source.created_at), set
                                            # only on the account-pivot flat rows for the running day header. None elsewhere.
 
@@ -304,7 +309,38 @@ def _length_label(profile: Optional[str]) -> Optional[str]:
     b = band_for(profile)
     return f"{int(b.lo)}–{int(b.hi)}s"
 
-def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=None) -> SurfacePost:
+@dataclass
+class ProvChip:                            # S2: one "value ← cause" chip (value=WHAT, cause=WHY|None, tone=''|'ok'|'warn')
+    value: str
+    cause: Optional[str]
+    tone: str = ""
+
+
+def provenance_chips(surface, *, creative_variation: bool = False) -> list[ProvChip]:
+    """Pure projection: turn an already-built surface (SurfacePost, or the duck-compatible MatrixCell) into ordered
+    'value ← cause' chips. Returns [] for an undifferentiated surface — the OFF-firewall / legacy shape mints NO
+    chips. No ledger read; NEVER raises (a torn/odd surface degrades to whatever it could derive). Consumed by
+    S4/S7/S8; `creative_variation` gates the shared-cut WARN (a shared cut under OFF is expected, not a fallback)."""
+    chips: list[ProvChip] = []
+    try:
+        if getattr(surface, "length_label", None):
+            chips.append(ProvChip(surface.length_label, getattr(surface, "length_cause", None), ""))
+        if getattr(surface, "framing", None):
+            chips.append(ProvChip(surface.framing, getattr(surface, "framing_cause", None), ""))
+        if getattr(surface, "is_account_cut", False):
+            chips.append(ProvChip("cut", f"{surface.account}'s own cut", "ok"))
+        elif creative_variation:
+            chips.append(ProvChip("shared-cut", "no per-account cut — fell back to shared", "warn"))
+        if getattr(surface, "hook_source", None) == "shared_fallback":
+            chips.append(ProvChip("shared-hook", "no per-account hook — fell back to shared", "warn"))
+        if getattr(surface, "cast_cause", None):
+            chips.append(ProvChip("cast", surface.cast_cause, ""))
+    except Exception:
+        return chips
+    return chips
+
+
+def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=None, affinities=()) -> SurfacePost:
     state = post.state.value
     # an awaiting_approval post is GATED — it cannot ship until approved, so it is never "imminent"
     # (no false "shipping now" badge) and is always editable (edit/regenerate/reschedule before approving).
@@ -314,6 +350,15 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     # M3a: the per-account differentiation, surfaced. is_account_cut is the TRUTH on the Render (a failed cut
     # fell back to a shared burn and stays False); framing is the account's own pinned crop (None = inherits global).
     r = led.renders.get(post.render_id) if getattr(post, "render_id", None) else None
+    # S2 provenance: NAME the cause of each derived value (pure, from the already-passed acct/affinities). length
+    # attributes to the persona when the account is persona-linked, else the account's own pin, else None (global
+    # inherited → value renders bare). framing names the account's pin. cast names the moment's pick for this account.
+    prof = getattr(post, "clip_profile", None)
+    if prof and getattr(acct, "persona_id", None): length_cause = f"persona {prof}"
+    elif prof and getattr(acct, "clip_profile", None): length_cause = f"{post.account} {prof}"
+    else: length_cause = None
+    framing_cause = f"{post.account} {acct.framing}" if getattr(acct, "framing", None) else None
+    cast_cause = f"picked for {post.account}" if (affinities and post.account in affinities) else None
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=post.caption, hashtags=list(post.hashtags or []),
@@ -327,15 +372,17 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
         # Phase 4: read Render.hook_source FAIL-OPEN (P3 provenance). A HookSource enum -> its .value string;
         # absent/None Render -> None (the ⚠ shared-hook badge stays dark, byte-identical). getattr-guarded so a
         # legacy Render with no hook_source field never raises.
-        hook_source=(getattr(getattr(r, "hook_source", None), "value", None) if r else None))
+        hook_source=(getattr(getattr(r, "hook_source", None), "value", None) if r else None),
+        length_cause=length_cause, framing_cause=framing_cause, cast_cause=cast_cause)
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
           active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
     accts = acct_by_handle or {}
-    surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account))
-                for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed + affinities (clip -> moment)
+    _affs = getattr(mom, "affinities", None) or []        # S2: thread the cast set into each surface for cast_cause
+    surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account), affinities=_affs)
+                for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     src_key = mom.parent_id if mom is not None else None   # Phase 4: stable source id (clip -> moment.parent_id); the ?source= key
     # Face 4: the REAL Batch this card belongs to — Post.batch_id (all posts on one clip share the lineage,
     # so the same batch). Post-less cards (held/prepared, posts == []) carry None -> 'Ungrouped'. Title via
@@ -440,7 +487,7 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
         cells: dict = {}
         for key, plist in by_channel.items():
             lead = _pick_lead(plist)
-            sp = _surface(lead, persona=None, now=now, cfg=cfg, led=led, acct=acct_by_handle.get(lead.account))
+            sp = _surface(lead, persona=None, now=now, cfg=cfg, led=led, acct=acct_by_handle.get(lead.account), affinities=(getattr(m, "affinities", None) or []))
             cells[key] = MatrixCell(channel=key, account=lead.account, platform=lead.platform.value,
                                     post_ids=[p.id for p in plist], lead_post_id=lead.id, state=sp.state,
                                     hook=sp.variant_hook, length_label=sp.length_label, framing=sp.framing,
