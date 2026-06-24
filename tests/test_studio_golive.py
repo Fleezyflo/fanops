@@ -727,6 +727,18 @@ def test_golive_persona_link_badge_linked_vs_none(tmp_path, monkeypatch):
     ])
     html = _client(cfg).get("/golive").get_data(as_text=True)
     assert "persona-linked" in html and "curator" in html   # the linked account names its persona
+
+def test_golive_demoted_account_also_shows_persona_link(tmp_path, monkeypatch):
+    # S8 audit LOW: golive_demoted_accounts populates persona_id, so the DEMOTED section must render the badge
+    # too (an operator deciding whether to promote it should see what persona it was linked to).
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [
+        {"handle": "@active", "account_id": "1", "platforms": ["instagram"], "status": "active"},   # gates the section
+        {"handle": "@sleeper", "account_id": "2", "platforms": ["instagram"], "status": "planned", "persona_id": "curator"},
+    ])
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "@sleeper" in html and "demoted" in html         # it shows in the demoted bucket
+    assert "persona-linked" in html and "curator" in html   # AND names its persona link
     assert "no-persona" in html                              # the bare account is flagged unlinked
 
 def test_golive_accounts_read_model_carries_persona_id(tmp_path, monkeypatch):

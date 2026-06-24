@@ -209,7 +209,8 @@
         <div class="account-row meta demoted-accounts">
           <p class="muted">Demoted (planned) accounts — not publishing. Promote to re-activate (a demote is no longer one-way).</p>
           {% for a in status.demoted %}
-          <span><strong>{{ a.handle }}</strong> <span class="muted">demoted</span></span>
+          <span><strong>{{ a.handle }}</strong> <span class="muted">demoted</span>
+            {% if a.persona_id %}<span class="chip ro persona-linked" title="Was linked to the '{{ a.persona_id }}' persona before demotion">✦ persona: {{ a.persona_id }}</span>{% endif %}</span>
           <form hx-post="{{ url_for('do_golive_account_promote') }}" hx-target="#golive-panel" hx-swap="outerHTML">
             <input type="hidden" name="handle" value="{{ a.handle }}">
             <button type="submit">Promote to active</button>
