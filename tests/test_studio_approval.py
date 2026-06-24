@@ -118,7 +118,7 @@ def test_get_review_renders_ingest_day_header(tmp_path):
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE))
-    html = _client(cfg).get("/review").data
+    html = _client(cfg).get("/review?view=list").data
     assert b'class="day-head">2026-06-03' in html
 
 def test_review_day_header_re_emits_across_pagination_boundary(tmp_path):
@@ -140,8 +140,8 @@ def test_review_day_header_re_emits_across_pagination_boundary(tmp_path):
                 led.add_clip(Clip(id=cid, parent_id=f"mom_{sid}", path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
                 led.add_post(Post(id=f"p_{sid}_{i}", parent_id=cid, account="@a", account_id="1",
                                   platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE))
-    p1 = _client(cfg).get("/review").data
-    p2 = _client(cfg).get(f"/review?offset={views.GRID_PAGE_SIZE}").data
+    p1 = _client(cfg).get("/review?view=list").data
+    p2 = _client(cfg).get(f"/review?view=list&offset={views.GRID_PAGE_SIZE}").data
     assert b'class="day-head">2026-06-10' in p1          # day A (newest) heads page 1
     assert b'class="day-head">2026-06-10' in p2          # day A SPANS the boundary -> its header RE-EMITS on page 2
     assert b'class="day-head">2026-06-03' in p2          # day B begins on page 2, below day A's spill
@@ -334,10 +334,10 @@ def test_review_renders_bulk_approve_buttons(tmp_path):
     with Ledger.transaction(cfg) as led:
         _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
         _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
-    html = _client(cfg).get("/review").data
+    html = _client(cfg).get("/review?view=list").data
     assert b"approve-clip/clip_1" in html                              # per-card "approve all accounts of this moment"
     # the one-account-across-the-video button appears only when an account filter is active
-    html_a = _client(cfg).get("/review?account=@a").data
+    html_a = _client(cfg).get("/review?view=list&account=@a").data
     assert b"approve-account" in html_a and b"Approve all @a" in html_a
 
 
@@ -357,7 +357,7 @@ def test_compact_view_keeps_bulk_approve(tmp_path):
     with Ledger.transaction(cfg) as led:
         _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
         _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
-    html = _client(cfg).get("/review?compact=1").data
+    html = _client(cfg).get("/review?view=list&compact=1").data
     assert b'name="ids"' in html and b"Approve selected" in html       # bulk approve still works in compact
     assert b"approve-clip/clip_1" in html                              # per-card approve-all still present
     assert b'value="p_a"' in html and b"@a" in html and b"@b" in html  # every surface is still listed + selectable
@@ -407,7 +407,7 @@ def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypat
     # is HIDDEN; the generic 'Approve all accounts' is the approve path instead.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
-    html = _client(cfg).get("/review").data
+    html = _client(cfg).get("/review?view=list").data
     assert b"Approve with hook" not in html and b"hook removed" not in html
     assert b"Approve all accounts" in html
 
@@ -415,5 +415,5 @@ def test_review_shows_hook_choice_when_creative_variation_off(tmp_path, monkeypa
     # pinned OFF: the shared clip ships clean with the stripped hook, so the restore badge + choice show.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
-    html = _client(cfg).get("/review").data
+    html = _client(cfg).get("/review?view=list").data
     assert b"Approve with hook" in html and b"hook removed" in html

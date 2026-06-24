@@ -277,6 +277,81 @@ def test_crosspost_to_account_inherits_clip_batch_lineage(tmp_path):
     assert res.detail["approved"] == 1                           # ...instead of silently under-approving
     assert Ledger.load(cfg).posts[r.detail["post_id"]].state is PostState.queued
 
+def test_approve_moment_approves_all_channels_and_clips_of_one_moment(tmp_path):
+    # Matrix 'approve row': one moment may span multiple clips (aspects) and multiple (handle×platform) channels.
+    # approve_moment promotes EVERY awaiting post under that moment — and ONLY that moment — to queued.
+    from fanops.studio.actions import approve_moment
+    import json
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@b", "account_id": "2", "platforms": ["instagram", "tiktok"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src1", source_path="/s.mp4"))
+        led.add_moment(Moment(id="m1", parent_id="src1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        led.add_moment(Moment(id="m2", parent_id="src1", content_token="10-20", start=10, end=20, reason="r2", state=MomentState.clipped))
+        led.add_clip(Clip(id="c1a", parent_id="m1", path="/c1a.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_clip(Clip(id="c1b", parent_id="m1", path="/c1b.mp4", aspect=Fmt.r9x16, state=ClipState.queued))  # 2nd clip, same moment
+        led.add_clip(Clip(id="c2", parent_id="m2", path="/c2.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p_a_ig", parent_id="c1a", account="@a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval))
+        led.add_post(Post(id="p_b_ig", parent_id="c1a", account="@b", account_id="2", platform=Platform.instagram, caption="B", state=PostState.awaiting_approval))
+        led.add_post(Post(id="p_b_tt", parent_id="c1b", account="@b", account_id="2", platform=Platform.tiktok, caption="Bt", state=PostState.awaiting_approval))  # 2nd clip of m1
+        led.add_post(Post(id="p_a_done", parent_id="c1a", account="@a", account_id="1", platform=Platform.instagram, caption="X", state=PostState.queued))  # already approved → not re-counted
+        led.add_post(Post(id="p_m2", parent_id="c2", account="@a", account_id="1", platform=Platform.instagram, caption="M2", state=PostState.awaiting_approval))  # other moment
+    res = approve_moment(cfg, "m1", now=NOW)
+    assert res.ok and res.detail["approved"] == 3 and res.detail["moment"] == "m1"
+    led = Ledger.load(cfg)
+    assert all(led.posts[pid].state is PostState.queued for pid in ("p_a_ig", "p_b_ig", "p_b_tt"))
+    assert led.posts["p_m2"].state is PostState.awaiting_approval   # a DIFFERENT moment is never touched (source-implicit scope)
+
+def test_approve_account_platform_scopes_to_one_channel(tmp_path):
+    # Matrix 'approve column': a column is a (handle × platform) CHANNEL. approve_account(platform=...) must
+    # clear ONLY that channel — @b's IG posts — and leave @b's TikTok column awaiting (else one click clears two columns).
+    from fanops.studio.actions import approve_account
+    import json
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@b", "account_id": "2", "platforms": ["instagram", "tiktok"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src1", source_path="/s.mp4"))
+        led.add_moment(Moment(id="m1", parent_id="src1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p_ig", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval))
+        led.add_post(Post(id="p_tt", parent_id="c1", account="@b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval))
+    res = approve_account(cfg, "@b", platform="instagram", source="src1", now=NOW)
+    assert res.ok and res.detail["approved"] == 1 and res.detail["platform"] == "instagram"
+    led = Ledger.load(cfg)
+    assert led.posts["p_ig"].state is PostState.queued                  # the IG channel cleared...
+    assert led.posts["p_tt"].state is PostState.awaiting_approval       # ...the TikTok channel untouched
+
+def test_approve_account_no_platform_is_byte_identical(tmp_path):
+    # platform=None (the default) keeps the legacy whole-account behavior — both channels approve.
+    from fanops.studio.actions import approve_account
+    import json
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@b", "account_id": "2", "platforms": ["instagram", "tiktok"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src1", source_path="/s.mp4"))
+        led.add_moment(Moment(id="m1", parent_id="src1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p_ig", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval))
+        led.add_post(Post(id="p_tt", parent_id="c1", account="@b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval))
+    res = approve_account(cfg, "@b", source="src1", now=NOW)
+    assert res.ok and res.detail["approved"] == 2
+
+def test_approve_moment_unknown_is_clean_noop(tmp_path):
+    # An unknown/dangling moment id matches no clip → no post → idempotent no-op, never a 500.
+    from fanops.studio.actions import approve_moment
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src1", source_path="/s.mp4"))
+    res = approve_moment(cfg, "nope", now=NOW)
+    assert res.ok and res.detail["approved"] == 0
+
 def test_crosspost_to_account_no_collision_and_already_exists(tmp_path):
     from fanops.studio.actions import crosspost_to_account
     cfg = Config(root=tmp_path)

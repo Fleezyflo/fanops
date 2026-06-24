@@ -104,14 +104,14 @@ def test_review_renders_collapsible_batch_section(tmp_path):
     _lineage(led, batch_id="batch_x")
     led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["@a"]))
     _await(led, "p_a", "clip_1", "@a", batch_id="batch_x"); led.save()
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=list").data.decode()
     assert "<details" in html and "Launch Week" in html         # batch name in a collapsible <summary>
 
 def test_review_unbatched_renders_ungrouped_section(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "@a"); led.save()
-    html = _client(cfg).get("/review").data.decode()
-    assert "Ungrouped" in html and b"c" in _client(cfg).get("/review").data   # card still renders
+    html = _client(cfg).get("/review?view=list").data.decode()
+    assert "Ungrouped" in html and b"c" in _client(cfg).get("/review?view=list").data   # card still renders
 
 
 # ---- Face 4 follow-up: B3 header / B4 excluded / C3 affinity / B2 filter ----
@@ -179,7 +179,7 @@ def test_route_batch_filter_scope_preserved_and_header_rendered(tmp_path):   # B
     _lineage(led, batch_id="batch_x")
     led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["@a"], created_at="2026-06-22T00:00:00Z"))
     _await(led, "p_a", "clip_1", "@a", batch_id="batch_x"); led.save()
-    html = _client(cfg).get("/review?batch=batch_x").data.decode()
+    html = _client(cfg).get("/review?view=list&batch=batch_x").data.decode()
     assert "batch=batch_x" in html                 # POST/pagination URLs carry the batch scope (R1)
     assert "Launch" in html and "→ @a" in html and "1 account(s) excluded" in html   # B3 header + B4 line
 
