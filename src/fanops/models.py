@@ -239,6 +239,12 @@ class Post(BaseModel):
                                         # published; old/in-flight rows fall back to scheduled_time in the grouper.
 
 
+class HookSource(str, Enum):
+    per_account = "per_account"          # this account's OWN persona-authored hook (m.hooks_by_persona[handle])
+    shared_fallback = "shared_fallback"  # fell back to the shared moment hook (m.hook)
+    none = "none"                        # no hook at all (variation OFF, or no hook resolved)
+
+
 class Render(BaseModel):
     # The per-account SHIPPABLE artifact — a first-class child of the shared substrate Clip (the audit
     # foundation: nothing owned the per-account render, so "which file does @a ship" was smeared across
@@ -266,6 +272,13 @@ class Render(BaseModel):
                                                 # source for Post.clip_profile provenance + the M3/M4 "this is a
                                                 # per-account 28-45s cut" UI label. Additive (False on every
                                                 # legacy render — they reload fine, no migration).
+    hook_source: HookSource = HookSource.none   # P3: was this account's on-screen hook its OWN (per_account) or a
+                                                # shared-moment fallback (shared_fallback)? The OR at crosspost.py:169
+                                                # computed this then DISCARDED it (Post.variant_hook is None in BOTH
+                                                # the fallback and the no-hook case). Additive; legacy renders -> none.
+    cut_seconds: Optional[float] = None         # P3: the REALIZED seconds (ce-cs) of THIS account's cut (clip.py:444),
+                                                # vs Clip.cut_seconds (the shared window) / the band-NAME label. None
+                                                # when not a real account cut (failed cut or shared burn).
 
 
 class SelectionMethod(str, Enum):

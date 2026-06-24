@@ -11,7 +11,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.bands import band_for
-from fanops.models import (Post, PostState, ClipState, Fmt, Render, RenderState,
+from fanops.models import (Post, PostState, ClipState, Fmt, Render, RenderState, HookSource,
                            PLATFORM_ASPECT, PLATFORM_MAX_SECONDS)
 from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut
@@ -166,7 +166,9 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
             # ROOT FIX: the on-screen per-account hook is the FRAME-SEEING moment author's hook for THIS
             # handle (m.hooks_by_persona[handle]) — falling back to the shared moment hook. The blind
             # caption gate no longer authors a shipped hook. m guarded defensively (None -> no hook).
-            hook_v = (m.hooks_by_persona.get(surf.account) or m.hook) if m is not None else None
+            own_hook = m.hooks_by_persona.get(surf.account) if m is not None else None   # this account's OWN authored hook
+            hook_v = own_hook or (m.hook if m is not None else None)                     # else the shared moment hook (fallback)
+            hook_source = HookSource.per_account if own_hook else (HookSource.shared_fallback if hook_v else HookSource.none)  # P3
             # M2: resolve THIS account's own LENGTH band AND vertical-crop framing. When either differs from
             # the global, the account's Render is a real per-account CUT (its own length — @short 8-15s,
             # @long 28-45s — AND its own crop — @top head-safe vs centred — off the SAME moment),
@@ -191,9 +193,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                     src_id = src.id if src is not None else None
                     vpath = cfg.render_path(src_batch, src_id, render_id, aspect)   # filed under clips/{batch}/{src}/
                     produced = False
+                    realized = None                                # P3: the account cut's realized seconds (None unless a real cut succeeds)
                     if wants_cut:                                  # a real per-account CUT: the account's own length AND framing
-                        produced = render_account_cut(led, cfg, moment_id, aspect=aspect, profile=acct_profile,
-                                                       hook=hook_v, out_path=vpath, top_bias=acct_top_bias)
+                        produced, realized = render_account_cut(led, cfg, moment_id, aspect=aspect, profile=acct_profile,
+                                                                 hook=hook_v, out_path=vpath, top_bias=acct_top_bias)
                         if not produced:                           # the cut failed -> fell back to the GLOBAL-length shared burn.
                             get_logger(cfg)("crosspost", target_clip.id, "account_cut_failed",   # never a SILENT wrong-length ship
                                             surface=f"{surf.account}/{surf.platform.value}", profile=acct_profile)
@@ -207,9 +210,13 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                     led.add_render(Render(id=render_id, clip_id=target_clip.id, account=surf.account,
                                           surface_key=skey, hook_text=hook_v, path=vpath,
                                           state=RenderState.rendered, batch_id=src_batch, source_id=src_id,
-                                          is_account_cut=produced))   # truthful: a failed cut fell back to the shared burn
+                                          is_account_cut=produced,                    # truthful: a failed cut fell back to the shared burn
+                                          hook_source=hook_source, cut_seconds=realized))   # P3: own-vs-fallback hook + realized cut seconds
                 else:
-                    did_cut = led.get_render(render_id).is_account_cut   # read the TRUTH (a prior failed cut stays False)
+                    did_cut = led.get_render(render_id).is_account_cut   # read the TRUTH (a prior failed cut stays False).
+                    # P3: hook_source/cut_seconds ride the SAME first-write-wins dedup as is_account_cut — content-
+                    # addressed on (clip_id, hook_text), so a changed hook mints a fresh id; the only un-refreshed
+                    # edge is identical text promoted shared->own (acceptable, same contract as is_account_cut).
                 media_urls = [f"file://{led.get_render(render_id).path}"]
             led.add_post(Post(
                 # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator

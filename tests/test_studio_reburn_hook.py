@@ -125,7 +125,7 @@ def test_reburn_override_account_preserves_per_account_cut(tmp_path, monkeypatch
     cfg = Config(root=tmp_path); _seed(cfg)
     _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
                      "status": "active", "clip_profile": "short"}])     # band 8-15s != global talk 12-22s -> a CUT
-    cut = mocker.patch("fanops.clip.render_account_cut", return_value=True)
+    cut = mocker.patch("fanops.clip.render_account_cut", return_value=(True, 12.0))   # P3: (produced, realized_seconds)
     burn = mocker.patch("fanops.overlay.burn_hook_only", return_value=True)
     res = reburn_hook(cfg, "p_edit", "NEW HOOK")
     assert res.ok is True

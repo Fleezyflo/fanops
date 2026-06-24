@@ -229,6 +229,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     # per-account CUT instead of silently reverting it to a bare-hook, global-length, centred shared clip.
     from fanops.crosspost import account_render_spec
     from fanops.clip import render_account_cut
+    from fanops.models import HookSource
     from fanops.accounts import Accounts
     acct = next((a for a in Accounts.load(cfg).accounts if a.handle == p.account), None)   # None -> global defaults
     rid, wants_cut, acct_profile, acct_top_bias = account_render_spec(cfg, clip=clip, hook=hook, acct=acct)
@@ -238,11 +239,14 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     source_id = src.id if src is not None else None
     skey = surface_key(p.account, p.platform.value)
     vpath = cfg.render_path(batch_id, source_id, rid, aspect)   # filed under clips/{batch}/{src}/; mkdirs
-    produced = False
+    produced, realized = False, None
     if wants_cut:                                       # override account: re-cut the SOURCE at its own band+crop (LOCK-FREE)
-        produced = render_account_cut(led, cfg, clip.parent_id, aspect=aspect, profile=acct_profile,
-                                      hook=hook, out_path=vpath, top_bias=acct_top_bias)
+        produced, realized = render_account_cut(led, cfg, clip.parent_id, aspect=aspect, profile=acct_profile,
+                                                hook=hook, out_path=vpath, top_bias=acct_top_bias)
     burned = produced
+    # P3: a re-burn supplies a LITERAL operator-typed hook -> it IS account-specific (per_account); there is no
+    # "shared fallback" on an explicit edit. Empty hook -> none. cut_seconds rides the same re-mint (anti-drift H1).
+    hook_source = HookSource.per_account if (hook or "").strip() else HookSource.none
     if not produced:                                    # default band/frame OR a failed cut -> shared-clip burn
         burned = overlay.burn_hook_only(clip.path, vpath, hook, width=tw, height=th,
                                         font=cfg.subtitle_font)   # LOCK-FREE; atomic + fail-open: vpath always exists
@@ -255,7 +259,8 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
         # is_account_cut mirrors the crosspost mint: truthful when an override account got its own cut.
         led2.add_render(Render(id=rid, clip_id=p2.parent_id, account=p2.account, surface_key=skey,
                                hook_text=hook, path=vpath, state=RenderState.rendered,
-                               batch_id=batch_id, source_id=source_id, is_account_cut=produced))
+                               batch_id=batch_id, source_id=source_id, is_account_cut=produced,
+                               hook_source=hook_source, cut_seconds=realized))   # P3: never stale on re-burn (H1 anti-drift)
         p2.render_id = rid                              # the authoritative pointer
         p2.variant_hook = hook                          # read-only mirror of Render.hook_text (carried by repost_post)
         p2.media_urls = [f"file://{vpath}"]

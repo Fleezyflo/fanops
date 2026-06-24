@@ -75,7 +75,7 @@ def _migrate_v4_metrics_series(raw: dict) -> dict:
     return out
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
 # v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
@@ -89,6 +89,9 @@ SCHEMA_VERSION = 7
 # v6 -> v7 (M4 filing/naming/tracking): inject the new top-level selection_facts map (additive; the durable
 # audit record of WHICH account got WHICH moment and WHY — Moment.affinities is non-durable). NO row backfill
 # (nothing wrote facts pre-v7); old ledgers load with selection_facts={} — same injection shape as v5/v6.
+# v7 -> v8 (P3 shipped-provenance): the 2 new Render scalars (hook_source, cut_seconds) ride pydantic defaults
+# on the Render model — NO top-level map to inject, NO row backfill. IDENTITY stamp (the v0->v1 baseline shape);
+# registered so _migrate's hop-chain has no gap. Old renders load with hook_source=none / cut_seconds=None.
 # Additive + idempotent + never-raising. The ledger is NEVER wiped — every migration is copy-on-write.
 _MIGRATIONS = {1: lambda raw: raw,
                2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})},
@@ -96,7 +99,8 @@ _MIGRATIONS = {1: lambda raw: raw,
                4: _migrate_v4_metrics_series,
                5: lambda raw: {**raw, "batches": raw.get("batches", {})},
                6: lambda raw: {**raw, "renders": raw.get("renders", {})},
-               7: lambda raw: {**raw, "selection_facts": raw.get("selection_facts", {})}}
+               7: lambda raw: {**raw, "selection_facts": raw.get("selection_facts", {})},
+               8: lambda raw: raw}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
