@@ -2,7 +2,7 @@
 (lock-free) and assembles these dataclasses; templates render them. Mutations live in actions.py."""
 from __future__ import annotations
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -79,6 +79,13 @@ class SurfacePost:
                                            # framing) — vs a hook-stamped shared clip. Read from Render.is_account_cut.
     framing: Optional[str] = None          # the account's PINNED vertical crop ("top"/"center"), or None when it
                                            # inherits the global. Shows the operator's deliberate per-account choice.
+    # Phase 4 (pivot fallback badges): the per-account differentiation TRUTH, read FAIL-OPEN from the Render so a
+    # surface that silently fell back to a shared cut/hook is flagged ⚠. is_account_cut (above) is the shared-cut
+    # signal; hook_source is the shared-hook signal — its value is the HookSource enum string ("shared_fallback"
+    # under a shared-hook fallback, "per_account" for its own, "none"/None when no hook / no Render).
+    hook_source: Optional[str] = None      # Render.hook_source.value (P3); None when no Render (fail-open dark badge).
+    day: Optional[str] = None              # Phase 4 pivot: the ingest day (clip -> moment -> source.created_at), set
+                                           # only on the account-pivot flat rows for the running day header. None elsewhere.
 
 
 @dataclass
@@ -112,6 +119,9 @@ class ReviewCard:
     batch_created: Optional[str] = None  # B3: Batch.created_at (None -> rendered '—')
     batch_excluded: int = 0              # B4: active accounts NOT in a non-empty target (0 == ALL/none excluded)
     affinities: list[str] = field(default_factory=list)      # C3: Moment.affinities (cast reach; [] == all accounts)
+    source_key: Optional[str] = None     # Phase 4: the STABLE source-scoping id (clip -> moment.parent_id = Source.id),
+                                         # NOT the basename (two sources can share a filename). The ?source= filter
+                                         # keys on this; the chip label is the basename. None == broken source lineage.
 
 
 @dataclass
@@ -313,7 +323,11 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
         variant_hook=getattr(post, "variant_hook", None),   # persona on-screen hook (None when variation OFF)
         length_label=_length_label(getattr(post, "clip_profile", None)),
         is_account_cut=bool(r and getattr(r, "is_account_cut", False)),
-        framing=(getattr(acct, "framing", None) or None))
+        framing=(getattr(acct, "framing", None) or None),
+        # Phase 4: read Render.hook_source FAIL-OPEN (P3 provenance). A HookSource enum -> its .value string;
+        # absent/None Render -> None (the ⚠ shared-hook badge stays dark, byte-identical). getattr-guarded so a
+        # legacy Render with no hook_source field never raises.
+        hook_source=(getattr(getattr(r, "hook_source", None), "value", None) if r else None))
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
           active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:
@@ -322,6 +336,7 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account))
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed + affinities (clip -> moment)
+    src_key = mom.parent_id if mom is not None else None   # Phase 4: stable source id (clip -> moment.parent_id); the ?source= key
     # Face 4: the REAL Batch this card belongs to — Post.batch_id (all posts on one clip share the lineage,
     # so the same batch). Post-less cards (held/prepared, posts == []) carry None -> 'Ungrouped'. Title via
     # led.get_batch defensively (a stale/None batch_id -> None title -> 'Ungrouped' at the grouper).
@@ -339,7 +354,7 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         batch_id=bid, batch_title=(b.name if b is not None else None),
         batch_targets=tgts, batch_state=(b.state.value if b is not None else None),
         batch_created=(b.created_at if b is not None else None), batch_excluded=excluded,
-        affinities=(getattr(mom, "affinities", None) or []))
+        affinities=(getattr(mom, "affinities", None) or []), source_key=src_key)
 
 def _card_day(led: Ledger, card: ReviewCard) -> str:
     """The ingest day (YYYY-MM-DD) a Review card buckets under: clip -> moment -> source.created_at.
@@ -352,8 +367,16 @@ def _card_day(led: Ledger, card: ReviewCard) -> str:
     try: return parse_iso(ca).date().isoformat()
     except (ValueError, TypeError, AttributeError): return "undated"
 
+# Phase 4: the ?state= filter maps an operator-facing state word to its ReviewCard.bucket. 'awaiting' is the
+# primary worklist state (editable cards); 'approved' surfaces have LEFT Review for the Schedule, so it maps to
+# the read-only 'recent' (already-shipped) bucket that Review still shows. An unknown word never reaches here
+# (the arg reader maps it to None upstream); this map is the single source of truth for the legal set.
+_STATE_TO_BUCKET = {"awaiting": "editable", "approved": "recent", "held": "held", "prepared": "prepared"}
+
+
 def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime,
-                   account: Optional[str] = None, batch: Optional[str] = None) -> list[ReviewCard]:
+                   account: Optional[str] = None, batch: Optional[str] = None,
+                   source: Optional[str] = None, state: Optional[str] = None) -> list[ReviewCard]:
     """Three buckets (spec §6): editable (awaiting_approval posts grouped by clip — the approve worklist),
     recent (published/analyzed within RECENT_WINDOW_HOURS), held (clips with held=True, no posts). A clip
     may appear in both editable and recent (different posts). Approved (`queued`) posts have left Review for
@@ -411,6 +434,11 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
         cards = [c for c in cards if any(s.account == account for s in c.surfaces)]
     if batch is not None:          # B2: drill into ONE batch — keep cards whose denormalized Batch.id matches
         cards = [c for c in cards if c.batch_id == batch]
+    if source is not None:         # Phase 4: drill into ONE source — keep cards on that stable source id (NOT basename)
+        cards = [c for c in cards if c.source_key == source]
+    if state is not None:          # Phase 4: keep one state's cards (awaiting/approved/held/prepared -> bucket)
+        target = _STATE_TO_BUCKET.get(state)
+        cards = [c for c in cards if c.bucket == target] if target else cards
     return cards
 
 
@@ -422,6 +450,61 @@ def review_counts(cards: list[ReviewCard]) -> dict:
     from collections import Counter
     c = Counter(card.bucket for card in cards)
     return {"awaiting": c.get("editable", 0), "prepared": c.get("prepared", 0), "held": c.get("held", 0)}
+
+
+def review_progress(cards: list[ReviewCard]) -> dict:
+    """Phase 4 progress header: per-scope counts (awaiting/approved/held/prepared) over the SAME cards the
+    worklist renders — a pure read, re-derived each htmx swap so the count rides the URL (mirrors review_counts).
+    'approved' counts the read-only 'recent' (already-shipped) bucket; Review is the AWAITING worklist, so
+    'awaiting' leads. Single source of truth for the pivot/per-account progress line. Trivially testable."""
+    from collections import Counter
+    c = Counter(card.bucket for card in cards)
+    return {"awaiting": c.get("editable", 0), "approved": c.get("recent", 0),
+            "held": c.get("held", 0), "prepared": c.get("prepared", 0)}
+
+
+def source_universe(cards: list[ReviewCard]) -> list:
+    """Phase 4 source-filter chips: the distinct sources present in THIS (unfiltered) card list, as
+    [(source_key, basename)] in FIRST-APPEARANCE order. Keyed on the stable Source.id (ReviewCard.source_key) so
+    two sources sharing a filename never collide; labelled with the basename (already on card.source_name) for the
+    operator. Cards with broken source lineage (source_key None) are skipped. Pure — mirrors the chip-universe
+    helpers; the template renders a GET link per entry like _account_filter.html."""
+    seen: dict = {}                                    # source_key -> basename; dict preserves first-appearance order
+    for c in cards:
+        if c.source_key is not None and c.source_key not in seen:
+            seen[c.source_key] = c.source_name or c.source_key
+    return list(seen.items())
+
+
+def account_pivot_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime, account: Optional[str],
+                       batch: Optional[str] = None, source: Optional[str] = None,
+                       state: Optional[str] = None) -> list[SurfacePost]:
+    """Phase 4 account-first PIVOT: ONE account's entire run as a flat SurfacePost list (NOT moment cards), in
+    the upstream day-sort order, ready to paginate. Reuses review_buckets (already account/batch/source/state
+    filtered) + the surfaces it built — flatten every card's surfaces, keeping ONLY the chosen account (a fan-out
+    card carries N surfaces; we want @x's row, not @y's). A blank/None account -> [] (the pivot is meaningless
+    without an account; the route falls back to moment-first). Each row carries its card's `day` for the running
+    day header (group_review_by_account_surface). Pure-ish (one lock-free ledger read); never raises."""
+    handle = (account or "").strip()
+    if not handle:
+        return []
+    cards = review_buckets(led, accounts, cfg, now=now, account=handle, batch=batch, source=source, state=state)
+    rows: list[SurfacePost] = []
+    for c in cards:                                    # cards arrive day-sorted; preserve that order across surfaces
+        for s in c.surfaces:
+            if s.account == handle:
+                rows.append(replace(s, day=c.day))     # immutable copy: stamp the card's ingest day for the header (no shared-ref mutation)
+    return rows
+
+
+def group_review_by_account_surface(rows: list) -> list:
+    """Phase 4 pivot grouper: group the flat account-pivot SurfacePost rows by their ingest `day` for a running
+    day header, FIRST-APPEARANCE order (preserves the upstream day-sort), within-day INPUT order. Pure — mirrors
+    group_review_by_batch / group_schedule_by_account. Returns [(day, [SurfacePost])]; a None day renders 'undated'."""
+    groups: dict = {}                                  # day -> [rows]; dict preserves first-appearance order
+    for r in rows:
+        groups.setdefault(getattr(r, "day", None), []).append(r)
+    return [(d if d is not None else "undated", rs) for d, rs in groups.items()]
 
 
 def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: datetime, cfg: Config) -> Optional[SurfacePost]:

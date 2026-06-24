@@ -126,6 +126,9 @@ def create_app(cfg: Config) -> Flask:
     # per-batch <details> sections. Pure read-model helper (views), exposed as a filter so the
     # already-paginated card slice is grouped at render time without threading it through every route.
     app.jinja_env.filters["group_review_by_batch"] = views.group_review_by_batch
+    # Phase 4: the account-first PIVOT grouper — group one account's flat SurfacePost rows by ingest day for a
+    # running day header, exposed as a filter so the already-paginated row slice is grouped at render time.
+    app.jinja_env.filters["group_review_by_account_surface"] = views.group_review_by_account_surface
 
     def _time_arg() -> str:
         # The datetime-local control submits naive LOCAL; convert to canonical UTC before the action sees it.
@@ -159,7 +162,34 @@ def create_app(cfg: Config) -> Flask:
         # M3c: the dense, video-less Review list mode from ?compact=. Read from request.args so it rides the
         # action/pagination URLs (templates carry compact=1) AND the htmx POST URL — so a mutation re-render
         # stays compact (R1). Truthy-words only; absent/blank/anything else -> False (the full video view).
-        return (request.args.get("compact") or "").strip().lower() in ("1", "true", "yes", "on")
+        # Phase 4: ?compact=ultra is ALSO truthy here (so the compact code paths still fire) AND flips _ultra_arg.
+        v = (request.args.get("compact") or "").strip().lower()
+        return v in ("1", "true", "yes", "on", "ultra")
+
+    def _ultra_arg() -> bool:
+        # Phase 4: the TRUE ultra-compact (zero-<video>, DOM-light) pivot mode from ?compact=ultra. The win at
+        # 150 surfaces is the ELEMENT COUNT (one row per surface, no <video>, no poster fetch), not just preload.
+        # Read from request.args so it rides the action/pagination URLs (R1). Anything but the exact word -> False.
+        return (request.args.get("compact") or "").strip().lower() == "ultra"
+
+    def _source_arg():
+        # Phase 4: the per-source filter from ?source=<Source.id>. Mirrors _account_arg/_batch_arg — blank/absent
+        # -> None (unfiltered); read from request.args so an htmx POST carrying source= re-applies scope (R1).
+        # Keyed on the STABLE source id (NOT the basename — two sources can share a filename); never raises.
+        v = (request.args.get("source") or "").strip()
+        return v or None
+
+    def _state_arg():
+        # Phase 4: the per-state filter from ?state=. VALIDATED against the legal set (views._STATE_TO_BUCKET) —
+        # an unknown word maps to None (the unfiltered view), so a hand-typed URL never 500s. Blank/absent -> None.
+        v = (request.args.get("state") or "").strip().lower()
+        return v if v in views._STATE_TO_BUCKET else None
+
+    def _view_arg():
+        # Phase 4: the Review view mode from ?view=. "account" -> the account-first PIVOT (one account's run as a
+        # flat list); anything else (incl. absent) -> the default moment-first card view (byte-identical). Mirrors
+        # _compact_arg — read from request.args so it rides the action/pagination URLs (R1).
+        return "account" if (request.args.get("view") or "").strip().lower() == "account" else None
 
     def _with_active(counts, active):
         # The chip UNIVERSE = the accounts present in the (unfiltered) list, PLUS the active filter itself, so
@@ -198,7 +228,14 @@ def create_app(cfg: Config) -> Flask:
         # else none)) drops the param everywhere it's off -> byte-identical on every non-compact / non-Review surface.
         # M3d: inject creative_variation GLOBALLY so Review can hide the moment-hook RESTORE choice while ON
         # (per-surface hooks own the burn then, and approve_with_hook refuses) — the choice is an OFF-mode flow.
+        # Phase 4: inject the Review-scoped filters/modes GLOBALLY (like compact) so _review_body.html + its
+        # includes (_card.html, _account_pivot.html, _account_filter.html) all see them without per-render
+        # plumbing, and url_for(..., source=active_source|default(none), ...) drops each one where it's off ->
+        # byte-identical everywhere it isn't set. active_source/active_state/active_view/ultra all None/False
+        # by default (a non-Review surface / a partial swap with no request args) -> url_for drops them.
         return {"nav_account": _account_arg(), "compact": _compact_arg(),
+                "active_source": _source_arg(), "active_state": _state_arg(),
+                "active_view": _view_arg(), "ultra": _ultra_arg(),
                 "creative_variation": cfg.creative_variation,
                 "cast_state": {"casting": cfg.account_casting,
                                "budget": cfg.cast_pick_budget, "profile": cfg.clip_profile}}
@@ -210,30 +247,42 @@ def create_app(cfg: Config) -> Flask:
         # here (Home renders no per-surface chip row — the chip universe is a per-tab concern).
         return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), tab="home")
 
+    def _review_context(*, result=None):
+        # Phase 4: ONE builder for the Review render-kwargs, shared by the full page (review) AND the htmx swap
+        # body (_review_panel) so the scope (account/batch/source/state), the pivot, the progress header, and the
+        # pagination NEVER drift between the two. All four filters compose (P5 + B2 + Phase 4 source/state);
+        # every arg defaults None so the unfiltered render is byte-identical. The pivot rows + progress are pure
+        # reads over the SAME scoped cards, re-derived each swap so they ride the URL (R1).
+        led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
+        account = _account_arg(); batch = _batch_arg(); source = _source_arg(); state = _state_arg()
+        view = _view_arg()
+        cards_full = views.review_buckets(led, accounts, cfg, now=now)               # universe for chips
+        scoped = bool(account or batch or source or state)
+        cards = (views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch,
+                                      source=source, state=state) if scoped else cards_full)
+        counts = views.review_counts(cards)              # counts reflect what's shown (the scoped worklist)
+        progress = views.review_progress(cards)          # Phase 4 per-scope header (awaiting/approved/held/prepared)
+        sources = views.source_universe(cards_full)      # Phase 4 source-filter chip universe (key, basename)
+        # Phase 4 account-first pivot: only meaningful WITH an account; view=account but no account falls back to
+        # the moment view (account_pivot_rows returns [] -> the body renders the cards path, never a 500).
+        pivot_rows = (views.account_pivot_rows(led, accounts, cfg, now=now, account=account, batch=batch,
+                                               source=source, state=state) if (view == "account" and account) else None)
+        pivot = views.paginate(pivot_rows, _offset_arg()) if pivot_rows is not None else None
+        page = views.paginate(cards, _offset_arg())
+        ctx = dict(cards=page.items, page=page, tab="review", backend=cfg.poster_backend, counts=counts,
+                   awaiting_total=counts["awaiting"], active_batch=batch, progress=progress, sources=sources,
+                   pivot=(pivot.items if pivot is not None else None), pivot_page=pivot, result=result,
+                   **_card_chips(cards_full, account))
+        return ctx
+
     @app.get("/review")
     def review():
-        led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
-        account = _account_arg(); batch = _batch_arg()
-        cards_full = views.review_buckets(led, accounts, cfg, now=now)               # universe for chips
-        cards = (views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch)
-                 if (account or batch) else cards_full)                              # both filters compose (B2 + P5)
-        counts = views.review_counts(cards)              # counts reflect what's shown (the scoped worklist)
-        page = views.paginate(cards, _offset_arg())
-        return render_template("review.html", cards=page.items, page=page, tab="review",
-                               backend=cfg.poster_backend, counts=counts, shown=counts["awaiting"],
-                               awaiting_total=counts["awaiting"], active_batch=batch, **_card_chips(cards_full, account))
+        ctx = _review_context()
+        return render_template("review.html", shown=ctx["counts"]["awaiting"], **ctx)
 
     def _review_panel(result=None):
-        led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
-        account = _account_arg(); batch = _batch_arg()    # R1: both ride the POST URL into request.args -> scope preserved
-        cards_full = views.review_buckets(led, accounts, cfg, now=now)
-        cards = (views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch)
-                 if (account or batch) else cards_full)
-        awaiting_total = views.review_counts(cards)["awaiting"]    # keep #review-body's data-awaiting fresh after every mutation
-        page = views.paginate(cards, _offset_arg())
-        return render_template("_review_body.html", cards=page.items, page=page, result=result,
-                               tab="review", backend=cfg.poster_backend, awaiting_total=awaiting_total,
-                               active_batch=batch, **_card_chips(cards_full, account))
+        # R1: account/batch/source/state/offset/view all ride the POST URL into request.args -> scope preserved.
+        return render_template("_review_body.html", **_review_context(result=result))
 
     @app.get("/review/live")
     def review_live():
@@ -290,10 +339,11 @@ def create_app(cfg: Config) -> Flask:
 
     @app.post("/posts/approve-account")
     def do_approve_account():
-        # M3b 'this account across the whole video': approve every awaiting post of the ACTIVE account filter
-        # (?account=), scoped to the active batch (?batch=). The target IS the filter — the button only shows
-        # under an active account filter. Re-render stays scoped (R1) so the now-empty view reflects the approve.
-        return _review_panel(actions.approve_account(cfg, _account_arg(), batch=_batch_arg()))
+        # M3b/Phase 4 'this account across the whole video': approve every awaiting post of the ACTIVE account
+        # filter (?account=), scoped to the active batch (?batch=) AND the active source (?source=). The target
+        # IS the filter — the button only shows under an active account filter. Re-render stays scoped (R1) so the
+        # now-empty view reflects the approve.
+        return _review_panel(actions.approve_account(cfg, _account_arg(), batch=_batch_arg(), source=_source_arg()))
 
     def _schedule_panel(result=None, *, full=False):
         led = Ledger.load(cfg); now = datetime.now(timezone.utc); account = _account_arg(); batch = _batch_arg()

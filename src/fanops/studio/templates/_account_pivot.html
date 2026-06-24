@@ -1,0 +1,50 @@
+{# src/fanops/studio/templates/_account_pivot.html — Phase 4 account-first PIVOT: ONE account's entire run as a
+   flat, day-grouped, scannable list (NOT N-<video> moment cards). The win at 150 surfaces is the ELEMENT COUNT:
+   a flat row per surface, and in ULTRA-compact mode (?compact=ultra) ZERO <video> + no poster fetch — just id +
+   hook + badges + checkbox. Keeps name="ids" so the #review-body bulk approve still gathers the checked rows.
+   Fallback badges (⚠ shared-cut from SurfacePost.is_account_cut==False, ⚠ shared-hook from
+   SurfacePost.hook_source=='shared_fallback') read Phase-3 provenance FAIL-OPEN — absent/None -> dark, byte-
+   identical. `pivot` is the paginated row slice; `pivot_page` the GridPage (its own offset/show-more). #}
+<div class="account-pivot" aria-label="{{ active }} run">
+  {% if not pivot %}
+    <div class="empty">No work for {{ active }}{% if active_source %} in this source{% endif %}{% if active_state %} ({{ active_state }}){% endif %} — <a href="{{ url_for('review', view='account', account=active, compact=compact_param) }}">clear the filters</a>.</div>
+  {% else %}
+  <div class="pivot-bulk approve-bar meta">
+    <button type="button" class="primary" hx-post="{{ url_for('do_approve_posts', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=pivot_page.offset) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Approve selected</button>
+    <button type="button" hx-post="{{ url_for('do_reject_posts', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=pivot_page.offset) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
+    <button type="button" class="primary approve-account" hx-post="{{ url_for('do_approve_account', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=pivot_page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all {{ active }}{% if active_source %} (this source){% endif %}{% if active_batch %} (this batch){% endif %}</button>
+  </div>
+  {% for day, rows in pivot | group_review_by_account_surface %}
+  <h4 class="day-head">{{ day }}</h4>
+  <ul class="pivot-rows{{ ' ultra' if ultra else '' }}">
+    {% for s in rows %}
+    <li class="pivot-row" id="pivot-{{ s.post_id }}">
+      {% if s.editable %}<label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}" aria-label="select {{ s.account }} {{ s.platform }} for approval"></label>{% endif %}
+      <span class="pivot-id muted">{{ s.post_id }}</span>
+      <span class="pivot-plat muted">{{ s.platform }}</span>
+      {% if s.length_label %}<span class="chip ro" title="clip length band">{{ s.length_label }}</span>{% endif %}
+      {% if s.is_account_cut %}<span class="chip ro cut" title="a real per-account cut at this account's own length and framing">✂ cut</span>{% else %}<span class="chip ro warn shared-cut" title="this surface fell back to a SHARED cut — not a real per-account clip">⚠ shared-cut</span>{% endif %}
+      {% if s.framing %}<span class="chip ro" title="vertical crop framing">{{ s.framing }}</span>{% endif %}
+      {% if s.hook_source == 'shared_fallback' %}<span class="chip ro warn shared-hook" title="this account's on-screen hook fell back to the SHARED moment hook — not its own">⚠ shared-hook</span>{% endif %}
+      {% if s.variant_hook %}<span class="pivot-hook" title="the on-screen hook burned into {{ s.account }}'s video">✦ {{ s.variant_hook }}</span>{% endif %}
+      {% if not ultra %}
+        {% if s.caption %}<span class="pivot-caption ro">{{ s.caption }}</span>{% endif %}
+      {% endif %}
+      {% if s.editable %}<button type="button" class="surface-reject" hx-post="{{ url_for('do_reject_posts', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=pivot_page.offset) }}" hx-vals='{"ids": "{{ s.post_id }}"}' hx-target="#review-body" hx-swap="outerHTML" aria-label="reject {{ s.account }} {{ s.platform }}">Reject</button>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+  {% if pivot_page and pivot_page.total > pivot_page.items|length %}
+    <div class="grid-more meta">
+      Showing {{ pivot_page.offset + 1 }}–{{ pivot_page.offset + pivot_page.items|length }} of {{ pivot_page.total }} ({{ active }}).
+      {% if pivot_page.next_offset is not none %}
+        <a class="button" href="{{ url_for('review', offset=pivot_page.next_offset, view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Show more</a>
+      {% endif %}
+      {% if pivot_page.offset > 0 %}
+        <a class="button" href="{{ url_for('review', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Back to start</a>
+      {% endif %}
+    </div>
+  {% endif %}
+  {% endif %}
+</div>

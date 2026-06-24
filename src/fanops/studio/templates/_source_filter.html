@@ -1,0 +1,15 @@
+{# src/fanops/studio/templates/_source_filter.html — Phase 4 per-source filter chip row. Mirrors
+   _account_filter.html: "All" is ALWAYS first (an unknown-source filter stays recoverable); one chip per
+   distinct source present in THIS list (the universe = views.source_universe(cards_full), keyed on the STABLE
+   Source.id, NOT the basename — two sources can share a filename). The label is the basename; the link keys on
+   the id. A plain GET link (re-request the page filtered — the simplest correct thing; htmx not needed). The
+   active chip carries .active + aria-current="page". Rendered only when >1 source is present. Carries the OTHER
+   live scopes (account/state/view/compact) so a source pick composes with them. #}
+{% if sources and sources|length > 1 %}
+<nav class="source-chips" aria-label="Filter by source">
+  <a class="button{{ ' active' if not active_source|default(none) else '' }}"{% if not active_source|default(none) %} aria-current="page"{% endif %} href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), state=active_state|default(none), compact=compact_param) }}">All sources</a>
+  {% for skey, slabel in sources %}
+  <a class="button{{ ' active' if active_source|default(none) == skey else '' }}"{% if active_source|default(none) == skey %} aria-current="page"{% endif %} href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), state=active_state|default(none), source=skey, compact=compact_param) }}">{{ slabel }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
