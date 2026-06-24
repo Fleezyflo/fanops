@@ -479,7 +479,9 @@ def create_app(cfg: Config) -> Flask:
         views.lineage_stats(rows)                         # S6: rank repost/crosspost siblings within the filtered set
         page = views.paginate(rows, _offset_arg())
         groups = views.group_posted_by_day(page.items)    # content-lifecycle Phase 3: publish-day buckets (over the slice)
-        peaks = views.metric_peaks(page.items)            # S6: micro-bar normalisation over the visible page
+        peaks = views.metric_peaks(rows)                  # S6: normalise micro-bars over the FULL filtered set (same
+                                                          # denominator as lineage_stats) so a bar is a STABLE reference
+                                                          # across pages — a saves=10 row reads the same width on any page
         accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
         return render_template("posted.html" if full else "_posted_panel.html", rows=page.items, groups=groups,
                                page=page, rollup=rollup, peaks=peaks, active_batch=batch, accounts=accounts,

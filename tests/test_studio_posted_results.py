@@ -172,3 +172,19 @@ def test_singleton_posted_panel_has_no_star(tmp_path):
     _seed_published(cfg, pid="only", clip="clip_solo", lift=0.55, hook="alone")
     html = _client(cfg).get("/posted").data.decode()
     assert "★" not in html                               # one post on the clip -> no winner badge
+
+
+def test_posted_micro_bars_normalise_over_full_filtered_set_not_the_page(tmp_path):
+    # S6 audit LOW: the micro-bar must be a STABLE reference across pages. metric_peaks reads the full
+    # filtered set (like lineage_stats), NOT the visible slice — else the same saves=10 row reads 1% on
+    # page 1 and 100% on page 2. Seed 25 distinct clips: the 24 newest carry saves=10, the oldest (off the
+    # first page) carries saves=1000 -> the first page's bars scale to 1000, i.e. ~1%, never 100%.
+    cfg = Config(root=tmp_path)
+    for i in range(24):
+        _seed_published(cfg, pid=f"p{i:02d}", clip=f"clip_{i:02d}", lift=0.5,
+                        metrics_extra={"saves": 10}, when=f"2026-06-{i + 2:02d}T00:00:00Z")
+    _seed_published(cfg, pid="whale", clip="clip_whale", lift=0.5,
+                    metrics_extra={"saves": 1000}, when="2026-06-01T00:00:00Z")   # oldest -> page 2
+    html = _client(cfg).get("/posted").data.decode()
+    assert 'class="bar metric-bar" style="width: 1%"' in html          # 10/1000 -> normalised to the global peak
+    assert 'class="bar metric-bar" style="width: 100%"' not in html    # would appear if peaks came from the page
