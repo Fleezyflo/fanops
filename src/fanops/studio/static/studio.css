@@ -233,6 +233,14 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .status.status-sub > span { padding:.5rem .75rem; min-width:5rem; }
 .status.status-sub > span strong { font-size:1.25rem; }
 .status.status-sub > span:last-child strong { color:var(--ink); font-size:1.25rem; }
+/* S3: the "do this next" banner — a left-rail-accented surface card; the rail colour names the kind of step. */
+.run-next { border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:var(--r-md);
+  background:var(--surface-1); padding:.7rem 1rem; margin:var(--s-4) 0 var(--s-3); }
+.run-next-gate { border-left-color:var(--warn); }
+.run-next-review { border-left-color:var(--ok); }
+.run-next-eyebrow { font:600 var(--t-eyebrow) var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-right:.4rem; }
+.run-next-label { margin:0 0 .2rem; font-size:var(--t-lg); color:var(--ink); }
+.run-next-hint { margin:0; }
 /* The ONE dominant action. */
 .run-primary { display:flex; flex-direction:column; align-items:flex-start; gap:.6rem; margin:var(--s-4) 0 var(--s-3);
   padding:var(--s-4); background:linear-gradient(180deg,var(--surface-2),var(--surface-1)); border:1px solid var(--line-bright); border-radius:var(--r-lg); box-shadow:var(--elev-1); }

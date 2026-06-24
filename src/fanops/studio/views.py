@@ -998,6 +998,32 @@ def pipeline_status(cfg: Config) -> dict:
     }
 
 
+def run_next_step(status: dict) -> dict:
+    """S3: the Make tab's ONE 'do this next' affordance, derived PURELY from pipeline_status counts (no ledger
+    read; fail-open via .get so a torn/partial dict never raises). The ladder mirrors the real pipeline:
+    add footage → answer gates → run a pass → review. Gates PRECEDE review because a pending decision is
+    BLOCKING mid-pipeline clips (the operator can't finish them until they answer). Returns {key, label, hint};
+    the gate step spells out the gate→clip link ('answer, then Prepare again')."""
+    s = status if isinstance(status, dict) else {}
+    def _n(k):
+        try: return int(s.get(k, 0) or 0)
+        except (TypeError, ValueError): return 0
+    footage = _n("sources") + _n("third_party")
+    gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_captions")
+    posts = _n("posts")
+    if footage == 0:
+        return {"key": "add", "label": "Add a video to begin",
+                "hint": "Choose a file above, or paste a link under More — then ingest it."}
+    if gates:
+        return {"key": "gate", "label": f"Answer {gates} processing decision(s)",
+                "hint": "Some clips are paused waiting on a decision. Answer them, then run Prepare again to finish those clips."}
+    if posts == 0:
+        return {"key": "prepare", "label": "Run a pass",
+                "hint": "Cut clips and write captions for every account — they'll land in Review."}
+    return {"key": "review", "label": f"{posts} post(s) ready",
+            "hint": "Review and approve them in the Review tab — nothing ships until you do."}
+
+
 def asset_catalog(cfg: Config) -> dict:
     """Lock-free read-model for the Library tab (M1): every remembered Source split by origin_kind, with
     just-enough metadata to recognize it. Fail-open — a torn/absent ledger yields empty lists, never a
