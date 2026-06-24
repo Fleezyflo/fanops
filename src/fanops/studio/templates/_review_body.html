@@ -10,8 +10,12 @@
   {# Phase 4: the View toggle — Moments (the default moment-first cards) vs By account (the pivot: one account's
      entire run as a flat, scannable, progress-counted list). 'By account' needs an account; it's a GET link that
      keeps the active account (or prompts to pick one). Mirrors the compact toggle's GET-link pattern. #}
+  {# Slice 2: three-way View toggle — Matrix (default moment×account grid) · Moments (legacy cards, ?view=list) ·
+     By account (the pivot). active_view in (none,'matrix') => Matrix is active. GET links; ride the URL. #}
   <div class="meta view-toggle pivot-toggle">View:
-    {% if active_view == 'account' %}<a class="button" href="{{ url_for('review', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Moments</a> <span class="button active" aria-current="page">By account</span>{% else %}<span class="button active" aria-current="page">Moments</span> <a class="button" href="{{ url_for('review', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">By account</a>{% endif %}
+    {% if active_view in (none, 'matrix') %}<span class="button active" aria-current="page">Matrix</span>{% else %}<a class="button" href="{{ url_for('review', view='matrix', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Matrix</a>{% endif %}
+    {% if active_view == 'list' %}<span class="button active" aria-current="page">Moments</span>{% else %}<a class="button" href="{{ url_for('review', view='list', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Moments</a>{% endif %}
+    {% if active_view == 'account' %}<span class="button active" aria-current="page">By account</span>{% else %}<a class="button" href="{{ url_for('review', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">By account</a>{% endif %}
   </div>
   {% include "_account_filter.html" %}
   {% include "_source_filter.html" %}
@@ -52,10 +56,14 @@
           {% if active %}<button type="button" class="primary approve-account" hx-post="{{ url_for('do_approve_account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all {{ active }}{% if active_source %} (this source){% endif %}</button>{% endif %}
         </div>
       {% endif %}
-      {% if key == 'editable' %}
-        {# Face 4: account-first, batch-grouped Review — collapsible <details> per REAL Batch (Post.batch_id),
-           first-appearance order, unbatched cards under 'Ungrouped' (sorts LAST). content-lifecycle Phase 3:
-           the running ingest-day header is preserved WITHIN each batch; a day (or batch) spanning the
+      {% if key == 'editable' and matrix %}
+        {# Slice 2: the moment×account MATRIX is the default awaiting view (per focused source). It REPLACES the
+           batch-grouped editable cards; the prepared/held/recent buckets below still render as cards. #}
+        {% include "_review_matrix.html" %}
+      {% elif key == 'editable' %}
+        {# Face 4 (?view=list): account-first, batch-grouped Review — collapsible <details> per REAL Batch
+           (Post.batch_id), first-appearance order, unbatched cards under 'Ungrouped' (sorts LAST). content-lifecycle
+           Phase 3: the running ingest-day header is preserved WITHIN each batch; a day (or batch) spanning the
            paginated 'Show more' boundary simply re-emits its header/summary on the next page. #}
         {% for batch_id, batch_title, bcards in group | group_review_by_batch %}
         <details class="batch" open>

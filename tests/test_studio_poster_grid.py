@@ -55,7 +55,7 @@ def _posters(html: str):
 def test_review_videos_all_have_nonempty_poster(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n_clips=3, state=PostState.awaiting_approval)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=list").data.decode()
     vids, posters = _videos(html), _posters(html)
     assert vids, "expected video elements on /review"
     assert len(posters) == len(vids), "every <video> must carry a poster="
@@ -101,7 +101,7 @@ def test_review_show_more_offset_returns_remainder(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _accounts(cfg)
     total = views.GRID_PAGE_SIZE + 6
     _seed(cfg, n_clips=total, state=PostState.awaiting_approval)
-    html = _client(cfg).get(f"/review?offset={views.GRID_PAGE_SIZE}").data.decode()
+    html = _client(cfg).get(f"/review?view=list&offset={views.GRID_PAGE_SIZE}").data.decode()
     cards = html.count('class="card clip-card"')
     assert cards == total - views.GRID_PAGE_SIZE       # the remainder shows on the next page
 

@@ -247,7 +247,7 @@ def _seed_two_accounts_all_surfaces(cfg):
                               scheduled_time="2026-06-01T00:00:00Z", metrics={LIFT_SCORE: 50.0, "saves": 3}))
 
 @pytest.mark.parametrize("path,present,absent", [
-    ("/review?account=@a", b"await a", b"await b"),
+    ("/review?view=list&account=@a", b"await a", b"await b"),
     ("/schedule?account=@a", b"q_a", b"q_b"),
     ("/posted?account=@a", b"https://insta/a", b"https://insta/b"),
     ("/publish?account=@a", b"q_a", b"q_b"),
@@ -320,7 +320,7 @@ def test_empty_filter_message_is_account_aware(tmp_path):
 
 def test_blank_account_param_is_all(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
-    r = _client(cfg).get("/review?account=")                 # blank -> None (All), both accounts shown
+    r = _client(cfg).get("/review?view=list&account=")                 # blank -> None (All), both accounts shown
     assert r.status_code == 200 and b"await a" in r.data and b"await b" in r.data
 
 def test_schedule_all_view_renders_per_account_headers(tmp_path):

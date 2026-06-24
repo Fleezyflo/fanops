@@ -926,29 +926,42 @@ def approve_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -
     return _approve_matching(cfg, lambda p: p.parent_id == clip_id, now=now, detail={"clip_id": clip_id})
 
 def approve_account(cfg: Config, handle: str, *, batch: Optional[str] = None, source: Optional[str] = None,
-                    now: Optional[datetime] = None) -> ActionResult:
+                    platform: Optional[str] = None, now: Optional[datetime] = None) -> ActionResult:
     """M3b/Phase 4 'this account across the whole video': one-click approve EVERY awaiting_approval post of ONE
-    account, scopable to a batch (Post.batch_id) AND a source (Phase 4: the stable Source.id via clip ->
-    moment.parent_id), so the operator clears a persona's run at account × batch × source granularity. A blank
+    account, scopable to a batch (Post.batch_id), a source (Phase 4: the stable Source.id via clip ->
+    moment.parent_id), AND a platform (Slice 2: a matrix COLUMN is a handle×platform CHANNEL, so column-approve
+    clears only that channel — without it, approving @b's IG column would also clear @b's TikTok column). A blank
     handle -> clean no-op (the button only shows under an active account filter). Idempotent, never a 500.
 
     The source scope walks lineage, which lives only on the in-lock ledger — so when `source` is set we build a
     `clip_id -> source_id` map ONCE inside the transaction (pred_for) and close over it; a post whose clip has
     broken lineage maps to a sentinel that matches NO source filter, so a scoped approve never over-approves on
-    a dangling clip. With no source scope this is byte-identical to before (the post-only predicate)."""
+    a dangling clip. platform=None / source=None each restore the broader scope (byte-identical legacy path)."""
     handle = (handle or "").strip()
     if not handle:
         return ActionResult(ok=True, detail={"account": None, "approved": 0})
-    det = {"account": handle, "batch": batch, "source": source}
-    if source is None:                          # byte-identical legacy path (post-only predicate, no lineage walk)
-        return _approve_matching(cfg, lambda p: p.account == handle and (batch is None or p.batch_id == batch),
+    det = {"account": handle, "batch": batch, "source": source, "platform": platform}
+    def _chan(p) -> bool: return platform is None or p.platform.value == platform   # column = handle × platform
+    if source is None:                          # legacy path (post-only predicate, no lineage walk); platform=None -> byte-identical
+        return _approve_matching(cfg, lambda p: p.account == handle and (batch is None or p.batch_id == batch) and _chan(p),
                                  now=now, detail=det)
     def _pred_for(led):                         # Phase 4: build the clip -> source map ONCE from the in-lock ledger
         src_of = {c.id: (m.parent_id if (m := led.moments.get(c.parent_id)) is not None else None)
                   for c in led.clips.values()}
-        return lambda p: (p.account == handle and (batch is None or p.batch_id == batch)
+        return lambda p: (p.account == handle and (batch is None or p.batch_id == batch) and _chan(p)
                           and src_of.get(p.parent_id) == source)   # dangling clip -> None != source -> excluded
     return _approve_matching(cfg, pred_for=_pred_for, now=now, detail=det)
+
+def approve_moment(cfg: Config, moment_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """Matrix 'approve this whole moment-row': approve EVERY awaiting_approval post across ALL channels AND ALL
+    clips (a moment may span aspects) of ONE moment, in one click. A moment uniquely identifies its source
+    (Moment.parent_id), so this is inherently source-scoped — it can never over-approve onto another source.
+    The lineage (post -> clip.parent_id == moment) lives only on the in-lock ledger, so we build the
+    moment's clip-id set ONCE inside the transaction (pred_for) and close over it. Idempotent, never a 500."""
+    def _pred_for(led):
+        clip_ids = {c.id for c in led.clips.values() if c.parent_id == moment_id}
+        return lambda p: p.parent_id in clip_ids
+    return _approve_matching(cfg, pred_for=_pred_for, now=now, detail={"moment": moment_id})
 
 def approve_as_is(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
     """The 'ship it clean' half of the removed-hook choice: one-click approve EVERY awaiting_approval post of

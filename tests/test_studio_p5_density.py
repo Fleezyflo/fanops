@@ -66,7 +66,7 @@ def test_review_card_renders_source_window_transcript(tmp_path):
     with Ledger.transaction(cfg) as led:
         _lineage(led, excerpt="UNIQUE transcript peek line")
         _await(led, "p_a", "@a")
-    html = _client(cfg).get("/review").data
+    html = _client(cfg).get("/review?view=list").data
     assert b"showtime.mp4" in html                  # source_name surfaced
     assert "0–7".encode() in html                   # moment_window (en dash)
     assert b"UNIQUE transcript peek line" in html   # transcript_excerpt surfaced
@@ -78,7 +78,7 @@ def test_review_card_has_per_surface_reject(tmp_path):
     with Ledger.transaction(cfg) as led:
         _lineage(led)
         _await(led, "p_a", "@a"); _await(led, "p_b", "@b")
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=list").data.decode()
     # each surface offers its OWN reject (a single-id control via hx-vals), distinct from the batch
     # checkbox set — so there are two single-id reject controls, one per post.
     assert "/posts/reject" in html

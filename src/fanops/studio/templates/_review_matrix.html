@@ -1,0 +1,55 @@
+{# src/fanops/studio/templates/_review_matrix.html — the moment×account REVIEW MATRIX for ONE focused source.
+   A real <table>: moment ROWS × (handle×platform) channel COLUMNS, sticky header row + first column, proper
+   scope headers + per-cell aria-labels. Bulk-approve a whole moment-ROW or a whole channel-COLUMN in one click;
+   both carry source=focused so a scoped approve can never reach another source, and so the re-render stays on
+   this source (R1). Per-cell checkboxes use name="ids" so the existing Approve/Reject-selected bar works here too. #}
+{% set m = matrix %}
+<section class="matrix-wrap" aria-label="Review matrix for {{ m.source_name }}">
+  {% if source_choices and source_choices|length > 1 %}
+  <nav class="matrix-sources meta" aria-label="Choose source">Source:
+    {% for sid, slabel in source_choices %}{% if sid == focused_source %}<span class="button active" aria-current="page">{{ slabel }}</span>{% else %}<a class="button" href="{{ url_for('review', source=sid, account=active, state=active_state|default(none), view=active_view|default(none), compact=compact_param) }}">{{ slabel }}</a>{% endif %} {% endfor %}
+  </nav>
+  {% endif %}
+  {% if not m.rows or not m.columns %}
+    <div class="empty">No moments cast for {{ m.source_name }} yet — cast accounts in the Make tab{% if source_choices and source_choices|length > 1 %}, or switch source above{% endif %}.</div>
+  {% else %}
+  <div class="matrix-scroll" tabindex="0" role="region" aria-label="Review matrix grid">
+  <table class="review-matrix">
+    <caption class="vh">Moments (rows) by account channel (columns) for {{ m.source_name }}. Approve a whole row or column, or tick individual cells.</caption>
+    <thead>
+      <tr>
+        <th scope="col" class="matrix-corner">Moment</th>
+        {% for key, handle, platform in m.columns %}
+        <th scope="col" class="matrix-col">
+          <span class="col-handle">{{ handle }}</span><span class="col-platform muted">{{ platform }}</span>
+          <button type="button" class="button col-approve" hx-post="{{ url_for('do_approve_channel', ch_account=handle, ch_platform=platform, ch_source=m.source_id, account=active, source=m.source_id, state=active_state|default(none), view=active_view|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Approve every {{ handle }} {{ platform }} post for this source">Approve column</button>
+        </th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in m.rows %}
+      <tr>
+        <th scope="row" class="matrix-row-head">
+          <span class="row-window">{{ row.window }}s</span>{% if row.reason %} <span class="row-reason muted">{{ row.reason }}</span>{% endif %}
+          <button type="button" class="button row-approve" hx-post="{{ url_for('do_approve_moment', moment_id=row.moment_id, account=active, source=m.source_id, state=active_state|default(none), view=active_view|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Approve every channel for the {{ row.window }} second moment">Approve row</button>
+        </th>
+        {% for key, handle, platform in m.columns %}
+          {% set cell = row.cells.get(key) %}
+          {% if cell %}
+          <td class="matrix-cell state-{{ cell.state }}">
+            <label class="cell-pick"><input type="checkbox" name="ids" value="{{ cell.lead_post_id }}"><span class="vh">Approve {{ handle }} {{ platform }} — moment {{ row.window }}s</span></label>
+            <a class="cell-hook" href="{{ cell.preview_url }}" aria-label="Preview {{ handle }} {{ platform }} — {{ cell.state }}{% if cell.multiplicity > 1 %}, {{ cell.multiplicity }} posts{% endif %}">{% if cell.hook %}{{ cell.hook }}{% else %}<span class="muted">no hook</span>{% endif %}</a>
+            <span class="cell-meta">{% if cell.length_label %}<span class="chip len">{{ cell.length_label }}</span>{% endif %}{% if cell.framing %}<span class="chip frame">{{ cell.framing }}</span>{% endif %}{% if cell.is_account_cut %}<span class="chip cut" title="this account's own cut">cut</span>{% else %}<span class="chip shared" title="shared moment clip">shared</span>{% endif %}{% if cell.multiplicity > 1 %}<span class="chip mult" title="{{ cell.multiplicity }} posts on this channel">×{{ cell.multiplicity }}</span>{% endif %}</span>
+          </td>
+          {% else %}
+          <td class="matrix-cell empty" aria-label="{{ handle }} {{ platform }} — not cast for this moment">—</td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>

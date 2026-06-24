@@ -202,7 +202,7 @@ button, .button { display:inline-flex; align-items:center; justify-content:cente
   letter-spacing:.01em; cursor:pointer; text-decoration:none; transition:transform var(--dur) var(--ease), background var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
 button:hover, .button:hover { background:var(--surface-3); border-color:var(--muted); color:var(--ink); transform:translateY(-1px); box-shadow:var(--elev-1); }
 button:active { transform:translateY(0); }
-button:focus-visible { outline:none; box-shadow:var(--ring); }
+button:focus-visible, .button:focus-visible { outline:none; box-shadow:var(--ring); }   /* anchors styled as buttons get the SAME unified ring (WCAG 2.4.7), not the browser default */
 button.primary { background:linear-gradient(180deg,var(--accent-bright),var(--accent)); color:var(--accent-ink); border-color:transparent; }
 button.primary:hover { box-shadow:0 6px 20px var(--accent-dim), var(--elev-1); }
 button.danger { background:transparent; border-color:var(--danger); color:var(--danger); }
@@ -403,6 +403,8 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
   .skip-to-nav { display:block; }        /* re-enable the mobile jump-to-nav escape (still .vh until focus) */
   .run-actions { grid-template-columns:1fr; }
   .status > span { flex:1 1 6rem; }
+  .matrix-scroll { max-height:none; }   /* tiny screens: let the page scroll the grid rather than a stubby viewport */
+  .matrix-col, .matrix-cell { min-width:9rem; }
 }
 @media (min-width:1440px) { main { max-width:1280px; } }
 
@@ -415,3 +417,35 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
   box-shadow:0 0 0 3px oklch(76% 0.16 152 / .18); animation:live-pulse 2s var(--ease) infinite; }
 @keyframes live-pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
 @media (prefers-reduced-motion: reduce) { .review-live .live-dot { animation:none; } }
+
+/* ── Review matrix (moment × account-channel grid) ──────────────────────────
+   A real <table> in a bounded dual-scroll viewport so the header ROW (top) AND the moment COLUMN (left) stay
+   pinned while scanning many channels. border-collapse:separate avoids sticky-cell border artifacts; every
+   sticky cell carries an OPAQUE background so scrolled content never bleeds through. z-index layering:
+   corner(30) > header row(20) > row head(10) > body cells(auto). */
+.matrix-wrap { margin:var(--s-3) 0 var(--s-5); }
+.matrix-sources { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }
+.matrix-scroll { overflow:auto; max-height:calc(100vh - 14rem); border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface-1);
+  scroll-padding-top:3rem; scroll-padding-left:13rem; }   /* keep a Tab-focused cell clear of the opaque sticky header/first-column (WCAG 2.4.11) */
+.matrix-scroll:focus-visible { outline:none; box-shadow:var(--ring); }
+.review-matrix { border-collapse:separate; border-spacing:0; width:max-content; min-width:100%; font-size:var(--t-meta); }
+.review-matrix th, .review-matrix td { border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:var(--s-2); text-align:left; vertical-align:top; }
+.review-matrix thead th { position:sticky; top:0; z-index:20; background:var(--surface-2); }
+.review-matrix th[scope="row"] { position:sticky; left:0; z-index:10; background:var(--surface-2); min-width:8.5rem; max-width:13rem; }
+.review-matrix .matrix-corner { position:sticky; top:0; left:0; z-index:30; background:var(--surface-3); font:var(--t-eyebrow) var(--mono); text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+.matrix-col { min-width:11rem; }
+.col-handle { font-weight:600; color:var(--ink); }
+.col-platform { margin-left:.35rem; font:var(--t-eyebrow) var(--mono); text-transform:uppercase; letter-spacing:.04em; }
+.row-window { font:600 var(--t-base) var(--mono); color:var(--ink); }
+.row-reason { display:block; margin-top:.15rem; font-size:var(--t-eyebrow); }
+.col-approve, .row-approve { display:block; margin-top:.4rem; font-size:var(--t-eyebrow); padding:.2rem .5rem; }
+.matrix-cell { position:relative; background:var(--surface-1); min-width:11rem; }
+.matrix-cell.empty { color:var(--faint); text-align:center; font-size:var(--t-lg); background:oklch(17% 0.012 280); }
+.cell-pick { position:absolute; top:.25rem; right:.25rem; width:1.5rem; height:1.5rem; display:flex; align-items:center; justify-content:center; cursor:pointer; }   /* >=24px hit target (WCAG 2.5.8) */
+.cell-hook { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; color:var(--ink); text-decoration:none; line-height:1.3; padding-right:1.3rem; }
+.cell-hook:hover, .cell-hook:focus-visible { color:var(--accent-bright); text-decoration:underline; }
+.cell-meta { display:flex; flex-wrap:wrap; gap:.25rem; margin-top:.4rem; }
+.cell-meta .chip { font-size:var(--t-eyebrow); padding:.05rem .4rem; }
+.chip.cut { color:var(--ok); border-color:var(--ok); }
+.chip.shared { color:var(--faint); }
+.chip.mult { color:var(--accent-bright); border-color:var(--accent); }

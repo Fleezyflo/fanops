@@ -186,10 +186,11 @@ def create_app(cfg: Config) -> Flask:
         return v if v in views._STATE_TO_BUCKET else None
 
     def _view_arg():
-        # Phase 4: the Review view mode from ?view=. "account" -> the account-first PIVOT (one account's run as a
-        # flat list); anything else (incl. absent) -> the default moment-first card view (byte-identical). Mirrors
-        # _compact_arg — read from request.args so it rides the action/pagination URLs (R1).
-        return "account" if (request.args.get("view") or "").strip().lower() == "account" else None
+        # Slice 2: the Review view mode from ?view=. 'list' -> the legacy moment-first cards; 'account' -> the
+        # account-first PIVOT (one account's run as a flat list); 'matrix' (or absent/unknown) -> the DEFAULT
+        # moment×account matrix. Read from request.args so it rides the action/pagination URLs (R1).
+        v = (request.args.get("view") or "").strip().lower()
+        return v if v in ("account", "list", "matrix") else None
 
     def _with_active(counts, active):
         # The chip UNIVERSE = the accounts present in the (unfiltered) list, PLUS the active filter itself, so
@@ -269,9 +270,19 @@ def create_app(cfg: Config) -> Flask:
                                                source=source, state=state) if (view == "account" and account) else None)
         pivot = views.paginate(pivot_rows, _offset_arg()) if pivot_rows is not None else None
         page = views.paginate(cards, _offset_arg())
+        # Slice 2: the moment×account MATRIX is the DEFAULT awaiting view (view absent/'matrix'); ?view=list is the
+        # legacy-card escape, ?view=account the pivot. It renders ONE focused source — the ?source= filter doubles as
+        # the picker; with no pick we focus the newest (source_choices[0]). Built only when it'll actually show (not
+        # list, not the active pivot) and a source exists, so the empty install falls through to the guided card path.
+        choices = views.source_choices(led)
+        focused = source if source else (choices[0][0] if choices else None)
+        show_matrix = view != "list" and not (view == "account" and account)
+        matrix = (views.review_matrix(led, accounts, cfg, source_id=focused, now=now, state=(state or "awaiting"))
+                  if (show_matrix and focused) else None)
         ctx = dict(cards=page.items, page=page, tab="review", backend=cfg.poster_backend, counts=counts,
                    awaiting_total=counts["awaiting"], active_batch=batch, progress=progress, sources=sources,
                    pivot=(pivot.items if pivot is not None else None), pivot_page=pivot, result=result,
+                   matrix=matrix, source_choices=choices, focused_source=focused,
                    **_card_chips(cards_full, account))
         return ctx
 
@@ -344,6 +355,27 @@ def create_app(cfg: Config) -> Flask:
         # IS the filter — the button only shows under an active account filter. Re-render stays scoped (R1) so the
         # now-empty view reflects the approve.
         return _review_panel(actions.approve_account(cfg, _account_arg(), batch=_batch_arg(), source=_source_arg()))
+
+    @app.post("/posts/approve-moment/<moment_id>")
+    def do_approve_moment(moment_id):
+        # Matrix 'approve this whole moment-ROW': approve every awaiting post across all channels + clips of ONE
+        # moment in one click (source-implicit — a moment uniquely identifies its source). Re-render stays scoped (R1).
+        return _review_panel(actions.approve_moment(cfg, moment_id))
+
+    @app.post("/posts/approve-channel")
+    def do_approve_channel():
+        # Matrix 'approve this whole channel-COLUMN': approve ONE (handle × platform) channel within the focused
+        # source. The TARGET rides DISTINCT ch_* args so it never collides with the VIEW's account/source filter
+        # (which drive the scope-stable re-render). GUARD: the column contract is "this channel within THIS source",
+        # so a missing ch_account OR ch_source is REJECTED — never silently widened to approve_account's all-sources
+        # path (a stale/replayed/hand-crafted POST must not sweep a sibling source), and never a misleading 0-count
+        # success. The matrix template always bakes both, so the normal htmx UI never hits this guard.
+        ch_account = request.args.get("ch_account") or ""
+        ch_source = request.args.get("ch_source") or None
+        if not ch_account or not ch_source:
+            return _review_panel(actions.ActionResult(ok=False, error="Approve column needs a channel and its source."))
+        return _review_panel(actions.approve_account(cfg, ch_account,
+                             platform=(request.args.get("ch_platform") or None), source=ch_source))
 
     def _schedule_panel(result=None, *, full=False):
         led = Ledger.load(cfg); now = datetime.now(timezone.utc); account = _account_arg(); batch = _batch_arg()

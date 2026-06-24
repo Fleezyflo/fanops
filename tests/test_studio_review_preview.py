@@ -48,7 +48,7 @@ def _seed_personas(cfg, *, hooks=True, two_clips=False):
 
 def test_card_renders_per_account_media(tmp_path):
     cfg = Config(root=tmp_path); _seed_personas(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=list").data.decode()
     # each account's OWN video is addressable in the card (not just one shared /clips/{id})
     assert "/media/p_mark" in html and "/media/p_perc" in html
     # each burned hook text is shown so the operator can compare personas
@@ -56,18 +56,18 @@ def test_card_renders_per_account_media(tmp_path):
 
 def test_card_degrades_when_no_variant(tmp_path):
     cfg = Config(root=tmp_path); _seed_personas(cfg, hooks=False)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=list").data.decode()
     assert "/media/p_mark" in html and "/media/p_perc" in html   # still per-post (serves base clip), no crash
     assert "WATCH THE CRAFT" not in html                          # no hook line when nothing was burned
 
 def test_preview_tabs_unique_per_card(tmp_path):
     cfg = Config(root=tmp_path); _seed_personas(cfg, two_clips=True)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=list").data.decode()
     assert "preview-clip_1" in html and "preview-clip_2" in html  # per-card radio group name -> no cross-toggle
 
 def test_preview_tab_a11y(tmp_path):
     cfg = Config(root=tmp_path); _seed_personas(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=list").data.decode()
     # each account tab carries an accessible name referencing the account (aria-label or visible label text)
     assert "markmakmouly" in html and "perca.late" in html
     assert 'aria-label="show markmakmouly' in html or 'aria-label="preview markmakmouly' in html
@@ -91,7 +91,7 @@ def test_card_shows_per_account_length_cut_and_framing(tmp_path):
     led.add_post(Post(id="p_long", parent_id="clip_1", account="@long", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.awaiting_approval, render_id="r1", clip_profile="long",
                       scheduled_time=_z(NOW + timedelta(hours=5)))); led.save()
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=list").data.decode()
     assert "28–45s" in html                                    # the long band length label
     assert "a real per-account cut" in html                    # the cut chip (title) — genuine per-account render
     assert "vertical crop framing" in html and ">top<" in html  # the pinned framing chip

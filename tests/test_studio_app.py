@@ -310,7 +310,7 @@ def test_review_renders_removed_hook_badge(tmp_path, monkeypatch):
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
-    r = _client(cfg).get("/review")
+    r = _client(cfg).get("/review?view=list")
     assert r.status_code == 200
     assert b"hook removed" in r.data and b"made it and lost everything" in r.data
 
@@ -333,7 +333,7 @@ def test_review_renders_both_hook_choice_buttons(tmp_path, monkeypatch):
     # slice 2: the removed-hook card offers BOTH one-click choices.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")   # M3d: the restore choice is OFF-mode only (hidden when ON)
     cfg = Config(root=tmp_path); _seed_removed_hook(cfg)
-    r = _client(cfg).get("/review")
+    r = _client(cfg).get("/review?view=list")
     assert r.status_code == 200
     assert b"Approve with hook" in r.data and b"Approve as-is" in r.data
 
@@ -374,7 +374,7 @@ def _seed_awaiting(cfg, tmp_path, *, pid="p_aw"):
 
 def test_review_renders_suggestion_and_clear_action(tmp_path):
     cfg = Config(root=tmp_path); _seed_awaiting(cfg, tmp_path)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=list").data.decode()
     assert "/clear/p_aw" in html                              # Clear-time form action for the editable surface
     assert "Suggested" in html                                # the suggestion hint is shown
 

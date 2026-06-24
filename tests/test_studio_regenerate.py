@@ -137,5 +137,5 @@ def test_review_card_renders_regenerate_button(tmp_path):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path); _seed(cfg, state=PostState.awaiting_approval)
     app = create_app(cfg); app.config.update(TESTING=True)
-    r = app.test_client().get("/review")
+    r = app.test_client().get("/review?view=list")
     assert r.status_code == 200 and b"Regenerate" in r.data
