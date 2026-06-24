@@ -153,7 +153,10 @@ def test_readonly_past_row_has_no_readiness(tmp_path):
 # ── route renders both the ready chip and the why-string ───────────────────────────────────────────
 def test_schedule_route_shows_ready_and_why(tmp_path):
     cfg = Config(root=tmp_path)
-    _led_with(cfg, clip_state=ClipState.queued, post_over={"scheduled_time": FUTURE})
+    # the route reads REAL wall-clock now (no now injection), so seed a future RELATIVE to real now — the
+    # fixed module-level FUTURE time-bombs once wall-clock passes it (row stops being editable -> no chip).
+    route_future = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+    _led_with(cfg, clip_state=ClipState.queued, post_over={"scheduled_time": route_future})
     html = _client(cfg).get("/schedule").data.decode()
     assert "schedule-ready" in html                              # the readiness chip rendered
     assert "lead" in html.lower()                                # the suggested-time rationale rendered
