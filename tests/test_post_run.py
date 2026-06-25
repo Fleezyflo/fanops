@@ -409,3 +409,19 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     assert sent["media_urls"] == ["https://cdn.blotato.test/v.mp4"]    # the poster sees https, never file://
     assert led.posts["pv"].media_urls == ["https://cdn.blotato.test/v.mp4"]  # persisted -> a retry never re-uploads
     assert led.posts["pv"].state is PostState.published
+
+
+def test_archive_published_is_owner_only_with_no_world_readable_window(tmp_path):
+    # L2 (audit): the published-post archive (operator handle + live permalink + creative) is written 0600
+    # ATOMICALLY (no write-then-chmod world-readable window) into a 0700 day-dir (not world-listable).
+    import stat
+    from fanops.post.run import _archive_published
+    cfg = Config(root=tmp_path)
+    post = Post(id="p_arch", parent_id="clip_1", account="@a", account_id="98432",
+                platform=Platform.instagram, caption="c", state=PostState.published,
+                created_at="2026-06-02T18:00:00Z", public_url="https://example/p")
+    _archive_published(cfg, post)
+    ap = cfg.published / "2026-06-02" / "p_arch.json"
+    assert ap.exists()
+    assert stat.S_IMODE(ap.stat().st_mode) == 0o600                  # owner-only file, created 0600 (no chmod window)
+    assert stat.S_IMODE(ap.parent.stat().st_mode) == 0o700          # owner-only day dir (not world-listable)

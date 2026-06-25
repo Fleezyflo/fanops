@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Clip, Moment, Source, Batch, ClipState, MomentState, Platform, Fmt
+from fanops.models import Clip, Moment, Source, Batch, ClipState, MomentState, Platform, Fmt, PostState
 from fanops.accounts import Accounts
 from fanops.crosspost import surface_time, crosspost_clips
 from fanops.ids import _hash
@@ -536,6 +536,53 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
     from fanops.ids import surface_key
     assert by_acct["@a"].variant_key == surface_key("@a", "instagram")
     assert by_acct["@b"].variant_key == surface_key("@b", "instagram")
+
+
+def test_recrosspost_rewrites_stale_hook_on_awaiting_post_only(tmp_path, monkeypatch, mocker):
+    # M2 (audit): the post id is content-addressed on (clip, surface), NOT the per-account hook, so a
+    # re-decision that changes this account's hook can't mint a superseding post — add_post's first-write-wins
+    # would keep a STALE hook and the operator would review/approve the old one. crosspost must rewrite the
+    # still-AWAITING post's variant_hook in place; a QUEUED/approved post must be left untouched.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped, hooks_by_persona={"@a": "HOOK A"}))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "c.mp4"; base.write_bytes(b"BASE")
+    clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
+    clip.meta_captions = {"@a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
+    led.add_clip(clip); led.save()
+
+    def _burn(base, out, hook, **kw):
+        Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_bytes(b"V"); return True
+    mocker.patch("fanops.overlay.burn_hook_only", side_effect=_burn)
+
+    def _run():
+        ld = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+        ld.save(); return ld
+
+    led = _run()
+    posts = list(led.posts.values())
+    assert len(posts) == 1 and posts[0].variant_hook == "HOOK A"
+    pid = posts[0].id
+
+    def _redecide(hook):                                          # a re-caption resets the clip + changes this account's hook
+        ld = Ledger.load(cfg)
+        ld.moments["mom_1"] = ld.moments["mom_1"].model_copy(update={"hooks_by_persona": {"@a": hook}})
+        ld.set_clip_state("clip_1", ClipState.captioned); ld.save()
+
+    _redecide("HOOK B"); led = _run()
+    assert len(led.posts) == 1                                    # SAME post (content-addressed) — not duplicated
+    assert led.posts[pid].variant_hook == "HOOK B"               # rewritten in place — never a stale hook
+
+    from fanops.studio.actions_approve import approve_posts       # now APPROVE, then re-decide -> queued must NOT change
+    approve_posts(cfg, [pid])
+    assert Ledger.load(cfg).posts[pid].state is PostState.queued
+    _redecide("HOOK C"); _run()
+    assert Ledger.load(cfg).posts[pid].variant_hook == "HOOK B"  # queued post keeps the approved hook (untouched)
 
 def test_crosspost_no_variant_when_disabled(tmp_path, monkeypatch, mocker):
     monkeypatch.delenv("FANOPS_CREATIVE_VARIATION", raising=False)   # OFF

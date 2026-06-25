@@ -57,14 +57,13 @@ def _adopt_render(led: Ledger, cfg: Config, post, plan, accts: Accounts) -> None
     if clip is None: return
     acct = _acct_for(accts, post.account)
     # rid is recomputed in-lock from the CURRENT variant_hook: if the hook changed between the warm snapshot
-    # and here, this rid won't match the warmed plan -> `plan is None`/stale -> the in-lock fallback renders
-    # the correct file (content-addressed, so the warmed stale file is simply orphaned, never adopted).
+    # and here, this rid won't match the warmed plan -> the post is left UN-materialized (M1: ffmpeg never runs
+    # under the flock), the spine skips it with a render_unavailable_skip_approve breadcrumb, and the next warm
+    # pass (a re-click) burns the correct file off the lock.
     rid, _wants, profile, _top = account_render_spec(cfg, clip=clip, hook=post.variant_hook, acct=acct)
     if led.get_render(rid) is None:
-        if plan is None or plan.render_id != rid:                    # no warm (race / fail-open / hook changed) -> render in-lock now
-            mom = led.moments.get(clip.parent_id)
-            src = led.sources.get(mom.parent_id) if mom is not None else None
-            plan = render_account_file(led, cfg, post=post, acct=acct, target_clip=clip, src=src)
+        if plan is None or plan.render_id != rid:                    # no usable warm (fail-open / race / hook changed)
+            return                                                   # M1: do NOT burn under the flock — leave it for the next warm pass
         led.add_render(Render(id=plan.render_id, clip_id=clip.id, account=post.account,
                               surface_key=surface_key(post.account, post.platform.value),
                               hook_text=post.variant_hook, path=plan.vpath, state=RenderState.rendered,
