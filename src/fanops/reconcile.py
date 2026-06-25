@@ -175,19 +175,22 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             # A single poll failure (e.g. a 404 on a not-yet-real fanops_ token) is NOT evidence the
             # post failed — it MAY be live. Honor the prime directive: never guess a post's fate.
             # Leave it parked (state untouched, NOT failed) and surface the reason for the digest;
-            # a later pass retries. Then move on so the next post still gets reconciled.
-            post.error_reason = f"reconcile poll error: {str(exc)[:200]}"
+            # a later pass retries. Then move on so the next post still gets reconciled. Immutable
+            # update (model_copy + dict reassignment), mirroring the ledger's own set_*_state pattern.
+            led.posts[post.id] = post.model_copy(update={"error_reason": f"reconcile poll error: {str(exc)[:200]}"})
             log("reconcile", post.id, "poll-error", err=str(exc)[:200])   # detail rides the log stream, not only the ledger
             continue
         status = (info.get("status") or "").lower()
         if status == "published":
-            post.state = PostState.published
-            post.public_url = safe_public_url(info.get("publicUrl")) or post.public_url   # M2: https-only or keep existing
-            post.error_reason = None                      # a transient poll-error reason must not survive a successful publish
+            led.posts[post.id] = post.model_copy(update={
+                "state": PostState.published,
+                "public_url": safe_public_url(info.get("publicUrl")) or post.public_url,   # M2: https-only or keep existing
+                "error_reason": None})                    # a transient poll-error reason must not survive a successful publish
             log("reconcile", post.id, "published")
         elif status == "failed":
-            post.state = PostState.failed
-            post.error_reason = f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"
+            led.posts[post.id] = post.model_copy(update={
+                "state": PostState.failed,
+                "error_reason": f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"})
             log("reconcile", post.id, "failed")
         else:
             # in-progress / scheduled / unknown -> leave parked (never guess the fate); a later pass retries.
@@ -197,7 +200,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             age = _parked_age(post, now)
             if age is not None and age > _STUCK_AFTER:
                 hrs = int(age.total_seconds() // 3600)
-                post.error_reason = (f"stuck {status or 'unknown'} ~{hrs}h past schedule — check the channel "
-                                     "(publish may have silently failed)")
+                led.posts[post.id] = post.model_copy(update={"error_reason": (
+                    f"stuck {status or 'unknown'} ~{hrs}h past schedule — check the channel "
+                    "(publish may have silently failed)")})
             log("reconcile", post.id, f"left: {status or 'unknown'}")
     return led

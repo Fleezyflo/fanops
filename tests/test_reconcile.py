@@ -33,6 +33,20 @@ def test_reconcile_promotes_published(tmp_path):
     assert led.posts["p1"].public_url == "https://ig.com/p/1"
 
 
+def test_reconcile_replaces_post_immutably_not_in_place(tmp_path):
+    # immutability (the user's CRITICAL principle + the ledger's own set_*_state pattern): reconcile_posts
+    # REPLACES led.posts[id] with a model_copy — it never mutates the existing Post object in place, so it is
+    # safe even if Post is later frozen. The ledger holds the new object; the original reference is untouched.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "p1", PostState.needs_reconcile, sub="sub_1")
+    orig = led.posts["p1"]
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "https://ig.com/p/1"})
+    assert led.posts["p1"].state is PostState.published          # the ledger now holds the UPDATED post
+    assert led.posts["p1"] is not orig                            # ...as a NEW object (immutable update)
+    assert orig.state is PostState.needs_reconcile                # the ORIGINAL object is untouched
+    assert orig.public_url is None
+
+
 def test_reconcile_stamps_stuck_breadcrumb_past_schedule(tmp_path):
     # H4: a post stuck 'scheduled'/unknown long past its schedule gets an age breadcrumb in error_reason so
     # it surfaces (instead of silently looping). State is NOT changed — the post's fate is never guessed.
