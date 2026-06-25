@@ -15,8 +15,8 @@ def _write(cfg, raw):
     cfg.ledger_path.write_text(json.dumps(raw))
 
 
-def test_schema_version_is_eight():
-    assert SCHEMA_VERSION == 8
+def test_schema_version_is_nine():
+    assert SCHEMA_VERSION == 9
 
 
 def test_migration_v2_to_v3_round_trip(tmp_path):

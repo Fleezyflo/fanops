@@ -9,7 +9,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
-from fanops.models import (Source, Moment, Clip, Post, Render, SelectionFact, StitchPlan, StitchState, Batch,
+from fanops.models import (Source, Moment, Clip, Post, Render, SelectionFact, AccountSelection,
+                           account_selection_id, StitchPlan, StitchState, Batch,
                            SourceState, MomentState, ClipState, PostState)
 
 
@@ -75,7 +76,7 @@ def _migrate_v4_metrics_series(raw: dict) -> dict:
     return out
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
 # v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
@@ -92,6 +93,10 @@ SCHEMA_VERSION = 8
 # v7 -> v8 (P3 shipped-provenance): the 2 new Render scalars (hook_source, cut_seconds) ride pydantic defaults
 # on the Render model — NO top-level map to inject, NO row backfill. IDENTITY stamp (the v0->v1 baseline shape);
 # registered so _migrate's hop-chain has no gap. Old renders load with hook_source=none / cut_seconds=None.
+# v8 -> v9 (RF1 account-first differentiation): inject the new top-level account_selections map (additive; the
+# durable, account-owned crosspost-gate input — (source, account) -> moment_ids + method, replacing the
+# non-durable Moment.affinities filter-tag). NO row backfill in Task 1 (scaffold); the decided default for
+# legacy affinities lands in Task 4. Old ledgers load with account_selections={} — same injection shape as v5/v6/v7.
 # Additive + idempotent + never-raising. The ledger is NEVER wiped — every migration is copy-on-write.
 _MIGRATIONS = {1: lambda raw: raw,
                2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})},
@@ -100,7 +105,8 @@ _MIGRATIONS = {1: lambda raw: raw,
                5: lambda raw: {**raw, "batches": raw.get("batches", {})},
                6: lambda raw: {**raw, "renders": raw.get("renders", {})},
                7: lambda raw: {**raw, "selection_facts": raw.get("selection_facts", {})},
-               8: lambda raw: raw}
+               8: lambda raw: raw,
+               9: lambda raw: {**raw, "account_selections": raw.get("account_selections", {})}}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
@@ -209,6 +215,10 @@ class Ledger:
                                               # creative_variation. Content-addressed by (clip_id, hook_text).
         self.selection_facts: dict[str, SelectionFact] = {}   # M4: durable per-(moment, account) selection audit
                                               # (7th id->unit map; additive). Empty until casting writes one (M4b).
+        self.account_selections: dict[str, AccountSelection] = {}   # RF1: the durable, account-owned crosspost-gate
+                                              # input (8th id->unit map; additive). One-per-(source, account),
+                                              # content-addressed. Empty until casting writes one; the gate falls
+                                              # back to Moment.affinities for a source that has none (pre-v9).
 
     @classmethod
     def load(cls, cfg: Config) -> "Ledger":
@@ -236,6 +246,7 @@ class Ledger:
                 led.batches = {k: Batch(**v) for k, v in raw.get("batches", {}).items()}
                 led.renders = {k: Render(**v) for k, v in raw.get("renders", {}).items()}
                 led.selection_facts = {k: SelectionFact(**v) for k, v in raw.get("selection_facts", {}).items()}
+                led.account_selections = {k: AccountSelection(**v) for k, v in raw.get("account_selections", {}).items()}
             except ControlFileError:
                 raise                                  # _NewerSchema / _migrate gap: pass through, unreworded
             except Exception as e:
@@ -289,6 +300,7 @@ class Ledger:
             "batches": {k: v.model_dump() for k, v in self.batches.items()},
             "renders": {k: v.model_dump() for k, v in self.renders.items()},
             "selection_facts": {k: v.model_dump() for k, v in self.selection_facts.items()},
+            "account_selections": {k: v.model_dump() for k, v in self.account_selections.items()},
         }
         self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
@@ -315,6 +327,18 @@ class Ledger:
     def get_render(self, rid: str): return self.renders.get(rid)
     def add_selection_fact(self, f: SelectionFact) -> None: self.selection_facts[f.id] = f   # M4: OVERWRITE — a re-cast updates the why (latest selection wins; NOT render's content-dedup)
     def get_selection_fact(self, fid: str): return self.selection_facts.get(fid)
+    def add_account_selection(self, s: AccountSelection) -> None: self.account_selections[s.id] = s   # RF1: OVERWRITE — one-per-(source, account); a re-cast replaces (latest wins)
+    def account_selection_for(self, source_id: str, account: str):
+        return self.account_selections.get(account_selection_id(source_id, account))
+    def selections_of_source(self, source_id: str) -> list[AccountSelection]:
+        return [s for s in self.account_selections.values() if s.source_id == source_id]
+    def moments_for_account(self, source_id: str, account: str) -> set:
+        # "which specific moments did this account get?" — for the Review READ-MODEL (Task 5), NOT the gate.
+        # WARNING (Task 3): do NOT use this as the crosspost gate predicate. It returns set() for BOTH "no
+        # selection written" (gate must fall back to affinities) AND fan_all_default (gate must admit ALL) —
+        # two opposite decisions. The gate calls account_selection_for() and branches on sel.method instead.
+        sel = self.account_selection_for(source_id, account)
+        return set(sel.moment_ids) if sel else set()
 
     # ---- typed state setters (FIX F65 — no cross-unit scan) ----
     # ECC fix #10: immutable update (model_copy + dict reassignment) instead of in-place `.state =`.

@@ -6,8 +6,8 @@ from __future__ import annotations
 import json, math
 from enum import Enum
 from typing import Optional, Literal
-from pydantic import BaseModel, Field, field_validator
-from fanops.ids import content_id
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from fanops.ids import content_id, child_id
 
 
 class SourceState(str, Enum):
@@ -131,6 +131,9 @@ class Source(BaseModel):
     transcript: Optional[list[dict]] = None     # None = not transcribed; [] = ran, no speech
     signal_peaks: Optional[list[dict]] = None
     error_reason: Optional[str] = None
+    degraded_reason: Optional[str] = None       # RF1: the single VISIBLE-degradation channel. Set when a
+                                                # fail-open path (casting probe error) lands the source on the
+                                                # fan-to-all fallback — so a silent collapse is never invisible.
     meta: dict = Field(default_factory=dict)
     created_at: Optional[str] = None            # content-lifecycle: ISO-8601 UTC ingest day, set at
                                                 # _catalogue_file / rebuild discovered. None on old ledgers ->
@@ -196,7 +199,9 @@ class Clip(BaseModel):
 class Post(BaseModel):
     id: str
     parent_id: str                              # clip id
-    state: PostState = PostState.queued
+    state: PostState = PostState.awaiting_approval   # RF1: BORN awaiting_approval (no-auto-publish invariant);
+                                                # the prior `queued` default inverted the human gate — a Post()
+                                                # with no explicit state was publishable on the next publish_due.
     account: str                                # human handle, e.g. "@a"
     account_id: str                             # Blotato NUMERIC id (FIX F06)
     platform: Platform
@@ -284,6 +289,10 @@ class Render(BaseModel):
 class SelectionMethod(str, Enum):
     heuristic = "heuristic"   # persona_fit_score (token overlap + signal) picked it
     llm = "llm"               # the moment_casting LLM gate selected it
+    operator = "operator"     # RF1: a human override (Studio cast action) selected it
+    fan_all_default = "fan_all_default"   # RF1: an active account got NO pick -> ships fan-to-all, LABELLED
+    pending = "pending"       # RF1: casting opened a gate but hasn't converged -> hold (deny), never fan
+    migrated = "migrated"     # RF1: lifted from a pre-v9 Moment.affinities row with no corroborating fact
 
 
 class SelectionFact(BaseModel):
@@ -308,6 +317,51 @@ class SelectionFact(BaseModel):
     source_id: Optional[str] = None             # lineage (the moment's source) — direct per-account/source audit
     batch_id: Optional[str] = None              # lineage (the ingest batch) — direct per-account/batch audit
     created_at: Optional[str] = None            # wall-clock ISO-Z when cast (audit timestamp); None when untimed/legacy
+
+
+# ---- RF1 (account-first differentiation): the durable, account-owned selection entity ----
+# The CHOSEN methods carry specific picks (moment_ids non-empty); the TAG methods carry meaning in the
+# method itself (moment_ids empty). Module-level frozenset (NOT a class attr — pydantic v2 would intercept a
+# leading-underscore class attr as a per-instance PrivateAttr; this keeps it a true shared constant).
+_ACCTSEL_CHOSEN_METHODS = frozenset({SelectionMethod.llm, SelectionMethod.heuristic,
+                                     SelectionMethod.operator, SelectionMethod.migrated})
+
+class AccountSelection(BaseModel):
+    # The crosspost gate's NEW input, replacing the non-durable Moment.affinities filter-tag. One-per-
+    # (source, account): content-addressed child_id("acctsel", source_id, account) so a re-cast OVERWRITES
+    # (the CURRENT selection, not a growing history — mirrors add_selection_fact, NOT render's first-write dedup).
+    # `method` is the SUM-TYPE DISCRIMINATOR — it dissolves the affinities empty-list overload (was: [] meant
+    # "not-cast" / "cast-to-nobody" / "fan-to-all" indistinguishably). The @model_validator BINDS meaning to the
+    # tag so moment_ids==[] is NEVER ambiguous: a chosen method (llm/heuristic/operator/migrated) MUST carry
+    # specific moment_ids; a tag-carried method (fan_all_default/pending) MUST be empty (the meaning is the tag).
+    # Additive top-level `account_selections` map (v8->v9); old ledgers load with {} — OFF/baseline byte-identical.
+    # FROZEN: an AccountSelection is never mutated in place — a re-cast OVERWRITES the whole record via
+    # add_account_selection (a freshly-constructed, re-validated object). frozen=True makes the direct-mutation
+    # bypass (`sel.moment_ids = []`) raise. NB the invariant is enforced on EVERY legitimate creation path
+    # (constructor, model_validate, ledger load); the ONE residual is model_copy(update=...), which pydantic v2
+    # leaves unvalidated by design — so no code updates this entity via model_copy (overwrite-with-fresh only).
+    model_config = ConfigDict(frozen=True)
+    id: str                                     # child_id("acctsel", source_id, account)
+    source_id: str                              # the source these picks belong to (the gate keys on it)
+    account: str                                # the handle this selection is FOR
+    moment_ids: list[str] = Field(default_factory=list)   # the specific moments selected; [] iff a tag-method
+    method: SelectionMethod = SelectionMethod.fan_all_default   # the discriminator (validated against moment_ids)
+    batch_id: Optional[str] = None              # lineage (the ingest batch) — direct per-account/batch audit
+    created_at: Optional[str] = None            # wall-clock ISO-Z when cast; None when legacy/untimed
+
+    @model_validator(mode="after")
+    def _enforce_sum_type(self) -> "AccountSelection":
+        chosen = self.method in _ACCTSEL_CHOSEN_METHODS
+        if chosen and not self.moment_ids:
+            raise ValueError(f"AccountSelection method={self.method.value} is a CHOSEN selection but carries no moment_ids")
+        if not chosen and self.moment_ids:
+            raise ValueError(f"AccountSelection method={self.method.value} is a TAG selection but carries moment_ids {self.moment_ids}")
+        return self
+
+def account_selection_id(source_id: str, account: str) -> str:
+    """Content-addressed one-per-(source, account) id — a re-cast for the same pair overwrites the prior
+    selection (latest wins). Deterministic across processes (ids.child_id)."""
+    return child_id("acctsel", source_id, account)
 
 
 # ---- M3 (structural-hooks): the stitch_plan entity — the operator-approval spine ----
