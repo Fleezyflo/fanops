@@ -130,6 +130,8 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     if not reconcilable:
         return {"needs_reconcile": len(snapshot.posts_in_state(PostState.needs_reconcile)),
                 "published": len(snapshot.posts_in_state(PostState.published))}
+    from fanops.postiz_lifecycle import ensure_up        # reconcilable>0: bring the local Postiz stack up to poll
+    ensure_up(cfg)
     results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
     for p in reconcilable:
         try:

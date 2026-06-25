@@ -202,6 +202,9 @@ def publish_due(cfg: Config, *, now: str | None = None) -> dict:
     accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
     led = Ledger.load(cfg)                             # lock-free snapshot of the due queue
     due = [post for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
+    if due:                                            # on-demand: start the local Postiz stack ONLY when there is work
+        from fanops.postiz_lifecycle import ensure_up
+        ensure_up(cfg)
     log = get_logger(cfg)
     published = no_provider = 0
     for post in due:
@@ -221,6 +224,8 @@ def publish_post(cfg: Config, post_id: str) -> str | None:
     to a single post. A missing/non-queued post is a no-op (returns None). A FATAL AuthError propagates
     (halt), matching publish_due. Returns the final post-state value (e.g. 'published'/'failed') or
     None when nothing was claimable."""
+    from fanops.postiz_lifecycle import ensure_up
+    ensure_up(cfg)                                     # operator clicked Publish-now: bring the local stack up
     post = Ledger.load(cfg).posts.get(post_id)         # resolve the per-channel provider for this one post
     if post is None:
         return None                                    # no such post -> nothing to claim
