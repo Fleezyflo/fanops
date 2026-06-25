@@ -14,8 +14,8 @@
   {# Slice 2: three-way View toggle — Matrix (default moment×account grid) · Moments (legacy cards, ?view=list) ·
      By account (the pivot). active_view in (none,'matrix') => Matrix is active. GET links; ride the URL. #}
   <div class="meta view-toggle pivot-toggle">View:
-    {% if active_view in (none, 'matrix') %}<span class="button active" aria-current="page">Matrix</span>{% else %}<a class="button" href="{{ url_for('review', view='matrix', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Matrix</a>{% endif %}
-    {% if active_view == 'list' %}<span class="button active" aria-current="page">Moments</span>{% else %}<a class="button" href="{{ url_for('review', view='list', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Moments</a>{% endif %}{{ term('moment') }}
+    {% if active_view == 'matrix' %}<span class="button active" aria-current="page">Matrix</span>{% else %}<a class="button" href="{{ url_for('review', view='matrix', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Matrix</a>{% endif %}
+    {% if active_view in (none, 'list') %}<span class="button active" aria-current="page">Moments</span>{% else %}<a class="button" href="{{ url_for('review', view='list', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Moments</a>{% endif %}{{ term('moment') }}
     {% if active_view == 'account' %}<span class="button active" aria-current="page">By account</span>{% else %}<a class="button" href="{{ url_for('review', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">By account</a>{% endif %}{{ term('surface') }}
   </div>
   {% include "_account_filter.html" %}

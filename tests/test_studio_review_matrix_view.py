@@ -1,6 +1,7 @@
 # tests/test_studio_review_matrix_view.py — Slice 2b: the moment×account matrix wired into Review.
-# Route-level contract: the matrix is the DEFAULT awaiting view; ?view=list keeps the legacy cards; ?view=account
-# keeps the pivot. Column-approve is CHANNEL-scoped (handle×platform×source) and row-approve is moment-scoped.
+# Route-level contract: the video-bearing CARDS are the DEFAULT awaiting view (the operator must SEE the clip to
+# approve); the matrix is OPT-IN (?view=matrix) because it goes structurally sparse under per-account casting;
+# ?view=account keeps the pivot. Column-approve is CHANNEL-scoped (handle×platform×source), row-approve moment-scoped.
 import json
 import pytest
 pytest.importorskip("flask")
@@ -41,21 +42,28 @@ def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
-def test_review_defaults_to_matrix(tmp_path):
+def test_review_defaults_to_cards_with_video(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/review").data.decode()
-    assert 'class="review-matrix"' in html and "<table" in html      # default view is the matrix, a REAL table
+    assert 'class="review-matrix"' not in html                       # the sparse matrix is no longer the default
+    assert "<video" in html                                          # the master clip player is on the DEFAULT view — approve what you can SEE
+    assert 'class="button active" aria-current="page">Moments' in html  # the cards (Moments) toggle is the active default
+
+def test_matrix_view_renders_table(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    html = _client(cfg).get("/review?view=matrix").data.decode()
+    assert 'class="review-matrix"' in html and "<table" in html      # opt-in matrix is a REAL table
     assert 'scope="col"' in html and 'scope="row"' in html           # channel cols + moment rows are header cells
     assert "0–7" in html or "0–7" in html                       # m1 window present as a row head
 
 def test_matrix_focuses_newest_source_by_default(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=matrix").data.decode()
     assert "know-time.mp4" in html                                   # src1 (newest) is focused, not src0/older.mp4
 
 def test_matrix_uncast_channel_renders_dash(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=matrix").data.decode()
     assert "—" in html                                               # m1 × @b·tiktok is uncast → em-dash cell
 
 def test_view_list_renders_legacy_cards_not_matrix(tmp_path):
@@ -71,19 +79,19 @@ def test_view_account_renders_pivot_not_matrix(tmp_path):
 
 def test_three_way_view_toggle_matrix_active(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=matrix").data.decode()
     assert "view=list" in html and "view=account" in html            # the toggle offers all three modes
-    assert 'class="button active" aria-current="page">Matrix' in html  # Matrix is the active default
+    assert 'class="button active" aria-current="page">Matrix' in html  # Matrix is active when explicitly selected
 
 def test_matrix_column_approve_is_channel_scoped(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=matrix").data.decode()
     # the column-approve button must carry the CHANNEL target (platform + source) so it never clears a sibling channel/source
     assert "approve-channel" in html and "ch_platform=instagram" in html and "ch_source=src1" in html
 
 def test_matrix_row_approve_targets_moment(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=matrix").data.decode()
     assert "/posts/approve-moment/m1" in html                        # row-approve hits the moment route
 
 def test_approve_moment_route_promotes_row(tmp_path):
@@ -121,7 +129,7 @@ def test_approve_channel_missing_account_is_rejected(tmp_path):
 
 def test_matrix_source_picker_lists_all_sources(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?view=matrix").data.decode()
     assert "source=src1" in html and "source=src0" in html           # the picker can switch the focused source
 
 def test_review_empty_shows_teaching_state(tmp_path):

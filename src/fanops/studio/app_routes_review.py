@@ -41,7 +41,11 @@ def register_review_routes(app, cfg):
         # list, not the active pivot) and a source exists, so the empty install falls through to the guided card path.
         choices = views.source_choices(led)
         focused = source if source else (choices[0][0] if choices else None)
-        show_matrix = view != "list" and not (view == "account" and account)
+        # The video-bearing CARDS (master clip player + per-account caption + the per-surface editor) are now
+        # the DEFAULT awaiting view — the operator must SEE the clip to approve it. The moment×account matrix
+        # is opt-in (?view=matrix): under per-account casting each account gets a DISJOINT moment subset, so the
+        # grid goes structurally sparse (mostly '—') exactly when casting is doing its job.
+        show_matrix = view == "matrix"
         matrix = (views.review_matrix(led, accounts, cfg, source_id=focused, now=now, state=(state or "awaiting"))
                   if (show_matrix and focused) else None)
         ctx = dict(cards=page.items, page=page, tab="review", backend=cfg.poster_backend, counts=counts,
