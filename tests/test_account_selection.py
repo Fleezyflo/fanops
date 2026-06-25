@@ -123,3 +123,78 @@ def test_selections_of_source_and_moments_for_account(tmp_path):
     assert led2.moments_for_account("src_a", "@a") == {"m1", "m2"}
     assert led2.moments_for_account("src_a", "@b") == set()        # fan_all_default carries no specific ids
     assert led2.account_selection_for("src_a", "@nobody") is None
+
+
+# ---- Task 2: ingest_moment_casting writes a durable AccountSelection per ACTIVE account ----
+import json as _json                                                                    # noqa: E402
+from fanops.models import Source, Moment, MomentState, MomentCastingDecision            # noqa: E402
+from fanops.accounts import Accounts                                                    # noqa: E402
+from fanops.agentstep import latest_request_id, response_path                           # noqa: E402
+from fanops.casting import request_moment_casting, ingest_moment_casting                # noqa: E402
+
+
+def _acct(handle, persona="x", aid="1"):
+    return {"handle": handle, "account_id": aid, "platforms": ["instagram"], "status": "active", "persona": persona}
+
+def _seed_casting(cfg, accts, moments=("m0", "m1", "m2")):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(_json.dumps({"accounts": accts}))
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    for mid in moments:
+        led.add_moment(Moment(id=mid, parent_id="src_1", content_token=mid, start=0, end=7,
+                              reason="r", signal_score=1.0, state=MomentState.decided))
+    led.save()
+    return Ledger.load(cfg)
+
+def _respond_ingest(led, cfg, selections):
+    rid = latest_request_id(cfg, "moment_casting", "src_1")
+    response_path(cfg, "moment_casting", "src_1").write_text(
+        MomentCastingDecision(request_id=rid, selections=selections).model_dump_json())
+    return ingest_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+
+
+def test_ingest_writes_llm_selection_for_picked_accounts(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _seed_casting(cfg, [_acct("@a", "guitar"), _acct("@b", "drums", aid="2")])
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    led = _respond_ingest(led, cfg, {"@a": ["m0", "m1"], "@b": ["m2"]})
+    sa = led.account_selection_for("src_1", "@a")
+    assert sa is not None and sa.moment_ids == ["m0", "m1"] and sa.method == SelectionMethod.llm
+    sb = led.account_selection_for("src_1", "@b")
+    assert sb is not None and sb.moment_ids == ["m2"] and sb.method == SelectionMethod.llm
+
+
+def test_ingest_writes_fan_all_default_for_unpicked_active_account(tmp_path):
+    # an ACTIVE account the LLM omitted ships fan-to-all — but LABELLED (fan_all_default), never silently.
+    # per the sum-type, fan_all_default carries NO moment_ids (the meaning is the tag; Task 3's gate admits all).
+    cfg = Config(root=tmp_path)
+    led = _seed_casting(cfg, [_acct("@a", "guitar"), _acct("@c", "bass", aid="3")])
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    led = _respond_ingest(led, cfg, {"@a": ["m0"]})          # @c got nothing
+    sc = led.account_selection_for("src_1", "@c")
+    assert sc is not None and sc.method == SelectionMethod.fan_all_default and sc.moment_ids == []
+
+
+def test_ingest_selection_persists_and_carries_lineage(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _seed_casting(cfg, [_acct("@a", "guitar")])
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    led = _respond_ingest(led, cfg, {"@a": ["m0", "m1"]})
+    led.save()
+    reloaded = Ledger.load(cfg)
+    sa = reloaded.account_selection_for("src_1", "@a")
+    assert sa is not None and sa.moment_ids == ["m0", "m1"]
+    assert sa.source_id == "src_1" and sa.created_at is not None
+
+
+def test_ingest_casting_error_sets_degraded_reason(tmp_path, monkeypatch):
+    # the fail-open except must no longer swallow silently — it stamps the VISIBLE degradation channel.
+    cfg = Config(root=tmp_path)
+    led = _seed_casting(cfg, [_acct("@a", "guitar")])
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    import fanops.casting as casting_mod
+    monkeypatch.setattr(casting_mod, "read_response", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    led = ingest_moment_casting(led, cfg, "src_1", Accounts.load(cfg))   # fail-open: still returns led
+    src = led.sources["src_1"]
+    assert src.degraded_reason and "casting" in src.degraded_reason.lower()

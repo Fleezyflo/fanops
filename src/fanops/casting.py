@@ -8,8 +8,10 @@
 # shared — per-account differentiation is the existing cheap hook overlay).
 # C1-safe: reads persona + signal_score, writes ONLY affinities — never touches amplify/retire/cascade/track.
 from __future__ import annotations
+import contextlib
 from datetime import datetime, timezone
-from fanops.models import MomentState, MomentCastingRequest, MomentCastingDecision, SelectionFact, SelectionMethod
+from fanops.models import (MomentState, MomentCastingRequest, MomentCastingDecision, SelectionFact,
+                           SelectionMethod, AccountSelection, account_selection_id)
 from fanops.variant_transfer import _persona_tokens
 from fanops.personas import casting_directive
 from fanops.agentstep import write_request, read_response, latest_request_id
@@ -142,10 +144,31 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
             led.moments[mid].affinities = sorted(set(led.moments[mid].affinities) | handles)
             for handle in handles:                        # M4: durable fact per LLM-selected (account, moment) —
                 _record_fact(led, led.moments[mid], handle, method=SelectionMethod.llm)   # no heuristic score/rank
+        # RF1: write a DURABLE, account-owned AccountSelection per ACTIVE account — the un-collapsible,
+        # always-visible crosspost-gate input (Task 3 reads it, replacing the non-durable affinities tag). A
+        # picked account -> llm with its moment_ids; an active account the selector OMITTED -> fan_all_default
+        # (it still ships fan-to-all, but LABELLED — never the old silent empty-affinities collapse). Per the
+        # sum-type, fan_all_default carries NO moment_ids (the gate admits-all on the method, not by enumeration).
+        src = led.sources.get(source_id)
+        bid = getattr(src, "batch_id", None)
+        now = iso_z(datetime.now(timezone.utc))
+        per_account: dict = {}
+        for mid, handles in add.items():
+            for h in handles: per_account.setdefault(h, []).append(mid)
+        for h in sorted(active):
+            picked = sorted(per_account.get(h, []))
+            led.add_account_selection(
+                AccountSelection(id=account_selection_id(source_id, h), source_id=source_id, account=h,
+                                 moment_ids=picked, method=SelectionMethod.llm, batch_id=bid, created_at=now)
+                if picked else
+                AccountSelection(id=account_selection_id(source_id, h), source_id=source_id, account=h,
+                                 moment_ids=[], method=SelectionMethod.fan_all_default, batch_id=bid, created_at=now))
         return led
     except Exception as e:
-        try: get_logger(cfg)("casting", source_id, "error", err=str(e)[:120])
-        except Exception: pass
+        with contextlib.suppress(Exception): get_logger(cfg)("casting", source_id, "error", err=str(e)[:120])
+        src = led.sources.get(source_id)          # RF1: route the fail-open through the VISIBLE degradation channel
+        if src is not None:                        # (Source.degraded_reason) — fail-open preserved, but never silent
+            led.sources[source_id] = src.model_copy(update={"degraded_reason": f"casting failed: {str(e)[:120]}"})
         return led
 
 
