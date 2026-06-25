@@ -460,6 +460,29 @@ def test_golive_validate_route_runs(tmp_path, monkeypatch):
     r = app.test_client().post("/golive/validate", data={"integration_id": "ig_1", "confirm": "1"})
     assert r.status_code == 200 and b"validated" in r.data.lower()
 
+def test_post_golive_live_confirm_requires_exactly_one(tmp_path, monkeypatch):
+    # opsec follow-up: the live switch must treat ONLY confirm="1" (the checkbox value) as confirmed,
+    # not any truthy string — mirrors the map/adopt routes (== "1"). A crafted confirm="false" must NOT confirm.
+    from fanops.studio.actions_common import ActionResult
+    cfg = _clean(monkeypatch, tmp_path)
+    seen = {}
+    def _spy(c, *, confirmed): seen["confirmed"] = confirmed; return ActionResult(ok=True, detail={"live": confirmed})
+    monkeypatch.setattr(golive, "go_live", _spy)
+    _client(cfg).post("/golive/live", data={"confirm": "false"})
+    assert seen["confirmed"] is False              # "false" != "1" -> not confirmed (was bool("false")=True)
+    _client(cfg).post("/golive/live", data={"confirm": "1"})
+    assert seen["confirmed"] is True               # the real checkbox value still confirms
+
+def test_post_golive_validate_confirm_requires_exactly_one(tmp_path, monkeypatch):
+    # same hardening on the validate route (it also gated on bool(confirm)).
+    from fanops.studio.actions_common import ActionResult
+    cfg = _clean(monkeypatch, tmp_path)
+    seen = {}
+    def _spy(c, integration_id=None, confirmed=False): seen["confirmed"] = confirmed; return ActionResult(ok=True, detail={})
+    monkeypatch.setattr(golive, "validate_learning", _spy)
+    _client(cfg).post("/golive/validate", data={"integration_id": "ig_1", "confirm": "yes"})
+    assert seen["confirmed"] is False
+
 def test_golive_panel_renders_validate_select_when_live_postiz(tmp_path, monkeypatch):
     # M3 panel: a live-postiz, not-yet-validated tab renders the "5 · Validate learning" step with the
     # operator-selectable integration <select> (never auto-picked) + the danger-styled confirm form.

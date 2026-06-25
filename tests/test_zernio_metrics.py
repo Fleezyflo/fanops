@@ -91,14 +91,17 @@ def test_metrics_client_401_raises_autherror_halts(tmp_path, monkeypatch, mocker
         ZernioMetricsClient(cfg, submission_ids=["zid"]).list_posts("30d")
     assert "sk_test" not in str(ei.value) and "sk_leak" not in str(ei.value)   # body + key WITHHELD
 
-def test_metrics_client_per_post_5xx_isolated(tmp_path, monkeypatch, mocker):
+def test_metrics_client_per_post_failure_is_skipped_not_emitted_as_empty(tmp_path, monkeypatch, mocker):
+    # operability follow-up: a per-post 5xx/transport failure SKIPS that id (its prior metrics survive,
+    # re-polled next pass) — it no longer emits a metrics={} row that record_metrics would WHOLESALE-zero
+    # the post with. Still isolated: one bad id never aborts the pass or loses the others.
     _zenv(monkeypatch); cfg = Config(root=tmp_path)
     def by_id(url, **kw):
         return _R(503, "down") if url.endswith("/bad") else _R(200, {"saves": 2})
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_id)
     rows = ZernioMetricsClient(cfg, submission_ids=["bad", "ok"]).list_posts("30d")
-    assert rows[0] == {"postSubmissionId": "bad", "metrics": {}, "_raw_labels": []}   # one 5xx -> empty row, NOT a raise
-    assert rows[1]["metrics"] == {"saves": 2.0}                        # the other post still measured
+    assert [r["postSubmissionId"] for r in rows] == ["ok"]             # bad SKIPPED, no empty row, no raise
+    assert rows[0]["metrics"] == {"saves": 2.0}                        # the healthy post still measured
 
 def test_metrics_client_missing_key_raises_at_construction(tmp_path, monkeypatch):
     monkeypatch.delenv("ZERNIO_API_KEY", raising=False); monkeypatch.setenv("FANOPS_POSTER", "zernio")
