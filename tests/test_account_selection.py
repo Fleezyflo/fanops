@@ -165,15 +165,18 @@ def test_ingest_writes_llm_selection_for_picked_accounts(tmp_path):
     assert sb is not None and sb.moment_ids == ["m2"] and sb.method == SelectionMethod.llm
 
 
-def test_ingest_writes_fan_all_default_for_unpicked_active_account(tmp_path):
-    # an ACTIVE account the LLM omitted ships fan-to-all — but LABELLED (fan_all_default), never silently.
-    # per the sum-type, fan_all_default carries NO moment_ids (the meaning is the tag; Task 3's gate admits all).
+def test_ingest_writes_no_selection_for_unpicked_account_and_gate_denies(tmp_path):
+    # the no-fan-to-all-leak contract: an in-cohort account the LLM omitted gets NO selection -> the gate
+    # DENIES it on this cast source (true differentiation). It is NEVER auto-fanned to all (that was the leak).
+    from fanops.casting import account_selection_admits
     cfg = Config(root=tmp_path)
     led = _seed_casting(cfg, [_acct("@a", "guitar"), _acct("@c", "bass", aid="3")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     led = _respond_ingest(led, cfg, {"@a": ["m0"]})          # @c got nothing
-    sc = led.account_selection_for("src_1", "@c")
-    assert sc is not None and sc.method == SelectionMethod.fan_all_default and sc.moment_ids == []
+    assert led.account_selection_for("src_1", "@c") is None  # no record minted
+    m0 = led.moments["m0"]
+    assert account_selection_admits(cfg, led, m0, "@a") is True    # @a selected it
+    assert account_selection_admits(cfg, led, m0, "@c") is False   # @c excluded, NOT fanned
 
 
 def test_ingest_selection_persists_and_carries_lineage(tmp_path):
@@ -198,3 +201,54 @@ def test_ingest_casting_error_sets_degraded_reason(tmp_path, monkeypatch):
     led = ingest_moment_casting(led, cfg, "src_1", Accounts.load(cfg))   # fail-open: still returns led
     src = led.sources["src_1"]
     assert src.degraded_reason and "casting" in src.degraded_reason.lower()
+
+
+# ---- Task 3: account_selection_admits — the new crosspost gate predicate (selection-first, legacy fallback) ----
+from types import SimpleNamespace                                                       # noqa: E402
+from fanops.casting import account_selection_admits                                     # noqa: E402
+
+
+def _mom(mid, parent="src_g", affinities=None):
+    return SimpleNamespace(id=mid, parent_id=parent, affinities=list(affinities or []))
+
+def _led_with_selection(cfg, **kw):
+    led = Ledger.load(cfg)
+    led.add_account_selection(AccountSelection(id=account_selection_id("src_g", kw["account"]),
+                                               source_id="src_g", **kw))
+    return led
+
+
+def test_gate_admits_only_selected_moments_on_a_cast_source(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _led_with_selection(cfg, account="@a", moment_ids=["m1"], method=SelectionMethod.llm)
+    assert account_selection_admits(cfg, led, _mom("m1"), "@a") is True     # selected
+    assert account_selection_admits(cfg, led, _mom("m2"), "@a") is False    # not selected -> DENY
+    assert account_selection_admits(cfg, led, _mom("m1"), "@c") is False    # cast source, no record for @c -> DENY (not fan-to-all)
+
+
+def test_gate_fan_all_default_admits_all_moments(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _led_with_selection(cfg, account="@b", moment_ids=[], method=SelectionMethod.fan_all_default)
+    assert account_selection_admits(cfg, led, _mom("m1"), "@b") is True     # labelled fan-to-all -> admit ALL
+    assert account_selection_admits(cfg, led, _mom("m9"), "@b") is True
+
+
+def test_gate_falls_back_to_affinities_when_source_has_no_selections(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)                                                   # NO selections anywhere
+    assert account_selection_admits(cfg, led, _mom("m1", affinities=["@a"]), "@a") is True   # legacy: member
+    assert account_selection_admits(cfg, led, _mom("m1", affinities=["@a"]), "@b") is False  # legacy: non-member
+    assert account_selection_admits(cfg, led, _mom("m1", affinities=[]), "@z") is True        # legacy: uncast -> fan-to-all
+
+
+def test_gate_off_firewall_admits_all(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = Config(root=tmp_path)
+    led = _led_with_selection(cfg, account="@a", moment_ids=["m1"], method=SelectionMethod.llm)
+    assert account_selection_admits(cfg, led, _mom("m2"), "@a") is True     # OFF ignores selections (A2 firewall)
+
+
+def test_gate_denies_missing_moment_under_casting_on(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    assert account_selection_admits(cfg, led, None, "@a") is False          # missing moment: DENY, never admit-all

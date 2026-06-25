@@ -283,7 +283,7 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                         # cap-is-None skip. Crosspost stays the SOLE casting-intent gate; meta_captions is never
                         # read as casting intent.
                         led = request_captions(led, cfg, clip.id,
-                                               scoped_caption_surfaces(cfg, m, accts.surfaces()),
+                                               scoped_caption_surfaces(cfg, led, m, accts.surfaces()),
                                                accounts=accts)
                 except Exception as e:
                     led.moments[m.id].state = MomentState.error

@@ -144,25 +144,25 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
             led.moments[mid].affinities = sorted(set(led.moments[mid].affinities) | handles)
             for handle in handles:                        # M4: durable fact per LLM-selected (account, moment) —
                 _record_fact(led, led.moments[mid], handle, method=SelectionMethod.llm)   # no heuristic score/rank
-        # RF1: write a DURABLE, account-owned AccountSelection per ACTIVE account — the un-collapsible,
-        # always-visible crosspost-gate input (Task 3 reads it, replacing the non-durable affinities tag). A
-        # picked account -> llm with its moment_ids; an active account the selector OMITTED -> fan_all_default
-        # (it still ships fan-to-all, but LABELLED — never the old silent empty-affinities collapse). Per the
-        # sum-type, fan_all_default carries NO moment_ids (the gate admits-all on the method, not by enumeration).
+        # RF1: write a DURABLE, account-owned AccountSelection for each PICKED account — the un-collapsible,
+        # always-visible crosspost-gate input (Task 3 reads it, replacing the non-durable affinities tag). An
+        # account the selector OMITTED gets NO selection: the gate's "cast source, no record -> DENY" branch
+        # excludes it (true per-account differentiation; this is the no-fan-to-all-leak contract). fan_all_default
+        # is NEVER auto-written here — it is an operator override (Task 6) or a migration label, not a casting
+        # fallback (auto-fanning an unpicked account to all would resurrect the silent collapse RF1 closes).
         src = led.sources.get(source_id)
         bid = getattr(src, "batch_id", None)
         now = iso_z(datetime.now(timezone.utc))
         per_account: dict = {}
         for mid, handles in add.items():
             for h in handles: per_account.setdefault(h, []).append(mid)
-        for h in sorted(active):
-            picked = sorted(per_account.get(h, []))
-            led.add_account_selection(
-                AccountSelection(id=account_selection_id(source_id, h), source_id=source_id, account=h,
-                                 moment_ids=picked, method=SelectionMethod.llm, batch_id=bid, created_at=now)
-                if picked else
-                AccountSelection(id=account_selection_id(source_id, h), source_id=source_id, account=h,
-                                 moment_ids=[], method=SelectionMethod.fan_all_default, batch_id=bid, created_at=now))
+        for h, mids in per_account.items():
+            led.add_account_selection(AccountSelection(
+                id=account_selection_id(source_id, h), source_id=source_id, account=h,
+                moment_ids=sorted(mids), method=SelectionMethod.llm, batch_id=bid, created_at=now))
+        if not per_account and src is not None and active:   # casting ran but picked NO ONE -> visible, never silent
+            led.sources[source_id] = src.model_copy(
+                update={"degraded_reason": "casting produced no selections (source falls back to fan-to-all)"})
         return led
     except Exception as e:
         with contextlib.suppress(Exception): get_logger(cfg)("casting", source_id, "error", err=str(e)[:120])
@@ -191,18 +191,41 @@ def casting_gate_pending(cfg, source_id) -> bool:
 # ---- M5: caption scoping. The AFFINITY gate as ONE shared predicate so crosspost (the enforcement gate)
 # and the caption-request scoper can never drift (the H1 lesson). Both pure, no I/O. ----
 def affinity_admits(cfg, moment, account) -> bool:
-    """Admit `account` for `moment` under the affinity rule. True when casting is OFF (flag-OFF IGNORES
-    persisted affinities — invariant A2), OR the moment is uncast (affinities==[] -> fan to all), OR the
-    account is in the cast set. This is the admit predicate the crosspost gate skips on its negation
-    (`if not affinity_admits(...): skip`)."""
+    """Admit `account` for `moment` under the LEGACY affinity rule (RF1: now only the pre-v9 fallback inside
+    account_selection_admits — kept as a separate predicate for sources that never wrote an AccountSelection).
+    True when casting is OFF (flag-OFF IGNORES persisted affinities — invariant A2), OR the moment is uncast
+    (affinities==[] -> fan to all), OR the account is in the cast set."""
     if not cfg.account_casting: return True
     if moment is None or not moment.affinities: return True
     return account in moment.affinities
 
-def scoped_caption_surfaces(cfg, moment, surfaces):
-    """M5: the surfaces a clip's captions are REQUESTED for — the affinity-admitted subset. Returns the full
-    list unchanged when casting is OFF or the moment is uncast (byte-identical / fan-to-all). Within a
-    decision cycle this is a SUPERSET of the crosspost survivors (which narrow further by batch target), so
-    every minted post has a caption; a post-captioning re-cast SWAP is backstopped by crosspost's cap-is-None
-    skip. `surfaces` is an iterable of Surface; returns the (account, platform) tuples request_captions wants."""
-    return [(s.account, s.platform) for s in surfaces if affinity_admits(cfg, moment, s.account)]
+def account_selection_admits(cfg, led, moment, account) -> bool:
+    """RF1: the crosspost gate predicate, reading the DURABLE AccountSelection instead of the non-durable
+    affinities tag. Selection-first, with the legacy affinities path preserved ONLY for a source that never
+    wrote a selection (pre-v9 / casting-never-ran). Mirrors affinity_admits' OFF-firewall, but it never
+    silently fans a CAST source to all — un-collapsible by construction:
+      - casting OFF -> admit all (A2 firewall, same as affinity_admits)
+      - missing moment under casting-ON -> DENY (never the old admit-all; scrutiny correction)
+      - the account has an AccountSelection: fan_all_default/pending decide on the METHOD (admit-all / hold),
+        else admit iff the moment is in its moment_ids (the sum-type makes [] unambiguous)
+      - no selection for this account BUT the source has others (casting ran) -> DENY (not silent fan-to-all)
+      - the source has NO selections at all -> fall back to affinity_admits (legacy/pre-v9 behavior)."""
+    if not cfg.account_casting: return True
+    if moment is None: return False
+    sel = led.account_selection_for(moment.parent_id, account)
+    if sel is None:
+        if not led.selections_of_source(moment.parent_id):
+            return affinity_admits(cfg, moment, account)   # pre-v9 / casting-never-ran -> legacy fallback
+        return False                                       # casting RAN, no record for this account -> DENY
+    if sel.method == SelectionMethod.fan_all_default: return True   # EXPLICIT, labelled fan-to-all
+    if sel.method == SelectionMethod.pending: return False          # gate open, unconverged -> hold (never fan)
+    return moment.id in set(sel.moment_ids)                         # specific picks: admit iff selected
+
+def scoped_caption_surfaces(cfg, led, moment, surfaces):
+    """M5/RF1: the surfaces a clip's captions are REQUESTED for — the SAME gate the crosspost enforcer uses
+    (account_selection_admits), so caption-scoping can never drift from post-minting (the H1 lesson). Returns
+    the full list unchanged when casting is OFF or the source is uncast. Within a decision cycle this is a
+    SUPERSET of the crosspost survivors (which narrow further by batch target), so every minted post has a
+    caption; a post-captioning re-cast SWAP is backstopped by crosspost's cap-is-None skip. `surfaces` is an
+    iterable of Surface; returns the (account, platform) tuples request_captions wants."""
+    return [(s.account, s.platform) for s in surfaces if account_selection_admits(cfg, led, moment, s.account)]

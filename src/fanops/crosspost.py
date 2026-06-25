@@ -18,7 +18,7 @@ from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 from fanops.timeutil import parse_iso as _parse, iso_z
-from fanops.casting import affinity_admits, casting_gate_pending   # M5 shared affinity gate + P1 casting-pending wait
+from fanops.casting import account_selection_admits, casting_gate_pending   # RF1 durable-selection gate + P1 casting-pending wait
 from fanops.log import get_logger
 
 # Staggering constants. _STEP_MIN is the fixed per-index spacing; _JITTER_MAX is the bounded
@@ -164,10 +164,11 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 get_logger(cfg)("crosspost", clip.id, "batch_target_skip",
                                 surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
                 continue   # batch targets a specific account set; this surface isn't in it (no post born)
-            if not affinity_admits(cfg, m, surf.account):
-                continue   # affinity gate (Face 3) via the M5 shared predicate so caption-scoping can't drift:
-                           # a cast moment fans ONLY to its accounts; an UNCAST moment (affinities==[]) fans to
-                           # all; flag-OFF IGNORES persisted affinities (A2). See casting.affinity_admits.
+            if not account_selection_admits(cfg, led, m, surf.account):
+                continue   # RF1 durable-selection gate (Face 3), shared with caption-scoping so they can't drift:
+                           # a cast source admits an account ONLY its AccountSelection's moments (or all, if its
+                           # method is the LABELLED fan_all_default); a source with no selection falls back to the
+                           # legacy affinities path; flag-OFF IGNORES selections (A2). See casting.account_selection_admits.
             # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
             # platform's hard cap, SKIP this surface only (conservative — the clip can still post
             # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown

@@ -58,21 +58,21 @@ def test_scoped_caption_surfaces_scopes_when_cast(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
     surfaces = Accounts.load(cfg).surfaces()
-    scoped = scoped_caption_surfaces(cfg, _moment(affinities=["@a"]), surfaces)
-    assert {acct for acct, _ in scoped} == {"@a"}                            # only the cast account's surfaces
+    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=["@a"]), surfaces)
+    assert {acct for acct, _ in scoped} == {"@a"}                            # only the cast account's surfaces (legacy fallback: no selection)
 
 def test_scoped_caption_surfaces_full_when_off(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
     surfaces = Accounts.load(cfg).surfaces()
-    scoped = scoped_caption_surfaces(cfg, _moment(affinities=["@a"]), surfaces)
+    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=["@a"]), surfaces)
     assert list(scoped) == [(s.account, s.platform) for s in surfaces]       # OFF -> byte-identical (all)
 
 def test_scoped_caption_surfaces_full_when_uncast(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
     surfaces = Accounts.load(cfg).surfaces()
-    scoped = scoped_caption_surfaces(cfg, _moment(affinities=[]), surfaces)
+    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=[]), surfaces)
     assert {acct for acct, _ in scoped} == {"@a", "@b"}                      # uncast -> all surfaces
 
 
@@ -86,7 +86,7 @@ def test_casting_on_scopes_request_and_loses_no_post(tmp_path, monkeypatch, mock
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
     accts = Accounts.load(cfg)
     # the scoped request the pipeline would build (Task 3 wiring uses this exact call)
-    led = request_captions(led, cfg, "clip_1", scoped_caption_surfaces(cfg, led.moments["mom_1"], accts.surfaces()),
+    led = request_captions(led, cfg, "clip_1", scoped_caption_surfaces(cfg, led, led.moments["mom_1"], accts.surfaces()),
                            accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert {s["surface"].split("/")[0] for s in payload["surfaces"]} == {"@a"}   # request SCOPED to @a
