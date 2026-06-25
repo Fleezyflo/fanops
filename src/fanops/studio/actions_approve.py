@@ -27,7 +27,9 @@ def _warm_renders(cfg: Config, snap: Ledger, ids: Sequence[str], accts: Accounts
     content-addressed path, so the in-lock adopt records the Render WITHOUT running ffmpeg under the flock (the
     60s flock guard / the approve_with_hook precedent). Returns {post_id: RenderPlan}. Deduped: a hook whose
     Render ENTITY already exists is skipped (in-lock reuses it), and identical hooks within the batch render
-    once. Per-post fail-open — a render error just omits the plan (in-lock then renders it as a fallback)."""
+    once. Per-post fail-open — a render error is LOGGED and just omits the plan; the in-lock adopt then leaves
+    the post un-materialized (M1: never ffmpeg under the flock) and the spine skips approving it with a
+    render_unavailable_skip_approve breadcrumb, so the NEXT warm pass (a re-click) retries the burn off-lock."""
     plans, by_rid = {}, {}
     for pid in ids:
         post = snap.posts.get(pid)
@@ -43,7 +45,8 @@ def _warm_renders(cfg: Config, snap: Ledger, ids: Sequence[str], accts: Accounts
             src = snap.sources.get(mom.parent_id) if mom is not None else None
             plan = render_account_file(snap, cfg, post=post, acct=acct, target_clip=clip, src=src)
             by_rid[rid] = plan; plans[pid] = plan
-        except Exception: continue                                   # fail-open: the in-lock adopt renders it as a fallback
+        except Exception as e:                                       # fail-open + M1: in-lock leaves it un-materialized,
+            get_logger(cfg)("approve", pid, "warm_render_failed", err=str(e)[:120]); continue   # spine skips, next pass retries
     return plans
 
 def _adopt_render(led: Ledger, cfg: Config, post, plan, accts: Accounts) -> None:
@@ -134,21 +137,26 @@ def unapprove_post(cfg: Config, post_id: str) -> ActionResult:
         return ActionResult(ok=False, error=f"unapprove failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": post_id})
 
-def _warm_hooked_render(cfg: Config, moment_id: str, aspect, hook: str) -> None:
+def _warm_hooked_render(cfg: Config, moment_id: str, aspect, hook: str) -> bool:
     """Lock-free pre-render of the HOOKED clip (mirror _warm_target_aspect, but FORCE the burn): set the
     restored hook on a THROWAWAY Ledger.load snapshot's moment and call render_moment, which writes cid.mp4
     + its fingerprint sidecar with the hook burned and NO flock held. The in-lock render_moment in
-    approve_with_hook then hits the fingerprint-skip and adopts it WITHOUT running ffmpeg under the lock —
-    _clip_for_aspect would have REUSED the old clean render, so the warm must drive render_moment directly.
-    FAIL-OPEN: any error just means the in-lock path renders (bounded 600s); the snapshot is discarded."""
+    approve_with_hook then hits the fingerprint-skip and adopts it WITHOUT running ffmpeg under the lock.
+    Returns True when the render is warmed (the in-lock call will fingerprint-SKIP ffmpeg) OR there is
+    nothing to warm; False ONLY when the warm ffmpeg FAILED — the caller then ABORTS rather than letting
+    render_moment burn under the flock (the M1 'never ffmpeg under the lock' invariant; one click must never
+    hold the flock for a 600s burn). A failure is LOGGED, never silently swallowed."""
     from fanops.clip import render_moment
     try:
         snap = Ledger.load(cfg)
         mom = snap.moments.get(moment_id)
-        if mom is None: return
+        if mom is None: return True                                  # nothing to warm; the in-lock path skips the render too
         snap.moments[moment_id] = mom.model_copy(update={"hook": hook, "hook_removed": None})
         render_moment(snap, cfg, moment_id, aspect=aspect)
-    except Exception: pass
+        return True
+    except Exception as e:
+        get_logger(cfg)("approve_with_hook", moment_id, "warm_failed", err=str(e)[:120])   # don't swallow silently
+        return False
 
 def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
     """The 'restore the auto-removed hook, then approve' half of the removed-hook choice (the operator's
@@ -168,7 +176,11 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
     if c0 is None: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
     m0 = snap.moments.get(c0.parent_id)
     removed = (m0.hook_removed if m0 is not None else None)
-    if removed: _warm_hooked_render(cfg, c0.parent_id, c0.aspect, removed)   # ffmpeg OUTSIDE the flock
+    if removed and not _warm_hooked_render(cfg, c0.parent_id, c0.aspect, removed):   # ffmpeg OUTSIDE the flock
+        # M1 invariant: the off-lock pre-warm FAILED, so the in-lock render_moment would burn ffmpeg under the
+        # flock (a 600s hold). Abort with a retry instead — the operator re-clicks and the next pass re-warms.
+        return ActionResult(ok=False, error="couldn't pre-render the hooked clip off the lock — retry approve "
+                            "(the on-screen hook is never burned under the ledger flock)")
     approved = 0
     try:
         with Ledger.transaction(cfg) as led:
