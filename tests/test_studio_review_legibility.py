@@ -172,7 +172,8 @@ def _seed_recent_no_cut(cfg):
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.published, clip_profile="long", scheduled_time=NOW.isoformat()))
+                          caption="x", state=PostState.published, clip_profile="long",
+                          scheduled_time=datetime.now(timezone.utc).isoformat()))   # recent-bucket card: seed relative to REAL now (the /review route uses datetime.now), not the fixed NOW — else it ages out of RECENT_WINDOW_HOURS and the test time-bombs
 
 
 def test_shared_cut_warn_suppressed_off_the_editable_worklist(tmp_path):
