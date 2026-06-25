@@ -109,6 +109,30 @@ def test_approve_with_hook_burn_failed_rolls_back(tmp_path, mocker):
     assert led.posts["p_1"].state is PostState.awaiting_approval  # NOT approved clean
 
 
+def test_warm_hooked_render_logs_and_returns_false_on_failure(tmp_path, mocker):
+    # Fix A: a failed off-lock pre-warm is LOGGED (no silent swallow) and reported as False so the caller
+    # can abort instead of letting ffmpeg burn under the flock.
+    from fanops.studio.actions_approve import _warm_hooked_render
+    cfg = Config(root=tmp_path); _seed(cfg)
+    mocker.patch("fanops.clip.render_moment", side_effect=RuntimeError("ffmpeg exploded"))
+    assert _warm_hooked_render(cfg, "mom_1", Fmt.r9x16, REMOVED) is False
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "warm_failed" in log                                    # not silently swallowed (was except: pass)
+
+
+def test_approve_with_hook_warm_failure_aborts_without_in_lock_ffmpeg(tmp_path, monkeypatch, mocker):
+    # Fix B (the M1 invariant extended to this path): when the off-lock pre-warm FAILS, approve_with_hook must
+    # NOT fall back to running ffmpeg UNDER the ledger flock (a 600s flock hold that starves every writer). It
+    # aborts with a retry error and leaves the posts awaiting — the next click re-warms off the lock.
+    cfg = Config(root=tmp_path); _seed(cfg)
+    monkeypatch.setattr("fanops.studio.actions_approve._warm_hooked_render", lambda *a, **k: False)
+    rm = mocker.patch("fanops.clip.render_moment")                 # the IN-LOCK burn — must never be called
+    res = approve_with_hook(cfg, "clip_1", now=NOW)
+    assert res.ok is False and "retry" in res.error.lower()
+    assert Ledger.load(cfg).posts["p_1"].state is PostState.awaiting_approval   # NOT approved
+    rm.assert_not_called()                                         # ffmpeg never ran under the flock
+
+
 def test_approve_with_hook_no_removed_hook_just_approves(tmp_path, mocker):
     cfg = Config(root=tmp_path); _seed(cfg, hook_removed=None)
     r = mocker.patch("fanops.clip.render_moment", side_effect=_fake_render)

@@ -128,6 +128,18 @@ def test_postiz_empty_data_series_omits_key(tmp_path, monkeypatch, mocker):
                  return_value=_R(200, [{"label": "Likes", "data": []}]))
     assert PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()[0]["metrics"] == {}
 
+def test_postiz_list_posts_skips_a_failed_fetch_not_an_empty_row(tmp_path, monkeypatch, mocker):
+    # operability follow-up: a per-post analytics fetch failure SKIPS that id (its prior metrics survive,
+    # re-polled next pass), NOT a metrics={} row that record_metrics would wholesale-zero the post with.
+    from fanops.post.metrics import PostizMetricsClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    def _flaky(url, **kw):
+        if "s_bad" in url: raise RuntimeError("transient 503")
+        return _R(200, _DOC_ARRAY)
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=_flaky)
+    rows = PostizMetricsClient(cfg, submission_ids=["s_ok", "s_bad"]).list_posts()
+    assert [r["postSubmissionId"] for r in rows] == ["s_ok"]           # s_bad SKIPPED, no empty row emitted
+
 def test_postiz_analytics_date_param_is_unix_ms_not_day_count(tmp_path, monkeypatch, mocker):
     # BUG (Context7-confirmed): /public/v1/analytics/post/{id} `date` is a Unix-MS TIMESTAMP, NOT a day
     # count. The old code sent date=_window_days(window) (7/30), which queries ~1970 -> empty metrics ->
@@ -168,13 +180,14 @@ def test_postiz_fetch_one_non_2xx_raises_runtimeerror(tmp_path, monkeypatch, moc
         PostizMetricsClient(cfg, submission_ids=["s"])._fetch_one("s", 7)
 
 def test_postiz_list_posts_isolates_a_single_5xx(tmp_path, monkeypatch, mocker):
-    # FIX 6: a single post's 5xx must NOT abort the pass — list_posts logs+skips it (empty row) and
-    # still returns the (lone) row rather than raising, so a co-batched healthy post isn't lost.
+    # FIX 6 + operability follow-up: a single post's 5xx must NOT abort the pass — list_posts logs+SKIPS it
+    # (no row, so record_metrics can't wholesale-zero the post's real metrics) rather than raising. With only
+    # the failing id that's an empty list; the co-batched-survivor case is test_postiz_list_posts_skips_a_failed_fetch.
     from fanops.post.metrics import PostizMetricsClient
     cfg = _pcfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(503, "down"))
     rows = PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()
-    assert rows == [{"postSubmissionId": "s", "metrics": {}, "_raw_labels": []}]   # skipped, not fatal
+    assert rows == []                              # the failed id is SKIPPED, not emitted as an empty row; no raise
 
 # ---- M2 Task 2: lock the label→lift mapping to the VERIFIED-live label set (the integration checkpoint) ----
 def test_postiz_map_analytics_maps_live_labels():

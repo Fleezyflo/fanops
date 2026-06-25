@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
 from fanops.accounts import Accounts
-from fanops.errors import AuthError
+from fanops.errors import AuthError, redact
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState
 from fanops.post import get_poster, get_media_uploader
@@ -140,7 +140,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str) -> str | None:
             raise                                      # bad key/401: halt, don't burn the queue (H8)
         if post.state is not PostState.needs_reconcile:   # C1/#17: don't downgrade an ambiguous-live park
             post.state = PostState.failed
-            post.error_reason = f"publish failed: {str(exc)[:200]}"
+            post.error_reason = "publish failed: " + redact(str(exc), cfg.blotato_api_key,
+                                                            cfg.postiz_api_key, cfg.zernio_api_key)   # scrub any leaked key
     net = {f: getattr(post, f) for f in _NET_POST_FIELDS}
     clip = led.clips.get(post.parent_id)
     clip_media = clip.media_url if clip is not None else None   # carry the F44 upload cache forward

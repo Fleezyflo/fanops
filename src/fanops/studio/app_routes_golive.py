@@ -178,7 +178,7 @@ def register_golive_routes(app, cfg):
         # The ONLY route that can set FANOPS_LIVE=1 (the global live switch — provider is per-channel);
         # confirm derived from the checkbox, and go_live itself re-gates on readiness (≥1 channel with a
         # provider+creds) — a stray POST can't flip the system live.
-        return _golive_panel(golive.go_live(cfg, confirmed=bool(request.form.get("confirm"))))
+        return _golive_panel(golive.go_live(cfg, confirmed=request.form.get("confirm") == "1"))
 
     @app.post("/golive/dryrun")
     def do_golive_dryrun():
@@ -190,4 +190,4 @@ def register_golive_routes(app, cfg):
         # throwaway probe to the operator-SELECTED integration behind a confirm. validate_learning
         # re-gates (live-postiz + known integration + confirm); a stray POST can't fire it.
         return _golive_panel(golive.validate_learning(cfg, integration_id=request.form.get("integration_id"),
-                                                       confirmed=bool(request.form.get("confirm"))))
+                                                       confirmed=request.form.get("confirm") == "1"))

@@ -176,6 +176,26 @@ def test_publish_failed_poster_marks_failed_durable(tmp_path, monkeypatch, mocke
     led2 = Ledger.load(cfg)
     assert led2.posts["pf"].state is PostState.failed
 
+def test_publish_failure_redacts_api_key_from_error_reason(tmp_path, monkeypatch, mocker):
+    # opsec follow-up: a network/library exception text can embed the presented key; it must be SCRUBBED
+    # before it lands in the durable error_reason (defense-in-depth; mirrors _safe on response bodies).
+    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "SUPERSECRETKEY")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    f = cfg.clips / "c_k.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    led.add_clip(Clip(id="c_k", parent_id="mom_1", path=str(f), state=ClipState.queued))
+    led.add_post(Post(id="pk", parent_id="c_k", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued))
+    led.save()
+    import fanops.post.run as run
+    def boom(led_, cfg_, clip_id):
+        raise RuntimeError("Blotato presign 503: token=SUPERSECRETKEY rejected")
+    mocker.patch.object(run, "ensure_clip_media", side_effect=boom)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    er = Ledger.load(cfg).posts["pk"].error_reason or ""
+    assert "SUPERSECRETKEY" not in er           # the key is scrubbed from the durable record
+    assert "***" in er and "503" in er          # redaction marker present; the diagnostic detail survives
+
 def test_publish_no_schedule_publishes_immediately(tmp_path, monkeypatch):
     # A post with no scheduled_time is due now (no schedule => publish).
     monkeypatch.delenv("FANOPS_POSTER", raising=False)

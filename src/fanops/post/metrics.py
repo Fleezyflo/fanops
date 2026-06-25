@@ -164,10 +164,12 @@ class PostizMetricsClient:
             except PostizAuthError:
                 raise                                       # a 401 is FATAL for every post — never swallow
             except Exception as e:
-                # Per-post isolation: a single post's 5xx/transport failure must NOT abort the whole
-                # pass and lose every OTHER post's metrics. Log + skip THIS id (empty row), keep going.
+                # Per-post isolation: a single post's 5xx/transport failure must NOT abort the whole pass
+                # and lose every OTHER post's metrics. SKIP this id entirely (no row) — an empty metrics={}
+                # row would make record_metrics WHOLESALE-zero the post's already-captured metrics; skipping
+                # preserves the prior snapshot and the post is simply re-polled next pass. Log it, keep going.
                 get_logger(self.cfg)("postiz_metrics", str(sid), "fetch_failed", err=str(e)[:120])
-                metrics, labels = {}, []
+                continue
             rows.append({"postSubmissionId": sid, "metrics": metrics, "_raw_labels": labels})
         return rows
 
@@ -324,8 +326,10 @@ class ZernioMetricsClient:
             except ZernioAuthError:
                 raise                                       # 401 is FATAL for every post — never swallow
             except Exception as e:
+                # SKIP this id (no row) — an empty metrics={} row would make record_metrics wholesale-zero
+                # the post's already-captured metrics; skipping preserves the prior snapshot, re-polled next pass.
                 get_logger(self.cfg)("zernio_metrics", str(sid), "fetch_failed", err=str(e)[:120])
-                metrics, labels = {}, []                    # per-post isolation: keep going, don't abort the pass
+                continue                                    # per-post isolation: keep going, don't abort the pass
             rows.append({"postSubmissionId": sid, "metrics": metrics, "_raw_labels": labels})
         return rows
 
