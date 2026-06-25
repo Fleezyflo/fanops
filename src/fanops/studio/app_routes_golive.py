@@ -57,11 +57,6 @@ def register_golive_routes(app, cfg):
         # (changes which posts are BORN, not whether they publish).
         return _golive_panel(golive.set_account_casting(cfg, request.form.get("on") == "1"))
 
-    @app.post("/golive/cast-budget")
-    def do_golive_cast_budget():
-        # Phase 2: set the budget-mode pick count (FANOPS_CAST_PICK_BUDGET); validated/clamped in the setter.
-        return _golive_panel(golive.set_cast_pick_budget(cfg, request.form.get("budget", "")))
-
     @app.post("/golive/clip-profile")
     def do_golive_clip_profile():
         # Phase 2: set the clip-length band (FANOPS_CLIP_PROFILE = talk|song); validated in the setter.

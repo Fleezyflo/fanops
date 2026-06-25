@@ -219,30 +219,15 @@ def set_per_account_hooks(cfg: Config, on: bool) -> ActionResult:
 
 
 def set_account_casting(cfg: Config, on: bool) -> ActionResult:
-    """Toggle per-account moment casting (FANOPS_ACCOUNT_CASTING) from the Go-Live tab — casts each account up
-    to cast_pick_budget best-fit moments (default OFF = every moment fans to all accounts). Dual-written so it
-    takes effect immediately AND persists. Works in dryrun OR live (it changes which posts are BORN, not whether
-    they publish). No secret -> no key-leak surface. A durable-write failure -> clean error. Structural twin of
-    set_per_account_hooks; OFF is a true kill-switch (crosspost ignores persisted affinities when the flag is off)."""
+    """Toggle per-account moment casting (FANOPS_ACCOUNT_CASTING) from the Go-Live tab — ON casts each account
+    its OWN LLM-selected moments (default OFF = every moment fans to all accounts). Dual-written so it takes
+    effect immediately AND persists. Works in dryrun OR live (it changes which posts are BORN, not whether they
+    publish). No secret -> no key-leak surface. A durable-write failure -> clean error. Structural twin of
+    set_per_account_hooks; OFF is a true kill-switch (crosspost ignores persisted selections when the flag is off)."""
     err = _dual_write(cfg, "FANOPS_ACCOUNT_CASTING", "1" if on else "0")
     if err:
         return ActionResult(ok=False, error=err)
     return ActionResult(ok=True, detail={"account_casting": bool(on)})
-
-
-def set_cast_pick_budget(cfg: Config, value) -> ActionResult:
-    """Set FANOPS_CAST_PICK_BUDGET (moments per account per run) from the Go-Live tab. Parses an int, CLAMPS >= 1
-    (mirrors cfg.cast_pick_budget — a 0 budget casts nothing), and never crashes on a bad input — a non-int is a
-    clean error with NO write."""
-    try:
-        n = int(str(value).strip())
-    except (ValueError, TypeError):
-        return ActionResult(ok=False, error=f"pick budget must be a whole number (got {value!r})")
-    n = max(1, n)                                        # clamp, mirroring the config default's >=1 guard
-    err = _dual_write(cfg, "FANOPS_CAST_PICK_BUDGET", str(n))
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"cast_pick_budget": n})
 
 
 def set_clip_profile(cfg: Config, profile: str) -> ActionResult:

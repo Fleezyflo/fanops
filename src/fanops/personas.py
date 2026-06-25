@@ -66,8 +66,8 @@ class Persona(BaseModel):
     casting_directive: str = ""                   # override for "which moments to clip" (else compiled from content_focus+energy)
     hook_directive: str = ""                      # override for the on-screen hook brief (else compiled from hook_angle+hook_tone)
     caption_directive: str = ""                   # override for the caption angle (else the voice; tags stay deterministic)
-    clip_count: Optional[int] = None              # per-persona CLIP BUDGET (deterministic): how many of its best-fit moments this
-                                                  # account gets. None -> the global cfg.cast_pick_budget (byte-identical when unset)
+    clip_count: Optional[int] = None              # per-persona clip-count HINT (prompt-level, not enforced — PRD #7):
+                                                  # how many moments this account ideally gets. None -> unset (no hint)
 
 
 class Personas:

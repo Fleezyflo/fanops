@@ -82,10 +82,10 @@ def test_ingest_overlap_is_sorted_union(tmp_path):
     led = _respond_and_ingest(led, cfg, {"@b": ["m0"], "@a": ["m0", "m0"]})   # dup + cross-account
     assert led.moments["m0"].affinities == ["@a", "@b"]
 
-def test_ingest_is_generous_no_count_cap(tmp_path, monkeypatch):
-    # unlike the heuristic budget, the LLM selection has NO count cap: an account gets ALL its picks even
-    # when far more than cast_pick_budget (the operator does not want output capped for cost).
-    monkeypatch.setenv("FANOPS_CAST_PICK_BUDGET", "2")
+def test_ingest_is_generous_no_count_cap(tmp_path):
+    # the wired LLM selection has NO count cap by design: an account gets ALL its picks (the operator does not
+    # want output capped for cost). There is no per-account budget knob — the heuristic's own `budget` arg is
+    # the only cap and it is unwired.
     cfg = Config(root=tmp_path)
     led = _seed(cfg, [_acct("@a", "guitar")], moments=tuple(f"m{i}" for i in range(7)))
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))

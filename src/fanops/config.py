@@ -465,23 +465,13 @@ class Config:
 
     @property
     def account_casting(self) -> bool:
-        # Account-First Studio: per-account MOMENT casting (Face 3). ON -> each active account is cast up to
-        # cast_pick_budget of its best persona-fit moments (bounded by the batch target); crosspost then fans
-        # a cast moment ONLY to its accounts. DEFAULT ON (per-account selection is the system's purpose,
-        # mirrors creative_variation) — set FANOPS_ACCOUNT_CASTING=0 to restore the legacy fan-to-all path.
+        # Account-First Studio: per-account MOMENT casting (Face 3). ON -> each active account is cast its OWN
+        # LLM-selected moments (RF1 AccountSelection); crosspost then fans a cast moment ONLY to its accounts.
+        # DEFAULT ON (per-account selection is the system's purpose, mirrors creative_variation) — set
+        # FANOPS_ACCOUNT_CASTING=0 to restore the legacy fan-to-all path. NB the wired LLM path is UNCAPPED by
+        # design (the operator does not want output capped for cost); there is no per-account moment budget.
         v = (os.getenv("FANOPS_ACCOUNT_CASTING") or "").strip().lower()
         return v not in ("0", "false", "no", "off")     # DEFAULT ON (per-account selection is the wanted path); explicit off-words disable
-
-    @property
-    def cast_pick_budget(self) -> int:
-        # Per-account max moments cast per pass (Face 3, budget mode). DEFAULT 6, CLAMPED >= 1 (a 0 budget casts
-        # nothing; the concurrent_workers clamp precedent). A non-int env falls back to the default, never
-        # crashing a run.
-        try:
-            v = int(os.getenv("FANOPS_CAST_PICK_BUDGET", "6"))
-        except ValueError:
-            return 6
-        return v if v >= 1 else 1
 
     @property
     def hook_router(self) -> bool:

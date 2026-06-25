@@ -19,9 +19,9 @@ def _moment(led, mid, *, reason="r", hook=None, signal=0.0, transcript="", batch
                           hook=hook, signal_score=signal, transcript_excerpt=transcript, state=MomentState.decided))
 
 
-def test_config_casting_flags_default_on_and_budget_six(tmp_path):
+def test_config_casting_flag_defaults_on(tmp_path):
     c = Config(root=tmp_path)
-    assert c.account_casting is True and c.cast_pick_budget == 6   # per-account selection defaults ON now
+    assert c.account_casting is True            # per-account selection defaults ON (no per-account budget knob)
 
 def test_persona_fit_score_is_deterministic_total_order():
     m1 = Moment(id="m1", parent_id="s", start=0, end=7, reason="guitar riff solo", signal_score=1.0)
@@ -30,12 +30,11 @@ def test_persona_fit_score_is_deterministic_total_order():
     assert persona_fit_score("guitar", m1)[0] >= 1                                          # 'guitar' overlaps the corpus
     assert persona_fit_score(None, m1)[0] == 0                                              # None persona -> zero overlap
 
-def test_cast_moments_budget_caps_per_account_by_fit(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CAST_PICK_BUDGET", "3")            # pin the cap so the test is default-independent
+def test_cast_moments_budget_caps_per_account_by_fit(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct("@a", "guitar")])
     led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4"))
     for i in range(5): _moment(led, f"m{i}", reason="guitar", signal=float(i))
-    led = cast_moments(led, cfg, Accounts.load(cfg))
+    led = cast_moments(led, cfg, Accounts.load(cfg), budget=3)    # the heuristic's own cap, passed explicitly
     cast = {m.id for m in led.moments.values() if m.affinities == ["@a"]}
     uncast = {m.id for m in led.moments.values() if m.affinities == []}
     assert cast == {"m2", "m3", "m4"} and uncast == {"m0", "m1"}   # budget 3 -> top-3 by signal
@@ -81,13 +80,12 @@ def test_cast_moments_fail_open(tmp_path, mocker):
 
 
 # ---- M4b: casting WRITES the durable selection FACTS (which account got which moment + WHY) ----
-def test_cast_moments_writes_heuristic_selection_facts(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CAST_PICK_BUDGET", "2")
+def test_cast_moments_writes_heuristic_selection_facts(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct("@a", "guitar")])
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", batch_id="b1"))
     for i in range(3): _moment(led, f"m{i}", reason="guitar solo", signal=float(i))
-    led = cast_moments(led, cfg, Accounts.load(cfg))
+    led = cast_moments(led, cfg, Accounts.load(cfg), budget=2)
     facts = {f.moment_id: f for f in led.selection_facts_of_account("@a")}
     assert set(facts) == {"m2", "m1"}                              # one fact per CAST (moment, account); m0 uncast -> no fact
     f = facts["m2"]

@@ -602,13 +602,7 @@ def test_golive_status_reflects_account_casting(tmp_path, monkeypatch):
     assert views.golive_status(cfg).account_casting is False                  # mirrors the flag after a toggle
 
 
-# ---- Phase 2: casting / volume levers (pick budget, clip profile) ----
-
-def test_set_cast_pick_budget_clamps_and_rejects_non_int(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    assert golive.set_cast_pick_budget(cfg, "5").ok is True and cfg.cast_pick_budget == 5
-    assert golive.set_cast_pick_budget(cfg, "0").ok is True and cfg.cast_pick_budget == 1   # clamp >=1 (cfg precedent)
-    assert golive.set_cast_pick_budget(cfg, "abc").ok is False                # non-int -> clean error, no write
+# ---- Phase 2: casting / volume levers (clip profile) ----
 
 def test_set_clip_profile_validates_talk_song(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -630,7 +624,7 @@ def test_golive_status_carries_casting_levers(tmp_path, monkeypatch):
     from fanops.studio import views
     cfg = _clean(monkeypatch, tmp_path)
     s = views.golive_status(cfg)
-    assert s.cast_pick_budget == 6 and s.clip_profile == "talk"   # defaults
+    assert s.clip_profile == "talk"   # default
     golive.set_clip_profile(cfg, "song")
     s = views.golive_status(cfg)
     assert s.clip_profile == "song"
@@ -639,16 +633,15 @@ def test_post_golive_casting_lever_routes_swap_panel(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     c = _client(cfg)
-    assert c.post("/golive/cast-budget", data={"budget": "4"}).status_code == 200 and cfg.cast_pick_budget == 4
     assert c.post("/golive/clip-profile", data={"profile": "song"}).status_code == 200 and cfg.clip_profile == "song"
 
 def test_golive_panel_renders_routing_casting_controls(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    golive.set_account_casting(cfg, True)                    # casting ON -> budget controls appear
+    golive.set_account_casting(cfg, True)                    # casting ON
     h = _client(cfg).get("/golive").data.decode()
     assert "Routing / casting" in h
-    assert "/golive/cast-budget" in h and "/golive/clip-profile" in h
+    assert "its OWN LLM-selected moments" in h and "/golive/clip-profile" in h   # no per-account budget knob
 
 def test_run_and_review_show_readonly_cast_state(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -734,13 +727,14 @@ def test_golive_clip_length_bands_come_from_the_engine_not_literals(tmp_path, mo
         assert band in html                              # every profile's engine-true band is rendered
     assert "(8–15s)" not in html                    # the old hardcoded en-dash literal is GONE
 
-def test_golive_casting_effect_line_uses_the_real_budget(tmp_path, monkeypatch):
-    # casting ON: the effect line names the REAL FANOPS_CAST_PICK_BUDGET, not a hardcoded count.
+def test_golive_casting_effect_line_is_honest_no_false_cap(tmp_path, monkeypatch):
+    # casting ON: the effect line states each account gets its OWN LLM-selected moments — it must NOT advertise
+    # a per-account count cap the wired LLM path ignores (the removed cast_pick_budget knob).
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1"); monkeypatch.setenv("FANOPS_CAST_PICK_BUDGET", "7")
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "7 distinct moment" in html                   # engine-sourced: the live budget, not a literal
+    assert "its OWN LLM-selected moments" in html and "distinct moment" not in html
 
 def test_golive_persona_link_badge_linked_vs_none(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)

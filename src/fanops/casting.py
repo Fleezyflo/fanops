@@ -3,7 +3,7 @@
 # fans a cast moment ONLY to its accounts): the default-ON **LLM gate** (`request_moment_casting`/
 # `ingest_moment_casting`, wired into the pipeline — an LLM SELECTION, GENEROUS, no count cap), and the
 # retained-but-unwired token-overlap **heuristic** (`cast_moments` — a pure persona-fit scorer that assigns
-# each account up to cfg.cast_pick_budget of its best-fitting moments BOUNDED by that moment's batch target).
+# each account up to a `budget` (default 6) of its best-fitting moments BOUNDED by that moment's batch target).
 # Neither does ffmpeg or a per-account author re-run (moments are SOURCE-keyed, so the base render stays
 # shared — per-account differentiation is the existing cheap hook overlay).
 # C1-safe: reads persona + signal_score, writes ONLY affinities — never touches amplify/retire/cascade/track.
@@ -45,20 +45,20 @@ def persona_fit_score(persona, moment) -> tuple:
     return (overlap, moment.signal_score, moment.id)
 
 
-def cast_moments(led, cfg, accounts, *, account_target=None):
-    """Assign per-account affinities over the decided, uncast moment pool; returns `led`. Each active
-    account is allotted up to cfg.cast_pick_budget of its best persona-fit moments, bounded PER MOMENT by
-    that moment's batch target (Source.batch_id -> Batch.target_accounts; empty/missing -> all active), so
-    affinities ⊆ the batch target (it can only NARROW). account_target overrides the per-moment resolution
-    for standalone callers (None -> resolve per moment). Idempotent (only affinities==[] moments are
-    considered) + fail-open (returns led unchanged, logged once, on any internal error). NON-DURABLE across
-    a moment re-decision: reconcile_moments rebuilds the Moment -> affinities reset to []; re-derived each
-    gated pass. The caller holds the transaction (pipeline.advance), mirroring crosspost_clips."""
+def cast_moments(led, cfg, accounts, *, account_target=None, budget: int = 6):
+    """Assign per-account affinities over the decided, uncast moment pool; returns `led`. The token-overlap
+    HEURISTIC (no-LLM fallback / manual mode — UNWIRED from the pipeline). Each active account is allotted up
+    to `budget` of its best persona-fit moments (default 6; this is the heuristic's OWN cap, not a global
+    config knob — the wired LLM path is uncapped by design), bounded PER MOMENT by that moment's batch target
+    (Source.batch_id -> Batch.target_accounts; empty/missing -> all active), so affinities ⊆ the batch target
+    (it can only NARROW). account_target overrides the per-moment resolution for standalone callers (None ->
+    resolve per moment). Idempotent (only affinities==[] moments are considered) + fail-open (returns led
+    unchanged, logged once, on any internal error). NON-DURABLE across a moment re-decision."""
     try:
         active = list(accounts.active())
         active_handles = {a.handle for a in active}
         pool = [m for m in led.moments.values() if m.state is MomentState.decided and not m.affinities]
-        budget = cfg.cast_pick_budget
+        budget = max(1, int(budget))
         def allowed(m):
             if account_target is not None: return set(account_target) & active_handles
             src = led.sources.get(m.parent_id)
