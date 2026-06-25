@@ -13,6 +13,8 @@ from fanops.models import Clip, Moment, Source, ClipState, MomentState, Fmt, Pos
 from fanops.accounts import Accounts
 from fanops.crosspost import crosspost_clips
 from fanops.studio.actions_approve import approve_posts, approve_clip
+from fanops.studio.actions_common import RENDER_PENDING_REASON
+from fanops.studio.views_review import review_matrix
 
 
 def _seed_accounts(cfg, accounts):
@@ -147,6 +149,7 @@ def test_approve_skips_variant_post_when_render_cannot_materialize(tmp_path, mon
     assert p.state is PostState.awaiting_approval                # NOT queued (no render -> not shippable)
     assert p.render_id is None and p.media_urls == []
     assert led.renders == {}
+    assert p.error_reason == RENDER_PENDING_REASON               # #4: durable marker, not only a log line
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "render_unavailable_skip_approve" in log
 
@@ -170,8 +173,27 @@ def test_warm_miss_skips_approve_and_never_burns_under_the_flock(tmp_path, monke
     assert p.state is PostState.awaiting_approval                # NOT queued — never burned under the flock to force it
     assert p.render_id is None and p.media_urls == [] and led.renders == {}
     assert spy.call_count == 1                                   # called ONCE (the off-flock warm); the in-lock adopt did NOT re-call it
+    assert p.error_reason == RENDER_PENDING_REASON               # #4: durable marker so Review can flag it
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "render_unavailable_skip_approve" in log
+
+def test_warm_miss_surfaces_render_pending_in_review_matrix(tmp_path, monkeypatch, mocker):
+    # #4: a warm-miss post carries a durable marker, so the Review matrix shows a 'render pending' cell
+    # (not just a log line) — the operator sees exactly which surface needs a re-approve.
+    from datetime import datetime, timezone
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1"); _mock_burn(mocker)
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _seed_clip(led, cfg, hooks_by_persona={"@a": "h"}, surfaces=("@a/instagram",)); led.save()
+    _crosspost(cfg)
+    pid = next(iter(Ledger.load(cfg).posts.values())).id
+    mocker.patch("fanops.studio.actions_approve.render_account_file", side_effect=RuntimeError("warm boom"))
+    approve_posts(cfg, [pid])
+    led = Ledger.load(cfg); accts = Accounts.load(cfg)
+    mv = review_matrix(led, accts, cfg, source_id="src_1", now=datetime(2026, 6, 2, tzinfo=timezone.utc))
+    cell = next(c for r in mv.rows for c in r.cells.values() if c)
+    assert cell.render_pending is True                           # the warm-miss surface is flagged in the grid
 
 def test_off_mode_approval_mints_no_render(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); _mock_burn(mocker)

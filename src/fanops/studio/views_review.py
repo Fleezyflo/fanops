@@ -15,6 +15,7 @@ from fanops.models import PostState
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
 from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, _imminent, suggest_time
+from fanops.studio.actions_common import RENDER_PENDING_REASON
 
 
 @dataclass
@@ -257,6 +258,8 @@ class MatrixCell:
     preview_url: str; thumb_url: str; multiplicity: int
     length_cause: Optional[str] = None    # S4: WHY this length (persona/account), shown as the chip's hover title
     framing_cause: Optional[str] = None   # S4: WHY this framing (the account's pin), as the chip's hover title
+    render_pending: bool = False          # #4: an approve was attempted but the per-account render couldn't be
+                                          # made off-lock (warm-miss) — the cell shows a 'render pending' flag
 
 @dataclass
 class MatrixRow:
@@ -342,7 +345,8 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
                                     hook=sp.variant_hook, length_label=sp.length_label, framing=sp.framing,
                                     is_account_cut=sp.is_account_cut, hook_source=sp.hook_source,
                                     preview_url=f"/clips/{lead.parent_id}", thumb_url=f"/clip-thumb/{lead.parent_id}",
-                                    multiplicity=len(plist), length_cause=sp.length_cause, framing_cause=sp.framing_cause)
+                                    multiplicity=len(plist), length_cause=sp.length_cause, framing_cause=sp.framing_cause,
+                                    render_pending=(lead.error_reason == RENDER_PENDING_REASON))   # #4: warm-miss flag
         rows.append(MatrixRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
                               hook=m.hook, affinities=list(getattr(m, "affinities", None) or []), cells=cells))
     cols = sorted(channels.items(), key=lambda kv: (col_rank.get(kv[1][0], 999), kv[1][1]))

@@ -16,7 +16,7 @@ from fanops.crosspost import account_render_spec, render_account_file
 from fanops.log import get_logger
 from fanops.timeutil import iso_z
 from fanops.studio.views import suggest_time
-from fanops.studio.actions_common import ActionResult, _now, _inherit_captions
+from fanops.studio.actions_common import ActionResult, _now, _inherit_captions, RENDER_PENDING_REASON
 
 
 def _acct_for(accts: Accounts, handle: str):
@@ -75,6 +75,8 @@ def _adopt_render(led: Ledger, cfg: Config, post, plan, accts: Accounts) -> None
     r = led.get_render(rid)                                          # authoritative (a racing writer may have added it)
     post.render_id = rid
     post.media_urls = [f"file://{r.path}"]
+    if post.error_reason == RENDER_PENDING_REASON:                   # #4: a prior warm-miss is now resolved -> clear the marker
+        post.error_reason = None
     if r.is_account_cut:                                             # a real cut stamps ITS OWN length profile (P4 dim)
         post.clip_profile = profile
 
@@ -90,7 +92,7 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
     accts = Accounts.load(cfg)
     snap = Ledger.load(cfg)                                          # lock-free: resolve + pre-warm the renders off the flock
     plans = _warm_renders(cfg, snap, resolve_ids(snap), accts) if cfg.creative_variation else {}
-    approved = 0
+    approved = 0; render_pending = 0
     try:
         with Ledger.transaction(cfg) as led:
             for pid in list(resolve_ids(led)):                       # P1: untimed/stale post -> a strictly-future suggestion (not now)
@@ -98,14 +100,16 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                 if post is not None and cfg.creative_variation:
                     _adopt_render(led, cfg, post, plans.get(pid), accts)   # render BEFORE queued (publish-needs-media)
                     if post.variant_hook and not post.media_urls:   # render could NOT be materialized (e.g. clip gone)
+                        post.error_reason = RENDER_PENDING_REASON   # #4: durable marker -> Review flags it (not just a log line)
                         get_logger(cfg)("approve", pid, "render_unavailable_skip_approve")   # surface it; never a silent hookless ship
+                        render_pending += 1
                         continue                                    # don't queue a variant post without its burned file
                 sugg = suggest_time(cfg, post, now=now) if post is not None else None
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
                 approved += 1
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={**detail, "approved": approved})
+    return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": render_pending})
 
 def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None) -> ActionResult:
     """Post-approval gate (multi-select, the Review-tab batch): awaiting_approval -> queued for each selected
