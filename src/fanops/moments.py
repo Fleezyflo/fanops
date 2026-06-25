@@ -13,7 +13,7 @@ from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, discard_gate
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
-from fanops.hookscore import narration_signature
+from fanops.hookscore import narration_signature, has_artist_reference
 from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
 from fanops.clip import fit_window
@@ -265,6 +265,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         # cluster) OR a THIRD-PERSON scene-narration recap (narration_signature — high precision;
         # viewer-POV/imperative pass). The stripped hook is PRESERVED so Review can restore it.
         if hook and (is_weak_hook(hook, used, cluster_scope=cluster_used) or narration_signature(hook)
+                     or has_artist_reference(hook, cfg.artist_name)   # 12x-flagged: a 3rd-person ARTIST hook (he/him/his/she/her/name) — gated even with a 'watch'/'wait'/'listen' opener the meter exempts
                      or brand_risk_flag(hook, cfg)):   # HIGH (audit): the burned hook gets the SAME brand-risk screen captions get
             hook_removed = hook
             hook = None                             # ...the clip still ships CLEAN by default
@@ -274,7 +275,8 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         # dropped handle falls back to the shared `hook` at crosspost. No cross-clip dedup (these are
         # per-account variants of ONE clip).
         hbp = {hh: s for hh, ph in (dec.hooks_by_persona or {}).items()
-               if (s := sanitize_generated_text(ph)) and not narration_signature(s) and not brand_risk_flag(s, cfg)}
+               if (s := sanitize_generated_text(ph)) and not narration_signature(s)
+               and not has_artist_reference(s, cfg.artist_name) and not brand_risk_flag(s, cfg)}
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
                                                  "hooks_by_persona": hbp,
                                                  "state": MomentState.decided})

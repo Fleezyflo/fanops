@@ -41,6 +41,27 @@ def narration_signature(text: str | None) -> bool:
         return False                                  # addresses the viewer -> not narration
     return bool(_THIRD_PERSON.search(low))            # third-person subject + no viewer address -> recap
 
+# THE GATE (stricter than the narration_signature METER above): a SINGULAR third-person personal pronoun
+# (he/him/his/she/her/hers) in this artist content almost always refers to the ARTIST, and a retention
+# hook must address the VIEWER, never narrate the artist — so reject it with NO viewer/imperative-opener
+# exemption ('watch HIM define HIS life' addresses the scroller yet still narrates the artist, which the
+# meter wrongly waves through). NARROW on purpose: plural 'they/people' is left to the prompt (a general
+# claim like 'famous people don't write hits' is a fine viewer hook, not artist narration).
+_ARTIST_PRONOUN = re.compile(r"\b(he|him|his|she|her|hers)\b", re.IGNORECASE)
+
+def has_artist_reference(text: str | None, artist_name: str = "") -> bool:
+    """True if `text` references the ARTIST in third person — a singular personal pronoun
+    (he/him/his/she/her/hers) or the artist's literal name. THE deterministic perspective GATE wired in
+    moments.ingest_moment_hooks: stricter than narration_signature (no opener/viewer exemption), narrower
+    on pronouns (singular only). Empty -> False."""
+    if not text or not text.strip():
+        return False
+    low = text.strip().lower()
+    if _ARTIST_PRONOUN.search(low):
+        return True
+    name = (artist_name or "").strip().lower()
+    return bool(name) and name in low
+
 def hook_quality(led: Ledger) -> dict:
     """Read-only hook scoreboard (Task 9) over the decided moments — no LLM, no network, no ledger
     write/flock. Reports `viewer_pov_rate` from narration_signature: a shipped hook counts against the
