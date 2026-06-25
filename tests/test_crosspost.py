@@ -523,10 +523,12 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
     posts = [p for p in led.posts.values()]
     assert len(posts) == 2
     by_acct = {p.account: p for p in posts}
-    # each account got a DIFFERENT variant_hook + variant_key, and burn_hook_only was called per account
+    # each account got a DIFFERENT variant_hook + variant_key; slice 2 (burn on approval) DEFERS the ffmpeg
+    # burn to approval, so the mint RECORDS the per-account intent but runs NO burn and mints no Render.
     assert by_acct["@a"].variant_hook == "HOOK A" and by_acct["@b"].variant_hook == "HOOK B"
     assert by_acct["@a"].variant_key and by_acct["@a"].variant_key != by_acct["@b"].variant_key
-    assert len(calls) == 2 and {h for _, h in calls} == {"HOOK A", "HOOK B"}
+    assert calls == [] and led.renders == {}                          # mint defers the burn (no ffmpeg, no Render)
+    assert all(p.render_id is None and p.media_urls == [] for p in posts)
     # DETERMINISM (pinned in-test, not only by construction): variant_key MUST be the
     # content-addressed surface_key — a future swap to random/uuid (distinct but non-reproducible,
     # the #1 v1 duplicate-post bug) would still pass the distinctness check above, so assert the

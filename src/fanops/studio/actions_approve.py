@@ -5,31 +5,113 @@ stitch-plan lifecycle. Each runs under one Ledger.transaction. Depends only on a
 module, so the graph stays acyclic (actions.py->actions_approve for clear_time's unapprove only)."""
 from __future__ import annotations
 from datetime import datetime
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import ClipState, PostState
+from fanops.accounts import Accounts
+from fanops.ids import surface_key
+from fanops.models import ClipState, PostState, Render, RenderState
+from fanops.crosspost import account_render_spec, render_account_file
+from fanops.log import get_logger
 from fanops.timeutil import iso_z
 from fanops.studio.views import suggest_time
 from fanops.studio.actions_common import ActionResult, _now, _inherit_captions
 
 
-def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None) -> ActionResult:
-    """Post-approval gate (multi-select, the Review-tab batch): awaiting_approval -> queued for each
-    selected post in ONE transaction, idempotent (a non-awaiting post is a no-op). One `now` stamp for
-    the whole batch so approve_post's stale-schedule bump is consistent. Never a 500."""
-    sel = [i for i in (ids or []) if i]
+def _acct_for(accts: Accounts, handle: str):
+    return next((a for a in accts.accounts if a.handle == handle), None)   # None -> account_render_spec's global defaults
+
+def _warm_renders(cfg: Config, snap: Ledger, ids: Sequence[str], accts: Accounts) -> dict:
+    """LOCK-FREE: render each DISTINCT (clip, hook) variant file for the posts `ids` selects to its
+    content-addressed path, so the in-lock adopt records the Render WITHOUT running ffmpeg under the flock (the
+    60s flock guard / the approve_with_hook precedent). Returns {post_id: RenderPlan}. Deduped: a hook whose
+    Render ENTITY already exists is skipped (in-lock reuses it), and identical hooks within the batch render
+    once. Per-post fail-open — a render error just omits the plan (in-lock then renders it as a fallback)."""
+    plans, by_rid = {}, {}
+    for pid in ids:
+        post = snap.posts.get(pid)
+        if post is None or not post.variant_hook: continue
+        clip = snap.clips.get(post.parent_id)
+        if clip is None: continue
+        try:
+            acct = _acct_for(accts, post.account)
+            rid, *_ = account_render_spec(cfg, clip=clip, hook=post.variant_hook, acct=acct)
+            if snap.get_render(rid) is not None: continue            # entity already exists -> in-lock reuses it
+            if rid in by_rid: plans[pid] = by_rid[rid]; continue      # identical hook already warmed this batch
+            mom = snap.moments.get(clip.parent_id)
+            src = snap.sources.get(mom.parent_id) if mom is not None else None
+            plan = render_account_file(snap, cfg, post=post, acct=acct, target_clip=clip, src=src)
+            by_rid[rid] = plan; plans[pid] = plan
+        except Exception: continue                                   # fail-open: the in-lock adopt renders it as a fallback
+    return plans
+
+def _adopt_render(led: Ledger, cfg: Config, post, plan, accts: Accounts) -> None:
+    """IN-LOCK: ensure the per-account Render exists (adopt the warmed file, or render in-lock as a fallback)
+    and point `post` at its burned file + stamp the realized cut profile — BEFORE the post is promoted to
+    queued (publish-needs-media: a variant post is NEVER queued without its render). Reuses an existing
+    content-addressed Render (dedup / anti-explosion). A clean no-op when the post carries no variant_hook
+    (the OFF / hookless firewall holds at approval too)."""
+    if not post.variant_hook: return
+    clip = led.clips.get(post.parent_id)
+    if clip is None: return
+    acct = _acct_for(accts, post.account)
+    # rid is recomputed in-lock from the CURRENT variant_hook: if the hook changed between the warm snapshot
+    # and here, this rid won't match the warmed plan -> `plan is None`/stale -> the in-lock fallback renders
+    # the correct file (content-addressed, so the warmed stale file is simply orphaned, never adopted).
+    rid, _wants, profile, _top = account_render_spec(cfg, clip=clip, hook=post.variant_hook, acct=acct)
+    if led.get_render(rid) is None:
+        if plan is None or plan.render_id != rid:                    # no warm (race / fail-open / hook changed) -> render in-lock now
+            mom = led.moments.get(clip.parent_id)
+            src = led.sources.get(mom.parent_id) if mom is not None else None
+            plan = render_account_file(led, cfg, post=post, acct=acct, target_clip=clip, src=src)
+        led.add_render(Render(id=plan.render_id, clip_id=clip.id, account=post.account,
+                              surface_key=surface_key(post.account, post.platform.value),
+                              hook_text=post.variant_hook, path=plan.vpath, state=RenderState.rendered,
+                              batch_id=plan.batch_id, source_id=plan.source_id, is_account_cut=plan.produced,
+                              hook_source=plan.hook_source, cut_seconds=plan.realized))   # first-write-wins (race-safe)
+    r = led.get_render(rid)                                          # authoritative (a racing writer may have added it)
+    post.render_id = rid
+    post.media_urls = [f"file://{r.path}"]
+    if r.is_account_cut:                                             # a real cut stamps ITS OWN length profile (P4 dim)
+        post.clip_profile = profile
+
+def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Sequence[str]],
+                             now: Optional[datetime], detail: dict) -> ActionResult:
+    """The shared approve spine (slice 2: burn on approval). Warm the per-account renders OUTSIDE the flock for
+    the posts `resolve_ids` selects, then in ONE transaction adopt each render (mint the Render + point the
+    post at its burned file) and promote awaiting->queued. resolve_ids(led) -> the post-id list, applied to a
+    lock-free snapshot to warm, then RE-APPLIED in-lock so a concurrent state change can't approve a
+    no-longer-eligible post. One `now` stamp for the batch (consistent stale-schedule bump). Materialize is a
+    clean no-op when creative_variation is OFF or a post has no variant_hook (OFF firewall). Never a 500."""
     now = _now(now); now_iso = iso_z(now)
+    accts = Accounts.load(cfg)
+    snap = Ledger.load(cfg)                                          # lock-free: resolve + pre-warm the renders off the flock
+    plans = _warm_renders(cfg, snap, resolve_ids(snap), accts) if cfg.creative_variation else {}
+    approved = 0
     try:
         with Ledger.transaction(cfg) as led:
-            for pid in sel:                                  # P1: untimed/stale post -> a strictly-future suggestion (not now)
+            for pid in list(resolve_ids(led)):                       # P1: untimed/stale post -> a strictly-future suggestion (not now)
                 post = led.posts.get(pid)
+                if post is not None and cfg.creative_variation:
+                    _adopt_render(led, cfg, post, plans.get(pid), accts)   # render BEFORE queued (publish-needs-media)
+                    if post.variant_hook and not post.media_urls:   # render could NOT be materialized (e.g. clip gone)
+                        get_logger(cfg)("approve", pid, "render_unavailable_skip_approve")   # surface it; never a silent hookless ship
+                        continue                                    # don't queue a variant post without its burned file
                 sugg = suggest_time(cfg, post, now=now) if post is not None else None
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
+                approved += 1
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"approved": len(sel)})
+    return ActionResult(ok=True, detail={**detail, "approved": approved})
+
+def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None) -> ActionResult:
+    """Post-approval gate (multi-select, the Review-tab batch): awaiting_approval -> queued for each selected
+    post in ONE transaction, idempotent (a non-awaiting post is a no-op). Slice 2: each approved per-account
+    surface's on-screen hook is BURNED here (the render is warmed off the flock, then adopted) so ONLY approved
+    posts ever render. One `now` stamp for the whole batch (consistent stale-schedule bump). Never a 500."""
+    sel = [i for i in (ids or []) if i]
+    return _approve_ids_with_render(cfg, resolve_ids=lambda led: sel, now=now, detail={})
 
 def reject_posts(cfg: Config, ids: Sequence[str]) -> ActionResult:
     """Operator discard (multi-select): awaiting_approval -> rejected (terminal) for each selected post
@@ -128,20 +210,12 @@ def _approve_matching(cfg: Config, pred=None, *, pred_for=None, now: Optional[da
 
     Two predicate forms: `pred(p)` (post-only — the existing clip/account scope) OR `pred_for(led) -> pred`
     when the predicate needs IN-LOCK ledger context (Phase 4 source scope walks clip -> moment.parent_id from
-    led.moments — built ONCE inside the transaction, never per-post I/O, off a fresh in-lock read)."""
-    now = _now(now); now_iso = iso_z(now); approved = 0
-    try:
-        with Ledger.transaction(cfg) as led:
-            p = pred_for(led) if pred_for is not None else pred
-            ids = [post.id for post in led.posts.values() if post.state is PostState.awaiting_approval and p(post)]
-            for pid in ids:                                  # P1: untimed/stale post -> a strictly-future suggestion (not now)
-                post = led.posts.get(pid)
-                sugg = suggest_time(cfg, post, now=now) if post is not None else None
-                led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
-            approved = len(ids)
-    except Exception as exc:
-        return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={**(detail or {}), "approved": approved})
+    led.moments — built ONCE inside the transaction, never per-post I/O, off a fresh in-lock read). Slice 2:
+    each approved surface's per-account render is materialized (burned) before it is promoted to queued."""
+    def _resolve(led):
+        p = pred_for(led) if pred_for is not None else pred
+        return [post.id for post in led.posts.values() if post.state is PostState.awaiting_approval and p(post)]
+    return _approve_ids_with_render(cfg, resolve_ids=_resolve, now=now, detail=detail or {})
 
 def approve_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
     """M3b 'all accounts of this moment': one-click approve EVERY awaiting_approval surface of ONE clip, so

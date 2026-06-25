@@ -151,7 +151,14 @@ def _patch_burn(mocker):
     return calls
 
 def _run(cfg):
-    return crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    # Slice 2 (burn on approval): the per-account Render materializes at APPROVAL, not at crosspost. Drive the
+    # FULL mint->approve path (persist so the approve txn sees the posts) — the framing/cut SEMANTICS asserted
+    # below are unchanged; only the render's timing moved.
+    led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    led.save()
+    from fanops.studio.actions_approve import approve_posts
+    approve_posts(cfg, [p.id for p in led.posts.values()])
+    return Ledger.load(cfg)
 
 
 def test_framing_override_triggers_cut_with_top_bias(tmp_path, monkeypatch, mocker):

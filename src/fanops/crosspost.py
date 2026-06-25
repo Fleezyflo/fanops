@@ -5,13 +5,14 @@ in ITS platform's aspect, rendering on demand (FIX F20). The resolved NUMERIC ac
 stored (FIX F06). decide_tag is invoked (FIX F31). Held/retired clips are skipped (FIX F55)."""
 from __future__ import annotations
 import hashlib, random
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from fanops import overlay
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.bands import band_for
-from fanops.models import (Post, PostState, ClipState, Fmt, Render, RenderState, HookSource,
+from fanops.models import (Post, PostState, ClipState, Fmt, HookSource,
                            PLATFORM_ASPECT, PLATFORM_MAX_SECONDS)
 from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut
@@ -83,11 +84,58 @@ def account_render_spec(cfg: Config, *, clip, hook: str, acct):
     if frame_differs: tag.append(f"frame:{'top' if top_bias else 'center'}")
     return child_id("render", clip.id, "\x1f".join(tag)), wants_cut, profile, top_bias
 
+@dataclass
+class RenderPlan:
+    """The result of rendering ONE per-account burned file (pure render-to-disk, NO ledger write) — adopted
+    into a Render by the approve actions. render_id is content-addressed; produced=True ONLY when a real
+    per-account CUT succeeded (else the shared-clip burn fallback wrote vpath); realized is the cut's seconds
+    (None unless a cut). vpath ALWAYS exists once render_account_file returns (cut OR burn OR fail-open)."""
+    render_id: str
+    vpath: str
+    produced: bool
+    realized: float | None
+    profile: str
+    hook_source: HookSource
+    batch_id: str | None
+    source_id: str | None
+
+_ASPECT_WH = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080), Fmt.r16x9: (1920, 1080)}
+
+def render_account_file(led: Ledger, cfg: Config, *, post, acct, target_clip, src, caller: str = "approve") -> RenderPlan:
+    """Render (burn) the per-account file for `post.variant_hook` to its content-addressed path and return its
+    RenderPlan. PURE render-to-disk — NO ledger mutation — so it is safe LOCK-FREE (the approve warm pass) OR
+    in-lock (the fallback). This is the mint's old burn block MOVED here (slice 2: burn on approval) so
+    approval and the Studio re-burn share ONE renderer (anti-drift H1). A real CUT when the account's
+    band/framing diverges (its own length + crop off the SAME moment); else the shared-clip burn onto
+    target_clip. `caller` is the log event category (the only caller today is approval). Fail-open: any ffmpeg
+    failure leaves a breadcrumb and falls back, and vpath always exists."""
+    hook = post.variant_hook
+    aspect = target_clip.aspect
+    rid, wants_cut, profile, top_bias = account_render_spec(cfg, clip=target_clip, hook=hook, acct=acct)
+    mom = led.moments.get(target_clip.parent_id)
+    own = mom.hooks_by_persona.get(post.account) if mom is not None else None
+    hook_source = HookSource.per_account if own else (HookSource.shared_fallback if hook else HookSource.none)
+    batch_id = src.batch_id if src is not None else None
+    source_id = src.id if src is not None else None
+    vpath = cfg.render_path(batch_id, source_id, rid, aspect)
+    tw, th = _ASPECT_WH.get(aspect, (1080, 1920))
+    surface = f"{post.account}/{post.platform.value}"
+    produced, realized = False, None
+    if wants_cut:                                          # a real per-account CUT: the account's own length AND framing
+        produced, realized = render_account_cut(led, cfg, target_clip.parent_id, aspect=aspect, profile=profile,
+                                                hook=hook, out_path=vpath, top_bias=top_bias)
+        if not produced:                                  # the cut failed -> fall back to the global-length shared burn
+            get_logger(cfg)(caller, target_clip.id, "account_cut_failed", surface=surface, profile=profile)
+    if not produced:                                      # default band/frame OR a failed cut -> shared-clip burn
+        burned = overlay.burn_hook_only(target_clip.path, vpath, hook, width=tw, height=th, font=cfg.subtitle_font)
+        if not burned:                                    # a hookless ship leaves the SAME breadcrumb the mint used to
+            get_logger(cfg)(caller, target_clip.id, "hook_burn_failed", surface=surface)
+    return RenderPlan(rid, vpath, produced, realized, profile, hook_source, batch_id, source_id)
+
 def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: str) -> Ledger:
     base = _parse(base_time)
     date_str = base.date().isoformat()
     surfaces = accounts.surfaces()
-    acct_by_handle = {a.handle: a for a in accounts.accounts}    # M2: per-account clip_profile lookup by handle
     # operate on the set of clips that are captioned + not held + not retired
     seed_clips = [c for c in led.clips_in_state(ClipState.captioned)
                   if not c.held and not led.is_retired_clip(c.id)
@@ -151,73 +199,26 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                                  clip_id=clip.id, lead_minutes=cfg.publish_lead_minutes)
             if decide_tag(led, account=surf.account, clip_id=clip.id, when=_parse(sched)):
                 caption = f"{caption}\n{ARTIST_HANDLE}"
-            # Per-account creative variation (gated by FANOPS_CREATIVE_VARIATION, default OFF; fail-open).
-            # When ON and this surface has a per-account hook, mint a first-class RENDER — the per-account
-            # shippable artifact (Stage B of the Render foundation). The Render owns the burned file + the
-            # hook (the single source of truth); Post.render_id is the authoritative "which file" pointer and
-            # the serve route resolves post->render->path (no media_urls guessing). CONTENT-ADDRESSED by
-            # (target_clip.id, hook): two surfaces with the SAME hook on the SAME aspect-clip dedup to ONE
-            # render + ONE file (anti-explosion). OFF / no hook -> render_id None, media_urls [], variant_*
-            # None == today's shared-clip behavior (byte-identical).
+            # Per-account creative variation (FANOPS_CREATIVE_VARIATION, default ON; fail-open). Slice 2 (burn
+            # on approval): the mint RECORDS the per-account on-screen hook — the INTENT — but does NOT run
+            # ffmpeg or mint a Render. The Render materializes when the operator APPROVES the surface
+            # (actions_approve._adopt_render via render_account_file), so ONLY approved surfaces ever render
+            # (the operator's anti-explosion ask — no "100 burned videos per run"). A born variant post carries
+            # variant_hook + variant_key with render_id None + media_urls [] (review serves the MASTER clip;
+            # approval points it at the burned file BEFORE it can become queued, so publish always has media).
+            # OFF / no hook -> variant_* None, render_id None, media [] == the shared-clip behavior (byte-identical).
             render_id = None
             variant_key = None
             variant_hook = None
             media_urls = []
-            # ROOT FIX: the on-screen per-account hook is the FRAME-SEEING moment author's hook for THIS
-            # handle (m.hooks_by_persona[handle]) — falling back to the shared moment hook. The blind
-            # caption gate no longer authors a shipped hook. m guarded defensively (None -> no hook).
-            own_hook = m.hooks_by_persona.get(surf.account) if m is not None else None   # this account's OWN authored hook
-            hook_v = own_hook or (m.hook if m is not None else None)                     # else the shared moment hook (fallback)
-            hook_source = HookSource.per_account if own_hook else (HookSource.shared_fallback if hook_v else HookSource.none)  # P3
-            # M2: resolve THIS account's own LENGTH band AND vertical-crop framing. When either differs from
-            # the global, the account's Render is a real per-account CUT (its own length — @short 8-15s,
-            # @long 28-45s — AND its own crop — @top head-safe vs centred — off the SAME moment),
-            # content-addressed with band/frame tags so two accounts sharing one hook but cut to a different
-            # length OR crop never collide on one file. Neither differs -> the shared-clip burn path + un-tagged
-            # id (byte-identical to today). did_cut gates the provenance stamp (only a real cut claims its length).
-            acct = acct_by_handle.get(surf.account)
-            acct_profile = cfg.clip_profile          # global default; a real per-account cut overwrites it below
-            did_cut = False
+            # The on-screen per-account hook is the FRAME-SEEING moment author's hook for THIS handle
+            # (m.hooks_by_persona[handle]), falling back to the shared moment hook. m guarded defensively.
+            own_hook = m.hooks_by_persona.get(surf.account) if m is not None else None
+            hook_v = own_hook or (m.hook if m is not None else None)
             if cfg.creative_variation and hook_v:
                 variant_key = skey
-                variant_hook = hook_v
-                # The render IDENTITY (content-addressed id) + cut/burn decision come from the SINGLE shared
-                # source account_render_spec, so the Studio re-burn (actions.reburn_hook) computes the SAME id
-                # + cut and can never drift (audit H1). Neither band nor frame differs -> bare-hook id, today's
-                # behavior byte-identical. Identical hooks on this aspect-clip dedup to ONE render/file.
-                render_id, wants_cut, acct_profile, acct_top_bias = account_render_spec(
-                    cfg, clip=target_clip, hook=hook_v, acct=acct)
-                if led.get_render(render_id) is None:
-                    tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080),
-                              Fmt.r16x9: (1920, 1080)}.get(aspect, (1080, 1920))
-                    src_id = src.id if src is not None else None
-                    vpath = cfg.render_path(src_batch, src_id, render_id, aspect)   # filed under clips/{batch}/{src}/
-                    produced = False
-                    realized = None                                # P3: the account cut's realized seconds (None unless a real cut succeeds)
-                    if wants_cut:                                  # a real per-account CUT: the account's own length AND framing
-                        produced, realized = render_account_cut(led, cfg, moment_id, aspect=aspect, profile=acct_profile,
-                                                                 hook=hook_v, out_path=vpath, top_bias=acct_top_bias)
-                        if not produced:                           # the cut failed -> fell back to the GLOBAL-length shared burn.
-                            get_logger(cfg)("crosspost", target_clip.id, "account_cut_failed",   # never a SILENT wrong-length ship
-                                            surface=f"{surf.account}/{surf.platform.value}", profile=acct_profile)
-                    if not produced:                               # default band OR a failed cut -> shared-clip burn (vpath always exists)
-                        burned = overlay.burn_hook_only(target_clip.path, vpath, hook_v, width=tw, height=th,
-                                                        font=cfg.subtitle_font)   # atomic + fail-open: vpath always exists
-                        if not burned:                             # AUDIT M1: capture the fail-open — a hookless ship leaves a breadcrumb
-                            get_logger(cfg)("crosspost", target_clip.id, "hook_burn_failed",   # the F9 signal the OFF path emitted
-                                            surface=f"{surf.account}/{surf.platform.value}")
-                    did_cut = produced
-                    led.add_render(Render(id=render_id, clip_id=target_clip.id, account=surf.account,
-                                          surface_key=skey, hook_text=hook_v, path=vpath,
-                                          state=RenderState.rendered, batch_id=src_batch, source_id=src_id,
-                                          is_account_cut=produced,                    # truthful: a failed cut fell back to the shared burn
-                                          hook_source=hook_source, cut_seconds=realized))   # P3: own-vs-fallback hook + realized cut seconds
-                else:
-                    did_cut = led.get_render(render_id).is_account_cut   # read the TRUTH (a prior failed cut stays False).
-                    # P3: hook_source/cut_seconds ride the SAME first-write-wins dedup as is_account_cut — content-
-                    # addressed on (clip_id, hook_text), so a changed hook mints a fresh id; the only un-refreshed
-                    # edge is identical text promoted shared->own (acceptable, same contract as is_account_cut).
-                media_urls = [f"file://{led.get_render(render_id).path}"]
+                variant_hook = hook_v          # burned AT APPROVAL; account_render_spec(clip, hook, acct) there
+                                               # recomputes the SAME content-addressed render id + cut decision (H1).
             led.add_post(Post(
                 # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator
                 # approves it in the Review tab. publish_due/publish_now iterate only `queued`, so a fresh
@@ -236,9 +237,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 # first_frame_kind/cut_seconds from the rendered clip, clip_profile from the global
                 # video-type knob (its only home today — config.py). Absent dims default None cleanly.
                 first_frame_kind=target_clip.first_frame_kind, cut_seconds=target_clip.cut_seconds,
-                # M2: a real per-account cut stamps ITS OWN length profile (provenance + the P4 clip_profile
-                # dim is then accurate); every other post keeps the global profile (byte-identical to today).
-                clip_profile=(acct_profile if did_cut else cfg.clip_profile), batch_id=src_batch,   # Account-First Studio: denormalized batch (None=ungrouped)
+                # clip_profile is the GLOBAL profile at the mint; a real per-account CUT re-stamps its OWN
+                # length profile at APPROVAL (actions_approve._adopt_render), when the cut's realized truth is
+                # known — so the P4 clip_profile dim is accurate by the time a post is published + learned on.
+                clip_profile=cfg.clip_profile, batch_id=src_batch,   # Account-First Studio: denormalized batch (None=ungrouped)
                 variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))   # P2: the axis this variant moved
         if tgt:   # T5: one structured exclusion summary per batched clip (the ONLY persistent record — excluded
                   # surfaces become no Post). Silent when tgt==[] (unbatched/ALL-sentinel) -> byte-identical fan-out.
