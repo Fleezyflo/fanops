@@ -173,6 +173,70 @@ def claim_without_evidence(transcript_path):
     return None
 
 
+def _agent_edited(transcript_path, root):
+    """Set of src/|tests/ .py paths the AGENT wrote via Edit/Write/MultiEdit THIS session.
+    Scopes the code gates to the agent's own work — never gate on a parallel operator WIP."""
+    paths = set()
+    try:
+        root_res = pathlib.Path(root).resolve()
+    except OSError:
+        root_res = pathlib.Path(root)
+    for r in _read_jsonl(transcript_path):
+        if r.get('type') != 'assistant':
+            continue
+        content = (r.get('message') or {}).get('content')
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if not (isinstance(b, dict) and b.get('type') == 'tool_use' and b.get('name') in ('Edit', 'Write', 'MultiEdit')):
+                continue
+            fp = (b.get('input') or {}).get('file_path', '')
+            if not fp:
+                continue
+            try:
+                rel = str(pathlib.Path(fp).resolve().relative_to(root_res))
+            except (ValueError, OSError):
+                rel = fp.lstrip('./')
+            if rel.endswith('.py') and (rel.startswith('src/') or rel.startswith('tests/')):
+                paths.add(rel)
+    return paths
+
+
+def targeted_tests(root, files):
+    """Impact-based selection: the test FILES relevant to the changed files — NOT the whole suite.
+    A changed test file runs itself; a changed src module runs tests/test_<module>.py plus any test
+    that imports that module by its dotted path. Keeps the gate accurate AND cheap (a handful of files,
+    a second, low RAM) instead of spiking memory on 2700 tests every turn. Empty -> skip pytest."""
+    rootp = pathlib.Path(root)
+    test_dir = rootp / 'tests'
+    tests, importer_pats = set(), []
+    for f in files:
+        if f.startswith('tests/') and f.endswith('.py'):
+            tests.add(f)
+        elif f.startswith('src/') and f.endswith('.py'):
+            mod = pathlib.Path(f).stem                       # e.g. 'run'
+            if (rootp / f'tests/test_{mod}.py').exists():
+                tests.add(f'tests/test_{mod}.py')
+            dotted = f[4:-3].replace('/', '.')               # fanops.post.run
+            pkg = dotted.rsplit('.', 1)[0] if '.' in dotted else ''
+            pat = re.escape(dotted) + r'\b'
+            if pkg:
+                pat += rf'|from {re.escape(pkg)} import[^\n]*\b{re.escape(mod)}\b'
+            importer_pats.append(re.compile(pat))
+    if importer_pats:
+        for tp in sorted(test_dir.glob('test_*.py')):
+            rel = f'tests/{tp.name}'
+            if rel in tests:
+                continue
+            try:
+                txt = tp.read_text(errors='ignore')
+            except OSError:
+                continue
+            if any(p.search(txt) for p in importer_pats):
+                tests.add(rel)
+    return sorted(tests)
+
+
 def main():
     if os.environ.get('FANOPS_STOP_GATE') == '0':
         allow()
@@ -190,10 +254,14 @@ def main():
     if ce:
         failures.append(ce)
 
-    # code gates only for sessions that changed src/|tests/ .py
+    # code gates only for src/|tests/ .py THIS AGENT changed this session (not parallel
+    # operator WIP): intersect working-tree changes with files the agent actually edited.
     added, files = ({}, [])
     if pathlib.Path(root, '.git').exists():
         added, files = changed_py(root)
+        edited = _agent_edited(inp.get('transcript_path'), root)
+        files = [f for f in files if f in edited]
+        added = {f: added[f] for f in added if f in edited}
 
     # 1) stub/placeholder in ADDED lines (cheap)
     if not failures and files:
@@ -213,14 +281,17 @@ def main():
             tail = "\n  ".join([line for line in out.splitlines() if line.strip()][-12:])
             failures.append(f"RUFF is red (the CI lint gate):\n  {tail}")
 
-    # 3) fast unit suite — only if lint+stubs clean (most expensive, run last)
+    # 3) IMPACTED tests only — the test files relevant to the changed code, not the whole suite
     if not failures and files:
-        rc, out = run([sys.executable, '-m', 'pytest', '-q', '-m', 'not integration', '--timeout=60'], root, PYTEST_CEILING_S)
-        if rc is None:
-            failures.append(f"PYTEST exceeded {PYTEST_CEILING_S}s — a hang is the bug (CLAUDE.md: ledger flock). Don't end on an unverifiable suite.")
-        elif rc not in (0, 5, 127):  # 5 = no tests collected, 127 = pytest absent
-            tail = "\n  ".join([line for line in out.splitlines() if line.strip()][-15:])
-            failures.append(f"PYTEST is red:\n  {tail}")
+        targets = targeted_tests(root, files)
+        if targets:
+            rc, out = run([sys.executable, '-m', 'pytest', '-q', '-m', 'not integration', '--timeout=60', *targets],
+                          root, PYTEST_CEILING_S)
+            if rc is None:
+                failures.append(f"PYTEST (impacted tests) exceeded {PYTEST_CEILING_S}s — a hang is the bug. Don't end on an unverifiable run.")
+            elif rc not in (0, 5, 127):  # 5 = no tests collected, 127 = pytest absent
+                tail = "\n  ".join([line for line in out.splitlines() if line.strip()][-15:])
+                failures.append(f"PYTEST is red ({len(targets)} impacted test file(s): {', '.join(t.split('/')[-1] for t in targets)}):\n  {tail}")
 
     if not failures:
         allow()
