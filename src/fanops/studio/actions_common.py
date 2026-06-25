@@ -8,6 +8,14 @@ from datetime import datetime, timezone
 from typing import Optional
 
 
+# #4: the durable marker stamped on a post when an approve was ATTEMPTED but its per-account render could
+# NOT be materialized off-lock (a warm-miss). It distinguishes a "render pending — re-approve to retry" post
+# from a normal not-yet-approved variant post (both are awaiting_approval + variant_hook + media_urls=[]),
+# so the Review matrix can show a 'render pending' chip instead of the warm-miss being only a log line. A
+# successful adopt clears it. Display-only — error_reason is never used in gating logic (state stays awaiting).
+RENDER_PENDING_REASON = "render unavailable — re-approve to retry the on-screen hook burn"
+
+
 def _inherit_captions(meta: dict | None) -> dict:
     """DEEP-copy a sibling clip's meta_captions for an inheriting clip (release_stitches / approve_with_hook).
     A shallow dict()/model_copy shares the inner {caption,hashtags} dicts, so a later in-place edit to one
