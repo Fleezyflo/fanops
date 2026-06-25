@@ -35,7 +35,9 @@ def _archive_published(cfg: Config, post: Post) -> None:
                     if dt.tzinfo is not None: day = dt.date().isoformat(); break
                 except (ValueError, TypeError): pass
         if day is None: day = datetime.now(timezone.utc).date().isoformat()
-        d = cfg.published / day; d.mkdir(parents=True, exist_ok=True)
+        d = cfg.published / day; d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try: os.chmod(d, 0o700)             # L2 (audit): tighten a pre-existing world-listable day dir too
+        except OSError: pass
         rec = {"post_id": post.id, "clip_id": post.parent_id, "account": post.account,
                "platform": post.platform.value, "caption": post.caption, "hashtags": list(post.hashtags or []),
                "public_url": post.public_url, "scheduled_time": post.scheduled_time,
@@ -46,8 +48,11 @@ def _archive_published(cfg: Config, post: Post) -> None:
                "render_id": post.render_id, "variant_hook": post.variant_hook,
                "media": (post.media_urls[0] if post.media_urls else None)}
         ap = d / f"{post.id}.json"
-        ap.write_text(json.dumps(rec, indent=2, ensure_ascii=False))
-        try: os.chmod(ap, 0o600)            # owner-only at rest (audit): the published archive carries caption/url/hook
+        # L2 (audit): create 0600 ATOMICALLY (no write-then-chmod world-readable window) — the archive carries
+        # the operator handle + live permalink + creative. Mirrors log.py's create-0600 pattern.
+        with os.fdopen(os.open(ap, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w") as fh:
+            json.dump(rec, fh, indent=2, ensure_ascii=False)
+        try: os.chmod(ap, 0o600)            # tighten a re-archived file that pre-existed at a looser mode (O_TRUNC keeps it)
         except OSError: pass
     except Exception as exc:
         try: get_logger(cfg)("publish", post.id, "archive_error", err=str(exc)[:160])

@@ -219,6 +219,18 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
                 variant_key = skey
                 variant_hook = hook_v          # burned AT APPROVAL; account_render_spec(clip, hook, acct) there
                                                # recomputes the SAME content-addressed render id + cut decision (H1).
+            existing = led.posts.get(pid)
+            if existing is not None:
+                # M2 (audit): a re-crosspost reaches an EXISTING post — pid is content-addressed on (clip,
+                # surface), NOT the per-account hook, so add_post's first-write-wins would keep a STALE hook
+                # after a re-decision (the operator would review/approve the old hook). Rewrite the variant
+                # INTENT in place ONLY while the post is still AWAITING (the render is deferred to approval, so
+                # there is no stale burn to undo) and ONLY on a real diff (a same-input re-run stays
+                # byte-identical). A queued/published post keeps the hook the operator already approved.
+                if existing.state is PostState.awaiting_approval and (
+                        existing.variant_hook != variant_hook or existing.variant_key != variant_key):
+                    existing.variant_hook = variant_hook; existing.variant_key = variant_key
+                continue
             led.add_post(Post(
                 # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator
                 # approves it in the Review tab. publish_due/publish_now iterate only `queued`, so a fresh

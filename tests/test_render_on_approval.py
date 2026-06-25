@@ -150,6 +150,29 @@ def test_approve_skips_variant_post_when_render_cannot_materialize(tmp_path, mon
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "render_unavailable_skip_approve" in log
 
+def test_warm_miss_skips_approve_and_never_burns_under_the_flock(tmp_path, monkeypatch, mocker):
+    # M1 (audit): the in-lock adopt must NEVER run ffmpeg while holding the ledger flock. When the off-flock
+    # warm produced no usable render for a post (warm failed, or the hook changed since the snapshot), the
+    # approve leaves it un-materialized + a breadcrumb and the NEXT warm pass renders it — it does NOT burn
+    # under the lock to force it through.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1"); _mock_burn(mocker)
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _seed_clip(led, cfg, hooks_by_persona={"@a": "h"}, surfaces=("@a/instagram",)); led.save()
+    led = _crosspost(cfg)
+    pid = next(iter(led.posts.values())).id
+    # the off-flock warm produces NO usable plan (simulate an ffmpeg/transport failure in the warm pass)
+    spy = mocker.patch("fanops.studio.actions_approve.render_account_file", side_effect=RuntimeError("warm boom"))
+    approve_posts(cfg, [pid])
+    led = Ledger.load(cfg)
+    p = led.posts[pid]
+    assert p.state is PostState.awaiting_approval                # NOT queued — never burned under the flock to force it
+    assert p.render_id is None and p.media_urls == [] and led.renders == {}
+    assert spy.call_count == 1                                   # called ONCE (the off-flock warm); the in-lock adopt did NOT re-call it
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "render_unavailable_skip_approve" in log
+
 def test_off_mode_approval_mints_no_render(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); _mock_burn(mocker)
     cfg = Config(root=tmp_path)

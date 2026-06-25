@@ -15,3 +15,17 @@ def test_logger_writes_line(tmp_path):
     assert "T" in cols[0]                                   # ISO timestamp leads
     assert cols[1] == "transcribe" and cols[2] == "src_1" and cols[3] == "ok"
     assert cols[4] == "extra=turbo"
+
+
+def test_logger_sanitizes_newlines_and_tabs(tmp_path):
+    # L1 (audit): a field value carrying \n/\r/\t (e.g. a remote API error body) must NOT forge extra log lines
+    # or shift the load-bearing TAB columns — the structural chars are collapsed to spaces so the line stays
+    # single and positionally parseable.
+    cfg = Config(root=tmp_path)
+    get_logger(cfg)("reconcile", "p_1", "poll-error", err="line1\nFORGED\tcol\rsplit")
+    lines = cfg.log_path.read_text().splitlines()
+    assert len(lines) == 1                                  # one physical line — no injected rows
+    cols = lines[0].split("\t")
+    assert len(cols) == 5                                   # exactly the 5 positional columns — no shifted tab
+    assert cols[1] == "reconcile" and cols[2] == "p_1" and cols[3] == "poll-error"
+    assert "FORGED" in cols[4] and "\n" not in lines[0] and "\r" not in lines[0]
