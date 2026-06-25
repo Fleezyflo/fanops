@@ -76,6 +76,40 @@ def _migrate_v4_metrics_series(raw: dict) -> dict:
     return out
 
 
+def _migrate_v8_account_selections(raw: dict) -> dict:
+    """v8->v9 (RF1): lift the legacy, non-durable Moment.affinities into durable AccountSelection rows. For
+    every moment with NON-EMPTY affinities, group (source_id, account) -> [moment_id] and write one
+    AccountSelection per pair. DECIDED DEFAULT: an empty-affinities moment mints NO record (the gate falls
+    back to affinity_admits -> the legacy fan-to-all is preserved byte-for-byte). PROVENANCE: label `llm` ONLY
+    when a durable SelectionFact corroborates that (source, account) — never fabricate a 'chosen' badge from
+    the non-durable affinities; otherwise `migrated`. Pure on the RAW dict (runs before unit construction);
+    NEVER raises on a torn row (mirrors _migrate_v4_metrics_series); idempotent (an already-present
+    account_selection id is kept, never overwritten)."""
+    from fanops.ids import child_id                  # local: pure, cycle-safe
+    out = dict(raw)
+    selections = dict(out.get("account_selections") or {})       # idempotent: keep any already-migrated rows
+    facts = out.get("selection_facts") or {}
+    llm_pairs = {(f["source_id"], f["account"]) for f in facts.values()
+                 if isinstance(f, dict) and f.get("method") == "llm" and f.get("source_id") and f.get("account")}
+    groups: dict = {}
+    for mid, m in (out.get("moments") or {}).items():
+        if not isinstance(m, dict): continue                     # torn row -> skip, never raise
+        affs = m.get("affinities") or []
+        sid = m.get("parent_id")
+        if not affs or not sid: continue                         # empty affinities / no parent -> no record
+        for handle in affs:
+            groups.setdefault((sid, handle), []).append(mid)
+    for (sid, handle), mids in groups.items():
+        asid = child_id("acctsel", sid, handle)
+        if asid in selections: continue                          # idempotent: never overwrite an existing row
+        method = "llm" if (sid, handle) in llm_pairs else "migrated"
+        selections[asid] = {"id": asid, "source_id": sid, "account": handle,
+                            "moment_ids": sorted(mids), "method": method,
+                            "batch_id": None, "created_at": None}
+    out["account_selections"] = selections
+    return out
+
+
 SCHEMA_VERSION = 9
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
@@ -106,7 +140,7 @@ _MIGRATIONS = {1: lambda raw: raw,
                6: lambda raw: {**raw, "renders": raw.get("renders", {})},
                7: lambda raw: {**raw, "selection_facts": raw.get("selection_facts", {})},
                8: lambda raw: raw,
-               9: lambda raw: {**raw, "account_selections": raw.get("account_selections", {})}}
+               9: _migrate_v8_account_selections}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
