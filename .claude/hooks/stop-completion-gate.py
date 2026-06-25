@@ -210,7 +210,7 @@ def main():
     if not failures and files:
         rc, out = run(['ruff', 'check', '.'], root, 60)
         if rc not in (0, 127):  # 127 = ruff not installed -> can't gate, skip
-            tail = "\n  ".join([l for l in out.splitlines() if l.strip()][-12:])
+            tail = "\n  ".join([line for line in out.splitlines() if line.strip()][-12:])
             failures.append(f"RUFF is red (the CI lint gate):\n  {tail}")
 
     # 3) fast unit suite — only if lint+stubs clean (most expensive, run last)
@@ -219,7 +219,7 @@ def main():
         if rc is None:
             failures.append(f"PYTEST exceeded {PYTEST_CEILING_S}s — a hang is the bug (CLAUDE.md: ledger flock). Don't end on an unverifiable suite.")
         elif rc not in (0, 5, 127):  # 5 = no tests collected, 127 = pytest absent
-            tail = "\n  ".join([l for l in out.splitlines() if l.strip()][-15:])
+            tail = "\n  ".join([line for line in out.splitlines() if line.strip()][-15:])
             failures.append(f"PYTEST is red:\n  {tail}")
 
     if not failures:
