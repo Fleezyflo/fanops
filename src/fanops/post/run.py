@@ -72,7 +72,7 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
 # ({state, submission_id, error_reason, public_url}) + the two run.py sets here (media_urls upload
 # result, published_at stamp). The throwaway network ledger is otherwise DISCARDED — only these
 # travel into the persisted ledger, so a concurrent writer's other changes are never clobbered (B4).
-_NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at")
+_NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at", "account_id")
 
 
 def _post_provider(cfg: Config, accounts: Accounts, post: Post) -> str | None:
@@ -85,6 +85,17 @@ def _post_provider(cfg: Config, accounts: Accounts, post: Post) -> str | None:
     if not cfg.is_live:
         return "dryrun"
     return accounts.effective_provider(post.account, post.platform)
+
+
+def _resolve_publish_account_id(accounts: Accounts, post: Post) -> str | None:
+    """The CURRENT poster/integration id for this post's channel, re-resolved at publish time so a Go-Live
+    integration REMAP since crosspost reaches the post (account_id is otherwise frozen onto the post at
+    crosspost). FAIL-OPEN: an unresolvable channel (removed account / empty id) returns None and the frozen
+    post.account_id stands — never crash a publish over a mapping lookup."""
+    try:
+        return accounts.resolve_account_id(post.account, post.platform)
+    except Exception:
+        return None
 
 
 def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str) -> None:
@@ -104,7 +115,7 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str) -> None:
                            if u.startswith("file://") else u for u in post.media_urls]
 
 
-def _publish_one(cfg: Config, post_id: str, backend: str) -> str | None:
+def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | None = None) -> str | None:
     """Publish ONE post via claim -> network -> finalize, with the network OUTSIDE the ledger flock.
 
     CLAIM (tight txn): re-read under lock; publish ONLY if still 'queued' (the double-post guard — a
@@ -128,6 +139,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str) -> str | None:
     post = led.posts.get(post_id)
     if post is None or post.state is not PostState.submitting:
         return None                                    # vanished/changed under us — leave it be
+    if account_id and account_id != post.account_id:   # #1: a Go-Live integration REMAP since crosspost
+        get_logger(cfg)("publish", post_id, "account_id_refreshed", was=post.account_id, new=account_id)
+        post.account_id = account_id                    # send the CURRENT integration id, not the frozen one
     poster = get_poster(cfg, backend)                  # per-account backend (slice 2), default = global
     try:
         _ensure_media(led, cfg, post, backend)
@@ -196,7 +210,7 @@ def publish_due(cfg: Config, *, now: str | None = None) -> dict:
             no_provider += 1
             log("publish", post.id, "no_provider", account=post.account, platform=post.platform.value)
             continue
-        if _publish_one(cfg, post.id, provider) == PostState.published.value:
+        if _publish_one(cfg, post.id, provider, account_id=_resolve_publish_account_id(accounts, post)) == PostState.published.value:
             published += 1
     return {"due": len(due), "published": published, "no_provider": no_provider}
 
@@ -210,8 +224,9 @@ def publish_post(cfg: Config, post_id: str) -> str | None:
     post = Ledger.load(cfg).posts.get(post_id)         # resolve the per-channel provider for this one post
     if post is None:
         return None                                    # no such post -> nothing to claim
-    provider = _post_provider(cfg, Accounts.load(cfg), post)
+    accounts = Accounts.load(cfg)                      # resolve the per-channel provider + current integration id
+    provider = _post_provider(cfg, accounts, post)
     if provider is None:                               # live but the channel has no provider -> can't publish
         get_logger(cfg)("publish", post_id, "no_provider", account=post.account, platform=post.platform.value)
         return None
-    return _publish_one(cfg, post_id, provider)
+    return _publish_one(cfg, post_id, provider, account_id=_resolve_publish_account_id(accounts, post))

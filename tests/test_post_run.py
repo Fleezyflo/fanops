@@ -208,6 +208,36 @@ def test_publish_no_schedule_publishes_immediately(tmp_path, monkeypatch):
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     assert Ledger.load(cfg).posts["pns"].state is PostState.published
 
+def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch, mocker):
+    # #1 resolve-at-publish: account_id is FROZEN onto the post at crosspost; a later Go-Live integration
+    # REMAP must still reach the post — publish re-resolves the CURRENT integration id before sending,
+    # rather than shipping the stale frozen id (which the backend would reject / route wrong).
+    import json
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active",
+         "integrations": {"instagram": "NEW_IG_ID"}}]}))
+    f = cfg.clips / "c_a.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    led.add_clip(Clip(id="c_a", parent_id="mom_1", path=str(f), state=ClipState.queued))
+    led.add_post(Post(id="pa", parent_id="c_a", account="@a", account_id="OLD_STALE_ID",   # frozen-at-crosspost id
+                      platform=Platform.instagram, caption="x",
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued))
+    led.save()
+    import fanops.post.run as run
+    seen = {}
+    class _CapturePoster:
+        def __init__(self, cfg): pass
+        def publish(self, led_, post_id):
+            seen["account_id"] = led_.posts[post_id].account_id    # what the poster will actually send
+            led_.posts[post_id].state = PostState.submitted; led_.posts[post_id].submission_id = "s"
+            return led_
+    mocker.patch.object(run, "get_poster", return_value=_CapturePoster(cfg))
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    assert seen["account_id"] == "NEW_IG_ID"                        # sent with the CURRENT mapping, not the frozen one
+    assert Ledger.load(cfg).posts["pa"].account_id == "NEW_IG_ID"   # and persisted for the Posted record
+
 def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker):
     # F11 crash-sim regression lock: a post stranded in 'submitting' is NOT re-published.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
