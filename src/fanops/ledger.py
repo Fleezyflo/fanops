@@ -366,6 +366,8 @@ class Ledger:
         return self.account_selections.get(account_selection_id(source_id, account))
     def selections_of_source(self, source_id: str) -> list[AccountSelection]:
         return [s for s in self.account_selections.values() if s.source_id == source_id]
+    def drop_account_selection(self, source_id: str, account: str) -> None:
+        self.account_selections.pop(account_selection_id(source_id, account), None)   # RF1: operator removed the last pick -> no record (gate denies on a cast source)
     def moments_for_account(self, source_id: str, account: str) -> set:
         # "which specific moments did this account get?" — for the Review READ-MODEL (Task 5), NOT the gate.
         # WARNING (Task 3): do NOT use this as the crosspost gate predicate. It returns set() for BOTH "no

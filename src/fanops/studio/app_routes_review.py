@@ -146,6 +146,25 @@ def register_review_routes(app, cfg):
         return _review_panel(actions.approve_account(cfg, ch_account,
                              platform=(request.args.get("ch_platform") or None), source=ch_source))
 
+    @app.post("/cast/add/<moment_id>")
+    def do_cast_add(moment_id):
+        # RF1 Task 6: operator cast OVERRIDE — add this (moment, account) to the account's durable
+        # AccountSelection (method=operator, supersedes llm/migrated). source+account ride the same ?source=/
+        # ?account= args the matrix bakes; a missing source/account is a clean failure (never a silent widen).
+        src = _source_arg()
+        if not src or not _account_arg():
+            return _review_panel(actions.ActionResult(ok=False, error="Cast override needs a source and an account."))
+        return _review_panel(actions.cast_add(cfg, src, _account_arg(), moment_id))
+
+    @app.post("/cast/remove/<moment_id>")
+    def do_cast_remove(moment_id):
+        # RF1 Task 6: operator cast OVERRIDE — remove this (moment, account); removing the account's last pick
+        # drops the record so the gate denies it on this cast source (no illegal empty operator row).
+        src = _source_arg()
+        if not src or not _account_arg():
+            return _review_panel(actions.ActionResult(ok=False, error="Cast override needs a source and an account."))
+        return _review_panel(actions.cast_remove(cfg, src, _account_arg(), moment_id))
+
 
     def _render_surface_edit(post_id, result):
         # P1: on success re-render _surface_edit.html via surface_for_post so the editor's time input
