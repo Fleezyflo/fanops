@@ -4,8 +4,10 @@ from fanops.post.payload import build_blotato_payload, default_target_fields
 
 pytestmark = pytest.mark.integration
 
-def test_payload_matches_confirmed_rest_shape():
-    # Locks the shape confirmed vs help.blotato.com so a regression is caught even offline.
+def test_payload_builder_output_snapshot():
+    # A SNAPSHOT of the local builder's own output — a change-detector for build_blotato_payload, NOT a wire
+    # contract (it never talks to Blotato). The REAL POST /v2/posts contract is proven over real HTTP in
+    # tests/test_blotato_contract.py; the real-network smoke is test_live_auth_and_schedule below.
     p = build_blotato_payload(account_id="98432", platform="tiktok", text="hi",
                               media_urls=["https://h/v.mp4"], scheduled_time="2026-06-02T18:00:00Z",
                               extra_target=default_target_fields("tiktok"))
