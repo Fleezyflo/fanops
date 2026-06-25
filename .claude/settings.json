@@ -22,6 +22,19 @@
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/hookify-run.py\"",
+            "timeout": 15,
+            "description": "Vendored hookify runner: evaluates .claude/hookify.*.local.md (no plugin dependency)"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

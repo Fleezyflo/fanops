@@ -66,3 +66,4 @@ coverage.json
 client_secret_*.json
 MohFlow-FanOps/00_control/accounts.json
 MohFlow-FanOps/00_control/personas.json
+MohFlow-FanOps/00_control/*.json
