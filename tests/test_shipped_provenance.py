@@ -28,6 +28,7 @@ def _seed_clip(cfg, *, hooks_by_persona, moment_hook=None):
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {"@a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
     led.add_clip(clip)
+    led.save()                                    # persist so _ship's approve txn sees the seed
     return led
 
 def _mock_burn(mocker, *, cut=(True, 11.5), burn=True):
@@ -37,6 +38,15 @@ def _mock_burn(mocker, *, cut=(True, 11.5), burn=True):
 def _render(led):
     return next(iter(led.renders.values()))
 
+def _ship(cfg):
+    # Slice 2 (burn on approval): the shipped-provenance Render materializes at APPROVAL, not at crosspost.
+    # Crosspost + persist + approve so the Render (hook_source / cut_seconds / is_account_cut) exists to assert on.
+    led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    led.save()
+    from fanops.studio.actions_approve import approve_posts
+    approve_posts(cfg, [p.id for p in led.posts.values()])
+    return Ledger.load(cfg)
+
 
 # ---- hook_source: own vs shared fallback vs none ----
 def test_hook_source_per_account(tmp_path, monkeypatch, mocker):
@@ -44,7 +54,7 @@ def test_hook_source_per_account(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
     led = _seed_clip(cfg, hooks_by_persona={"@a": "MY OWN HOOK"})   # this account's OWN authored hook
     _mock_burn(mocker)
-    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    led = _ship(cfg)
     assert _render(led).hook_source is HookSource.per_account
 
 def test_hook_source_shared_fallback(tmp_path, monkeypatch, mocker):
@@ -52,7 +62,7 @@ def test_hook_source_shared_fallback(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
     led = _seed_clip(cfg, hooks_by_persona={}, moment_hook="SHARED MOMENT HOOK")   # no own hook -> shared fallback
     _mock_burn(mocker)
-    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    led = _ship(cfg)
     assert _render(led).hook_source is HookSource.shared_fallback
 
 
@@ -62,7 +72,7 @@ def test_cut_seconds_recorded_for_account_cut(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct(clip_profile="short")])   # band differs -> a real cut fires
     led = _seed_clip(cfg, hooks_by_persona={"@a": "H"})
     _mock_burn(mocker, cut=(True, 11.5))
-    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    led = _ship(cfg)
     r = _render(led)
     assert r.cut_seconds == 11.5 and r.is_account_cut is True
 
@@ -71,7 +81,7 @@ def test_failed_cut_records_none(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct(clip_profile="short")])
     led = _seed_clip(cfg, hooks_by_persona={"@a": "H"})
     _mock_burn(mocker, cut=(False, None), burn=True)   # cut fails -> shared burn; realized None
-    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    led = _ship(cfg)
     r = _render(led)
     assert r.cut_seconds is None and r.is_account_cut is False
 
