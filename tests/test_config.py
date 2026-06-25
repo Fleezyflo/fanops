@@ -181,6 +181,22 @@ def test_asr_model_defaults_medium_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_ASR_MODEL", " large-v3 ")
     assert Config(root=tmp_path).asr_model == "large-v3"
 
+def test_asr_model_for_scales_with_source_duration(monkeypatch, tmp_path):
+    # UNAWARE-CONFIG FIX: with no operator pin the ASR model scales with SOURCE LENGTH — a short source
+    # affords the most accurate model (large-v3, cheap on little audio); a long (or unknown) source stays
+    # on the faster default (medium) so a long transcription lands under transcribe._WHISPER_TIMEOUT.
+    monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
+    cfg = Config(root=tmp_path)
+    assert cfg.asr_model_for(60) == "large-v3"        # 1-min source -> accuracy is free
+    assert cfg.asr_model_for(3600) == "medium"        # 1-hour source -> stay fast/safe
+    assert cfg.asr_model_for(None) == "medium"        # unknown duration -> the safe long default
+
+def test_asr_model_for_honors_operator_pin_over_duration(monkeypatch, tmp_path):
+    # An explicit FANOPS_ASR_MODEL is the operator's call and wins verbatim, regardless of duration.
+    monkeypatch.setenv("FANOPS_ASR_MODEL", "small")
+    cfg = Config(root=tmp_path)
+    assert cfg.asr_model_for(60) == "small" and cfg.asr_model_for(3600) == "small"
+
 def test_asr_language_defaults_en_ar_and_respects_env(monkeypatch, tmp_path):
     # Default "en,ar" — pins BOTH candidates (the runner detects per segment, handling mixed EN+AR in
     # one source). An operator can pin a single language e.g. "ar" for the ~3x decode speedup.

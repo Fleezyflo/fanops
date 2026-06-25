@@ -84,6 +84,10 @@ _BACKEND_PLATFORMS = {
 # quality unchanged + the hook is the operator's #1 ask). `captions` (hashtags only) stays MECHANICAL
 # -> sonnet. FANOPS_LLM_MODEL overrides all.
 _GATE_MODEL_DEFAULTS = {"moments": "opus", "moment_hooks": "opus", "captions": "sonnet"}
+# Below this SOURCE length (seconds) the duration-aware ASR default upgrades to large-v3 — on little
+# audio the most accurate model is cheap; at/above it (or unknown) the faster medium keeps a long
+# source's transcription bounded under transcribe._WHISPER_TIMEOUT. ~5min = a short clip, not a full set.
+_ASR_SHORT_SOURCE_SECONDS = 300.0
 
 class Config:
     def __init__(self, root: Path | str | None = None):
@@ -389,6 +393,15 @@ class Config:
         # FANOPS_ASR_MODEL="large-v3" for max accuracy on a fast host, or "small" on a slow one.
         v = os.getenv("FANOPS_ASR_MODEL")
         return v.strip() if v and v.strip() else "medium"
+
+    def asr_model_for(self, duration_seconds: float | None) -> str:
+        # Duration-aware ASR selection (the unaware-config fix): an explicit FANOPS_ASR_MODEL pin is the
+        # operator's call and wins verbatim (-> asr_model); otherwise the model scales with SOURCE length
+        # — a short source affords large-v3 (accuracy is cheap on little audio), a long/unknown source
+        # stays on medium (fast enough to land under transcribe._WHISPER_TIMEOUT). NOT a frugality cap:
+        # short sources UPGRADE to the most accurate model; only long ones hold the fast default.
+        if os.getenv("FANOPS_ASR_MODEL", "").strip(): return self.asr_model
+        return "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "medium"
 
     @property
     def asr_language(self) -> str:

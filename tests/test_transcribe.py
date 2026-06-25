@@ -42,8 +42,8 @@ def test_fwrun_pins_en_ar_as_multilingual(tmp_path, mocker):
 
 def test_transcribe_prefers_faster_whisper_when_available(tmp_path, mocker, monkeypatch):
     # DEFAULT engine: when faster-whisper (the [asr] extra) is importable, transcribe_source runs the
-    # fanops._fwrun runner with cfg.asr_model (large-v3 — the proven music/rap winner), NOT the
-    # legacy `whisper` CLI. Subprocess is mocked; this proves the SELECTION + the asr_model wiring.
+    # fanops._fwrun runner with the pinned FANOPS_ASR_MODEL (here large-v3), NOT the legacy `whisper`
+    # CLI. Subprocess is mocked; this proves the SELECTION + the asr_model pin wiring.
     monkeypatch.setenv("FANOPS_ASR_MODEL", "large-v3")
     mocker.patch("fanops.transcribe._fw_available", return_value=True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -61,6 +61,26 @@ def test_transcribe_prefers_faster_whisper_when_available(tmp_path, mocker, monk
     assert captured["cmd"][2] == "fanops._fwrun"                       # ran the faster-whisper runner
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == "large-v3"
     assert led.sources["src_1"].state is SourceState.transcribed
+
+def test_transcribe_selects_fw_model_by_source_duration(tmp_path, mocker, monkeypatch):
+    # UNAWARE-CONFIG FIX: with no FANOPS_ASR_MODEL pin, transcribe_source picks the fw model from the
+    # SOURCE duration — short -> large-v3 (accuracy), long -> medium (speed/safety under the timeout).
+    monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
+    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")           # skip demucs; isolate the model-selection wiring
+    mocker.patch("fanops.transcribe._fw_available", return_value=True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="short", source_path=str(cfg.sources / "short.mp4"), state=SourceState.catalogued, duration=60.0))
+    led.add_source(Source(id="long", source_path=str(cfg.sources / "long.mp4"), state=SourceState.catalogued, duration=3600.0))
+    models = []
+    def fake_run(cmd, **kw):
+        models.append(cmd[cmd.index("--model") + 1])
+        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "en", "segments": []}))
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    transcribe_source(led, cfg, "short"); transcribe_source(led, cfg, "long")
+    assert models == ["large-v3", "medium"]
 
 def test_transcribe_passes_asr_language_to_fw_runner(tmp_path, mocker, monkeypatch):
     # FANOPS_ASR_LANGUAGE -> cfg.asr_language -> fw_cmd --language, threaded through transcribe_source

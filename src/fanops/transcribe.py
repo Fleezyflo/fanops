@@ -153,11 +153,12 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
             # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
             try: Path(voc).replace(target); audio = str(target)
             except OSError: audio = src.source_path
-    # Engine: prefer faster-whisper (FANOPS_ASR_MODEL, default medium) — the proven music
-    # winner; fail open to the legacy `whisper` CLI (FANOPS_WHISPER_MODEL turbo) when the [asr] extra
-    # is absent. Both write JSON named by the INPUT stem, so the parse below is engine-agnostic.
+    # Engine: prefer faster-whisper at a DURATION-AWARE model (cfg.asr_model_for(src.duration): a short
+    # source -> large-v3 for accuracy, a long/unknown source -> medium to land under _WHISPER_TIMEOUT; an
+    # explicit FANOPS_ASR_MODEL pin overrides). Fail open to the legacy `whisper` CLI (FANOPS_WHISPER_MODEL
+    # turbo) when the [asr] extra is absent. Both write JSON named by the INPUT stem (engine-agnostic parse).
     if _fw_available():
-        cmd = fw_cmd(audio, str(out_dir), model or cfg.asr_model, cfg.asr_language)
+        cmd = fw_cmd(audio, str(out_dir), model or cfg.asr_model_for(src.duration), cfg.asr_language)
     else:
         cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model or cfg.whisper_model))
     try:
