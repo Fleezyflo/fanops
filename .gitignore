@@ -64,3 +64,5 @@ coverage.json
 
 # Google OAuth client secret downloads (never commit)
 client_secret_*.json
+MohFlow-FanOps/00_control/accounts.json
+MohFlow-FanOps/00_control/personas.json
