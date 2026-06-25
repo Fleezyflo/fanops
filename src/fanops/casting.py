@@ -1,9 +1,11 @@
 # src/fanops/casting.py — Account-First Studio: per-account moment casting (Face 3).
-# A PURE assignment layer over the already-decided moment pool: NO LLM, NO ffmpeg, NO per-account author
-# re-run (moments are SOURCE-keyed, so the base render stays shared — per-account differentiation is the
-# existing cheap hook overlay). It scores each decided moment per active account by persona fit, assigns
-# each account up to cfg.cast_pick_budget of its best-fitting moments BOUNDED by that moment's batch
-# target, and stamps Moment.affinities. crosspost then fans a cast moment ONLY to its accounts.
+# Two selectors over the already-decided moment pool, both writing ONLY Moment.affinities (crosspost then
+# fans a cast moment ONLY to its accounts): the default-ON **LLM gate** (`request_moment_casting`/
+# `ingest_moment_casting`, wired into the pipeline — an LLM SELECTION, GENEROUS, no count cap), and the
+# retained-but-unwired token-overlap **heuristic** (`cast_moments` — a pure persona-fit scorer that assigns
+# each account up to cfg.cast_pick_budget of its best-fitting moments BOUNDED by that moment's batch target).
+# Neither does ffmpeg or a per-account author re-run (moments are SOURCE-keyed, so the base render stays
+# shared — per-account differentiation is the existing cheap hook overlay).
 # C1-safe: reads persona + signal_score, writes ONLY affinities — never touches amplify/retire/cascade/track.
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -168,7 +170,8 @@ def casting_gate_pending(cfg, source_id) -> bool:
 def affinity_admits(cfg, moment, account) -> bool:
     """Admit `account` for `moment` under the affinity rule. True when casting is OFF (flag-OFF IGNORES
     persisted affinities — invariant A2), OR the moment is uncast (affinities==[] -> fan to all), OR the
-    account is in the cast set. Equivalent to the negation of the crosspost affinity gate."""
+    account is in the cast set. This is the admit predicate the crosspost gate skips on its negation
+    (`if not affinity_admits(...): skip`)."""
     if not cfg.account_casting: return True
     if moment is None or not moment.affinities: return True
     return account in moment.affinities

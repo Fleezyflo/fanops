@@ -252,11 +252,11 @@ class Render(BaseModel):
     # the rendered bytes (`path`), the burned on-screen hook (`hook_text` — THE single home; Post.variant_hook
     # is a read-only mirror), the upload cache (`media_url`, FIX-F44 parity), its lifecycle (`state`), and its
     # lineage (`batch_id`/`source_id`, for batch-scoped filing + the durable archive). CONTENT-ADDRESSED by
-    # (clip_id, hook_text): two surfaces with the SAME hook compute the same id -> ONE render, ONE file (the
-    # anti-explosion dedup). Exists ONLY under creative_variation; a hookless surface has Post.render_id None
+    # (clip, hook, band, framing): two surfaces with the SAME spec compute the same id -> ONE render, ONE file
+    # (the anti-explosion dedup). Exists ONLY under creative_variation; a hookless surface has Post.render_id None
     # and serves the shared Clip.path. Captions are NOT here — they stay surface-keyed on the shared Clip
     # (the caption pipeline is intentionally untouched).
-    id: str                                     # child_id("render", clip_id, hook_text or "NO_HOOK")
+    id: str                                     # child_id("render", clip_id, hook[\x1fband:lo-hi][\x1fframe:x]) — see crosspost.account_render_spec
     clip_id: str                                # parent shared Clip (the substrate this render burned onto)
     account: str                                # the handle this render belongs to (UI attribution)
     surface_key: str                            # surface_key(account, platform) — UI attribution / grouping
@@ -273,10 +273,10 @@ class Render(BaseModel):
                                                 # per-account 28-45s cut" UI label. Additive (False on every
                                                 # legacy render — they reload fine, no migration).
     hook_source: HookSource = HookSource.none   # P3: was this account's on-screen hook its OWN (per_account) or a
-                                                # shared-moment fallback (shared_fallback)? The OR at crosspost.py:169
-                                                # computed this then DISCARDED it (Post.variant_hook is None in BOTH
+                                                # shared-moment fallback (shared_fallback)? crosspost's own_hook-vs-shared
+                                                # resolution computed this then DISCARDED it (Post.variant_hook is None in BOTH
                                                 # the fallback and the no-hook case). Additive; legacy renders -> none.
-    cut_seconds: Optional[float] = None         # P3: the REALIZED seconds (ce-cs) of THIS account's cut (clip.py:444),
+    cut_seconds: Optional[float] = None         # P3: the REALIZED seconds (ce-cs) of THIS account's cut (clip.py:449),
                                                 # vs Clip.cut_seconds (the shared window) / the band-NAME label. None
                                                 # when not a real account cut (failed cut or shared burn).
 

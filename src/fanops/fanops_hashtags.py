@@ -7,8 +7,9 @@ learn-doctor verdict is PASS (if the reach analytics label does not reconcile, r
 we refuse to write and the frozen pools stand). The live Meta Graph TREND fetch (ig_hashtag_search +
 top_media) + its 30/7-day budget IS built (fanops.meta_graph) and wired here as opt-in SECONDARY
 signal via cfg.hashtag_trends (FANOPS_HASHTAG_TRENDS) — budget-bounded + fail-open (no token / fetch
-miss -> trends simply absent, own-reach + frozen seed still stand). Default OFF: it needs a real IG
-Business token, so a deployment without one is byte-identical to own-reach-only ranking."""
+miss -> trends simply absent, own-reach + frozen seed still stand). Default ON (2026-06-23); without
+META_GRAPH_TOKEN + META_IG_USER_ID, sample_trends no-ops and refresh is own-reach-only, so default-ON
+is byte-identical to the old off output on a deployment with no Meta app."""
 from __future__ import annotations
 import json
 from fanops.config import Config

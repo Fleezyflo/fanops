@@ -2,7 +2,8 @@
 none and are excluded). AMPLIFY = re-open a moment request on the winner's SOURCE, injecting
 the winning moment's signature as guidance; write_request auto-invalidates the stale response
 (Task 10) so ingest_moments answers fresh and reconciles (Task 11) — v1's amplify silently
-no-opped. RETIRE = ledger.retire_clip, which clip/crosspost honor (FIX F55)."""
+no-opped. AMPLIFY is capped per source at MAX_AMPLIFY_PER_SOURCE (default 3) so an autonomous loop
+can't grow one source endlessly. RETIRE = ledger.retire_clip, which clip/crosspost honor (FIX F55)."""
 from __future__ import annotations
 from fanops.config import Config
 from fanops.ledger import Ledger

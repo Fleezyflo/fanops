@@ -4,9 +4,10 @@ JSON into [{start,end,text}] + detected language. Distinguishes 'ran, no speech'
 [], meta.transcribed=True) from 'not run' (transcript None) so a failed run can recover.
 Missing JSON -> error state, never a crash.
 
-ENGINE: prefers faster-whisper large-v3 (the [asr] extra, via the fanops._fwrun runner) — the
-proven music/rap accuracy winner (int8 makes large-v3 practical on CPU). FAILS OPEN to the legacy
-`whisper` CLI (turbo) when faster-whisper is absent (CI / air-gapped), so transcription always runs."""
+ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
+(default **medium**) — strong on music/rap EN+AR; large-v3 is available as the max-accuracy opt-in
+(int8 makes even large-v3 practical on CPU). FAILS OPEN to the legacy `whisper` CLI (turbo) when
+faster-whisper is absent (CI / air-gapped), so transcription always runs."""
 from __future__ import annotations
 import json, subprocess, sys
 from pathlib import Path
@@ -47,7 +48,7 @@ def _resolve_model(model: str) -> str:
         return model
     if cached:
         # requested model not on disk; reuse a cached one rather than trigger a download that
-        # may be impossible here. Preference order: larger-but-still-cached for quality.
+        # may be impossible here. Preference order: fast-and-cached first (turbo), then the largest cached fallbacks.
         for pref in ("turbo", "large-v3", "medium", "small", "base", "tiny"):
             if pref in cached:
                 return pref
@@ -86,7 +87,7 @@ def real_transcript_signal(transcript: list[dict]) -> bool:
 def whisper_cmd(src: str, out_dir: str, model: str = "turbo") -> list[str]:
     # --word_timestamps True makes whisper emit per-segment word timings ([{word,start,end}]) so the
     # overlay can sync active captions word-by-word (without it the captions fall back to an even
-    # split of each segment). Negligible extra cost on the turbo model.
+    # split of each segment). Negligible extra cost.
     return ["whisper", "--model", model, "--output_format", "json", "--word_timestamps", "True",
             "--output_dir", out_dir, "--task", "transcribe", src]
 
@@ -152,7 +153,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
             # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
             try: Path(voc).replace(target); audio = str(target)
             except OSError: audio = src.source_path
-    # Engine: prefer faster-whisper large-v3 (FANOPS_ASR_MODEL, default large-v3) — the proven music
+    # Engine: prefer faster-whisper (FANOPS_ASR_MODEL, default medium) — the proven music
     # winner; fail open to the legacy `whisper` CLI (FANOPS_WHISPER_MODEL turbo) when the [asr] extra
     # is absent. Both write JSON named by the INPUT stem, so the parse below is engine-agnostic.
     if _fw_available():

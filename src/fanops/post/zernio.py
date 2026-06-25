@@ -204,7 +204,7 @@ class ZernioPoster:
                     return led
                 post.state = PostState.submitted
                 post.submission_id = sid
-                post.public_url = safe_public_url(None) or post.public_url   # no permalink in the API yet
+                post.public_url = safe_public_url(None) or post.public_url   # permalink captured later by ZernioStatusClient (reconcile); none on the publish 2xx — placeholder mirrors postiz.py
                 return led
             if resp.status_code == 401:
                 raise ZernioAuthError("Zernio 401 unauthorized — check ZERNIO_API_KEY (response body withheld)")

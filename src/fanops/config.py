@@ -307,10 +307,10 @@ class Config:
 
     def llm_model_for(self, kind: str) -> str:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
-        # But the tier is now PER-GATE, not one blanket "opus": the MECHANICAL gates — moment-window picks
-        # and hashtags-only captions — run on `sonnet` (fast + plenty for the task; blanket-opus made a
-        # 28-source run ~40min of SEQUENTIAL calls). The CREATIVE gate — `moments`, the VISION author of
-        # the on-screen RETENTION hook (the watch-through driver) — stays on `opus`.
+        # But the tier is now PER-GATE, not one blanket "opus": the MECHANICAL gates — hashtags-only
+        # `captions` and per-account `moment_casting` — run on `sonnet` (fast + plenty for the task).
+        # The CREATIVE VISION gates — `moments` (the pass-1 WINDOW picks) and `moment_hooks` (the pass-2
+        # author of the on-screen RETENTION hook, the watch-through driver) — stay on `opus`.
         # FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
         # like "claude-opus-4-..." for bit-stable repro). Validate-or-default shape (mirrors clip_profile).
         g = os.getenv("FANOPS_LLM_MODEL")
@@ -539,8 +539,8 @@ class Config:
         # KILL SWITCH: DEFAULT OFF (opt-in). Only the explicit on-words enable it; unset/empty/other
         # stays OFF (today's behavior — no variant-driven amplify). Amplify-only: never feeds retire.
         # VALIDATION-FROZEN (Phase 2): this flag = operator INTENT; even ON, apply_variant_amplify stays
-        # INERT until `fanops cutover metrics` confirms lift_score's field shape against a real row
-        # (validation_gate.learning_validated) — re-mining on unvalidated lift is the over-build trap.
+        # INERT until `learning_validated` opens — AUTO-stamped by the first real non-degraded live metric
+        # (track._auto_validate_metrics_shape), or the optional early `fanops cutover metrics` probe.
         v = (os.getenv("FANOPS_VARIANT_AMPLIFY") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
@@ -585,7 +585,9 @@ class Config:
         # affect variant_amplify, which keeps using best_hooks as its safety floor. Only the explicit
         # on-words enable it; unset/empty/other stays OFF (v2 greedy behavior).
         # VALIDATION-FROZEN (Phase 2): a bandit allocating over lift_scores whose live field shape is
-        # unconfirmed is theater — do NOT enable until `fanops cutover` reconciles a real metrics row.
+        # unconfirmed is theater — stays inert until `learning_validated` opens (AUTO-stamped by the first
+        # real non-degraded live metric via track._auto_validate_metrics_shape, or the optional early
+        # `fanops cutover metrics` probe).
         v = (os.getenv("FANOPS_VARIANT_UCB") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
@@ -610,7 +612,9 @@ class Config:
         # FANOPS_CREATIVE_VARIATION and FANOPS_VARIANT_LEARNING. DEFAULT OFF (opt-in), fail-open:
         # unset/empty/other -> today's behavior, no transferred prior injected.
         # VALIDATION-FROZEN (Phase 2): transferring a "proven" style measured on an unconfirmed lift
-        # propagates noise across surfaces — do NOT enable until `fanops cutover` confirms the fields.
+        # propagates noise across surfaces — stays inert until `learning_validated` opens (AUTO-stamped by
+        # the first real non-degraded live metric via track._auto_validate_metrics_shape, or the optional
+        # early `fanops cutover metrics` probe).
         v = (os.getenv("FANOPS_VARIANT_TRANSFER") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
@@ -721,7 +725,7 @@ class Config:
     @property
     def concurrent_workers(self) -> int:
         # Pool size for concurrent_sources (the source map AND the responder fan-out). DEFAULT 4 — a
-        # proven safe concurrent-opus ceiling, a rate-limit guardrail that
+        # proven safe concurrent-LLM ceiling, a rate-limit guardrail that
         # caps simultaneous claude -p / whisper / ffmpeg children, NOT a correctness device. CLAMPED
         # >= 1: a pool of 0 would never run a worker and HANG, and a hang is a deadlock-guard violation
         # (the variant_ucb_c clamp precedent). A non-int env falls back to the default rather than

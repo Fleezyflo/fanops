@@ -1,5 +1,5 @@
 """Dry-run poster: writes the exact payload it WOULD send (with media + target fields),
-posts nothing. Active until Blotato is connected."""
+posts nothing. Active whenever the system is not live (cfg.is_live False) — the default-safe state; the global live switch (FANOPS_LIVE / go_live), not any single backend, governs when a real poster takes over."""
 from __future__ import annotations
 import json
 import os

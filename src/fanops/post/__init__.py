@@ -1,5 +1,5 @@
-"""Poster interface + factory. Backends: dryrun (default), rest, mcp (Blotato), postiz (free,
-self-hosted). get_media_uploader dispatches the file->hosted-URL step per backend so publish_due
+"""Poster interface + factory. Backends: dryrun (default), postiz (free, self-hosted), zernio (hosted TikTok), rest, mcp (Blotato, being retired).
+get_media_uploader dispatches the file->hosted-URL step per backend so publish_due
 uploads to the right place (Blotato presign vs Postiz upload vs dryrun file://)."""
 from __future__ import annotations
 from pathlib import Path

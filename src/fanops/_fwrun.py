@@ -1,8 +1,9 @@
 # src/fanops/_fwrun.py
 """Bounded faster-whisper (CTranslate2) runner, invoked as a SUBPROCESS by transcribe.py so a
 wedged model stays killable at the timeout (transcribe_source holds the ledger lock — an in-process
-call could not be reaped). large-v3 on Demucs-isolated vocals is the proven music/rap accuracy
-winner (clean coherent Arabic where turbo produced gibberish); int8 makes it practical on CPU
+call could not be reaped). The model is chosen by the caller via FANOPS_ASR_MODEL (default medium);
+large-v3 is OFFERED because, on Demucs-isolated vocals, it is the proven music/rap accuracy winner
+(clean coherent Arabic where turbo produced gibberish), and int8 makes even large-v3 practical on CPU
 (~1-4min/clip vs 5-15 via the stock whisper CLI). Free, on-machine, NO API.
 
 Writes whisper-compatible JSON ({language, segments:[{start,end,text[,words]}]}) named by the INPUT

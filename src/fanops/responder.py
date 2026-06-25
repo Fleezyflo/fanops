@@ -1,7 +1,7 @@
 # src/fanops/responder.py
 """Autonomous agent-gate answerer (FIX F02/F13 + AUDIT B1/H2/N1). Behind the file contract: reads
 pending *.request.json, produces a schema-valid *.response.json. ManualResponder = no-op (a human
-writes the files). LlmResponder = calls `claude -p` (via fanops.llm.claude_json) with the committed
+writes the files). LlmResponder = calls `claude -p` (via fanops.llm.claude_json_meta) with the committed
 prompt + the exact pydantic JSON schema, validates the output, and writes the response. Each request
 is QUARANTINED (one bad gate logs + stays pending, never halts the others — mirrors advance()'s
 per-unit quarantine). get_responder() picks by FANOPS_RESPONDER and returns a WORKING llm responder."""
@@ -37,8 +37,9 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
     """The production model: hand claude -p the committed prompt + the gate's JSON schema, PINNED to
     cfg.llm_model_for(kind) (V2 M1/F1 — an unpinned `claude -p` drifts with the CLI default; the tier is
     PER-GATE — opus for the creative VISION moments gate, sonnet for the mechanical caption gate). For
-    the `moments` gate, also hand it the SOURCE frames (top-level `frames`) as images so the author SEES
-    the footage and writes the on-screen hook true to what is on screen; captions stay text-only. When
+    the two VISION gates (`moments` = window picks, `moment_hooks` = the frame-seeing on-screen-hook author),
+    also hand the relevant frames (top-level `frames`) as images; `moment_casting` and `captions` stay
+    text-only. When
     cfg is given, emit ONE provenance line per call (the model that ANSWERED, the prompt fingerprint, and
     the brief fingerprint) so every creative output is traceable to the exact model + brief that produced
     it (M1/F10). cfg=None (the legacy test path) keeps the old behavior: no pin, no provenance."""

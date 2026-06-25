@@ -6,7 +6,9 @@ URL is `publicUrl` on get_post_status (the single-post lookup) but `postUrl` on 
 client reads metrics rows by postSubmissionId and does NOT read a URL, so the split does not bite
 here (a future reader of a list row's URL must use postUrl). Which METRICS fields Blotato exposes
 remains an INTEGRATION CHECKPOINT: if saves/shares/retention are unavailable, redesign lift_score
-(Task 21) on the available fields."""
+(Task 21) on the available fields. This file also houses the Postiz (PostizMetricsClient/PostizStatusClient)
+and Zernio (ZernioMetricsClient/ZernioStatusClient) per-post read clients, each emitting the same
+{postSubmissionId, metrics} / {status, publicUrl} row contracts."""
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional

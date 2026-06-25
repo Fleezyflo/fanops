@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-19 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle + Account-First (SCHEMA_VERSION=5, born-awaiting_approval, day-bucket archive, batches map) -->
+<!-- Generated: 2026-06-19 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle + Account-First (SCHEMA_VERSION=8, born-awaiting_approval, day-bucket archive, batches/renders/selection_facts maps) -->
 # FanOps Data
 
 No database. ONE JSON ledger + operator-editable control files, all under the data tree.
@@ -6,7 +6,7 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 ## Data tree (config.py — `<root>/MohFlow-FanOps/`)
 
 ```
-00_control/   ledger.json ledger.lock accounts.json context.md tuning.json ledger_digest.md cutover.json
+00_control/   ledger.json ledger.lock accounts.json accounts.lock personas.json personas.lock context.md tuning.json ledger_digest.md cutover.json
 00_review/    manifest.json intaken.json *.jpg + approved/   (discover/intake staging)
 01_inbox/     dropped/pulled media awaiting ingest (native — the pipeline cuts these)
 01_thirdparty_inbox/   M1: PEER of 01_inbox (outside the native rglob) — handed-in third-party assets (video/photo), catalogued as origin_kind=third_party, INERT to clip-production
@@ -26,16 +26,20 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 - Writes: tmp file + `os.replace` (atomic). Reads in Studio are lock-free (atomic replace
   guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log` + `stitch_plans`
-  (M3 structural-hooks) + `batches` (Account-First: named, account-targeted ingest groups). Versioned:
-  `SCHEMA_VERSION=5` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
+  (M3 structural-hooks) + `batches` (Account-First: named, account-targeted ingest groups) + `renders`
+  (per-account Render foundation: the per-account shippable artifacts) + `selection_facts` (M4: durable
+  per-(moment, account) selection audit). Versioned:
+  `SCHEMA_VERSION=8` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
   v2→v3 `_migrate_v3_created_at` backfills `created_at` — Source from file mtime, Post from a tz-aware
   `scheduled_time` else the migration stamp; v3→v4 `_migrate_v4_metrics_series` back-fills ONE 'legacy'-tagged
   metrics_series row per post that already carries metrics; v4→v5 the additive `{**raw, "batches": raw.get(
-  "batches", {})}` lambda injects the empty `batches` map; all idempotent, never raise, do NOT backfill
+  "batches", {})}` lambda injects the empty `batches` map; v5→v6 injects the empty `renders` map (per-account
+  Render foundation); v6→v7 injects the empty `selection_facts` map (M4 filing/naming/tracking); v7→v8 the
+  latest additive step; all idempotent, never raise, do NOT backfill
   `published_at` — old ledgers load clean, proven on the real 51-post ledger); a NEWER on-disk version →
   `_NewerSchema` refuses to load (exit 2) rather than silently drop fields. New OPTIONAL entity fields
   (Moment.{hook_strategy, intro_matches, affinities}, StitchPlan.*, Source.{created_at, batch_id}, Post.
-  {created_at, published_at, batch_id, variant_hook}, Batch.*) ride pydantic defaults. Inner dicts of
+  {created_at, published_at, batch_id, variant_hook}, Batch.*, Render.*, SelectionFact.*) ride pydantic defaults. Inner dicts of
   variant_streaks/tag_log remain untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
@@ -85,8 +89,12 @@ by) + `rationale` (operator-facing WHY) — both optional, ride defaults).
 
 - **accounts.json:** handle/account_id/platforms/status/persona per account; validate() pre-run.
   `account_id` is numeric for Blotato or a UUID for Postiz integrations (same field, different schema).
-  Writable atomically via `write_account_id()` (ecc audit: python + security).
-  
+  Writable atomically via `write_account_id()` (ecc audit: python + security). Guarded by `accounts.lock`.
+
+- **personas.json:** first-class `Persona` records (`models`/`personas.py`) — `voice`/`tag_lean`/`hashtag_corpus`/`intake`
+  per persona; `Account.persona_id` links one and its voice/lean/corpus HYDRATE the account at load (fail-open,
+  byte-identical when unlinked). Edited in the Studio Personas tab; mutated under `personas.lock` (reuses the ledger flock shape).
+
 - **tuning.json** (OPTIONAL, fail-open): lift_weights override for track.lift_score.
 
 - **context.md:** free-text guidance injected into moment requests.

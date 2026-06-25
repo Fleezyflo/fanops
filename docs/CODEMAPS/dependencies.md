@@ -7,9 +7,9 @@
 |---|---|---|---|
 | ffprobe | ingest/discover probes | 30s | ToolchainMissingError (ingest) / fail-soft (discover) |
 | ffmpeg | clip render, signals, overlay burn, thumbnails | 600s (thumbs 60s, `-filters` probe 30s) | per-unit error / overlay fails open (skip subtitles) |
-| whisper | transcribe (optional `[transcribe]` extra) | 1800s | Source -> error, retriable |
+| whisper | transcribe (optional `[transcribe]`/`[asr]` extra) | 2700s | Source -> error, retriable |
 | yt-dlp | `pull` download (outside the flock) | 600s | ToolchainMissingError -> exit 2 |
-| claude CLI | llm.py `claude -p` (responder; subscription/OAuth login, NOT ANTHROPIC_API_KEY) | 180s | preflight blocks the run |
+| claude CLI | llm.py `claude -p` (responder; subscription/OAuth login, NOT ANTHROPIC_API_KEY) | 300s | preflight blocks the run |
 
 ## Services
 
@@ -25,10 +25,15 @@
   Auth: `x-api-key` header from env `POSTIZ_API_KEY`; failures -> typed PostizAuthError.
   Schema: account → integration_id stored in `accounts.json` (shared with Blotato model).
 
+- **Zernio** (hosted TikTok poster; no learning loop):
+  `ZERNIO_API_URL` (default `https://zernio.com/api/v1`) upload + schedule.
+  Auth: `ZERNIO_API_KEY` (WRITE-ONLY — never logged/echoed). TikTok-only; a per-account live backend.
+
 - **Poster backends** (post/__init__.get_poster):
   - `dryrun` (default, offline, file:// media, never publishes)
-  - `rest` (BlotatoRestPoster, learning-loop capable)
   - `postiz` (Postiz self-hosted, no learning loop, operator-gated via Studio Go-Live tab)
+  - `zernio` (hosted TikTok poster, no learning loop)
+  - `rest` (BlotatoRestPoster, learning-loop capable; Blotato being retired)
   - `mcp` (blotato_mcp wrapper, LEGACY)
 
 ## Python deps (pyproject)
@@ -38,17 +43,19 @@ Extras:
 - `[dev]` pytest/pytest-mock/pytest-timeout(60s global guardrail)/ruff
 - `[studio]` flask>=3.0 (imported LAZILY — core install runs Flask-free)
 - `[transcribe]` openai-whisper
+- `[asr]` demucs>=4.0 + faster-whisper>=1.0 + certifi (accurate music ASR: Demucs strips the beat, faster-whisper runs the CTranslate2 model; imported LAZILY + FAIL-OPEN — no-[asr] install isolates to raw audio and falls back to the legacy `whisper` CLI)
 - `[compose]` moviepy>=2.0 (imported LAZILY in compose.py; core install MoviePy-free)
 
 ## Env flags (config.py; bools parse "1/true/yes/on")
 
 **Posting backend:**
-- `FANOPS_POSTER` (dryrun|rest|postiz|mcp); `BLOTATO_API_KEY` for rest; `POSTIZ_URL` + `POSTIZ_API_KEY` for postiz.
-- `cfg.is_live_backend` = (rest or postiz) + required keys present.
+- `FANOPS_POSTER` (dryrun|postiz|zernio|rest|mcp); `BLOTATO_API_KEY` for rest/mcp; `POSTIZ_URL` + `POSTIZ_API_KEY` for postiz; `ZERNIO_API_URL` + `ZERNIO_API_KEY` for zernio.
+- `cfg.is_live_backend` = (rest or postiz or zernio) + that backend's required key present.
 
 **Pipeline:**
-- `FANOPS_ARTIST_NAME`, `FANOPS_BURN_SUBS`, `FANOPS_SUBTITLE_FONT`, `FANOPS_WHISPER_MODEL`,
-  `FANOPS_PUBLISH_LEAD_MINUTES`, `FANOPS_RESPONDER` (manual default), `FANOPS_HOOK_EDITOR` (ON), `FANOPS_VISUAL_START` (ON).
+- `FANOPS_ARTIST_NAME`, `FANOPS_BURN_SUBS` (default OFF), `FANOPS_SUBTITLE_FONT`, `FANOPS_WHISPER_MODEL` (legacy whisper CLI, default turbo),
+  `FANOPS_PUBLISH_LEAD_MINUTES`, `FANOPS_RESPONDER` (manual default), `FANOPS_VISUAL_START` (ON).
+- ASR ([asr] extra): `FANOPS_ASR_MODEL` (faster-whisper model, default medium), `FANOPS_ASR_LANGUAGE` (default "en,ar" — multilingual EN+AR), `FANOPS_ISOLATE_VOCALS` (Demucs beat-strip before ASR, default ON, fail-open).
 - `FANOPS_GC_KEEP_DAYS` (content-lifecycle: manual-`gc` retention window, default 30, clamped ≥1; sweeps retired/analyzed renders + 05_scheduled payloads, never 06_published).
 
 **Structural hooks (M2–M6, ALL default OFF):**
@@ -57,15 +64,15 @@ Extras:
   `FANOPS_INTRO_TEASE` (M6: pair a clean clip with a third-party intro asset + compose-PREPEND a
   "wait for it" tease; needs the router on + `FANOPS_RESPONDER=llm` for the LLM-vision matcher gate).
 
-**Learning family (ALL default OFF, fail-safe):**
-- `FANOPS_CREATIVE_VARIATION`, `FANOPS_VARIANT_LEARNING` (+_MIN_POSTS/_MIN_GAP),
+**Learning family (default OFF, fail-safe — except `FANOPS_CREATIVE_VARIATION`, default ON):**
+- `FANOPS_CREATIVE_VARIATION` (default ON; =0 restores the legacy single shared-clip path), `FANOPS_VARIANT_LEARNING` (+_MIN_POSTS/_MIN_GAP),
   `FANOPS_VARIANT_UCB` (+_C), `FANOPS_VARIANT_AMPLIFY` (+_MIN_POSTS/_MIN_GAP/_MIN_STREAK),
   `FANOPS_VARIANT_TRANSFER` (+_MAX_HOOKS/_MIN_DONORS).
 
-**Account-casting (Account-First, default OFF — a deliberate kill-switch over live-account fan-out):**
-- `FANOPS_ACCOUNT_CASTING` (gates the per-account moment-casting stage in `casting.py`: when ON a cast
-  Moment fans ONLY to its `affinities` accounts; OFF leaves `affinities=[]` and is render/post byte-identical);
-  `FANOPS_CAST_PICK_BUDGET` (per-account winner cap, default 3, clamped ≥1). The Go-Live tab's **casting
+**Account-casting (Account-First, default ON — set =0 to restore fan-to-all):**
+- `FANOPS_ACCOUNT_CASTING` (gates the per-account moment-casting stage in `casting.py`: default ON — a cast
+  Moment fans ONLY to its `affinities` accounts; =0 leaves `affinities=[]` and is render/post byte-identical);
+  `FANOPS_CAST_PICK_BUDGET` (per-account winner cap, default 6, clamped ≥1). The Go-Live tab's **casting
   toggle** (Studio, go_live-style) now writes `FANOPS_ACCOUNT_CASTING` to `.env` + `os.environ`, so the flag
   is UI-reachable, not env-only. Batch targeting (`Batch.target_accounts`) is a SEPARATE, always-on hard
   bound enforced at crosspost (no flag) — distinct from this casting narrow.

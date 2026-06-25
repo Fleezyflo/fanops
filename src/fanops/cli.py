@@ -1,4 +1,4 @@
-"""CLI. Commands: status, ingest, advance, respond, track, adjust, gc, digest, run.
+"""CLI. Commands include: status, ingest, advance, respond, track, adjust, gc, digest, run … and the recovery/live verbs (reconcile, resolve, pull, doctor, studio, cutover, hashtags, daemon, autopilot).
 advance() lives in pipeline.py; track/adjust close the feedback loop (FIX F04); respond drains
 the agent gates via the responder (FIX F02/F13); gc reclaims disk (FIX F83); run loops
 respond+advance until stable for unattended operation."""

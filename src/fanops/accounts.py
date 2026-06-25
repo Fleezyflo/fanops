@@ -201,7 +201,7 @@ class Accounts:
 
 
 def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
-    """A1: override each LINKED account's persona/tag_lean IN MEMORY from its Persona (the source of truth
+    """A1: override each LINKED account's persona voice, tag_lean, corpus, levers (content_focus/energy/hook_angle/hook_tone), cut spec (clip_profile/framing), brief, and per-dimension directives IN MEMORY from its Persona (the source of truth
     once linked), so every consumer reading a.persona / a.tag_lean sees the persona's value and an operator
     edit takes effect on the next load — with ZERO consumer rewiring. FAIL-OPEN: no personas.json, a
     dangling persona_id, or any error leaves the account's inline values exactly as today (byte-identical

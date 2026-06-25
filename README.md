@@ -31,17 +31,19 @@ Source ──▶ Moment ──▶ Clip ──▶ Post
   timestamps, so re-deciding a source upserts the set and cascade-deletes dropped lineage.
 - **Clip** — a rendered, platform-ready file (e.g. `1080×1920` 9:16) cut from a moment with a
   frame-accurate ffmpeg seek + a safe reframe chosen from the *probed* source dimensions. One
-  clip per distinct aspect the active platforms need. Clips also carry **burned-in subtitles**
-  (from the transcript) and a **top-third hook**, burned via ffmpeg's `subtitles` filter after
-  the reframe — toggle `FANOPS_BURN_SUBS` (default on; needs a text-capable ffmpeg/libass, else
-  it falls open and renders plain).
+  clip per distinct aspect the active platforms need. Clips also carry an optional layer of
+  **burned-in subtitles** (from the transcript) and a **top-third hook**, burned via ffmpeg's
+  `subtitles` filter after the reframe — toggle `FANOPS_BURN_SUBS` (default off; the on-screen hook
+  is a separate layer that burns regardless). Subtitle burn needs a text-capable ffmpeg/libass, else
+  it falls open and renders plain.
 - **Post** — one clip fanned out to one `(account, platform)` surface, in *that* platform's
   aspect, with that surface's caption, a deterministic per-surface schedule time, and the
-  resolved **numeric** Blotato `account_id`. Set `FANOPS_CREATIVE_VARIATION=1` for **per-account
-  A/B creative** (caption + burned-in hook): each account gets a genuinely different caption and
-  a cheap per-account hook overlay burned onto the shared base clip, stamped with a deterministic
+  resolved **numeric** Blotato `account_id`. Per-account creative variation is **ON by default**;
+  set `FANOPS_CREATIVE_VARIATION=0` to restore the legacy single shared-clip path. With it on, each
+  account gets **per-account A/B creative** (caption + burned-in hook): a genuinely different caption
+  and a cheap per-account hook overlay burned onto the shared base clip, stamped with a deterministic
   `variant_key`/`variant_hook`. The digest then **reports lift-by-variant** so the `track →
-  analyzed → adjust` loop attributes which creative wins (observe-only v1; default OFF, fail-open).
+  analyzed → adjust` loop attributes which creative wins (observe-only v1; fail-open).
 
 The ledger is the single source of truth. Each `advance()` pass runs inside **one
 `Ledger.transaction`** that holds an `fcntl.flock` across the **whole load → mutate → save**

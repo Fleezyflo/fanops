@@ -53,7 +53,7 @@ class GoLiveStatus:
     learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
     creative_variation: bool = False   # per-account on-screen hooks ON (FANOPS_CREATIVE_VARIATION) — persona diff
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
-    cast_pick_budget: int = 3          # moments/account/run (FANOPS_CAST_PICK_BUDGET)
+    cast_pick_budget: int = 6          # moments/account/run (FANOPS_CAST_PICK_BUDGET)
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
     demoted: list = field(default_factory=list)   # Phase 3: planned/demoted accounts (promotable) — golive_accounts lists only active()
     # Phase 6: A/B learning-loop INTENT flags (default OFF). ON sets intent only — the apply paths stay

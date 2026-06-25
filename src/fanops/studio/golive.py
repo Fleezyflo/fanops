@@ -579,7 +579,7 @@ def validate_learning(cfg: Config, *, integration_id: Optional[str] = None, conf
     if not confirmed:
         return ActionResult(ok=False, error="Validate posts ONE real throwaway post — tick the confirm box, then click again.")
     try:
-        if not cutover.cutover_auth(cfg).get("ok"):                          # postiz_check_auth returns False on a non-401 failure (unreachable/5xx)
+        if not cutover.cutover_auth(cfg).get("ok"):                          # cutover_auth -> postiz_auth wraps postiz_check_auth, which returns False on a non-401 failure (unreachable/5xx) -> ok=False here
             return ActionResult(ok=False, error="Postiz auth probe failed — check POSTIZ_URL and POSTIZ_API_KEY (instance reachable?).")
         posted = cutover.cutover_post(cfg, integration_id, confirmed=True)   # the operator-SELECTED integration, never auto-picked
         sid = posted["submission_id"]

@@ -1,7 +1,8 @@
 """Track stage: pull + record per-post performance. saves/shares/retention = algorithmic
 lift; likes ~ noise. lift_score WHITELISTS keys (FIX F23/F42 — unknown Blotato fields are
-ignored, never KeyError). pull_metrics binds to the real BlotatoMetricsClient by default but
-stays injectable for tests; rows match published posts by submission_id (failed posts skipped)."""
+ignored, never KeyError). pull_metrics binds the metrics reader per-account through _default_list_posts
+(postiz/zernio per-post analytics, else the Blotato bulk list), stays injectable for tests; rows match
+published/analyzed posts by submission_id."""
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Callable, Optional

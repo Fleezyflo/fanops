@@ -1,8 +1,8 @@
 # src/fanops/studio/actions.py — CREATE
 """Lock-safe Studio mutations (no Flask). Each public action opens ONE Ledger.transaction and does
 its existence + state(queued) + not-imminent guard + mutation INSIDE the lock, on the in-lock
-freshly-loaded ledger — mirroring the CLI recovery verbs (cli.py:285,298) so it cannot lose-update
-against a concurrent cron `fanops run`. Reads/normalization that can fail happen OUTSIDE the lock."""
+freshly-loaded ledger — mirroring the cmd_reconcile/cmd_resolve recovery verbs in cli.py so it cannot
+lose-update against a concurrent cron `fanops run`. Reads/normalization that can fail happen OUTSIDE the lock."""
 from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
@@ -70,7 +70,7 @@ def clear_time(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> 
     so the post is NEVER persisted as queued-and-timeless (which publish_due would publish-now). Reuses
     _guard_editable_post (rejects unknown/imminent/wrong-state), mirroring reschedule_post's shape. The
     unapprove uses the immutable model_copy (ledger layer); the scheduled_time=None is the in-place actions-
-    layer edit (like reschedule_post line 89) — consistent with both conventions."""
+    layer edit (like reschedule_post's in-place p.scheduled_time = z) — consistent with both conventions."""
     now = _now(now)
     with Ledger.transaction(cfg) as led:
         p, err = _guard_editable_post(led, post_id, now)
@@ -345,7 +345,9 @@ def answer_gate(cfg: Config, kind: str, key: str, data: dict) -> ActionResult:
 
 def snooze_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
     """Push every non-imminent queued post of a clip ~SNOOZE_DAYS into the future, in ONE
-    transaction (atomic — never a partial snooze). Inherits the same guard + normalization."""
+    transaction (atomic — never a partial snooze). Computes the snooze time directly (iso_z) and
+    applies an inline per-post imminence + state check — it does not use _guard_editable_post/_normalize_z
+    (it operates over many posts of a clip, not one editable post)."""
     now = _now(now)
     z = iso_z(now + timedelta(days=SNOOZE_DAYS))
     with Ledger.transaction(cfg) as led:
