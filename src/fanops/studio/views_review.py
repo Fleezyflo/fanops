@@ -11,7 +11,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import PostState
+from fanops.models import PostState, SelectionMethod
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
 from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, _imminent, suggest_time
@@ -164,6 +164,25 @@ def provenance_chips(surface, *, creative_variation: bool = False) -> list[ProvC
     return chips
 
 
+def _cast_cause(led: Ledger, post, affinities) -> Optional[str]:
+    """RF1: name WHY this account got this moment, from the DURABLE AccountSelection (method-aware) instead of
+    the non-durable affinities tag. A degraded provenance (fan_all_default / migrated) is flagged ⚠ so the
+    operator SEES a labelled fan-to-all or a lifted-legacy pick rather than a silent gap. Falls back to the
+    exact legacy affinities string ONLY for a pre-v9 source that wrote no selection. Pure read; fail-open."""
+    clip = led.clips.get(post.parent_id)
+    mom = led.moments.get(clip.parent_id) if clip else None
+    if mom is None: return None
+    sel = led.account_selection_for(mom.parent_id, post.account)
+    if sel is None:
+        if not led.selections_of_source(mom.parent_id):       # pre-v9 / casting-never-ran -> legacy fallback
+            return f"picked for {post.account}" if (affinities and post.account in affinities) else None
+        return None                                           # cast source, account not selected -> no cause
+    if sel.method == SelectionMethod.fan_all_default: return f"⚠ fans to all ({post.account})"
+    if mom.id in set(sel.moment_ids):
+        return (f"⚠ picked for {post.account} (migrated)" if sel.method == SelectionMethod.migrated
+                else f"picked for {post.account} ({sel.method.value})")
+    return None
+
 def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=None, affinities=()) -> SurfacePost:
     state = post.state.value
     # an awaiting_approval post is GATED — it cannot ship until approved, so it is never "imminent"
@@ -185,7 +204,7 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     elif prof and getattr(acct, "clip_profile", None) == prof: length_cause = f"{post.account} {prof}"
     else: length_cause = None
     framing_cause = f"{post.account} {acct.framing}" if getattr(acct, "framing", None) else None
-    cast_cause = f"picked for {post.account}" if (affinities and post.account in affinities) else None
+    cast_cause = _cast_cause(led, post, affinities)
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=post.caption, hashtags=list(post.hashtags or []),

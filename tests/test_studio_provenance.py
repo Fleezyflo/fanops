@@ -89,6 +89,53 @@ def test_surface_stamps_attribution_via_persona(tmp_path):
     assert sp.length_cause == "persona long" and sp.framing_cause == "@a center" and sp.cast_cause == "picked for @a"
 
 
+def _seed_for_cast(cfg, *, method, moment_ids, affinities):
+    from fanops.ledger import Ledger
+    from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt,
+                               AccountSelection, account_selection_id)
+    cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s", source_path="/v.mp4"))
+        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r",
+                              state=MomentState.clipped, affinities=affinities))
+        led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.awaiting_approval))
+        if method is not None:
+            led.add_account_selection(AccountSelection(id=account_selection_id("s", "@a"), source_id="s",
+                                                       account="@a", moment_ids=moment_ids, method=method))
+    return Ledger.load(cfg)
+
+
+def test_surface_cast_cause_reads_selection_method(tmp_path):
+    # RF1: cast_cause reflects the DURABLE AccountSelection method (not just affinities / post-existence).
+    from fanops.models import SelectionMethod
+    cfg = Config(root=tmp_path)
+    led = _seed_for_cast(cfg, method=SelectionMethod.llm, moment_ids=["m"], affinities=["@a"])
+    sp = views._surface(led.posts["p"], persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc),
+                        cfg=cfg, led=led, acct=None, affinities=["@a"])
+    assert sp.cast_cause == "picked for @a (llm)"
+
+
+def test_surface_cast_cause_flags_fan_all_default_visibly(tmp_path):
+    # an operator/migration fan_all_default -> a VISIBLE labelled fan-to-all (⚠), never a silent gap.
+    from fanops.models import SelectionMethod
+    cfg = Config(root=tmp_path)
+    led = _seed_for_cast(cfg, method=SelectionMethod.fan_all_default, moment_ids=[], affinities=[])
+    sp = views._surface(led.posts["p"], persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc),
+                        cfg=cfg, led=led, acct=None, affinities=[])
+    assert sp.cast_cause and "fans to all" in sp.cast_cause and "⚠" in sp.cast_cause
+
+
+def test_surface_cast_cause_legacy_affinity_fallback_unchanged(tmp_path):
+    # a pre-v9 source (NO AccountSelection) keeps the exact legacy string — byte-identical fallback.
+    cfg = Config(root=tmp_path)
+    led = _seed_for_cast(cfg, method=None, moment_ids=[], affinities=["@a"])
+    sp = views._surface(led.posts["p"], persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc),
+                        cfg=cfg, led=led, acct=None, affinities=["@a"])
+    assert sp.cast_cause == "picked for @a"
+
+
 def test_surface_persona_link_without_owned_profile_names_account(tmp_path):
     # the audit's MEDIUM-1: a persona-LINKED account whose persona supplies NO profile (persona_owns_profile
     # False) but the ACCOUNT has its own pin -> the profile came from the account pin, NOT the persona. The
