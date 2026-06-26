@@ -45,8 +45,10 @@ def candidate_meta(path: Path) -> dict:
         # dims while ingest later failed LOUDLY on the same missing tool (confusing asymmetry).
         # Leave one breadcrumb so the operator sees the cause; still fail-soft (list it anyway).
         logging.getLogger("fanops.discover").warning("ffprobe absent; dimensions unavailable for %s", path)
-    except Exception:
-        pass                                   # fail-soft: list it anyway, dims/duration unknown
+    except Exception as e:
+        # fail-soft: list it anyway (dims/duration unknown) — but leave a breadcrumb so a real
+        # probe_dimensions bug is visible, not swallowed silently (mirrors the ToolchainMissingError arm).
+        logging.getLogger("fanops.discover").debug("probe failed for %s: %s", path, e)
     return {"bytes": st.st_size, "mtime": st.st_mtime, "width": w, "height": h, "duration": dur}
 
 # Tight bound for the one-frame thumbnail: discovery is CHEAP by design (module docstring), so
