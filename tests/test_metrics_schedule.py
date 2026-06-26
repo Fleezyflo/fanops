@@ -3,7 +3,7 @@ the FIXED operator spec (4h,12h,24h,72h,1w then weekly-to-1mo then monthly-to-1y
 tunable knob. due_offset is latest-due-wins (NEVER backfills an earlier missed offset), never raises on a
 None/naive/malformed published_at, and returns None once the latest-elapsed offset is already captured."""
 from datetime import datetime, timedelta, timezone
-from fanops.metrics_schedule import CADENCE_OFFSETS, offset_seconds, due_offset, is_final
+from fanops.metrics_schedule import CADENCE_OFFSETS, offset_seconds, due_offset
 
 _PUB = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
@@ -60,8 +60,3 @@ def test_due_offset_naive_published_at_is_none():
 def test_due_offset_malformed_published_at_is_none():
     for bad in ("", "not-a-date", "2026-13-99T99:99:99Z", 12345):
         assert due_offset(bad, (), _PUB + timedelta(days=5)) is None            # never raises
-
-def test_is_final():
-    assert is_final("52w") is True
-    assert is_final("24h") is False
-    assert is_final("legacy") is False

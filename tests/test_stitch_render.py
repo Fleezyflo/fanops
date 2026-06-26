@@ -8,7 +8,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, Post, MomentState, SourceState, ClipState,
                            StitchState, StitchPlan, PostState, Platform, Fmt)
 from fanops.router import awaiting, CLEAN_FINAL
-from fanops.stitch_render import (mine_suggestions, render_approved_stitches, approved_impact_cut_count,
+from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
                                   prewarm_approved_stitches, _stitch_clip_id)
 
 
@@ -159,13 +159,6 @@ def test_render_approved_skips_suggested(tmp_path, mocker):
     render_approved_stitches(led, cfg)
     assert led.stitch_plans["plan1"].state is StitchState.suggested
     assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
-
-def test_approved_impact_cut_count(tmp_path):
-    cfg = Config(root=tmp_path); led = _seed_approved(cfg)
-    assert approved_impact_cut_count(led) == 1
-    led.stitch_plans["plan1"].state = StitchState.in_use
-    assert approved_impact_cut_count(led) == 0
-
 
 # ---- Task 6: resilience sweep (failure-mode table) ----
 def test_render_approved_cut_out_of_range_errors(tmp_path, mocker):

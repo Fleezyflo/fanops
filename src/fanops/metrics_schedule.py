@@ -22,12 +22,6 @@ def offset_seconds(offset: str) -> int:
     return int(offset[:-1]) * _UNIT_SECONDS[offset[-1]]
 
 
-def is_final(offset: str) -> bool:
-    """True iff this is the terminal cadence offset (52w) — the series is complete after it. The
-    'legacy' migration tag and any non-cadence string are not final."""
-    return offset == CADENCE_OFFSETS[-1]
-
-
 def _parse_pub(published_at) -> Optional[datetime]:
     # Tolerant parse: a None / non-str / malformed / NAIVE (no tzinfo) published_at -> None, never a
     # raise and never a local-time guess (mirrors _migrate_v3_created_at / the pipeline heartbeat guard).
