@@ -215,6 +215,30 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     led.set_clip_state(clip_id, ClipState.captions_requested)
     return led
 
+def _request_surfaces(cfg: Config, clip_id: str) -> tuple[set, dict, dict]:
+    """The crosspost request is the source of truth for completeness: which surfaces were ASKED for, and
+    the per-surface tag_lean (persona differentiation) + curated corpus (B1) each carried (None/absent when
+    unset) so vet_hashtags can float them. Returns (requested, surface_lean, surface_corpus). Pure read."""
+    req = json.loads(request_path(cfg, "captions", clip_id).read_text())
+    surfaces = req.get("surfaces", [])
+    requested = {s["surface"] for s in surfaces}
+    surface_lean = {s["surface"]: s.get("tag_lean") for s in surfaces}
+    surface_corpus = {s["surface"]: s.get("corpus") for s in surfaces}
+    return requested, surface_lean, surface_corpus
+
+
+def _caption_entry(tags: list, hashtags_raw: list, *, fallback: bool = False) -> dict:
+    """One surface's stored meta_captions entry. The posted caption IS the vetted <=4-tag line (hashtags-only).
+    hashtags_raw keeps the model's RAW picks verbatim (finding #3: Studio shows picked-vs-vetted; display-only).
+    ROOT FIX: the caption gate no longer authors an on-screen hook (the frame-seeing moment gate does, via
+    hooks_by_persona) -> hook/axis/rationale are always None. `fallback` marks a seed-tag synthesized entry."""
+    entry = {"caption": " ".join(tags), "hashtags": tags, "hashtags_raw": hashtags_raw,
+             "hook": None, "axis": None, "rationale": None}
+    if fallback:
+        entry["fallback"] = True
+    return entry
+
+
 def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     cs = read_response(cfg, "captions", clip_id, CaptionSet)
     if cs is None:
@@ -222,13 +246,8 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     clip = led.clips[clip_id]
     # the clip's source language is the contract the caption must match (AUDIT H5).
     src = led.sources.get(led.moments[clip.parent_id].parent_id)
-    # what surfaces did we ask for? (the request is the source of truth for completeness)
-    req = json.loads(request_path(cfg, "captions", clip_id).read_text())
-    requested = {s["surface"] for s in req.get("surfaces", [])}
-    # persona differentiation: the per-surface tag_lean the request carried (None when absent) -> vet_hashtags.
-    surface_lean = {s["surface"]: s.get("tag_lean") for s in req.get("surfaces", [])}
-    # B1: the per-surface curated corpus the request carried (absent when empty) -> vet_hashtags floats it first.
-    surface_corpus = {s["surface"]: s.get("corpus") for s in req.get("surfaces", [])}
+    # what surfaces did we ask for, and their per-surface lean/corpus? (the request is the truth)
+    requested, surface_lean, surface_corpus = _request_surfaces(cfg, clip_id)
     # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
     # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
     # logic so a typo'd-but-present caption is not mislabelled "missing".
@@ -269,17 +288,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
                             src.language if src else None, store=load_store(cfg),   # M4: live store when present
                             lean=surface_lean.get(item.surface),                    # persona diff: per-account lean
                             corpus=surface_corpus.get(item.surface))                # B1: per-persona curated pool leads
-        clip.meta_captions[item.surface] = {"caption": " ".join(tags), "hashtags": tags,
-                                            # finding #3: keep the model's RAW tag picks (verbatim, before
-                                            # the vet filter) so Studio can show picked-vs-vetted, not just
-                                            # the survivors. Display-only; the posted line is still `tags`.
-                                            "hashtags_raw": [str(h) for h in (item.hashtags or [])],
-                                            # ROOT FIX: the caption gate no longer authors an on-screen hook
-                                            # (the frame-seeing moment gate does, via hooks_by_persona). No
-                                            # hook stored here, so no 7-word mid-sentence chop. axis/rationale
-                                            # described the removed per-surface hook variant -> None now; the
-                                            # dormant variation machinery is a /ecc:prp-plan deeper-fix.
-                                            "hook": None, "axis": None, "rationale": None}
+        clip.meta_captions[item.surface] = _caption_entry(tags, [str(h) for h in (item.hashtags or [])])
     answered = {item.surface for item in cs.items}
     missing = requested - answered
     # SEED-TAG FALLBACK (was: hold). The caption is hashtags-ONLY, and the model frequently returns NO
@@ -294,9 +303,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         tags = vet_hashtags(None, plat, src.language if src else None, store=load_store(cfg),
                             lean=surface_lean.get(surface),    # seed-fallback still honors the account's lean
                             corpus=surface_corpus.get(surface))   # B1: ...and its curated corpus leads the seed too
-        clip.meta_captions[surface] = {"caption": " ".join(tags), "hashtags": tags,
-                                       "hashtags_raw": [], "hook": None, "axis": None,
-                                       "rationale": None, "fallback": True}
+        clip.meta_captions[surface] = _caption_entry(tags, [], fallback=True)
         get_logger(cfg)("captions", clip_id, "caption_fallback_seed", surface=surface)
     if held_reason:
         clip.held = True
