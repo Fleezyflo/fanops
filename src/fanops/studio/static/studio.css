@@ -558,13 +558,22 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
    (mirrors the existing .golive-step card, so the two setup pages match) + clean the disclosures. ─────────── */
 .persona-card { border:1px solid var(--line); border-radius:var(--r-lg); padding:var(--s-4); margin-top:var(--s-3);
   background:var(--surface-1); box-shadow:var(--elev-1); }
-.persona-card header { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
-.persona-card header strong { font-size:var(--t-h4, 1.05rem); }
-.persona-voice { color:var(--ink); margin:.4rem 0 .6rem; max-width:70ch; }
+.persona-card-head { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.persona-card-head strong { font-size:1.05rem; }
+.persona-drives { margin-left:auto; }                 /* who this voice drives, pushed to the right edge */
+.persona-voice { color:var(--ink); margin:.45rem 0 .65rem; max-width:72ch; }
+/* the DIFFERENTIATORS — a comparable chip row so you can tell voices apart at a glance */
+.persona-spec { display:flex; flex-wrap:wrap; gap:.4rem; margin:0 0 .2rem; }
+.spec-chip { font-size:var(--t-meta); padding:.2rem .55rem; border-radius:var(--r-pill); background:var(--surface-2);
+  border:1px solid var(--line); color:var(--ink); white-space:nowrap; }
 .persona-corpus { margin-top:.7rem; padding-top:.6rem; border-top:1px solid var(--line); display:flex;
   align-items:center; flex-wrap:wrap; gap:.45rem; }
+.persona-corpus-label { font-weight:500; }
+.persona-corpus-tools { display:flex; flex-wrap:wrap; gap:.4rem; margin-left:.2rem; }
+.persona-corpus-tools .inline { display:inline-flex; gap:.25rem; }
+.persona-detail { margin-top:.6rem; }
 .persona-detail > summary.persona-detail-summary { font-size:var(--t-meta); padding:.3rem 0; }
-.persona-edit-open { margin-top:.7rem; }
+.persona-edit-open { margin-top:.85rem; }
 /* the collapsed "+ Add a persona" reads as a section header, not a buried toggle */
 .disclosure-step > summary.step-summary { font-size:1.05rem; font-weight:600; color:var(--ink); padding:.5rem 0; }
 .persona-add-step { margin-top:var(--s-4); }

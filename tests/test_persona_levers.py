@@ -331,7 +331,7 @@ def test_personas_panel_renders_directive_ui(tmp_path):
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "hook &#8594;" in html or "hook →" in html or "hook →" in html   # per-dimension directive shown (clips/hook/caption)
     assert 'name="casting_directive"' in html and 'name="hook_directive"' in html  # the override editors
-    assert 'name="clip_count"' in html and "up to 4 per drop" in html             # the clip ceiling
+    assert 'name="clip_count"' in html and "≤4 clips/drop" in html                # the clip ceiling (spec chip)
 
 def test_studio_edit_persona_persists_directives_and_count(tmp_path):
     from fanops.studio import personas as sp
