@@ -12,6 +12,12 @@
     <textarea id="caption-{{ s.post_id }}" name="caption" rows="3">{{ s.caption }}</textarea>
     <button type="submit">Save caption</button>
   </form>
+  {% if s.tag_sources %}
+  {# why each hashtag shipped — proves every tag traces to a real signal (no decorative/theatre tags). #}
+  <p class="meta tag-prov">Why these tags:
+    {% for tag, src in s.tag_sources.items() %}<span class="chip tag-src tag-src-{{ src }}">{{ tag }} · {{ src }}</span>{% endfor %}
+  </p>
+  {% endif %}
   <form hx-post="{{ url_for('do_regenerate', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
     <label for="guidance-{{ s.post_id }}">Not right? Tell the system what to change, then regenerate</label>
     <input id="guidance-{{ s.post_id }}" type="text" name="guidance" placeholder="e.g. punchier · mention the beat drop · less hype">

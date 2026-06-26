@@ -157,3 +157,30 @@ def test_contentless_clip_is_byte_identical(tmp_path):
     led = _ingest_empty(led, cfg, "clip_a")
     tags = led.clips["clip_a"].meta_captions["@a/instagram"]["hashtags"]
     assert tags == vet_hashtags(None, Platform.instagram, "en")
+
+
+# ---- Task 6: Review surfaces the per-tag provenance (read-only) ---------------------------------------
+def _surface_post(**kw):
+    from fanops.studio.views_review import SurfacePost
+    base = dict(post_id="p1", account="@a", platform="instagram", persona=None, caption="#diss #fyp",
+                hashtags=["#diss", "#fyp"], scheduled_time=None, media_url="/m", state="awaiting_approval",
+                imminent=False, editable=True)
+    return SurfacePost(**{**base, **kw})
+
+
+def test_surface_edit_renders_tag_source_chips(tmp_path):
+    from fanops.studio.app import create_app
+    app = create_app(Config(root=tmp_path))
+    sp = _surface_post(tag_sources={"#diss": "content", "#fyp": "discovery"})
+    with app.test_request_context():
+        html = app.jinja_env.get_template("_surface_edit.html").render(s=sp, backend="dryrun")
+    assert "#diss" in html and "content" in html and "tag-src" in html   # the provenance chip renders
+
+
+def test_surface_edit_no_chip_row_without_sources(tmp_path):
+    from fanops.studio.app import create_app
+    app = create_app(Config(root=tmp_path))
+    sp = _surface_post(tag_sources={})
+    with app.test_request_context():
+        html = app.jinja_env.get_template("_surface_edit.html").render(s=sp, backend="dryrun")
+    assert "tag-prov" not in html                                       # legacy/absent -> no row, no clutter
