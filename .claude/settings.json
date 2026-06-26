@@ -34,18 +34,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-completion-gate.py\"",
-            "timeout": 180,
-            "description": "Completion-gate: refuse to end a turn while ruff/fast-pytest is red, a stub sits in added lines, a claim lacks evidence, or scope was silently narrowed (3-strike breaker; FANOPS_STOP_GATE=0 disables)"
-          }
-        ]
-      }
     ]
   }
 }

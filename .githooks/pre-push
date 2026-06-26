@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# FanOps repo-owned pre-push (OPT-IN: `git config --local core.hooksPath .githooks`). Runs the FAST
+# unit suite ONLY, under the project venv — never the codebase-wide suite under a flask-less PATH
+# python (that crashed the 16GB host). Mirrors CI's `unit` job. Bypass once with FANOPS_SKIP_PREPUSH=1.
+# NOTE: opting in re-points core.hooksPath, which would DISABLE the global pre-commit secret scanner —
+# so anyone who opts in MUST also copy ~/.codex/git-hooks/pre-commit into .githooks/pre-commit. See README.md.
+[[ "${FANOPS_SKIP_PREPUSH:-0}" == "1" ]] && exit 0
+ROOT="$(git rev-parse --show-toplevel)"
+PY="$ROOT/.venv/bin/python"
+if [[ ! -x "$PY" ]]; then echo "[fanops pre-push] .venv missing — activate it (pip install -e '.[dev,studio]'); refusing to run under a deps-less python"; exit 1; fi
+echo "[fanops pre-push] ruff + fast unit suite ($PY)"
+"$PY" -m ruff check . || { echo "[fanops pre-push] ruff failed"; exit 1; }
+"$PY" -m pytest -q -m "not integration" || { echo "[fanops pre-push] fast suite failed"; exit 1; }

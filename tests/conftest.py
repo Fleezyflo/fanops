@@ -45,6 +45,19 @@ _LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL"
               "FANOPS_ACCOUNT_CASTING")
 
 
+def pytest_configure(config):
+    # #13: studio tests use pytest.importorskip("flask"), so a flask-less interpreter SKIPS them — fine
+    # LOCALLY, but it silently false-greens the whole studio surface for anyone running bare `pytest`
+    # without the [studio] extra. CI (and a strict local run) sets FANOPS_REQUIRE_STUDIO=1, which turns a
+    # missing flask into a hard SESSION ABORT — the same skip→fail intent as FANOPS_REQUIRE_E2E for the
+    # real-tooling suite, implemented here as a collection-time precondition (not a per-test guard).
+    if os.getenv("FANOPS_REQUIRE_STUDIO") == "1":
+        try:
+            import flask  # noqa: F401
+        except ImportError:
+            pytest.exit("FANOPS_REQUIRE_STUDIO=1 but flask is absent — run: pip install -e '.[dev,studio]'", returncode=1)
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_publish_env():
     saved = {k: os.environ.get(k) for k in _LEAKY_ENV}
