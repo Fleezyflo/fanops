@@ -161,16 +161,6 @@ def _cut_in_range(params: dict, src) -> bool:
     dur = getattr(src, "duration", None)
     return not (dur and ce > float(dur))
 
-def _approved_impact_plans(led: Ledger):
-    return [p for p in led.stitch_plans.values()
-            if p.state is StitchState.approved and p.strategy_key == STRATEGY_KEY]
-
-def approved_impact_cut_count(led: Ledger) -> int:
-    """How many impact-cut plans are approved-but-not-yet-rendered. Used by the forward-only kill-switch:
-    when the feature is OFF, the pipeline logs this count rather than silently freezing the plans."""
-    return len(_approved_impact_plans(led))
-
-
 def _approved_plans(led: Ledger, strategies=None):
     """Approved-but-unrendered plans (render_approved dispatches by strategy_key), filtered to the per-format
     enabled set when given — so a disabled format's approved plans are FROZEN (the forward-only kill-switch)."""

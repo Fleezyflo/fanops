@@ -10,7 +10,7 @@ from fanops.models import Source, Moment, SourceState, MomentState
 from fanops.agentstep import pending, latest_request_id, response_path
 from fanops.router import awaiting
 from fanops.intro_match import (request_intro_match, ingest_intro_match,
-                                intro_match_pending, MATCHER_VERSION, _candidates)
+                                MATCHER_VERSION, _candidates)
 
 
 def _cfg(tmp_path, monkeypatch, *, llm=True, tease=True):
@@ -77,14 +77,6 @@ def test_request_is_idempotent(tmp_path, monkeypatch):
     rid1 = latest_request_id(cfg, "intro_match", key)
     request_intro_match(led, cfg)                                                     # second pass
     assert latest_request_id(cfg, "intro_match", key) == rid1                         # not re-minted
-
-def test_pending_true_until_answered(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch); led = _seed(cfg)
-    request_intro_match(led, cfg)
-    assert intro_match_pending(led, cfg) is True
-    _answer(cfg, items=[{"moment_id": "m1", "asset_id": "i1", "fit_score": 0.9,
-                         "rationale": "stage entrance matches the drop", "tease_text": "wait for it"}])
-    assert intro_match_pending(led, cfg) is False
 
 def test_ingest_writes_ranked_pairings_to_moment(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch); led = _seed(cfg)

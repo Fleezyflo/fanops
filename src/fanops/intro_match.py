@@ -109,22 +109,6 @@ def request_intro_match(led: Ledger, cfg: Config) -> Ledger:
     return led
 
 
-def intro_match_pending(led: Ledger, cfg: Config) -> bool:
-    """True when the matcher is ON, there is a reserved moment + a candidate set, and any gate is not yet
-    answered — a queryable "matcher still working" read-model (e.g. for Studio status). NOTE: the
-    pipeline does NOT hold rendering on this — the bare clip always ships and the
-    intro stitch is purely additive, so the producer self-defers (a moment with no `intro_matches` yields no
-    candidate) until the pairings land. False when off / nothing reserved / no candidates (never spurious)."""
-    if not (cfg.intro_tease and cfg.responder_mode == "llm"):
-        return False
-    cands = _candidates(led)
-    reserved = _reserved(led)
-    if not cands or not reserved:
-        return False
-    return any(read_response(cfg, "intro_match", _gate_key(m, cands), IntroMatchDecision) is None
-               for m in reserved)
-
-
 def ingest_intro_match(led: Ledger, cfg: Config) -> Ledger:
     """Apply the matcher's response: write each reserved moment's RANKED pairings onto Moment.intro_matches
     (best fit first), keeping only pairings that name a REAL candidate asset AND carry a tease_text (a
