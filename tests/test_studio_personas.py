@@ -24,22 +24,16 @@ def _client(cfg):
 
 # --- action layer ------------------------------------------------------------------------------
 
-def test_create_persona_captures_genre_only(tmp_path):
-    # Intake collapsed to its ONE functional field: genre seeds hashtag research. language / reference_accounts
-    # / notes were inert (language is derived from the SOURCE transcript, not the persona; refs + notes fed
-    # nothing) — they are removed, not merely hidden, so they can no longer be collected into a void.
+def test_create_persona_is_the_clean_lever_set(tmp_path):
+    # create takes the five clean levers only (voice + content_focus/energy/hook_angle); tag_lean and genre are
+    # NOT create params — hashtags come from the card corpus, genre is set via the Research control.
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="Curator", voice="champions craft", tag_lean="tasteful", genre="hip hop")
+    r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines"],
+                          energy="high", hook_angle="curiosity")
     assert r.ok
     p = core.Personas.load(cfg).get(r.detail["created"])
-    assert p.voice == "champions craft" and p.tag_lean == "tasteful"
-    assert p.intake == {"genre": "hip hop"}        # genre only — no language / reference_accounts / notes keys
-
-
-def test_create_persona_bad_lean_is_clean_error(tmp_path):
-    cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="X", tag_lean="spicy")
-    assert r.ok is False and r.error                  # no raise -> the panel renders the ✗
+    assert p.voice == "champions craft" and p.content_focus == ["punchlines"] and p.hook_angle == "curiosity"
+    assert p.intake == {}                          # genre is set later via Research, not collected at create
 
 
 def test_create_persona_blank_name_is_clean_error(tmp_path):
@@ -51,11 +45,10 @@ def test_create_persona_blank_name_is_clean_error(tmp_path):
 def test_edit_persona_updates_fields(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Z", voice="old", tag_lean="bold")
-    r = sp.edit_persona(cfg, pid, name="Z2", voice="new", tag_lean="underground", genre="rap")
+    r = sp.edit_persona(cfg, pid, name="Z2", voice="new", content_focus=["hype"], hook_angle="fomo")
     assert r.ok
     p = core.Personas.load(cfg).get(pid)
-    assert p.name == "Z2" and p.voice == "new" and p.tag_lean == "underground"
-    assert p.intake == {"genre": "rap"}            # intake is genre-only now
+    assert p.name == "Z2" and p.voice == "new" and p.content_focus == ["hype"] and p.hook_angle == "fomo"
 
 
 def test_delete_persona_action(tmp_path):
@@ -158,6 +151,30 @@ def test_personas_route_renders(tmp_path):
     assert r.status_code == 200 and b"Curator" in r.data
 
 
+def test_edit_drawer_is_the_clean_five_lever_set(tmp_path):
+    # The edit sidebar collapses to DISTINCT, non-overlapping levers: voice, content_focus, energy, hook_angle
+    # (the corpus is managed on the card). Everything that repeated another field is gone from the drawer AND
+    # the compose-preview path: tag_lean (corpus owns hashtags), the 3 directive overrides (voice + structured
+    # levers cover them), genre (-> Research), framing (-> smart framing), hook_tone/clip_profile/clip_count/brief.
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1", voice="v1")
+    drawer = _client(cfg).get(f"/personas/drawer/{pid}").get_data(as_text=True)
+    for keep in ('name="voice"', 'name="content_focus"', 'name="energy"', 'name="hook_angle"'):
+        assert keep in drawer, f"missing lever {keep}"
+    for gone in ('name="tag_lean"', 'name="casting_directive"', 'name="hook_directive"',
+                 'name="caption_directive"', 'name="genre"', 'name="framing"', 'name="clip_count"',
+                 'name="hook_tone"', 'name="clip_profile"', 'name="brief"'):
+        assert gone not in drawer, f"removed control still in the edit drawer: {gone}"
+
+
+def test_genre_moves_from_editor_to_research(tmp_path):
+    # genre is not a clip lever — it seeds hashtag RESEARCH, so its input lives with the Research control.
+    cfg = Config(root=tmp_path)
+    core.add_persona(cfg, name="P1", voice="v1")
+    page = _client(cfg).get("/personas").get_data(as_text=True)
+    assert 'name="genre"' in page and "/personas/research" in page     # genre settable in the research area
+
+
 def test_persona_forms_drop_dead_intake_fields(tmp_path):
     # The inert intake inputs (language / reference accounts / notes) are gone from BOTH the add form and the
     # edit drawer; only the functional Genre field remains. language is source-derived; refs + notes fed nothing.
@@ -166,7 +183,6 @@ def test_persona_forms_drop_dead_intake_fields(tmp_path):
     add_form = _client(cfg).get("/personas").get_data(as_text=True)
     drawer = _client(cfg).get(f"/personas/drawer/{pid}").get_data(as_text=True)
     for body in (add_form, drawer):
-        assert 'name="genre"' in body              # the one functional intake field stays
         assert 'name="language"' not in body       # inert (source-derived) — removed
         assert 'name="refs"' not in body           # reference accounts — removed
         assert 'name="notes"' not in body          # memo nothing read — removed

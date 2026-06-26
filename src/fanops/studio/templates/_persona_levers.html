@@ -25,34 +25,10 @@
         <select name="energy"><option value="">— any —</option>
           {% for e in levers.energy %}<option value="{{ e }}" title="{{ effects.energy[e] }}" {{ 'selected' if p and p.energy == e else '' }}>{{ e }} — {{ effects.energy[e] }}</option>{% endfor %}
         </select></label>
-      <label>Clip length
-        <select name="clip_profile"><option value="">— global —</option>
-          {% for c in levers.clip_profile %}<option value="{{ c }}" title="{{ effects.clip_profile[c] }}" {{ 'selected' if p and p.clip_profile == c else '' }}>{{ c }} — {{ effects.clip_profile[c] }}</option>{% endfor %}
-        </select></label>
-      <label>Framing
-        <select name="framing"><option value="">— global —</option>
-          {% for f in levers.framing %}<option value="{{ f }}" title="{{ effects.framing[f] }}" {{ 'selected' if p and p.framing == f else '' }}>{{ f }} — {{ effects.framing[f] }}</option>{% endfor %}
-        </select></label>
       <label>Hook angle
         <select name="hook_angle"><option value="">— any —</option>
           {% for h in levers.hook_angle %}<option value="{{ h }}" title="{{ effects.hook_angle[h] }}" {{ 'selected' if p and p.hook_angle == h else '' }}>{{ h }} — {{ effects.hook_angle[h] }}</option>{% endfor %}
         </select></label>
-      <label>Hook tone
-        <select name="hook_tone"><option value="">— any —</option>
-          {% for h in levers.hook_tone %}<option value="{{ h }}" title="{{ effects.hook_tone[h] }}" {{ 'selected' if p and p.hook_tone == h else '' }}>{{ h }} — {{ effects.hook_tone[h] }}</option>{% endfor %}
-        </select></label>
-      <label>Clips per drop
-        <input type="number" name="clip_count" min="1" size="4" placeholder="all that fit"
-          title="how many clips this account gets per source (blank = no ceiling)" value="{{ p.clip_count if p and p.clip_count else '' }}"></label>
-    </fieldset>
-    <fieldset class="directives">
-      <legend>Directive overrides — blank = use the compiled default above (a set override SHADOWS its levers)</legend>
-      <label class="block">Clips directive
-        <textarea name="casting_directive" rows="2" placeholder="(compiled from Clips + Energy above)">{{ p.casting_override if p else '' }}</textarea></label>
-      <label class="block">Hook directive
-        <textarea name="hook_directive" rows="2" placeholder="(compiled from Hook angle + tone above)">{{ p.hook_override if p else '' }}</textarea></label>
-      <label class="block">Caption directive
-        <textarea name="caption_directive" rows="2" placeholder="(the persona voice; hashtags stay deterministic)">{{ p.caption_override if p else '' }}</textarea></label>
     </fieldset>
   </div>
   <div id="persona-compose-{{ cid }}" class="persona-compose" aria-live="polite">

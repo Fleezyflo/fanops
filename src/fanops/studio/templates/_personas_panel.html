@@ -50,21 +50,12 @@
       <summary class="step-summary">+ Add a persona</summary>
       <p class="muted persona-levers-intro">Each persona's levers{{ term('lever') }} shape its clips, hooks and captions.</p>
       {{ levers_reference(lever_ref) }}
-      <p class="muted">Name it, write its voice, pick a hashtag lean, and set its genre —
-        the genre seeds the hashtag research later.</p>
+      <p class="muted">Name it, write its voice, and set its levers — which moments it clips, its energy, and
+        its hook angle. Hashtags (and genre for research) are curated per-card after it exists.</p>
       <form hx-post="{{ url_for('do_personas_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
         <label>Name <input type="text" name="name" placeholder="e.g. Music Blogger" size="22" required></label>
-        <label>Tag lean
-          <select name="tag_lean">
-            <option value="">— none —</option>
-            {% for l in tag_leans %}<option value="{{ l }}">{{ l }}</option>{% endfor %}
-          </select></label>
         <label class="block">Voice
           <textarea name="voice" rows="2" placeholder="champions craft; clip the moments that show artistry…"></textarea></label>
-        <fieldset class="intake">
-          <legend>Intake</legend>
-          <label>Genre <input type="text" name="genre" placeholder="hip hop" size="14"></label>
-        </fieldset>
         {{ lever_fields(levers, effects) }}
         <button type="submit" class="primary">Add persona</button>
       </form>
@@ -88,11 +79,11 @@
 
         {# The DIFFERENTIATORS, surfaced as comparable chips on the card face — the whole reason personas exist
            is that these differ per voice, so they belong here, not buried in directive prose. #}
-        <div class="persona-spec" title="how this voice's output differs from the others">
-          {% if p.length_band %}<span class="spec-chip">~{{ p.length_band }}{% if p.clip_profile %} · {{ p.clip_profile }}{% endif %}</span>{% endif %}
-          {% if p.framing %}<span class="spec-chip">{{ p.framing }} framing</span>{% endif %}
-          {% if p.tag_lean %}<span class="spec-chip">{{ p.tag_lean }} tags</span>{% endif %}
-          {% if p.clip_count %}<span class="spec-chip">≤{{ p.clip_count }} clips/drop</span>{% endif %}
+        <div class="persona-spec" title="how this voice's output differs from the others — the cut length is DERIVED from content focus">
+          {% if p.length_band %}<span class="spec-chip">~{{ p.length_band }} clips</span>{% endif %}
+          {% for c in p.content_focus %}<span class="spec-chip">{{ c }}</span>{% endfor %}
+          {% if p.energy %}<span class="spec-chip">{{ p.energy }} energy</span>{% endif %}
+          {% if p.hook_angle %}<span class="spec-chip">{{ p.hook_angle }} hook</span>{% endif %}
         </div>
 
         {# Account assignment lives WITH the voice it drives — not in a separate dropdown stack at the page
@@ -129,6 +120,8 @@
           <div class="persona-corpus-tools">
             <form class="inline" hx-post="{{ url_for('do_personas_research') }}" hx-target="#personas-panel" hx-swap="outerHTML">
               <input type="hidden" name="id" value="{{ p.id }}">
+              <input type="text" name="genre" value="{{ p.intake.get('genre', '') }}" placeholder="genre" size="10"
+                title="seeds the hashtag search for this persona (saved when you Research)">
               <button type="submit" title="propose the reach-best tags this persona is missing">Research</button>
             </form>
             <form class="inline" hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
@@ -151,7 +144,6 @@
             {% if p.hook_text %}<p class="persona-instruction"><span class="muted">hook →</span> {{ p.hook_text }}</p>{% endif %}
             {% if p.caption_text %}<p class="persona-instruction"><span class="muted">caption →</span> {{ p.caption_text }}</p>{% endif %}
           </div>
-          {% if p.brief %}<p class="persona-brief" title="freeform direction this persona runs against downstream — composed into the AI instruction"><span class="muted">brief →</span> {{ p.brief }}</p>{% endif %}
         </details>
 
         {# Slice 3: the levers live in a slide-out DRAWER now, not a buried per-card collapse. This Edit button

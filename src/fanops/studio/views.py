@@ -264,7 +264,6 @@ class PersonaCard:
     casting_override: str = ""
     hook_override: str = ""
     caption_override: str = ""
-    clip_count: Optional[int] = None
 
 
 @dataclass
@@ -323,15 +322,14 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
                          content_focus=list(p.content_focus), energy=p.energy, hook_angle=p.hook_angle,
-                         hook_tone=p.hook_tone, clip_profile=p.clip_profile, framing=p.framing,
+                         hook_tone=p.hook_tone, clip_profile=p.clip_profile, framing=facts["framing"],
                          instruction=compose_persona_instruction(p), brief=getattr(p, "brief", "") or "",
-                         length_band=(facts := persona_facts(cfg, p))["length_band"], lead_tags=facts["lead_tags"],
+                         length_band=facts["length_band"], lead_tags=facts["lead_tags"],
                          hook_text=hook_directive(p), caption_text=caption_directive(p),
                          casting_override=getattr(p, "casting_directive", "") or "",
                          hook_override=getattr(p, "hook_directive", "") or "",
-                         caption_override=getattr(p, "caption_directive", "") or "",
-                         clip_count=getattr(p, "clip_count", None))
-             for p in reg.all()]
+                         caption_override=getattr(p, "caption_directive", "") or "")
+             for p in reg.all() for facts in (persona_facts(cfg, p),)]
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)
 
