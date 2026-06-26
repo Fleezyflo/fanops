@@ -11,7 +11,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import PostState, SelectionMethod
+from fanops.models import PostState, SelectionMethod, MomentState
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
 from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, _imminent, suggest_time
@@ -378,6 +378,80 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
                                             affinities=row.affinities, acct=acct_by_handle.get(handle))
                 if reason: row.empty_reasons[key] = reason
     return MatrixView(source_id=source_id, source_name=_source_label(src), columns=columns, rows=rows)
+
+# ── RF6: the per-account LANES (account-first Review) ─────────────────────────
+# A LANE is ONE account's view of a source: every DECIDED moment as a row, with whether THIS account is cast
+# on it — read from the DURABLE AccountSelection, NOT post existence (the matrix's rule). That inversion is the
+# whole point: a lane can show a cast moment with no post yet, AND a targeted account with ZERO posts (a column
+# the matrix structurally cannot draw). Data-only (no string formatting — the header chips live in the template,
+# matching MatrixCell). cast state truth = led.moments_for_account; fans-to-all = no record OR fan_all_default.
+@dataclass
+class LaneRow:
+    moment_id: str; window: str; reason: Optional[str]; hook: Optional[str]
+    is_cast: bool                       # m.id ∈ this account's AccountSelection.moment_ids (durable truth, not a post)
+    preview_url: str                    # the MASTER clip player (clip -> source); '' when this moment has no clip yet
+    post: Optional[SurfacePost] = None  # this account's LEAD post for the moment (matrix collapse: awaiting>newest>id); None = no post
+
+@dataclass
+class AccountLane:
+    account: str
+    rows: list                          # [LaneRow] — the source's decided moments, this account's cast/uncast per row
+    method: Optional[str]               # AccountSelection.method.value (provenance: llm/operator/migrated/fan_all_default); None = no record
+    cast_count: int                     # how many of THESE rows (decided moments) the account is cast on
+    moment_count: int                   # the row count (decided moments) — the "N of M" denominator
+    fans_all: bool                      # sel is None OR fan_all_default — every row uncast, header reads "fans to all"
+
+@dataclass
+class LaneView:
+    source_id: str; source_name: str
+    lanes: list                         # [AccountLane] in active-first then-alpha account order
+
+def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: str, now: datetime,
+                  state: Optional[str] = None) -> LaneView:
+    """One LANE per account for ONE source: rows = the source's DECIDED moments, each flagged is_cast from the
+    account's durable AccountSelection (NOT a post). Reuses the matrix's lead-post collapse for the post side and
+    _surface() for the surface shape. The lane UNIVERSE = active accounts ∪ accounts-with-a-selection ∪ accounts-
+    with-a-post (so a zero-post targeted account, or a selection-only handle, still gets a lane — the matrix can't).
+    fan-to-all (sel is None OR fan_all_default) -> every row is_cast=False (NEVER misread as "cast on everything";
+    the gate semantics are unchanged). A 0-moment source yields lanes with empty rows (no crash)."""
+    src = led.sources.get(source_id)
+    moments = sorted([m for m in led.moments.values()
+                      if m.parent_id == source_id and m.state == MomentState.decided], key=lambda m: m.start)
+    moment_ids = {m.id for m in moments}
+    # one-pass lineage maps scoped to this source's moments (mirror review_matrix) for the post side of each row.
+    clips_by_moment: dict = {}
+    for c in led.clips.values():
+        if c.parent_id in moment_ids: clips_by_moment.setdefault(c.parent_id, []).append(c)
+    posts_by_clip: dict = {}
+    clip_ids = {c.id for cs in clips_by_moment.values() for c in cs}
+    for p in led.posts.values():
+        if p.parent_id in clip_ids: posts_by_clip.setdefault(p.parent_id, []).append(p)
+    acct_by_handle = {a.handle: a for a in accounts.accounts}
+    personas = _personas(accounts)
+    # lane universe: active-first (in accounts.json order), then any has-selection / has-post handle, alpha.
+    active_order = [a.handle for a in accounts.accounts]
+    extra = {s.account for s in led.selections_of_source(source_id)} | {p.account for p in led.posts.values() if p.parent_id in clip_ids}
+    handles = active_order + sorted(h for h in extra if h not in set(active_order))
+    # first-clip per moment owns the MASTER preview (clip -> source player), matching the cards/matrix.
+    preview_by_moment = {mid: f"/clips/{cs[0].id}" for mid, cs in clips_by_moment.items() if cs}
+    lanes: list = []
+    for handle in handles:
+        sel = led.account_selection_for(source_id, handle)
+        cast_ids = led.moments_for_account(source_id, handle)        # set() for BOTH no-record AND fan_all_default
+        fans_all = sel is None or sel.method == SelectionMethod.fan_all_default
+        acct = acct_by_handle.get(handle); persona = personas.get(handle)
+        rows: list = []
+        for m in moments:
+            mposts = [p for c in clips_by_moment.get(m.id, []) for p in posts_by_clip.get(c.id, [])
+                      if p.account == handle and _state_matches(p, state)]
+            sp = _surface(_pick_lead(mposts), persona=persona, now=now, cfg=cfg, led=led, acct=acct,
+                          affinities=(getattr(m, "affinities", None) or [])) if mposts else None
+            rows.append(LaneRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
+                                hook=m.hook, is_cast=m.id in cast_ids,
+                                preview_url=preview_by_moment.get(m.id, ""), post=sp))
+        lanes.append(AccountLane(account=handle, rows=rows, method=(sel.method.value if sel else None),
+                                 cast_count=len(cast_ids & moment_ids), moment_count=len(moments), fans_all=fans_all))
+    return LaneView(source_id=source_id, source_name=_source_label(src), lanes=lanes)
 
 # Phase 4: the ?state= filter maps an operator-facing state word to its ReviewCard.bucket. 'awaiting' is the
 # primary worklist state (editable cards); 'approved' surfaces have LEFT Review for the Schedule, so it maps to

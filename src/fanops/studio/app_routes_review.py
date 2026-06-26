@@ -48,10 +48,15 @@ def register_review_routes(app, cfg):
         show_matrix = view == "matrix"
         matrix = (views.review_matrix(led, accounts, cfg, source_id=focused, now=now, state=(state or "awaiting"))
                   if (show_matrix and focused) else None)
+        # RF6: the account-first LANES view (?view=lanes) — every decided moment per account with explicit
+        # cast/uncast state, read from the durable AccountSelection (NOT post existence). Built ONLY when
+        # view=='lanes' AND a source is focused; else None (default behaviour byte-identical, like matrix).
+        lanes = (views.account_lanes(led, accounts, cfg, source_id=focused, now=now, state=(state or "awaiting"))
+                 if (view == "lanes" and focused) else None)
         ctx = dict(cards=page.items, page=page, tab="review", backend=cfg.poster_backend, counts=counts,
                    awaiting_total=counts["awaiting"], active_batch=batch, progress=progress, sources=sources,
                    pivot=(pivot.items if pivot is not None else None), pivot_page=pivot, result=result,
-                   matrix=matrix, source_choices=choices, focused_source=focused,
+                   matrix=matrix, lanes=lanes, source_choices=choices, focused_source=focused,
                    **_card_chips(cards_full, account))
         return ctx
 

@@ -1,0 +1,47 @@
+{# src/fanops/studio/templates/_review_lanes.html — RF6: the account-first per-account LANES for ONE focused
+   source. One <section> per account = that account's view of every DECIDED moment, with whether THIS account is
+   cast on it (☑/☐) read from the durable AccountSelection — NOT post existence. The +cast / −uncast buttons drive
+   the already-built do_cast_add / do_cast_remove routes; both carry source=focused, account=lane.account, AND
+   view='lanes' so the post-action re-render rebuilds the lanes view in-scope (R1), never dropping to the default
+   cards. A zero-post targeted account STILL gets a lane (the matrix could not draw that column). #}
+{% set lv = lanes %}
+<section class="account-lanes" aria-label="Per-account lanes for {{ lv.source_name }}">
+  {% if source_choices and source_choices|length > 1 %}
+  <nav class="lanes-sources meta" aria-label="Choose source">Source:
+    {% for sid, slabel in source_choices %}{% if sid == focused_source %}<span class="button active" aria-current="page">{{ slabel }}</span>{% else %}<a class="button" href="{{ url_for('review', view='lanes', source=sid, account=active, state=active_state|default(none), compact=compact_param) }}">{{ slabel }}</a>{% endif %} {% endfor %}
+  </nav>
+  {% endif %}
+  {% if not lv.lanes %}
+    <div class="empty">No accounts to lane for {{ lv.source_name }} yet — add an account in the Go Live tab{% if source_choices and source_choices|length > 1 %}, or switch source above{% endif %}.</div>
+  {% else %}
+  {% for lane in lv.lanes %}
+  <section class="lane" role="group" aria-label="{{ lane.account }} cast lane">
+    <header class="lane-head">
+      <span class="lane-handle">{{ lane.account }}</span>
+      <span class="lane-cast muted">cast {{ lane.cast_count }} of {{ lane.moment_count }}</span>
+      {% if lane.fans_all %}<span class="chip lane-method warn" title="no specific cast — every moment fans to all accounts">fans to all</span>{% elif lane.method %}<span class="chip lane-method" title="how this account was cast">{{ lane.method }}</span>{% endif %}
+    </header>
+    {% if not lane.rows %}
+      <div class="empty muted">No decided moments yet for this source.</div>
+    {% else %}
+    <ul class="lane-rows">
+      {% for row in lane.rows %}
+      <li class="lane-row{{ ' is-cast' if row.is_cast else ' is-uncast' }}">
+        <span class="lane-window">{{ row.window }}s</span>{% if row.reason %} <span class="lane-reason muted">{{ row.reason }}</span>{% endif %}
+        {% if row.preview_url %}<a class="lane-preview" href="{{ row.preview_url }}" aria-label="Preview the {{ row.window }} second moment">▸ preview</a>{% endif %}
+        {% if row.is_cast %}
+          <span class="lane-state cast" aria-label="cast">☑ cast</span>
+          <button type="button" class="button lane-uncast" hx-post="{{ url_for('do_cast_remove', moment_id=row.moment_id, source=lv.source_id, account=lane.account, view='lanes', state=active_state|default(none), offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Remove {{ lane.account }} from the {{ row.window }} second moment">− uncast</button>
+        {% else %}
+          <span class="lane-state uncast muted" aria-label="not cast">☐ uncast</span>
+          <button type="button" class="button lane-cast-add" hx-post="{{ url_for('do_cast_add', moment_id=row.moment_id, source=lv.source_id, account=lane.account, view='lanes', state=active_state|default(none), offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Cast {{ lane.account }} on the {{ row.window }} second moment">+ cast</button>
+        {% endif %}
+        {% if row.post %}<span class="lane-post chip state-{{ row.post.state }}" title="this account already has a post for this moment">post: {{ row.post.state }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% endfor %}
+  {% endif %}
+</section>

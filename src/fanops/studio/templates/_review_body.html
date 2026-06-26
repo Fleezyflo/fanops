@@ -17,6 +17,10 @@
     {% if active_view == 'matrix' %}<span class="button active" aria-current="page">Matrix</span>{% else %}<a class="button" href="{{ url_for('review', view='matrix', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Matrix</a>{% endif %}
     {% if active_view in (none, 'list') %}<span class="button active" aria-current="page">Moments</span>{% else %}<a class="button" href="{{ url_for('review', view='list', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Moments</a>{% endif %}{{ term('moment') }}
     {% if active_view == 'account' %}<span class="button active" aria-current="page">By account</span>{% else %}<a class="button" href="{{ url_for('review', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">By account</a>{% endif %}{{ term('surface') }}
+    {# RF6: the per-account LANES — every decided moment per account with cast/uncast + the +cast/−uncast
+       override (the matrix can't host them). Most useful WITH a focused source; preserves ?source= like the
+       matrix picker. Opt-in, never the default. #}
+    {% if active_view == 'lanes' %}<span class="button active" aria-current="page">Lanes</span>{% else %}<a class="button" href="{{ url_for('review', view='lanes', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Lanes</a>{% endif %}
   </div>
   {% include "_account_filter.html" %}
   {% include "_source_filter.html" %}
@@ -37,7 +41,12 @@
       {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }} post(s){% if result.detail.hook %} with the hook restored{% endif %} — now in the Schedule.{% elif result.detail.rejected is defined %}Rejected {{ result.detail.rejected }} post(s).{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
-  {% if active_view == 'account' and active and pivot is not none %}
+  {% if lanes %}
+    {# RF6 account-first LANES: one section per account, every decided moment with explicit cast/uncast +
+       the +cast/−uncast override buttons. A TOP-LEVEL branch (like the pivot) so it shows even when zero
+       awaiting cards exist — a targeted account with no posts still gets a lane. Reads AccountSelection. #}
+    {% include "_review_lanes.html" %}
+  {% elif active_view == 'account' and active and pivot is not none %}
     {# Phase 4 account-first PIVOT: @x's entire run as a flat, day-grouped, scannable list. #}
     {% include "_account_pivot.html" %}
   {% else %}
