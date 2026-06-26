@@ -394,6 +394,10 @@ def test_request_captions_failopen_on_transfer_error(monkeypatch, tmp_path):
     accts = _transfer_accounts(cfg, [("@a", "hype"), ("@b", "hype"), ("@c", "hype")])
     _win_surface_for(led, "@a", Platform.instagram, "STYLE")
     _win_surface_for(led, "@b", Platform.instagram, "STYLE")
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True})      # open the validation gate so the raising
+    #                                                           scorer is actually REACHED (else the freeze
+    #                                                           short-circuits and the fail-open path is untested)
     monkeypatch.setattr("fanops.caption.transferred_hooks",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=accts)  # no raise
