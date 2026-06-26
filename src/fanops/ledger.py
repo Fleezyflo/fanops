@@ -368,11 +368,12 @@ class Ledger:
         return [s for s in self.account_selections.values() if s.source_id == source_id]
     def drop_account_selection(self, source_id: str, account: str) -> None:
         self.account_selections.pop(account_selection_id(source_id, account), None)   # RF1: operator removed the last pick -> no record (gate denies on a cast source)
-    def moments_for_account(self, source_id: str, account: str) -> set:
-        # "which specific moments did this account get?" — for the Review READ-MODEL (Task 5), NOT the gate.
-        # WARNING (Task 3): do NOT use this as the crosspost gate predicate. It returns set() for BOTH "no
-        # selection written" (gate must fall back to affinities) AND fan_all_default (gate must admit ALL) —
-        # two opposite decisions. The gate calls account_selection_for() and branches on sel.method instead.
+    def moment_ids_selected_for(self, source_id: str, account: str) -> set:
+        # "which specific moments did this account get?" — for the Review READ-MODEL ONLY, NEVER the gate. The
+        # name says it: this is the SELECTED-ids set for display, not an admit/deny predicate. It returns set()
+        # for BOTH "no selection written" (gate must fall back to affinities) AND fan_all_default (gate must
+        # admit ALL) — two OPPOSITE gate decisions, indistinguishable here. The crosspost gate calls
+        # account_selection_for() and branches on sel.method instead (casting.account_selection_admits).
         sel = self.account_selection_for(source_id, account)
         return set(sel.moment_ids) if sel else set()
 

@@ -66,18 +66,18 @@ def test_frozen_blocks_direct_mutation():
         sel.moment_ids = []                       # frozen -> raises, never silently mutates
 
 
-def test_model_copy_is_the_documented_residual():
-    # HONEST characterization (not an endorsement): pydantic v2 model_copy(update=) skips validation even on
-    # a frozen model, so it CAN forge an illegal object. This entity is therefore NEVER updated via model_copy
-    # — a re-cast OVERWRITES with a freshly-constructed (re-validated) record. This test pins that residual so
-    # a future reader knows it is known, bounded, and unused — not an oversight.
+def test_model_copy_revalidates_and_cannot_forge_an_illegal_selection():
+    # #12: the residual is CLOSED. AccountSelection overrides model_copy to re-validate the result, so the
+    # pydantic-v2 "model_copy(update=) skips validators even on a frozen model" forgery path no longer produces
+    # a sum-type-illegal object. An illegal update RAISES; a legal field update (e.g. created_at) still works.
     sel = AccountSelection(id="acctsel_6", source_id="src_a", account="@a",
                            moment_ids=["m1"], method=SelectionMethod.llm)
-    forged = sel.model_copy(update={"moment_ids": []})   # bypasses the validator (documented pydantic behavior)
-    assert forged.moment_ids == []                        # illegal-but-constructable ONLY via this path
-    # the legitimate update path (overwrite-with-fresh) DOES re-validate:
     with pytest.raises(ValidationError):
-        AccountSelection(**{**sel.model_dump(), "moment_ids": []})
+        sel.model_copy(update={"moment_ids": []})         # chosen method + empty ids -> now re-validated -> RAISES
+    with pytest.raises(ValidationError):
+        AccountSelection(**{**sel.model_dump(), "moment_ids": []})   # the constructor path also rejects (unchanged)
+    legal = sel.model_copy(update={"created_at": "2026-06-26T00:00:00Z"})   # a non-invariant field copies fine
+    assert legal.created_at == "2026-06-26T00:00:00Z" and legal.moment_ids == ["m1"]
 
 
 # ---- ledger round-trip: add (OVERWRITE on re-cast) + save + load, mirror selection_facts ----
@@ -109,7 +109,7 @@ def test_add_account_selection_overwrites_on_recast(tmp_path):
     assert len(led2.selections_of_source("src_a")) == 1
 
 
-def test_selections_of_source_and_moments_for_account(tmp_path):
+def test_selections_of_source_and_moment_ids_selected_for(tmp_path):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_account_selection(AccountSelection(id=account_selection_id("src_a", "@a"),
@@ -120,8 +120,8 @@ def test_selections_of_source_and_moments_for_account(tmp_path):
                                                    moment_ids=[], method=SelectionMethod.fan_all_default))
     led2 = Ledger.load(cfg)
     assert len(led2.selections_of_source("src_a")) == 2
-    assert led2.moments_for_account("src_a", "@a") == {"m1", "m2"}
-    assert led2.moments_for_account("src_a", "@b") == set()        # fan_all_default carries no specific ids
+    assert led2.moment_ids_selected_for("src_a", "@a") == {"m1", "m2"}
+    assert led2.moment_ids_selected_for("src_a", "@b") == set()     # fan_all_default carries no specific ids
     assert led2.account_selection_for("src_a", "@nobody") is None
 
 
