@@ -24,14 +24,16 @@ def _client(cfg):
 
 # --- action layer ------------------------------------------------------------------------------
 
-def test_create_persona_captures_intake(tmp_path):
+def test_create_persona_captures_genre_only(tmp_path):
+    # Intake collapsed to its ONE functional field: genre seeds hashtag research. language / reference_accounts
+    # / notes were inert (language is derived from the SOURCE transcript, not the persona; refs + notes fed
+    # nothing) — they are removed, not merely hidden, so they can no longer be collected into a void.
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="Curator", voice="champions craft", tag_lean="tasteful",
-                          genre="hip hop", language="en", refs="@a, @b", notes="lyrical")
+    r = sp.create_persona(cfg, name="Curator", voice="champions craft", tag_lean="tasteful", genre="hip hop")
     assert r.ok
     p = core.Personas.load(cfg).get(r.detail["created"])
     assert p.voice == "champions craft" and p.tag_lean == "tasteful"
-    assert p.intake["genre"] == "hip hop" and p.intake["reference_accounts"] == ["@a", "@b"]
+    assert p.intake == {"genre": "hip hop"}        # genre only — no language / reference_accounts / notes keys
 
 
 def test_create_persona_bad_lean_is_clean_error(tmp_path):
@@ -49,12 +51,11 @@ def test_create_persona_blank_name_is_clean_error(tmp_path):
 def test_edit_persona_updates_fields(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Z", voice="old", tag_lean="bold")
-    r = sp.edit_persona(cfg, pid, name="Z2", voice="new", tag_lean="underground",
-                        genre="rap", language="ar", refs="", notes="")
+    r = sp.edit_persona(cfg, pid, name="Z2", voice="new", tag_lean="underground", genre="rap")
     assert r.ok
     p = core.Personas.load(cfg).get(pid)
     assert p.name == "Z2" and p.voice == "new" and p.tag_lean == "underground"
-    assert p.intake["language"] == "ar"
+    assert p.intake == {"genre": "rap"}            # intake is genre-only now
 
 
 def test_delete_persona_action(tmp_path):
@@ -155,6 +156,20 @@ def test_personas_route_renders(tmp_path):
     core.add_persona(cfg, name="Curator", voice="champions craft")
     r = _client(cfg).get("/personas")
     assert r.status_code == 200 and b"Curator" in r.data
+
+
+def test_persona_forms_drop_dead_intake_fields(tmp_path):
+    # The inert intake inputs (language / reference accounts / notes) are gone from BOTH the add form and the
+    # edit drawer; only the functional Genre field remains. language is source-derived; refs + notes fed nothing.
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1", voice="v1")
+    add_form = _client(cfg).get("/personas").get_data(as_text=True)
+    drawer = _client(cfg).get(f"/personas/drawer/{pid}").get_data(as_text=True)
+    for body in (add_form, drawer):
+        assert 'name="genre"' in body              # the one functional intake field stays
+        assert 'name="language"' not in body       # inert (source-derived) — removed
+        assert 'name="refs"' not in body           # reference accounts — removed
+        assert 'name="notes"' not in body          # memo nothing read — removed
 
 
 def test_post_add_persona_route(tmp_path):
