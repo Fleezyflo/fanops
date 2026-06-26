@@ -8,7 +8,7 @@ fanops-hook-hashtag skill (.claude/skills/fanops-hook-hashtag/SKILL.md); these c
 seeded from it. Re-verify counts before trusting them as current — this is a class ranking,
 not a live API."""
 from __future__ import annotations
-import json
+import json, re
 from fanops.models import Platform
 
 # Reach-ranked pools (June 2026 research; counts in the skill). Lower index = higher reach.
@@ -74,6 +74,46 @@ def _norm(tag: str) -> str:
     t = tag.strip().lower().lstrip("#").strip()
     return f"#{t}" if t else ""
 
+def _dedupe_norm(seq) -> list[str]:
+    """Normalize + dedupe a tag sequence (corpus / content), preserving first-seen order. Non-str -> skipped."""
+    out: list[str] = []; seen: set[str] = set()
+    for t in (seq or []):
+        n = _norm(t) if isinstance(t, str) else ""
+        if n and n not in seen: seen.add(n); out.append(n)
+    return out
+
+# Per-clip CONTENT signal: the small stopword set + latin word token used by content_tag_candidates.
+# A token is a latin word, 3-20 chars, starting with a letter (so '12'/'###'/Arabic yield nothing).
+_STOPWORDS = frozenset(
+    "a an and are as at be but by for from had has have he her his i in is it its me my no not of on or "
+    "our out so that the their them they this to too up us was we what when where which who will with you "
+    "your yours just got get like dont cant im".split())
+_WORD = re.compile(r"[a-z][a-z0-9]{2,19}")
+
+def content_tag_candidates(text: str | None, *, max_n: int = 6) -> list[str]:
+    """Per-clip content signal: candidate hashtag tokens derived from THIS clip's transcript text.
+    Deterministic + pure (NO NLP model): lowercase, latin word tokens (3-20 chars), drop stopwords,
+    order by frequency then first-seen, normalize to '#tag', dedupe, cap at `max_n`. Blank / non-str /
+    non-latin (Arabic) / numbers-only -> [] so a contentless/instrumental/Arabic clip stays byte-identical
+    to today's tag selection. These are CANDIDATES the model may pick + that survive vetting; never
+    invented junk in the posted line (the membership gate + the model's selection still apply)."""
+    if not isinstance(text, str) or not text.strip():
+        return []
+    counts: dict[str, int] = {}; order: list[str] = []
+    for tok in _WORD.findall(text.lower()):
+        if tok in _STOPWORDS: continue
+        if tok not in counts: order.append(tok)
+        counts[tok] = counts.get(tok, 0) + 1
+    first_idx = {t: i for i, t in enumerate(order)}
+    order.sort(key=lambda t: (-counts[t], first_idx[t]))   # frequency desc, then first-seen -> deterministic
+    out: list[str] = []; seen: set[str] = set()
+    for t in order:
+        n = _norm(t)
+        if n and n not in seen:
+            seen.add(n); out.append(n)
+        if len(out) >= max_n: break
+    return out
+
 def _composition(platform: Platform, language: str | None) -> list[str]:
     """The balanced default 4 (genre + relevance + language/region + discovery), reach-ordered.
     A mega tag for reach, a relevance tag for the right feed, an Arabic tag only when the clip is
@@ -85,7 +125,7 @@ def _composition(platform: Platform, language: str | None) -> list[str]:
 
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
                  max_tags: int = 4, *, store: list[str] | None = None, lean: str | None = None,
-                 corpus: list[str] | None = None) -> list[str]:
+                 corpus: list[str] | None = None, content: list[str] | None = None) -> list[str]:
     """Return at most `max_tags` reach-vetted hashtags. Keeps the model's VETTED tags (reach-ordered),
     then backfills the balanced default until full. Drops every non-vetted word, dedupes case/'#'
     variants, hard-caps the count. Deterministic; never empty (the default always fills). With a live
@@ -96,16 +136,22 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     region reach. lean=None / unknown -> empty pool -> byte-identical (no language floor, frozen rank).
     `corpus` (B1: the per-persona curated pool) JOINS the vetted membership (so a curated tag the frozen
     set / store doesn't know SURVIVES) and floats AHEAD of the lean pool — the operator's pool wins. The
-    corpus order is the curation order. corpus=None/empty -> byte-identical (no membership change, no float)."""
-    corpus_norm: list[str] = []; _cseen: set[str] = set()
-    for t in (corpus or []):                                         # normalize + dedupe the curated pool
-        n = _norm(t) if isinstance(t, str) else ""
-        if n and n not in _cseen: _cseen.add(n); corpus_norm.append(n)
-    vetted = (set(store) if store else set(VETTED)) | set(corpus_norm)   # corpus joins the membership gate
+    corpus order is the curation order. corpus=None/empty -> byte-identical (no membership change, no float).
+    `content` (per-clip content-derived tags, content_tag_candidates) ALSO joins the membership so a
+    clip-specific tag the model picked SURVIVES, floats just behind the corpus (clip info ahead of the
+    lean), and RESERVES one slot so the clip's own information always reaches the line when present.
+    content=None/empty -> byte-identical (no membership change, no float, no reserved slot)."""
+    corpus_norm = _dedupe_norm(corpus)
+    content_norm = _dedupe_norm(content)
+    vetted = (set(store) if store else set(VETTED)) | set(corpus_norm) | set(content_norm)   # corpus + content join the gate
     base_rank = {t: i for i, t in enumerate(store)} if store else dict(_RANK)
     pool = _LEANS.get((lean or "").strip().lower(), [])              # unknown/None lean -> [] -> byte-identical
-    rank = {**base_rank, **{t: i - len(pool) for i, t in enumerate(pool)},   # lean tags float ahead of the frozen rank
-            **{t: i - len(pool) - len(corpus_norm) for i, t in enumerate(corpus_norm)}}   # corpus floats ahead of the lean
+    # Preference float ahead of the frozen rank: corpus (operator curation) > content (clip info) > lean pool.
+    preferred: list[str] = []
+    for grp in (corpus_norm, content_norm, pool):
+        for t in grp:
+            if t not in preferred: preferred.append(t)
+    rank = {**base_rank, **{t: i - len(preferred) for i, t in enumerate(preferred)}}
     lang_floor = _ARABIC[:1] if (pool and (language or "").strip().lower().startswith("ar")) else []
     seen: set[str] = set()
     kept: list[str] = []
@@ -117,10 +163,18 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         h = _norm(t)
         if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
-    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, then lean pool, own-reach store, or frozen rank)
+    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, lean pool, own-reach store, or frozen rank)
+    # Content floor: GUARANTEE one clip-content tag reaches the line even if corpus/reach filled the cap —
+    # the operator's "tags based off information" ask. Fronts the top content tag (within the cap, so the
+    # Arabic floor below still keeps it). No content -> skipped -> byte-identical.
+    content_set = set(content_norm)
+    if content_norm and not any(h in content_set for h in kept[:max_tags]):
+        promote = next((h for h in kept if h in content_set), content_norm[0])
+        if promote in kept: kept.remove(promote)
+        kept = [promote] + kept; seen = set(kept)
     # Arabic floor under a lean: GUARANTEE one region tag survives the cap even when the model already filled
-    # all max_tags slots (a flavor lean must not strip AR reach). Reserve the LAST slot for it (lean tags keep
-    # the lead). No lean -> lang_floor empty -> floor None -> skipped -> byte-identical.
+    # all max_tags slots (a flavor lean must not strip AR reach). Reserve the LAST slot for it (content/lean
+    # keep the lead). No lean -> lang_floor empty -> floor None -> skipped -> byte-identical.
     arabic = set(_ARABIC)
     if lang_floor and not any(h in arabic for h in kept[:max_tags]):     # detect against the CAP WINDOW, not `seen` (the model's own AR tag may be in seen but sorted PAST the cap)
         promote = next((h for h in kept if h in arabic), lang_floor[0])  # promote the model's own AR tag, else the floor default
@@ -130,8 +184,39 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     # (leaned only) -> no-lean backfill is byte-identical. An AR clip's region floor still wins the reserved
     # last slot above, so AR accounts prioritise region reach over discovery (acceptable).
     disc_floor = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)[:1] if pool else []
-    for h in corpus_norm + pool + disc_floor + (store or []) + _composition(platform, language):   # corpus, lean, discovery floor, store, default
+    for h in corpus_norm + content_norm + pool + disc_floor + (store or []) + _composition(platform, language):
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)
     return kept[:max_tags]                           # hard cap
+
+_ARABIC_SET = set(_ARABIC)
+_DISCOVERY_SET = {t for v in _DISCOVERY.values() for t in v}
+
+def _tag_source(tag: str, *, content_set: set, corpus_set: set, lean_set: set, store_set: set) -> str:
+    """The provenance label for ONE shipped tag — the real signal it traces to. Priority (highest first):
+    content > corpus > lean > region > reach-store > discovery > genre-floor. Never empty (genre-floor is
+    the catch-all for a frozen-pool backfill tag), so a sourceless tag — pure theater — cannot ship."""
+    if tag in content_set: return "content"
+    if tag in corpus_set: return "corpus"
+    if tag in lean_set: return "lean"
+    if tag in _ARABIC_SET: return "region"
+    if store_set and tag in store_set: return "reach-store"
+    if tag in _DISCOVERY_SET: return "discovery"
+    return "genre-floor"
+
+def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: str | None = None,
+                        max_tags: int = 4, *, store: list[str] | None = None, lean: str | None = None,
+                        corpus: list[str] | None = None,
+                        content: list[str] | None = None) -> tuple[list[str], dict[str, str]]:
+    """vet_hashtags + a provenance `source` per shipped tag. SAME selection as vet_hashtags (DRY — it
+    calls it), then labels each kept tag by the signal it traces to (content|corpus|lean|region|
+    reach-store|discovery|genre-floor). This proves every shipped tag is evidence-backed — the
+    hashtag-axis instance of the operator's 'every knob real, no theater' rule."""
+    out = vet_hashtags(tags, platform, language, max_tags,
+                       store=store, lean=lean, corpus=corpus, content=content)
+    content_set = set(_dedupe_norm(content)); corpus_set = set(_dedupe_norm(corpus))
+    lean_set = set(_LEANS.get((lean or "").strip().lower(), [])); store_set = set(store) if store else set()
+    sources = {t: _tag_source(t, content_set=content_set, corpus_set=corpus_set,
+                              lean_set=lean_set, store_set=store_set) for t in out}
+    return out, sources
