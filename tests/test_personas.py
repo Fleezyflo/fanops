@@ -50,9 +50,9 @@ def test_add_persona_requires_name(tmp_path):
 def test_update_persona_fields(tmp_path):
     cfg = Config(root=tmp_path)
     pid = P.add_persona(cfg, name="Z", voice="old", tag_lean="bold")
-    P.update_persona(cfg, pid, voice="new", tag_lean="underground", intake={"genre": "rap"})
+    P.update_persona(cfg, pid, voice="new", tag_lean="underground")
     p = P.Personas.load(cfg).get(pid)
-    assert p.voice == "new" and p.tag_lean == "underground" and p.intake["genre"] == "rap"
+    assert p.voice == "new" and p.tag_lean == "underground"
 
 
 def test_update_persona_clears_lean_with_blank(tmp_path):

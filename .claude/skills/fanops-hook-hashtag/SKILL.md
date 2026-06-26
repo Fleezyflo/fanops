@@ -192,13 +192,13 @@ The lifecycle is now explicit, per-persona, and closed-loop. Top to bottom:
 
 1. **A persona owns a curated corpus.** A `Persona` ([personas.py](../../../src/fanops/personas.py))
    is a first-class record in `00_control/personas.json` — `voice`, `tag_lean`, a
-   **`hashtag_corpus`** (the per-persona pool), and `intake` (genre/language/reference
-   accounts). Accounts link via `Account.persona_id`; the persona's voice/lean/corpus
+   **`hashtag_corpus`** (the per-persona pool), and the lever fields. Accounts link via
+   `Account.persona_id`; the persona's voice/lean/corpus
    **hydrate** the account at load. Edited entirely in the Studio **Personas** tab.
 2. **Where corpus tags come from — four sources, all visible in the Personas tab:**
    - **Live co-occurrence discovery** (`personas.discover_corpus` → `meta_graph.discover_candidates`):
-     the **Research corpus** button resolves the persona's category seeds (corpus + lean pool +
-     intake genre), reads each seed's live `top_media`, and harvests the hashtags those
+     the **Research corpus** button resolves the persona's category seeds (corpus + lean pool),
+     reads each seed's live `top_media`, and harvests the hashtags those
      *currently-winning* posts use alongside it — ranked by co-occurrence count. This is the only
      Graph-native way to surface a tag the system has **never named** (IG has no trending-by-topic
      endpoint); the harvest is budget-free (one `ig_hashtag_search` slot per seed, the caption read

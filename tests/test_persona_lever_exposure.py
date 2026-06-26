@@ -28,8 +28,8 @@ def test_catalog_focus_effect_is_the_engine_clause():
 def test_catalog_energy_angle_tone_effects_are_engine_clauses():
     cat = _by_key(lever_catalog())
     energy = {o["value"]: o["effect"] for o in cat["energy"]["options"]}
-    assert energy["high"] == _ENERGY_CLAUSE["high"]
-    assert "any" in energy["medium"].lower()                       # medium's empty clause is shown as an explicit no-op note
+    assert energy["high"] == _ENERGY_CLAUSE["high"] and energy["low"] == _ENERGY_CLAUSE["low"]
+    assert "medium" not in energy                                  # the no-op value is removed, not just relabelled
     angle = {o["value"]: o["effect"] for o in cat["hook_angle"]["options"]}
     assert angle["curiosity"] == _ANGLE_CLAUSE["curiosity"]
     tone = {o["value"]: o["effect"] for o in cat["hook_tone"]["options"]}
@@ -94,11 +94,6 @@ def test_breakdown_override_shadows_structured_levers(tmp_path):
     assert d["hook"]["override"] is True
     assert set(d["hook"]["shadowed"]) == {"hook_angle", "hook_tone"}   # the angle/tone are DEAD — surfaced, not hidden
     assert d["hook"]["text"] == "my exact hook brief"
-
-def test_breakdown_flags_energy_medium_noop(tmp_path):
-    cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", voice="v", energy="medium", content_focus=["hype"]))
-    assert any("medium" in n for n in d["noops"])                 # medium compiles to nothing — say so
 
 def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)

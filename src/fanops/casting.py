@@ -105,7 +105,7 @@ def request_moment_casting(led, cfg, source_id, accounts):
     pool = sorted([m for m in led.moments.values()
                    if m.parent_id == source_id and m.state in (MomentState.decided, MomentState.clipped)],
                   key=lambda m: (m.start, m.end))
-    personas = [{"handle": a.handle, "persona": instr, "clip_count": a.clip_count}   # the CASTING directive + per-account clip ceiling
+    personas = [{"handle": a.handle, "persona": instr}   # the CASTING directive per active account
                 for a in accounts.active() if (instr := casting_directive(a))]
     if not pool or not personas: return led           # nothing to cast / no persona to differentiate -> no gate
     if latest_request_id(cfg, "moment_casting", source_id) is not None:

@@ -279,9 +279,7 @@ def moment_casting_prompt(payload: dict) -> str:
     overlap allowed where a moment honestly suits several accounts. Returns `selections` (handle -> [moment_id])."""
     moment_lines = "".join(_casting_moment_line(m) for m in payload.get("moments", []))
     def _persona_line(p: dict) -> str:
-        cap = p.get("clip_count")
-        cap_s = f" (give this account UP TO {cap} clips)" if cap else ""
-        return f"  * {p.get('handle')}{cap_s}: {p.get('persona','')}\n"
+        return f"  * {p.get('handle')}: {p.get('persona','')}\n"
     persona_lines = "".join(_persona_line(p) for p in payload.get("personas", []))
     return (
         "You are the editorial brain of an autonomous fan-account engine for a bilingual (EN/AR) rapper. "
@@ -297,8 +295,7 @@ def moment_casting_prompt(payload: dict) -> str:
         "persona and angle. Different personas should end up with NOTICEABLY different sets.\n"
         "  - BE GENEROUS by DEFAULT: no cap — give an account EVERY moment that genuinely fits it, do not ration. "
         "A moment may go to several accounts when it honestly suits them all (overlap is fine), and a strong "
-        "moment that fits everyone may go to everyone. EXCEPTION: an account shown as '(give this account UP TO N "
-        "clips)' has its OWN ceiling — pick that account's N BEST-FITTING moments and stop, never exceed N.\n"
+        "moment that fits everyone may go to everyone.\n"
         "  - Use the EXACT handle strings and the EXACT moment_id strings below, never invent ids.\n"
         "  - Give an account at least one moment whenever any moment plausibly fits it; leave it empty ONLY "
         "when NONE of these moments suit its persona at all.\n"

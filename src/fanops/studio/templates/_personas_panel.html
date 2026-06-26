@@ -47,8 +47,7 @@
 
   <section class="persona-step">
     <h3>Add a persona</h3>
-    <p class="muted">Name it, write its voice, pick a hashtag lean, and capture the intake (genre,
-      language, reference accounts) — the intake seeds the hashtag research later.</p>
+    <p class="muted">Name it, write its voice, and pick a hashtag lean — then set its levers in the editor.</p>
     <form hx-post="{{ url_for('do_personas_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
       <label>Name <input type="text" name="name" placeholder="e.g. Music Blogger" size="22" required></label>
       <label>Tag lean
@@ -58,13 +57,6 @@
         </select></label>
       <label class="block">Voice
         <textarea name="voice" rows="2" placeholder="champions craft; clip the moments that show artistry…"></textarea></label>
-      <fieldset class="intake">
-        <legend>Intake</legend>
-        <label>Genre <input type="text" name="genre" placeholder="hip hop" size="14"></label>
-        <label>Language <input type="text" name="language" placeholder="en / ar" size="8"></label>
-        <label>Reference accounts <input type="text" name="refs" placeholder="@a, @b" size="20"></label>
-        <label class="block">Notes <input type="text" name="notes" placeholder="optional" size="40"></label>
-      </fieldset>
       {{ lever_fields(levers, effects) }}
       <button type="submit" class="primary">Add persona</button>
     </form>
@@ -94,7 +86,7 @@
         {% if p.clip_profile or p.framing %}<p class="muted persona-cut">cut: {% if p.clip_profile %}{{ p.clip_profile }} length{% endif %}{% if p.clip_profile and p.framing %}, {% endif %}{% if p.framing %}{{ p.framing }} framing{% endif %}</p>{% endif %}
         {# TRANSPARENCY: what the config DETERMINISTICALLY produces — the resolved clip length band + the
            lead hashtags (lean+corpus over the reach store; the tag step the caption LLM never sees). #}
-        <p class="muted persona-produces" title="derived from the same resolvers the pipeline runs">produces: ~{{ p.length_band }} clips{% if p.clip_count %} · up to {{ p.clip_count }} per drop{% endif %}{% if p.lead_tags %} · lead tags {{ p.lead_tags|join(' ') }}{% endif %}</p>
+        <p class="muted persona-produces" title="derived from the same resolvers the pipeline runs">produces: ~{{ p.length_band }} clips{% if p.lead_tags %} · lead tags {{ p.lead_tags|join(' ') }}{% endif %}</p>
 
         <div class="persona-corpus">
           <span class="muted">Corpus ({{ p.corpus|length }}, reach-ranked):</span>

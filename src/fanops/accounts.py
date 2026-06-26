@@ -68,7 +68,6 @@ class Account(BaseModel):
     casting_directive: str = ""
     hook_directive: str = ""
     caption_directive: str = ""
-    clip_count: Optional[int] = None
     # Provenance (S2): True only when the LINKED persona actually supplied clip_profile (resolved_cut_spec
     # returned a profile at hydration). HYDRATION-ONLY — never written back to accounts.json (set_* mutate the
     # raw dict). Lets the Studio attribute a length to the persona vs the account's own pin truthfully; default
@@ -233,7 +232,6 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.casting_directive = per.casting_directive or ""   # M3: per-dimension override text (empty -> lever-compiled default)
         acc.hook_directive = per.hook_directive or ""
         acc.caption_directive = per.caption_directive or ""
-        acc.clip_count = per.clip_count                       # M3: per-persona clip budget (None -> global)
 
 
 def link_persona(cfg: Config, handle: str, persona_id: str) -> str:

@@ -1,7 +1,7 @@
 {# _persona_compose.html — the LIVE composed translation of the in-progress persona (POST /personas/compose).
    Shows the EXACT casting/hook/caption directives the pipeline will read + the deterministic cut + lead
    hashtags, each fragment traced to the lever that produced it, with the engine's real precedence (an
-   override shadows its levers; energy=medium is a no-op) surfaced. Autoescape stays on (engine text as text). #}
+   override shadows its levers) surfaced. Autoescape stays on (engine text as text). #}
 {% if result and result.ok and result.detail %}
   {% set d = result.detail %}
   {# S7: lead with the OUTPUT in plain words — what this persona DROPS (length · framing · hook · hashtags) —

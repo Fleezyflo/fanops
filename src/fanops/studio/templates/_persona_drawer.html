@@ -22,13 +22,6 @@
         {% for l in tag_leans %}<option value="{{ l }}" {{ 'selected' if p.tag_lean == l else '' }}>{{ l }}</option>{% endfor %}
       </select></label>
     <label class="block">Voice <textarea name="voice" rows="2">{{ p.voice }}</textarea></label>
-    <fieldset class="intake">
-      <legend>Intake</legend>
-      <label>Genre <input type="text" name="genre" value="{{ p.intake.get('genre', '') }}" size="14"></label>
-      <label>Language <input type="text" name="language" value="{{ p.intake.get('language', '') }}" size="8"></label>
-      <label>Reference accounts <input type="text" name="refs" value="{{ p.intake.get('reference_accounts', []) | join(', ') }}" size="20"></label>
-      <label class="block">Notes <input type="text" name="notes" value="{{ p.intake.get('notes', '') }}" size="40"></label>
-    </fieldset>
     {{ lever_fields(levers, effects, p) }}
     <label class="block">Brief
       <textarea name="brief" rows="2" placeholder="(optional) freeform direction this persona runs against — composed into the AI instruction after the voice">{{ p.brief }}</textarea></label>
