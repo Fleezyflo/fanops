@@ -384,7 +384,7 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
 # on it — read from the DURABLE AccountSelection, NOT post existence (the matrix's rule). That inversion is the
 # whole point: a lane can show a cast moment with no post yet, AND a targeted account with ZERO posts (a column
 # the matrix structurally cannot draw). Data-only (no string formatting — the header chips live in the template,
-# matching MatrixCell). cast state truth = led.moments_for_account; fans-to-all = no record OR fan_all_default.
+# matching MatrixCell). cast state truth = led.moment_ids_selected_for; fans-to-all = no record OR fan_all_default.
 @dataclass
 class LaneRow:
     moment_id: str; window: str; reason: Optional[str]; hook: Optional[str]
@@ -437,7 +437,7 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
     lanes: list = []
     for handle in handles:
         sel = led.account_selection_for(source_id, handle)
-        cast_ids = led.moments_for_account(source_id, handle)        # set() for BOTH no-record AND fan_all_default
+        cast_ids = led.moment_ids_selected_for(source_id, handle)    # set() for BOTH no-record AND fan_all_default (read-model only)
         fans_all = sel is None or sel.method == SelectionMethod.fan_all_default
         acct = acct_by_handle.get(handle); persona = personas.get(handle)
         rows: list = []

@@ -337,9 +337,9 @@ class AccountSelection(BaseModel):
     # Additive top-level `account_selections` map (v8->v9); old ledgers load with {} — OFF/baseline byte-identical.
     # FROZEN: an AccountSelection is never mutated in place — a re-cast OVERWRITES the whole record via
     # add_account_selection (a freshly-constructed, re-validated object). frozen=True makes the direct-mutation
-    # bypass (`sel.moment_ids = []`) raise. NB the invariant is enforced on EVERY legitimate creation path
-    # (constructor, model_validate, ledger load); the ONE residual is model_copy(update=...), which pydantic v2
-    # leaves unvalidated by design — so no code updates this entity via model_copy (overwrite-with-fresh only).
+    # bypass (`sel.moment_ids = []`) raise. The invariant is now enforced on EVERY creation path — constructor,
+    # model_validate, ledger load, AND model_copy (overridden below to re-validate, closing the pydantic-v2
+    # skip-validation residual that previously made model_copy(update=...) the one forgery gap).
     model_config = ConfigDict(frozen=True)
     id: str                                     # child_id("acctsel", source_id, account)
     source_id: str                              # the source these picks belong to (the gate keys on it)
@@ -357,6 +357,15 @@ class AccountSelection(BaseModel):
         if not chosen and self.moment_ids:
             raise ValueError(f"AccountSelection method={self.method.value} is a TAG selection but carries moment_ids {self.moment_ids}")
         return self
+
+    def model_copy(self, *, update=None, deep=False) -> "AccountSelection":
+        # Close the model_copy residual: pydantic v2 model_copy(update=) skips validators even on a frozen
+        # model, which could otherwise forge a sum-type-illegal selection (a CHOSEN method with empty
+        # moment_ids, or a TAG method carrying moment_ids). Re-validate the copy through model_validate so
+        # the @_enforce_sum_type invariant holds on EVERY construction path — copy included, not just the
+        # constructor/model_validate/ledger-load paths. A legal field update (e.g. created_at) is unaffected.
+        copied = super().model_copy(update=update, deep=deep)
+        return type(self).model_validate(copied.model_dump())
 
 def account_selection_id(source_id: str, account: str) -> str:
     """Content-addressed one-per-(source, account) id — a re-cast for the same pair overwrites the prior
