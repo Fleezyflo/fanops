@@ -12,12 +12,13 @@ from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import ClipState, PostState, StitchState
 from fanops.timeutil import parse_iso
-# Re-export the shared read-model core (pagination, the term glossary, account universe, the imminence/
-# suggestion time helpers, batch-title lookup) from views_common so the whole API stays addressable as
-# views.X for templates / app.py / tests; views_common owns the definitions now (no import cycle).
-from fanops.studio.views_common import (IMMINENT_THRESHOLD_MINUTES, RECENT_WINDOW_HOURS, GRID_PAGE_SIZE, GridPage, paginate, PREPARABLE_STATES, TERM_DEFS, term_def, accounts_in, _imminent, suggest_time, _batch_title)  # noqa: F401
-from fanops.studio.views_review import (SurfacePost, ReviewCard, _personas, _timecode, _lineage_for_clip, _length_label, ProvChip, provenance_chips, _surface, _card, _card_day, MatrixCell, MatrixRow, MatrixView, _CH, _source_label, source_choices, _pick_lead, _state_matches, _empty_cell_reason, review_matrix, LaneRow, AccountLane, LaneView, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch)  # noqa: F401
-from fanops.studio.views_results import (ScheduleRow, LiftRow, LiftView, _SHIPPABLE_RENDER, publish_readiness, explain_suggested_time, schedule_rows, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, _BAR_METRICS, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, _loop_state, lift_rows)  # noqa: F401
+# Facade re-exports: the names consumers reach via `fanops.studio.views` / `views.X` (templates / app.py /
+# tests). Dead re-exports (no facade consumer AND no internal use here) were trimmed — every trimmed symbol
+# still lives in its home submodule (views_common/_review/_results); this is just the public views surface.
+# F401-silenced because each name is re-exported, not referenced within this file.
+from fanops.studio.views_common import (IMMINENT_THRESHOLD_MINUTES, GRID_PAGE_SIZE, paginate, TERM_DEFS, term_def, accounts_in, _imminent, suggest_time)  # noqa: F401
+from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch)  # noqa: F401
+from fanops.studio.views_results import (ScheduleRow, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows)  # noqa: F401
 
 
 @dataclass
