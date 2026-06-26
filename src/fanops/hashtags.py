@@ -164,27 +164,30 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
     kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, lean pool, own-reach store, or frozen rank)
-    # Content floor: GUARANTEE one clip-content tag reaches the line even if corpus/reach filled the cap —
-    # the operator's "tags based off information" ask. Fronts the top content tag (within the cap, so the
-    # Arabic floor below still keeps it). No content -> skipped -> byte-identical.
-    content_set = set(content_norm)
+    # Reserved floors take the TAIL slots so the corpus/lean/reach LEAD is preserved: region reach first
+    # (non-negotiable under a lean — a flavor lean must not strip AR reach), then ONE clip-content tag (the
+    # operator's "tags based off information" ask). Each guarantees its signal reaches the <=max_tags line
+    # even when the model already filled every slot. Detect against the CAP WINDOW, not `seen` (the model's
+    # own AR/content tag may be in seen but sorted PAST the cap). No lean + no content -> reserved empty ->
+    # byte-identical.
+    arabic = set(_ARABIC); content_set = set(content_norm)
+    reserved: list[str] = []
+    if lang_floor and not any(h in arabic for h in kept[:max_tags]):
+        reserved.append(next((h for h in kept if h in arabic), lang_floor[0]))
     if content_norm and not any(h in content_set for h in kept[:max_tags]):
-        promote = next((h for h in kept if h in content_set), content_norm[0])
-        if promote in kept: kept.remove(promote)
-        kept = [promote] + kept; seen = set(kept)
-    # Arabic floor under a lean: GUARANTEE one region tag survives the cap even when the model already filled
-    # all max_tags slots (a flavor lean must not strip AR reach). Reserve the LAST slot for it (content/lean
-    # keep the lead). No lean -> lang_floor empty -> floor None -> skipped -> byte-identical.
-    arabic = set(_ARABIC)
-    if lang_floor and not any(h in arabic for h in kept[:max_tags]):     # detect against the CAP WINDOW, not `seen` (the model's own AR tag may be in seen but sorted PAST the cap)
-        promote = next((h for h in kept if h in arabic), lang_floor[0])  # promote the model's own AR tag, else the floor default
-        kept = kept[:max_tags - 1] + [promote]; seen = set(kept)
+        reserved.append(next((h for h in kept if h in content_set), content_norm[0]))
+    if reserved:
+        head = [h for h in kept if h not in reserved][:max_tags - len(reserved)]
+        kept = head + reserved; seen = set(kept)
     # M3: a leaned account keeps one platform DISCOVERY tag (#fyp/#reels/…) — backfill it right after the
     # lean pool so a flavor lean (e.g. tasteful) can't eat all 4 slots and lose its reach. Gated on `pool`
     # (leaned only) -> no-lean backfill is byte-identical. An AR clip's region floor still wins the reserved
     # last slot above, so AR accounts prioritise region reach over discovery (acceptable).
     disc_floor = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)[:1] if pool else []
-    for h in corpus_norm + content_norm + pool + disc_floor + (store or []) + _composition(platform, language):
+    # Backfill is REACH-first; content trails. The content FLOOR above already guarantees ONE content slot,
+    # so a seed-fallback clip ships 1 content + reach (not all-content) — content adds more only if reach is
+    # exhausted. content=[] -> identical tail -> byte-identical.
+    for h in corpus_norm + pool + disc_floor + (store or []) + _composition(platform, language) + content_norm:
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)
