@@ -24,13 +24,39 @@ Every source PROPOSES; the operator ACCEPTS into the corpus (the curation gate).
 
 ## Selection (the deterministic gate)
 
-`hashtags.vet_hashtags(tags, platform, language, max_tags=4, *, store, lean, corpus)`:
+`hashtags.vet_hashtags(tags, platform, language, max_tags=4, *, store, lean, corpus, content)`:
 - `corpus` joins the vetted membership (a curated tag the frozen set/store doesn't know SURVIVES)
   and is the PRIORITY pool — seeded first, floated ahead of the lean, capped at 4.
-- `corpus=None/empty` → byte-identical to the pre-corpus behavior.
+- **`content`** (per-clip content tags, see below) ALSO joins the membership (so a clip-specific tag the
+  model picked SURVIVES) and floats just behind the corpus.
+- **Reserved floors** take the TAIL slots so the corpus/lean/reach LEAD is preserved: a region (Arabic)
+  tag first (non-negotiable under a lean), then ONE content tag — each guarantees its signal reaches the
+  ≤4 line even when the model filled every slot.
+- `corpus=None/empty` AND `content=None/empty` → byte-identical to the pre-corpus behavior.
 - Wired at [caption.py](../../src/fanops/caption.py): `request_captions` carries each surface's `corpus`
-  in the payload; `ingest_captions` passes it to both `vet_hashtags` calls (normal + seed-fallback).
-- [prompts.py](../../src/fanops/prompts.py) `caption_prompt` shows the corpus + a "prefer it" rule.
+  + the clip-level `content_tags` in the payload; `ingest_captions` passes both to `vet_hashtags_traced`
+  (normal + seed-fallback paths).
+- [prompts.py](../../src/fanops/prompts.py) `caption_prompt` shows the corpus + the content tags + a
+  "prefer them" rule (byte-identical menu-only rule when no content).
+
+## Per-clip CONTENT tags — tags based off the clip's own information
+
+The reach/corpus/lean signals are persona/account-level constants — two different clips of one persona
+used to get IDENTICAL tags. `content_tag_candidates(transcript)` ([hashtags.py](../../src/fanops/hashtags.py))
+adds the per-CLIP signal: a deterministic, pure extractor (latin word tokens 3–20 chars, stopwords dropped,
+frequency-then-first-seen, ≤6, normalized) over the clip's `Moment.transcript_excerpt`. Blank / instrumental
+/ Arabic-only / numbers → `[]` → byte-identical. These are CANDIDATES the model may pick + that survive the
+membership gate; the model still SELECTS (never invents outside menu ∪ content), and `vet_hashtags` still
+enforces ≤4. Result: two different-content clips of one persona ship DIFFERENT tags.
+
+## Provenance — every shipped tag traces to a real signal
+
+`vet_hashtags_traced(...)` returns `(tags, {tag: source})` where `source ∈ {content, corpus, lean, region,
+reach-store, discovery, genre-floor}` (priority content > corpus > lean > region > reach-store > discovery >
+genre-floor). `ingest_captions` stores it as `meta_captions[surface]["tag_sources"]`; the Studio surface
+editor ([_surface_edit.html](../../src/fanops/studio/templates/_surface_edit.html)) renders a read-only
+"Why these tags" chip row. A sourceless tag — pure theatre — cannot ship (genre-floor is the catch-all, never
+empty). This is the hashtag-axis instance of the "every knob real, no theatre" rule.
 
 ## Live discovery (co-occurrence) — finding tags we have never named
 

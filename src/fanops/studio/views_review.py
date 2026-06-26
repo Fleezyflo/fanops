@@ -54,6 +54,9 @@ class SurfacePost:
     cast_cause: Optional[str] = None       # why THIS account got it ("picked for @a"); None = uncast / fans to all
     day: Optional[str] = None              # Phase 4 pivot: the ingest day (clip -> moment -> source.created_at), set
                                            # only on the account-pivot flat rows for the running day header. None elsewhere.
+    tag_sources: dict = field(default_factory=dict)   # per-tag provenance {tag: source} from the clip's meta_captions
+                                           # (content|corpus|lean|region|reach-store|discovery|genre-floor). {} when absent
+                                           # (legacy entry / no caption yet) -> the chip row simply doesn't render.
 
 
 @dataclass
@@ -205,6 +208,11 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     else: length_cause = None
     framing_cause = f"{post.account} {acct.framing}" if getattr(acct, "framing", None) else None
     cast_cause = _cast_cause(led, post, affinities)
+    # per-tag provenance for the surface-edit chip row: read the clip's stored caption entry (fail-open to
+    # {} for a legacy entry / no caption yet -> the chip row simply doesn't render).
+    _clip = led.clips.get(post.parent_id)
+    tag_sources = (_clip.meta_captions.get(f"{post.account}/{post.platform.value}", {}).get("tag_sources", {})
+                   if _clip is not None else {})
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=post.caption, hashtags=list(post.hashtags or []),
@@ -219,7 +227,8 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
         # absent/None Render -> None (the ⚠ shared-hook badge stays dark, byte-identical). getattr-guarded so a
         # legacy Render with no hook_source field never raises.
         hook_source=(getattr(getattr(r, "hook_source", None), "value", None) if r else None),
-        length_cause=length_cause, framing_cause=framing_cause, cast_cause=cast_cause)
+        length_cause=length_cause, framing_cause=framing_cause, cast_cause=cast_cause,
+        tag_sources=tag_sources)
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
           active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:

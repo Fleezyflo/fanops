@@ -334,6 +334,19 @@ def caption_prompt(payload: dict) -> str:
         f"{json.dumps(transferred, ensure_ascii=False)}\n"
         if transferred else ""
     )
+    # The tag-pick rule. WITHOUT content_tags it is byte-identical to the menu-only rule. WITH per-clip
+    # content_tags it widens the allowed set to {menu UNION clip-specific tags} and tells the model to
+    # prefer the clip's own tags when they fit — the model SELECTS (never invents outside both lists);
+    # vet_hashtags still enforces membership + the <=4 cap downstream.
+    menu_json = json.dumps(vetted_menu(), ensure_ascii=False)
+    content_tags = payload.get("content_tags")
+    if content_tags:
+        pick_rule = (f"Choose from this REACH-VETTED menu (ranked by real post volume) OR the CLIP-SPECIFIC "
+                     f"tags listed next; do NOT invent anything outside BOTH lists: {menu_json}. "
+                     f"CLIP-SPECIFIC tags (derived from THIS clip — prefer them when they fit the content): "
+                     f"{json.dumps(content_tags, ensure_ascii=False)}. ")
+    else:
+        pick_rule = f"Choose ONLY from this REACH-VETTED menu (ranked by real post volume); do NOT invent tags: {menu_json}. "
     return (
         "You write captions for FAN ACCOUNTS that repost and celebrate a bilingual (EN/AR) rapper. "
         "You are a FAN hyping the artist to other fans — NEVER the artist, never an official account. "
@@ -357,8 +370,7 @@ def caption_prompt(payload: dict) -> str:
         f"  - Surfaces to caption (use these exact keys): {json.dumps(keys, ensure_ascii=False)}\n"
         "  - Each `caption` is HASHTAGS ONLY: a single line of AT MOST 4 hashtags (MAX 4 — fewer is "
         "fine) separated by spaces and NOTHING ELSE — no sentences, no prose, no @mentions, no emoji. "
-        "Put the SAME tags in the `hashtags` array. Choose ONLY from this REACH-VETTED menu (ranked by "
-        f"real post volume); do NOT invent tags: {json.dumps(vetted_menu(), ensure_ascii=False)}. "
+        f"Put the SAME tags in the `hashtags` array. {pick_rule}"
         "Compose a balanced 4: one mega genre tag (#hiphop/#rap), one relevance tag (#rapper/#bars), "
         "one language/region tag for an Arabic clip (#arabicmusic/#arabtiktok) else a second music tag "
         "(#newmusic), and one platform-discovery tag (#fyp/#reels). English tags on an Arabic clip are "
