@@ -89,18 +89,13 @@ def gate_state(led: Ledger, cfg: Config, account: str, platform: Platform,
         _cache[key] = state
     return state
 
-def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
-    out = ["# FAN OPS Ledger Digest\n"]
-    out.append(f"\n**Sources** ({len(led.sources)}):\n" + _counts(led.sources.values()))
-    out.append(f"\n**Moments** ({len(led.moments)}):\n" + _counts(led.moments.values()))
-    out.append(f"\n**Clips** ({len(led.clips)}):\n" + _counts(led.clips.values()))
-    out.append(f"\n**Posts** ({len(led.posts)}):\n" + _counts(led.posts.values()))
-
+def _holds(led: Ledger) -> list[str]:
     holds = [f"- clip `{c.id}` (moment {c.parent_id}): {c.held_reason or '(no reason given)'}"
              for c in led.clips.values() if c.held]
-    if holds:
-        out.append("\n## Brand-risk holds (need Moh)\n" + "\n".join(holds) + "\n")
+    return ["\n## Brand-risk holds (need Moh)\n" + "\n".join(holds) + "\n"] if holds else []
 
+
+def _failures(led: Ledger) -> list[str]:
     fails = ([f"- post `{p.id}` ({p.platform.value}): {p.error_reason or '(no reason given)'}"
               for p in led.posts.values()
               if p.state in (PostState.failed, PostState.error)] +          # M4: error too
@@ -108,9 +103,10 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
               for kind, store in (("source", led.sources), ("moment", led.moments),
                                   ("clip", led.clips), ("stitch", led.stitch_plans))  # M3 structural-hooks
               for u in store.values() if u.state.value == "error"])         # M3: drop getattr
-    if fails:
-        out.append("\n## Failures (need attention)\n" + "\n".join(fails) + "\n")
+    return ["\n## Failures (need attention)\n" + "\n".join(fails) + "\n"] if fails else []
 
+
+def _needs_reconcile(led: Ledger) -> list[str]:
     # Needs reconcile (AUDIT C1): an ambiguous publish failure (5xx / network timeout after the
     # body was sent) — the post MAY be live on the platform. It is deliberately NOT in Failures
     # (re-queueing a failed post is safe; re-queueing this one could double-post). Surface it on
@@ -118,10 +114,11 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     # resubmit. This is a manual step by design — there is no idempotency key to make it automatic.
     reconcile = [f"- post `{p.id}` ({p.platform.value}): {p.error_reason or '(no reason given)'}"
                  for p in led.posts.values() if p.state is PostState.needs_reconcile]
-    if reconcile:
-        out.append("\n## Needs reconcile (may be live — verify before resubmit)\n"
-                   + "\n".join(reconcile) + "\n")
+    return (["\n## Needs reconcile (may be live — verify before resubmit)\n"
+             + "\n".join(reconcile) + "\n"] if reconcile else [])
 
+
+def _unmeasured(led: Ledger) -> list[str]:
     # Published but never measured: track.py flips published->analyzed only when a metrics row
     # matches by submission_id, so a post that shipped but Blotato never returned metrics for
     # stays 'published' with empty metrics forever. Surface it so the operator notices (the
@@ -129,10 +126,11 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     unmeasured = [f"- post `{p.id}` ({p.platform.value}): published, no metrics yet"
                   for p in led.posts.values()
                   if p.state is PostState.published and not p.metrics]
-    if unmeasured:
-        out.append("\n## Published but unmeasured (shipped, never measured)\n"
-                   + "\n".join(unmeasured) + "\n")
+    return (["\n## Published but unmeasured (shipped, never measured)\n"
+             + "\n".join(unmeasured) + "\n"] if unmeasured else [])
 
+
+def _variant_lift(led: Ledger, cfg: Config, accounts=None) -> list[str]:
     # Creative-variation observability (v1): rank analyzed posts that carry a variant by lift_score,
     # so the operator sees which per-account creative treatment performs. v2 annotates each surface's
     # LEARNING-LOOP state ("learning ACTIVE" once it crossed the trust gate, else "gathering data")
@@ -140,49 +138,56 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     # amplify side — no automated propagation (that touches the amplify machinery, deferred / C1).
     variant_posts = [p for p in led.posts.values()
                      if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
-    if variant_posts:
-        rows = sorted(variant_posts, key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True)
-        gate_cache: dict[tuple[str, str], str] = {}     # one best_hooks call per surface per render
-        lines = [f"- `{p.variant_hook or p.variant_key}` ({p.account}/{p.platform.value}): "
-                 f"lift {p.metrics.get(LIFT_SCORE, 0.0)}"
-                 # T4: surface the honest-lift marker — a degraded score (a primary metric absent from the
-                 # row) is partial, so flag it inline + name the missing keys instead of letting the operator
-                 # trust a reach/shares-dominated scalar as a full-objective number.
-                 + (f" [DEGRADED: missing {', '.join(p.metrics.get('lift_missing_keys') or [])}]"
-                    if p.metrics.get("lift_degraded") else "")
-                 + f" — {gate_state(led, cfg, p.account, p.platform, gate_cache, accounts)}"
-                 for p in rows]
-        out.append("\n## Lift by variant (which creative is winning)\n" + "\n".join(lines) + "\n")
+    if not variant_posts:
+        return []
+    rows = sorted(variant_posts, key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True)
+    gate_cache: dict[tuple[str, str], str] = {}     # one best_hooks call per surface per render
+    lines = [f"- `{p.variant_hook or p.variant_key}` ({p.account}/{p.platform.value}): "
+             f"lift {p.metrics.get(LIFT_SCORE, 0.0)}"
+             # T4: surface the honest-lift marker — a degraded score (a primary metric absent from the
+             # row) is partial, so flag it inline + name the missing keys instead of letting the operator
+             # trust a reach/shares-dominated scalar as a full-objective number.
+             + (f" [DEGRADED: missing {', '.join(p.metrics.get('lift_missing_keys') or [])}]"
+                if p.metrics.get("lift_degraded") else "")
+             + f" — {gate_state(led, cfg, p.account, p.platform, gate_cache, accounts)}"
+             for p in rows]
+    return ["\n## Lift by variant (which creative is winning)\n" + "\n".join(lines) + "\n"]
 
+
+def _variant_amplify(led: Ledger, cfg: Config) -> list[str]:
     # variant-amplify (v3) observability: per surface, the sustained-win streak toward the amplify
     # gate. "amplified" = currently a full-gate candidate; "building streak (n/MIN)" = a winner whose
     # lead has not yet sustained across enough windows; "gathering data" = no current streak. Fail-open
     # and gated on the flag (section absent when v3 is off). Read-only: reuses the streak state +
     # amplify_candidates (one gate home in variant_amplify), never mutates / never touches retire.
-    if cfg.variant_amplify:
-        try:
-            from fanops.variant_amplify import amplify_candidates, _surfaces
-            cands = amplify_candidates(led, cfg)
-            cand_sources = {c["source_id"] for c in cands}
-            alines = []
-            for account, platform in sorted(_surfaces(led), key=lambda s: (s[0], s[1].value)):
-                entry = led.variant_streaks.get(f"{account}|{platform.value}", {})
-                hook = entry.get("hook")
-                streak = int(entry.get("streak", 0))
-                # is THIS surface's winning hook a current candidate? (match by hook AND source so a
-                # cross-surface candidate can't mislabel this row)
-                is_amplified = bool(hook) and any(
-                    c["winning_hook"] == hook and c["source_id"] in cand_sources for c in cands)
-                state = ("amplified" if is_amplified
-                         else f"building streak ({streak}/{cfg.variant_amplify_min_streak})" if streak
-                         else "gathering data")
-                alines.append(f"- `{hook or '-'}` ({account}/{platform.value}): {state}")
-            if alines:
-                out.append("\n## Variant amplification (v3 — proven winners → more reach)\n"
-                           + "\n".join(alines) + "\n")
-        except Exception:
-            logger.warning("variant-amplify digest section degraded (fail-open)", exc_info=True)
+    if not cfg.variant_amplify:
+        return []
+    try:
+        from fanops.variant_amplify import amplify_candidates, _surfaces
+        cands = amplify_candidates(led, cfg)
+        cand_sources = {c["source_id"] for c in cands}
+        alines = []
+        for account, platform in sorted(_surfaces(led), key=lambda s: (s[0], s[1].value)):
+            entry = led.variant_streaks.get(f"{account}|{platform.value}", {})
+            hook = entry.get("hook")
+            streak = int(entry.get("streak", 0))
+            # is THIS surface's winning hook a current candidate? (match by hook AND source so a
+            # cross-surface candidate can't mislabel this row)
+            is_amplified = bool(hook) and any(
+                c["winning_hook"] == hook and c["source_id"] in cand_sources for c in cands)
+            state = ("amplified" if is_amplified
+                     else f"building streak ({streak}/{cfg.variant_amplify_min_streak})" if streak
+                     else "gathering data")
+            alines.append(f"- `{hook or '-'}` ({account}/{platform.value}): {state}")
+        if alines:
+            return ["\n## Variant amplification (v3 — proven winners → more reach)\n"
+                    + "\n".join(alines) + "\n"]
+    except Exception:
+        logger.warning("variant-amplify digest section degraded (fail-open)", exc_info=True)
+    return []
 
+
+def _reach_by_dim(led: Ledger, cfg: Config) -> list[str]:
     # P3 surface (#7): for each stamped creative dim, once P4 is UNLOCKED for it (cutover-confirmed plumbing
     # AND enough attributed signal — validation_gate.p4_unlocked, per dim), surface aggregate_by_dim's REACH-
     # FIRST rollup. READ-ONLY observability, NOT an actuator — it never biases generation (the P4 ranker is a
@@ -197,25 +202,41 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
                                      key=lambda kv: kv[1]["reach_mean"], reverse=True):
                 dlines.append(f"- {dim} `{value}`: reach mean {row['reach_mean']} (n={row['n']}, sum {row['reach_sum']})")
         if dlines:
-            out.append("\n## Reach by creative dim (P3 — what's earning reach)\n" + "\n".join(dlines) + "\n")
+            return ["\n## Reach by creative dim (P3 — what's earning reach)\n" + "\n".join(dlines) + "\n"]
     except Exception:
         logger.warning("P3 reach-by-dim digest section degraded (fail-open)", exc_info=True)
+    return []
 
+
+def _pending_gates(cfg: Config) -> list[str]:
     # ECC fix #16: compute the pending-gate lists ONCE (was 4 pending() filesystem scans producing
     # two byte-identical sections). Both sections below reuse this single read.
     gates = ([f"- moments: {k}" for k in pending(cfg, kind="moments")] +
              [f"- moment_hooks: {k}" for k in pending(cfg, kind="moment_hooks")] +
              [f"- captions: {k}" for k in pending(cfg, kind="captions")])
-    if gates:
-        out.append("\n## Awaiting agent (request written, no response yet)\n"
-                   + "\n".join(gates) + "\n")
+    if not gates:
+        return []
+    body = "\n".join(gates)
+    # Two sections share the SAME gate list: "Awaiting" + E3's explicit "Pending agent gates" (the word
+    # 'pending' is the searchable signal a monitor/operator greps for). Both gated on the same keys.
+    return ["\n## Awaiting agent (request written, no response yet)\n" + body + "\n",
+            "\n## Pending agent gates (responder has not cleared)\n" + body + "\n"]
 
-    # E3: an explicit "Pending agent gates" section (the word 'pending' is the searchable signal a
-    # monitor/operator greps for) — same per-kind list as Awaiting, gated on the same pending keys
-    # so an empty ledger renders neither. These are the gates a responder has NOT yet cleared.
-    if gates:
-        out.append("\n## Pending agent gates (responder has not cleared)\n"
-                   + "\n".join(gates) + "\n")
+
+def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
+    out = ["# FAN OPS Ledger Digest\n"]
+    out.append(f"\n**Sources** ({len(led.sources)}):\n" + _counts(led.sources.values()))
+    out.append(f"\n**Moments** ({len(led.moments)}):\n" + _counts(led.moments.values()))
+    out.append(f"\n**Clips** ({len(led.clips)}):\n" + _counts(led.clips.values()))
+    out.append(f"\n**Posts** ({len(led.posts)}):\n" + _counts(led.posts.values()))
+    out += _holds(led)
+    out += _failures(led)
+    out += _needs_reconcile(led)
+    out += _unmeasured(led)
+    out += _variant_lift(led, cfg, accounts)
+    out += _variant_amplify(led, cfg)
+    out += _reach_by_dim(led, cfg)
+    out += _pending_gates(cfg)
     return "".join(out)
 
 def write_digest(led: Ledger, cfg: Config) -> None:
