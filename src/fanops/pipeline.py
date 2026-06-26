@@ -163,192 +163,172 @@ def _prewarm_sequential(cfg: Config, aspects: set[Fmt], log) -> None:
         try: prewarm_approved_stitches(led, cfg, log, strategies=strategies)   # fail-open per unit (mirror the concurrent path); a prewarm/[compose]-ImportError must NOT crash advance()
         except Exception as e: log("prewarm", "-", "warn", err=str(e)[:120])
 
-def advance(cfg: Config, *, base_time: str) -> dict:
-    accts = Accounts.load(cfg)
-    log = get_logger(cfg)
-    aspects = _aspects_for(accts)
+def _quarantine(coll, eid, error_state, stage, exc, log) -> None:
+    """The per-unit failure stamp shared by the source/moment/clip stage loops (FIX F03): flip the entity
+    to its error state, record the typed reason, and log — so one bad unit is skipped, never wedging the
+    whole pass. `coll` is the LIVE ledger collection passed at call time (after any in-block reassignment),
+    so the same object the stage was operating on is the one stamped."""
+    obj = coll[eid]
+    obj.state = error_state
+    obj.error_reason = f"{type(exc).__name__}: {exc}"
+    log(stage, eid, "error", err=str(exc)[:120])
 
-    # Phase D: ingest in a SHORT transaction FIRST so a brand-new drop is catalogued and VISIBLE to the
-    # lock-free pre-warm below — otherwise its transcribe would run inside the main lock. ingest_drops is
-    # idempotent (content-addressed dedup), so this never double-catalogues.
-    with Ledger.transaction(cfg) as led:
-        led = ingest_drops(led, cfg)
-    # Phase D: warm the slow subprocess stages with NO lock held (see _prewarm). The main transaction
-    # then re-runs them and they skip on the warm artifacts — so a render no longer starves a concurrent
-    # Studio write / second pass. Lock-free; saves nothing; fail-open.
-    _prewarm(cfg, aspects, log)
 
-    # AUDIT B4: the load-mutate-save COMMIT runs inside ONE ledger transaction — the lock is acquired
-    # BEFORE load and the single save happens on clean exit. This closes the lost-update window the
-    # save()-only lock left open (two overlapping cron passes both loaded a stale snapshot; last save()
-    # won; the other's updates — a published post, a submitting flip — vanished silently). A second live
-    # pass is excluded (typed LockBusyError, bounded by timeout), not silently overwritten. (Phase D: the
-    # SLOW subprocesses already ran lock-free above; this transaction only flips state + does the cheap
-    # gate/crosspost/publish work, so the lock-held window is short.)
-    with Ledger.transaction(cfg) as led:
-        # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
-        # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in
-        # `before` and is NOT counted (set difference against the exit state). Ingest already ran (above)
-        # and never publishes, so the snapshot here is the correct baseline.
-        before = {p.id for p in led.posts_in_state(PostState.published)}
-
-        # transcribe -> signals -> request moments (per source), each quarantined
-        for s in list(led.sources.values()):
-            if s.origin_kind == "third_party": continue   # M1: third-party assets are INERT to clip-production
-            try:
-                if s.state is SourceState.catalogued:
-                    led = transcribe_source(led, cfg, s.id)
-                if led.sources[s.id].state is SourceState.transcribed:
-                    led = detect_signals(led, cfg, s.id)
-                if led.sources[s.id].state is SourceState.signalled:
-                    led = request_moments(led, cfg, s.id, accounts=accts)   # P4(c): proven-hook STYLE block
-            except Exception as e:
-                led.sources[s.id].state = SourceState.error
-                led.sources[s.id].error_reason = f"{type(e).__name__}: {e}"
-                log("source", s.id, "error", err=str(e)[:120])
-
-        # ingest decided moments -> render aspects -> request captions
-        for s in list(led.sources.values()):
-            if s.state is SourceState.moments_requested:
-                try:
-                    led = ingest_moments(led, cfg, s.id)
-                except Exception as e:
-                    led.sources[s.id].state = SourceState.error
-                    led.sources[s.id].error_reason = f"{type(e).__name__}: {e}"
-                    log("moments", s.id, "error", err=str(e)[:120])
-        # M1b PASS 2 (frame-seeing hook): for each source whose picks reconciled (picks_decided), open a
-        # per-pick moment_hooks gate (request, write-once) seeing THAT window's frames, then ingest any
-        # landed hooks (promote picked->decided; source->moments_decided once every pick's hook lands).
-        # Per-source quarantine, mirroring the pick gate above. The responder answers the moment_hooks
-        # gates between passes — the SAME multi-gate convergence as moments->captions (one extra cycle).
-        for s in list(led.sources.values()):
-            if s.state is SourceState.picks_decided:
-                try:
-                    led = request_moment_hooks(led, cfg, s.id, accounts=accts)   # personas + learned hook styles ride here
-                    led = ingest_moment_hooks(led, cfg, s.id)
-                except Exception as e:
-                    led.sources[s.id].state = SourceState.error
-                    led.sources[s.id].error_reason = f"{type(e).__name__}: {e}"
-                    log("moment_hooks", s.id, "error", err=str(e)[:120])
-        # Task 9 scoreboard: one read-only digest line of hook quality (null/viewer_pov_rate) on EVERY
-        # pass. viewer_pov_rate (narration_signature) measures the FINAL on-screen hooks the vision
-        # author wrote — independent of any subsystem flag — so the operator's hook-quality visibility
-        # stays on by default (it rode the now-deleted editor/critic flags before). Read-only + fail-open.
-        try: log_hook_quality(led, cfg)
-        except Exception as e: log("hookscore", "-", "error", err=str(e)[:120])
-        # M2 structural-hooks router (opt-in, observe-only): classify each decided hook into a
-        # hook_strategy reason BEFORE the render loop. Renders nothing; a router error never wedges the
-        # pass (fail-open). Default OFF -> byte-identical to today.
-        if cfg.hook_router:
-            try:
-                led = route_moments(led, cfg)
-            except Exception as e:
-                log("router", "-", "error", err=str(e)[:120])
-        # M1 (Option C) per-account moment SELECTION (opt-in, default OFF): an LLM gate chooses, per account,
-        # that account's OWN set of moments from the decided pool, writing Moment.affinities BEFORE the render
-        # loop. The crosspost affinity gate then fans a cast moment ONLY to its accounts. request is write-once;
-        # ingest applies the selection once the responder answers (a no-op until then — a cast moment waits one
-        # convergence cycle, exactly like moments->hooks->captions). Per-source quarantine, fail-open; OFF -> no
-        # gate, affinities stay [] -> render/fan-out byte-identical. NB: the LLM gate is now the SOLE production
-        # selector — account_casting ON therefore requires an LLM responder (manual mode leaves affinities []
-        # until a human answers). casting.cast_moments (the token-overlap heuristic) is no longer wired here; it
-        # is retained as a tested standalone selector, not a pipeline fallback.
-        if cfg.account_casting:
-            for s in list(led.sources.values()):
-                rel = [m for m in led.moments.values() if m.parent_id == s.id
-                       and m.state in (MomentState.decided, MomentState.clipped)]
-                # P1 backfill: process a source with DECIDED moments (the normal path) OR one stranded with
-                # CLIPPED-uncast moments (raced past the gate before the answer landed) — write-once keeps it
-                # idempotent (a source already cast has non-empty affinities -> skipped; one mid-flight has a
-                # request -> not re-stamped). OFF firewall: this whole block is account_casting-guarded.
-                has_decided = any(m.state is MomentState.decided for m in rel)
-                has_clipped_uncast = any(m.state is MomentState.clipped and not m.affinities for m in rel)
-                if not has_decided and not has_clipped_uncast:
-                    continue
-                try:
-                    led = request_moment_casting(led, cfg, s.id, accts)
-                    led = ingest_moment_casting(led, cfg, s.id, accts)
-                except Exception as e:
-                    log("casting", s.id, "error", err=str(e)[:120])
-        for m in list(led.moments.values()):
-            if m.state is MomentState.decided:
-                try:
-                    led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
-                    for clip in clips:
-                        if clip.state is not ClipState.rendered: continue   # a failed-aspect clip (ClipState.error) must not be laundered into a phantom captioned post with a dangling mp4
-                        # M5: scope the caption request to the affinity-admitted surfaces. Casting OFF / an
-                        # uncast moment -> all surfaces (byte-identical). Within a decision cycle this is a
-                        # SUPERSET of the crosspost survivors (which narrow further by batch target), so every
-                        # minted post has a caption; a post-captioning RE-DECISION swap is caught by crosspost's
-                        # cap-is-None skip. Crosspost stays the SOLE casting-intent gate; meta_captions is never
-                        # read as casting intent.
-                        led = request_captions(led, cfg, clip.id,
-                                               scoped_caption_surfaces(cfg, led, m, accts.surfaces()),
-                                               accounts=accts)
-                except Exception as e:
-                    led.moments[m.id].state = MomentState.error
-                    led.moments[m.id].error_reason = f"{type(e).__name__}: {e}"
-                    log("clip", m.id, "error", err=str(e)[:120])
-        # M4/M5/M6 structural-hooks: after the bare clips render, run the per-format producers + render the
-        # operator-approved plans. intro_tease first OPENS its LLM-vision matcher gate (request) + applies any
-        # landed pairings (ingest) so mine_suggestions can pair them. Ledger-only mutation here (safe in-lock);
-        # the heavy approved-plan RENDER is lock-free in the prewarm pass. Per-format opt-in + fail-open: a
-        # producer error never wedges a pass. Both formats OFF -> byte-identical to pre-structural-hooks.
-        strategies = _enabled_strategies(cfg)
-        if strategies:
-            try:
-                if cfg.intro_tease:                          # M6: the matcher gate (fail-open; no answer -> no plan)
-                    led = request_intro_match(led, cfg)
-                    led = ingest_intro_match(led, cfg)
-                led = mine_suggestions(led, cfg, log, strategies=strategies)   # ranked, top-N-capped, multi-strategy
-                led = render_approved_stitches(led, cfg, strategies=strategies)  # adopts prewarmed mp4s
-            except Exception as e:
-                log("structural_hooks", "-", "error", err=str(e)[:120])
-        # Forward-only kill-switch (PRD): an approved plan of a DISABLED format is NOT rendered and NOT
-        # retracted — but never a SILENT freeze. Log the count so the operator knows it renders on re-enable.
-        n = approved_disabled_count(led, enabled=strategies)
-        if n:
-            log("structural_hooks", "-", "warn",
-                err=f"{n} approved plans for disabled formats (feature OFF) — will render when re-enabled")
-
-        # ingest captions -> crosspost -> publish due
-        for c in list(led.clips.values()):
-            if c.state is ClipState.captions_requested:
-                try:
-                    led = ingest_captions(led, cfg, c.id)
-                except Exception as e:
-                    led.clips[c.id].state = ClipState.error
-                    led.clips[c.id].error_reason = f"{type(e).__name__}: {e}"
-                    log("caption", c.id, "error", err=str(e)[:120])
-        # AUDIT M2: the volatile crosspost/publish stages run inside the transaction. Each is
-        # wrapped so a raise does NOT abandon the whole pass's in-memory progress before the
-        # exit-save — an uncaught raise inside the with-block skips transaction()'s save and rolls
-        # back to the prior on-disk snapshot, silently losing this pass's completed transitions.
-        # The wrap mirrors the per-unit quarantine of the loops above (log + continue). The ONE
-        # exception we deliberately let escape is a FATAL AuthError from publish_due (Blotato or
-        # Postiz): a bad key fails every post, so halting + rolling back the pass is the intended F52
-        # behavior, handled cleanly by the CLI's run guard. (publish_due also isolates per-post —
-        # incl. a malformed scheduled_time, review finding — so this stage-level wrap is a
-        # defense-in-depth net for any unforeseen non-auth raise, not the primary isolation.)
+def _stage_source_to_moments(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
+    """transcribe -> signals -> request moments, per source, each quarantined. A third-party asset is
+    INERT to clip-production (M1)."""
+    for s in list(led.sources.values()):
+        if s.origin_kind == "third_party": continue   # M1: third-party assets are INERT to clip-production
         try:
-            led = crosspost_clips(led, cfg, accts, base_time=base_time)
-        except AuthError:
-            raise                                        # F52: a fatal auth error halts (symmetry
-            # with publish_due below). crosspost has no Blotato call today, but if one is ever added
-            # (e.g. pre-flight account validation) a bad key must halt, not be logged-and-continued.
+            if s.state is SourceState.catalogued:
+                led = transcribe_source(led, cfg, s.id)
+            if led.sources[s.id].state is SourceState.transcribed:
+                led = detect_signals(led, cfg, s.id)
+            if led.sources[s.id].state is SourceState.signalled:
+                led = request_moments(led, cfg, s.id, accounts=accts)   # P4(c): proven-hook STYLE block
         except Exception as e:
-            log("crosspost", "-", "error", err=str(e)[:120])
-    # Reconcile last pass's stranded posts AFTER the main txn commits, BEFORE publishing this pass
-    # (AUDIT H4 + M1 reconcile-out-of-lock): a submitting/submitted/needs_reconcile post with a
-    # submission_id is resolved by polling the backend (Blotato GET /v2/posts/:id; Postiz the
-    # date-windowed GET /public/v1/posts `state`). reconcile_due pre-polls each status with NO lock held,
-    # then applies the cached results in its OWN tight transaction — so N status GETs never hold the
-    # ledger flock (same contention fix as publish #89). C1: gated on is_live_backend ALONE (now per-channel
-    # readiness, not the retired global poster_backend) — reconcile_due resolves each post's provider via
-    # effective_provider (H1) and skips dryrun/provider-less posts, so the old `poster_backend in (...)`
-    # clause (dryrun under the FANOPS_LIVE-only shape -> reconciler silently OFF) is dropped. A FATAL
-    # AuthError halts (symmetry with publish_due); any other hiccup must not wedge the pass. `fanops resolve`
-    # stays the manual escape hatch (e.g. a Postiz post genuinely absent from its page -> 'unknown', parked).
+            _quarantine(led.sources, s.id, SourceState.error, "source", e, log)
+    return led
+
+
+def _stage_ingest_moments(led: Ledger, cfg: Config, log) -> Ledger:
+    """Ingest each source's DECIDED moments (moments_requested -> moments_decided), per-source quarantine."""
+    for s in list(led.sources.values()):
+        if s.state is SourceState.moments_requested:
+            try:
+                led = ingest_moments(led, cfg, s.id)
+            except Exception as e:
+                _quarantine(led.sources, s.id, SourceState.error, "moments", e, log)
+    return led
+
+
+def _stage_moment_hooks(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
+    """M1b PASS 2 (frame-seeing hook): for each source whose picks reconciled (picks_decided), open a
+    per-pick moment_hooks gate (request, write-once) seeing THAT window's frames, then ingest any landed
+    hooks (promote picked->decided; source->moments_decided once every pick's hook lands). Per-source
+    quarantine, mirroring the pick gate. The responder answers between passes — the SAME multi-gate
+    convergence as moments->captions (one extra cycle)."""
+    for s in list(led.sources.values()):
+        if s.state is SourceState.picks_decided:
+            try:
+                led = request_moment_hooks(led, cfg, s.id, accounts=accts)   # personas + learned hook styles ride here
+                led = ingest_moment_hooks(led, cfg, s.id)
+            except Exception as e:
+                _quarantine(led.sources, s.id, SourceState.error, "moment_hooks", e, log)
+    return led
+
+
+def _stage_casting(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
+    """M1 (Option C) per-account moment SELECTION (default ON via cfg.account_casting): an LLM gate chooses,
+    per account, that account's OWN set of moments from the decided pool, writing Moment.affinities BEFORE
+    the render loop. The crosspost affinity gate then fans a cast moment ONLY to its accounts. request is
+    write-once; ingest applies the selection once the responder answers (a no-op until then). Per-source
+    quarantine, fail-open (log-only — affinities just stay []). OFF -> no gate, byte-identical fan-out. NB:
+    the LLM gate is now the SOLE production selector; casting.cast_moments (the token-overlap heuristic) is
+    no longer wired here (retained as a tested standalone selector, not a fallback)."""
+    if not cfg.account_casting:
+        return led
+    for s in list(led.sources.values()):
+        rel = [m for m in led.moments.values() if m.parent_id == s.id
+               and m.state in (MomentState.decided, MomentState.clipped)]
+        # P1 backfill: process a source with DECIDED moments (the normal path) OR one stranded with
+        # CLIPPED-uncast moments (raced past the gate before the answer landed) — write-once keeps it
+        # idempotent (a source already cast has non-empty affinities -> skipped). OFF firewall: this whole
+        # block is account_casting-guarded.
+        has_decided = any(m.state is MomentState.decided for m in rel)
+        has_clipped_uncast = any(m.state is MomentState.clipped and not m.affinities for m in rel)
+        if not has_decided and not has_clipped_uncast:
+            continue
+        try:
+            led = request_moment_casting(led, cfg, s.id, accts)
+            led = ingest_moment_casting(led, cfg, s.id, accts)
+        except Exception as e:
+            log("casting", s.id, "error", err=str(e)[:120])
+    return led
+
+
+def _stage_render_and_caption(led: Ledger, cfg: Config, accts: Accounts, aspects: set[Fmt], log) -> Ledger:
+    """For each DECIDED moment: render its aspects, then request captions for each rendered clip, scoped to
+    the affinity-admitted surfaces (M5). A failed-aspect clip (ClipState.error) is NOT laundered into a
+    phantom captioned post with a dangling mp4. Per-moment quarantine."""
+    for m in list(led.moments.values()):
+        if m.state is MomentState.decided:
+            try:
+                led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
+                for clip in clips:
+                    if clip.state is not ClipState.rendered: continue   # a failed-aspect clip (ClipState.error) must not be laundered into a phantom captioned post with a dangling mp4
+                    # M5: scope the caption request to the affinity-admitted surfaces. Casting OFF / an
+                    # uncast moment -> all surfaces (byte-identical). Within a decision cycle this is a
+                    # SUPERSET of the crosspost survivors (which narrow further by batch target), so every
+                    # minted post has a caption; a post-captioning RE-DECISION swap is caught by crosspost's
+                    # cap-is-None skip. Crosspost stays the SOLE casting-intent gate; meta_captions is never
+                    # read as casting intent.
+                    led = request_captions(led, cfg, clip.id,
+                                           scoped_caption_surfaces(cfg, led, m, accts.surfaces()),
+                                           accounts=accts)
+            except Exception as e:
+                _quarantine(led.moments, m.id, MomentState.error, "clip", e, log)
+    return led
+
+
+def _stage_structural_hooks(led: Ledger, cfg: Config, log) -> Ledger:
+    """M4/M5/M6 structural-hooks: after the bare clips render, run the per-format producers + render the
+    operator-approved plans. intro_tease first OPENS its LLM-vision matcher gate (request) + applies any
+    landed pairings (ingest) so mine_suggestions can pair them. Ledger-only mutation here (safe in-lock);
+    the heavy approved-plan RENDER is lock-free in the prewarm pass. Per-format opt-in + fail-open. Both
+    formats OFF -> byte-identical to pre-structural-hooks. A forward-only kill-switch logs (never silently
+    freezes) any approved plan of a now-disabled format."""
+    strategies = _enabled_strategies(cfg)
+    if strategies:
+        try:
+            if cfg.intro_tease:                          # M6: the matcher gate (fail-open; no answer -> no plan)
+                led = request_intro_match(led, cfg)
+                led = ingest_intro_match(led, cfg)
+            led = mine_suggestions(led, cfg, log, strategies=strategies)   # ranked, top-N-capped, multi-strategy
+            led = render_approved_stitches(led, cfg, strategies=strategies)  # adopts prewarmed mp4s
+        except Exception as e:
+            log("structural_hooks", "-", "error", err=str(e)[:120])
+    n = approved_disabled_count(led, enabled=strategies)
+    if n:
+        log("structural_hooks", "-", "warn",
+            err=f"{n} approved plans for disabled formats (feature OFF) — will render when re-enabled")
+    return led
+
+
+def _stage_ingest_captions(led: Ledger, cfg: Config, log) -> Ledger:
+    """Ingest each captions_requested clip's landed captions (captions_requested -> captioned), per-clip
+    quarantine."""
+    for c in list(led.clips.values()):
+        if c.state is ClipState.captions_requested:
+            try:
+                led = ingest_captions(led, cfg, c.id)
+            except Exception as e:
+                _quarantine(led.clips, c.id, ClipState.error, "caption", e, log)
+    return led
+
+
+def _stage_crosspost(led: Ledger, cfg: Config, accts: Accounts, base_time: str, log) -> Ledger:
+    """AUDIT M2: the volatile crosspost stage runs inside the transaction, wrapped so a raise does NOT
+    abandon the whole pass's in-memory progress before the exit-save. The ONE exception we deliberately let
+    escape is a FATAL AuthError (F52): a bad key fails every post, so halting + rolling back the pass is
+    intended (handled by the CLI run guard). crosspost has no Blotato call today, but if one is ever added
+    a bad key must halt, not be logged-and-continued."""
+    try:
+        return crosspost_clips(led, cfg, accts, base_time=base_time)
+    except AuthError:
+        raise
+    except Exception as e:
+        log("crosspost", "-", "error", err=str(e)[:120])
+        return led
+
+
+def _reconcile_safe(cfg: Config, log) -> None:
+    """Reconcile last pass's stranded posts AFTER the main txn commits, BEFORE publishing (AUDIT H4 + M1
+    reconcile-out-of-lock): reconcile_due pre-polls each backend status with NO lock held, then applies the
+    cached results in its OWN tight transaction (N status GETs never hold the ledger flock). Gated on
+    is_live_backend (per-channel readiness); resolves each post's provider via effective_provider and skips
+    dryrun/provider-less posts. A FATAL AuthError halts (symmetry with publish); any other hiccup must not
+    wedge the pass. `fanops resolve` stays the manual escape hatch."""
     if cfg.is_live_backend:
         try:
             reconcile_due(cfg)
@@ -356,13 +336,14 @@ def advance(cfg: Config, *, base_time: str) -> dict:
             raise                                        # bad key: every poll fails -> halt
         except Exception as e:                           # status API hiccup must not wedge the pass
             log("reconcile", "-", "error", err=str(e)[:120])
-    # publish-out-of-lock: publishing runs AFTER the main transaction COMMITS — its network I/O (media
-    # upload + poster.publish) must NOT hold the ledger flock (it would starve a concurrent Studio/daemon
-    # writer up to the 30s lock timeout). publish_due now owns its locking: per-post claim->network->
-    # finalize, network lock-free, no stale full-snapshot save (B4). The main pass's transcribe/render/
-    # crosspost progress is already committed above, so a FATAL AuthError halt here no longer rolls it
-    # back (improvement over the old in-txn publish). publish cutoff = real now (base_time anchors the
-    # crosspost SCHEDULE; publishing uses actual now).
+
+
+def _publish_safe(cfg: Config, log) -> None:
+    """publish-out-of-lock: publishing runs AFTER the main transaction COMMITS — its network I/O (media
+    upload + poster.publish) must NOT hold the ledger flock (it would starve a concurrent Studio/daemon
+    writer up to the 30s lock timeout). publish_due owns its locking: per-post claim->network->finalize,
+    network lock-free. publish cutoff = real now (base_time anchors the crosspost SCHEDULE; publishing uses
+    actual now). A FATAL AuthError halts the run (F52)."""
     try:
         publish_due(cfg, now=None)
     except AuthError:
@@ -370,10 +351,13 @@ def advance(cfg: Config, *, base_time: str) -> dict:
     except Exception as e:
         log("publish", "-", "error", err=str(e)[:120])
 
-    # B5/E2 heartbeat + summary: built from a POST-publish reload (the publish committed via its own
-    # finalize txns above). published_in_run = published ids now MINUS `before` (snapshotted at main-txn
-    # ENTRY — the THIS-RUN delta, incl. reconcile-driven publishes); last_published_age_hours is the age
-    # (hours, 2dp) of the newest published post's scheduled_time vs now, or None when none is parseable.
+
+def _build_summary(cfg: Config, before: set) -> dict:
+    """B5/E2 heartbeat + summary, built from a POST-publish READ-ONLY reload (the publish committed via its
+    own finalize txns). published_in_run = published ids now MINUS `before` (snapshotted at main-txn ENTRY —
+    the THIS-RUN delta, incl. reconcile-driven publishes); last_published_age_hours is the age (hours, 2dp)
+    of the newest published post's scheduled_time vs now, or None when none parses. Also writes the
+    read-only digest from the same snapshot, OUTSIDE the lock."""
     led = Ledger.load(cfg)                               # post-publish snapshot, READ-ONLY (no save/lock)
     after = led.posts_in_state(PostState.published)
     published_in_run = len([p for p in after if p.id not in before])
@@ -405,6 +389,57 @@ def advance(cfg: Config, *, base_time: str) -> dict:
                      "moment_casting": len(pending(cfg, kind="moment_casting")),   # P1: the run loop must WAIT for casting
                      "captions": len(pending(cfg, kind="captions"))},
     }
-    # digest is read-only reporting, built from the SAME post-publish snapshot, OUTSIDE the lock.
-    write_digest(led, cfg)
+    write_digest(led, cfg)                               # read-only reporting, same snapshot, OUTSIDE the lock
     return summary
+
+
+def advance(cfg: Config, *, base_time: str) -> dict:
+    accts = Accounts.load(cfg)
+    log = get_logger(cfg)
+    aspects = _aspects_for(accts)
+
+    # Phase D: ingest in a SHORT transaction FIRST so a brand-new drop is catalogued and VISIBLE to the
+    # lock-free pre-warm below — otherwise its transcribe would run inside the main lock. ingest_drops is
+    # idempotent (content-addressed dedup), so this never double-catalogues.
+    with Ledger.transaction(cfg) as led:
+        led = ingest_drops(led, cfg)
+    # Phase D: warm the slow subprocess stages with NO lock held (see _prewarm). The main transaction
+    # then re-runs them and they skip on the warm artifacts — so a render no longer starves a concurrent
+    # Studio write / second pass. Lock-free; saves nothing; fail-open.
+    _prewarm(cfg, aspects, log)
+
+    # AUDIT B4: the load-mutate-save COMMIT runs inside ONE ledger transaction — the lock is acquired
+    # BEFORE load and the single save happens on clean exit. This closes the lost-update window the
+    # save()-only lock left open (two overlapping cron passes both loaded a stale snapshot; last save()
+    # won; the other's updates — a published post, a submitting flip — vanished silently). A second live
+    # pass is excluded (typed LockBusyError, bounded by timeout), not silently overwritten. (Phase D: the
+    # SLOW subprocesses already ran lock-free above; this transaction only flips state + does the cheap
+    # gate/crosspost/publish work, so the lock-held window is short.)
+    with Ledger.transaction(cfg) as led:
+        # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
+        # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in
+        # `before` and is NOT counted (set difference against the exit state). Ingest already ran (above)
+        # and never publishes, so the snapshot here is the correct baseline.
+        before = {p.id for p in led.posts_in_state(PostState.published)}
+        led = _stage_source_to_moments(led, cfg, accts, log)
+        led = _stage_ingest_moments(led, cfg, log)
+        led = _stage_moment_hooks(led, cfg, accts, log)
+        # Task 9 scoreboard: one read-only digest line of hook quality on EVERY pass — independent of any
+        # subsystem flag, so the operator's hook-quality visibility stays on by default. Read-only + fail-open.
+        try: log_hook_quality(led, cfg)
+        except Exception as e: log("hookscore", "-", "error", err=str(e)[:120])
+        # M2 structural-hooks router (opt-in, observe-only): classify each decided hook into a hook_strategy
+        # reason BEFORE the render loop. Renders nothing; fail-open. Default OFF -> byte-identical to today.
+        if cfg.hook_router:
+            try:
+                led = route_moments(led, cfg)
+            except Exception as e:
+                log("router", "-", "error", err=str(e)[:120])
+        led = _stage_casting(led, cfg, accts, log)
+        led = _stage_render_and_caption(led, cfg, accts, aspects, log)
+        led = _stage_structural_hooks(led, cfg, log)
+        led = _stage_ingest_captions(led, cfg, log)
+        led = _stage_crosspost(led, cfg, accts, base_time, log)
+    _reconcile_safe(cfg, log)                            # stranded-post reconcile, out of lock (AUDIT H4)
+    _publish_safe(cfg, log)                              # publish-out-of-lock (own per-post locking)
+    return _build_summary(cfg, before)                   # post-publish read-only snapshot + digest
