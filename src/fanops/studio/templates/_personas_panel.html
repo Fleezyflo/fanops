@@ -50,8 +50,8 @@
       <summary class="step-summary">+ Add a persona</summary>
       <p class="muted persona-levers-intro">Each persona's levers{{ term('lever') }} shape its clips, hooks and captions.</p>
       {{ levers_reference(lever_ref) }}
-      <p class="muted">Name it, write its voice, pick a hashtag lean, and capture the intake (genre,
-        language, reference accounts) — the intake seeds the hashtag research later.</p>
+      <p class="muted">Name it, write its voice, pick a hashtag lean, and set its genre —
+        the genre seeds the hashtag research later.</p>
       <form hx-post="{{ url_for('do_personas_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
         <label>Name <input type="text" name="name" placeholder="e.g. Music Blogger" size="22" required></label>
         <label>Tag lean
@@ -64,9 +64,6 @@
         <fieldset class="intake">
           <legend>Intake</legend>
           <label>Genre <input type="text" name="genre" placeholder="hip hop" size="14"></label>
-          <label>Language <input type="text" name="language" placeholder="en / ar" size="8"></label>
-          <label>Reference accounts <input type="text" name="refs" placeholder="@a, @b" size="20"></label>
-          <label class="block">Notes <input type="text" name="notes" placeholder="optional" size="40"></label>
         </fieldset>
         {{ lever_fields(levers, effects) }}
         <button type="submit" class="primary">Add persona</button>

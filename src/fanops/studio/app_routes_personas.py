@@ -42,8 +42,7 @@ def register_personas_routes(app, cfg):
     def do_personas_add():
         return _personas_panel(studio_personas.create_persona(
             cfg, request.form.get("name", ""), request.form.get("voice", ""), request.form.get("tag_lean", ""),
-            request.form.get("genre", ""), request.form.get("language", ""),
-            request.form.get("refs", ""), request.form.get("notes", ""),
+            request.form.get("genre", ""),
             content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
             hook_angle=request.form.get("hook_angle", ""), hook_tone=request.form.get("hook_tone", ""),
             clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", ""),
@@ -54,8 +53,7 @@ def register_personas_routes(app, cfg):
     def do_personas_edit():
         return _personas_panel(studio_personas.edit_persona(
             cfg, request.form.get("id", ""), request.form.get("name", ""), request.form.get("voice", ""),
-            request.form.get("tag_lean", ""), request.form.get("genre", ""), request.form.get("language", ""),
-            request.form.get("refs", ""), request.form.get("notes", ""),
+            request.form.get("tag_lean", ""), request.form.get("genre", ""),
             content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
             hook_angle=request.form.get("hook_angle", ""), hook_tone=request.form.get("hook_tone", ""),
             clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", ""),

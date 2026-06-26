@@ -12,20 +12,12 @@ from fanops.accounts import link_persona as _link_persona
 from fanops.studio.actions import ActionResult
 
 
-def _intake(genre: str = "", language: str = "", refs: str = "", notes: str = "") -> dict:
-    """Build the persona intake dict from the form fields — only non-blank keys (so an empty intake is
-    {} not a bag of empties). `refs` is a comma/space list of reference accounts -> a clean list; it
-    seeds B3's per-persona hashtag research (genre/language/audience steer what tags to propose)."""
-    out: dict = {}
+def _intake(genre: str = "") -> dict:
+    """Build the persona intake dict from the form. GENRE is the only intake field that drives anything —
+    it seeds B3's per-persona hashtag research (persona_research). language/reference_accounts/notes were
+    inert (language is derived from the SOURCE transcript, not the persona) and were removed. Blank -> {}."""
     g = (genre or "").strip()
-    lang = (language or "").strip()
-    n = (notes or "").strip()
-    ref_list = [r.strip() for r in (refs or "").replace(",", " ").split() if r.strip()]
-    if g: out["genre"] = g
-    if lang: out["language"] = lang
-    if ref_list: out["reference_accounts"] = ref_list
-    if n: out["notes"] = n
-    return out
+    return {"genre": g} if g else {}
 
 
 def preview_compose(cfg: Config, form) -> ActionResult:
@@ -77,7 +69,7 @@ def preview_compose(cfg: Config, form) -> ActionResult:
 
 
 def create_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
-                   genre: str = "", language: str = "", refs: str = "", notes: str = "",
+                   genre: str = "",
                    content_focus=None, energy: str = "", hook_angle: str = "", hook_tone: str = "",
                    clip_profile: str = "", framing: str = "", casting_directive: str = "",
                    hook_directive: str = "", caption_directive: str = "", clip_count="") -> ActionResult:
@@ -86,7 +78,7 @@ def create_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
     bad clip_count / blank name -> a clean one-line error, never a 500."""
     try:
         pid = core.add_persona(cfg, name=name, voice=voice, tag_lean=tag_lean,
-                               intake=_intake(genre, language, refs, notes),
+                               intake=_intake(genre),
                                content_focus=content_focus, energy=energy, hook_angle=hook_angle,
                                hook_tone=hook_tone, clip_profile=clip_profile, framing=framing,
                                casting_directive=casting_directive, hook_directive=hook_directive,
@@ -99,7 +91,7 @@ def create_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
 
 
 def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "", tag_lean: str = "",
-                 genre: str = "", language: str = "", refs: str = "", notes: str = "",
+                 genre: str = "",
                  content_focus=None, energy: str = "", hook_angle: str = "", hook_tone: str = "",
                  clip_profile: str = "", framing: str = "", brief: str = "", casting_directive: str = "",
                  hook_directive: str = "", caption_directive: str = "", clip_count="") -> ActionResult:
@@ -112,7 +104,7 @@ def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "", tag_lea
         return ActionResult(ok=False, error="no persona selected")
     try:
         core.update_persona(cfg, pid, name=name, voice=voice, tag_lean=tag_lean,
-                            intake=_intake(genre, language, refs, notes),
+                            intake=_intake(genre),
                             content_focus=(content_focus or []), energy=energy, hook_angle=hook_angle,
                             hook_tone=hook_tone, clip_profile=clip_profile, framing=framing, brief=brief,
                             casting_directive=casting_directive, hook_directive=hook_directive,

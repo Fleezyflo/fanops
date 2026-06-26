@@ -25,9 +25,6 @@
     <fieldset class="intake">
       <legend>Intake</legend>
       <label>Genre <input type="text" name="genre" value="{{ p.intake.get('genre', '') }}" size="14"></label>
-      <label>Language <input type="text" name="language" value="{{ p.intake.get('language', '') }}" size="8"></label>
-      <label>Reference accounts <input type="text" name="refs" value="{{ p.intake.get('reference_accounts', []) | join(', ') }}" size="20"></label>
-      <label class="block">Notes <input type="text" name="notes" value="{{ p.intake.get('notes', '') }}" size="40"></label>
     </fieldset>
     {{ lever_fields(levers, effects, p) }}
     <label class="block">Brief

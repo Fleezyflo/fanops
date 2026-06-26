@@ -3,7 +3,7 @@
 string + tag_lean, seeded by hand from a brief doc — not editable, not reusable, not a thing you could
 add an intake for. This makes a Persona a named record in 00_control/personas.json: a `voice` (the
 string the pipeline reads), a `tag_lean`, a `hashtag_corpus` (the per-persona reach-vetted pool, B1),
-and free-form `intake` metadata (genre/language/reference accounts, seeds B3's research). Accounts LINK
+and `intake` metadata whose one live field is `genre` (seeds B3's research). Accounts LINK
 to a persona via Account.persona_id; the linked persona's voice/tag_lean HYDRATE the account in memory
 at load (accounts._hydrate_from_personas), so every existing consumer (caption/moments/casting/
 variant_transfer) stays byte-identical while an operator edit takes effect on the next load.
@@ -38,7 +38,7 @@ class Persona(BaseModel):
     voice: str = ""                               # the persona string the pipeline reads (caption/hook/casting voice)
     tag_lean: Optional[str] = None                # persona TAG knob: tasteful|underground|bold (None -> no lean)
     hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona reach-vetted pool
-    intake: dict = Field(default_factory=dict)    # free-form intake (genre/language/reference accounts) — seeds B3 research
+    intake: dict = Field(default_factory=dict)    # intake metadata; one live field `genre` — seeds B3 research
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
     # compose returns the bare `voice` (byte-identical). Validated at the write boundary (add/update_persona).
