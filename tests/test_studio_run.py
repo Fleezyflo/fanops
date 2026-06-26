@@ -233,6 +233,22 @@ def test_pipeline_status_counts(tmp_path):
     assert st["sources"] == 1 and "pending_moments" in st and st["backend"] == "dryrun"
 
 
+def test_pipeline_status_awaiting_counts_moments_not_posts(tmp_path):
+    # The Make tab's "Next: N ready" must speak the SAME unit as Home/Review (MOMENTS), not the raw awaiting-post
+    # count — a clip fans out to many surface posts, so counting posts made Make say "57" next to "Clips ready 17".
+    from fanops.models import Moment, Clip, Post, Platform, PostState, MomentState, Fmt, ClipState
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.catalogued))
+        led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r",
+                              state=MomentState.clipped))
+        led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        for i in range(3):                       # 3 awaiting SURFACE posts on ONE clip/moment
+            led.add_post(Post(id=f"p{i}", parent_id="c1", account=f"@a{i}", account_id=str(i),
+                              platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+    assert views.pipeline_status(cfg)["awaiting"] == 1      # ONE moment, not three posts
+
+
 # ---- Flask wiring ----
 def test_run_route_renders(tmp_path):
     from fanops.studio.app import create_app
@@ -302,7 +318,7 @@ def test_run_next_step_gate_counts_all_three_pending_kinds():
 def test_run_next_step_gate_precedes_review():
     # gates block mid-pipeline clips; answering them comes BEFORE reviewing finished posts (ladder order)
     n = views.run_next_step(_st(sources=2, awaiting=4, pending_captions=1))
-    assert n["key"] == "gate" and "4 post(s) are also waiting" in n["hint"]   # gate hint also flags review work
+    assert n["key"] == "gate" and "4 clip(s) are also waiting" in n["hint"]   # gate hint also flags review work
 
 
 def test_run_next_step_review_counts_only_actionable_awaiting():
