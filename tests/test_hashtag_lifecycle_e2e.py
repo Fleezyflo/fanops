@@ -45,6 +45,10 @@ def test_hashtag_lifecycle_end_to_end(tmp_path):
     ingest_captions(led, cfg, "clip_1")
     tags = led.clips["clip_1"].meta_captions["@a/instagram"]["hashtags"]
     assert tags[0] == "#detroitrap"                            # B1: the curated corpus leads, even over #hiphop
+    # provenance closed-loop: every shipped tag traces to a real signal; the curated tag is credited to corpus
+    sources = led.clips["clip_1"].meta_captions["@a/instagram"]["tag_sources"]
+    assert set(sources) == set(tags) and all(sources.values())
+    assert sources["#detroitrap"] == "corpus"
 
     # 3 · a posted + analyzed post carrying the corpus tag earns reach
     led.add_post(Post(id="post_1", parent_id="clip_1", account="@a", account_id="1",
