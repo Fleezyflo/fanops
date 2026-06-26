@@ -48,6 +48,9 @@ def test_transferred_prior_reaches_caption_request_on_disk(tmp_path, monkeypatch
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
     cfg = Config(root=tmp_path)
     _seed_on_disk(cfg)
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True})    # B2: transfer is VALIDATION-FROZEN — open the gate
+    #                                                          so the borrowed prior actually reaches the caption
     led = Ledger.load(cfg)                                   # round-trip from disk
     assert led.posts and led.clips["clip_1"].state is ClipState.rendered
     led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=_accounts(cfg))
@@ -65,6 +68,8 @@ def test_stricter_min_donors_blocks_transfer_on_disk(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER_MIN_DONORS", "3")
     cfg = Config(root=tmp_path)
     _seed_on_disk(cfg)
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True})    # validate so the MIN_DONORS gate (not the freeze) is what blocks
     led = Ledger.load(cfg)
     led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=_accounts(cfg))
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
