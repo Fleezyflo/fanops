@@ -22,6 +22,13 @@ def test_content_candidates_empty_for_blank_or_nonlatin(text):
     assert content_tag_candidates(text) == []          # nothing latin/usable -> [] -> byte-identity path
 
 
+def test_content_candidates_drop_url_tech_junk():
+    # a transcript's most-frequent token must not be a URL/tech word forced into the caption (review MEDIUM).
+    cands = content_tag_candidates("http http www mp3 beats fire fire")
+    assert "#http" not in cands and "#www" not in cands and "#mp3" not in cands
+    assert "#fire" in cands and "#beats" in cands
+
+
 def test_content_candidates_are_bounded_and_normalized():
     cands = content_tag_candidates(" ".join(f"word{i}" for i in range(50)), max_n=6)
     assert len(cands) <= 6

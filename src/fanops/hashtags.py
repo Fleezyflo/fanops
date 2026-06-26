@@ -87,7 +87,10 @@ def _dedupe_norm(seq) -> list[str]:
 _STOPWORDS = frozenset(
     "a an and are as at be but by for from had has have he her his i in is it its me my no not of on or "
     "our out so that the their them they this to too up us was we what when where which who will with you "
-    "your yours just got get like dont cant im".split())
+    "your yours just got get like dont cant im "
+    # URL/tech-adjacent tokens a transcript can surface as a high-frequency word — never a real hashtag,
+    # and the content floor would otherwise force one into the posted line (code review MEDIUM).
+    "http https www com org net mp3 mp4 wav png jpg jpeg gif url link".split())
 _WORD = re.compile(r"[a-z][a-z0-9]{2,19}")
 
 def content_tag_candidates(text: str | None, *, max_n: int = 6) -> list[str]:
