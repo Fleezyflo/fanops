@@ -541,15 +541,15 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .spine-next.caught-up { background:transparent; color:var(--ok); border:1px solid var(--ok); }
 @media (max-width:760px) { .spine { flex-direction:column; align-items:stretch; } .spine-next { justify-content:center; } }
 
-/* ── Inline term glossary (S9) — a tiny native <details> disclosure (keyboard-accessible, no JS) marking an
-   insider term's first use. The ⓘ marker sits inline; opening reveals a small definition card. */
-.term { display:inline-block; vertical-align:baseline; margin-left:.2rem; font-weight:400; }
-.term > summary { display:inline; cursor:help; list-style:none; color:var(--accent-bright); font-size:.82em; line-height:1; }
-.term > summary::-webkit-details-marker { display:none; }
-.term > summary::marker { content:""; }
-.term > summary:focus-visible { outline:none; box-shadow:var(--ring); border-radius:var(--r-pill); }
-.term[open] > summary { color:var(--muted); }
-.term-def { display:block; margin:.3rem 0 .1rem; padding:.4rem .6rem; max-width:24rem; background:var(--surface-2);
+/* ── Inline term glossary (S9) — a focusable inline <span> (PHRASING content, valid inside <p>/<h3>/cells; a
+   <details> here is flow content and the HTML parser ejects it, tearing the sentence) marking an insider term's
+   first use. The ⓘ mark sits inline; focusing it (tabindex=0, keyboard/click) or hovering reveals a small
+   definition card in flow. No JS. */
+.term { display:inline-block; vertical-align:baseline; margin-left:.2rem; font-weight:400; cursor:help; }
+.term-mark { color:var(--accent-bright); font-size:.82em; line-height:1; }
+.term:focus-visible { outline:none; box-shadow:var(--ring); border-radius:var(--r-pill); }
+.term-def { display:none; margin:.3rem 0 .1rem; padding:.4rem .6rem; max-width:24rem; background:var(--surface-2);
   border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:var(--r-sm); color:var(--ink);
   font-size:var(--t-meta); font-weight:400; line-height:1.45; }
+.term:hover > .term-def, .term:focus > .term-def, .term:focus-within > .term-def { display:block; }
 .term-def strong { color:var(--accent-bright); text-transform:none; }

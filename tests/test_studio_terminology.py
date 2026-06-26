@@ -44,12 +44,14 @@ def test_term_def_is_fail_soft_on_unknown_or_nonstring():
     assert views.term_def(123) is None
 
 
-# ── the macro: a native, keyboard-accessible disclosure with NO JavaScript ─────────────────────────
-def test_term_macro_renders_keyboard_accessible_details(tmp_path):
+# ── the macro: a focusable inline PHRASING element, keyboard-accessible, NO JavaScript ─────────────
+def test_term_macro_renders_keyboard_accessible_span(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     html = _client(cfg).get("/personas").get_data(as_text=True)
-    assert '<details class="term" data-term="lever"' in html   # native focusable disclosure
-    assert "<summary" in html and "term-def" in html           # toggles on Enter/Space, reveals the definition
+    assert '<span class="term" data-term="lever"' in html       # PHRASING content (a <details> here is flow
+                                                                # content and the parser ejects it, tearing the line)
+    assert 'tabindex="0"' in html and "term-def" in html        # focusable (keyboard/click), reveals the definition
+    assert "<details class=\"term\"" not in html                # never the flow-content disclosure
     assert "ⓘ" in html                                          # the inline marker
 
 

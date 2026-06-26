@@ -1,10 +1,14 @@
 {# src/fanops/studio/templates/_term.html — S9: an inline, keyboard-accessible plain-language definition for an
-   insider term (moment / cast / lever / batch / surface / variant / integration). A NATIVE <details> disclosure
-   — focusable, toggles on Enter/Space, NO JavaScript. Placed ONCE at a term's first use per surface. Fail-soft:
-   an unknown key renders nothing (term_def -> None), so a typo never breaks a page. term_def is a Jinja GLOBAL
-   (app.jinja_env.globals, NOT a context processor — a context processor would not reach this context-isolated
-   {% from %} macro; the global does); autoescape stays on (the defs are plain text). #}
+   insider term (moment / cast / lever / batch / surface / variant / integration). A focusable inline <span> —
+   PHRASING content, so it is valid wherever inline text goes (<p>, <h3>, table cells). The old <details> was
+   FLOW content: inside a <p> the HTML parser auto-closes the <p> before it, tearing "…integration{term} it
+   publishes through." across three lines. The <span> keeps the sentence whole. Definition reveals on focus
+   (tabindex=0 — keyboard-accessible, click-to-show) and on hover, in flow, NO JavaScript. Placed ONCE at a
+   term's first use per surface. Fail-soft: an unknown key renders nothing (term_def -> None), so a typo never
+   breaks a page. term_def is a Jinja GLOBAL (app.jinja_env.globals, NOT a context processor — a context
+   processor would not reach this context-isolated {% from %} macro); autoescape stays on (defs are plain text).
+   The full definition rides in aria-label so a screen reader gets it on focus without the visual reveal. #}
 {% macro term(key) %}
 {%- set d = term_def(key) -%}
-{%- if d %}<details class="term" data-term="{{ key }}"><summary aria-label="What does {{ key }} mean?">ⓘ</summary><span class="term-def"><strong>{{ key }}</strong> — {{ d }}</span></details>{% endif -%}
+{%- if d %}<span class="term" data-term="{{ key }}" tabindex="0" role="note" aria-label="{{ key }} — {{ d }}"><span class="term-mark" aria-hidden="true">ⓘ</span><span class="term-def" aria-hidden="true"><strong>{{ key }}</strong> — {{ d }}</span></span>{% endif -%}
 {% endmacro %}

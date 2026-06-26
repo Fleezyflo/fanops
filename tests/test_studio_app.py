@@ -73,6 +73,16 @@ def test_home_metrics_per_account(tmp_path):
     assert 'data-acct-count="@a"' in html                  # @a's count is inline on its account row
     assert 'data-metric="by-account"' not in html          # no orphans -> no fallback table
 
+def test_home_term_glossary_is_phrasing_content(tmp_path):
+    # Root fix: the inline glossary mark term() must be PHRASING content. It used to render a <details>, which
+    # is FLOW content — inside the accounts <p> ("…integration{term} it publishes through.") the HTML parser
+    # auto-closes the <p> before the <details>, ejecting the trailing clause onto its own line (the visible
+    # tear). A <span> is phrasing-valid, so the sentence renders whole. Guard the invariant at the source.
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    html = _client(cfg).get("/").data.decode()
+    assert '<span class="term"' in html              # the glossary mark renders as phrasing content (a span)
+    assert '<details class="term"' not in html       # never the flow-content <details> that tore the <p>
+
 def test_home_batch_deep_link_and_zero_result(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     from fanops.batches import create_batch
