@@ -84,20 +84,20 @@ def publish_readiness(led: Ledger, post) -> tuple[bool, str]:
     shared clip: it must exist, be in a reusable state (the SAME allowlist crosspost ships from — single source of
     truth), and have its file on disk. Fail-open: any torn/odd shape -> (False, 'unverified'), never raises."""
     try:
-        rid = getattr(post, "render_id", None)
+        rid = post.render_id
         if rid:
             r = led.renders.get(rid)
             if r is None: return (False, "render record missing")
-            if getattr(r, "state", None) not in _SHIPPABLE_RENDER: return (False, "render not finished")
-            if not (getattr(r, "path", None) and Path(r.path).exists()): return (False, "render file missing from disk")
-            if (getattr(r, "hook_text", "") or "") != (getattr(post, "variant_hook", "") or ""):
+            if r.state not in _SHIPPABLE_RENDER: return (False, "render not finished")
+            if not (r.path and Path(r.path).exists()): return (False, "render file missing from disk")
+            if (r.hook_text or "") != (post.variant_hook or ""):
                 return (False, "hook drift — the burned hook differs from the one shown")
             return (True, "ready — its own cut")
         from fanops.crosspost import _REUSABLE_CLIP_STATES        # the EXACT states crosspost will reuse a clip from
-        clip = led.clips.get(getattr(post, "parent_id", None)) if getattr(post, "parent_id", None) else None
+        clip = led.clips.get(post.parent_id) if post.parent_id else None
         if clip is None: return (False, "source clip missing")
         if clip.state not in _REUSABLE_CLIP_STATES: return (False, f"clip not shippable ({clip.state.value})")
-        if not (getattr(clip, "path", None) and Path(clip.path).exists()): return (False, "clip file missing from disk")
+        if not (clip.path and Path(clip.path).exists()): return (False, "clip file missing from disk")
         return (True, "ready — shared clip")
     except Exception:
         return (False, "unverified")
@@ -145,7 +145,7 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             suggested_time=suggest_time(cfg, p, now=now) if editable else None,   # P1: only editable rows
             batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),       # Face 5: batch legibility
             caption=p.caption,                                                    # P5: caption column
-            variant_hook=getattr(p, "variant_hook", None))                        # Render: per-account hook column
+            variant_hook=p.variant_hook)                                          # Render: per-account hook column
         if editable:                                                              # S5: advisory readiness + why (editable only)
             row.ready, row.ready_reason = publish_readiness(led, p)
             row.why_suggested = explain_suggested_time(cfg, row)
@@ -228,7 +228,7 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, b
                       saves=p.metrics.get("saves"), shares=p.metrics.get("shares"),
                       retention=p.metrics.get("retention"), reach=p.metrics.get("reach"),
                       batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
-                      variant_hook=getattr(p, "variant_hook", None)) for p in posts]
+                      variant_hook=p.variant_hook) for p in posts]
 
 
 def posted_batch_rollup(rows) -> Optional[dict]:

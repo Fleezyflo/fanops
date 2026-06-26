@@ -205,7 +205,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
     edit takes effect on the next load — with ZERO consumer rewiring. FAIL-OPEN: no personas.json, a
     dangling persona_id, or any error leaves the account's inline values exactly as today (byte-identical
     when unlinked). The personas import is lazy (personas imports accounts in migrate -> avoid a cycle)."""
-    if not any(getattr(acc, "persona_id", None) for acc in accts.accounts):
+    if not any(acc.persona_id for acc in accts.accounts):
         return                                       # no links -> no work, no personas.json read at all
     try:
         from fanops.personas import Personas, resolved_cut_spec
@@ -213,7 +213,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
     except Exception:
         return                                       # corrupt/absent personas.json -> inline values stand
     for acc in accts.accounts:
-        per = reg.get(getattr(acc, "persona_id", None))
+        per = reg.get(acc.persona_id)
         if per is None:
             continue                                 # dangling id -> inline values stand
         if per.voice:
@@ -229,11 +229,11 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         _prof, _fr = resolved_cut_spec(per)   # P2: pin wins; else derived from content_focus/energy; else None (global stands)
         if _prof: acc.clip_profile = _prof; acc.persona_owns_profile = True   # S2 provenance: the persona TRULY owns the length
         if _fr: acc.framing = _fr
-        acc.brief = getattr(per, "brief", "") or ""   # M2: the persona owns the locked brief (empty -> compose ignores it)
-        acc.casting_directive = getattr(per, "casting_directive", "") or ""   # M3: per-dimension override text (empty -> lever-compiled default)
-        acc.hook_directive = getattr(per, "hook_directive", "") or ""
-        acc.caption_directive = getattr(per, "caption_directive", "") or ""
-        acc.clip_count = getattr(per, "clip_count", None)                     # M3: per-persona clip budget (None -> global)
+        acc.brief = per.brief or ""   # M2: the persona owns the locked brief (empty -> compose ignores it)
+        acc.casting_directive = per.casting_directive or ""   # M3: per-dimension override text (empty -> lever-compiled default)
+        acc.hook_directive = per.hook_directive or ""
+        acc.caption_directive = per.caption_directive or ""
+        acc.clip_count = per.clip_count                       # M3: per-persona clip budget (None -> global)
 
 
 def link_persona(cfg: Config, handle: str, persona_id: str) -> str:
