@@ -5,6 +5,7 @@ NOTHING — it cannot create platform accounts or obtain a Blotato key (the irre
 steps), so usability for a brand-new operator is capped here by reality, not code; doctor just makes
 'what's left' legible instead of buried in the source."""
 from __future__ import annotations
+import logging
 import shutil
 from fanops.config import Config
 from fanops.accounts import Accounts
@@ -77,7 +78,8 @@ def doctor_report(cfg: Config) -> dict:
                      "run the Studio Validate learning step (Go-Live > 5 · Validate learning), or `fanops cutover`, to confirm lift fields")
     try:
         n = len(list(cfg.review.glob("*.jpg"))) if cfg.review.exists() else 0
-    except Exception:
+    except OSError as e:                                 # a glob/stat hiccup (perms, stale mount) -> fail-soft to 0,
+        logging.getLogger("fanops.doctor").debug("review glob failed: %s", e)   # but leave a breadcrumb, not a silent 0
         n = 0
     if n:
         notes.append(f"review queue: {n} candidate(s) in 00_review/ awaiting Finder approval — "

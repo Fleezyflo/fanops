@@ -5,6 +5,7 @@ the whole pass (FIX F03). Returns counts + awaiting{moments,captions}."""
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from typing import Optional, TypedDict
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.errors import AuthError
@@ -352,7 +353,36 @@ def _publish_safe(cfg: Config, log) -> None:
         log("publish", "-", "error", err=str(e)[:120])
 
 
-def _build_summary(cfg: Config, before: set) -> dict:
+class AwaitingCounts(TypedDict):
+    """The per-kind count of agent gates still awaiting a responder answer (the run loop converges only
+    when all are 0). Keys mirror responder._SCHEMA / agentstep.pending kinds."""
+    moments: int
+    moment_hooks: int
+    moment_casting: int
+    captions: int
+
+
+class RunSummary(TypedDict):
+    """advance()'s return: the post-run heartbeat/summary. A TypedDict (NOT a dataclass) on purpose — the
+    value is `print()`ed as a dict for operators, flows to the Studio as an ActionResult.detail payload, and
+    is key-accessed by the CLI/run loop, so the runtime shape MUST stay a plain dict; this only documents the
+    keys + lets a checker catch a mistyped key. last_published_age_hours is None when nothing has published."""
+    sources: int
+    moments: int
+    clips: int
+    posts: int
+    published: int
+    failed: int
+    published_in_run: int
+    last_published_age_hours: Optional[float]
+    needs_reconcile: int
+    holds: int
+    hook_burn_failed: int
+    errors: int
+    awaiting: AwaitingCounts
+
+
+def _build_summary(cfg: Config, before: set) -> RunSummary:
     """B5/E2 heartbeat + summary, built from a POST-publish READ-ONLY reload (the publish committed via its
     own finalize txns). published_in_run = published ids now MINUS `before` (snapshotted at main-txn ENTRY —
     the THIS-RUN delta, incl. reconcile-driven publishes); last_published_age_hours is the age (hours, 2dp)
@@ -364,7 +394,7 @@ def _build_summary(cfg: Config, before: set) -> dict:
     newest = max((_parse(p.scheduled_time) for p in after if p.scheduled_time), default=None)
     last_published_age_hours = (None if newest is None
                                 else round((datetime.now(timezone.utc) - newest).total_seconds() / 3600, 2))
-    summary = {
+    summary: RunSummary = {
         "sources": len(led.sources), "moments": len(led.moments),
         "clips": len(led.clips), "posts": len(led.posts),
         "published": len(led.posts_in_state(PostState.published)),
@@ -393,7 +423,7 @@ def _build_summary(cfg: Config, before: set) -> dict:
     return summary
 
 
-def advance(cfg: Config, *, base_time: str) -> dict:
+def advance(cfg: Config, *, base_time: str) -> RunSummary:
     accts = Accounts.load(cfg)
     log = get_logger(cfg)
     aspects = _aspects_for(accts)
