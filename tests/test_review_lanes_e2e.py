@@ -46,15 +46,16 @@ def test_lane_cast_button_drives_gate_admit_then_uncast_denies(tmp_path):
 
     # 1) BEFORE: @b is uncast on m0 -> the lane shows a +cast button AND the gate DENIES @b on m0.
     html = client.get("/review?view=lanes&source=src1").data.decode()
-    assert "/cast/add/m0?source=src1&amp;account=@b" in html     # the +cast button for (@b, m0) is present
+    assert "/cast/add/m0?source=src1&amp;cast_account=@b" in html  # +cast for (@b, m0); cast_account, NOT the ?account= filter
+    assert "&amp;account=@b" not in html                          # the click must NOT set the global account filter (scope bleed)
     led = Ledger.load(cfg)
     assert account_selection_admits(cfg, led, led.moments["m0"], "@b") is False   # gate: @b not cast -> DENY
 
     # 2) CLICK +cast: POST the route the button targets (exactly its url_for args).
-    r = client.post("/cast/add/m0?source=src1&account=@b&view=lanes")
+    r = client.post("/cast/add/m0?source=src1&cast_account=@b&view=lanes")
     assert r.status_code == 200
     body = r.data.decode()
-    assert "/cast/remove/m0?source=src1&amp;account=@b" in body  # the swapped body now shows −uncast for (@b, m0)
+    assert "/cast/remove/m0?source=src1&amp;cast_account=@b" in body  # the swapped body now shows −uncast for (@b, m0)
 
     # 3) AFTER add: the GATE now ADMITS @b on m0 (the button reached output, not just the ledger).
     led = Ledger.load(cfg)
@@ -64,6 +65,8 @@ def test_lane_cast_button_drives_gate_admit_then_uncast_denies(tmp_path):
     assert account_selection_admits(cfg, led, led.moments["m1"], "@b") is False   # only m0 was cast -> m1 still DENY
 
     # 4) CLICK −uncast (the last pick): POST the remove route -> record DROPS -> gate DENIES again.
+    # Deliberately uses the LEGACY ?account= arg (not cast_account) to keep the back-compat fallback
+    # (request.args.get("cast_account") or _account_arg()) under test — an old caller must still work.
     r = client.post("/cast/remove/m0?source=src1&account=@b&view=lanes")
     assert r.status_code == 200
     led = Ledger.load(cfg)

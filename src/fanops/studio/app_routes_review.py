@@ -154,21 +154,23 @@ def register_review_routes(app, cfg):
     @app.post("/cast/add/<moment_id>")
     def do_cast_add(moment_id):
         # RF1 Task 6: operator cast OVERRIDE — add this (moment, account) to the account's durable
-        # AccountSelection (method=operator, supersedes llm/migrated). source+account ride the same ?source=/
-        # ?account= args the matrix bakes; a missing source/account is a clean failure (never a silent widen).
-        src = _source_arg()
-        if not src or not _account_arg():
+        # AccountSelection (method=operator, supersedes llm/migrated). RF6 #3: the account rides a DISTINCT
+        # `cast_account` arg (mirrors the matrix's ch_account) so a lane's +cast button never sets the global
+        # ?account= FILTER on the re-render (scope bleed); falls back to _account_arg() for any legacy caller.
+        src = _source_arg(); acct = request.args.get("cast_account") or _account_arg()
+        if not src or not acct:
             return _review_panel(actions.ActionResult(ok=False, error="Cast override needs a source and an account."))
-        return _review_panel(actions.cast_add(cfg, src, _account_arg(), moment_id))
+        return _review_panel(actions.cast_add(cfg, src, acct, moment_id))
 
     @app.post("/cast/remove/<moment_id>")
     def do_cast_remove(moment_id):
         # RF1 Task 6: operator cast OVERRIDE — remove this (moment, account); removing the account's last pick
-        # drops the record so the gate denies it on this cast source (no illegal empty operator row).
-        src = _source_arg()
-        if not src or not _account_arg():
+        # drops the record so the gate denies it on this cast source (no illegal empty operator row). RF6 #3:
+        # distinct `cast_account` arg (no ?account= filter bleed), legacy _account_arg() fallback.
+        src = _source_arg(); acct = request.args.get("cast_account") or _account_arg()
+        if not src or not acct:
             return _review_panel(actions.ActionResult(ok=False, error="Cast override needs a source and an account."))
-        return _review_panel(actions.cast_remove(cfg, src, _account_arg(), moment_id))
+        return _review_panel(actions.cast_remove(cfg, src, acct, moment_id))
 
 
     def _render_surface_edit(post_id, result):

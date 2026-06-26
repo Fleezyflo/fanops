@@ -32,6 +32,13 @@ def _seed(cfg):
                                                    account="@a", moment_ids=["m0"], method=SelectionMethod.llm))
         led.add_post(Post(id="p_a_m0", parent_id="c0", account="@a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval))
 
+def _seed_with_post(cfg):
+    # like _seed but @a's m0 post carries clip_profile="long" so its lane row renders the length-band spec chip.
+    _seed(cfg)
+    with Ledger.transaction(cfg) as led:
+        p = led.posts["p_a_m0"]
+        led.posts["p_a_m0"] = p.model_copy(update={"clip_profile": "long"})   # band_for('long') -> "28–45s"
+
 def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
@@ -66,6 +73,16 @@ def test_lanes_view_shows_cast_and_uncast_controls(tmp_path):
     # @a is cast on m0 -> an UNCAST button (− uncast) hitting cast/remove; an uncast row -> a + cast button.
     assert "/cast/remove/m0" in html and "/cast/add/" in html
     assert "view=lanes" in html                                 # the buttons carry view=lanes (scope-stable re-render)
+    # #3: the account rides a DISTINCT cast_account arg, NOT the global ?account= filter (no scope bleed).
+    assert "cast_account=@a" in html                            # @a's lane buttons target @a via the distinct arg
+    assert "&amp;account=@" not in html                         # clicking must not set the global account filter
+
+def test_lanes_row_shows_spec_chips_for_a_cast_post(tmp_path):
+    # #1: a lane row that HAS a post renders the per-account spec chips (length band) like the cards/matrix.
+    cfg = Config(root=tmp_path); _seed_with_post(cfg)
+    html = _client(cfg).get("/review?view=lanes&source=src1").data.decode()
+    assert "lane-spec" in html                                  # the spec-chip container rendered for the post-bearing row
+    assert "28–45s" in html                                     # @a's clip_profile=long -> the length band chip
 
 def test_lanes_view_active_in_toggle(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
