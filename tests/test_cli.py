@@ -707,6 +707,11 @@ def test_studio_subcommand_parses_and_lazy_imports(tmp_path, monkeypatch, mocker
     create_app = mocker.Mock(return_value=fake_app)
     # the module is imported lazily inside the dispatch branch, so patch the source symbol
     mocker.patch("fanops.studio.app.create_app", create_app)
+    # #5: the studio dispatch also lazily calls fanops.health.ensure_up/system_health (cli.py:683),
+    # which boots Docker Desktop + polls it (up to 90s → the 60s pytest-timeout). Stub both at the
+    # source so this CLI-parsing unit test never contacts Docker.
+    mocker.patch("fanops.health.ensure_up", return_value=[])
+    mocker.patch("fanops.health.system_health", return_value=[])
     rc = cli.main(["studio", "--host", "127.0.0.1", "--port", "9999"])
     assert rc == 0
     create_app.assert_called_once()
@@ -719,6 +724,8 @@ def test_studio_defaults_host_port(tmp_path, monkeypatch, mocker):
     import fanops.cli as cli
     fake_app = mocker.Mock()
     mocker.patch("fanops.studio.app.create_app", mocker.Mock(return_value=fake_app))
+    mocker.patch("fanops.health.ensure_up", return_value=[])         # #5: no Docker boot in this unit test
+    mocker.patch("fanops.health.system_health", return_value=[])
     assert cli.main(["studio"]) == 0
     _, kwargs = fake_app.run.call_args
     assert kwargs.get("host") == "127.0.0.1" and kwargs.get("port") == 8787
