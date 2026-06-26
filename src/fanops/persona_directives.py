@@ -267,11 +267,12 @@ def persona_facts(cfg: Config, p) -> dict:
     from fanops.bands import band_for
     from fanops.hashtags import vet_hashtags, load_store
     from fanops.models import Platform
-    band = band_for(getattr(p, "clip_profile", None))
-    try:
+    prof, fr = resolved_cut_spec(p)          # the EFFECTIVE cut — pin OR derived from content_focus/energy (the
+    band = band_for(prof)                    # SAME spec hydration applies), so the card shows the REAL length, not
+    try:                                     # the raw-unset value (which made every persona read as one global band)
         store = load_store(cfg)
     except Exception:
         store = None
     lead = vet_hashtags([], Platform.instagram, lean=getattr(p, "tag_lean", None),
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store)
-    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": getattr(p, "framing", None), "lead_tags": lead}
+    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead}
