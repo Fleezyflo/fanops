@@ -35,7 +35,7 @@
   <div class="count-strip meta">
     <span>Native sources <strong>{{ status.counts.sources }}</strong></span> ·
     <span data-count="batches">Batches <a href="{{ url_for('review') }}"><strong>{{ status.counts.batches if status.counts.batches is not none else '—' }}</strong></a></span> ·
-    <span>Awaiting <strong>{{ status.counts.awaiting }}</strong></span> ·
+    <span>Awaiting <a href="{{ url_for('review') }}"><strong title="{{ status.counts.awaiting_posts }} post(s) across {{ status.counts.awaiting }} moment(s) awaiting review">{{ status.counts.awaiting }}</strong></a></span> ·
     <span>Scheduled <strong>{{ status.counts.scheduled }}</strong></span> ·
     <span>Posted <strong>{{ status.counts.posted }}</strong></span>
   </div>
