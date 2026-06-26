@@ -159,3 +159,22 @@ def test_stale_selected_moment_not_shown(tmp_path):
     lane = _lane(_lanes(cfg), "@a")
     assert [r.moment_id for r in lane.rows] == ["m0", "m1", "m2", "m3"]   # 'gone' is not a row (not in moments)
     assert lane.cast_count == 1                                  # only m0 (the live cast moment) counts
+
+
+# ---- OFF-firewall: account_lanes is a PURE READ — casting=0 doesn't change the truth view, and viewing mints nothing ----
+def test_off_firewall_lanes_still_render_readonly(tmp_path, monkeypatch):
+    # FANOPS_ACCOUNT_CASTING flips the crosspost GATE, NOT the lanes read-model: account_lanes never reads
+    # cfg.account_casting, so a recorded selection STILL shows as cast in the truth view under OFF, every lane
+    # still renders, and merely BUILDING the view mints no posts. (The gate's OFF behavior is tested elsewhere.)
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = _cfg(tmp_path); _seed_moments(cfg)
+    assert cfg.account_casting is False                          # firewall is OFF for this test
+    with Ledger.transaction(cfg) as led:
+        led.add_account_selection(AccountSelection(id=account_selection_id("src1", "@a"), source_id="src1",
+                                                   account="@a", moment_ids=["m0"], method=SelectionMethod.llm))
+    view = _lanes(cfg)
+    assert {ln.account for ln in view.lanes} == {"@a", "@b"}     # every active account still gets a lane under OFF
+    a = _lane(view, "@a")
+    assert next(r for r in a.rows if r.moment_id == "m0").is_cast is True   # recorded cast still shown as cast (read is config-independent)
+    assert a.cast_count == 1
+    assert len(Ledger.load(cfg).posts) == 0                      # VIEWING is a pure read — nothing was minted

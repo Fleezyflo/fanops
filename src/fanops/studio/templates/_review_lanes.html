@@ -4,6 +4,7 @@
    the already-built do_cast_add / do_cast_remove routes; both carry source=focused, account=lane.account, AND
    view='lanes' so the post-action re-render rebuilds the lanes view in-scope (R1), never dropping to the default
    cards. A zero-post targeted account STILL gets a lane (the matrix could not draw that column). #}
+{% from "_prov.html" import cause_chips %}
 {% set lv = lanes %}
 <section class="account-lanes" aria-label="Per-account lanes for {{ lv.source_name }}">
   {% if source_choices and source_choices|length > 1 %}
@@ -31,12 +32,18 @@
         {% if row.preview_url %}<a class="lane-preview" href="{{ row.preview_url }}" aria-label="Preview the {{ row.window }} second moment">▸ preview</a>{% endif %}
         {% if row.is_cast %}
           <span class="lane-state cast" aria-label="cast">☑ cast</span>
-          <button type="button" class="button lane-uncast" hx-post="{{ url_for('do_cast_remove', moment_id=row.moment_id, source=lv.source_id, account=lane.account, view='lanes', state=active_state|default(none), offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Remove {{ lane.account }} from the {{ row.window }} second moment">− uncast</button>
+          <button type="button" class="button lane-uncast" hx-post="{{ url_for('do_cast_remove', moment_id=row.moment_id, source=lv.source_id, cast_account=lane.account, view='lanes', state=active_state|default(none), offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Remove {{ lane.account }} from the {{ row.window }} second moment">− uncast</button>
         {% else %}
           <span class="lane-state uncast muted" aria-label="not cast">☐ uncast</span>
-          <button type="button" class="button lane-cast-add" hx-post="{{ url_for('do_cast_add', moment_id=row.moment_id, source=lv.source_id, account=lane.account, view='lanes', state=active_state|default(none), offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Cast {{ lane.account }} on the {{ row.window }} second moment">+ cast</button>
+          <button type="button" class="button lane-cast-add" hx-post="{{ url_for('do_cast_add', moment_id=row.moment_id, source=lv.source_id, cast_account=lane.account, view='lanes', state=active_state|default(none), offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Cast {{ lane.account }} on the {{ row.window }} second moment">+ cast</button>
         {% endif %}
-        {% if row.post %}<span class="lane-post chip state-{{ row.post.state }}" title="this account already has a post for this moment">post: {{ row.post.state }}</span>{% endif %}
+        {% if row.post %}<span class="lane-post chip state-{{ row.post.state }}" title="this account already has a post for this moment">post: {{ row.post.state }}</span>
+          {# RF6 #1: per-account spec chips (length/framing/cut/cast), reused from the cards via provenance_chips
+             (a Jinja global). Scoped to awaiting surfaces (mirrors _card.html's bucket guard) so a non-default
+             ?state=approved lane never emits a spurious shared-cut WARN on a read-only post. #}
+          {% set spec_chips = provenance_chips(row.post, creative_variation=(creative_variation and row.post.state == 'awaiting_approval')) %}
+          {% if spec_chips %}<span class="lane-spec meta" aria-label="{{ row.post.account }} clip spec">{{ cause_chips(spec_chips) }}</span>{% endif %}
+        {% endif %}
       </li>
       {% endfor %}
     </ul>
