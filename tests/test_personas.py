@@ -7,7 +7,7 @@
 import json
 import pytest
 from fanops.config import Config
-from fanops.accounts import Accounts, link_persona
+from fanops.accounts import Accounts, link_persona, set_clip_profile, set_framing
 from fanops import personas as P
 
 
@@ -137,6 +137,27 @@ def test_load_unlinked_account_is_byte_identical(tmp_path):
     assert a.persona == "my own voice" and a.tag_lean == "underground" and a.persona_id is None
 
 
+def test_unlinking_a_persona_leaves_no_stale_hydrated_state(tmp_path):
+    # D3 (audit concern, proven NOT a defect): hydration is IN-MEMORY only — no writer persists a hydrated
+    # field back to accounts.json (every writer mutates the raw dict; there is no Accounts.save). So
+    # clearing a link must leave the account byte-identical to its raw inline values: the persona's brief/
+    # voice never leak into accounts.json, and the next load reads the inline persona again. This pins that
+    # contract so a future hydrated-save path can't silently strand a stale brief on unlink.
+    cfg = Config(root=tmp_path)
+    pid = P.add_persona(cfg, name="P1", voice="curator voice", tag_lean="tasteful", brief="locked strategy")
+    _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
+                           "persona": "my own inline voice", "tag_lean": "bold"}])
+    link_persona(cfg, "@a", pid)
+    linked = Accounts.load(cfg).accounts[0]
+    assert linked.persona == "curator voice" and linked.brief == "locked strategy"   # hydrated in memory
+    link_persona(cfg, "@a", "")                       # clear the link (blank -> persona_id None)
+    raw = json.loads(cfg.accounts_path.read_text())["accounts"][0]
+    assert raw.get("persona_id") is None and "brief" not in raw   # no hydrated field persisted to disk
+    after = Accounts.load(cfg).accounts[0]
+    assert after.persona == "my own inline voice" and after.tag_lean == "bold"   # inline restored
+    assert after.brief == "" and after.persona_id is None         # no stale hydrated brief
+
+
 # --- migration ---------------------------------------------------------------------------------
 
 def test_migrate_from_accounts_creates_and_links(tmp_path):
@@ -158,6 +179,24 @@ def test_migrate_from_accounts_creates_and_links(tmp_path):
     # idempotent: a second run creates nothing new and re-links nothing
     P.migrate_from_accounts(cfg)
     assert len(P.Personas.load(cfg).all()) == 2
+
+
+def test_migrate_preserves_inline_cut_spec(tmp_path):
+    # D4 (audit concern, proven NOT a defect): migrate lifts only voice+tag_lean into the new Persona — the
+    # ONLY fields hydration overwrites unconditionally (tag_lean at _hydrate line 222). An account's inline
+    # clip_profile/framing are NOT carried, but they SURVIVE: hydration overrides them only when the persona
+    # PINS them (conditional `if _prof`), and a freshly-migrated persona pins neither, so the account's own
+    # cut spec stands. This pins that no-data-loss contract (a future unconditional clip_profile hydrate
+    # would silently drop an operator's inline length on migrate).
+    cfg = Config(root=tmp_path)
+    _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
+                           "persona": "hypewoman energy", "tag_lean": "bold"}])
+    set_clip_profile(cfg, "@a", "long")               # operator hand-set an inline cut spec
+    set_framing(cfg, "@a", "top")
+    P.migrate_from_accounts(cfg)
+    a = Accounts.load(cfg).accounts[0]                 # reloaded + hydrated (now linked)
+    assert a.persona_id and a.persona == "hypewoman energy" and a.tag_lean == "bold"   # voice+lean carried
+    assert a.clip_profile == "long" and a.framing == "top"   # inline cut spec NOT lost through migrate+hydrate
 
 
 def test_migrate_skips_accounts_without_persona(tmp_path):
