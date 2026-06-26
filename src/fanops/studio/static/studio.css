@@ -581,3 +581,17 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 /* the collapsed "+ Add a persona" reads as a section header, not a buried toggle */
 .disclosure-step > summary.step-summary { font-size:1.05rem; font-weight:600; color:var(--ink); padding:.5rem 0; }
 .persona-add-step { margin-top:var(--s-4); }
+
+/* ── Go-Live clarity: a guided wizard, not a wall. Done/optional steps collapse so the ACTIVE next step
+   leads; each step heading carries a done/pending marker so the operator knows where they are. ─────────── */
+.step-done { color:var(--ok); font-size:var(--t-meta); font-weight:500; }
+.step-pending { color:var(--muted); font-size:var(--t-meta); font-weight:400; }
+.step-opt { color:var(--faint); font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.05em;
+  font-weight:500; border:1px solid var(--line); border-radius:var(--r-pill); padding:.05rem .45rem; vertical-align:middle; }
+/* nested disclosures inside step 3 — the advanced/orthogonal blocks (routing, content config) tuck away
+   so the channel-MAPPING table is what you see by default */
+.golive-sub { margin-top:var(--s-3); }
+.golive-sub > summary.sub-summary { cursor:pointer; padding:.45rem 0; font-size:var(--t-meta); }
+.golive-sub.channel-backends > summary { margin:-.2rem 0 0; }
+/* the go-live flip is the page's primary gate — give it a left accent so it reads as the decision point */
+.golive-flip { border-left:3px solid var(--accent); }

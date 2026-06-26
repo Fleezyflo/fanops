@@ -323,6 +323,32 @@ def test_get_golive_renders_banner_without_key(tmp_path, monkeypatch):
     assert b"Go Live" in r.data and b"DRYRUN" in r.data
     assert b"TOPSECRET" not in r.data                 # the key VALUE never appears in the HTML
 
+def test_golive_is_a_guided_wizard_not_a_wall(tmp_path, monkeypatch):
+    # Clarity: every step is present, but the page reads as a guided flow — the optional steps are flagged
+    # and collapsed, the advanced step-3 blocks tuck behind sub-disclosures, and the live flip is the gate.
+    cfg = _clean(monkeypatch, tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
+    body = _client(cfg).get("/golive").get_data(as_text=True)
+    for heading in ["1 · Connect Postiz", "2 · Add an account", "3 · Map channels",
+                    "4 · Readiness", "5 · Go live", "6 · Validate learning", "7 · Advanced learning"]:
+        assert heading in body                       # no step was lost in the restructure
+    assert "step-opt" in body                        # the optional steps (validate, advanced) are flagged
+    assert "golive-flip" in body                     # the live flip reads as the decision gate
+    assert 'class="golive-sub' in body               # the advanced step-3 blocks collapse behind sub-disclosures
+
+
+def test_golive_connect_step_collapses_once_connected(tmp_path, monkeypatch):
+    # The connect step is OPEN + "not connected" when fresh, then collapses to a check once a scheduler is
+    # wired — the wizard surfaces the ACTIVE next step instead of holding every step open at once.
+    cfg = _clean(monkeypatch, tmp_path)
+    fresh = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "step-pending" in fresh                                   # step 1 flagged pending (and rendered open)
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)
+    _client(cfg).post("/golive/config", data={"url": "https://p.example.com", "key": "K"})
+    done = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "step-done" in done and "step-pending" not in done        # connected -> done marker, pending gone
+
+
 def test_get_golive_has_nav_tab(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     r = _client(cfg).get("/review")                   # the nav tab is on every page
