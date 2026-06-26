@@ -132,21 +132,128 @@ def render_account_file(led: Ledger, cfg: Config, *, post, acct, target_clip, sr
             get_logger(cfg)(caller, target_clip.id, "hook_burn_failed", surface=surface)
     return RenderPlan(rid, vpath, produced, realized, profile, hook_source, batch_id, source_id)
 
+def _seed_clips(led: Ledger) -> list:
+    """The crosspost seed set: clips that are captioned + not held + not retired (clip or its moment)."""
+    return [c for c in led.clips_in_state(ClipState.captioned)
+            if not c.held and not led.is_retired_clip(c.id)
+            and not led.is_retired_moment(c.parent_id)]
+
+
+def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
+                       base, date_str: str, clip_dur, tgt, src_batch) -> int:
+    """Born/skip ONE post for this clip x surface. Returns 1 when the surface is a BATCH-TARGET
+    exclusion (the per-clip tally counts only these), else 0 for every other outcome (a born post OR
+    any other skip). Owns all the per-surface gates + the add_post — the deepest-nested body of
+    crosspost_clips, hoisted out verbatim (each `continue` -> `return 0`, the batch skip -> `return 1`)."""
+    moment_id = clip.parent_id
+    if tgt and surf.account not in tgt:
+        get_logger(cfg)("crosspost", clip.id, "batch_target_skip",
+                        surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
+        return 1   # batch targets a specific account set; this surface isn't in it (no post born)
+    if not account_selection_admits(cfg, led, m, surf.account):
+        return 0   # RF1 durable-selection gate (Face 3), shared with caption-scoping so they can't drift:
+                   # a cast source admits an account ONLY its AccountSelection's moments (or all, if its
+                   # method is the LABELLED fan_all_default); a source with no selection falls back to the
+                   # legacy affinities path; flag-OFF IGNORES selections (A2). See casting.account_selection_admits.
+    # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
+    # platform's hard cap, SKIP this surface only (conservative — the clip can still post
+    # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown
+    # duration or a platform with no cap -> DO NOT skip (fail-open; the old code posted
+    # regardless and we must never silently drop a post over an unprobed length).
+    max_secs = PLATFORM_MAX_SECONDS.get(surf.platform)
+    if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
+        return 0   # over-cap for this surface -> no post here (still posts to others)
+    aspect = PLATFORM_ASPECT.get(surf.platform, Fmt.r9x16)
+    target_clip = _clip_for_aspect(led, cfg, moment_id, aspect)
+    if target_clip.state not in _REUSABLE_CLIP_STATES:
+        return 0   # on-demand render failed (error/dangling file) -> no post for this surface
+    skey = surface_key(surf.account, surf.platform.value)
+    pid = child_id("post", target_clip.id, skey)        # stable, content-addressed
+    cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
+    if cap is None:
+        # No caption for THIS surface (clip captioned for some surfaces but not this one).
+        # An autonomous run would otherwise drop a real post with zero trace — leave a
+        # breadcrumb before skipping so the missing post is diagnosable in run.log.
+        get_logger(cfg)("crosspost", clip.id, "skipped_surface",
+                        surface=f"{surf.account}/{surf.platform.value}")
+        return 0
+    caption = cap["caption"]
+    # subtle, non-synchronized artist tag on its own line (FIX F31)
+    # clip.id (the captioned seed clip) keys the schedule so two different clips don't
+    # collide on the same surface/minute (AUDIT H1/H2). Use the seed clip, not target_clip,
+    # so the same content schedules consistently across its per-platform aspect renders.
+    sched = surface_time(base, surf.account, surf.platform.value, date_str, i,
+                         clip_id=clip.id, lead_minutes=cfg.publish_lead_minutes)
+    if decide_tag(led, account=surf.account, clip_id=clip.id, when=_parse(sched)):
+        caption = f"{caption}\n{ARTIST_HANDLE}"
+    # Per-account creative variation (FANOPS_CREATIVE_VARIATION, default ON; fail-open). Slice 2 (burn
+    # on approval): the mint RECORDS the per-account on-screen hook — the INTENT — but does NOT run
+    # ffmpeg or mint a Render. The Render materializes when the operator APPROVES the surface
+    # (actions_approve._adopt_render via render_account_file), so ONLY approved surfaces ever render
+    # (the operator's anti-explosion ask — no "100 burned videos per run"). A born variant post carries
+    # variant_hook + variant_key with render_id None + media_urls [] (review serves the MASTER clip;
+    # approval points it at the burned file BEFORE it can become queued, so publish always has media).
+    # OFF / no hook -> variant_* None, render_id None, media [] == the shared-clip behavior (byte-identical).
+    render_id = None
+    variant_key = None
+    variant_hook = None
+    media_urls = []
+    # The on-screen per-account hook is the FRAME-SEEING moment author's hook for THIS handle
+    # (m.hooks_by_persona[handle]), falling back to the shared moment hook. m guarded defensively.
+    own_hook = m.hooks_by_persona.get(surf.account) if m is not None else None
+    hook_v = own_hook or (m.hook if m is not None else None)
+    if cfg.creative_variation and hook_v:
+        variant_key = skey
+        variant_hook = hook_v          # burned AT APPROVAL; account_render_spec(clip, hook, acct) there
+                                       # recomputes the SAME content-addressed render id + cut decision (H1).
+    existing = led.posts.get(pid)
+    if existing is not None:
+        # M2 (audit): a re-crosspost reaches an EXISTING post — pid is content-addressed on (clip,
+        # surface), NOT the per-account hook, so add_post's first-write-wins would keep a STALE hook
+        # after a re-decision (the operator would review/approve the old hook). Rewrite the variant
+        # INTENT in place ONLY while the post is still AWAITING (the render is deferred to approval, so
+        # there is no stale burn to undo) and ONLY on a real diff (a same-input re-run stays
+        # byte-identical). A queued/published post keeps the hook the operator already approved.
+        if existing.state is PostState.awaiting_approval and (
+                existing.variant_hook != variant_hook or existing.variant_key != variant_key):
+            existing.variant_hook = variant_hook; existing.variant_key = variant_key
+        return 0
+    led.add_post(Post(
+        # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator
+        # approves it in the Review tab. publish_due/publish_now iterate only `queued`, so a fresh
+        # post is structurally unpublishable until Ledger.approve_post promotes it.
+        id=pid, parent_id=target_clip.id, state=PostState.awaiting_approval,
+        account=surf.account, account_id=surf.account_id, platform=surf.platform,
+        caption=caption, hashtags=cap.get("hashtags", []), aspect=aspect,
+        scheduled_time=sched, created_at=iso_z(datetime.now(timezone.utc)),   # wall-clock BIRTH (NOT in the pid)
+        media_urls=media_urls,
+        # AUDIT H1: stamp a stable, content-addressed CLIENT idempotency token at birth so
+        # an ambiguous publish is ALWAYS pollable (a real Blotato id overwrites it in
+        # blotato_rest). pid is content-addressed -> a re-run computes the identical token.
+        submission_id=f"fanops_{_hash('idemp', pid)}",
+        render_id=render_id, variant_key=variant_key, variant_hook=variant_hook,
+        # P1 attribution key (one writer = here): the creative dims P3 groups reach by.
+        # first_frame_kind/cut_seconds from the rendered clip, clip_profile from the global
+        # video-type knob (its only home today — config.py). Absent dims default None cleanly.
+        first_frame_kind=target_clip.first_frame_kind, cut_seconds=target_clip.cut_seconds,
+        # clip_profile is the GLOBAL profile at the mint; a real per-account CUT re-stamps its OWN
+        # length profile at APPROVAL (actions_approve._adopt_render), when the cut's realized truth is
+        # known — so the P4 clip_profile dim is accurate by the time a post is published + learned on.
+        clip_profile=cfg.clip_profile, batch_id=src_batch,   # Account-First Studio: denormalized batch (None=ungrouped)
+        variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))   # P2: the axis this variant moved
+    return 0
+
+
 def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: str) -> Ledger:
     base = _parse(base_time)
     date_str = base.date().isoformat()
     surfaces = accounts.surfaces()
-    # operate on the set of clips that are captioned + not held + not retired
-    seed_clips = [c for c in led.clips_in_state(ClipState.captioned)
-                  if not c.held and not led.is_retired_clip(c.id)
-                  and not led.is_retired_moment(c.parent_id)]
-    for clip in seed_clips:
-        moment_id = clip.parent_id
+    for clip in _seed_clips(led):   # captioned + not held + not retired
         # AUDIT (g): the clip's PLAYABLE duration is its MOMENT window (end - start). Clip has no
         # .duration field; the seed clip is rendered from [start,end] of the source, so the window
         # — not the full source length — is the right value. Guard a missing moment defensively
         # (treat as UNKNOWN -> fail-open, never skip). dur is None/<=0 => unknown.
-        m = led.moments.get(moment_id)
+        m = led.moments.get(clip.parent_id)
         clip_dur = (m.end - m.start) if m is not None else None
         # Account-First Studio: resolve the named-batch account target ONCE per clip via the
         # moment->source lineage (m.parent_id == source id). A non-empty target_accounts HARD-bounds
@@ -157,104 +264,10 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
             continue   # P1: casting answer not yet landed -> fan out NEXT pass (mirror: a clip waits for its caption gate)
         src_batch = src.batch_id if src is not None else None
         tgt = led.get_batch(src_batch).target_accounts if (src_batch and led.get_batch(src_batch)) else []
-        n_skipped = 0   # T5: per-CLIP tally of batch-target exclusions (reset inside the clip loop, never bled across clips)
+        n_skipped = 0   # T5: per-CLIP tally of batch-target exclusions (reset each clip, never bled across clips)
         for i, surf in enumerate(surfaces):
-            if tgt and surf.account not in tgt:
-                n_skipped += 1
-                get_logger(cfg)("crosspost", clip.id, "batch_target_skip",
-                                surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
-                continue   # batch targets a specific account set; this surface isn't in it (no post born)
-            if not account_selection_admits(cfg, led, m, surf.account):
-                continue   # RF1 durable-selection gate (Face 3), shared with caption-scoping so they can't drift:
-                           # a cast source admits an account ONLY its AccountSelection's moments (or all, if its
-                           # method is the LABELLED fan_all_default); a source with no selection falls back to the
-                           # legacy affinities path; flag-OFF IGNORES selections (A2). See casting.account_selection_admits.
-            # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
-            # platform's hard cap, SKIP this surface only (conservative — the clip can still post
-            # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown
-            # duration or a platform with no cap -> DO NOT skip (fail-open; the old code posted
-            # regardless and we must never silently drop a post over an unprobed length).
-            max_secs = PLATFORM_MAX_SECONDS.get(surf.platform)
-            if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
-                continue   # over-cap for this surface -> no post here (still posts to others)
-            aspect = PLATFORM_ASPECT.get(surf.platform, Fmt.r9x16)
-            target_clip = _clip_for_aspect(led, cfg, moment_id, aspect)
-            if target_clip.state not in _REUSABLE_CLIP_STATES:
-                continue   # on-demand render failed (error/dangling file) -> no post for this surface
-            skey = surface_key(surf.account, surf.platform.value)
-            pid = child_id("post", target_clip.id, skey)        # stable, content-addressed
-            cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
-            if cap is None:
-                # No caption for THIS surface (clip captioned for some surfaces but not this one).
-                # An autonomous run would otherwise drop a real post with zero trace — leave a
-                # breadcrumb before skipping so the missing post is diagnosable in run.log.
-                get_logger(cfg)("crosspost", clip.id, "skipped_surface",
-                                surface=f"{surf.account}/{surf.platform.value}")
-                continue
-            caption = cap["caption"]
-            # subtle, non-synchronized artist tag on its own line (FIX F31)
-            # clip.id (the captioned seed clip) keys the schedule so two different clips don't
-            # collide on the same surface/minute (AUDIT H1/H2). Use the seed clip, not target_clip,
-            # so the same content schedules consistently across its per-platform aspect renders.
-            sched = surface_time(base, surf.account, surf.platform.value, date_str, i,
-                                 clip_id=clip.id, lead_minutes=cfg.publish_lead_minutes)
-            if decide_tag(led, account=surf.account, clip_id=clip.id, when=_parse(sched)):
-                caption = f"{caption}\n{ARTIST_HANDLE}"
-            # Per-account creative variation (FANOPS_CREATIVE_VARIATION, default ON; fail-open). Slice 2 (burn
-            # on approval): the mint RECORDS the per-account on-screen hook — the INTENT — but does NOT run
-            # ffmpeg or mint a Render. The Render materializes when the operator APPROVES the surface
-            # (actions_approve._adopt_render via render_account_file), so ONLY approved surfaces ever render
-            # (the operator's anti-explosion ask — no "100 burned videos per run"). A born variant post carries
-            # variant_hook + variant_key with render_id None + media_urls [] (review serves the MASTER clip;
-            # approval points it at the burned file BEFORE it can become queued, so publish always has media).
-            # OFF / no hook -> variant_* None, render_id None, media [] == the shared-clip behavior (byte-identical).
-            render_id = None
-            variant_key = None
-            variant_hook = None
-            media_urls = []
-            # The on-screen per-account hook is the FRAME-SEEING moment author's hook for THIS handle
-            # (m.hooks_by_persona[handle]), falling back to the shared moment hook. m guarded defensively.
-            own_hook = m.hooks_by_persona.get(surf.account) if m is not None else None
-            hook_v = own_hook or (m.hook if m is not None else None)
-            if cfg.creative_variation and hook_v:
-                variant_key = skey
-                variant_hook = hook_v          # burned AT APPROVAL; account_render_spec(clip, hook, acct) there
-                                               # recomputes the SAME content-addressed render id + cut decision (H1).
-            existing = led.posts.get(pid)
-            if existing is not None:
-                # M2 (audit): a re-crosspost reaches an EXISTING post — pid is content-addressed on (clip,
-                # surface), NOT the per-account hook, so add_post's first-write-wins would keep a STALE hook
-                # after a re-decision (the operator would review/approve the old hook). Rewrite the variant
-                # INTENT in place ONLY while the post is still AWAITING (the render is deferred to approval, so
-                # there is no stale burn to undo) and ONLY on a real diff (a same-input re-run stays
-                # byte-identical). A queued/published post keeps the hook the operator already approved.
-                if existing.state is PostState.awaiting_approval and (
-                        existing.variant_hook != variant_hook or existing.variant_key != variant_key):
-                    existing.variant_hook = variant_hook; existing.variant_key = variant_key
-                continue
-            led.add_post(Post(
-                # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator
-                # approves it in the Review tab. publish_due/publish_now iterate only `queued`, so a fresh
-                # post is structurally unpublishable until Ledger.approve_post promotes it.
-                id=pid, parent_id=target_clip.id, state=PostState.awaiting_approval,
-                account=surf.account, account_id=surf.account_id, platform=surf.platform,
-                caption=caption, hashtags=cap.get("hashtags", []), aspect=aspect,
-                scheduled_time=sched, created_at=iso_z(datetime.now(timezone.utc)),   # wall-clock BIRTH (NOT in the pid)
-                media_urls=media_urls,
-                # AUDIT H1: stamp a stable, content-addressed CLIENT idempotency token at birth so
-                # an ambiguous publish is ALWAYS pollable (a real Blotato id overwrites it in
-                # blotato_rest). pid is content-addressed -> a re-run computes the identical token.
-                submission_id=f"fanops_{_hash('idemp', pid)}",
-                render_id=render_id, variant_key=variant_key, variant_hook=variant_hook,
-                # P1 attribution key (one writer = here): the creative dims P3 groups reach by.
-                # first_frame_kind/cut_seconds from the rendered clip, clip_profile from the global
-                # video-type knob (its only home today — config.py). Absent dims default None cleanly.
-                first_frame_kind=target_clip.first_frame_kind, cut_seconds=target_clip.cut_seconds,
-                # clip_profile is the GLOBAL profile at the mint; a real per-account CUT re-stamps its OWN
-                # length profile at APPROVAL (actions_approve._adopt_render), when the cut's realized truth is
-                # known — so the P4 clip_profile dim is accurate by the time a post is published + learned on.
-                clip_profile=cfg.clip_profile, batch_id=src_batch,   # Account-First Studio: denormalized batch (None=ungrouped)
-                variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))   # P2: the axis this variant moved
+            n_skipped += _mint_surface_post(led, cfg, clip, m, surf, i, base=base, date_str=date_str,
+                                            clip_dur=clip_dur, tgt=tgt, src_batch=src_batch)
         if tgt:   # T5: one structured exclusion summary per batched clip (the ONLY persistent record — excluded
                   # surfaces become no Post). Silent when tgt==[] (unbatched/ALL-sentinel) -> byte-identical fan-out.
             get_logger(cfg)("crosspost", clip.id, "batch_target_summary",
