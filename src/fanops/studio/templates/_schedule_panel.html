@@ -13,7 +13,7 @@
     </div>
   {% endif %}
   {% if approved_total %}
-    <form class="respread" hx-post="{{ url_for('do_reschedule_bucket', account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+    <form class="respread" hx-post="{{ url_for('do_reschedule_bucket', account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
       <button type="submit">Reschedule all</button> <span class="muted">— re-spread the {{ approved_total }} approved post(s) from now</span>
     </form>
   {% endif %}
@@ -34,22 +34,22 @@
       <td>{{ r.state }}</td>
       <td>
         {% if r.editable %}
-        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <input type="datetime-local" name="new_time" value="{{ r.scheduled_time | localinput }}" aria-label="New local time for {{ r.account }} {{ r.platform }}">
           <button type="submit">Move</button>
         </form>
         {% if r.suggested_time %}
-        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <input type="hidden" name="new_time" value="{{ r.suggested_time }}">
           <button type="submit">Use suggested</button> <span class="muted"{% if r.why_suggested %} title="{{ r.why_suggested }}"{% endif %}>{{ r.suggested_time | localdt }}</span>
         </form>
         {# S5: WHY this slot — the suggestion is deterministic (per-account cadence + lead window); spell it out. #}
         {% if r.why_suggested %}<p class="meta why-suggested muted">{{ r.why_suggested }}</p>{% endif %}
         {% endif %}
-        <form hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <button type="submit">Clear time</button>
         </form>
-        <form hx-post="{{ url_for('do_schedule_publish', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_schedule_publish', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           {% if backend is defined and backend != 'dryrun' %}
             <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> publish to the REAL account ({{ backend }})</label>
           {% endif %}
@@ -57,7 +57,7 @@
           {% if r.ready %}<span class="chip ok schedule-ready" title="{{ r.ready_reason }}">ready</span>{% elif r.ready is not none %}<span class="chip warn schedule-ready" title="{{ r.ready_reason }}">⚠ {{ r.ready_reason }}</span>{% endif %}
           <button type="submit" class="primary">Publish now</button>
         </form>
-        <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id, account=active) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
           <button type="submit">Send back to Review</button>
         </form>
         {% else %}<span class="ro">—</span>{% endif %}

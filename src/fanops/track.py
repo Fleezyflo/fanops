@@ -31,10 +31,14 @@ ListPosts = Callable[[str], list[dict]]
 def _missing_high_weight(metrics: dict, weights: Optional[dict]) -> list[str]:
     """The ACTIVE high-weight keys absent from this row (sorted). Judged against the ACTIVE weight map
     (a tuning override REPLACES _W), so 'degraded' tracks whatever objective is configured. NEVER
-    recalibrates _W — purely observational (audit H3)."""
+    recalibrates _W — purely observational (audit H3). D1: a key PRESENT-BUT-NULL counts as missing —
+    lift_score drops a non-numeric value (isinstance guard) so a null saves contributes nothing, exactly
+    like an absent saves; treating it as present would stamp a partial objective 'complete' and could
+    auto-unfreeze learning on an unproven shape."""
     w = _W if weights is None else weights
     return sorted(k for k, wt in w.items()
-                  if isinstance(wt, (int, float)) and not isinstance(wt, bool) and wt >= _HIGH_WEIGHT and k not in metrics)
+                  if isinstance(wt, (int, float)) and not isinstance(wt, bool) and wt >= _HIGH_WEIGHT
+                  and metrics.get(k) is None)    # absent OR present-but-null (.get -> None for both)
 
 def lift_score(metrics: dict, weights: Optional[dict] = None) -> float:
     # weights=None -> the in-code DEFAULT _W (existing callers/tests unchanged). A tuning.json
