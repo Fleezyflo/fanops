@@ -344,6 +344,8 @@ def test_request_captions_injects_transferred_prior_for_cold_surface(monkeypatch
     accts = _transfer_accounts(cfg, [("@a", "hype"), ("@b", "hype"), ("@c", "hype")])
     _win_surface_for(led, "@a", Platform.instagram, "STYLE")
     _win_surface_for(led, "@b", Platform.instagram, "STYLE")   # 2 donors -> STYLE qualifies
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True})      # transfer is VALIDATION-FROZEN — open the gate
     # request captions for the COLD recipient @c.
     led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
@@ -379,10 +381,12 @@ def test_request_captions_own_winner_takes_precedence_over_transfer(monkeypatch,
     _win_surface_for(led, "@a", Platform.instagram, "STYLE")
     _win_surface_for(led, "@b", Platform.instagram, "STYLE")
     _win_surface_for(led, "@c", Platform.instagram, "OWN")     # @c has its OWN winner
-    led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=accts)
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True})      # open the validation gate so transfer COULD fire —
+    led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=accts)   # the OWN-WINS rule is what suppresses it
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert payload["learned_hooks"] == ["OWN"]                 # own signal present
-    assert "learned_hooks_transferred" not in payload          # borrowed signal suppressed
+    assert "learned_hooks_transferred" not in payload          # borrowed signal suppressed (own-wins, not the freeze)
 
 def test_request_captions_failopen_on_transfer_error(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
@@ -390,6 +394,10 @@ def test_request_captions_failopen_on_transfer_error(monkeypatch, tmp_path):
     accts = _transfer_accounts(cfg, [("@a", "hype"), ("@b", "hype"), ("@c", "hype")])
     _win_surface_for(led, "@a", Platform.instagram, "STYLE")
     _win_surface_for(led, "@b", Platform.instagram, "STYLE")
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True})      # open the validation gate so the raising
+    #                                                           scorer is actually REACHED (else the freeze
+    #                                                           short-circuits and the fail-open path is untested)
     monkeypatch.setattr("fanops.caption.transferred_hooks",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=accts)  # no raise

@@ -30,6 +30,35 @@ def _win_surface(led, account, platform, hook="WIN", *, n=3, win=90.0, lose=10.0
                           variant_key=f"vk_{pid}{i}", variant_hook=h, metrics={"lift_score": lift}))
 
 
+def _validate(cfg):
+    # mark the live-validation precondition (mirrors test_variant_amplify._validate).
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True})
+
+
+def test_transfer_is_validation_frozen_until_learning_validated(tmp_path, monkeypatch):
+    # B2 (real defect): config.py:variant_transfer DOCSTRING promises the feature "stays inert until
+    # learning_validated opens" — transferring a style proven on an UNCONFIRMED lift propagates noise.
+    # variant_amplify enforces this (test_apply_amplify_inert_until_learning_validated); transfer did NOT —
+    # the caption consumer (_transferred_hooks) gated only on the flag. Pin the contract at the injection
+    # point: flag ON + learning UNVALIDATED -> NO borrowed prior reaches a caption.
+    from fanops import caption
+    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    accts = _accounts(cfg, [("@a", [Platform.instagram], "hype"),
+                            ("@b", [Platform.instagram], "hype"),
+                            ("@c", [Platform.instagram], "hype")])
+    _win_surface(led, "@a", Platform.instagram, "STYLE")     # two donors prove a transferable style
+    _win_surface(led, "@b", Platform.instagram, "STYLE")
+    surfaces = [("@c", Platform.instagram)]                  # @c is cold (no own winner)
+    # the pure scorer still computes the borrowable style (validation-agnostic by design)...
+    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == ["STYLE"]
+    # ...but the CAPTION consumer must withhold it until learning is validated.
+    assert caption._transferred_hooks(led, cfg, accts, surfaces) == []      # FROZEN
+    _validate(cfg)
+    assert caption._transferred_hooks(led, cfg, accts, surfaces) == ["STYLE"]   # OPENS once validated
+
+
 def test_recipient_with_own_winner_gets_nothing(tmp_path, monkeypatch):
     # own-wins rule: a surface that already has its own gated winner borrows nothing.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

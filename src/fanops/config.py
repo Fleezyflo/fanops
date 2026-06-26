@@ -587,10 +587,13 @@ class Config:
         # FANOPS_VARIANT_LEARNING (still the master gate — UCB is inert if learning is off). Does NOT
         # affect variant_amplify, which keeps using best_hooks as its safety floor. Only the explicit
         # on-words enable it; unset/empty/other stays OFF (v2 greedy behavior).
-        # VALIDATION-FROZEN (Phase 2): a bandit allocating over lift_scores whose live field shape is
-        # unconfirmed is theater — stays inert until `learning_validated` opens (AUTO-stamped by the first
-        # real non-degraded live metric via track._auto_validate_metrics_shape, or the optional early
-        # `fanops cutover metrics` probe).
+        # NOT validation-frozen: this is a scorer swap on the SAFE caption-bias READ path (AST-locked to the
+        # read/request side by test_ucb_rank_called_only_on_safe_read_or_request_side). Its trust gate is the
+        # statistical one (variant_amplify_min_posts/min_gap inside the scorer) + the variant_learning master
+        # flag — NOT `learning_validated`. The learning_validated freeze is reserved for the CONSEQUENTIAL
+        # actuator that consumes a winner to re-mine a source (variant_amplify.py:166), never the cheap,
+        # reversible caption hint. (A degraded/unconfirmed lift can still bias a caption; that is an accepted,
+        # low-stakes trade — biasing a caption is reversible, re-mining a source is not.)
         v = (os.getenv("FANOPS_VARIANT_UCB") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 

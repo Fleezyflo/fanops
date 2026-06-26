@@ -161,6 +161,10 @@ def _transferred_hooks(led: Ledger, cfg: Config, accounts,
     FAIL-OPEN: any error is logged once and yields [] so a transfer failure can never block a caption."""
     if not cfg.variant_transfer or accounts is None:
         return []
+    from fanops.validation_gate import learning_validated
+    if not learning_validated(cfg):
+        return []                              # VALIDATION-FROZEN (Phase 2): never bias a caption toward a style
+                                               # measured on an UNCONFIRMED lift — mirrors variant_amplify's gate
     try:
         out: list[str] = []
         seen: set[str] = set()
