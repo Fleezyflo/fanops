@@ -308,6 +308,17 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .day-head::before { content:none; }
 /* the «batch title» tag in Schedule/Posted table cells */
 .batch-tag { font-family:var(--serif); font-style:italic; }
+/* Schedule clip preview: a narrow lazy poster thumbnail that expands to an inline player on click. Collapsed
+   by default + loading=lazy + preload=none, so the timeline stays a fast scan — no 150 simultaneous videos. */
+.sched-clip { width:3.5rem; }
+.sched-preview > summary { cursor:pointer; list-style:none; display:inline-block; line-height:0; }
+.sched-preview > summary::-webkit-details-marker { display:none; }
+.sched-thumb { width:3rem; aspect-ratio:9/16; object-fit:cover; border-radius:var(--r-sm); border:1px solid var(--line);
+  background:#000; display:block; }
+.sched-preview > summary:hover .sched-thumb, .sched-preview > summary:focus-visible .sched-thumb { border-color:var(--accent); }
+.sched-preview[open] { position:relative; }
+.sched-preview[open] > video { display:block; width:11rem; max-width:40vw; aspect-ratio:9/16; object-fit:cover; background:#000;
+  border:1px solid var(--line-bright); border-radius:var(--r-sm); margin-top:.3rem; }
 /* Posted "Link" cell: the live social-post permalink as a labeled pill affordance (click the post -> the
    real IG/TikTok post), not a raw URL dump; the muted "pending ⟳" sibling reads when reconcile hasn't
    captured public_url yet. */

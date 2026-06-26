@@ -23,9 +23,19 @@
   {% for acct, acct_rows in (groups if groups else [('', rows)]) %}
   {% if not active and groups %}<h3 class="day-head">{{ acct }}</h3>{% endif %}
   <table>
-    <tr><th>Time</th><th>Account</th><th>Hook</th><th>Caption</th><th>Integration</th><th>State</th><th><span class="vh">Actions</span></th></tr>
+    <tr><th><span class="vh">Clip</span></th><th>Time</th><th>Account</th><th>Hook</th><th>Caption</th><th>Integration</th><th>State</th><th><span class="vh">Actions</span></th></tr>
     {% for r in acct_rows %}
     <tr>
+      {# Click-to-expand clip preview: a lazy poster thumbnail (no fetch off-screen) that opens a preload=none
+         player on click — visual confirmation without the 150-<video> hit this table was built to avoid. The
+         poster resolves from the clip; the player from this post's (per-account) media. Native <details>: no JS
+         to rebind after an htmx swap. Both fail-open to a blank box (clip_thumb/media 404), never a 500. #}
+      <td class="sched-clip">{% if r.clip_id %}
+        <details class="sched-preview">
+          <summary aria-label="Preview clip for {{ r.account }} {{ r.platform }}"><img class="sched-thumb" loading="lazy" src="{{ url_for('clip_thumb', clip_id=r.clip_id) }}" alt="clip first frame"></summary>
+          <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=r.clip_id) }}" src="{{ url_for('media', post_id=r.post_id) }}" aria-label="{{ r.account }} {{ r.platform }} clip"></video>
+        </details>
+      {% else %}<span class="ro">—</span>{% endif %}</td>
       <td>{{ r.scheduled_time | localdt or 'unscheduled' }}{% if r.imminent %} <span class="badge {{ 'shipped' if r.state != 'queued' else '' }}">{{ 'shipped' if r.state != 'queued' else 'now' }}</span>{% endif %}</td>
       <td>{{ r.account }} <span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %}</td>
       <td class="muted" title="on-screen hook">{% if r.variant_hook %}✦ {{ r.variant_hook }}{% else %}—{% endif %}</td>
