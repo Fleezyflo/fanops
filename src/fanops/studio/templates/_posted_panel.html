@@ -17,7 +17,7 @@
   {% endif %}
   {# content-lifecycle Phase 4: bulk cross-account backfill — send everything from one account also to another. #}
   {% if accounts and accounts|length > 1 %}
-  <form class="crosspost-all" hx-post="{{ url_for('do_crosspost_all', account=active) }}" hx-target="#posted-body" hx-swap="outerHTML">
+  <form class="crosspost-all" hx-post="{{ url_for('do_crosspost_all', account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
     <label>Send all of
       <select name="source_account" aria-label="Source account">{% for a in accounts %}<option value="{{ a.handle }}">{{ a.handle }}</option>{% endfor %}</select>
       also to
@@ -48,12 +48,12 @@
       <td>{{ metric(r.reach, peaks.reach) }}</td>
       <td>{% if r.public_url %}<a class="live-link" href="{{ r.public_url }}" target="_blank" rel="noopener" title="Open the live {{ r.platform }} post in a new tab">View on {{ r.platform }} ↗</a>{% else %}<span class="muted" title="The live link fills in automatically once the post goes live and the next insights pull runs.">pending ⟳</span>{% endif %}</td>
       <td>
-        <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active) }}" hx-target="#posted-body" hx-swap="outerHTML">
+        <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
           <button type="submit">Post again</button>
         </form>
         {% if accounts %}
         {# content-lifecycle Phase 4: reuse this clip on ANOTHER account/platform (a fresh awaiting_approval post). #}
-        <form class="crosspost-one" hx-post="{{ url_for('do_crosspost_to_account', clip_id=r.clip_id, account=active) }}" hx-target="#posted-body" hx-swap="outerHTML">
+        <form class="crosspost-one" hx-post="{{ url_for('do_crosspost_to_account', clip_id=r.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
           <select name="target_account" aria-label="Target account">{% for a in accounts %}<option value="{{ a.handle }}">{{ a.handle }}</option>{% endfor %}</select>
           <select name="platform" aria-label="Target platform">{% for a in accounts %}{% for p in a.platforms %}<option value="{{ p.value }}">{{ p.value }}</option>{% endfor %}{% endfor %}</select>
           <button type="submit">Post to another account</button>

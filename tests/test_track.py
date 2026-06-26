@@ -85,6 +85,30 @@ def test_lift_degraded_marker_does_not_corrupt_a_later_lift_score(tmp_path):
     assert degraded_score == lift_score({"shares": 10})        # marker did not change the score
     assert led.posts["p1"].metrics["lift_degraded"] is True
 
+def test_record_marks_degraded_when_high_weight_metric_is_present_but_null(tmp_path):
+    # D1: a backend row carrying a primary key with a NULL value (e.g. Postiz returns {"saves": None})
+    # is AS untrustworthy as one omitting it — lift_score drops the null (isinstance guard), so the
+    # objective is partial. The marker must catch present-but-null, not only present-but-absent.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"saves": None, "shares": 12, "retention": 0.7, "reach": 1000})
+    m = led.posts["p1"].metrics
+    assert m["lift_degraded"] is True
+    assert m["lift_missing_keys"] == ["saves"]                # null saves is a MISSING high-weight key
+    assert m["lift_score"] == lift_score({"saves": None, "shares": 12, "retention": 0.7, "reach": 1000})
+
+def test_present_but_null_high_weight_blocks_auto_validation(tmp_path, monkeypatch):
+    # D1 (the stakes): a present-but-null primary metric must NOT auto-unfreeze learning. Before the fix
+    # the null escaped lift_degraded, so _auto_validate_metrics_shape saw a "clean" analyzed row and
+    # stamped learning_validated on an unproven shape. With the fix the row is degraded -> never stamps.
+    from fanops.validation_gate import learning_validated
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    assert not learning_validated(cfg)
+    record_metrics(led, "p1", {"saves": None, "shares": 12, "retention": 0.7})
+    from fanops.track import _auto_validate_metrics_shape
+    _auto_validate_metrics_shape(led, cfg)
+    assert not learning_validated(cfg)                        # degraded null-shape never proves the gate
+
 def test_pull_matches_by_submission_id_and_skips_failed(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1",
