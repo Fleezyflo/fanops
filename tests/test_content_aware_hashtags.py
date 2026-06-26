@@ -131,6 +131,24 @@ def test_seed_fallback_entry_carries_tag_sources(tmp_path):
     assert "content" in entry["tag_sources"].values()          # the clip's content reached the line
 
 
+# ---- Task 5: the prompt offers the clip's content tags (byte-identical without) ----------------------
+from fanops.prompts import caption_prompt
+
+_BASE_PAYLOAD = {"surfaces": [{"surface": "@a/instagram", "platform": "instagram"}], "language": "en"}
+
+
+def test_prompt_includes_content_block_when_present():
+    out = caption_prompt({**_BASE_PAYLOAD, "content_tags": ["#diss", "#loyalty"]})
+    assert "#diss" in out and "#loyalty" in out
+    assert "clip-specific" in out.lower()                       # the model is told these are clip-derived
+
+
+def test_prompt_byte_identical_without_content():
+    out = caption_prompt(_BASE_PAYLOAD)
+    assert "do NOT invent tags:" in out                         # original menu-only wording stands
+    assert "clip-specific" not in out.lower()                   # no content block when absent
+
+
 def test_contentless_clip_is_byte_identical(tmp_path):
     # an empty-transcript clip ships the same seed line as before this feature (firewall).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
