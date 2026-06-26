@@ -192,11 +192,11 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     editable = awaiting or (state == PostState.queued.value and not imm)
     # M3a: the per-account differentiation, surfaced. is_account_cut is the TRUTH on the Render (a failed cut
     # fell back to a shared burn and stays False); framing is the account's own pinned crop (None = inherits global).
-    r = led.renders.get(post.render_id) if getattr(post, "render_id", None) else None
+    r = led.renders.get(post.render_id) if post.render_id else None
     # S2 provenance: NAME the cause of each derived value (pure, from the already-passed acct/affinities). length
     # attributes to the persona when the account is persona-linked, else the account's own pin, else None (global
     # inherited → value renders bare). framing names the account's pin. cast names the moment's pick for this account.
-    prof = getattr(post, "clip_profile", None)
+    prof = post.clip_profile
     # length attributes to the persona ONLY when the linked persona TRULY supplied the cut (persona_owns_profile,
     # stamped at hydration) — a persona_id alone proves nothing (the account's own pin may stand). Else name the
     # account ONLY when its pin actually EQUALS the post's stamped profile (a drifted pin must not be miscredited).
@@ -211,9 +211,9 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
         scheduled_time=post.scheduled_time, media_url=f"/media/{post.id}",
         state=state, imminent=imm, editable=editable,
         suggested_time=suggest_time(cfg, post, now=now) if editable else None,   # P1: only editable surfaces
-        variant_hook=getattr(post, "variant_hook", None),   # persona on-screen hook (None when variation OFF)
-        length_label=_length_label(getattr(post, "clip_profile", None)),
-        is_account_cut=bool(r and getattr(r, "is_account_cut", False)),
+        variant_hook=post.variant_hook,   # persona on-screen hook (None when variation OFF)
+        length_label=_length_label(post.clip_profile),
+        is_account_cut=bool(r and r.is_account_cut),
         framing=(getattr(acct, "framing", None) or None),
         # Phase 4: read Render.hook_source FAIL-OPEN (P3 provenance). A HookSource enum -> its .value string;
         # absent/None Render -> None (the ⚠ shared-hook badge stays dark, byte-identical). getattr-guarded so a

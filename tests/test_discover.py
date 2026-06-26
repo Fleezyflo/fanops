@@ -20,6 +20,18 @@ def test_candidate_meta_fail_soft_when_probe_fails(tmp_path, mocker):
     m = discover.candidate_meta(f)
     assert m["bytes"] > 0 and m["duration"] is None and m["width"] is None
 
+def test_candidate_meta_logs_breadcrumb_on_probe_error(tmp_path, mocker, caplog):
+    # A non-toolchain probe failure must NOT vanish silently — leave one breadcrumb so a real
+    # probe_dimensions bug is visible, mirroring the ToolchainMissingError sibling. Still fail-soft
+    # (the candidate is listed with null dims).
+    import logging
+    f = tmp_path / "a.mp4"; _put(f)
+    mocker.patch("fanops.discover.probe_dimensions", side_effect=ValueError("garbled ffprobe json"))
+    with caplog.at_level(logging.DEBUG, logger="fanops.discover"):
+        m = discover.candidate_meta(f)
+    assert m["width"] is None and m["bytes"] > 0                 # still fail-soft, still listed
+    assert any(str(f) in r.getMessage() for r in caplog.records)   # breadcrumb names the path
+
 def test_make_thumbnail_builds_ffmpeg_cmd(tmp_path, mocker):
     src = tmp_path / "a.mp4"; _put(src)
     out = tmp_path / "a.jpg"
