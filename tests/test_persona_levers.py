@@ -250,7 +250,7 @@ def test_personas_panel_renders_transparency_facts(tmp_path):
 # ======================================================================================
 # M3 — THE DIRECTIVE ENGINE. Each structured lever compiles into a SUBSTANTIVE per-dimension
 # instruction injected into THAT dimension's real prompt (not a glued adjective). The operator
-# can OVERRIDE the compiled text per dimension; clip_count is a per-persona clip ceiling. THE
+# can OVERRIDE the compiled text per dimension. THE
 # FIREWALL holds: no levers + no override -> the bare voice, byte-identical to today.
 # ======================================================================================
 from fanops.personas import casting_directive, hook_directive, caption_directive
