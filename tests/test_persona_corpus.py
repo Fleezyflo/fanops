@@ -38,6 +38,28 @@ def test_corpus_floats_ahead_of_lean():
     assert out[0] == "#detroitrap"
 
 
+def test_corpus_with_non_str_entry_is_dropped_not_crashed():
+    # Investigation-2 D6 (audit feared a crash, proven fail-open BY CONSTRUCTION): a hand-edited
+    # personas.json could in principle carry a non-str in hashtag_corpus. vet_hashtags isinstance-guards
+    # every corpus entry (n = _norm(t) if isinstance(t, str) else "") so a non-str is DROPPED, never raised.
+    # Pinned so a future refactor that removes the guard can't reintroduce a Personas-page crash. (NB the
+    # Persona model also validates hashtag_corpus: list[str], so this is the second line of defense.)
+    out = vet_hashtags(["#hiphop"], Platform.instagram, "en", corpus=["#detroitrap", 123, None, "#rap"])
+    assert "#detroitrap" in out and "#hiphop" in out      # valid tags kept
+    assert all(isinstance(t, str) for t in out)            # no non-str leaked into the result; no exception
+
+
+def test_persona_facts_failopen_on_weird_corpus(tmp_path):
+    # D6 end-to-end: persona_facts is the Personas-page transparency read. Even a duck-typed object whose
+    # corpus holds a non-str must NOT crash the read (vet_hashtags drops it). Pins the page's fail-open.
+    from types import SimpleNamespace
+    cfg = Config(root=tmp_path)
+    p = SimpleNamespace(clip_profile=None, framing="top", tag_lean="bold", hashtag_corpus=["#detroitrap", 7])
+    facts = core.persona_facts(cfg, p)                      # must return cleanly, not raise
+    assert facts["framing"] == "top" and isinstance(facts["lead_tags"], list)
+    assert "#detroitrap" in facts["lead_tags"]
+
+
 def test_corpus_hard_capped_at_4():
     out = vet_hashtags([], Platform.instagram, "en", corpus=["#a", "#b", "#c", "#d", "#e", "#f"])
     assert len(out) == 4 and out == ["#a", "#b", "#c", "#d"]
