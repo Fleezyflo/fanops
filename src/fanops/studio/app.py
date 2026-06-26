@@ -176,10 +176,11 @@ def _state_arg():
 
 def _view_arg():
     # Slice 2: the Review view mode from ?view=. 'list' -> the legacy moment-first cards; 'account' -> the
-    # account-first PIVOT (one account's run as a flat list); 'matrix' (or absent/unknown) -> the DEFAULT
-    # moment×account matrix. Read from request.args so it rides the action/pagination URLs (R1).
+    # account-first PIVOT (one account's run as a flat list); 'lanes' (RF6) -> the account-first per-account
+    # lanes; 'matrix' (or absent/unknown) -> the DEFAULT moment×account matrix. Read from request.args so it
+    # rides the action/pagination URLs (R1).
     v = (request.args.get("view") or "").strip().lower()
-    return v if v in ("account", "list", "matrix") else None
+    return v if v in ("account", "list", "matrix", "lanes") else None   # RF6: 'lanes' = the account-first per-account lanes
 
 def _with_active(counts, active):
     # The chip UNIVERSE = the accounts present in the (unfiltered) list, PLUS the active filter itself, so
