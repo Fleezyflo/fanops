@@ -86,7 +86,6 @@
         <header class="persona-card-head">
           <strong>{{ p.name }}</strong>
           {% if p.tag_lean %}<span class="chip lean">{{ p.tag_lean }}</span>{% endif %}
-          <span class="persona-drives muted">{% if p.linked_handles %}drives {{ p.linked_handles|join(', ') }}{% else %}no account yet — assign below{% endif %}</span>
         </header>
         {% if p.voice %}<p class="persona-voice">{{ p.voice }}</p>{% endif %}
 
@@ -97,6 +96,29 @@
           {% if p.framing %}<span class="spec-chip">{{ p.framing }} framing</span>{% endif %}
           {% if p.tag_lean %}<span class="spec-chip">{{ p.tag_lean }} tags</span>{% endif %}
           {% if p.clip_count %}<span class="spec-chip">≤{{ p.clip_count }} clips/drop</span>{% endif %}
+        </div>
+
+        {# Account assignment lives WITH the voice it drives — not in a separate dropdown stack at the page
+           foot. Each driven handle is one click to unlink; the dropdown assigns another (blank persona_id on
+           unlink disconnects; assigning a handle owned elsewhere reassigns it). #}
+        <div class="persona-accounts">
+          <span class="muted persona-accounts-label">Drives</span>
+          {% for h in p.linked_handles %}
+            <span class="chip acct">{{ h }}
+              <button type="button" title="unlink {{ h }}" class="chip-x"
+                hx-post="{{ url_for('do_personas_connect') }}" hx-target="#personas-panel" hx-swap="outerHTML"
+                hx-vals='{{ {"handle": h, "persona_id": ""} | tojson }}'>×</button></span>
+          {% else %}<span class="muted">no account yet</span>{% endfor %}
+          {% set assignable = page.accounts | rejectattr('persona_id', 'equalto', p.id) | list %}
+          {% if assignable %}
+            <form class="inline persona-assign" hx-post="{{ url_for('do_personas_connect') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+              <input type="hidden" name="persona_id" value="{{ p.id }}">
+              <select name="handle" aria-label="assign an account to {{ p.name }}">
+                {% for a in assignable %}<option value="{{ a.handle }}">{{ a.handle }}{% if a.persona_id %} · now {{ a.persona_id }}{% endif %}</option>{% endfor %}
+              </select>
+              <button type="submit">Assign</button>
+            </form>
+          {% endif %}
         </div>
 
         <div class="persona-corpus">
@@ -142,23 +164,8 @@
           aria-haspopup="dialog" aria-label="Tune the {{ p.name }} voice">Tune this voice</button>
       </article>
     {% endfor %}
-  </section>
-
-  <section class="persona-step">
-    <h3>Connect accounts</h3>
-    <p class="muted">Point each account at a persona. The persona's voice + tag_lean then drive that
-      account (an account with no persona keeps its own inline voice).</p>
-    {% if not page.accounts %}<p class="muted">No accounts yet — add them in Go Live.</p>{% endif %}
-    {% for a in page.accounts %}
-      <form class="persona-connect" hx-post="{{ url_for('do_personas_connect') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-        <input type="hidden" name="handle" value="{{ a.handle }}">
-        <label>{{ a.handle }}
-          <select name="persona_id">
-            <option value="" {{ 'selected' if not a.persona_id else '' }}>— none —</option>
-            {% for p in page.personas %}<option value="{{ p.id }}" {{ 'selected' if a.persona_id == p.id else '' }}>{{ p.name }} ({{ p.id }})</option>{% endfor %}
-          </select></label>
-        <button type="submit">Connect</button>
-      </form>
-    {% endfor %}
+    {% if page.personas and not page.accounts %}
+      <p class="muted persona-no-accounts">No accounts yet — add them in <a href="{{ url_for('golive_view') }}">Go Live</a>, then assign each to a voice above.</p>
+    {% endif %}
   </section>
 </div>

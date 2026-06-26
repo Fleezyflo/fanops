@@ -560,8 +560,12 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
   background:var(--surface-1); box-shadow:var(--elev-1); }
 .persona-card-head { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
 .persona-card-head strong { font-size:1.05rem; }
-.persona-drives { margin-left:auto; }                 /* who this voice drives, pushed to the right edge */
 .persona-voice { color:var(--ink); margin:.45rem 0 .65rem; max-width:72ch; }
+/* account assignment, folded in WITH the voice it drives (was a separate dropdown stack at the page foot) */
+.persona-accounts { display:flex; align-items:center; flex-wrap:wrap; gap:.45rem; margin:.2rem 0 .1rem; }
+.persona-accounts-label { font-weight:500; }
+.chip.acct { border-color:var(--accent); color:var(--ink); }
+.persona-assign { display:inline-flex; gap:.25rem; margin-left:.2rem; }
 /* the DIFFERENTIATORS — a comparable chip row so you can tell voices apart at a glance */
 .persona-spec { display:flex; flex-wrap:wrap; gap:.4rem; margin:0 0 .2rem; }
 .spec-chip { font-size:var(--t-meta); padding:.2rem .55rem; border-radius:var(--r-pill); background:var(--surface-2);

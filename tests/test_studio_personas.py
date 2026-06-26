@@ -183,3 +183,18 @@ def test_post_connect_route_links(tmp_path):
     r = _client(cfg).post("/personas/connect", data={"handle": "@a", "persona_id": pid})
     assert r.status_code == 200
     assert Accounts.load(cfg).accounts[0].persona_id == pid
+
+
+def test_account_assignment_is_folded_into_each_card(tmp_path):
+    # Clarity: account assignment lives WITH the voice it drives — a driven handle is one click to unlink and
+    # an unassigned account is offered in the card's assign dropdown. The orphan page-foot "Connect accounts"
+    # dropdown stack is gone (it duplicated the card head's "drives" and forced an account-centric mental model).
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@linked", "platforms": ["instagram"], "status": "active"},
+                         {"handle": "@free", "platforms": ["tiktok"], "status": "active"}])
+    pid = core.add_persona(cfg, name="Curator", voice="champions craft")
+    sp.connect_account(cfg, "@linked", pid)
+    html = _client(cfg).get("/personas").get_data(as_text=True)
+    assert "persona-accounts" in html and "@linked" in html          # the driven handle shows on the card
+    assert "persona-assign" in html and "@free" in html              # the unassigned account is assignable inline
+    assert "Connect accounts" not in html                            # the orphan page-foot section is removed
