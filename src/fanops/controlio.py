@@ -1,0 +1,40 @@
+"""Shared atomic read/write primitives for the hand-editable JSON control files (accounts.json,
+personas.json). Extracted from accounts.py/personas.py, which carried a byte-identical copy of the
+atomic-write body — exactly the correctness-critical code (unique temp + os.replace + cleanup-on-failure)
+where a future hardening of one copy would silently skip the other. ONE implementation now; both modules
+route through it. NB the LEDGER has its own writer (fixed .json.tmp + 0600, single-writer-under-flock) —
+deliberately NOT merged here; this pair is for the multi-writer, operator-hand-editable control files."""
+from __future__ import annotations
+import contextlib
+import json
+import os
+import tempfile
+from pathlib import Path
+from fanops.errors import ControlFileError
+
+
+def write_json_atomic(p: Path, raw: dict) -> None:
+    """Persist the raw dict via temp file + os.replace, so a crash mid-write never leaves a torn file. A
+    UNIQUE temp (mkstemp, same dir so os.replace stays atomic) — a fixed <name>.tmp lets two concurrent
+    writers clobber each other's temp (one's os.replace then FileNotFoundErrors). On any failure the temp
+    is best-effort unlinked and the ORIGINAL error re-raised (the suppress only guards the cleanup unlink,
+    never the real write error). Indented for the operator who still hand-edits."""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh: fh.write(json.dumps(raw, indent=2) + "\n")
+        os.replace(tmp, p)                               # atomic: never a half-written file
+    except BaseException:
+        with contextlib.suppress(OSError): os.unlink(tmp)   # best-effort cleanup; re-raise the real error
+        raise
+
+
+def load_raw_list(p: Path, key: str) -> tuple[dict, list]:
+    """A control file as the RAW dict (absent -> {key: []}) + its top-level `key` list. Mutating the raw
+    dict (not a model_dump) preserves unknown/future fields and sibling records exactly. Raises
+    ControlFileError when the top-level `key` is not a list (a corrupt/mis-shaped file)."""
+    raw = json.loads(p.read_text()) if p.exists() else {key: []}
+    lst = raw.get(key) if isinstance(raw, dict) else None
+    if not isinstance(lst, list):
+        raise ControlFileError(f"{p.name} invalid: expected a top-level '{key}' list")
+    return raw, lst
