@@ -12,35 +12,18 @@ from fanops.accounts import link_persona as _link_persona
 from fanops.studio.actions import ActionResult
 
 
-def _intake(genre: str = "", language: str = "", refs: str = "", notes: str = "") -> dict:
-    """Build the persona intake dict from the form fields — only non-blank keys (so an empty intake is
-    {} not a bag of empties). `refs` is a comma/space list of reference accounts -> a clean list; it
-    seeds B3's per-persona hashtag research (genre/language/audience steer what tags to propose)."""
-    out: dict = {}
-    g = (genre or "").strip()
-    lang = (language or "").strip()
-    n = (notes or "").strip()
-    ref_list = [r.strip() for r in (refs or "").replace(",", " ").split() if r.strip()]
-    if g: out["genre"] = g
-    if lang: out["language"] = lang
-    if ref_list: out["reference_accounts"] = ref_list
-    if n: out["notes"] = n
-    return out
-
-
 def preview_compose(cfg: Config, form) -> ActionResult:
     """LIVE TRANSLATION — given the in-progress (UNSAVED) editor form, return what the persona compiles to
     (core.compose_breakdown): the exact casting/hook/caption directives + cut + lead tags, decomposed to the
     lever, with override-shadow + no-op flags. Builds a TRANSIENT Persona from the form — it NEVER calls the
     persisting writers, so personas.json is untouched. An existing persona's curated corpus (not a form field)
-    is merged in by `id` so the lead tags are accurate. A bad lever value / clip_count -> a clean one-line
+    is merged in by `id` so the lead tags are accurate. A bad lever value -> a clean one-line
     error, never a 500. `form` is a Werkzeug MultiDict (or any object with .get/.getlist)."""
     try:
         from fanops.bands import PROFILE_NAMES
         from fanops.config import FRAMING_NAMES
         from fanops.hashtags import TAG_LEANS
-        from fanops.personas import (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, HOOK_TONES,
-                                     _clip_count_or_none)
+        from fanops.personas import CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, HOOK_TONES
 
         def _enum(value, allowed, label):
             v = (value or "").strip()
@@ -67,8 +50,7 @@ def preview_compose(cfg: Config, form) -> ActionResult:
             clip_profile=_enum(form.get("clip_profile"), PROFILE_NAMES, "clip_profile"),
             framing=_enum(form.get("framing"), FRAMING_NAMES, "framing"),
             casting_directive=form.get("casting_directive", ""), hook_directive=form.get("hook_directive", ""),
-            caption_directive=form.get("caption_directive", ""),
-            clip_count=_clip_count_or_none(form.get("clip_count", "")))
+            caption_directive=form.get("caption_directive", ""))
     except ValueError as exc:
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
@@ -77,20 +59,18 @@ def preview_compose(cfg: Config, form) -> ActionResult:
 
 
 def create_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
-                   genre: str = "", language: str = "", refs: str = "", notes: str = "",
                    content_focus=None, energy: str = "", hook_angle: str = "", hook_tone: str = "",
                    clip_profile: str = "", framing: str = "", casting_directive: str = "",
-                   hook_directive: str = "", caption_directive: str = "", clip_count="") -> ActionResult:
-    """Create a NEW persona from the intake form + the lever engine. Validates a non-blank name, a known
-    tag_lean, and every lever value at the A1 write boundary; a duplicate id / bad lean / unknown lever /
-    bad clip_count / blank name -> a clean one-line error, never a 500."""
+                   hook_directive: str = "", caption_directive: str = "") -> ActionResult:
+    """Create a NEW persona from the form + the lever engine. Validates a non-blank name, a known tag_lean,
+    and every lever value at the A1 write boundary; a duplicate id / bad lean / unknown lever / blank name
+    -> a clean one-line error, never a 500."""
     try:
         pid = core.add_persona(cfg, name=name, voice=voice, tag_lean=tag_lean,
-                               intake=_intake(genre, language, refs, notes),
                                content_focus=content_focus, energy=energy, hook_angle=hook_angle,
                                hook_tone=hook_tone, clip_profile=clip_profile, framing=framing,
                                casting_directive=casting_directive, hook_directive=hook_directive,
-                               caption_directive=caption_directive, clip_count=clip_count)
+                               caption_directive=caption_directive)
     except ValueError as exc:                            # blank name / unknown lean or lever / duplicate id
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
@@ -99,24 +79,22 @@ def create_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
 
 
 def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "", tag_lean: str = "",
-                 genre: str = "", language: str = "", refs: str = "", notes: str = "",
                  content_focus=None, energy: str = "", hook_angle: str = "", hook_tone: str = "",
                  clip_profile: str = "", framing: str = "", brief: str = "", casting_directive: str = "",
-                 hook_directive: str = "", caption_directive: str = "", clip_count="") -> ActionResult:
-    """Save edits to a persona (name/voice/tag_lean + the full intake + every lever + the locked brief). The
-    edit form is AUTHORITATIVE: an unchecked/blank lever CLEARS it, and the brief textarea is pre-filled so a
-    Save preserves it (emptying it clears the lock). Unknown id / bad lean / unknown lever / blank name -> a
+                 hook_directive: str = "", caption_directive: str = "") -> ActionResult:
+    """Save edits to a persona (name/voice/tag_lean + every lever + the locked brief). The edit form is
+    AUTHORITATIVE: an unchecked/blank lever CLEARS it, and the brief textarea is pre-filled so a Save
+    preserves it (emptying it clears the lock). Unknown id / bad lean / unknown lever / blank name -> a
     clean one-line error."""
     pid = (pid or "").strip()
     if not pid:
         return ActionResult(ok=False, error="no persona selected")
     try:
         core.update_persona(cfg, pid, name=name, voice=voice, tag_lean=tag_lean,
-                            intake=_intake(genre, language, refs, notes),
                             content_focus=(content_focus or []), energy=energy, hook_angle=hook_angle,
                             hook_tone=hook_tone, clip_profile=clip_profile, framing=framing, brief=brief,
                             casting_directive=casting_directive, hook_directive=hook_directive,
-                            caption_directive=caption_directive, clip_count=clip_count)
+                            caption_directive=caption_directive)
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
     except ValueError as exc:                            # unknown lean or lever / blank name

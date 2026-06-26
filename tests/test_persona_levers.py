@@ -115,19 +115,18 @@ def test_casting_payload_only_voice_is_byte_identical(tmp_path):
     request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     payload = json.loads(request_path(cfg, "moment_casting", "src_1").read_text())
     p0 = payload["personas"][0]                                     # firewall: no levers -> the casting directive == raw voice
-    assert p0["handle"] == "@a" and p0["persona"] == "bold fan" and p0["clip_count"] is None
+    assert p0["handle"] == "@a" and p0["persona"] == "bold fan" and "clip_count" not in p0
 
 def test_casting_payload_carries_lever_direction(tmp_path):
     cfg = Config(root=tmp_path)
     led = _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
                        "persona": "bold fan", "persona_id": "p"}])
     cfg.personas_path.write_text(json.dumps({"personas": [
-        {"id": "p", "voice": "bold fan", "content_focus": ["punchlines"], "energy": "high", "clip_count": 3}]}))
+        {"id": "p", "voice": "bold fan", "content_focus": ["punchlines"], "energy": "high"}]}))
     request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     payload = json.loads(request_path(cfg, "moment_casting", "src_1").read_text())
     persona_str = payload["personas"][0]["persona"]
     assert "punchline" in persona_str and ("peak-intensity" in persona_str or "skip calm" in persona_str)  # substantive, not adjectives
-    assert payload["personas"][0]["clip_count"] == 3               # the per-account clip ceiling rides into the prompt
 
 
 # ---- Studio surface (Task 5): set levers in the browser; the card shows "what the AI reads" ----
@@ -285,19 +284,6 @@ def test_directives_firewall_to_bare_voice():
 def test_caption_directive_is_voice_or_override():
     assert caption_directive(Persona(id="p", voice="v", tag_lean="tasteful")) == "v"   # tags stay deterministic, not in the text
 
-def test_clip_count_validates_and_persists(tmp_path):
-    cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", clip_count=3)
-    assert Personas.load(cfg).get("p").clip_count == 3
-    update_persona(cfg, "p", clip_count="")                               # blank CLEARS -> None (global budget)
-    assert Personas.load(cfg).get("p").clip_count is None
-
-def test_clip_count_rejects_bad_values(tmp_path):
-    cfg = Config(root=tmp_path)
-    with pytest.raises(ValueError): add_persona(cfg, name="A", clip_count=0)
-    with pytest.raises(ValueError): add_persona(cfg, name="B", clip_count=-2)
-    with pytest.raises(ValueError): add_persona(cfg, name="C", clip_count="lots")
-
 def test_directive_fields_roundtrip(tmp_path):
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v", casting_directive="cd", hook_directive="hd", caption_directive="capd")
@@ -313,39 +299,22 @@ def test_directive_override_hydrates_and_drives_hook_payload(tmp_path):
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
     assert hook_directive(a) == "always a POV hook"                       # override hydrated + drives the hook prompt
 
-def test_clip_count_hydrates_onto_account(tmp_path):
-    cfg = Config(root=tmp_path)
-    _write(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-                  "persona_id": "p"}],
-           [{"id": "p", "voice": "v", "clip_count": 5}])
-    a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
-    assert a.clip_count == 5
-
-
 def test_personas_panel_renders_directive_ui(tmp_path):
-    # the per-persona UI: the three compiled directives show per dimension, the override editors + clip_count render
+    # the per-persona UI: the three compiled directives show per dimension, the override editors render
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity", clip_count=4)
+    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity")
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "hook &#8594;" in html or "hook →" in html or "hook →" in html   # per-dimension directive shown (clips/hook/caption)
     assert 'name="casting_directive"' in html and 'name="hook_directive"' in html  # the override editors
-    assert 'name="clip_count"' in html and "up to 4 per drop" in html             # the clip ceiling
 
-def test_studio_edit_persona_persists_directives_and_count(tmp_path):
+def test_studio_edit_persona_persists_directives(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v")
     r = sp.edit_persona(cfg, "p", name="P", voice="v", casting_directive="only freestyles",
-                        hook_directive="POV only", clip_count="3")
+                        hook_directive="POV only")
     assert r.ok
     p = Personas.load(cfg).get("p")
-    assert p.casting_directive == "only freestyles" and p.hook_directive == "POV only" and p.clip_count == 3
-
-def test_studio_edit_persona_bad_clip_count_is_clean_error(tmp_path):
-    from fanops.studio import personas as sp
-    cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v")
-    r = sp.edit_persona(cfg, "p", name="P", voice="v", clip_count="-1")
-    assert r.ok is False and r.error                       # validated, no 500
+    assert p.casting_directive == "only freestyles" and p.hook_directive == "POV only"

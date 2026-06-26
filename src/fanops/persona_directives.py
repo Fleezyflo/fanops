@@ -23,7 +23,6 @@ _FOCUS_CLAUSE = {
 }
 _ENERGY_CLAUSE = {
     "low": "Favor calmer, more introspective moments over loud ones.",
-    "medium": "",
     "high": "Strongly prefer peak-intensity moments; skip calm, low-energy passages.",
 }
 _ANGLE_CLAUSE = {
@@ -135,7 +134,7 @@ def lever_catalog() -> list[dict]:
     sourced from the SAME engine constants the compilers/resolvers use (the clause maps above, bands.band_for,
     hashtags._LEANS), so the effect the operator reads is EXACTLY what the pipeline acts on (zero drift; a
     parity test forbids divergence). Pure, ordered (the editor + the reference render it). Each lever:
-    {key, label, kind, stage, does, options:[{value, effect}]}; clip_count/corpus have no enumerated options."""
+    {key, label, kind, stage, does, options:[{value, effect}]}; corpus has no enumerated options."""
     from fanops.bands import band_for
     from fanops.hashtags import _LEANS
     # An ORDERED display list (PROFILE_NAMES is a frozenset, no order). The coverage test asserts this set ==
@@ -165,8 +164,6 @@ def lever_catalog() -> list[dict]:
         {"key": "tag_lean", "label": "Tag lean", "kind": "select", "stage": "caption",
          "does": "floats a flavor pool to the front of the caption hashtags (deterministic, not in the prompt)",
          "options": [{"value": k, "effect": "leads with " + " ".join(v)} for k, v in _LEANS.items()]},
-        {"key": "clip_count", "label": "Clips per drop", "kind": "int", "stage": "casting",
-         "does": "how many best-fit moments this account gets per source (blank = the global budget)", "options": []},
         {"key": "hashtag_corpus", "label": "Corpus", "kind": "tags", "stage": "caption",
          "does": "your curated tags LEAD the caption hashtags, ahead of the lean pool", "options": []},
     ]
@@ -200,7 +197,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
     """THE LIVE COMPOSED TRANSLATION — what this persona compiles to RIGHT NOW: the exact casting/hook/caption
     directives the pipeline will read, the deterministic cut band + framing, and the lead hashtags, each
     decomposed to the lever that produced it, with the engine's REAL precedence surfaced (an override SHADOWS
-    its structured levers; energy=medium is a no-op). The `text` of each dimension is the compiler's own output
+    its structured levers). The `text` of each dimension is the compiler's own output
     (parity — the panel can't drift); the fragments reconstruct the assembly for provenance. Pure read; the
     cut/tags reuse the same band_for / persona_facts resolvers the pipeline runs. Duck-typed (Persona/Account)."""
     from fanops.bands import band_for
@@ -225,9 +222,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
     tags = {"lead": facts["lead_tags"], "lean": getattr(p, "tag_lean", None),
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
-    noops: list[str] = []
-    if (getattr(p, "energy", None) or "").strip().lower() == "medium" and not cast_override:
-        noops.append("energy=medium has no effect on selection")
+    noops: list[str] = []                                 # energy=medium (the only no-op) removed; kept for shape
     bd = {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
     bd["produces"] = produces_summary(bd)                 # S7: the operator-facing OUTPUT lead, from this same detail
     return bd

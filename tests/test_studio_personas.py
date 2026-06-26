@@ -24,14 +24,12 @@ def _client(cfg):
 
 # --- action layer ------------------------------------------------------------------------------
 
-def test_create_persona_captures_intake(tmp_path):
+def test_create_persona_captures_fields(tmp_path):
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="Curator", voice="champions craft", tag_lean="tasteful",
-                          genre="hip hop", language="en", refs="@a, @b", notes="lyrical")
+    r = sp.create_persona(cfg, name="Curator", voice="champions craft", tag_lean="tasteful")
     assert r.ok
     p = core.Personas.load(cfg).get(r.detail["created"])
     assert p.voice == "champions craft" and p.tag_lean == "tasteful"
-    assert p.intake["genre"] == "hip hop" and p.intake["reference_accounts"] == ["@a", "@b"]
 
 
 def test_create_persona_bad_lean_is_clean_error(tmp_path):
@@ -49,12 +47,10 @@ def test_create_persona_blank_name_is_clean_error(tmp_path):
 def test_edit_persona_updates_fields(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Z", voice="old", tag_lean="bold")
-    r = sp.edit_persona(cfg, pid, name="Z2", voice="new", tag_lean="underground",
-                        genre="rap", language="ar", refs="", notes="")
+    r = sp.edit_persona(cfg, pid, name="Z2", voice="new", tag_lean="underground")
     assert r.ok
     p = core.Personas.load(cfg).get(pid)
     assert p.name == "Z2" and p.voice == "new" and p.tag_lean == "underground"
-    assert p.intake["language"] == "ar"
 
 
 def test_delete_persona_action(tmp_path):

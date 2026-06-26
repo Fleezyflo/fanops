@@ -41,9 +41,6 @@
         <select name="hook_tone"><option value="">— any —</option>
           {% for h in levers.hook_tone %}<option value="{{ h }}" title="{{ effects.hook_tone[h] }}" {{ 'selected' if p and p.hook_tone == h else '' }}>{{ h }} — {{ effects.hook_tone[h] }}</option>{% endfor %}
         </select></label>
-      <label>Clips per drop
-        <input type="number" name="clip_count" min="1" size="4" placeholder="all that fit"
-          title="how many clips this account gets per source (blank = no ceiling)" value="{{ p.clip_count if p and p.clip_count else '' }}"></label>
     </fieldset>
     <fieldset class="directives">
       <legend>Directive overrides — blank = use the compiled default above (a set override SHADOWS its levers)</legend>
