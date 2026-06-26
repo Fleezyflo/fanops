@@ -15,9 +15,7 @@ won't reload. Like accounts.json the file is hand-editable (indented); Personas.
 corrupt file is guarded by the fail-open hydration helper so account loading never crashes on it."""
 from __future__ import annotations
 import json
-import os
 import re
-import tempfile
 from contextlib import contextmanager
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -25,6 +23,7 @@ from fanops.config import Config, FRAMING_NAMES
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.hashtags import TAG_LEANS, _norm
 from fanops.bands import PROFILE_NAMES
+from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 
 _CORPUS_CAP = 40                # max curated tags per persona — keeps captions/budget bounded (cap, not a target)
 
@@ -409,25 +408,7 @@ def _norm_focus(content_focus) -> list[str]:
 def _load_raw(p) -> tuple[dict, list]:
     """personas.json as the RAW dict (absent -> empty) + its list. Mutating the raw dict (not
     Persona.model_dump) preserves unknown/future fields and sibling records exactly, like accounts.py."""
-    raw = json.loads(p.read_text()) if p.exists() else {"personas": []}
-    plist = raw.get("personas") if isinstance(raw, dict) else None
-    if not isinstance(plist, list):
-        raise ControlFileError(f"{p.name} invalid: expected a top-level 'personas' list")
-    return raw, plist
-
-
-def _write_atomic(p, raw: dict) -> None:
-    """Persist via temp + os.replace (a unique mkstemp, same dir so replace stays atomic), so a crash
-    mid-write never leaves a torn personas.json. Indented for the operator who still hand-edits."""
-    p.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as fh: fh.write(json.dumps(raw, indent=2) + "\n")
-        os.replace(tmp, p)
-    except BaseException:
-        try: os.unlink(tmp)
-        except OSError: pass
-        raise
+    return load_raw_list(p, "personas")
 
 
 @contextmanager
@@ -480,7 +461,7 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
                       "clip_profile": prof_v, "framing": fr_v, "brief": str(brief or ""),
                       "casting_directive": str(casting_directive or ""), "hook_directive": str(hook_directive or ""),
                       "caption_directive": str(caption_directive or ""), "clip_count": count_v})
-        _write_atomic(p, raw)
+        write_json_atomic(p, raw)
     return pid
 
 
@@ -529,7 +510,7 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean
                 found = True
         if not found:
             raise KeyError(pid)
-        _write_atomic(p, raw)
+        write_json_atomic(p, raw)
     return pid
 
 
@@ -558,7 +539,7 @@ def add_corpus_tag(cfg: Config, pid: str, tag: str) -> str:
                 found = True
         if not found:
             raise KeyError(pid)
-        _write_atomic(p, raw)
+        write_json_atomic(p, raw)
     return pid
 
 
@@ -577,7 +558,7 @@ def remove_corpus_tag(cfg: Config, pid: str, tag: str) -> str:
                 found = True
         if not found:
             raise KeyError(pid)
-        _write_atomic(p, raw)
+        write_json_atomic(p, raw)
     return pid
 
 
@@ -592,7 +573,7 @@ def delete_persona(cfg: Config, pid: str) -> str:
         if len(kept) == len(plist):
             raise KeyError(pid)
         raw["personas"] = kept
-        _write_atomic(p, raw)
+        write_json_atomic(p, raw)
     return pid
 
 

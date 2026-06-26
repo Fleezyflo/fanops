@@ -4,8 +4,6 @@ participates. surfaces() yields each (handle, account_id, platform). resolve_acc
 maps a handle to its numeric Blotato id (FIX F06: v1 passed the handle straight to Blotato)."""
 from __future__ import annotations
 import json
-import os
-import tempfile
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
@@ -16,6 +14,7 @@ from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform
 from fanops.hashtags import TAG_LEANS                 # the valid per-account tag_lean names (persona diff)
 from fanops.bands import PROFILE_NAMES                # the valid per-account clip_profile names (M2 length tier)
+from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 
 class AccountStatus(str, Enum):
     planned = "planned"; warming = "warming"; active = "active"; retired = "retired"
@@ -253,7 +252,7 @@ def link_persona(cfg: Config, handle: str, persona_id: str) -> str:
                 a["persona_id"] = pid or None; found = True
         if not found:
             raise KeyError(handle)
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
 
 
@@ -273,11 +272,7 @@ def _load_raw_accounts(p: Path) -> tuple[dict, list]:
     """Read accounts.json as the RAW parsed dict (absent file -> empty registry) and return (raw, the
     accounts list). Mutating the raw dict — not Account.model_dump() — is how every writer preserves
     unknown/future fields and sibling accounts exactly. A non-list 'accounts' is a corrupt file."""
-    raw = json.loads(p.read_text()) if p.exists() else {"accounts": []}
-    accounts = raw.get("accounts") if isinstance(raw, dict) else None
-    if not isinstance(accounts, list):
-        raise ControlFileError(f"{p.name} invalid: expected a top-level 'accounts' list")
-    return raw, accounts
+    return load_raw_list(p, "accounts")
 
 
 @contextmanager
@@ -289,22 +284,6 @@ def _accounts_txn(cfg: Config):
     from fanops.ledger import _file_lock
     with _file_lock(cfg.accounts_lock_path):
         yield
-
-
-def _write_accounts_atomic(p: Path, raw: dict) -> None:
-    """Persist the raw accounts dict via temp file + os.replace, so a crash mid-write never leaves a
-    torn accounts.json. A UNIQUE temp (mkstemp, same dir so os.replace stays atomic) — a fixed
-    accounts.json.tmp lets two concurrent writers clobber each other's temp (one's os.replace then
-    FileNotFoundErrors); cleaned up on any failure. Indented for the operator who still hand-edits."""
-    p.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as fh: fh.write(json.dumps(raw, indent=2) + "\n")
-        os.replace(tmp, p)                               # atomic: never a half-written accounts.json
-    except BaseException:
-        try: os.unlink(tmp)
-        except OSError: pass
-        raise
 
 
 def write_integration(cfg: Config, handle: str, platform: str, integration_id: str | int) -> str:
@@ -329,7 +308,7 @@ def write_integration(cfg: Config, handle: str, platform: str, integration_id: s
                 a["integrations"] = integ; found = True
         if not found:
             raise KeyError(handle)
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
 
 
@@ -365,7 +344,7 @@ def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
                 a["backends"] = bk; found = True
         if not found:
             raise KeyError(handle)
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
 
 
@@ -405,7 +384,7 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
                          "status": str(status), "access": str(access),
                          "persona": persona or "", "tag_lean": lean or None,
                          "clip_profile": prof or None, "framing": fr or None, "integrations": {}})
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
 
 
@@ -448,7 +427,7 @@ def ensure_channel(cfg: Config, handle: str, platform: str, persona: str = "", t
                              "persona": (persona or "").strip(), "tag_lean": lean or None, "integrations": {}})
             changed = True
         if changed:
-            _write_accounts_atomic(p, raw)
+            write_json_atomic(p, raw)
         return changed
 
 
@@ -469,7 +448,7 @@ def set_status(cfg: Config, handle: str, status: str) -> str:
                 a["status"] = str(status); found = True          # mirrors remove_account dropping every match
         if not found:
             raise KeyError(handle)
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
 
 
@@ -491,7 +470,7 @@ def set_tag_lean(cfg: Config, handle: str, lean: str) -> str:
                 a["tag_lean"] = lean or None; found = True
         if not found:
             raise KeyError(handle)
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
 
 
@@ -514,7 +493,7 @@ def set_clip_profile(cfg: Config, handle: str, profile: str) -> str:
                 a["clip_profile"] = profile or None; found = True
         if not found:
             raise KeyError(handle)
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
 
 
@@ -537,7 +516,7 @@ def set_framing(cfg: Config, handle: str, framing: str) -> str:
                 a["framing"] = framing or None; found = True
         if not found:
             raise KeyError(handle)
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
 
 
@@ -555,7 +534,7 @@ def set_persona(cfg: Config, handle: str, persona: str) -> str:
                 a["persona"] = persona; found = True
         if not found:
             raise KeyError(handle)
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
 
 
@@ -571,5 +550,5 @@ def remove_account(cfg: Config, handle: str) -> str:
         if len(kept) == len(accounts):
             raise KeyError(handle)
         raw["accounts"] = kept
-        _write_accounts_atomic(p, raw)
+        write_json_atomic(p, raw)
     return handle
