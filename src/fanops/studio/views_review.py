@@ -538,6 +538,22 @@ def review_counts(cards: list[ReviewCard]) -> dict:
     return {"awaiting": c.get("editable", 0), "prepared": c.get("prepared", 0), "held": c.get("held", 0)}
 
 
+def awaiting_moment_count(led: Ledger) -> int:
+    """Single source of truth for the 'awaiting' headline shared by the Review tab and the status Home: the
+    number of MOMENTS (distinct non-held clips) with >=1 awaiting_approval post — i.e. the size of the Review
+    approve-worklist (editable cards), NOT the raw awaiting-POST count. A clip fans out to many per-account
+    surface posts, so counting posts overstates the worklist (the 'Home 57 vs Review 17' bug). Mirrors the
+    editable-bucket rule in review_buckets exactly (non-held existing clip with an awaiting post) so the Home
+    headline and the Review worklist can never drift. Pure, lock-free read."""
+    seen: set[str] = set()
+    for p in led.posts.values():
+        if p.state is PostState.awaiting_approval:
+            clip = led.clips.get(p.parent_id)
+            if clip is not None and not clip.held:
+                seen.add(p.parent_id)
+    return len(seen)
+
+
 def review_progress(cards: list[ReviewCard]) -> dict:
     """Phase 4 progress header: per-scope counts (awaiting/approved/held/prepared) over the SAME cards the
     worklist renders — a pure read, re-derived each htmx swap so the count rides the URL (mirrors review_counts).

@@ -483,6 +483,39 @@ def test_home_status_counts(tmp_path):
     assert st.counts["awaiting"] == 1 and st.counts["scheduled"] == 1 and st.counts["posted"] == 1
     assert st.mode == "dryrun" and st.is_live is False
 
+def test_home_awaiting_counts_moments_not_posts(tmp_path):
+    # Root fix: Home 'Awaiting' is the MOMENT count (size of the Review approve-worklist), NOT the raw
+    # awaiting-POST count — a clip fans out to many per-account surface posts, so counting posts overstates
+    # the worklist (the live '57 posts vs 17 moments' bug). awaiting_posts retains the raw count for the tip.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+                         {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"},
+                         {"handle": "@c", "account_id": "3", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    for i, h in enumerate(["@a", "@b", "@c"]):            # 3 awaiting SURFACE posts, ONE moment (clip_1)
+        led.add_post(Post(id=f"pa{i}", parent_id="clip_1", account=h, account_id=str(i + 1),
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+    led.save()
+    st = home_status(cfg)
+    assert st.counts["awaiting"] == 1                     # ONE moment, not three posts
+    assert st.counts["awaiting_posts"] == 3              # raw surface count retained (Home tooltip)
+
+def test_home_awaiting_matches_review_worklist(tmp_path):
+    # Single source of truth: Home's awaiting count == the Review tab's editable-card count, by construction.
+    from fanops.studio.views_review import review_buckets as _rb, review_counts as _rc
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+                         {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="pa", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.awaiting_approval))
+    led.add_post(Post(id="pb", parent_id="clip_1", account="@b", account_id="2", platform=Platform.instagram,
+                      caption="x", state=PostState.awaiting_approval))
+    led.save()
+    now = datetime.now(timezone.utc)
+    review_awaiting = _rc(_rb(led, Accounts.load(cfg), cfg, now=now))["awaiting"]
+    assert home_status(cfg).counts["awaiting"] == review_awaiting    # one definition, cannot drift
+
 def test_home_status_by_account(tmp_path):
     cfg = Config(root=tmp_path); _seed_home(cfg)
     assert home_status(cfg).by_account == {"@a": 2, "@b": 1}          # on-disk post facts, never fabricated
@@ -499,7 +532,7 @@ def test_home_status_fail_open(tmp_path, monkeypatch):
     def _boom(c): raise RuntimeError("torn")
     monkeypatch.setattr(Ledger, "load", _boom)
     st = home_status(cfg)
-    assert st.counts == {"sources": 0, "batches": None, "awaiting": 0, "scheduled": 0, "posted": 0}
+    assert st.counts == {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0, "posted": 0}
     assert st.by_account == {}                                        # zeroed shell, never a 500
 
 def test_golive_accounts_parity_with_golive_status(tmp_path):

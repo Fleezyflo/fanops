@@ -17,7 +17,7 @@ from fanops.timeutil import parse_iso
 # still lives in its home submodule (views_common/_review/_results); this is just the public views surface.
 # F401-silenced because each name is re-exported, not referenced within this file.
 from fanops.studio.views_common import (IMMINENT_THRESHOLD_MINUTES, GRID_PAGE_SIZE, paginate, TERM_DEFS, term_def, accounts_in, _imminent, suggest_time)  # noqa: F401
-from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch)  # noqa: F401
+from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch, awaiting_moment_count)  # noqa: F401
 from fanops.studio.views_results import (ScheduleRow, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows)  # noqa: F401
 
 
@@ -403,14 +403,15 @@ def home_status(cfg: Config) -> HomeStatus:
         st = Counter(p.state for p in led.posts.values())
         counts = {"sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),
                   "batches": len(getattr(led, "batches", {})),
-                  "awaiting": st.get(PostState.awaiting_approval, 0),
+                  "awaiting": awaiting_moment_count(led),    # MOMENTS (== Review worklist), not raw surface posts
+                  "awaiting_posts": st.get(PostState.awaiting_approval, 0),  # raw surface count for the tooltip
                   "scheduled": st.get(PostState.queued, 0),
                   "posted": st.get(PostState.published, 0) + st.get(PostState.analyzed, 0)}
         by_account = dict(Counter(p.account for p in led.posts.values()))
     except Exception as exc:                          # the first page an operator sees must never 500
         from fanops.log import get_logger
         get_logger(cfg)("home", "-", "error", err=str(exc)[:160])
-        counts = {"sources": 0, "batches": None, "awaiting": 0, "scheduled": 0, "posted": 0}
+        counts = {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0, "posted": 0}
         by_account = {}
     return HomeStatus(mode=mode, is_live=cfg.is_live, counts=counts, accounts=accounts, by_account=by_account)
 
