@@ -48,6 +48,29 @@ explicit on-words `1`/`true`/`yes`/`on`.
 |---|---|---|---|
 | `hook_router` | `FANOPS_HOOK_ROUTER=1` | OFF | read-only Moment hook-strategy classifier (records an annotation, renders nothing) — [config.py:476](../src/fanops/config.py) |
 | `variant_learning` | `FANOPS_VARIANT_LEARNING=1` | OFF | the A/B caption-bias learning loop (independent of `creative_variation`) — [config.py](../src/fanops/config.py) |
+| `impact_cut` | `FANOPS_IMPACT_CUT=1` | OFF | M4 structural-hooks: the impact-cut PRODUCER (suggest + render operator-approved plans into stitch_draft clips). Needs `hook_router` on; off → no plans, no stitch renders (non-regression) — [config.py:485](../src/fanops/config.py). Firewall: [test_impact_cut.py](../tests/test_impact_cut.py), [test_stitch_render.py](../tests/test_stitch_render.py) |
+| `intro_tease` | `FANOPS_INTRO_TEASE=1` | OFF | M6 structural-hooks: the intro-tease PRODUCER (LLM-vision matcher pairs a clean clip with an intro asset, compose-prepends a "wait for it" tease). Needs `hook_router` on + `FANOPS_RESPONDER=llm`; off → no matcher gate, no renders (non-regression) — [config.py:494](../src/fanops/config.py). Firewall: [test_router.py](../tests/test_router.py), [test_intro_match.py](../tests/test_intro_match.py) |
+
+### Validation-frozen actuators (default-OFF AND frozen until `learning_validated`)
+
+A distinct safety class: even with the kill switch ON, the actuator stays inert until `learning_validated`
+opens (auto-stamped by the first real non-degraded live metric). `variant_amplify` (re-mines a source) and
+`variant_transfer` (injects a cross-surface prior into real captions) are BOTH in this class — acting on a
+`lift_score` whose live field-shape is unconfirmed propagates noise. `variant_ucb` is the exception: it only
+swaps the caption-bias SCORER on the safe read path, gated by `variant_learning` + the statistical trust gate
+(min-posts/min-gap), not `learning_validated`.
+
+> **Investigation-2 B2:** `variant_transfer` previously gated ONLY on its flag — its config docstring promised
+> "inert until `learning_validated`" but neither the caption injector nor the digest label enforced it (transfer
+> fired on unproven lift). Now `caption._transferred_hooks` AND the digest "borrowing" label both check
+> `learning_validated`. The pure scorer `variant_transfer.transferred_hooks` stays validation-agnostic (its
+> algorithm tests don't stamp validation); the gate lives at the consumption/injection points, mirroring amplify.
+
+| Flag | Env var (ON) | Default | Frozen-until-validated? | Notes |
+|---|---|---|---|---|
+| `variant_amplify` | `FANOPS_VARIANT_AMPLIFY=1` | OFF | **YES** (enforced) | re-mines a source on a SUSTAINED variant win; gate at [variant_amplify.py:166](../src/fanops/variant_amplify.py). Firewall: `test_apply_amplify_inert_until_learning_validated` ([test_variant_amplify.py](../tests/test_variant_amplify.py)) |
+| `variant_ucb` | `FANOPS_VARIANT_UCB=1` | OFF | NO (scorer swap on the safe read path) | swaps the caption-bias scorer to a UCB1 bandit; gated by `variant_learning` + the statistical trust gate, not `learning_validated` — [config.py:582](../src/fanops/config.py) |
+| `variant_transfer` | `FANOPS_VARIANT_TRANSFER=1` | OFF | **YES** (enforced, B2) | injects a cold-start cross-surface prior into real captions; gate at [caption.py `_transferred_hooks`](../src/fanops/caption.py) + the digest label. Firewall: `test_transfer_is_validation_frozen_until_learning_validated` ([test_variant_transfer.py](../tests/test_variant_transfer.py)) — [config.py:611](../src/fanops/config.py) |
 
 (Other opt-in knobs — e.g. concurrent-source processing — follow the same explicit-on-word convention; grep
 `config.py` for `os.getenv("FANOPS_` to enumerate.)

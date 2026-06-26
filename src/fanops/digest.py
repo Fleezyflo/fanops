@@ -20,6 +20,7 @@ from fanops.variant_learning import ucb_rank
 # Transfer (v2 follow-up): the SAME read-only safe side. Used to annotate a COLD surface that is
 # receiving a borrowed cross-surface prior. Fail-open like best_hooks; does NOT touch the C1 path.
 from fanops.variant_transfer import transferred_hooks
+from fanops.validation_gate import learning_validated   # transfer is VALIDATION-FROZEN -> reflect it in the label
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +77,9 @@ def gate_state(led: Ledger, cfg: Config, account: str, platform: Platform,
             state = f'UCB -> "{picked[0]}"' if picked else "gathering data"
         elif best_hooks(led, cfg, account, platform):
             state = "learning ACTIVE"
-        elif cfg.variant_transfer and accounts is not None and \
+        elif cfg.variant_transfer and learning_validated(cfg) and accounts is not None and \
                 transferred_hooks(led, cfg, accounts, account, platform):
-            state = "borrowing platform signal"
+            state = "borrowing platform signal"     # only once VALIDATION-FROZEN gate opens (matches caption inject)
         else:
             state = "gathering data"
     except Exception:

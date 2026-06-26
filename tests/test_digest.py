@@ -340,5 +340,7 @@ def test_digest_marks_cold_surface_borrowing(monkeypatch, tmp_path):
     accts = Accounts(cfg)
     accts.accounts = [Account(handle=h, account_id="x", platforms=[Platform.instagram],
                               status=AccountStatus.active, persona="hype") for h in ("@a", "@b", "@c")]
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True})    # transfer is VALIDATION-FROZEN — open the gate
     out = render_digest(led, cfg, accounts=accts)
     assert "borrowing platform signal" in out
