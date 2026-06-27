@@ -155,12 +155,14 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
             except OSError: audio = src.source_path
     # Engine: prefer faster-whisper at a DURATION-AWARE model (cfg.asr_model_for(src.duration): a short
     # source -> large-v3 for accuracy, a long/unknown source -> medium to land under _WHISPER_TIMEOUT; an
-    # explicit FANOPS_ASR_MODEL pin overrides). Fail open to the legacy `whisper` CLI (FANOPS_WHISPER_MODEL
-    # turbo) when the [asr] extra is absent. Both write JSON named by the INPUT stem (engine-agnostic parse).
+    # explicit FANOPS_ASR_MODEL pin overrides). Fail open to the legacy `whisper` CLI when the [asr] extra is
+    # absent — and that fallback is ALSO duration-aware now (cfg.whisper_model_for, audit c0-f2): the CI /
+    # air-gapped path no longer transcribes a 10s clip and a 40min source at the identical fixed model.
+    # Both write JSON named by the INPUT stem (engine-agnostic parse).
     if _fw_available():
         cmd = fw_cmd(audio, str(out_dir), model or cfg.asr_model_for(src.duration), cfg.asr_language)
     else:
-        cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model or cfg.whisper_model))
+        cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model or cfg.whisper_model_for(src.duration)))
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_WHISPER_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
