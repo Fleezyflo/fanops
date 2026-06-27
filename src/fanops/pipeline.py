@@ -168,10 +168,12 @@ def _quarantine(coll, eid, error_state, stage, exc, log) -> None:
     """The per-unit failure stamp shared by the source/moment/clip stage loops (FIX F03): flip the entity
     to its error state, record the typed reason, and log — so one bad unit is skipped, never wedging the
     whole pass. `coll` is the LIVE ledger collection passed at call time (after any in-block reassignment),
-    so the same object the stage was operating on is the one stamped."""
+    so the same object the stage was operating on is the one stamped. The stamp lands via an IMMUTABLE
+    model_copy(update=...) setter (audit x-f1): these are ledger records, and the day any of Source/Moment/Clip
+    gains frozen=True an in-place `obj.state = ...` would raise INSIDE this except handler and wedge the whole
+    pass — the precise failure F03 added quarantine to prevent. Replacing the collection entry keeps it safe."""
     obj = coll[eid]
-    obj.state = error_state
-    obj.error_reason = f"{type(exc).__name__}: {exc}"
+    coll[eid] = obj.model_copy(update={"state": error_state, "error_reason": f"{type(exc).__name__}: {exc}"})
     log(stage, eid, "error", err=str(exc)[:120])
 
 
