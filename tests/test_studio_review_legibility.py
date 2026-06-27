@@ -91,8 +91,10 @@ def _seed_persona_cut(cfg):
         {"handle": "@long", "account_id": "1", "platforms": ["instagram"], "status": "active",
          "persona_id": "hype", "clip_profile": "long", "framing": "top"}]}))
     cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
+    # M3d: a persona no longer PINS clip_profile — it DERIVES the cut from content_focus (storytelling -> long),
+    # which still sets persona_owns_profile=True so the card attributes the length to the persona.
     cfg.personas_path.write_text(json.dumps({"personas": [
-        {"id": "hype", "voice": "hype", "clip_profile": "long", "framing": "top"}]}))
+        {"id": "hype", "voice": "hype", "content_focus": ["storytelling"]}]}))
     cfg.clips.mkdir(parents=True, exist_ok=True); r = cfg.clips / "r.mp4"; r.write_bytes(b"\x00ftypmp42")
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))

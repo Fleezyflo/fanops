@@ -46,8 +46,10 @@ class Persona(BaseModel):
     content_focus: list[str] = Field(default_factory=list)   # which moment KINDS to favor (casting): CONTENT_FOCUS
     energy: Optional[str] = None                  # clip energy: low|medium|high (ENERGY_LEVELS)
     hook_angle: Optional[str] = None              # on-screen hook strategy: curiosity|challenge|... (HOOK_ANGLES)
-    clip_profile: Optional[str] = None            # per-account LENGTH tier (bands.PROFILE_NAMES) — hydrates onto the account
-    framing: Optional[str] = None                 # per-account vertical CROP bias (config.FRAMING_NAMES) — hydrates onto the account
+    # M3 (2026-06-27): the per-persona clip_profile/framing PINS were RETIRED — invisible (no editor) + duplicate
+    # of the content_focus/energy-DERIVED cut (derive_cut_spec). A persona's cut LENGTH now derives from
+    # content_focus and FRAMING from energy; the Account.clip_profile/framing carriers + the global
+    # FANOPS_CLIP_PROFILE lever stay. resolved_cut_spec is duck-typed, so an absent Persona pin -> derived.
     # M3 DIRECTIVE ENGINE: the structured levers above compile into a SUBSTANTIVE per-dimension instruction
     # (casting/hook/caption) injected into THAT dimension's real prompt — not a glued adjective. The operator
     # can OVERRIDE the compiled text per persona (these fields); a non-empty override is used VERBATIM, else

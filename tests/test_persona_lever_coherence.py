@@ -24,8 +24,7 @@ import fanops.persona_levers as pl
 # The original incoherent fields — the QUARANTINE CEILING (hard-coded, separate from the mutable set below so
 # the ratchet test reds if anything NEW is grandfathered). M3 shrinks `_KNOWN_INCOHERENT` to empty. (M3c: the
 # 6th member `tag_lean` was RETIRED from the model — folded into hashtag_corpus — so it leaves both sets.)
-_ORIGINAL_SIX = frozenset({"clip_profile", "framing",
-                           "casting_directive", "hook_directive", "caption_directive"})
+_ORIGINAL_SIX = frozenset({"casting_directive", "hook_directive", "caption_directive"})
 # The live quarantine: seeded with the remaining incoherent fields, only ever shrinks. (M3f sets this to frozenset().)
 _KNOWN_INCOHERENT = set(_ORIGINAL_SIX)
 
@@ -39,8 +38,6 @@ _MUTATIONS = {
     "energy": ("high", "low"),
     "hook_angle": ("curiosity", "fomo"),
     "hashtag_corpus": (["#aaa"], ["#bbb"]),
-    "clip_profile": ("short", "long"),
-    "framing": ("top", "center"),
     "casting_directive": ("", "ONLY clip the freestyle bars"),
     "hook_directive": ("", "POV hooks only"),
     "caption_directive": ("", "hype-fan caption energy"),
@@ -103,11 +100,12 @@ def test_each_lever_mutation_changes_the_compiled_output(tmp_path):
 
 
 def test_quarantine_teeth_bite_on_the_editability_axis():
-    # THE GUARD'S TEETH — proving it would catch the exact Phase-1 over-claim. clip_profile (the per-persona
-    # pin) is OUTPUT-SENSITIVE (it is in _MUTATIONS and moves output), so an output-only guard PASSES it. The
-    # NEW power is editability: the Persona pin is NOT in the save route. Un-quarantining it must red the
-    # coherence guard SPECIFICALLY on editability. (Was tag_lean pre-M3c; now any still-quarantined field.)
-    probe = "clip_profile"
+    # THE GUARD'S TEETH — proving it would catch the exact Phase-1 over-claim. casting_directive (the freeform
+    # override) is OUTPUT-SENSITIVE (it is in _MUTATIONS and moves output), so an output-only guard PASSES it.
+    # The NEW power is editability: the override has NO save-route control. Un-quarantining it must red the
+    # coherence guard SPECIFICALLY on editability. (Probe walks the quarantine as M3 shrinks it: tag_lean ->
+    # clip_profile -> casting_directive.)
+    probe = "casting_directive"
     assert probe in _MUTATIONS                            # it DOES move output — output-sensitivity alone passes it
     assert probe not in pl.editable_fields()              # but it is NOT editable — the discriminating fact
     q_without = _KNOWN_INCOHERENT - {probe}

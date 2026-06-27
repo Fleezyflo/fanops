@@ -7,9 +7,8 @@ so the file never lands a record that won't reload. All names are re-exported fr
 from __future__ import annotations
 from contextlib import contextmanager
 from typing import Optional
-from fanops.config import Config, FRAMING_NAMES
+from fanops.config import Config
 from fanops.hashtags import _norm
-from fanops.bands import PROFILE_NAMES
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 from fanops.personas import (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, Personas, _slug)
 
@@ -62,12 +61,12 @@ _UNSET = object()
 def add_persona(cfg: Config, name: str, voice: str = "",
                 intake: Optional[dict] = None, id: str = "", *, content_focus=None,
                 energy: str = "", hook_angle: str = "",
-                clip_profile: str = "", framing: str = "",
                 casting_directive: str = "", hook_directive: str = "", caption_directive: str = "") -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
     duplicate id and a blank name (never write a record that won't reload). Validates every lever-engine
     field against its vocabulary. Returns the id; raises ValueError on bad input. (M3: tag_lean retired —
-    the curated hashtag_corpus is the per-account hashtag differentiator.)"""
+    hashtag_corpus is the hashtag differentiator; the per-persona clip_profile/framing PINS retired — the
+    cut LENGTH derives from content_focus and FRAMING from energy.)"""
     nm = (name or "").strip()
     if not nm:
         raise ValueError("persona name is required")
@@ -77,8 +76,6 @@ def add_persona(cfg: Config, name: str, voice: str = "",
     focus = _norm_focus(content_focus)
     energy_v = _enum_or_none(energy, ENERGY_LEVELS, "energy")
     angle_v = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle")
-    prof_v = _enum_or_none(clip_profile, PROFILE_NAMES, "clip_profile")
-    fr_v = _enum_or_none(framing, FRAMING_NAMES, "framing")
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
@@ -87,7 +84,6 @@ def add_persona(cfg: Config, name: str, voice: str = "",
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""),
                       "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
                       "energy": energy_v, "hook_angle": angle_v,
-                      "clip_profile": prof_v, "framing": fr_v,
                       "casting_directive": str(casting_directive or ""), "hook_directive": str(hook_directive or ""),
                       "caption_directive": str(caption_directive or "")})
         write_json_atomic(p, raw)
@@ -95,17 +91,14 @@ def add_persona(cfg: Config, name: str, voice: str = "",
 
 
 def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_UNSET,
-                   content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET,
-                   clip_profile=_UNSET, framing=_UNSET, casting_directive=_UNSET,
+                   content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET, casting_directive=_UNSET,
                    hook_directive=_UNSET, caption_directive=_UNSET) -> str:
     """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; each lever
     clears on "". Validates every passed lever against its vocabulary BEFORE the lock (never write a typo).
-    Unknown id -> KeyError. (M3: tag_lean retired.)"""
+    Unknown id -> KeyError. (M3: tag_lean + the clip_profile/framing pins retired.)"""
     _focus = _norm_focus(content_focus) if content_focus is not _UNSET else _UNSET
     _energy = _enum_or_none(energy, ENERGY_LEVELS, "energy") if energy is not _UNSET else _UNSET
     _angle = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle") if hook_angle is not _UNSET else _UNSET
-    _prof = _enum_or_none(clip_profile, PROFILE_NAMES, "clip_profile") if clip_profile is not _UNSET else _UNSET
-    _fr = _enum_or_none(framing, FRAMING_NAMES, "framing") if framing is not _UNSET else _UNSET
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
@@ -121,8 +114,6 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_
                 if _focus is not _UNSET: d["content_focus"] = _focus
                 if _energy is not _UNSET: d["energy"] = _energy
                 if _angle is not _UNSET: d["hook_angle"] = _angle
-                if _prof is not _UNSET: d["clip_profile"] = _prof
-                if _fr is not _UNSET: d["framing"] = _fr
                 if casting_directive is not _UNSET: d["casting_directive"] = str(casting_directive or "")
                 if hook_directive is not _UNSET: d["hook_directive"] = str(hook_directive or "")
                 if caption_directive is not _UNSET: d["caption_directive"] = str(caption_directive or "")

@@ -89,9 +89,9 @@ def test_breakdown_flags_energy_medium_noop(tmp_path):
 
 def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", clip_profile="short", framing="top",
-                                       hashtag_corpus=["#myscene"]))
-    assert "8-15s" in d["cut"]["band"] and d["cut"]["framing"] == "top" and d["cut"]["source"] == "persona"
+    d = compose_breakdown(cfg, Persona(id="p", content_focus=["punchlines"], energy="low",
+                                       hashtag_corpus=["#myscene"]))   # M3d: cut DERIVES (punchlines->short, low->top)
+    assert "8-15s" in d["cut"]["band"] and d["cut"]["framing"] == "top" and d["cut"]["source"] == "derived"
     assert "#myscene" in d["tags"]["lead"]                        # corpus floats to the lead, like the pipeline
     d2 = compose_breakdown(cfg, Persona(id="q", voice="v"))
     assert d2["cut"]["source"] == "global"                        # unset profile → global, not persona
@@ -100,8 +100,8 @@ def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
 # ---- produces_summary: the operator-facing "what this persona DROPS" lead (S7) ----
 def test_produces_summary_lists_configured_dimensions(tmp_path):
     cfg = Config(root=tmp_path)
-    p = Persona(id="p", voice="v", clip_profile="short", framing="top", hook_angle="curiosity",
-                hashtag_corpus=["#myscene"])
+    p = Persona(id="p", voice="v", content_focus=["punchlines"], energy="low", hook_angle="curiosity",
+                hashtag_corpus=["#myscene"])                        # M3d: cut DERIVES (punchlines->short, low->top)
     d = compose_breakdown(cfg, p)
     clauses = produces_summary(d)
     joined = " · ".join(clauses)
@@ -118,14 +118,14 @@ def test_produces_summary_unset_persona_is_empty(tmp_path):
 def test_produces_summary_hashtag_clause_needs_a_deliberate_posture(tmp_path):
     # length set but NO corpus -> the hashtag clause stays silent (the floor isn't a choice); clips still list.
     cfg = Config(root=tmp_path)
-    clauses = produces_summary(compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="long")))
+    clauses = produces_summary(compose_breakdown(cfg, Persona(id="p", voice="v", content_focus=["storytelling"])))   # M3d: derives long
     assert any("clips" in c for c in clauses)
     assert not any("hashtag" in c for c in clauses)
 
 def test_produces_summary_is_embedded_in_breakdown_with_parity(tmp_path):
     # compose_breakdown carries the SAME clause list under "produces" — no second resolver, can't drift (S7 additive).
     cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="short", hook_angle="fomo"))
+    d = compose_breakdown(cfg, Persona(id="p", voice="v", content_focus=["punchlines"], hook_angle="fomo"))   # M3d: derives short
     assert d["produces"] == produces_summary(d)                     # parity: embedded == standalone
     assert "angle" in d["hook"]                                     # the additive hook['angle'] key
 
@@ -138,7 +138,7 @@ def test_produces_summary_skips_angle_when_hook_overridden(tmp_path):
 
 def test_produces_summary_is_pure_no_persistence(tmp_path):
     cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="short"))
+    d = compose_breakdown(cfg, Persona(id="p", voice="v", content_focus=["punchlines"]))   # M3d: derives short
     produces_summary(d); produces_summary(d)                        # idempotent, takes only the dict
     assert not cfg.personas_path.exists()
 

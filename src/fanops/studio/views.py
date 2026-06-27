@@ -283,7 +283,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     never 500s), mirroring golive_accounts. `led` is injectable (tests); else loaded lock-free."""
     try:
         from fanops.personas import (Personas, compose_persona_instruction, persona_facts,   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
-                                     hook_directive, caption_directive)
+                                     hook_directive, caption_directive, resolved_cut_spec)
         reg = Personas.load(cfg)
         accts = Accounts.load(cfg).accounts
     except Exception as exc:
@@ -318,7 +318,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
                          content_focus=list(p.content_focus), energy=p.energy, hook_angle=p.hook_angle,
-                         clip_profile=p.clip_profile, framing=facts["framing"],
+                         clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],   # M3: the DERIVED tier (the per-persona pin is retired)
                          instruction=compose_persona_instruction(p),
                          length_band=facts["length_band"], lead_tags=facts["lead_tags"],
                          hook_text=hook_directive(p), caption_text=caption_directive(p),
