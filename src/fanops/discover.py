@@ -3,7 +3,14 @@ ONE ffprobe + ONE thumbnail frame per candidate — NO transcription, NO LLM, NO
 (that expensive pipeline work happens only AFTER the operator approves, on approved items). The
 operator reviews 00_review/ in Finder and moves keepers into 00_review/approved/; `intake` then
 copies the approved originals into 01_inbox/ for the existing pipeline. Rejects never enter the
-pipeline (no wasted clip/claude cost)."""
+pipeline (no wasted clip/claude cost).
+
+SINGLE-OPERATOR ASSUMPTION (audit c0-f4): discover()/intake() write their manifest + intaken-set
+control files WITHOUT holding the ledger flock — they are pre-ingest, human-at-Finder steps, so two
+concurrent `intake` runs (or discover racing intake) on the SAME root could lost-update those JSONs.
+This is by-design: the review→intake step is inherently one operator moving files in Finder, not a
+daemon path. Each write is still crash-safe (tmp + os.replace below), so a single operator never sees
+a torn file; the only thing not guarded is two simultaneous operators, which this stage does not have."""
 from __future__ import annotations
 import json, logging, os, shutil, subprocess
 from pathlib import Path
@@ -27,8 +34,12 @@ def _write_json_atomic(path: Path, obj) -> None:
     """tmp + os.replace, mirroring Ledger._save_unlocked: a crash mid-write must never leave a
     truncated manifest/intaken file — the next run would die on it, or a partial intaken set
     would silently re-intake (duplicate sources). Plain write_text violated the module's own
-    'idempotent, never a crash' docstring claim (stage-6 audit)."""
+    'idempotent, never a crash' docstring claim (stage-6 audit). os.replace is atomic only when src
+    and dst share a filesystem (audit c2-f3); the tmp is `path.with_suffix(... + '.tmp')`, i.e. the
+    SAME directory as the target, so the same-fs precondition holds by construction — never move it to
+    a /tmp scratch dir or the swap silently stops being atomic."""
     tmp = path.with_suffix(path.suffix + ".tmp")
+    assert tmp.parent == path.parent          # same-fs precondition for an atomic os.replace (audit c2-f3)
     tmp.write_text(json.dumps(obj, indent=2))
     os.replace(tmp, path)
 

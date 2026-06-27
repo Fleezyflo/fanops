@@ -1,13 +1,28 @@
 # tests/test_agentstep.py
 import json
+from pathlib import Path
+import fanops.agentstep as agentstep
 from fanops.config import Config
 from fanops.models import MomentDecision
-from fanops.agentstep import write_request, read_response, pending, response_path, latest_request_id
+from fanops.agentstep import write_request, write_response, read_response, pending, response_path, latest_request_id
 
 def test_write_request_creates_file_with_id(tmp_path):
     cfg = Config(root=tmp_path)
     rid = write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
     assert rid and latest_request_id(cfg, "moments", "src_1") == rid
+
+
+def test_atomic_write_tmp_shares_target_dir(tmp_path, mocker):
+    # audit c2-f3: os.replace is atomic only when tmp and target share a filesystem; both the request and the
+    # response writers must keep their tmp in the target's OWN directory. Pins it against a refactor to a /tmp
+    # scratch dir that would silently break atomicity (the in-code assert also enforces it at runtime).
+    cfg = Config(root=tmp_path)
+    seen = []
+    real = agentstep.os.replace
+    mocker.patch("fanops.agentstep.os.replace", side_effect=lambda s, d: (seen.append((Path(s), Path(d))), real(s, d))[1])
+    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    write_response(cfg, "moments", "src_1", json.dumps({"request_id": "x", "moments": []}))
+    assert seen and all(src.parent == dst.parent for src, dst in seen)
 
 def test_pending_lists_until_matching_response(tmp_path):
     cfg = Config(root=tmp_path)

@@ -46,8 +46,11 @@ def write_request(cfg: Config, *, kind: str, key: str, payload: dict) -> str:
     # ATOMIC write (temp + os.replace, the ledger._save_unlocked pattern): the old plain write_text
     # left a concurrent reader exposed to a torn request — safe ONLY by the implicit "all writers
     # hold the ledger flock" invariant. os.replace makes the swap-in atomic regardless, so a reader
-    # always sees either the prior request or the complete new one, never a partial.
+    # always sees either the prior request or the complete new one, never a partial. os.replace is
+    # atomic ONLY when tmp and target share a filesystem (audit c2-f3); tmp = p.with_suffix(".json.tmp")
+    # keeps it in the SAME directory as the target, so the same-fs precondition holds by construction.
     tmp = p.with_suffix(".json.tmp")
+    assert tmp.parent == p.parent             # same-fs precondition for an atomic os.replace (audit c2-f3)
     tmp.write_text(json.dumps(payload, indent=2, default=str))
     os.replace(str(tmp), str(p))
     # a freshly (re)written request invalidates any prior response on disk. The request_id check in
@@ -65,6 +68,7 @@ def write_response(cfg: Config, kind: str, key: str, json_text: str) -> None:
     window on the answer file itself, which the old plain write_text left open under overlapping passes."""
     rp = response_path(cfg, kind, key)
     tmp = rp.with_suffix(".json.tmp")
+    assert tmp.parent == rp.parent       # same-fs precondition for an atomic os.replace (audit c2-f3)
     tmp.write_text(json_text)
     try: os.chmod(tmp, 0o600)            # owner-only at rest (audit): the answer carries hook/caption/casting content
     except OSError: pass                 # best-effort — never break the gate on a perms quirk
