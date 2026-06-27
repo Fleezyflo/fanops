@@ -99,3 +99,14 @@ def test_drawer_renders_cut_and_caption_provenance(tmp_path):
     html = app.test_client().post("/personas/compose", data={
         "voice": "a devoted fan", "content_focus": "storytelling", "energy": "low"}).get_data(as_text=True)
     assert "content_focus" in html and "energy" in html     # the cut provenance names the levers
+
+
+def test_drawer_renders_lever_health_panel(tmp_path):
+    from fanops.studio.app import create_app
+    from fanops.personas import add_persona
+    cfg = Config(root=tmp_path)
+    pid = add_persona(cfg, name="P", voice="a devoted fan", content_focus=["storytelling"], hook_angle="curiosity")
+    app = create_app(cfg); app.config.update(TESTING=True)
+    html = app.test_client().get(f"/personas/drawer/{pid}").get_data(as_text=True)
+    assert "Lever health" in html and "✓" in html           # the manifest/health panel renders, all coherent
+    assert "⚠" not in html                                   # no incoherent lever post-M3

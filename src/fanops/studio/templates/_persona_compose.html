@@ -21,11 +21,13 @@
     <div class="compose-row">
       <span class="compose-tag">CAPTION</span>
       <span class="compose-text">{{ d.caption.text or '—' }}</span>
+      {% if d.caption.fragments %}<span class="compose-prov">{% for f in d.caption.fragments %}<span class="frag" title="{{ f.text }}">← {{ f.source }}</span> {% endfor %}</span>{% endif %}
       <span class="muted">(hashtags are deterministic, not in this text)</span>
     </div>
     <div class="compose-row">
       <span class="compose-tag">CUT</span>
       <span class="compose-text">{{ d.cut.band }}{% if d.cut.framing %}, {{ d.cut.framing }} crop{% endif %}</span>
+      {% if d.cut.fragments %}<span class="compose-prov">{% for f in d.cut.fragments %}<span class="frag" title="{{ f.text }}">← {{ f.source }}</span> {% endfor %}</span>{% endif %}
       <span class="muted">(set by {{ d.cut.source }})</span>
     </div>
     <div class="compose-row">
