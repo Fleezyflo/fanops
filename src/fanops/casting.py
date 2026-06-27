@@ -160,6 +160,24 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
             led.add_account_selection(AccountSelection(
                 id=account_selection_id(source_id, h), source_id=source_id, account=h,
                 moment_ids=sorted(mids), method=SelectionMethod.llm, batch_id=bid, created_at=now))
+        # WS1 (audit c5-f1/xc-1): a persona-LESS active account is NEVER in the brief (request_moment_casting
+        # filters on a truthy casting_directive), so the selector cannot place it; on a CAST source it would hit
+        # account_selection_admits' "no record -> DENY" branch and silently post NOTHING. Give each never-
+        # candidate active account an EXPLICIT fan_all_default selection so it ships fan-to-all via the LABELLED
+        # gate branch (casting.py account_selection_admits) — VISIBLE, not a silent admit, so RF1's no-collapse
+        # contract holds: an in-brief-but-unpicked account still has NO record and still DENIES (true
+        # differentiation). Only when the source actually became cast (per_account non-empty); the picked-no-one
+        # case is left to the existing fan-to-all fallback + degraded_reason below.
+        if per_account:
+            candidates = {a.handle for a in accounts.active() if casting_directive(a)}
+            for a in accounts.active():
+                if a.handle in candidates or a.handle in per_account: continue
+                if led.account_selection_for(source_id, a.handle) is not None: continue
+                led.add_account_selection(AccountSelection(
+                    id=account_selection_id(source_id, a.handle), source_id=source_id, account=a.handle,
+                    moment_ids=[], method=SelectionMethod.fan_all_default, batch_id=bid, created_at=now))
+                with contextlib.suppress(Exception):
+                    get_logger(cfg)("casting", source_id, "fan_all_default", account=a.handle)
         if not per_account and src is not None and active:   # casting ran but picked NO ONE -> visible, never silent
             led.sources[source_id] = src.model_copy(
                 update={"degraded_reason": "casting produced no selections (source falls back to fan-to-all)"})
