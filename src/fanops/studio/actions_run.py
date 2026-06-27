@@ -61,9 +61,11 @@ def run_pull(cfg: Config, url: str) -> ActionResult:
         return ActionResult(ok=False, error=f"url must be http(s):// — got {url!r}")
     n = 0
     try:
-        download_url(cfg, url.strip())
+        produced = download_url(cfg, url.strip())
         with Ledger.transaction(cfg) as led:
-            led = ingest_drops(led, cfg, origin="url")
+            # per-file origin (audit c0-f1): only the freshly-pulled files are "url"; a manual drop already
+            # in the inbox keeps "drop" — same correlation as the CLI's cmd_pull, so neither surface mislabels.
+            led = ingest_drops(led, cfg, origin="url", origin_paths=produced)
             n = len(led.sources)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:

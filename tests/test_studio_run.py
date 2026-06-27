@@ -224,6 +224,25 @@ def test_run_pull_rejects_non_http_url(tmp_path):
     assert not res.ok and "http" in (res.error or "").lower()
 
 
+def test_run_pull_does_not_mislabel_a_pre_existing_drop_as_url(tmp_path, mocker):
+    # audit c0-f1: the Studio URL-ingest path mirrors the CLI's cmd_pull — a manual drop already in the inbox
+    # must keep "drop", only the freshly-pulled file becomes "url" (no pass-wide mislabel on this surface either).
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
+    (cfg.inbox).mkdir(parents=True, exist_ok=True); (cfg.inbox / "drop.mp4").write_bytes(b"DROPPED")
+    def fake_ytdlp(cmd, **kw):
+        (cfg.inbox / "pulled.mp4").write_bytes(b"PULLED")
+        class R: returncode = 0; stdout = ""; stderr = ""
+        return R()
+    mocker.patch("fanops.ingest.subprocess.run", side_effect=fake_ytdlp)
+    res = actions.run_pull(cfg, "https://example.com/v")
+    assert res.ok
+    led = Ledger.load(cfg)
+    origins = {s.meta["bytes"]: s.source_origin for s in led.sources.values()}
+    assert origins[len(b"DROPPED")] == "drop" and origins[len(b"PULLED")] == "url"
+
+
 # ---- views.pipeline_status ----
 def test_pipeline_status_counts(tmp_path):
     cfg = Config(root=tmp_path)

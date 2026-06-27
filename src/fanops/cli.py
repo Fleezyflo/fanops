@@ -574,9 +574,11 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "pull":
         # Phase-B-followup: the yt-dlp DOWNLOAD (network, slow) runs OUTSIDE the lock; only the
         # ingest of what landed runs inside the transaction.
-        download_url(cfg, args.url)                  # network, NO lock held
+        produced = download_url(cfg, args.url)       # network, NO lock held; returns the files it produced
         with Ledger.transaction(cfg) as led:
-            led = ingest_drops(led, cfg, origin="url")
+            # per-file origin (audit c0-f1): only the freshly-pulled files are "url"; a manual drop already
+            # waiting in the inbox keeps "drop" instead of being mislabeled by this pull.
+            led = ingest_drops(led, cfg, origin="url", origin_paths=produced)
             n = len(led.sources)
         write_digest(Ledger.load(cfg), cfg)
         print(f"pulled -> {n} sources"); return 0
