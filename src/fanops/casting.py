@@ -1,12 +1,19 @@
 # src/fanops/casting.py — Account-First Studio: per-account moment casting (Face 3).
-# Two selectors over the already-decided moment pool, both writing ONLY Moment.affinities (crosspost then
-# fans a cast moment ONLY to its accounts): the default-ON **LLM gate** (`request_moment_casting`/
-# `ingest_moment_casting`, wired into the pipeline — an LLM SELECTION, GENEROUS, no count cap), and the
-# retained-but-unwired token-overlap **heuristic** (`cast_moments` — a pure persona-fit scorer that assigns
-# each account up to a `budget` (default 6) of its best-fitting moments BOUNDED by that moment's batch target).
+# THE crosspost gate is the DURABLE AccountSelection (RF1), read by `account_selection_admits` below —
+# `Moment.affinities` is the LEGACY non-durable tag, honored only as the fallback for a source that never
+# wrote a selection (pre-v9 / casting-never-ran). Two selectors over the already-decided moment pool:
+#   - the default-ON **LLM gate** (`request_moment_casting`/`ingest_moment_casting`, wired into the
+#     pipeline — an LLM SELECTION, GENEROUS, no count cap): writes the DURABLE AccountSelection (the real
+#     gate input) AND mirrors it onto Moment.affinities for the legacy readers.
+#   - the retained-but-unwired token-overlap **heuristic** (`cast_moments` — a pure persona-fit scorer,
+#     up to `budget` (default 6) best-fitting moments per account, bounded by that moment's batch target):
+#     writes ONLY affinities (+ a SelectionFact audit row), NOT an AccountSelection — so it feeds only the
+#     legacy fallback path. It is the documented no-LLM/manual fallback (CLAUDE.md), tested but NOT wired
+#     into the pipeline; re-activating it as a production selector would require also emitting AccountSelection
+#     to be RF1-gate-consistent (audit c5-f4).
 # Neither does ffmpeg or a per-account author re-run (moments are SOURCE-keyed, so the base render stays
 # shared — per-account differentiation is the existing cheap hook overlay).
-# C1-safe: reads persona + signal_score, writes ONLY affinities — never touches amplify/retire/cascade/track.
+# C1-safe: reads persona + signal_score, writes ONLY affinities/AccountSelection — never touches amplify/retire/cascade/track.
 from __future__ import annotations
 import contextlib
 from datetime import datetime, timezone
@@ -53,7 +60,9 @@ def cast_moments(led, cfg, accounts, *, account_target=None, budget: int = 6):
     (Source.batch_id -> Batch.target_accounts; empty/missing -> all active), so affinities ⊆ the batch target
     (it can only NARROW). account_target overrides the per-moment resolution for standalone callers (None ->
     resolve per moment). Idempotent (only affinities==[] moments are considered) + fail-open (returns led
-    unchanged, logged once, on any internal error). NON-DURABLE across a moment re-decision."""
+    unchanged, logged once, on any internal error). NON-DURABLE across a moment re-decision. c5-f4: this writes
+    ONLY affinities (+ a SelectionFact audit row), NOT a durable AccountSelection — so it feeds only the legacy
+    fallback gate path; re-wiring it as a production selector must also emit AccountSelection (RF1-consistency)."""
     try:
         active = list(accounts.active())
         active_handles = {a.handle for a in active}
