@@ -76,10 +76,15 @@ def subject_focus(cfg, src, *, start: float, end: float):
     cv2 = _cv2()
     frames: list[str] = []
     fx = fy = None
+    # WS4 (audit c0-f2/c2-f1): a PER-(source, window) tmp dir, not one shared framing/tmp. extract_keyframes
+    # names files only by (rounded-start, index), so two sources whose windows share a start would collide in a
+    # shared dir — under FANOPS_CONCURRENT_SOURCES the prewarm runs this in a thread pool and a worker would
+    # clobber/unlink another's frames (silently wrong crop or a None read). Keying the dir on (source, window)
+    # makes the collision domain per-call, so the race can't be constructed (safe to default the flag on).
+    tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_{key}"
     try:
         if cv2 is not None:
             from fanops.keyframes import extract_keyframes
-            tmp = cfg.agent_io / "framing" / "tmp"
             frames = extract_keyframes(getattr(src, "source_path", ""), start, end,
                                        count=_KF_COUNT, out_dir=tmp)
             if frames:
@@ -93,6 +98,8 @@ def subject_focus(cfg, src, *, start: float, end: float):
         for f in frames:
             with contextlib.suppress(OSError):
                 os.unlink(f)
+        with contextlib.suppress(OSError):                   # remove the now-empty per-call dir (no accumulation)
+            os.rmdir(tmp)
     cache[key] = {"fx": fx, "fy": fy}
     result = (fx, fy) if fx is not None else None
     try:
