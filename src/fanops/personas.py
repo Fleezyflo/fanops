@@ -20,15 +20,18 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from fanops.config import Config
 from fanops.errors import ControlFileError, reason as _reason
+from fanops.persona_levers import vocab as _lever_vocab
 
 # The lever-engine vocabularies (the validated control surface — one lever per persona characteristic). Each
 # is the WRITE boundary for its lever: add/update_persona refuses an unknown value (never write a typo that
 # reloads as a silent no-op), and compose_persona_instruction renders the SET levers into the single
-# instruction the casting/hook/caption prompts read. clip_profile/framing reuse the Account validators
-# (bands.PROFILE_NAMES / config.FRAMING_NAMES) so a persona pins the SAME deterministic CUT an account can.
-CONTENT_FOCUS = frozenset({"punchlines", "emotional", "hype", "storytelling", "visual", "bold-statement"})
-ENERGY_LEVELS = frozenset({"low", "medium", "high"})
-HOOK_ANGLES = frozenset({"curiosity", "challenge", "emotional", "result-first", "fomo"})
+# instruction the casting/hook/caption prompts read. M1: these are now PROJECTIONS of the single lever
+# registry (fanops.persona_levers) — the same declaration the clause maps + lever_catalog derive from, so the
+# three can no longer drift. clip_profile/framing reuse the Account validators (bands.PROFILE_NAMES /
+# config.FRAMING_NAMES) so a persona pins the SAME deterministic CUT an account can.
+CONTENT_FOCUS = _lever_vocab("content_focus")
+ENERGY_LEVELS = _lever_vocab("energy")
+HOOK_ANGLES = _lever_vocab("hook_angle")
 
 
 class Persona(BaseModel):
@@ -97,3 +100,4 @@ from fanops.persona_store import (   # noqa: E402,F401
     add_persona, update_persona, add_corpus_tag, remove_corpus_tag,
     delete_persona, migrate_from_accounts)
 from fanops.persona_research import research_corpus, discover_corpus   # noqa: E402,F401
+from fanops.persona_levers import LEVER_REGISTRY, build_catalog as _registry_build_catalog   # noqa: E402,F401  (facade re-export of the M1 registry)

@@ -165,7 +165,7 @@ def test_single_declaration_option_present_in_all_three_projections():
     val = "storytelling"
     assert val in pl.vocab("content_focus")                         # vocab
     assert val in pl.clause_map("content_focus")                    # clause map
-    assert val in {o["value"] for o in next(l for l in pl.build_catalog() if l["key"] == "content_focus")["options"]}
+    assert val in {o["value"] for o in next(lv for lv in pl.build_catalog() if lv["key"] == "content_focus")["options"]}
     assert val in pl.focus_profile_map()                            # derived-cut map
 
 
@@ -173,7 +173,7 @@ def test_removing_an_option_from_a_registry_copy_drops_it_from_all_three():
     import copy
     import fanops.persona_levers as pl
     reg = copy.deepcopy(pl.LEVER_REGISTRY)
-    cf = next(l for l in reg if l["key"] == "content_focus")
+    cf = next(lv for lv in reg if lv["key"] == "content_focus")
     cf["options"] = [o for o in cf["options"] if o["value"] != "storytelling"]
     # build the three projections from the MUTATED registry via the same pure derivers
     vocab = frozenset(o["value"] for o in cf["options"])
