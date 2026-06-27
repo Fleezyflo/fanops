@@ -81,6 +81,18 @@ def test_load_store_reads_tags_or_none(tmp_path):
     assert load_store(cfg) is None                          # corrupt -> None, never raises
 
 
+def test_refresh_store_flag_off_writes_frozen_floor_even_with_creds(tmp_path, monkeypatch):
+    # FANOPS_HASHTAG_TRENDS=0 is the operator escape hatch: the store is the frozen reach floor only — no Graph
+    # harvest/measure — even when Meta creds are present. Keeps the flag meaningful (not a dead switch).
+    monkeypatch.setenv("FANOPS_HASHTAG_TRENDS", "0")
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    out = refresh_store(cfg, get=_graph_router({"#beta": 900}, cooccur="#beta"))   # router present but must NOT be used
+    store = json.loads(cfg.hashtags_path.read_text())["tags"]
+    assert out["measured"] == 0 and out["harvested"] == 0       # Graph sampling skipped
+    assert store == vetted_menu()                               # frozen floor verbatim
+
+
 def test_load_store_reach_reads_graph_reach_map_or_empty(tmp_path):
     # WS5: refresh_store persists {"reach": {tag: graph reach}} for the Studio surface; load_store_reach reads
     # it normalized, fail-open to {} when absent / no reach key / corrupt.

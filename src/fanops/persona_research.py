@@ -12,9 +12,9 @@ from fanops.personas import Personas
 
 def research_corpus(cfg: Config, pid: str, *, limit: int = 8) -> list[str]:
     """B3: propose the reach-best hashtags this persona doesn't yet carry — the bootstrap "research my
-    corpus" step. Grounded in the reach-ranked store (own-reach + Graph trends, default-ON), minus its
-    current corpus. INSTANT + budget-free: the store already encodes the Graph signal (refresh_store blends
-    it), so no per-candidate Graph call is spent here. Returns an ordered list of candidate tags (most-reach
+    corpus" step. Grounded in the reach-ranked store (LIVE Meta Graph reach), minus its current corpus.
+    INSTANT + budget-free: the store already encodes the Graph signal (refresh_store built it), so no
+    per-candidate Graph call is spent here. Returns an ordered list of candidate tags (most-reach
     first) the operator accepts into the corpus. Unknown id -> KeyError. (M3: tag_lean retired — the curated
     corpus itself is the persona's flavor; research re-ranks the reach universe against it.)"""
     from fanops.hashtags import vetted_menu, load_store   # _norm already imported at module scope
@@ -22,7 +22,7 @@ def research_corpus(cfg: Config, pid: str, *, limit: int = 8) -> list[str]:
     if per is None:
         raise KeyError(pid)
     have = {_norm(t) for t in per.hashtag_corpus if isinstance(t, str)}
-    ranked = vetted_menu(load_store(cfg))                                # store (own-reach+trends) else frozen reach-order
+    ranked = vetted_menu(load_store(cfg))                                # store (live Graph reach) else frozen reach-order
     out: list[str] = []; seen: set[str] = set()
     for t in ranked:
         n = _norm(t)

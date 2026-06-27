@@ -5,7 +5,7 @@ on the publish path. Two design rules, both load-bearing:
 
   1. ENHANCEMENT -> the TRANSPORT fails SOFT. Any per-tag fetch failure (no creds, 401, 5xx, timeout,
      non-JSON, unresolved hashtag) returns None and is skipped — a missing trend never blocks a refresh
-     (own-reach ranking still stands). The token is sent as the Graph `access_token` param and is NEVER
+     (the frozen reach floor still stands). The token is sent as the Graph `access_token` param and is NEVER
      logged/echoed (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors post/metrics.py).
 
   2. The 30-unique-hashtags / rolling-7-day `ig_hashtag_search` cap is a HARD Meta limit, so the BUDGET
@@ -264,7 +264,7 @@ def harvest_cooccurring(cfg: Config, seed_tags: list[str], *, get=None, now: dat
 def discover_candidates(cfg: Config, seeds: list[str], *, known=(), measure_k: int = 0,
                         get=None, now: datetime | None = None) -> list[dict]:
     """M2: rank the co-occurrence harvest, DROP the tags we already know (VETTED ∪ store ∪ corpus, passed
-    in `known`), and OPTIONALLY measure the top `measure_k` novel tags' own reach within budget. Returns
+    in `known`), and OPTIONALLY measure the top `measure_k` novel tags' live Graph reach within budget. Returns
     ordered proposals [{"tag","count","host_engagement","measured_engagement"?,"sampled_at"?}], most-relevant
     first (by co-occurrence count, then host engagement). The FREE harvest is the primary signal; measurement
     is the only extra budget cost beyond seed resolution, hard-capped by BOTH measure_k AND a live

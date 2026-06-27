@@ -44,6 +44,10 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     -> measured is empty -> the frozen seed order stands. Returns a summary dict; never raises on a clean run."""
     from fanops.meta_graph import harvest_cooccurring, sample_trends
     seed = vetted_menu()                                  # frozen reach-ranked cold-start floor (never empty)
+    if not cfg.hashtag_trends:                            # operator escape hatch: Graph sampling OFF -> frozen floor only
+        cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg.hashtags_path.write_text(json.dumps({"tags": list(seed), "reach": {}}, indent=2))
+        return {"written": True, "measured": 0, "harvested": 0, "total": len(seed)}
     seeds = _seed_tags(cfg)
     harvested = harvest_cooccurring(cfg, seeds, get=get, now=now) if seeds else {}
     by_count = [t for t, _ in sorted(harvested.items(),   # discovered co-occurring tags, most-relevant first

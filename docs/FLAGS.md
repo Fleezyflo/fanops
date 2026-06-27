@@ -17,7 +17,7 @@ for what each flag does, how to disable it, and which test guards its OFF contra
 |---|---|---|---|---|
 | `creative_variation` | `FANOPS_CREATIVE_VARIATION=0` | **ON** | each active account gets its own caption + burned-in on-screen hook per clip (+ its own length/framing cut under M2) | legacy fan-to-all **single shared clip + moment hook**; the Review approve-with-hook restore flow becomes available (it's an OFF-mode feature) |
 | `account_casting` | `FANOPS_ACCOUNT_CASTING=0` | **ON** | each active account is cast its **own LLM-selected moments** (RF1 `AccountSelection`); crosspost fans a cast moment **only** to its accounts | legacy fan-to-all — every moment reaches every account; no per-account selection gate |
-| `hashtag_trends` | `FANOPS_HASHTAG_TRENDS=0` | **ON** | `hashtags refresh` samples **live Meta Graph** hashtag trends (closed-loop discovery) | own-reach-only refresh (also the automatic behavior when `META_GRAPH_TOKEN`/`META_IG_USER_ID` are absent — fail-open) |
+| `hashtag_trends` | `FANOPS_HASHTAG_TRENDS=0` | **ON** | `hashtags refresh` builds the store from **live Meta Graph** reach (harvest→measure→rank) | frozen reach floor only, no Graph harvest/measure (also the automatic behavior when `META_GRAPH_TOKEN`/`META_IG_USER_ID` are absent — fail-open) |
 
 Disable semantics are uniform: the env var disables the flag **only** on the explicit off-words `0`/`false`/`no`/`off`;
 unset, empty, or anything else → **ON**.
@@ -35,8 +35,8 @@ unset, empty, or anything else → **ON**.
 - **Note:** the wired LLM path is **uncapped by design** — there is no per-account moment budget (cost guardrails are a product call, deliberately not imposed).
 
 ### `hashtag_trends`
-- **Code:** [config.py:255](../src/fanops/config.py) (`def hashtag_trends`). Gates the **background** `hashtags refresh` Graph sampling only; the on-demand operator lookup (`meta_graph.tag_metrics`) is gated by creds + budget, never this flag.
-- **OFF contract:** refresh is own-reach-only; the output `hashtags.json` shape is byte-identical to the live-sampled one (trends only re-rank, never change the schema). Fail-open: identical to ON when no Meta token is configured.
+- **Code:** [config.py:255](../src/fanops/config.py) (`def hashtag_trends`). Master switch for the **background** `hashtags refresh` Graph store build only; the on-demand operator lookup (`meta_graph.tag_metrics`) is gated by creds + budget, never this flag.
+- **OFF contract:** `refresh_store` writes the frozen reach floor only — no Graph harvest/measure; the `hashtags.json` shape (`{tags, reach}`) is unchanged (`reach` empty). Fail-open: identical to ON when no Meta token is configured.
 - **Firewall tests:** `test_hashtag_trends_default_on` + `test_hashtag_trends_explicit_off` ([test_graph_tag_metrics.py:93](../tests/test_graph_tag_metrics.py)).
 
 ## Notable default-OFF flags (opt-in; byte-identical when off)

@@ -35,10 +35,10 @@ VETTED = set(_MEGA) | set(_RELEVANCE) | set(_ARABIC) | {t for v in _DISCOVERY.va
 # corpus is the SOLE per-account hashtag differentiator. See docs / persona-lever-coherence M3.
 
 def load_store(cfg) -> list[str] | None:
-    """M4: the dynamic reach-ranked tag store (00_control/hashtags.json `{"tags": [...]}`), normalized.
+    """The dynamic reach-ranked tag store (00_control/hashtags.json `{"tags": [...]}`), normalized.
     Absent / corrupt / empty -> None so every caller falls back to the frozen pools (fail-open, like
-    tuning.json). Never raises. The store is WRITTEN by fanops_hashtags.refresh_store (own-reach,
-    doctor-gated); this is the read side the caption path consumes."""
+    tuning.json). Never raises. The store is WRITTEN by fanops_hashtags.refresh_store from LIVE Meta Graph
+    reach; this is the read side the caption path consumes."""
     p = cfg.hashtags_path
     if not p.exists():
         return None
@@ -175,7 +175,7 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         h = _norm(t)
         if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
-    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, own-reach store, or frozen rank)
+    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, Graph-reach store, or frozen rank)
     # Reserved floors take the TAIL slots so the corpus/reach LEAD is preserved: region reach first
     # (non-negotiable under a corpus — a curated corpus must not strip AR reach), then ONE clip-content tag (the
     # operator's "tags based off information" ask). Each guarantees its signal reaches the <=max_tags line even

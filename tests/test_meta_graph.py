@@ -91,7 +91,7 @@ def test_record_query_appends_and_decrements(tmp_path, monkeypatch):
 
 
 def test_sample_trends_no_creds_returns_empty(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch, token=None)                 # no token -> own-reach only
+    cfg = _cfg(tmp_path, monkeypatch, token=None)                 # no token -> Graph fails open (no trend signal)
     get = _router({})
     assert meta_graph.sample_trends(cfg, ["#a"], get=get) == {}
     assert get.calls == []                                        # never hits the network without creds
