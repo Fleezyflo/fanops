@@ -20,18 +20,11 @@ def _write_accounts(cfg, rows):
 
 def test_add_and_load_persona(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Music Blogger", voice="champions craft", tag_lean="tasteful")
+    pid = P.add_persona(cfg, name="Music Blogger", voice="champions craft")
     p = P.Personas.load(cfg).get(pid)
     assert p is not None
     assert p.voice == "champions craft"
-    assert p.tag_lean == "tasteful"
     assert p.name == "Music Blogger"
-
-
-def test_add_persona_rejects_bad_lean(tmp_path):
-    cfg = Config(root=tmp_path)
-    with pytest.raises(ValueError):
-        P.add_persona(cfg, name="X", tag_lean="spicy")
 
 
 def test_add_persona_rejects_duplicate(tmp_path):
@@ -49,24 +42,10 @@ def test_add_persona_requires_name(tmp_path):
 
 def test_update_persona_fields(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Z", voice="old", tag_lean="bold")
-    P.update_persona(cfg, pid, voice="new", tag_lean="underground")
+    pid = P.add_persona(cfg, name="Z", voice="old")
+    P.update_persona(cfg, pid, voice="new")
     p = P.Personas.load(cfg).get(pid)
-    assert p.voice == "new" and p.tag_lean == "underground"
-
-
-def test_update_persona_clears_lean_with_blank(tmp_path):
-    cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Z", tag_lean="bold")
-    P.update_persona(cfg, pid, tag_lean="")
-    assert P.Personas.load(cfg).get(pid).tag_lean is None
-
-
-def test_update_persona_rejects_bad_lean(tmp_path):
-    cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Z")
-    with pytest.raises(ValueError):
-        P.update_persona(cfg, pid, tag_lean="zesty")
+    assert p.voice == "new"
 
 
 def test_update_unknown_persona_raises(tmp_path):
@@ -97,7 +76,7 @@ def test_delete_persona(tmp_path):
 def test_link_persona_sets_account_field(tmp_path):
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active"}])
-    pid = P.add_persona(cfg, name="P1", voice="voice-1", tag_lean="tasteful")
+    pid = P.add_persona(cfg, name="P1", voice="voice-1")
     link_persona(cfg, "@a", pid)
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0]["persona_id"] == pid
@@ -112,29 +91,28 @@ def test_link_unknown_account_raises(tmp_path):
 
 def test_load_hydrates_linked_account_from_persona(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="P1", voice="curator voice", tag_lean="tasteful")
+    pid = P.add_persona(cfg, name="P1", voice="curator voice")
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
-                           "persona": "stale inline", "tag_lean": "bold", "persona_id": pid}])
+                           "persona": "stale inline", "persona_id": pid}])
     a = Accounts.load(cfg).accounts[0]
     assert a.persona == "curator voice"    # the linked persona overrides the stale inline string
-    assert a.tag_lean == "tasteful"
 
 
 def test_load_failopen_when_personas_absent(tmp_path):
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
-                           "persona": "inline voice", "tag_lean": "bold", "persona_id": "ghost"}])
+                           "persona": "inline voice", "persona_id": "ghost"}])
     a = Accounts.load(cfg).accounts[0]    # no personas.json + dangling id -> inline stands, no crash
-    assert a.persona == "inline voice" and a.tag_lean == "bold"
+    assert a.persona == "inline voice"
 
 
 def test_load_unlinked_account_is_byte_identical(tmp_path):
     cfg = Config(root=tmp_path)
     P.add_persona(cfg, name="Other", voice="other voice")   # a persona exists but this account isn't linked
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
-                           "persona": "my own voice", "tag_lean": "underground"}])
+                           "persona": "my own voice"}])
     a = Accounts.load(cfg).accounts[0]
-    assert a.persona == "my own voice" and a.tag_lean == "underground" and a.persona_id is None
+    assert a.persona == "my own voice" and a.persona_id is None
 
 
 def test_unlinking_a_persona_leaves_no_stale_hydrated_state(tmp_path):
@@ -144,17 +122,17 @@ def test_unlinking_a_persona_leaves_no_stale_hydrated_state(tmp_path):
     # tag_lean never leak into accounts.json, and the next load reads the inline persona again. This pins that
     # contract so a future hydrated-save path can't silently strand a stale hydrated value on unlink.
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="P1", voice="curator voice", tag_lean="tasteful")
+    pid = P.add_persona(cfg, name="P1", voice="curator voice")
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
-                           "persona": "my own inline voice", "tag_lean": "bold"}])
+                           "persona": "my own inline voice"}])
     link_persona(cfg, "@a", pid)
     linked = Accounts.load(cfg).accounts[0]
-    assert linked.persona == "curator voice" and linked.tag_lean == "tasteful"   # hydrated in memory
+    assert linked.persona == "curator voice"   # hydrated in memory
     link_persona(cfg, "@a", "")                       # clear the link (blank -> persona_id None)
     raw = json.loads(cfg.accounts_path.read_text())["accounts"][0]
     assert raw.get("persona_id") is None and raw.get("persona") == "my own inline voice"   # no hydrated value persisted
     after = Accounts.load(cfg).accounts[0]
-    assert after.persona == "my own inline voice" and after.tag_lean == "bold"   # inline restored
+    assert after.persona == "my own inline voice"   # inline restored
     assert after.persona_id is None
 
 
@@ -164,9 +142,9 @@ def test_migrate_from_accounts_creates_and_links(tmp_path):
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [
         {"handle": "@mark", "platforms": ["instagram"], "status": "active",
-         "persona": "music blogger curator", "tag_lean": "tasteful"},
+         "persona": "music blogger curator"},
         {"handle": "@perca", "platforms": ["instagram"], "status": "active",
-         "persona": "underground zine", "tag_lean": "underground"},
+         "persona": "underground zine"},
     ])
     P.migrate_from_accounts(cfg)
     assert len(P.Personas.load(cfg).all()) == 2
@@ -190,12 +168,12 @@ def test_migrate_preserves_inline_cut_spec(tmp_path):
     # would silently drop an operator's inline length on migrate).
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
-                           "persona": "hypewoman energy", "tag_lean": "bold"}])
+                           "persona": "hypewoman energy"}])
     set_clip_profile(cfg, "@a", "long")               # operator hand-set an inline cut spec
     set_framing(cfg, "@a", "top")
     P.migrate_from_accounts(cfg)
     a = Accounts.load(cfg).accounts[0]                 # reloaded + hydrated (now linked)
-    assert a.persona_id and a.persona == "hypewoman energy" and a.tag_lean == "bold"   # voice+lean carried
+    assert a.persona_id and a.persona == "hypewoman energy"   # voice carried
     assert a.clip_profile == "long" and a.framing == "top"   # inline cut spec NOT lost through migrate+hydrate
 
 
@@ -210,7 +188,7 @@ def test_migrate_skips_unsluggable_handle(tmp_path):
     # A handle that slugs to "" must NOT be linked to an empty persona_id (a false "link to nothing").
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@@@", "platforms": ["instagram"], "status": "active",
-                           "persona": "some voice", "tag_lean": "bold"}])
+                           "persona": "some voice"}])
     out = P.migrate_from_accounts(cfg)
     assert out["created"] == [] and out["linked"] == []
     assert P.Personas.load(cfg).all() == []

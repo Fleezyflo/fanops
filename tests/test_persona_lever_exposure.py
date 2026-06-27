@@ -90,7 +90,7 @@ def test_breakdown_flags_energy_medium_noop(tmp_path):
 def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
     d = compose_breakdown(cfg, Persona(id="p", clip_profile="short", framing="top",
-                                       tag_lean="tasteful", hashtag_corpus=["#myscene"]))
+                                       hashtag_corpus=["#myscene"]))
     assert "8-15s" in d["cut"]["band"] and d["cut"]["framing"] == "top" and d["cut"]["source"] == "persona"
     assert "#myscene" in d["tags"]["lead"]                        # corpus floats to the lead, like the pipeline
     d2 = compose_breakdown(cfg, Persona(id="q", voice="v"))
@@ -101,7 +101,7 @@ def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
 def test_produces_summary_lists_configured_dimensions(tmp_path):
     cfg = Config(root=tmp_path)
     p = Persona(id="p", voice="v", clip_profile="short", framing="top", hook_angle="curiosity",
-                tag_lean="tasteful", hashtag_corpus=["#myscene"])
+                hashtag_corpus=["#myscene"])
     d = compose_breakdown(cfg, p)
     clauses = produces_summary(d)
     joined = " · ".join(clauses)
@@ -125,7 +125,7 @@ def test_produces_summary_hashtag_clause_needs_a_deliberate_posture(tmp_path):
 def test_produces_summary_is_embedded_in_breakdown_with_parity(tmp_path):
     # compose_breakdown carries the SAME clause list under "produces" — no second resolver, can't drift (S7 additive).
     cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="short", hook_angle="fomo", tag_lean="bold"))
+    d = compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="short", hook_angle="fomo"))
     assert d["produces"] == produces_summary(d)                     # parity: embedded == standalone
     assert "angle" in d["hook"]                                     # the additive hook['angle'] key
 
@@ -155,7 +155,7 @@ def test_preview_compose_returns_breakdown_without_persisting(tmp_path):
 def test_preview_compose_merges_saved_corpus_for_an_existing_id(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="Curator", voice="v", tag_lean="tasteful")
+    add_persona(cfg, name="Curator", voice="v")
     Personas.load(cfg)  # sanity
     from fanops.personas import add_corpus_tag
     add_corpus_tag(cfg, "curator", "#myscene")

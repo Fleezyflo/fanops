@@ -21,11 +21,12 @@ from fanops.personas import Persona, compose_breakdown, resolved_cut_spec, casti
 import fanops.persona_levers as pl
 
 
-# The original six incoherent fields — the QUARANTINE CEILING (hard-coded, separate from the mutable set below
-# so the ratchet test reds if anything NEW is grandfathered). M3 shrinks `_KNOWN_INCOHERENT` to empty.
-_ORIGINAL_SIX = frozenset({"tag_lean", "clip_profile", "framing",
+# The original incoherent fields — the QUARANTINE CEILING (hard-coded, separate from the mutable set below so
+# the ratchet test reds if anything NEW is grandfathered). M3 shrinks `_KNOWN_INCOHERENT` to empty. (M3c: the
+# 6th member `tag_lean` was RETIRED from the model — folded into hashtag_corpus — so it leaves both sets.)
+_ORIGINAL_SIX = frozenset({"clip_profile", "framing",
                            "casting_directive", "hook_directive", "caption_directive"})
-# The live quarantine: seeded with the six, only ever shrinks. (M3f sets this to frozenset().)
+# The live quarantine: seeded with the remaining incoherent fields, only ever shrinks. (M3f sets this to frozenset().)
 _KNOWN_INCOHERENT = set(_ORIGINAL_SIX)
 
 # Each lever field paired with (baseline, mutated) — two DISTINCT valid settings proving OUTPUT-SENSITIVITY.
@@ -38,7 +39,6 @@ _MUTATIONS = {
     "energy": ("high", "low"),
     "hook_angle": ("curiosity", "fomo"),
     "hashtag_corpus": (["#aaa"], ["#bbb"]),
-    "tag_lean": ("tasteful", "bold"),
     "clip_profile": ("short", "long"),
     "framing": ("top", "center"),
     "casting_directive": ("", "ONLY clip the freestyle bars"),
@@ -103,15 +103,17 @@ def test_each_lever_mutation_changes_the_compiled_output(tmp_path):
 
 
 def test_quarantine_teeth_bite_on_the_editability_axis():
-    # THE GUARD'S TEETH — proving it would catch the exact Phase-1 over-claim. tag_lean is OUTPUT-SENSITIVE (it
-    # is in _MUTATIONS and moves output), so an output-only guard PASSES it. The NEW power is editability: it is
-    # NOT in the save route. Un-quarantining it must red the coherence guard SPECIFICALLY on editability.
-    assert "tag_lean" in _MUTATIONS                       # it DOES move output — output-sensitivity alone passes it
-    assert "tag_lean" not in pl.editable_fields()         # but it is NOT editable — the discriminating fact
-    q_without = _KNOWN_INCOHERENT - {"tag_lean"}
+    # THE GUARD'S TEETH — proving it would catch the exact Phase-1 over-claim. clip_profile (the per-persona
+    # pin) is OUTPUT-SENSITIVE (it is in _MUTATIONS and moves output), so an output-only guard PASSES it. The
+    # NEW power is editability: the Persona pin is NOT in the save route. Un-quarantining it must red the
+    # coherence guard SPECIFICALLY on editability. (Was tag_lean pre-M3c; now any still-quarantined field.)
+    probe = "clip_profile"
+    assert probe in _MUTATIONS                            # it DOES move output — output-sensitivity alone passes it
+    assert probe not in pl.editable_fields()              # but it is NOT editable — the discriminating fact
+    q_without = _KNOWN_INCOHERENT - {probe}
     violators = [f for f in Persona.model_fields
                  if not pl.is_exempt(f) and f not in q_without and f not in pl.editable_fields()]
-    assert "tag_lean" in violators, "removing tag_lean from quarantine must red the guard on the editability axis"
+    assert probe in violators, "removing a quarantined field must red the guard on the editability axis"
 
 
 def test_runtime_is_fail_open_on_malformed_fields():

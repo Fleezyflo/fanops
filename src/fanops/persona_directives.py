@@ -170,7 +170,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
     cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": res_fr,
            "source": ("persona" if pin_prof else ("derived" if res_prof else "global"))}
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
-    tags = {"lead": facts["lead_tags"], "lean": getattr(p, "tag_lean", None),
+    tags = {"lead": facts["lead_tags"],
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
     noops: list[str] = []
     if (getattr(p, "energy", None) or "").strip().lower() == "medium" and not cast_override:
@@ -196,7 +196,7 @@ def produces_summary(breakdown: dict) -> list[str]:
         out.append(f"{angle} hooks")
     tags = breakdown.get("tags") or {}
     lead = tags.get("lead") or []
-    if lead and (tags.get("lean") or tags.get("corpus")):   # a deliberate hashtag posture, not the cold-start floor
+    if lead and tags.get("corpus"):                         # a deliberate hashtag posture (curated corpus), not the cold-start floor
         out.append(f"≤{len(lead)} hashtags")
     return out
 
@@ -205,10 +205,10 @@ def persona_facts(cfg: Config, p) -> dict:
     """The TRANSPARENCY read (M2 Task 8) — "what this persona produces", derived from the EXACT resolvers the
     pipeline calls (never a re-encoded copy that could drift): the clip LENGTH band (bands.band_for on the
     resolved profile — the same call moment_pick_prompt makes), the FRAMING, and the deterministic LEAD
-    hashtags (hashtags.vet_hashtags with this persona's lean + curated corpus over the live reach store). The
-    lean/corpus are a DETERMINISTIC post-step (not shown to the caption LLM), so this is the only place the
-    operator sees their effect. PURE read; FAIL-OPEN to the frozen floor when no store/creds. Duck-typed
-    (serves a Persona OR a hydrated Account)."""
+    hashtags (hashtags.vet_hashtags with this persona's curated corpus over the live reach store). The corpus
+    is a DETERMINISTIC post-step (not shown to the caption LLM), so this is the only place the operator sees
+    its effect. PURE read; FAIL-OPEN to the frozen floor when no store/creds. Duck-typed (serves a Persona OR
+    a hydrated Account)."""
     from fanops.bands import band_for
     from fanops.hashtags import vet_hashtags, load_store
     from fanops.models import Platform
@@ -218,6 +218,6 @@ def persona_facts(cfg: Config, p) -> dict:
         store = load_store(cfg)
     except Exception:
         store = None
-    lead = vet_hashtags([], Platform.instagram, lean=getattr(p, "tag_lean", None),
+    lead = vet_hashtags([], Platform.instagram,
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store)
     return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead}

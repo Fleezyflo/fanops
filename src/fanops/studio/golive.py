@@ -25,7 +25,7 @@ from fanops import cutover
 from fanops.config import Config, _LIVE_BACKENDS
 from fanops.accounts import (Accounts, write_integration, add_account as _accounts_add_account,
                              set_status as _accounts_set_status, remove_account as _accounts_remove_account,
-                             set_tag_lean as _accounts_set_tag_lean, set_persona as _accounts_set_persona,
+                             set_persona as _accounts_set_persona,
                              set_backend as _accounts_set_backend, ensure_channel as _accounts_ensure_channel,
                              load_accounts_safe)
 from fanops.autopilot import set_env_var
@@ -167,12 +167,12 @@ def set_account_backend(cfg: Config, handle: str, platform: str, backend: str, c
     return ActionResult(ok=True, detail={"handle": handle, "platform": platform, "backend": bk or "default"})
 
 
-def add_account(cfg: Config, handle: str, platforms: list, persona: str = "", tag_lean: str = "") -> ActionResult:
+def add_account(cfg: Config, handle: str, platforms: list, persona: str = "") -> ActionResult:
     """Onboard a NEW account ENTIRELY in the Go-Live tab (no accounts.json hand-edit): validate a
     non-blank handle + at least one platform, then append it (status active, access postiz) so it shows
-    up in the channel-mapping list immediately. An optional tag_lean (tasteful|underground|bold) steers
-    its hashtag picks. Duplicate handle / unknown platform / bad lean / blank input -> a clean one-line
-    error, never a 500. account_id stays empty — each channel is mapped per-platform next."""
+    up in the channel-mapping list immediately. Duplicate handle / unknown platform / blank input -> a clean
+    one-line error, never a 500. account_id stays empty — each channel is mapped per-platform next. (M3:
+    tag_lean retired — link the account to a persona; its curated corpus is the hashtag differentiator.)"""
     handle = (handle or "").strip()
     platforms = [p for p in (platforms or []) if (p or "").strip()]
     if not handle:
@@ -180,30 +180,12 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "", ta
     if not platforms:
         return ActionResult(ok=False, error=f"pick at least one platform for {handle}")
     try:
-        _accounts_add_account(cfg, handle, platforms, persona=(persona or "").strip(),
-                              tag_lean=(tag_lean or "").strip())
-    except ValueError as exc:                            # duplicate handle / unknown platform / bad lean / blank
+        _accounts_add_account(cfg, handle, platforms, persona=(persona or "").strip())
+    except ValueError as exc:                            # duplicate handle / unknown platform / blank
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not add {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"added": handle, "platforms": platforms})
-
-
-def set_account_lean(cfg: Config, handle: str, lean: str) -> ActionResult:
-    """Set or clear ONE account's tag_lean from the Go-Live tab (persona differentiation) — a blank lean
-    clears it. Unknown handle / bad lean -> a clean one-line error, never a 500."""
-    handle = (handle or "").strip()
-    if not handle:
-        return ActionResult(ok=False, error="no account selected")
-    try:
-        _accounts_set_tag_lean(cfg, handle, (lean or "").strip())
-    except ValueError as exc:                            # unknown lean value
-        return ActionResult(ok=False, error=str(exc))
-    except KeyError:
-        return ActionResult(ok=False, error=f"no such account: {handle}")
-    except Exception as exc:
-        return ActionResult(ok=False, error=f"could not set lean for {handle}: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"handle": handle, "tag_lean": (lean or "").strip().lower() or None})
 
 
 def set_per_account_hooks(cfg: Config, on: bool) -> ActionResult:
@@ -401,7 +383,7 @@ def adopt_channels(cfg: Config, selections: list, confirmed: bool = False) -> Ac
     won't publish until routed), so a stray POST can never make a channel live. Returns counts + per-row outcomes;
     always a clean result (never 500/raises), so the htmx panel can render it.
 
-    Each selection is a dict: {provider, id, platform, handle, persona?, tag_lean?}."""
+    Each selection is a dict: {provider, id, platform, handle, persona?}. (M3: tag_lean retired.)"""
     adopted = routed = 0
     rows: list[dict] = []
     for sel in (selections or []):
@@ -413,8 +395,7 @@ def adopt_channels(cfg: Config, selections: list, confirmed: bool = False) -> Ac
             rows.append({"handle": handle, "platform": platform, "ok": False, "error": "incomplete selection"})
             continue
         try:
-            _accounts_ensure_channel(cfg, handle, platform, persona=(sel.get("persona") or "").strip(),
-                                     tag_lean=(sel.get("tag_lean") or "").strip())
+            _accounts_ensure_channel(cfg, handle, platform, persona=(sel.get("persona") or "").strip())
             write_integration(cfg, handle, platform, cid)
             adopted += 1
             row = {"handle": handle, "platform": platform, "provider": provider, "ok": True, "routed": False}

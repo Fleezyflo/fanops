@@ -36,7 +36,8 @@ def _router(media):
 def test_discover_corpus_live_returns_evidence(tmp_path, monkeypatch):
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", tag_lean="underground")   # the lean pool seeds the harvest
+    pid = core.add_persona(cfg, name="P1")
+    core.add_corpus_tag(cfg, pid, "#freestyle")                      # the corpus seeds the harvest
     media = [{"caption": "#detroitrap #bars", "like_count": 80, "comments_count": 20}]
     out = core.discover_corpus(cfg, pid, get=_router(media))
     tags = [c["tag"] for c in out]
@@ -47,7 +48,8 @@ def test_discover_corpus_live_returns_evidence(tmp_path, monkeypatch):
 def test_discover_corpus_excludes_existing_corpus(tmp_path, monkeypatch):
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", tag_lean="underground")
+    pid = core.add_persona(cfg, name="P1")
+    core.add_corpus_tag(cfg, pid, "#freestyle")                     # the corpus seeds the harvest
     core.add_corpus_tag(cfg, pid, "#detroitrap")                    # already curated -> must not be re-proposed
     media = [{"caption": "#detroitrap #flintrap", "like_count": 10, "comments_count": 0}]
     out = core.discover_corpus(cfg, pid, get=_router(media))
@@ -58,7 +60,8 @@ def test_discover_corpus_excludes_existing_corpus(tmp_path, monkeypatch):
 def test_discover_corpus_threads_measure_k(tmp_path, monkeypatch):
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", tag_lean="underground")
+    pid = core.add_persona(cfg, name="P1")
+    core.add_corpus_tag(cfg, pid, "#freestyle")                     # the corpus seeds the harvest
     media = [{"caption": "#detroitrap", "like_count": 50, "comments_count": 0}]
     out = core.discover_corpus(cfg, pid, measure_k=1, get=_router(media))
     assert out[0].get("measured_engagement") == 50.0               # measurement threads through when requested
@@ -67,7 +70,7 @@ def test_discover_corpus_threads_measure_k(tmp_path, monkeypatch):
 def test_discover_corpus_offline_falls_back(tmp_path, monkeypatch):
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", tag_lean="tasteful")
+    pid = core.add_persona(cfg, name="P1")
     out = core.discover_corpus(cfg, pid)
     assert out and all(isinstance(c, dict) and c["tag"].startswith("#") for c in out)
     assert all("count" not in c for c in out)                      # offline = research_corpus re-rank wrapped as dicts
@@ -82,7 +85,7 @@ def test_discover_corpus_unknown_persona_raises(tmp_path):
 
 def test_studio_research_returns_dict_proposals(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", tag_lean="bold")
+    pid = core.add_persona(cfg, name="P1")
     monkeypatch.setattr("fanops.personas.discover_corpus",
                         lambda c, p, **k: [{"tag": "#detroitrap", "count": 3}])
     r = sp.research_corpus(cfg, pid)

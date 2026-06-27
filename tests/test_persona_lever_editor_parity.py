@@ -8,8 +8,8 @@ from fanops.config import Config
 from fanops.personas import Persona, Personas, add_persona, update_persona, add_corpus_tag
 import fanops.persona_levers as pl
 
-# kept in sync with the guard's quarantine ceiling (M3 empties it)
-_QUARANTINE = {"tag_lean", "clip_profile", "framing", "casting_directive", "hook_directive", "caption_directive"}
+# kept in sync with the guard's quarantine ceiling (M3 empties it; M3c retired tag_lean from the model)
+_QUARANTINE = {"clip_profile", "framing", "casting_directive", "hook_directive", "caption_directive"}
 
 
 def test_every_editable_field_persists_through_the_save_route(tmp_path):

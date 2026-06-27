@@ -145,7 +145,7 @@ def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch,
     from fanops.fanops_hashtags import cmd_hashtags_discover
     from fanops import personas as P
     cfg = Config(root=tmp_path)
-    P.add_persona(cfg, name="Curator", id="curator", tag_lean="underground")
+    P.add_persona(cfg, name="Curator", id="curator")
     monkeypatch.setattr("fanops.personas.discover_corpus",
                         lambda c, pid, **k: [{"tag": "#detroitrap", "count": 9}])
     rc = cmd_hashtags_discover(cfg)

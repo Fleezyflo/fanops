@@ -6,7 +6,7 @@ runs, so importing them here is cycle-free)."""
 from __future__ import annotations
 from flask import render_template, request
 from fanops.studio import actions, golive, views
-from fanops.studio.app import _ALL_PLATFORMS, _LEVER_EFFECTS, _TAG_LEANS
+from fanops.studio.app import _ALL_PLATFORMS, _LEVER_EFFECTS
 
 
 def register_golive_routes(app, cfg):
@@ -15,14 +15,14 @@ def register_golive_routes(app, cfg):
         # Milestone 5 (operator-gated): turn FanOps from dryrun into real Postiz publishing entirely in
         # the browser — add accounts, map each channel to its integration, see readiness, flip dryrun<->live.
         return render_template("golive.html", status=views.golive_status(cfg), result=None,
-                               all_platforms=_ALL_PLATFORMS, tag_leans=_TAG_LEANS, effects=_LEVER_EFFECTS, tab="golive")
+                               all_platforms=_ALL_PLATFORMS, effects=_LEVER_EFFECTS, tab="golive")
 
     def _golive_panel(result):
         # Re-render the panel with FRESH golive_status after an action (htmx swaps #golive-panel), so the
         # mode banner + readiness checks update in place — mirrors _run_panel. S8: `effects` carries the
         # engine-true _LEVER_EFFECTS so the clip-length bands render from the catalog, never a stale literal.
         return render_template("_golive_panel.html", status=views.golive_status(cfg), result=result,
-                               all_platforms=_ALL_PLATFORMS, tag_leans=_TAG_LEANS, effects=_LEVER_EFFECTS, tab="golive")
+                               all_platforms=_ALL_PLATFORMS, effects=_LEVER_EFFECTS, tab="golive")
 
     @app.post("/golive/config")
     def do_golive_config():
@@ -34,14 +34,7 @@ def register_golive_routes(app, cfg):
         # active/postiz account appended to accounts.json (no JSON hand-edit), ready to map below.
         return _golive_panel(golive.add_account(cfg, request.form.get("handle", ""),
                                                 request.form.getlist("platform"),
-                                                request.form.get("persona", ""),
-                                                request.form.get("tag_lean", "")))
-
-    @app.post("/golive/account/lean")
-    def do_golive_account_lean():
-        # Set/clear an account's tag_lean (persona differentiation) — blank clears; re-render the panel.
-        return _golive_panel(golive.set_account_lean(cfg, request.form.get("handle", ""),
-                                                      request.form.get("tag_lean", "")))
+                                                request.form.get("persona", "")))
 
     @app.post("/golive/hooks")
     def do_golive_hooks():

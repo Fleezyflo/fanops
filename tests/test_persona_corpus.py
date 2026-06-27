@@ -27,15 +27,9 @@ def test_corpus_tag_not_in_vetted_survives_and_leads():
 
 
 def test_empty_corpus_is_byte_identical():
-    base = vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", lean="bold")
-    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", lean="bold", corpus=[]) == base
-    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", lean="bold", corpus=None) == base
-
-
-def test_corpus_floats_ahead_of_lean():
-    # tasteful lean leads #lyrics; a corpus must outrank the lean pool.
-    out = vet_hashtags([], Platform.instagram, "en", lean="tasteful", corpus=["#detroitrap"])
-    assert out[0] == "#detroitrap"
+    base = vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en")
+    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", corpus=[]) == base
+    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", corpus=None) == base
 
 
 def test_corpus_with_non_str_entry_is_dropped_not_crashed():
@@ -54,7 +48,7 @@ def test_persona_facts_failopen_on_weird_corpus(tmp_path):
     # corpus holds a non-str must NOT crash the read (vet_hashtags drops it). Pins the page's fail-open.
     from types import SimpleNamespace
     cfg = Config(root=tmp_path)
-    p = SimpleNamespace(clip_profile=None, framing="top", tag_lean="bold", hashtag_corpus=["#detroitrap", 7])
+    p = SimpleNamespace(clip_profile=None, framing="top", hashtag_corpus=["#detroitrap", 7])
     facts = core.persona_facts(cfg, p)                      # must return cleanly, not raise
     assert facts["framing"] == "top" and isinstance(facts["lead_tags"], list)
     assert "#detroitrap" in facts["lead_tags"]
@@ -65,10 +59,10 @@ def test_corpus_hard_capped_at_4():
     assert len(out) == 4 and out == ["#a", "#b", "#c", "#d"]
 
 
-def test_corpus_does_not_starve_arabic_floor_under_lean():
-    # A 4-tag non-Arabic corpus on an AR clip UNDER a lean must not displace the AR region floor: the
+def test_corpus_does_not_starve_arabic_floor():
+    # A 4-tag non-Arabic corpus on an AR clip must not displace the AR region floor: the
     # floor still injects an AR tag (one corpus tag yields), so curated tags never strip AR reach.
-    out = vet_hashtags([], Platform.instagram, "ar", lean="bold", corpus=["#x", "#y", "#z", "#w"])
+    out = vet_hashtags([], Platform.instagram, "ar", corpus=["#x", "#y", "#z", "#w"])
     assert len(out) == 4 and any(t in {"#arabicmusic", "#arabtiktok", "#arabicmusiclovers"} for t in out)
 
 

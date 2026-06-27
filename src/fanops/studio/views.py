@@ -36,9 +36,8 @@ class GoLiveAccount:
     handle: str
     persona: Optional[str]
     channels: list[GoLiveChannel]    # one per platform this handle posts to
-    tag_lean: Optional[str] = None   # persona-differentiation tag knob: tasteful|underground|bold (None -> none)
     persona_id: Optional[str] = None # S8: the linked first-class Persona record id (Account.persona_id) — None
-                                     # when the account uses only inline text/lean. Drives the linked/no-persona badge.
+                                     # when the account uses only inline text. Drives the linked/no-persona badge.
 
 
 @dataclass
@@ -237,8 +236,7 @@ class PersonaCard:
     id: str
     name: str
     voice: str
-    tag_lean: Optional[str]
-    corpus: list                       # the per-persona reach-vetted hashtag pool (B1), DISPLAYED reach-first (B3)
+    corpus: list                       # the per-persona reach-vetted hashtag pool (B1) — the SOLE hashtag differentiator (M3), DISPLAYED reach-first (B3)
     intake: dict                       # genre/language/reference_accounts/notes (seeds B3 research)
     linked_handles: list               # accounts whose persona_id points at this persona
     reach_tags: list = field(default_factory=list)   # B3: corpus tags present in the reach store (own-reach+trends) -> flag high-reach
@@ -314,7 +312,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
         means = {}
     def _ranked(corpus):
         return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
-    cards = [PersonaCard(id=p.id, name=p.name, voice=p.voice, tag_lean=p.tag_lean,
+    cards = [PersonaCard(id=p.id, name=p.name, voice=p.voice,
                          corpus=_ranked(p.hashtag_corpus), intake=dict(p.intake),
                          linked_handles=by_pid.get(p.id, []),
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set],
@@ -339,7 +337,7 @@ def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
     malformed accounts.json logs accounts_error and degrades to [] (the surface never 500s). NO secret."""
     try:
         return [GoLiveAccount(
-            handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
+            handle=a.handle, persona=a.persona,
             persona_id=getattr(a, "persona_id", None),     # S8: the linked first-class Persona (badge), additive
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "",
@@ -358,7 +356,7 @@ def golive_demoted_accounts(cfg: Config) -> list:
     on a malformed accounts.json (mirrors golive_accounts)."""
     try:
         return [GoLiveAccount(
-            handle=a.handle, persona=a.persona, tag_lean=a.tag_lean,
+            handle=a.handle, persona=a.persona,
             persona_id=getattr(a, "persona_id", None),     # S8: the linked first-class Persona (badge), additive
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "",

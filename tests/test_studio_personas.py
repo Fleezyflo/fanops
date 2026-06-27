@@ -44,7 +44,7 @@ def test_create_persona_blank_name_is_clean_error(tmp_path):
 
 def test_edit_persona_updates_fields(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Z", voice="old", tag_lean="bold")
+    pid = core.add_persona(cfg, name="Z", voice="old")
     r = sp.edit_persona(cfg, pid, name="Z2", voice="new", content_focus=["hype"], hook_angle="fomo")
     assert r.ok
     p = core.Personas.load(cfg).get(pid)
@@ -76,14 +76,14 @@ def test_corpus_add_then_remove(tmp_path):
 def test_connect_account_links_persona(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active"}])
-    pid = core.add_persona(cfg, name="P1", voice="v1", tag_lean="tasteful")
+    pid = core.add_persona(cfg, name="P1", voice="v1")
     r = sp.connect_account(cfg, "@a", pid)
     assert r.ok
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0]["persona_id"] == pid
     # and the link hydrates the account on next load
     a = Accounts.load(cfg).accounts[0]
-    assert a.persona == "v1" and a.tag_lean == "tasteful"
+    assert a.persona == "v1"
 
 
 def test_connect_unknown_account_is_clean_error(tmp_path):
@@ -113,7 +113,7 @@ def test_disconnect_account_with_blank(tmp_path):
 def test_run_migration_action(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@mark", "platforms": ["instagram"], "status": "active",
-                          "persona": "music blogger", "tag_lean": "tasteful"}])
+                          "persona": "music blogger"}])
     r = sp.run_migration(cfg)
     assert r.ok and r.detail["created"] == ["mark"]
     assert Accounts.load(cfg).accounts[0].persona_id == "mark"
@@ -123,7 +123,7 @@ def test_run_migration_action(tmp_path):
 
 def test_personas_page_read_model(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", voice="v1", tag_lean="bold")
+    pid = core.add_persona(cfg, name="P1", voice="v1")
     core.add_corpus_tag(cfg, pid, "#detroitrap")
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active", "persona_id": pid},
                          {"handle": "@b", "platforms": ["instagram"], "status": "active"}])
@@ -190,7 +190,7 @@ def test_persona_forms_drop_dead_intake_fields(tmp_path):
 
 def test_post_add_persona_route(tmp_path):
     cfg = Config(root=tmp_path)
-    r = _client(cfg).post("/personas/add", data={"name": "New One", "voice": "a voice", "tag_lean": "bold"})
+    r = _client(cfg).post("/personas/add", data={"name": "New One", "voice": "a voice"})
     assert r.status_code == 200
     assert any(p.name == "New One" for p in core.Personas.load(cfg).all())
 

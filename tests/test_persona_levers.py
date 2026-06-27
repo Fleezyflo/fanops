@@ -179,7 +179,7 @@ def test_compose_empty_brief_is_byte_identical():
 def test_persona_facts_resolve_from_real_resolvers(tmp_path):
     from fanops.personas import persona_facts
     cfg = Config(root=tmp_path)
-    f = persona_facts(cfg, Persona(id="p", clip_profile="short", framing="top", tag_lean="tasteful",
+    f = persona_facts(cfg, Persona(id="p", clip_profile="short", framing="top",
                                    hashtag_corpus=["#myscene"]))
     assert f["length_band"] == "8-15s"          # bands.band_for(short) == SHORT(8,15) — the SAME resolver the pipeline uses
     assert f["framing"] == "top"
@@ -244,7 +244,7 @@ def test_directives_firewall_to_bare_voice():
     assert casting_directive(p) == "bold fan" and hook_directive(p) == "bold fan" and caption_directive(p) == "bold fan"
 
 def test_caption_directive_is_voice_or_override():
-    assert caption_directive(Persona(id="p", voice="v", tag_lean="tasteful")) == "v"   # tags stay deterministic, not in the text
+    assert caption_directive(Persona(id="p", voice="v")) == "v"   # tags stay deterministic, not in the text
 
 def test_directive_fields_roundtrip(tmp_path):
     cfg = Config(root=tmp_path)

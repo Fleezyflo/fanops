@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from fanops.config import Config, _VALID_BACKENDS, _LIVE_BACKENDS, _BACKEND_PLATFORMS, FRAMING_NAMES
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform
-from fanops.hashtags import TAG_LEANS                 # the valid per-account tag_lean names (persona diff)
 from fanops.bands import PROFILE_NAMES                # the valid per-account clip_profile names (M2 length tier)
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 
@@ -28,14 +27,11 @@ class Account(BaseModel):
     access: str = "blotato"                # METHOD, never a credential
     persona: Optional[str] = None
     persona_id: Optional[str] = None       # A1: link to a first-class Persona (personas.json). When set AND it
-                                           # resolves, the linked persona's voice/tag_lean HYDRATE this account
-                                           # in memory at load (_hydrate_from_personas), so the persona is the
-                                           # source of truth and an edit takes effect on next load. Additive:
-                                           # None / a dangling id -> the inline persona/tag_lean below stand
+                                           # resolves, the linked persona's voice/corpus/levers HYDRATE this
+                                           # account in memory at load (_hydrate_from_personas), so the persona
+                                           # is the source of truth and an edit takes effect on next load.
+                                           # Additive: None / a dangling id -> the inline persona below stands
                                            # (byte-identical to today) — fail-open, never crashes a load.
-    tag_lean: Optional[str] = None         # persona TAG knob: tasteful|underground|bold (None -> no lean).
-                                           # Additive (empty on legacy rows). An unknown value reloads fine
-                                           # and is inert (vet_hashtags treats it as no-lean) — fail-open.
     clip_profile: Optional[str] = None     # M2 per-account LENGTH tier: short|medium|long (or legacy talk|song).
                                            # None -> Config.resolve_clip_profile falls back to the GLOBAL
                                            # FANOPS_CLIP_PROFILE (byte-identical to today). Additive (empty on
@@ -51,7 +47,8 @@ class Account(BaseModel):
     hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona curated hashtag pool, HYDRATED in
                                            # memory from the linked Persona at load (never stored on the account row —
                                            # personas.json owns it). Empty on an unlinked account -> vet_hashtags(corpus=[])
-                                           # is byte-identical to today. The caption path floats these ahead of the lean.
+                                           # is byte-identical to today. The caption path floats these ahead of the frozen rank
+                                           # (M3: the curated corpus is the SOLE per-account hashtag differentiator).
     # Lever engine (M-levers): explicit per-characteristic direction HYDRATED from the linked Persona at load,
     # which personas.compose_persona_instruction renders into the surface `persona` the casting/hook/caption
     # payloads carry. ADDITIVE — empty on every legacy/unlinked account, so compose returns the bare persona
@@ -104,7 +101,7 @@ class Accounts:
                 # Hand-edit typo (the documented "paste account_id, set status:active" step).
                 # Clear one-liner instead of a raw traceback.
                 raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
-        _hydrate_from_personas(a, cfg)               # A1: linked accounts read their persona's voice/tag_lean
+        _hydrate_from_personas(a, cfg)               # A1: linked accounts read their persona's voice/corpus/levers
         return a
 
     def active(self) -> list[Account]:
@@ -195,11 +192,11 @@ class Accounts:
 
 
 def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
-    """A1: override each LINKED account's persona voice, tag_lean, corpus, levers (content_focus/energy/hook_angle), cut spec (clip_profile/framing), and per-dimension directives IN MEMORY from its Persona (the source of truth
-    once linked), so every consumer reading a.persona / a.tag_lean sees the persona's value and an operator
-    edit takes effect on the next load — with ZERO consumer rewiring. FAIL-OPEN: no personas.json, a
-    dangling persona_id, or any error leaves the account's inline values exactly as today (byte-identical
-    when unlinked). The personas import is lazy (personas imports accounts in migrate -> avoid a cycle)."""
+    """A1: override each LINKED account's persona voice, corpus, levers (content_focus/energy/hook_angle), cut spec (clip_profile/framing), and per-dimension directives IN MEMORY from its Persona (the source of truth
+    once linked), so every consumer reading a.persona sees the persona's value and an operator edit takes
+    effect on the next load — with ZERO consumer rewiring. FAIL-OPEN: no personas.json, a dangling persona_id,
+    or any error leaves the account's inline values exactly as today (byte-identical when unlinked). The
+    personas import is lazy (personas imports accounts in migrate -> avoid a cycle)."""
     if not any(acc.persona_id for acc in accts.accounts):
         return                                       # no links -> no work, no personas.json read at all
     try:
@@ -213,8 +210,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
             continue                                 # dangling id -> inline values stand
         if per.voice:
             acc.persona = per.voice                  # the persona owns the voice (empty voice -> keep inline)
-        acc.tag_lean = per.tag_lean                  # the persona owns the lean (may be None -> clears inline)
-        acc.hashtag_corpus = list(per.hashtag_corpus)   # B1: the persona owns the curated corpus (the caption path reads it)
+        acc.hashtag_corpus = list(per.hashtag_corpus)   # B1: the persona owns the curated corpus (the caption path reads it; M3 — the sole hashtag differentiator)
         # Lever engine: the persona owns each lever (empty -> compose ignores it -> byte-identical). clip_profile/
         # framing override the account's own ONLY when the persona pins them (else the account/global default stands).
         acc.content_focus = list(per.content_focus)
@@ -231,7 +227,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
 def link_persona(cfg: Config, handle: str, persona_id: str) -> str:
     """Link ONE account to a first-class Persona (set persona_id) atomically — the A2 connect control. A
     BLANK persona_id CLEARS the link (-> the account's inline persona/tag_lean stand again). Scans ALL
-    rows (dup-handle safety, mirrors set_tag_lean); preserves every sibling + unknown field. Unknown
+    rows (dup-handle safety, mirrors set_status); preserves every sibling + unknown field. Unknown
     handle -> KeyError (caller -> clean ActionResult). Does NOT validate the id exists (a dangling link
     fails open at load) — the Studio resolves the id from the live registry before calling."""
     pid = (persona_id or "").strip()
@@ -341,15 +337,15 @@ def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
 
 
 def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
-                status: str = "active", access: str = "postiz", tag_lean: str = "",
+                status: str = "active", access: str = "postiz",
                 clip_profile: str = "", framing: str = "") -> str:
     """Onboard a BRAND-NEW account into accounts.json atomically — so the Go-Live tab adds an account
-    WITHOUT the operator hand-editing JSON. Validates at this control-file boundary: a non-blank handle,
-    every platform a known Platform value, and (when given) a known tag_lean (never write an account that
-    won't reload or carries a bogus lean). Rejects a duplicate handle. New accounts default to status=active
-    (so they appear in the mapping list at once) and access=postiz; account_id stays empty — the per-platform
-    ids are set afterward via write_integration / the mapping UI. Returns the handle; raises ValueError on bad
-    input."""
+    WITHOUT the operator hand-editing JSON. Validates at this control-file boundary: a non-blank handle and
+    every platform a known Platform value (never write an account that won't reload). Rejects a duplicate
+    handle. New accounts default to status=active (so they appear in the mapping list at once) and
+    access=postiz; account_id stays empty — the per-platform ids are set afterward via write_integration /
+    the mapping UI. Returns the handle; raises ValueError on bad input. (M3: tag_lean retired — a linked
+    persona's curated hashtag_corpus is the per-account hashtag differentiator.)"""
     handle = (handle or "").strip()
     if not handle:
         raise ValueError("handle is required")
@@ -358,9 +354,6 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
     bad = [x for x in plats if x not in valid]
     if bad:
         raise ValueError(f"unknown platform(s): {', '.join(map(str, bad))}")
-    lean = (tag_lean or "").strip().lower()
-    if lean and lean not in TAG_LEANS:
-        raise ValueError(f"unknown tag_lean: {tag_lean!r}")
     prof = (clip_profile or "").strip().lower()
     if prof and prof not in PROFILE_NAMES:
         raise ValueError(f"unknown clip_profile: {clip_profile!r}")
@@ -374,34 +367,31 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
             raise ValueError(f"duplicate handle {handle} (already exists)")
         accounts.append({"handle": handle, "account_id": "", "platforms": plats,
                          "status": str(status), "access": str(access),
-                         "persona": persona or "", "tag_lean": lean or None,
+                         "persona": persona or "",
                          "clip_profile": prof or None, "framing": fr or None, "integrations": {}})
         write_json_atomic(p, raw)
     return handle
 
 
-def ensure_channel(cfg: Config, handle: str, platform: str, persona: str = "", tag_lean: str = "") -> bool:
+def ensure_channel(cfg: Config, handle: str, platform: str, persona: str = "") -> bool:
     """Idempotently ensure a (handle, platform) channel EXISTS in accounts.json atomically — the adopt-side
     primitive (M4 discover→adopt): a discovered remote channel becomes an onboardable account+platform in
     ONE write. If the handle is absent → append a NEW account (status active, [platform], empty account_id —
     born inert; the id is mapped next via write_integration). If the handle EXISTS but lacks this platform →
     append the platform (preserving every other field, sibling, and integration). If it already has the
-    platform → no-op. persona/tag_lean SEED a NEW account only — they are IGNORED when the handle already
-    exists (an existing account keeps its own persona/lean; change those via set_persona/set_tag_lean), so
-    adopting a second platform never clobbers an account's persona. Scans ALL rows (no break) so a hand-edited
-    duplicate handle gains the platform on EVERY copy — consistent with write_integration/set_backend, which
-    adopt calls next. Validates handle non-blank + platform a known Platform.value + tag_lean (when given) at
-    the control-file boundary. Returns True iff it changed accounts.json. Unlike add_account it NEVER raises
-    on a duplicate handle (idempotent by design); it raises ValueError only on bad input."""
+    platform → no-op. persona SEEDS a NEW account only — IGNORED when the handle already exists (an existing
+    account keeps its own persona; change it via set_persona), so adopting a second platform never clobbers an
+    account's persona. Scans ALL rows (no break) so a hand-edited duplicate handle gains the platform on EVERY
+    copy — consistent with write_integration/set_backend, which adopt calls next. Validates handle non-blank +
+    platform a known Platform.value at the control-file boundary. Returns True iff it changed accounts.json.
+    Unlike add_account it NEVER raises on a duplicate handle (idempotent by design); raises ValueError only on
+    bad input. (M3: tag_lean retired.)"""
     handle = (handle or "").strip()
     if not handle:
         raise ValueError("handle is required")
     platform = getattr(platform, "value", platform)              # accept a Platform enum or its value string
     if platform not in {pf.value for pf in Platform}:
         raise ValueError(f"unknown platform: {platform!r}")
-    lean = (tag_lean or "").strip().lower()
-    if lean and lean not in TAG_LEANS:
-        raise ValueError(f"unknown tag_lean: {tag_lean!r}")
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
@@ -416,7 +406,7 @@ def ensure_channel(cfg: Config, handle: str, platform: str, persona: str = "", t
         if not found:
             accounts.append({"handle": handle, "account_id": "", "platforms": [platform],
                              "status": "active", "access": "postiz",
-                             "persona": (persona or "").strip(), "tag_lean": lean or None, "integrations": {}})
+                             "persona": (persona or "").strip(), "integrations": {}})
             changed = True
         if changed:
             write_json_atomic(p, raw)
@@ -444,34 +434,12 @@ def set_status(cfg: Config, handle: str, status: str) -> str:
     return handle
 
 
-def set_tag_lean(cfg: Config, handle: str, lean: str) -> str:
-    """Set or clear ONE account's tag_lean atomically (the Go-Live persona-differentiation control). A blank
-    lean CLEARS it (-> None). Validates a non-blank lean at the control-file boundary (must be a known
-    TAG_LEANS value — never write a lean that vet_hashtags would ignore as a typo); preserves every sibling,
-    unknown field, and the account's own other fields; scans ALL rows (dup-handle safety, mirrors set_status).
-    Unknown handle -> KeyError."""
-    lean = (lean or "").strip().lower()
-    if lean and lean not in TAG_LEANS:
-        raise ValueError(f"unknown tag_lean: {lean!r}")
-    p = cfg.accounts_path
-    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
-        raw, accounts = _load_raw_accounts(p)
-        found = False
-        for a in accounts:
-            if isinstance(a, dict) and a.get("handle") == handle:
-                a["tag_lean"] = lean or None; found = True
-        if not found:
-            raise KeyError(handle)
-        write_json_atomic(p, raw)
-    return handle
-
-
 def set_clip_profile(cfg: Config, handle: str, profile: str) -> str:
     """Set or clear ONE account's clip_profile atomically (the M2 per-account LENGTH control). A blank
     profile CLEARS it (-> None -> resolve_clip_profile falls back to the global FANOPS_CLIP_PROFILE).
     Validates a non-blank profile at the control-file boundary (must be a known bands.PROFILE_NAMES value
     — never write a profile that only band_for's default would catch); preserves every sibling, unknown
-    field, and the account's own other fields; scans ALL rows (dup-handle safety, mirrors set_tag_lean).
+    field, and the account's own other fields; scans ALL rows (dup-handle safety, mirrors set_status).
     Unknown handle -> KeyError."""
     profile = (profile or "").strip().lower()
     if profile and profile not in PROFILE_NAMES:
@@ -515,7 +483,7 @@ def set_framing(cfg: Config, handle: str, framing: str) -> str:
 def set_persona(cfg: Config, handle: str, persona: str) -> str:
     """Set or clear ONE account's persona atomically (the Go-Live persona editor). A blank persona CLEARS it
     (-> ""). Preserves every sibling, unknown field, and the account's other fields; scans ALL rows (dup-handle
-    safety, mirrors set_tag_lean/set_status). Unknown handle -> KeyError."""
+    safety, mirrors set_status). Unknown handle -> KeyError."""
     persona = (persona or "").strip()
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)

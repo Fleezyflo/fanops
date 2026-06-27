@@ -5,20 +5,20 @@ create_app calls it. Constants come from app (loaded before create_app runs, so 
 from __future__ import annotations
 from flask import render_template, request
 from fanops.studio import personas as studio_personas, views
-from fanops.studio.app import _LEVER_EFFECTS, _LEVERS, _LEVER_REF, _TAG_LEANS
+from fanops.studio.app import _LEVER_EFFECTS, _LEVERS, _LEVER_REF
 
 
 def register_personas_routes(app, cfg):
     @app.get("/personas")
     def personas_view():
-        # First-class personas (voice/tag_lean/corpus/intake) — list, add via intake, edit, connect to
+        # First-class personas (voice/corpus/intake/levers) — list, add via intake, edit, connect to
         # accounts. nav_account is injected globally but the page is account-agnostic (it lists ALL).
-        return render_template("personas.html", page=views.personas_page(cfg), tag_leans=_TAG_LEANS,
+        return render_template("personas.html", page=views.personas_page(cfg),
                                levers=_LEVERS, effects=_LEVER_EFFECTS, lever_ref=_LEVER_REF, result=None, tab="personas")
 
     def _personas_panel(result=None):
         # Re-render the panel with FRESH personas_page after an action (htmx swaps #personas-panel).
-        return render_template("_personas_panel.html", page=views.personas_page(cfg), tag_leans=_TAG_LEANS,
+        return render_template("_personas_panel.html", page=views.personas_page(cfg),
                                levers=_LEVERS, effects=_LEVER_EFFECTS, lever_ref=_LEVER_REF, result=result, tab="personas")
 
     @app.get("/personas/drawer/<pid>")
@@ -28,7 +28,7 @@ def register_personas_routes(app, cfg):
         # /personas/edit + /personas/delete (re-render #personas-panel). Fail-open: an unknown id renders a
         # clean "not found" dialog (p=None), never a 404/500 (htmx would swap an error page into the mount).
         card = next((c for c in views.personas_page(cfg).personas if c.id == pid), None)
-        return render_template("_persona_drawer.html", p=card, tag_leans=_TAG_LEANS,
+        return render_template("_persona_drawer.html", p=card,
                                levers=_LEVERS, effects=_LEVER_EFFECTS)
 
     @app.post("/personas/compose")
@@ -67,7 +67,7 @@ def register_personas_routes(app, cfg):
     @app.post("/personas/research")
     def do_personas_research():
         # B3: propose the reach-best hashtags this persona lacks (bootstrap research) -> the panel renders
-        # them with one-click Add. Grounded in the reach store + the persona's lean; instant + budget-free.
+        # them with one-click Add. Grounded in the reach store; instant + budget-free.
         return _personas_panel(studio_personas.research_corpus(cfg, request.form.get("id", ""), request.form.get("genre", "")))
 
     @app.post("/personas/recommend")

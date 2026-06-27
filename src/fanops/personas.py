@@ -38,8 +38,7 @@ class Persona(BaseModel):
     id: str                                       # stable slug (the link key on Account.persona_id)
     name: str = ""                                # operator-facing display name
     voice: str = ""                               # the persona string the pipeline reads (caption/hook/casting voice)
-    tag_lean: Optional[str] = None                # persona TAG knob: tasteful|underground|bold (None -> no lean)
-    hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona reach-vetted pool
+    hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona reach-vetted pool — the SOLE per-account hashtag differentiator (tag_lean folded in, M3)
     intake: dict = Field(default_factory=dict)    # intake metadata; one live field `genre` — seeds B3 research
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so

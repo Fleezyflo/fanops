@@ -22,6 +22,30 @@
     ]
   },
   "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-hedge-on-stop.py\"",
+            "timeout": 10,
+            "description": "Blocks the turn from ending when the final message carries hedge/deflection/half-measure tells — forces a rewrite"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/anti-divert-contract.py\"",
+            "timeout": 10,
+            "description": "Injects the anti-divert contract every turn — covers the prose surface no tool hook scans"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|Edit|Write|MultiEdit|AskUserQuestion",

@@ -5,7 +5,7 @@ import threading
 import pytest
 from fanops.config import Config
 from fanops.errors import LockBusyError
-from fanops.accounts import Accounts, write_integration, add_account, set_status, remove_account, set_tag_lean
+from fanops.accounts import Accounts, write_integration, add_account, set_status, remove_account
 
 def _seed(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -324,60 +324,6 @@ def test_remove_account_unknown_handle_raises(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     with pytest.raises(KeyError):
         remove_account(cfg, "@nope")
-
-
-# ---- persona differentiation: per-account tag_lean ----
-def test_account_tag_lean_defaults_none(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    assert Accounts.load(cfg).accounts[0].tag_lean is None        # absent field -> None (additive, no migration)
-
-def test_add_account_with_tag_lean_persists(tmp_path):
-    cfg = Config(root=tmp_path)
-    assert add_account(cfg, "@a", ["instagram"], persona="craft", tag_lean="tasteful") == "@a"
-    a = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "@a")
-    assert a["tag_lean"] == "tasteful" and a["persona"] == "craft"
-
-def test_add_account_blank_tag_lean_stays_none(tmp_path):
-    cfg = Config(root=tmp_path)
-    add_account(cfg, "@a", ["instagram"])                         # no tag_lean given
-    assert Accounts.load(cfg).accounts[0].tag_lean is None
-
-def test_add_account_rejects_unknown_tag_lean(tmp_path):
-    cfg = Config(root=tmp_path)
-    with pytest.raises(ValueError):
-        add_account(cfg, "@a", ["instagram"], tag_lean="spicy")   # not in TAG_LEANS
-
-def test_set_tag_lean_sets_and_clears_preserving_siblings(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed(cfg, [
-        {"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active", "note": "keep me"},
-        {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"},
-    ])
-    assert set_tag_lean(cfg, "@a", "bold") == "@a"
-    a = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "@a")
-    assert a["tag_lean"] == "bold" and a["note"] == "keep me"     # set + sibling/unknown field intact
-    set_tag_lean(cfg, "@a", "")                                   # blank clears
-    a = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "@a")
-    assert a["tag_lean"] is None
-    b = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "@b")
-    assert b["account_id"] == "x"                                 # sibling untouched throughout
-
-def test_set_tag_lean_rejects_unknown(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    with pytest.raises(ValueError):
-        set_tag_lean(cfg, "@a", "spicy")
-
-def test_set_tag_lean_unknown_handle_raises(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    with pytest.raises(KeyError):
-        set_tag_lean(cfg, "@nope", "bold")
-
-def test_load_unknown_tag_lean_does_not_crash(tmp_path):
-    # fail-open: a hand-edited/legacy unknown lean must reload (vet_hashtags treats it as no-lean).
-    cfg = Config(root=tmp_path)
-    _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "tag_lean": "weird"}])
-    assert Accounts.load(cfg).accounts[0].tag_lean == "weird"     # persisted, inert downstream
 
 
 # ---- HIGH (audit Slice 4): the 5 mutators must serialize their read-modify-write under a file lock ----

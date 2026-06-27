@@ -8,7 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Optional
 from fanops.config import Config, FRAMING_NAMES
-from fanops.hashtags import TAG_LEANS, _norm
+from fanops.hashtags import _norm
 from fanops.bands import PROFILE_NAMES
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 from fanops.personas import (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, Personas, _slug)
@@ -59,23 +59,21 @@ def _personas_txn(cfg: Config):
 _UNSET = object()
 
 
-def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
+def add_persona(cfg: Config, name: str, voice: str = "",
                 intake: Optional[dict] = None, id: str = "", *, content_focus=None,
                 energy: str = "", hook_angle: str = "",
                 clip_profile: str = "", framing: str = "",
                 casting_directive: str = "", hook_directive: str = "", caption_directive: str = "") -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
-    duplicate id and a blank name (never write a record that won't reload). Validates tag_lean AND every
-    lever-engine field against its vocabulary. Returns the id; raises ValueError on bad input."""
+    duplicate id and a blank name (never write a record that won't reload). Validates every lever-engine
+    field against its vocabulary. Returns the id; raises ValueError on bad input. (M3: tag_lean retired —
+    the curated hashtag_corpus is the per-account hashtag differentiator.)"""
     nm = (name or "").strip()
     if not nm:
         raise ValueError("persona name is required")
     pid = _slug(id) or _slug(nm)
     if not pid:
         raise ValueError(f"could not derive a persona id from name {name!r}")
-    lean = (tag_lean or "").strip().lower()
-    if lean and lean not in TAG_LEANS:
-        raise ValueError(f"unknown tag_lean: {tag_lean!r}")
     focus = _norm_focus(content_focus)
     energy_v = _enum_or_none(energy, ENERGY_LEVELS, "energy")
     angle_v = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle")
@@ -86,7 +84,7 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
         raw, plist = _load_raw(p)
         if any(isinstance(d, dict) and d.get("id") == pid for d in plist):
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
-        plist.append({"id": pid, "name": nm, "voice": str(voice or ""), "tag_lean": lean or None,
+        plist.append({"id": pid, "name": nm, "voice": str(voice or ""),
                       "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
                       "energy": energy_v, "hook_angle": angle_v,
                       "clip_profile": prof_v, "framing": fr_v,
@@ -96,17 +94,13 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
     return pid
 
 
-def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean=_UNSET, intake=_UNSET,
+def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_UNSET,
                    content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET,
                    clip_profile=_UNSET, framing=_UNSET, casting_directive=_UNSET,
                    hook_directive=_UNSET, caption_directive=_UNSET) -> str:
-    """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; tag_lean=""
-    CLEARS the lean (-> None) and likewise each lever clears on "". Validates tag_lean + every passed lever
-    against its vocabulary BEFORE the lock (never write a typo). Unknown id -> KeyError."""
-    if tag_lean is not _UNSET:
-        _l = (tag_lean or "").strip().lower()
-        if _l and _l not in TAG_LEANS:
-            raise ValueError(f"unknown tag_lean: {tag_lean!r}")
+    """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; each lever
+    clears on "". Validates every passed lever against its vocabulary BEFORE the lock (never write a typo).
+    Unknown id -> KeyError. (M3: tag_lean retired.)"""
     _focus = _norm_focus(content_focus) if content_focus is not _UNSET else _UNSET
     _energy = _enum_or_none(energy, ENERGY_LEVELS, "energy") if energy is not _UNSET else _UNSET
     _angle = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle") if hook_angle is not _UNSET else _UNSET
@@ -123,7 +117,6 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean
                     if not _nm: raise ValueError("persona name cannot be blank")
                     d["name"] = _nm
                 if voice is not _UNSET: d["voice"] = str(voice or "")
-                if tag_lean is not _UNSET: d["tag_lean"] = ((tag_lean or "").strip().lower() or None)
                 if intake is not _UNSET: d["intake"] = dict(intake or {})
                 if _focus is not _UNSET: d["content_focus"] = _focus
                 if _energy is not _UNSET: d["energy"] = _energy
@@ -223,7 +216,7 @@ def migrate_from_accounts(cfg: Config) -> dict:
         if not pid:
             continue                                 # a handle with no usable slug (e.g. "@@@") -> never a false empty link
         if pid not in existing:
-            add_persona(cfg, name=a.handle, voice=voice, tag_lean=(a.tag_lean or ""), id=pid)
+            add_persona(cfg, name=a.handle, voice=voice, id=pid)   # M3: tag_lean retired; corpus is curated separately
             existing.add(pid); created.append(pid)
         link_persona(cfg, a.handle, pid)
         linked.append(a.handle)

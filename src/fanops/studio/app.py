@@ -15,12 +15,10 @@ from fanops.ledger import Ledger
 from fanops.models import Platform
 from fanops.discover import make_thumbnail        # reuse the cheap one-frame ffmpeg extractor for clip posters
 from fanops.studio import views, actions
-from fanops.hashtags import TAG_LEANS            # the add-account lean picker options (no drift from the engine)
 from fanops.personas import lever_catalog        # the code-derived lever catalog (every option + its real effect)
 from fanops.timeutil import local_input_to_utc_z, to_local_display, to_local_input  # local-time rendering at the web boundary
 
 _ALL_PLATFORMS = [p.value for p in Platform]    # the add-account form's platform checkboxes (no enum drift)
-_TAG_LEANS = sorted(TAG_LEANS)                  # add-account lean picker options (sourced from the engine)
 # Lever exposure for the Personas tab — ALL sourced from personas.lever_catalog() so the option lists, their
 # effects, and the reference never drift from the engine. `_LEVERS` keeps the macro's keyed option lists,
 # `_LEVER_EFFECTS` maps each option to its engine-true effect (rendered next to the control), `_LEVER_REF` is
