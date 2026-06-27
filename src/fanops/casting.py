@@ -160,6 +160,24 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
             led.add_account_selection(AccountSelection(
                 id=account_selection_id(source_id, h), source_id=source_id, account=h,
                 moment_ids=sorted(mids), method=SelectionMethod.llm, batch_id=bid, created_at=now))
+        # WS1 (audit c5-f1/xc-1): a persona-LESS active account is NEVER in the brief (request_moment_casting
+        # filters on a truthy casting_directive), so the selector cannot place it; on a CAST source it would hit
+        # account_selection_admits' "no record -> DENY" branch and silently post NOTHING. Give each never-
+        # candidate active account an EXPLICIT fan_all_default selection so it ships fan-to-all via the LABELLED
+        # gate branch (casting.py account_selection_admits) — VISIBLE, not a silent admit, so RF1's no-collapse
+        # contract holds: an in-brief-but-unpicked account still has NO record and still DENIES (true
+        # differentiation). Only when the source actually became cast (per_account non-empty); the picked-no-one
+        # case is left to the existing fan-to-all fallback + degraded_reason below.
+        if per_account:
+            candidates = {a.handle for a in accounts.active() if casting_directive(a)}
+            for a in accounts.active():
+                if a.handle in candidates or a.handle in per_account: continue
+                if led.account_selection_for(source_id, a.handle) is not None: continue
+                led.add_account_selection(AccountSelection(
+                    id=account_selection_id(source_id, a.handle), source_id=source_id, account=a.handle,
+                    moment_ids=[], method=SelectionMethod.fan_all_default, batch_id=bid, created_at=now))
+                with contextlib.suppress(Exception):
+                    get_logger(cfg)("casting", source_id, "fan_all_default", account=a.handle)
         if not per_account and src is not None and active:   # casting ran but picked NO ONE -> visible, never silent
             led.sources[source_id] = src.model_copy(
                 update={"degraded_reason": "casting produced no selections (source falls back to fan-to-all)"})
@@ -183,8 +201,31 @@ def casting_gate_pending(cfg, source_id) -> bool:
         if latest_request_id(cfg, "moment_casting", source_id) is None: return False   # no gate -> nothing to wait for
         return read_response(cfg, "moment_casting", source_id, MomentCastingDecision) is None
     except Exception as e:
-        try: get_logger(cfg)("casting", source_id, "gate_probe_error", err=str(e)[:120])   # fail-open, but leave a trace
-        except Exception: pass
+        with contextlib.suppress(Exception): get_logger(cfg)("casting", source_id, "gate_probe_error", err=str(e)[:120])  # fail-open, but leave a trace
+        return False
+
+
+def casting_gate_failed_to_open(cfg, led, accounts, source_id) -> bool:
+    """WS1 (audit xc-2): True iff casting is ON and this source SHOULD have opened a casting gate this pass —
+    it has CANDIDATE accounts (a truthy casting_directive, so the brief would list them) AND castable
+    (decided/clipped) moments — but NONE opened AND no selections were written. That is the fingerprint of a
+    request_moment_casting I/O failure: without this, account_selection_admits falls back to the legacy 'no
+    selections -> fan-to-all' path and a transient disk error silently downgrades a differentiated source to
+    undifferentiated fan-out for the pass. Crosspost must DEFER (retry next pass), mirroring casting_gate_pending.
+    Distinct from the LEGIT no-gate case (no candidate accounts -> nothing to differentiate -> fan-to-all is
+    correct), which returns False. Fail-open to False (never permanently strand a clip on a probe glitch)."""
+    try:
+        if not cfg.account_casting: return False
+        if latest_request_id(cfg, "moment_casting", source_id) is not None: return False  # gate exists -> casting_gate_pending owns it
+        if led.selections_of_source(source_id): return False                              # casting ran fine -> selections written
+        if not any(casting_directive(a) for a in accounts.active()): return False          # no candidate -> legit no-gate -> fan-to-all
+        castable = [m for m in led.moments.values()
+                    if m.parent_id == source_id and m.state in (MomentState.decided, MomentState.clipped)]
+        if not castable: return False                                                      # nothing to cast -> no gate expected
+        if any(m.affinities for m in castable): return False                              # legacy/heuristic affinities cast (no gate by design) -> not a failure
+        return True                                                                        # candidates + castable + no gate + no selections + no affinities -> request failed -> defer
+    except Exception as e:
+        with contextlib.suppress(Exception): get_logger(cfg)("casting", source_id, "gate_probe_error", err=str(e)[:120])
         return False
 
 

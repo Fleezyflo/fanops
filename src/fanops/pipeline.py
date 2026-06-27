@@ -244,7 +244,14 @@ def _stage_casting(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
             led = request_moment_casting(led, cfg, s.id, accts)
             led = ingest_moment_casting(led, cfg, s.id, accts)
         except Exception as e:
+            # xc-2: a request/ingest failure (e.g. an OSError opening the gate) must be VISIBLE, not just logged —
+            # route it through the same degraded_reason channel ingest uses, so the operator sees the casting
+            # downgrade. Crosspost independently DEFERS this source this pass via casting_gate_failed_to_open
+            # (it won't silently fan-to-all); the gate re-opens next pass.
             log("casting", s.id, "error", err=str(e)[:120])
+            cur = led.sources.get(s.id)
+            if cur is not None:
+                led.sources[s.id] = cur.model_copy(update={"degraded_reason": f"casting failed this pass: {str(e)[:120]}"})
     return led
 
 
