@@ -10,7 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
 from fanops.ids import child_id
 from fanops.bands import band_for, TALK
-from fanops import overlay, frames
+from fanops import overlay, frames, framing
 from fanops.log import get_logger
 
 # Target render size per aspect. The subtitle .ass PlayResX/Y must match the rendered frame so
@@ -188,12 +188,19 @@ def pick_visual_start(src_path: str, start: float, end: float, *, scene_peaks, o
         pass                                                # write failure just re-probes next time
     return new_start, kind
 
-def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = False) -> str:
-    """Pick a safe ffmpeg -vf for the target aspect given the source dimensions. With `top_bias`
-    (Theme 2, opt-in) a VERTICAL height-crop offsets its window UP — keeping headroom so a subject in
-    the upper third isn't decapitated by ffmpeg's default centre crop. top_bias affects ONLY the
-    height-crop branch (a scale-only or width-crop reframe keeps full height, so there is nothing to
-    decapitate); every other path — and top_bias=False — is byte-identical to today."""
+def _clamp(v: int, lo: int, hi: int) -> int:
+    return lo if v < lo else (hi if v > hi else v)
+
+def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = False,
+                   focus: tuple[float, float] | None = None) -> str:
+    """Pick a safe ffmpeg -vf for the target aspect given the source dimensions. With `focus`
+    (smart framing — a normalized (fx, fy) subject centroid from framing.subject_focus) the crop window
+    is OFFSET to keep that subject in the safe area: x on the width-crop branch (landscape->vertical, where
+    the speaker sits off-centre), y on the height-crop branch — taking precedence over the blind `top_bias`
+    guess. With `top_bias` (Theme 2, opt-in) and no focus, a VERTICAL height-crop offsets its window UP —
+    keeping headroom so the upper third isn't decapitated by ffmpeg's default centre crop. focus=None AND
+    top_bias=False is byte-identical to today; an offset is clamped in-bounds so the crop never runs off
+    the frame. The scale-only and unknown-source branches keep the full frame, so focus is moot there."""
     tw, th = _TARGETS[aspect]
     if not src_w or not src_h:
         # unknown source: scale to fit + pad to exact target (never an impossible crop)
@@ -204,23 +211,32 @@ def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = Fals
     if abs(src_ar - tgt_ar) < 0.01:
         return f"scale={tw}:{th},setsar=1"
     if src_ar > tgt_ar:
-        # source wider than target -> crop width (full height kept -> no vertical decapitation)
+        # source wider than target -> crop width (full height kept -> no vertical decapitation).
+        # smart framing slides the x-window onto the subject; else ffmpeg's default centre (today).
+        if focus is not None:
+            cw = round(src_h * tw / th)
+            x = _clamp(round(focus[0] * src_w) - cw // 2, 0, max(0, src_w - cw))
+            return f"crop=ih*{tw}/{th}:ih:{x}:0,scale={tw}:{th},setsar=1"
         return f"crop=ih*{tw}/{th}:ih,scale={tw}:{th},setsar=1"
-    # source taller/narrower than target -> crop height. top_bias lifts the window to the upper
-    # quarter of the leftover (vs ffmpeg's default centre) so heads survive; else centre (today).
+    # source taller/narrower than target -> crop height. smart framing slides the y-window onto the
+    # subject; else top_bias lifts to the upper quarter; else centre (today).
+    if focus is not None:
+        ch = round(src_w * th / tw)
+        y = _clamp(round(focus[1] * src_h) - ch // 2, 0, max(0, src_h - ch))
+        return f"crop=iw:iw*{th}/{tw}:0:{y},scale={tw}:{th},setsar=1"
     if top_bias:
         return f"crop=iw:iw*{th}/{tw}:0:(ih-iw*{th}/{tw})/4,scale={tw}:{th},setsar=1"
     return f"crop=iw:iw*{th}/{tw},scale={tw}:{th},setsar=1"
 
 def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
                     *, src_w: int = 0, src_h: int = 0, extra_vf: str | None = None,
-                    top_bias: bool = False) -> list[str]:
+                    top_bias: bool = False, focus: tuple[float, float] | None = None) -> list[str]:
     # -ss before -i (fast seek) makes output-position -to a DURATION measured from the seek
     # point, so it must be (end - start), not the absolute end. Verified on ffmpeg 8.0.1:
     # `-ss 1.5 -to 6.5` yields a 6.5s clip; passing 8.0 here would yield 8.0s (the F39 bug).
     # extra_vf (e.g. the burned-subtitles `subtitles=...` token) is chained AFTER the reframe
     # with a comma so it operates on the already-reframed frame; default None == old behavior.
-    vf = reframe_filter(aspect, src_w, src_h, top_bias=top_bias)
+    vf = reframe_filter(aspect, src_w, src_h, top_bias=top_bias, focus=focus)
     if extra_vf:
         vf = f"{vf},{extra_vf}"
     return ["ffmpeg", "-y", "-ss", str(start), "-i", src, "-to", str(end - start),
@@ -274,11 +290,14 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
 # lock-free pre-warm and the in-lock commit agree on when an existing mp4 may be reused. This is what
 # lets the heavy ffmpeg run OUTSIDE the ledger lock and the commit pass skip it.
 def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
-                        src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False) -> str:
+                        src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
+                        focus: tuple[float, float] | None = None) -> str:
     payload = {"src": src_path, "cs": round(cs, 3), "ce": round(ce, 3), "aspect": aspect_value,
                "w": src_w, "h": src_h, "ass": ass_text}
     if top_bias:                                          # additive: absent key -> byte-identical fp to today
         payload["top_bias"] = True
+    if focus is not None:                                 # additive: smart-framing offset -> re-render on change
+        payload["focus"] = [round(focus[0], 3), round(focus[1], 3)]
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
 
@@ -330,6 +349,11 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
             cs, first_frame_kind = pick_visual_start(src.source_path, cs, ce,
                                                      scene_peaks=src.signal_peaks, out_dir=cfg.clips)
     cut_seconds = round(ce - cs, 3)                            # P1 provenance (observational; length not varied)
+    # Smart framing (default-on, fail-open): the subject's normalized centroid over THIS window slides the
+    # crop onto the speaker/action instead of the blind top/center guess. None (no [framing] extra / no
+    # detection) -> today's centered crop. Resolved here (window final) + cached, so the in-lock commit
+    # re-probes nothing — and it feeds BOTH the fingerprint and the render so a fp-match can't reuse a stale crop.
+    focus = framing.subject_focus(cfg, src, start=cs, end=ce) if cfg.smart_framing else None
     extra_vf, hook_burn_failed = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
     # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
     # render (a pre-warm pass produced it), adopt it and SKIP ffmpeg — record the clip + advance the
@@ -337,7 +361,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     ass_path = cfg.clips / f"{cid}.ass"
     ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
     fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0,
-                             ass_text, top_bias=cfg.aware_reframe)
+                             ass_text, top_bias=cfg.aware_reframe, focus=focus)
     fp_path = cfg.clips / f"{cid}.render.json"
     if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
         # An fp-match means a prior render of THIS exact window already passed (the fp is stamped only
@@ -351,7 +375,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         return led, clip
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                          top_bias=cfg.aware_reframe)
+                          top_bias=cfg.aware_reframe, focus=focus)
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
@@ -447,6 +471,7 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
             cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
         realized = ce - cs                                    # P3: the account cut's REALIZED window length (post snap+visual-start)
+        focus = framing.subject_focus(cfg, src, start=cs, end=ce) if cfg.smart_framing else None  # subject-aware crop (fail-open None)
         tw, th = _TARGETS[aspect.value]
         extra_vf = None
         if (hook or "").strip() and overlay.ffmpeg_has_textfilter():
@@ -459,7 +484,8 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
                 overlay.write_ass(ass_text, ass_path)
                 extra_vf = overlay.subtitles_vf(ass_path)
         cmd = ffmpeg_clip_cmd(src.source_path, tmp, cs, ce, aspect.value,
-                              src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf, top_bias=top_bias)
+                              src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
+                              top_bias=top_bias, focus=focus)
         try:
             r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):

@@ -91,7 +91,7 @@ by) + `rationale` (operator-facing WHY) — both optional, ride defaults).
   `account_id` is numeric for Blotato or a UUID for Postiz integrations (same field, different schema).
   Writable atomically via `write_account_id()` (ecc audit: python + security). Guarded by `accounts.lock`.
 
-- **personas.json:** first-class `Persona` records (`models`/`personas.py`) — `voice`/`tag_lean`/`hashtag_corpus`/`intake`
+- **personas.json:** first-class `Persona` records (`models`/`personas.py`) — `voice`/`tag_lean`/`hashtag_corpus`
   per persona; `Account.persona_id` links one and its voice/lean/corpus HYDRATE the account at load (fail-open,
   byte-identical when unlinked). Edited in the Studio Personas tab; mutated under `personas.lock` (reuses the ledger flock shape).
 

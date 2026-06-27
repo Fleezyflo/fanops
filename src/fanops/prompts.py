@@ -279,9 +279,7 @@ def moment_casting_prompt(payload: dict) -> str:
     overlap allowed where a moment honestly suits several accounts. Returns `selections` (handle -> [moment_id])."""
     moment_lines = "".join(_casting_moment_line(m) for m in payload.get("moments", []))
     def _persona_line(p: dict) -> str:
-        cap = p.get("clip_count")
-        cap_s = f" (give this account UP TO {cap} clips)" if cap else ""
-        return f"  * {p.get('handle')}{cap_s}: {p.get('persona','')}\n"
+        return f"  * {p.get('handle')}: {p.get('persona','')}\n"
     persona_lines = "".join(_persona_line(p) for p in payload.get("personas", []))
     return (
         "You are the editorial brain of an autonomous fan-account engine for a bilingual (EN/AR) rapper. "
@@ -297,8 +295,7 @@ def moment_casting_prompt(payload: dict) -> str:
         "persona and angle. Different personas should end up with NOTICEABLY different sets.\n"
         "  - BE GENEROUS by DEFAULT: no cap — give an account EVERY moment that genuinely fits it, do not ration. "
         "A moment may go to several accounts when it honestly suits them all (overlap is fine), and a strong "
-        "moment that fits everyone may go to everyone. EXCEPTION: an account shown as '(give this account UP TO N "
-        "clips)' has its OWN ceiling — pick that account's N BEST-FITTING moments and stop, never exceed N.\n"
+        "moment that fits everyone may go to everyone.\n"
         "  - Use the EXACT handle strings and the EXACT moment_id strings below, never invent ids.\n"
         "  - Give an account at least one moment whenever any moment plausibly fits it; leave it empty ONLY "
         "when NONE of these moments suit its persona at all.\n"
@@ -334,6 +331,19 @@ def caption_prompt(payload: dict) -> str:
         f"{json.dumps(transferred, ensure_ascii=False)}\n"
         if transferred else ""
     )
+    # The tag-pick rule. WITHOUT content_tags it is byte-identical to the menu-only rule. WITH per-clip
+    # content_tags it widens the allowed set to {menu UNION clip-specific tags} and tells the model to
+    # prefer the clip's own tags when they fit — the model SELECTS (never invents outside both lists);
+    # vet_hashtags still enforces membership + the <=4 cap downstream.
+    menu_json = json.dumps(vetted_menu(), ensure_ascii=False)
+    content_tags = payload.get("content_tags")
+    if content_tags:
+        pick_rule = (f"Choose from this REACH-VETTED menu (ranked by real post volume) OR the CLIP-SPECIFIC "
+                     f"tags listed next; do NOT invent anything outside BOTH lists: {menu_json}. "
+                     f"CLIP-SPECIFIC tags (derived from THIS clip — prefer them when they fit the content): "
+                     f"{json.dumps(content_tags, ensure_ascii=False)}. ")
+    else:
+        pick_rule = f"Choose ONLY from this REACH-VETTED menu (ranked by real post volume); do NOT invent tags: {menu_json}. "
     return (
         "You write captions for FAN ACCOUNTS that repost and celebrate a bilingual (EN/AR) rapper. "
         "You are a FAN hyping the artist to other fans — NEVER the artist, never an official account. "
@@ -357,8 +367,7 @@ def caption_prompt(payload: dict) -> str:
         f"  - Surfaces to caption (use these exact keys): {json.dumps(keys, ensure_ascii=False)}\n"
         "  - Each `caption` is HASHTAGS ONLY: a single line of AT MOST 4 hashtags (MAX 4 — fewer is "
         "fine) separated by spaces and NOTHING ELSE — no sentences, no prose, no @mentions, no emoji. "
-        "Put the SAME tags in the `hashtags` array. Choose ONLY from this REACH-VETTED menu (ranked by "
-        f"real post volume); do NOT invent tags: {json.dumps(vetted_menu(), ensure_ascii=False)}. "
+        f"Put the SAME tags in the `hashtags` array. {pick_rule}"
         "Compose a balanced 4: one mega genre tag (#hiphop/#rap), one relevance tag (#rapper/#bars), "
         "one language/region tag for an Arabic clip (#arabicmusic/#arabtiktok) else a second music tag "
         "(#newmusic), and one platform-discovery tag (#fyp/#reels). English tags on an Arabic clip are "

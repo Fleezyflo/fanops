@@ -78,19 +78,6 @@ def test_discover_corpus_unknown_persona_raises(tmp_path):
         core.discover_corpus(Config(root=tmp_path), "ghost")
 
 
-def test_discover_corpus_null_genre_yields_no_none_seed(tmp_path, monkeypatch):
-    # a HAND-EDITED personas.json with "genre": null must NOT produce a "#none" seed (which would waste
-    # a 30/7-day budget slot resolving a junk tag). regression: str(None).split() == ["None"].
-    cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", tag_lean="underground")
-    core.update_persona(cfg, pid, intake={"genre": None})
-    captured = {}
-    def fake(c, seeds, **k): captured["seeds"] = seeds; return []
-    monkeypatch.setattr("fanops.meta_graph.discover_candidates", fake)
-    core.discover_corpus(cfg, pid)
-    assert "#none" not in captured["seeds"]                         # null genre contributes no seed
-
-
 # --- Studio action now returns dicts -----------------------------------------------------------
 
 def test_studio_research_returns_dict_proposals(tmp_path, monkeypatch):

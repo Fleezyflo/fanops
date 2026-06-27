@@ -59,8 +59,6 @@ class Persona(BaseModel):
     casting_directive: str = ""                   # override for "which moments to clip" (else compiled from content_focus+energy)
     hook_directive: str = ""                      # override for the on-screen hook brief (else compiled from hook_angle+hook_tone)
     caption_directive: str = ""                   # override for the caption angle (else the voice; tags stay deterministic)
-    clip_count: Optional[int] = None              # per-persona clip-count HINT (prompt-level, not enforced — PRD #7):
-                                                  # how many moments this account ideally gets. None -> unset (no hint)
 
 
 class Personas:
@@ -102,6 +100,6 @@ from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; 
     compose_persona_instruction, lever_catalog, compose_breakdown, produces_summary, persona_facts,
     _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE, _TONE_CLAUSE, _FOCUS_PROFILE, _ENERGY_FRAMING)
 from fanops.persona_store import (   # noqa: E402,F401
-    _clip_count_or_none, add_persona, update_persona, add_corpus_tag, remove_corpus_tag,
+    add_persona, update_persona, add_corpus_tag, remove_corpus_tag,
     delete_persona, migrate_from_accounts)
 from fanops.persona_research import research_corpus, discover_corpus   # noqa: E402,F401

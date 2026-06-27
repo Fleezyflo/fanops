@@ -8,7 +8,8 @@
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Moment, Clip, ClipState, MomentState, Fmt, MomentCastingDecision
+from fanops.models import (Source, Moment, Clip, ClipState, MomentState, Fmt, MomentCastingDecision,
+                           AccountSelection, SelectionMethod, account_selection_id)
 from fanops.accounts import Accounts
 from fanops.casting import request_moment_casting, ingest_moment_casting, casting_gate_pending
 from fanops.crosspost import crosspost_clips
@@ -128,3 +129,46 @@ def test_request_opens_for_clipped_uncast_and_is_write_once(tmp_path):
     assert rid1 is not None
     led = request_moment_casting(led, cfg, "src_1", accts)            # write-once: no re-cast storm
     assert latest_request_id(cfg, "moment_casting", "src_1") == rid1
+
+
+# ---- The HEADLINE promise, pinned END-TO-END: disjoint per-account casts -> disjoint posts ----
+def _moment_n(mid, lo, hi):
+    return Moment(id=mid, parent_id="src_1", content_token=f"{lo}-{hi}", start=lo, end=hi, reason="r",
+                  transcript_excerpt="x", state=MomentState.clipped, affinities=[])
+
+def _captioned_clip_for(mid, cid):
+    clip = Clip(id=cid, parent_id=mid, path=f"/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
+    clip.meta_captions = {f"{h}/{p}": {"caption": "impact.", "hashtags": ["#x"]}
+                          for h in ("@a", "@b") for p in ("instagram", "youtube")}
+    return clip
+
+def test_disjoint_account_selections_yield_disjoint_posts_end_to_end(tmp_path):
+    # The product's headline promise, characterized end-to-end (the one gap the audit found): a source cast so
+    # @a gets {mom_1,mom_2} and @b gets {mom_3,mom_4} must mint posts on DISJOINT parent clips — @a never posts
+    # on @b's moments and vice versa (the RF1 no-fan-leak contract AT THE OUTPUT). Until now this rested on two
+    # SEPARATELY-tested halves: account_selection_admits (unit, SimpleNamespace) + the crosspost enforcer (proved
+    # only via the legacy single-moment affinities path). This drives the DURABLE AccountSelection multi-moment
+    # path through the real crosspost_clips so the promise can't silently regress to fan-to-all.
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
+    led = _src(cfg)
+    bands = {"mom_1": (0, 7), "mom_2": (8, 15), "mom_3": (16, 23), "mom_4": (24, 31)}
+    for i, (mid, (lo, hi)) in enumerate(bands.items(), 1):
+        led.add_moment(_moment_n(mid, lo, hi)); led.add_clip(_captioned_clip_for(mid, f"clip_{i}"))
+    # cast (durable AccountSelection — the RF1 gate input): NO casting request is written, so the gate is not
+    # pending (casting_gate_pending: no request -> nothing to wait for) and crosspost fans out now, scoped.
+    led.add_account_selection(AccountSelection(id=account_selection_id("src_1", "@a"), source_id="src_1",
+                                               account="@a", moment_ids=["mom_1", "mom_2"], method=SelectionMethod.llm))
+    led.add_account_selection(AccountSelection(id=account_selection_id("src_1", "@b"), source_id="src_1",
+                                               account="@b", moment_ids=["mom_3", "mom_4"], method=SelectionMethod.llm))
+    led.save(); led = Ledger.load(cfg)
+    accts = Accounts.load(cfg)
+    led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
+    posts = list(led.posts.values())
+    assert posts, "crosspost minted no posts at all"                  # guard: a silent zero-post run isn't a pass
+    def moment_of(p): return led.clips[p.parent_id].parent_id        # post -> parent clip -> its moment
+    a_moments = {moment_of(p) for p in posts if p.account == "@a"}
+    b_moments = {moment_of(p) for p in posts if p.account == "@b"}
+    assert a_moments == {"mom_1", "mom_2"}                            # @a posts ONLY on its cast moments
+    assert b_moments == {"mom_3", "mom_4"}                            # @b posts ONLY on its cast moments
+    assert a_moments.isdisjoint(b_moments)                           # no cross-account fan leak reached the output
+    assert all(p.account in ("@a", "@b") for p in posts)             # no third surface leaked in

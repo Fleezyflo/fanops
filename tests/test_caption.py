@@ -142,7 +142,10 @@ def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     mc = led.clips["clip_1"].meta_captions["@a/instagram"]
     assert len(mc["hashtags"]) <= 4                       # hard cap
     assert "#mohflow" not in mc["hashtags"]               # non-vetted random word dropped
-    assert all(t in VETTED for t in mc["hashtags"])       # every survivor is reach-vetted
+    # every survivor traces to a real signal: reach-vetted OR a per-clip content tag (content membership
+    # is the new evidence source — a tag is never a sourceless junk word).
+    assert all(t in VETTED or mc["tag_sources"].get(t) == "content" for t in mc["hashtags"])
+    assert all(mc["tag_sources"][t] for t in mc["hashtags"])   # no sourceless tag ships
     assert mc["caption"] == " ".join(mc["hashtags"])      # posted caption == the vetted tag line
 
 def test_ingest_captions_noop_without_response(tmp_path):
@@ -549,7 +552,9 @@ def test_ingest_captions_applies_per_account_lean(tmp_path):
     assert a_tags != b_tags                                   # genuinely differentiated
 
 def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
-    from fanops.hashtags import vet_hashtags
+    # no accounts -> no lean/corpus; content is a CLIP-level signal so it still applies (the clip's own
+    # transcript drives its tags regardless of accounts). The expected line carries that same content.
+    from fanops.hashtags import vet_hashtags, content_tag_candidates
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])   # no accounts -> no lean
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
@@ -560,4 +565,5 @@ def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
         CaptionItem(surface="@a/instagram", caption="c", hashtags=tags)]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["@a/instagram"]["hashtags"]
-    assert mc == vet_hashtags(tags, Platform.instagram, "en")  # no lean applied -> frozen behavior
+    content = content_tag_candidates("they slept on me")      # the _clip helper's transcript
+    assert mc == vet_hashtags(tags, Platform.instagram, "en", content=content)  # no lean; content still rides

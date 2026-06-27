@@ -11,14 +11,13 @@ The persona is the operator's control surface over per-account output. Each **le
 | Lever | Stage | What it does | Effect string lives in | Compiler / resolver |
 |---|---|---|---|---|
 | `content_focus` (multi) | casting | which moment KINDS to clip for | `_FOCUS_CLAUSE` (personas.py) | `casting_directive()` injects into the casting prompt |
-| `energy` | casting | bias toward calm vs peak-intensity (`medium` = no-op) | `_ENERGY_CLAUSE` | `casting_directive()` |
+| `energy` | casting | bias toward calm vs peak-intensity (`low`/`high`) | `_ENERGY_CLAUSE` | `casting_directive()` |
 | `hook_angle` | hook | the on-screen hook's strategy | `_ANGLE_CLAUSE` | `hook_directive()` injects into the hook prompt |
 | `hook_tone` | hook | the on-screen hook's voice | `_TONE_CLAUSE` | `hook_directive()` |
 | `clip_profile` | cut | the deterministic cut-length band | `bands._PROFILES` / `band_for()` | `config.resolve_clip_profile` → `clip.fit_window` |
 | `framing` | cut | the deterministic vertical crop | `config.FRAMING_NAMES` | `config.resolve_top_bias` → `clip.reframe_filter` |
 | `tag_lean` | caption | floats a flavor pool to the front of the hashtags | `hashtags._LEANS` | `hashtags.vet_hashtags(lean=)` (deterministic, not in the prompt) |
 | `hashtag_corpus` (list) | caption | curated tags that LEAD the hashtags | the persona's own pool | `vet_hashtags(corpus=)` (corpus-first) |
-| `clip_count` | casting | per-account moment ceiling | — | `cfg.cast_pick_budget` override (the casting payload) |
 | `voice` / `brief` | all | the freeform base of every directive | the persona itself | `_base_voice()` → all three compilers |
 | `casting_directive` / `hook_directive` / `caption_directive` (overrides) | per-dimension | replace the compiled directive VERBATIM; **SHADOW** the structured levers feeding that dimension | the persona itself | the override branch of each compiler |
 
