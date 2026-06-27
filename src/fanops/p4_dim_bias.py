@@ -61,8 +61,10 @@ def apply_p4_dim_bias(led: Ledger, cfg: Config) -> Ledger:
     if not cfg.p4_dim_bias:
         return led                                  # kill switch / default OFF -> inert
     if not learning_validated(cfg):
+        # unfreezes AUTOMATICALLY on the first real non-degraded live metric (track auto-stamps
+        # metrics_confirmed) — NOT an operator step; `fanops cutover metrics` is only an optional early probe.
         get_logger(cfg)("p4_dim_bias", "-", "skipped_unvalidated",
-                        hint="run `fanops cutover metrics` to confirm the live reach shape")
+                        hint="auto-unfreezes on the first real non-degraded live metric (optional early: `fanops cutover metrics`)")
         return led
     try:
         candidates = dim_bias_candidates(led, cfg)

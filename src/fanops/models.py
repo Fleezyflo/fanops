@@ -113,6 +113,12 @@ PLATFORM_MAX_SECONDS = {
 
 
 # ---- units ----
+# LEDGER FORWARD-COMPAT (audit x-f4): the ledger models do NOT set model_config extra=... — they rely on
+# pydantic v2's DEFAULT, which is extra="ignore" (unknown fields are silently DROPPED on load, not an error).
+# This is load-bearing: an OLDER binary loading a ledger written by a NEWER schema (extra fields present) must
+# parse it, dropping the keys it doesn't know, never crash. Do NOT switch any ledger model to extra="forbid"
+# — it would turn a forward-rolled ledger into a hard ControlFileError on the old binary. Pinned by
+# tests/test_models_extra_ignore.py::test_unknown_field_is_ignored.
 class Source(BaseModel):
     id: str
     state: SourceState = SourceState.catalogued

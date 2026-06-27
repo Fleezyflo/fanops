@@ -165,11 +165,14 @@ def apply_variant_amplify(led: Ledger, cfg: Config) -> Ledger:
         return led                                  # kill switch / default OFF -> inert
     if not learning_validated(cfg):
         # OFF-until-proven (Phase 2): the kill switch is ON but no real metrics row has confirmed
-        # lift_score's field shape (run `fanops cutover metrics`). Amplifying would re-mine sources
-        # off a possibly-meaningless lift — stay inert, but LOG the why (not silent) so the operator
-        # knows it's gated on validation, not on a weak signal.
+        # lift_score's field shape yet. This unfreezes AUTOMATICALLY on the first real, non-degraded
+        # live metric (track._auto_validate_metrics_shape stamps cutover.json metrics_confirmed) — NOT
+        # an operator step; `fanops cutover metrics` is only an OPTIONAL early shortcut to prove the
+        # shape before real posts accumulate. Amplifying now would re-mine sources off a possibly-
+        # meaningless lift — stay inert, but LOG the why (not silent) so the operator knows it's gated
+        # on validation, not on a weak signal.
         get_logger(cfg)("variant_amplify", "-", "skipped_unvalidated",
-                        hint="run `fanops cutover metrics` to confirm lift fields")
+                        hint="auto-unfreezes on the first real non-degraded live metric (optional early: `fanops cutover metrics`)")
         return led
     try:
         update_streaks(led, cfg)
