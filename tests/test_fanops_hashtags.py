@@ -81,6 +81,19 @@ def test_load_store_reads_tags_or_none(tmp_path):
     assert load_store(cfg) is None                          # corrupt -> None, never raises
 
 
+def test_load_store_reach_reads_graph_reach_map_or_empty(tmp_path):
+    # WS5: refresh_store persists {"reach": {tag: graph reach}} for the Studio surface; load_store_reach reads
+    # it normalized, fail-open to {} when absent / no reach key / corrupt.
+    from fanops.hashtags import load_store_reach
+    cfg = Config(root=tmp_path)
+    assert load_store_reach(cfg) == {}                      # absent -> {}
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#a"]}))     # no reach key -> {}
+    assert load_store_reach(cfg) == {}
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#a"], "reach": {"#A": 1200, "#b": "x"}}))
+    assert load_store_reach(cfg) == {"#a": 1200.0}          # normalized key; non-numeric dropped
+
+
 def test_vetted_menu_uses_store_when_given_else_frozen():
     assert vetted_menu(store=["#a", "#b"]) == ["#a", "#b"]  # dynamic store drives the menu
     assert "#hiphop" in vetted_menu()                       # no store -> frozen pools

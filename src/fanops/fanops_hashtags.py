@@ -58,7 +58,8 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     for t in universe:                                    # unmeasured tags keep relevance order so the store stays broad
         if t not in seen: seen.add(t); merged.append(t)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"tags": merged}, indent=2))
+    reach = {t: round(measured[t]) for t in measured}     # the per-tag LIVE Graph reach, persisted for the Studio surface
+    cfg.hashtags_path.write_text(json.dumps({"tags": merged, "reach": reach}, indent=2))
     return {"written": True, "measured": len(measured), "harvested": len(harvested), "total": len(merged)}
 
 

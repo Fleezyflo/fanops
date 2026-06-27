@@ -50,6 +50,24 @@ def load_store(cfg) -> list[str] | None:
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         return None                                  # corrupt store -> frozen pools, never crash a run
 
+def load_store_reach(cfg) -> dict[str, float]:
+    """The per-tag LIVE Graph reach map persisted alongside the store (00_control/hashtags.json `{"reach":
+    {tag: score}}`, written by refresh_store). The Studio shows this number next to each curated tag — the
+    honest 'why this tag' signal (its measured platform reach), NOT own-post reach. Absent / corrupt / no
+    `reach` key -> {} (the number simply doesn't render). Never raises."""
+    p = cfg.hashtags_path
+    if not p.exists():
+        return {}
+    try:
+        d = json.loads(p.read_text())
+        r = d.get("reach") if isinstance(d, dict) else None
+        if not isinstance(r, dict):
+            return {}
+        return {_norm(k): float(v) for k, v in r.items()
+                if isinstance(k, str) and _norm(k) and isinstance(v, (int, float)) and not isinstance(v, bool)}
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return {}
+
 def vetted_menu(store: list[str] | None = None) -> list[str]:
     """The vetted tags as one flat, reach-ordered, de-duplicated list — the MENU the caption prompt
     tells the model to pick from. With a live `store` (M4) it IS the menu; else the frozen pools. The

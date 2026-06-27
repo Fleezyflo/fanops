@@ -239,8 +239,8 @@ class PersonaCard:
     corpus: list                       # the per-persona reach-vetted hashtag pool (B1) — the SOLE hashtag differentiator (M3), DISPLAYED reach-first (B3)
     intake: dict                       # genre/language/reference_accounts/notes (seeds B3 research)
     linked_handles: list               # accounts whose persona_id points at this persona
-    reach_tags: list = field(default_factory=list)   # B3: corpus tags present in the reach store (own-reach+trends) -> flag high-reach
-    reach_means: dict = field(default_factory=dict)  # B4 (closed loop): {corpus tag -> measured mean reach} over analyzed posts
+    reach_tags: list = field(default_factory=list)   # corpus tags present in the LIVE Graph-reach store -> flag as currently most-active
+    reach_means: dict = field(default_factory=dict)  # {corpus tag -> LIVE Graph reach} from the store (the honest 'why this tag' signal)
     # Lever engine: the per-characteristic levers + the COMPOSED instruction the pipeline will read
     # ("what the AI will read") — so the operator sees their config's exact downstream effect on the card.
     content_focus: list = field(default_factory=list)
@@ -278,9 +278,9 @@ class PersonasPage:
 
 def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage":
     """The Personas-page read-model: every persona as a card (with its linked account handles + corpus
-    reach-ranked + each curated tag's MEASURED reach) + every account's current persona link (for the
-    connect dropdown). Fail-open: a corrupt personas.json / accounts.json -> an EMPTY page (the surface
-    never 500s), mirroring golive_accounts. `led` is injectable (tests); else loaded lock-free."""
+    ranked by LIVE Graph reach + each curated tag's Graph reach) + every account's current persona link (for
+    the connect dropdown). Fail-open: a corrupt personas.json / accounts.json -> an EMPTY page (the surface
+    never 500s), mirroring golive_accounts. `led` is accepted for call-compat; the surface reads no ledger."""
     try:
         from fanops.personas import (Personas, compose_persona_instruction, persona_facts,   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
                                      hook_directive, caption_directive, resolved_cut_spec, manifest)
@@ -294,22 +294,16 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     for a in accts:
         if getattr(a, "persona_id", None):
             by_pid.setdefault(a.persona_id, []).append(a.handle)
-    # B3: surface each corpus REACH-RANKED (the store blends own-reach + Graph trends) and flag the
-    # high-reach (store-present) tags. No store -> insertion order preserved, reach_tags empty (no signal yet).
-    from fanops.hashtags import vetted_menu, load_store, _norm
+    # Surface each corpus REACH-RANKED by the LIVE Graph-reach store and flag the currently-most-active
+    # (store-present) tags. No store -> insertion order preserved, reach_tags empty (no signal yet).
+    from fanops.hashtags import vetted_menu, load_store, load_store_reach, _norm
     store = load_store(cfg)
     rank = {t: i for i, t in enumerate(vetted_menu(store))}
     store_set = {_norm(t) for t in (store or [])}
-    # B4 (closed loop): the MEASURED mean reach per tag over analyzed posts, shown next to each curated
-    # tag. Fail-open — a missing/torn ledger leaves reach_means empty (the page still renders).
-    means: dict = {}
-    try:
-        from fanops.fanops_hashtags import tag_reach_means
-        means = tag_reach_means(led if led is not None else Ledger.load(cfg))
-    except Exception as exc:
-        from fanops.log import get_logger
-        get_logger(cfg)("personas", "-", "reach_means_error", err=str(exc)[:160])   # observable, still fail-open
-        means = {}
+    # The numeric reach annotation per tag is the tag's LIVE Graph reach, persisted in the store by
+    # refresh_store — NOT own-post reach (the own-reach judge was deleted; a tag's worth is its platform
+    # reach, never a post that used it). Absent store / no creds -> {} (the number simply doesn't render).
+    means = load_store_reach(cfg)
     def _ranked(corpus):
         return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
     cards = [PersonaCard(id=p.id, name=p.name, voice=p.voice,

@@ -134,6 +134,19 @@ def test_personas_page_read_model(tmp_path):
     assert links["@a"] == pid and links["@b"] is None
 
 
+def test_personas_page_surfaces_live_graph_reach(tmp_path):
+    # WS5: the card's reach annotation + ★ come from the LIVE Graph-reach store (refresh_store), NOT own-post
+    # reach. A curated tag present in the store is flagged most-active and shows its Graph reach number.
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1", voice="v1")
+    core.add_corpus_tag(cfg, pid, "#detroitrap")
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#detroitrap", "#hiphop"], "reach": {"#detroitrap": 4200}}))
+    card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
+    assert "#detroitrap" in card.reach_tags                 # store-present -> flagged most-active (★)
+    assert card.reach_means.get("#detroitrap") == 4200.0    # the LIVE Graph reach, surfaced honestly
+
+
 def test_personas_page_failopen_on_corrupt(tmp_path):
     cfg = Config(root=tmp_path)
     cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
