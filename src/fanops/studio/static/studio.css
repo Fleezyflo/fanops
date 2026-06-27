@@ -308,6 +308,17 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .day-head::before { content:none; }
 /* the «batch title» tag in Schedule/Posted table cells */
 .batch-tag { font-family:var(--serif); font-style:italic; }
+/* Schedule clip preview: a narrow lazy poster thumbnail that expands to an inline player on click. Collapsed
+   by default + loading=lazy + preload=none, so the timeline stays a fast scan — no 150 simultaneous videos. */
+.sched-clip { width:3.5rem; }
+.sched-preview > summary { cursor:pointer; list-style:none; display:inline-block; line-height:0; }
+.sched-preview > summary::-webkit-details-marker { display:none; }
+.sched-thumb { width:3rem; aspect-ratio:9/16; object-fit:cover; border-radius:var(--r-sm); border:1px solid var(--line);
+  background:#000; display:block; }
+.sched-preview > summary:hover .sched-thumb, .sched-preview > summary:focus-visible .sched-thumb { border-color:var(--accent); }
+.sched-preview[open] { position:relative; }
+.sched-preview[open] > video { display:block; width:11rem; max-width:40vw; aspect-ratio:9/16; object-fit:cover; background:#000;
+  border:1px solid var(--line-bright); border-radius:var(--r-sm); margin-top:.3rem; }
 /* Posted "Link" cell: the live social-post permalink as a labeled pill affordance (click the post -> the
    real IG/TikTok post), not a raw URL dump; the muted "pending ⟳" sibling reads when reconcile hasn't
    captured public_url yet. */
@@ -554,13 +565,44 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .term:hover > .term-def, .term:focus > .term-def, .term:focus-within > .term-def { display:block; }
 .term-def strong { color:var(--accent-bright); text-transform:none; }
 
-/* Schedule clip preview: lazy poster thumbnail -> preload=none player on click (kept from the schedule-video work). */
-.sched-clip { width:3.5rem; }
-.sched-preview > summary { cursor:pointer; list-style:none; display:inline-block; line-height:0; }
-.sched-preview > summary::-webkit-details-marker { display:none; }
-.sched-thumb { width:3rem; aspect-ratio:9/16; object-fit:cover; border-radius:var(--r-sm); border:1px solid var(--line);
-  background:#000; display:block; }
-.sched-preview > summary:hover .sched-thumb, .sched-preview > summary:focus-visible .sched-thumb { border-color:var(--accent); }
-.sched-preview[open] { position:relative; }
-.sched-preview[open] > video { display:block; width:11rem; max-width:40vw; aspect-ratio:9/16; object-fit:cover; background:#000;
-  border:1px solid var(--line-bright); border-radius:var(--r-sm); margin-top:.3rem; }
+/* ── Personas clarity: the cards had NO styling, so personas blurred into one wall. Give each a real boundary
+   (mirrors the existing .golive-step card, so the two setup pages match) + clean the disclosures. ─────────── */
+.persona-card { border:1px solid var(--line); border-radius:var(--r-lg); padding:var(--s-4); margin-top:var(--s-3);
+  background:var(--surface-1); box-shadow:var(--elev-1); }
+.persona-card-head { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.persona-card-head strong { font-size:1.05rem; }
+.persona-voice { color:var(--ink); margin:.45rem 0 .65rem; max-width:72ch; }
+/* account assignment, folded in WITH the voice it drives (was a separate dropdown stack at the page foot) */
+.persona-accounts { display:flex; align-items:center; flex-wrap:wrap; gap:.45rem; margin:.2rem 0 .1rem; }
+.persona-accounts-label { font-weight:500; }
+.chip.acct { border-color:var(--accent); color:var(--ink); }
+.persona-assign { display:inline-flex; gap:.25rem; margin-left:.2rem; }
+/* the DIFFERENTIATORS — a comparable chip row so you can tell voices apart at a glance */
+.persona-spec { display:flex; flex-wrap:wrap; gap:.4rem; margin:0 0 .2rem; }
+.spec-chip { font-size:var(--t-meta); padding:.2rem .55rem; border-radius:var(--r-pill); background:var(--surface-2);
+  border:1px solid var(--line); color:var(--ink); white-space:nowrap; }
+.persona-corpus { margin-top:.7rem; padding-top:.6rem; border-top:1px solid var(--line); display:flex;
+  align-items:center; flex-wrap:wrap; gap:.45rem; }
+.persona-corpus-label { font-weight:500; }
+.persona-corpus-tools { display:flex; flex-wrap:wrap; gap:.4rem; margin-left:.2rem; }
+.persona-corpus-tools .inline { display:inline-flex; gap:.25rem; }
+.persona-detail { margin-top:.6rem; }
+.persona-detail > summary.persona-detail-summary { font-size:var(--t-meta); padding:.3rem 0; }
+.persona-edit-open { margin-top:.85rem; }
+/* the collapsed "+ Add a persona" reads as a section header, not a buried toggle */
+.disclosure-step > summary.step-summary { font-size:1.05rem; font-weight:600; color:var(--ink); padding:.5rem 0; }
+.persona-add-step { margin-top:var(--s-4); }
+
+/* ── Go-Live clarity: a guided wizard, not a wall. Done/optional steps collapse so the ACTIVE next step
+   leads; each step heading carries a done/pending marker so the operator knows where they are. ─────────── */
+.step-done { color:var(--ok); font-size:var(--t-meta); font-weight:500; }
+.step-pending { color:var(--muted); font-size:var(--t-meta); font-weight:400; }
+.step-opt { color:var(--faint); font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.05em;
+  font-weight:500; border:1px solid var(--line); border-radius:var(--r-pill); padding:.05rem .45rem; vertical-align:middle; }
+/* nested disclosures inside step 3 — the advanced/orthogonal blocks (routing, content config) tuck away
+   so the channel-MAPPING table is what you see by default */
+.golive-sub { margin-top:var(--s-3); }
+.golive-sub > summary.sub-summary { cursor:pointer; padding:.45rem 0; font-size:var(--t-meta); }
+.golive-sub.channel-backends > summary { margin:-.2rem 0 0; }
+/* the go-live flip is the page's primary gate — give it a left accent so it reads as the decision point */
+.golive-flip { border-left:3px solid var(--accent); }

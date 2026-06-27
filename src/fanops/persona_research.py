@@ -35,7 +35,7 @@ def research_corpus(cfg: Config, pid: str, *, limit: int = 8) -> list[str]:
 def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0, get=None) -> list[dict]:
     """M3: LIVE per-persona discovery — the upgrade from research_corpus's re-rank-what-we-know to
     finding tags we have never named. Seeds the Graph co-occurrence harvest from the persona's category
-    (its corpus + lean flavor pool), DROPS what we already know (VETTED ∪ reach store ∪
+    (its corpus + lean flavor pool + intake `genre`), DROPS what we already know (VETTED ∪ reach store ∪
     corpus), and returns evidence-carrying proposals [{"tag","count","host_engagement",...}] reach-relevant
     first. FAIL-OPEN: no creds / nothing fresh / any Graph error -> today's offline research_corpus re-rank,
     wrapped as evidence-less {"tag": ...} dicts so the caller has ONE shape. measure_k defaults 0 (the free
@@ -47,7 +47,8 @@ def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0
     if per is None:
         raise KeyError(pid)
     corpus = [_norm(t) for t in per.hashtag_corpus if isinstance(t, str)]
-    seeds = list(dict.fromkeys(corpus + _LEANS.get((per.tag_lean or "").strip().lower(), [])))
+    genre_seeds = [_norm("#" + w) for w in (per.intake.get("genre") or "").split() if w.strip()]   # `or ""`: a hand-edited "genre": null must not seed "#none"
+    seeds = list(dict.fromkeys(corpus + _LEANS.get((per.tag_lean or "").strip().lower(), []) + genre_seeds))
     store = load_store(cfg) or []
     known = set(VETTED) | set(store) | set(corpus)
     try:
