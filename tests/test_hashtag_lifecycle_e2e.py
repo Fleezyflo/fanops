@@ -28,7 +28,7 @@ def test_hashtag_lifecycle_end_to_end(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
 
     # 1 · a persona owns a curated corpus, and an account LINKS to it
-    pid = core.add_persona(cfg, name="Curator", voice="champions craft", tag_lean="tasteful")
+    pid = core.add_persona(cfg, name="Curator", voice="champions craft")
     core.add_corpus_tag(cfg, pid, "#detroitrap")               # a niche tag the frozen set has never heard of
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [

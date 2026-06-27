@@ -12,20 +12,19 @@ from fanops.personas import Personas
 
 def research_corpus(cfg: Config, pid: str, *, limit: int = 8) -> list[str]:
     """B3: propose the reach-best hashtags this persona doesn't yet carry — the bootstrap "research my
-    corpus" step. Grounded in the reach-ranked store (own-reach + Graph trends, default-ON) PLUS the
-    persona's lean flavor pool, minus its current corpus. INSTANT + budget-free: the store already encodes
-    the Graph signal (refresh_store blends it), so no per-candidate Graph call is spent here. The persona's
-    flavor leads, then the reach-ranked universe. Returns an ordered list of candidate tags (most-reach
-    first) the operator accepts into the corpus. Unknown id -> KeyError."""
-    from fanops.hashtags import vetted_menu, load_store, _LEANS   # _norm already imported at module scope
+    corpus" step. Grounded in the reach-ranked store (own-reach + Graph trends, default-ON), minus its
+    current corpus. INSTANT + budget-free: the store already encodes the Graph signal (refresh_store blends
+    it), so no per-candidate Graph call is spent here. Returns an ordered list of candidate tags (most-reach
+    first) the operator accepts into the corpus. Unknown id -> KeyError. (M3: tag_lean retired — the curated
+    corpus itself is the persona's flavor; research re-ranks the reach universe against it.)"""
+    from fanops.hashtags import vetted_menu, load_store   # _norm already imported at module scope
     per = Personas.load(cfg).get(pid)
     if per is None:
         raise KeyError(pid)
     have = {_norm(t) for t in per.hashtag_corpus if isinstance(t, str)}
-    lean_pool = _LEANS.get((per.tag_lean or "").strip().lower(), [])     # flavor leads
     ranked = vetted_menu(load_store(cfg))                                # store (own-reach+trends) else frozen reach-order
     out: list[str] = []; seen: set[str] = set()
-    for t in lean_pool + ranked:
+    for t in ranked:
         n = _norm(t)
         if n and n not in have and n not in seen:
             seen.add(n); out.append(n)
@@ -35,20 +34,21 @@ def research_corpus(cfg: Config, pid: str, *, limit: int = 8) -> list[str]:
 def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0, get=None) -> list[dict]:
     """M3: LIVE per-persona discovery — the upgrade from research_corpus's re-rank-what-we-know to
     finding tags we have never named. Seeds the Graph co-occurrence harvest from the persona's category
-    (its corpus + lean flavor pool + intake `genre`), DROPS what we already know (VETTED ∪ reach store ∪
-    corpus), and returns evidence-carrying proposals [{"tag","count","host_engagement",...}] reach-relevant
-    first. FAIL-OPEN: no creds / nothing fresh / any Graph error -> today's offline research_corpus re-rank,
-    wrapped as evidence-less {"tag": ...} dicts so the caller has ONE shape. measure_k defaults 0 (the free
-    co-occurrence COUNT is the operator's evidence; per-tag reach stays the explicit 'Check reach' action) —
-    the global refresh passes measure_k>0 to gate the menu on measured reach. Unknown id -> KeyError."""
-    from fanops.hashtags import load_store, _LEANS, VETTED
+    (its corpus + intake `genre`), DROPS what we already know (VETTED ∪ reach store ∪ corpus), and returns
+    evidence-carrying proposals [{"tag","count","host_engagement",...}] reach-relevant first. FAIL-OPEN: no
+    creds / nothing fresh / any Graph error -> today's offline research_corpus re-rank, wrapped as evidence-
+    less {"tag": ...} dicts so the caller has ONE shape. measure_k defaults 0 (the free co-occurrence COUNT is
+    the operator's evidence; per-tag reach stays the explicit 'Check reach' action) — the global refresh
+    passes measure_k>0 to gate the menu on measured reach. Unknown id -> KeyError. (M3: tag_lean retired —
+    the curated corpus is the seed flavor.)"""
+    from fanops.hashtags import load_store, VETTED
     from fanops.meta_graph import discover_candidates
     per = Personas.load(cfg).get(pid)
     if per is None:
         raise KeyError(pid)
     corpus = [_norm(t) for t in per.hashtag_corpus if isinstance(t, str)]
     genre_seeds = [_norm("#" + w) for w in (per.intake.get("genre") or "").split() if w.strip()]   # `or ""`: a hand-edited "genre": null must not seed "#none"
-    seeds = list(dict.fromkeys(corpus + _LEANS.get((per.tag_lean or "").strip().lower(), []) + genre_seeds))
+    seeds = list(dict.fromkeys(corpus + genre_seeds))
     store = load_store(cfg) or []
     known = set(VETTED) | set(store) | set(corpus)
     try:

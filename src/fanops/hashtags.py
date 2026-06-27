@@ -29,17 +29,10 @@ _RANK = {t: i for i, t in enumerate(_MEGA + _RELEVANCE + _ARABIC + ["#fyp", "#re
 # The membership set: a tag the model returns survives only if it is one of these.
 VETTED = set(_MEGA) | set(_RELEVANCE) | set(_ARABIC) | {t for v in _DISCOVERY.values() for t in v}
 
-# Per-account tag LEAN (persona differentiation). Each pool is an ORDERED preference drawn ONLY from
-# VETTED — genre/relevance FLAVOR plus cross-platform #viral; NO #fyp/#reels (those stay platform-correct
-# via _composition). When an account declares a lean, its pool floats ahead of the frozen rank for both
-# the kept model tags and the backfill, so a tasteful account leads lyrical/craft tags and a bold one
-# leads viral. lean=None / unknown -> no pool -> byte-identical to the frozen behavior.
-# M3: DISJOINT flavor vocabularies — no shared tag, so each persona produces a visibly different line
-# (not the same pool reordered). 3 tags each (leaving a slot for the platform-discovery floor below).
-_LEANS = {"tasteful":    ["#lyrics", "#bars", "#newmusic"],            # lyrical / craft
-          "underground": ["#freestyle", "#undergroundhiphop", "#trap"],# raw / scene
-          "bold":        ["#viral", "#rapmusic", "#hiphop"]}           # mainstream / viral — all subset of VETTED
-TAG_LEANS = frozenset(_LEANS)                  # the valid lean names — the write-boundary validates against this
+# NB (M3, 2026-06-27): the per-account tag LEAN was RETIRED. It was an invisible+duplicate lever — no editor
+# control, and it co-owned the hashtag channel with `hashtag_corpus`. Its 3 disjoint flavor pools were folded
+# into each persona's curated `hashtag_corpus` (non-lossy: the reach floors now fire on the corpus), so the
+# corpus is the SOLE per-account hashtag differentiator. See docs / persona-lever-coherence M3.
 
 def load_store(cfg) -> list[str] | None:
     """M4: the dynamic reach-ranked tag store (00_control/hashtags.json `{"tags": [...]}`), normalized.
@@ -127,52 +120,50 @@ def _composition(platform: Platform, language: str | None) -> list[str]:
     return _MEGA[:1] + _RELEVANCE[:1] + lang_slot + disc[:1] + _MEGA[1:] + _RELEVANCE[1:] + disc[1:]
 
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
-                 max_tags: int = 4, *, store: list[str] | None = None, lean: str | None = None,
+                 max_tags: int = 4, *, store: list[str] | None = None,
                  corpus: list[str] | None = None, content: list[str] | None = None) -> list[str]:
     """Return at most `max_tags` reach-vetted hashtags. Keeps the model's VETTED tags (reach-ordered),
     then backfills the balanced default until full. Drops every non-vetted word, dedupes case/'#'
     variants, hard-caps the count. Deterministic; never empty (the default always fills). With a live
     `store` (M4), the store IS the vetted set + reach order (data-driven); store tags backfill first,
     the frozen composition is the last-resort fill. store=None -> today's frozen behavior, byte-identical.
-    `lean` (persona differentiation) floats that account's pool ahead of the frozen rank for BOTH the kept
-    tags and the backfill; an Arabic clip keeps a language tag as a floor so the lean can't displace its
-    region reach. lean=None / unknown -> empty pool -> byte-identical (no language floor, frozen rank).
-    `corpus` (B1: the per-persona curated pool) JOINS the vetted membership (so a curated tag the frozen
-    set / store doesn't know SURVIVES) and floats AHEAD of the lean pool — the operator's pool wins. The
-    corpus order is the curation order. corpus=None/empty -> byte-identical (no membership change, no float).
+    `corpus` (B1: the per-persona curated pool — the SOLE per-account hashtag differentiator since the
+    tag_lean fold, M3) JOINS the vetted membership (so a curated tag the frozen set / store doesn't know
+    SURVIVES) and floats AHEAD of the frozen rank; the corpus order is the curation order. A corpus-led
+    account keeps a region tag (Arabic clips) + one platform discovery tag as reach FLOORS so its curated
+    pool can't strip reach. corpus=None/empty -> byte-identical (no membership change, no float, no floor).
     `content` (per-clip content-derived tags, content_tag_candidates) ALSO joins the membership so a
-    clip-specific tag the model picked SURVIVES, floats just behind the corpus (clip info ahead of the
-    lean), and RESERVES one slot so the clip's own information always reaches the line when present.
+    clip-specific tag the model picked SURVIVES, floats just behind the corpus (clip info ahead of reach),
+    and RESERVES one slot so the clip's own information always reaches the line when present.
     content=None/empty -> byte-identical (no membership change, no float, no reserved slot)."""
     corpus_norm = _dedupe_norm(corpus)
     content_norm = _dedupe_norm(content)
     vetted = (set(store) if store else set(VETTED)) | set(corpus_norm) | set(content_norm)   # corpus + content join the gate
     base_rank = {t: i for i, t in enumerate(store)} if store else dict(_RANK)
-    pool = _LEANS.get((lean or "").strip().lower(), [])              # unknown/None lean -> [] -> byte-identical
-    # Preference float ahead of the frozen rank: corpus (operator curation) > content (clip info) > lean pool.
+    # Preference float ahead of the frozen rank: corpus (operator curation) > content (clip info).
     preferred: list[str] = []
-    for grp in (corpus_norm, content_norm, pool):
+    for grp in (corpus_norm, content_norm):
         for t in grp:
             if t not in preferred: preferred.append(t)
     rank = {**base_rank, **{t: i - len(preferred) for i, t in enumerate(preferred)}}
-    lang_floor = _ARABIC[:1] if (pool and (language or "").strip().lower().startswith("ar")) else []
+    lang_floor = _ARABIC[:1] if (corpus_norm and (language or "").strip().lower().startswith("ar")) else []
     seen: set[str] = set()
     kept: list[str] = []
     for h in corpus_norm:                           # B1: seed the WHOLE curated corpus first (the reach-sort + the final
         if h not in seen: seen.add(h); kept.append(h)   # [:max_tags] truncate cap it) — so a corpus AR tag past the cap
-                                                    # stays eligible for the lean's AR-floor promotion below, not dropped early
+                                                    # stays eligible for the AR-floor promotion below, not dropped early
     # NB: kept may exceed max_tags here (corpus + model picks); the sort + cap below enforce the bound.
     for t in (tags or []):                          # honour the model's choices, but ONLY vetted ones
         h = _norm(t)
         if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
-    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, lean pool, own-reach store, or frozen rank)
-    # Reserved floors take the TAIL slots so the corpus/lean/reach LEAD is preserved: region reach first
-    # (non-negotiable under a lean — a flavor lean must not strip AR reach), then ONE clip-content tag (the
-    # operator's "tags based off information" ask). Each guarantees its signal reaches the <=max_tags line
-    # even when the model already filled every slot. Detect against the CAP WINDOW, not `seen` (the model's
-    # own AR/content tag may be in seen but sorted PAST the cap). No lean + no content -> reserved empty ->
-    # byte-identical.
+    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, own-reach store, or frozen rank)
+    # Reserved floors take the TAIL slots so the corpus/reach LEAD is preserved: region reach first
+    # (non-negotiable under a corpus — a curated corpus must not strip AR reach), then ONE clip-content tag (the
+    # operator's "tags based off information" ask). Each guarantees its signal reaches the <=max_tags line even
+    # when the model already filled every slot. Detect against the CAP WINDOW, not `seen` (the model's own AR/
+    # content tag may be in seen but sorted PAST the cap). M3: lang_floor fires on `corpus_norm` (the lean fold
+    # made corpus the sole differentiator). No corpus + no content -> reserved empty -> byte-identical.
     arabic = set(_ARABIC); content_set = set(content_norm)
     reserved: list[str] = []
     if lang_floor and not any(h in arabic for h in kept[:max_tags]):
@@ -182,15 +173,15 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     if reserved:
         head = [h for h in kept if h not in reserved][:max_tags - len(reserved)]
         kept = head + reserved; seen = set(kept)
-    # M3: a leaned account keeps one platform DISCOVERY tag (#fyp/#reels/…) — backfill it right after the
-    # lean pool so a flavor lean (e.g. tasteful) can't eat all 4 slots and lose its reach. Gated on `pool`
-    # (leaned only) -> no-lean backfill is byte-identical. An AR clip's region floor still wins the reserved
-    # last slot above, so AR accounts prioritise region reach over discovery (acceptable).
-    disc_floor = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)[:1] if pool else []
+    # M3: a corpus-led account keeps one platform DISCOVERY tag (#fyp/#reels/…) — backfill it right after the
+    # corpus pool so a curated corpus can't eat all 4 slots and lose its reach. Gated on `corpus_norm` -> no-
+    # corpus backfill is byte-identical. An AR clip's region floor still wins the reserved last slot above, so
+    # AR accounts prioritise region reach over discovery (acceptable).
+    disc_floor = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)[:1] if corpus_norm else []
     # Backfill is REACH-first; content trails. The content FLOOR above already guarantees ONE content slot,
     # so a seed-fallback clip ships 1 content + reach (not all-content) — content adds more only if reach is
     # exhausted. content=[] -> identical tail -> byte-identical.
-    for h in corpus_norm + pool + disc_floor + (store or []) + _composition(platform, language) + content_norm:
+    for h in corpus_norm + disc_floor + (store or []) + _composition(platform, language) + content_norm:
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)
@@ -199,30 +190,29 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
 _ARABIC_SET = set(_ARABIC)
 _DISCOVERY_SET = {t for v in _DISCOVERY.values() for t in v}
 
-def _tag_source(tag: str, *, content_set: set, corpus_set: set, lean_set: set, store_set: set) -> str:
+def _tag_source(tag: str, *, content_set: set, corpus_set: set, store_set: set) -> str:
     """The provenance label for ONE shipped tag — the real signal it traces to. Priority (highest first):
-    content > corpus > lean > region > reach-store > discovery > genre-floor. Never empty (genre-floor is
-    the catch-all for a frozen-pool backfill tag), so a sourceless tag — pure theater — cannot ship."""
+    content > corpus > region > reach-store > discovery > genre-floor. Never empty (genre-floor is the
+    catch-all for a frozen-pool backfill tag), so a sourceless tag — pure theater — cannot ship. (M3: the
+    `lean` source was retired with tag_lean; a former-lean tag now traces to `corpus`.)"""
     if tag in content_set: return "content"
     if tag in corpus_set: return "corpus"
-    if tag in lean_set: return "lean"
     if tag in _ARABIC_SET: return "region"
     if store_set and tag in store_set: return "reach-store"
     if tag in _DISCOVERY_SET: return "discovery"
     return "genre-floor"
 
 def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: str | None = None,
-                        max_tags: int = 4, *, store: list[str] | None = None, lean: str | None = None,
+                        max_tags: int = 4, *, store: list[str] | None = None,
                         corpus: list[str] | None = None,
                         content: list[str] | None = None) -> tuple[list[str], dict[str, str]]:
     """vet_hashtags + a provenance `source` per shipped tag. SAME selection as vet_hashtags (DRY — it
-    calls it), then labels each kept tag by the signal it traces to (content|corpus|lean|region|
-    reach-store|discovery|genre-floor). This proves every shipped tag is evidence-backed — the
-    hashtag-axis instance of the operator's 'every knob real, no theater' rule."""
+    calls it), then labels each kept tag by the signal it traces to (content|corpus|region|reach-store|
+    discovery|genre-floor). This proves every shipped tag is evidence-backed — the hashtag-axis instance
+    of the operator's 'every knob real, no theater' rule."""
     out = vet_hashtags(tags, platform, language, max_tags,
-                       store=store, lean=lean, corpus=corpus, content=content)
+                       store=store, corpus=corpus, content=content)
     content_set = set(_dedupe_norm(content)); corpus_set = set(_dedupe_norm(corpus))
-    lean_set = set(_LEANS.get((lean or "").strip().lower(), [])); store_set = set(store) if store else set()
-    sources = {t: _tag_source(t, content_set=content_set, corpus_set=corpus_set,
-                              lean_set=lean_set, store_set=store_set) for t in out}
+    store_set = set(store) if store else set()
+    sources = {t: _tag_source(t, content_set=content_set, corpus_set=corpus_set, store_set=store_set) for t in out}
     return out, sources

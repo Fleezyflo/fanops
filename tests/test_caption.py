@@ -525,32 +525,6 @@ def test_request_captions_no_persona_key_without_accounts(tmp_path):
 def _accts(cfg, rows):
     a = Accounts(cfg); a.accounts = [Account(**r) for r in rows]; return a
 
-def test_request_captions_injects_account_tag_lean(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    accts = _accts(cfg, [{"handle": "@a", "account_id": "x", "platforms": ["instagram"],
-                          "status": "active", "tag_lean": "tasteful"}])
-    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)], accounts=accts)
-    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
-    s = next(s for s in payload["surfaces"] if s["surface"] == "@a/instagram")
-    assert s["tag_lean"] == "tasteful"                        # lean rides the payload (mirrors persona)
-
-def test_ingest_captions_applies_per_account_lean(tmp_path):
-    # same clip, same model tags, two accounts with different leans -> different vetted ORDER.
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    accts = _accts(cfg, [{"handle": "@a", "account_id": "x", "platforms": ["instagram"], "status": "active", "tag_lean": "tasteful"},
-                         {"handle": "@b", "account_id": "y", "platforms": ["instagram"], "status": "active", "tag_lean": "bold"}])
-    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram), ("@b", Platform.instagram)], accounts=accts)
-    rid = latest_request_id(cfg, "captions", "clip_1")
-    tags = ["#hiphop", "#bars", "#viral", "#rap"]
-    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="@a/instagram", caption="c", hashtags=tags),
-        CaptionItem(surface="@b/instagram", caption="c", hashtags=tags)]).model_dump_json())
-    led = ingest_captions(led, cfg, "clip_1")
-    a_tags = led.clips["clip_1"].meta_captions["@a/instagram"]["hashtags"]
-    b_tags = led.clips["clip_1"].meta_captions["@b/instagram"]["hashtags"]
-    assert a_tags[0] == "#bars" and b_tags[0] == "#viral"     # tasteful floats craft; bold floats viral
-    assert a_tags != b_tags                                   # genuinely differentiated
-
 def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
     # no accounts -> no lean/corpus; content is a CLIP-level signal so it still applies (the clip's own
     # transcript drives its tags regardless of accounts). The expected line carries that same content.

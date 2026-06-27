@@ -70,11 +70,6 @@
         {% endfor %}
       </span>
       <label>Persona <input type="text" name="persona" placeholder="optional — caption voice" size="24"></label>
-      <label>Tag lean
-        <select name="tag_lean">
-          <option value="">— none —</option>
-          {% for l in tag_leans %}<option value="{{ l }}">{{ l }}</option>{% endfor %}
-        </select></label>
       <button type="submit">Add account</button>
     </form>
   </details>
@@ -178,19 +173,10 @@
         {% for a in status.accounts %}
         <div class="account-row meta">
           {# S8: the account→persona LINK state — a first-class Persona record (persona_id) drives the
-             voice/lean/corpus hydration; an unlinked account uses only inline text/lean. #}
+             voice/corpus hydration; an unlinked account uses only inline text. #}
           <span><strong>{{ a.handle }}</strong>
-            {% if a.persona_id %}<span class="chip ok persona-linked" title="Linked to the '{{ a.persona_id }}' persona — its voice / lean / corpus hydrate this account">✦ persona: {{ a.persona_id }}</span>
-            {% else %}<span class="chip ro no-persona" title="No first-class persona linked — uses inline text / lean only">○ no persona</span>{% endif %}</span>
-          <form hx-post="{{ url_for('do_golive_account_lean') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-            <input type="hidden" name="handle" value="{{ a.handle }}">
-            <label class="lean-pick">lean
-              <select name="tag_lean" aria-label="Tag lean for {{ a.handle }}">
-                <option value="">— none —</option>
-                {% for l in tag_leans %}<option value="{{ l }}" {{ 'selected' if l == a.tag_lean else '' }}>{{ l }}</option>{% endfor %}
-              </select></label>
-            <button type="submit">Set lean</button>
-          </form>
+            {% if a.persona_id %}<span class="chip ok persona-linked" title="Linked to the '{{ a.persona_id }}' persona — its voice / corpus hydrate this account">✦ persona: {{ a.persona_id }}</span>
+            {% else %}<span class="chip ro no-persona" title="No first-class persona linked — uses inline text only">○ no persona</span>{% endif %}</span>
           <form class="persona-edit" hx-post="{{ url_for('do_golive_account_persona') }}" hx-target="#golive-panel" hx-swap="outerHTML">
             <input type="hidden" name="handle" value="{{ a.handle }}">
             <label class="persona-pick">persona

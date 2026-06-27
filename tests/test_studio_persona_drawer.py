@@ -23,7 +23,7 @@ def _client(cfg):
 
 def test_panel_edit_is_a_drawer_trigger_not_nested_details(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Curator", voice="champions craft", tag_lean="tasteful")
+    pid = core.add_persona(cfg, name="Curator", voice="champions craft")
     html = _client(cfg).get("/personas").data.decode()
     # the card's Edit is now an htmx drawer trigger — never a second nested expand
     assert f'/personas/drawer/{pid}' in html
@@ -42,7 +42,7 @@ def test_personas_page_mounts_drawer_backdrop_and_js(tmp_path):
 
 def test_drawer_route_renders_levers_visible(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Curator", voice="champions craft", tag_lean="tasteful")
+    pid = core.add_persona(cfg, name="Curator", voice="champions craft")
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert 'role="dialog"' in html and 'aria-modal="true"' in html
     assert 'id="persona-drawer-heading"' in html         # the labelled, focusable heading drawer.js focuses

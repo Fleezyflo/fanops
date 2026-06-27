@@ -38,8 +38,7 @@ class Persona(BaseModel):
     id: str                                       # stable slug (the link key on Account.persona_id)
     name: str = ""                                # operator-facing display name
     voice: str = ""                               # the persona string the pipeline reads (caption/hook/casting voice)
-    tag_lean: Optional[str] = None                # persona TAG knob: tasteful|underground|bold (None -> no lean)
-    hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona reach-vetted pool
+    hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona reach-vetted pool — the SOLE per-account hashtag differentiator (tag_lean folded in, M3)
     intake: dict = Field(default_factory=dict)    # intake metadata; one live field `genre` — seeds B3 research
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
@@ -47,15 +46,15 @@ class Persona(BaseModel):
     content_focus: list[str] = Field(default_factory=list)   # which moment KINDS to favor (casting): CONTENT_FOCUS
     energy: Optional[str] = None                  # clip energy: low|medium|high (ENERGY_LEVELS)
     hook_angle: Optional[str] = None              # on-screen hook strategy: curiosity|challenge|... (HOOK_ANGLES)
-    clip_profile: Optional[str] = None            # per-account LENGTH tier (bands.PROFILE_NAMES) — hydrates onto the account
-    framing: Optional[str] = None                 # per-account vertical CROP bias (config.FRAMING_NAMES) — hydrates onto the account
-    # M3 DIRECTIVE ENGINE: the structured levers above compile into a SUBSTANTIVE per-dimension instruction
-    # (casting/hook/caption) injected into THAT dimension's real prompt — not a glued adjective. The operator
-    # can OVERRIDE the compiled text per persona (these fields); a non-empty override is used VERBATIM, else
-    # the lever-compiled clauses are used, else the bare voice (the firewall). Empty -> byte-identical.
-    casting_directive: str = ""                   # override for "which moments to clip" (else compiled from content_focus+energy)
-    hook_directive: str = ""                      # override for the on-screen hook brief (else compiled from hook_angle)
-    caption_directive: str = ""                   # override for the caption angle (else the voice; tags stay deterministic)
+    # M3 (2026-06-27): the per-persona clip_profile/framing PINS were RETIRED — invisible (no editor) + duplicate
+    # of the content_focus/energy-DERIVED cut (derive_cut_spec). A persona's cut LENGTH now derives from
+    # content_focus and FRAMING from energy; the Account.clip_profile/framing carriers + the global
+    # FANOPS_CLIP_PROFILE lever stay. resolved_cut_spec is duck-typed, so an absent Persona pin -> derived.
+    # M3e (2026-06-27): the 3 freeform per-dimension OVERRIDES (casting/hook/caption_directive) were RETIRED —
+    # invisible (no editor) + shadow-duplicates of the structured levers, an unaudited verbatim-injection
+    # surface. The structured levers (content_focus/energy/hook_angle) now ALWAYS compile the directives; the
+    # voice carries any freeform register. The compile FUNCTIONS persona_directives.casting_directive/
+    # hook_directive/caption_directive stay (they are the compile, not the override).
 
 
 class Personas:

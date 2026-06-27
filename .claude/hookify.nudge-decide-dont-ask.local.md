@@ -1,12 +1,12 @@
 ---
-name: nudge-decide-dont-ask
+name: decide-dont-ask-block
 enabled: true
 event: all
-action: warn
+action: block
 tool_matcher: AskUserQuestion
 conditions:
   - field: questions
     operator: regex_match
     pattern: .
 ---
-DECIDE-FIRST CHECK (not a block): before asking, can you resolve this from the code, sensible defaults, or best practice? Scale, cost, UX-layout, and data-model calls are YOURS to make — make them and note the call in one line. Only ask on a GENUINE product fork you cannot resolve. The operator has repeatedly said "just decide / don't ask / do it and show me."
+BLOCKED: asking instead of deciding. This is NOT "just decide" — it is decide GROUNDED in the fixed hierarchy: (1) the operator's brief, (2) the stated requirement, (3) best practice, (4) compliance with the existing base/codebase, (5) reliability / robustness / resilience, (6) scalability. Resolve the answer from those and PROCEED. If a genuine fork survives that hierarchy, state the fork + your grounded choice in ONE prose line and act on it; the operator redirects if wrong. Asking what the brief/requirements already settle IS the diversion. Only the OPERATOR re-enables questions, via /hookify-configure; the agent does not ask its way out.

@@ -9,7 +9,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState
 from fanops.accounts import Accounts, Account
 from fanops.personas import (Persona, compose_persona_instruction, add_persona, update_persona, Personas,
-                             CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES)
+                             resolved_cut_spec, CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES)
 from fanops.agentstep import request_path
 from fanops.casting import request_moment_casting
 import pytest
@@ -48,11 +48,12 @@ def test_compose_ignores_cut_levers_in_text():
 def test_add_persona_persists_levers(tmp_path):
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="Curator", voice="tasteful crate-digger", content_focus=["storytelling", "visual"],
-                energy="low", hook_angle="emotional", clip_profile="long", framing="center")
+                energy="low", hook_angle="emotional")
     p = Personas.load(cfg).get("curator")
     assert p.content_focus == ["storytelling", "visual"] and p.energy == "low"
     assert p.hook_angle == "emotional"
-    assert p.clip_profile == "long" and p.framing == "center"
+    # M3d: clip_profile/framing are no longer per-persona pins — the cut DERIVES from content_focus/energy
+    assert resolved_cut_spec(p) == ("long", "top")               # storytelling -> long, low -> top
 
 def test_add_persona_rejects_unknown_lever(tmp_path):
     cfg = Config(root=tmp_path)
@@ -84,10 +85,11 @@ def test_hydrate_levers_onto_linked_account(tmp_path):
     _write(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
                   "persona_id": "curator"}],
            [{"id": "curator", "voice": "tasteful", "content_focus": ["storytelling"], "energy": "low",
-             "hook_angle": "emotional", "clip_profile": "long", "framing": "center"}])
+             "hook_angle": "emotional"}])
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
     assert a.persona == "tasteful" and a.content_focus == ["storytelling"] and a.energy == "low"
-    assert a.hook_angle == "emotional" and a.clip_profile == "long" and a.framing == "center"
+    # M3d: clip_profile/framing DERIVE from content_focus/energy onto the account (no per-persona pin)
+    assert a.hook_angle == "emotional" and a.clip_profile == "long" and a.framing == "top"
 
 def test_unlinked_account_levers_stay_empty(tmp_path):
     cfg = Config(root=tmp_path)
@@ -179,8 +181,8 @@ def test_compose_empty_brief_is_byte_identical():
 def test_persona_facts_resolve_from_real_resolvers(tmp_path):
     from fanops.personas import persona_facts
     cfg = Config(root=tmp_path)
-    f = persona_facts(cfg, Persona(id="p", clip_profile="short", framing="top", tag_lean="tasteful",
-                                   hashtag_corpus=["#myscene"]))
+    f = persona_facts(cfg, Persona(id="p", content_focus=["punchlines"], energy="low",
+                                   hashtag_corpus=["#myscene"]))   # M3d: cut DERIVES (punchlines->short, low->top)
     assert f["length_band"] == "8-15s"          # bands.band_for(short) == SHORT(8,15) — the SAME resolver the pipeline uses
     assert f["framing"] == "top"
     assert "#myscene" in f["lead_tags"]         # vet_hashtags floats the curated corpus to the lead
@@ -194,7 +196,7 @@ def test_persona_facts_default_length_when_unset(tmp_path):
 def test_personas_page_exposes_facts(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", clip_profile="long")
+    add_persona(cfg, name="P", voice="v", content_focus=["storytelling"])   # M3d: derives long (28-45s)
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
     assert card.length_band == "28-45s"
     assert isinstance(card.lead_tags, list)
@@ -202,7 +204,7 @@ def test_personas_page_exposes_facts(tmp_path):
 def test_personas_panel_renders_transparency_facts(tmp_path):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", clip_profile="short")
+    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"])   # M3d: derives short (8-15s)
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "8-15s" in html                       # the resolved length band is shown (transparency)
@@ -233,33 +235,15 @@ def test_hook_directive_is_separate_from_casting():
     assert "curiosity gap" in hook_directive(p) and "curiosity gap" not in casting_directive(p)
     assert "hype moments" in casting_directive(p) and "hype moments" not in hook_directive(p)
 
-def test_directive_override_wins_verbatim():
-    p = Persona(id="p", voice="ignored", content_focus=["hype"], casting_directive="ONLY clip the freestyle bars.")
-    assert casting_directive(p) == "ONLY clip the freestyle bars."        # operator text wins, verbatim
-    assert hook_directive(Persona(id="p", hook_directive="POV hooks only")) == "POV hooks only"
-    assert caption_directive(Persona(id="p", caption_directive="hype-fan energy")) == "hype-fan energy"
-
+# (M3e: the freeform directive OVERRIDE tests were removed — the per-dimension overrides were retired as
+# invisible shadow-duplicates of the structured levers. The compile FUNCTIONS remain; their firewall + bare-
+# voice behavior is covered below and the structured-lever compile is covered above.)
 def test_directives_firewall_to_bare_voice():
-    p = Persona(id="p", voice="bold fan")                                 # no levers, no override
+    p = Persona(id="p", voice="bold fan")                                 # no levers set
     assert casting_directive(p) == "bold fan" and hook_directive(p) == "bold fan" and caption_directive(p) == "bold fan"
 
-def test_caption_directive_is_voice_or_override():
-    assert caption_directive(Persona(id="p", voice="v", tag_lean="tasteful")) == "v"   # tags stay deterministic, not in the text
-
-def test_directive_fields_roundtrip(tmp_path):
-    cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", casting_directive="cd", hook_directive="hd", caption_directive="capd")
-    p = Personas.load(cfg).get("p")
-    assert p.casting_directive == "cd" and p.hook_directive == "hd" and p.caption_directive == "capd"
-
-def test_directive_override_hydrates_and_drives_hook_payload(tmp_path):
-    # a linked persona's hook_directive override hydrates onto the account and drives the HOOK payload downstream
-    cfg = Config(root=tmp_path)
-    _write(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-                  "persona_id": "p"}],
-           [{"id": "p", "voice": "v", "hook_directive": "always a POV hook"}])
-    a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
-    assert hook_directive(a) == "always a POV hook"                       # override hydrated + drives the hook prompt
+def test_caption_directive_is_the_voice():
+    assert caption_directive(Persona(id="p", voice="v")) == "v"   # hashtags stay deterministic, not in the text
 
 
 def test_personas_panel_renders_directive_ui(tmp_path):

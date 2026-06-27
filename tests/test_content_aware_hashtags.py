@@ -43,13 +43,12 @@ def test_content_tag_survives_vetting():
     assert "#diss" in out
 
 
-@pytest.mark.parametrize("lean", [None, "tasteful", "underground", "bold"])
-@pytest.mark.parametrize("corpus", [None, ["#customtag"]])
-def test_content_none_is_byte_identical(lean, corpus):
-    # FIREWALL: content=None must reproduce today's output exactly, across lean/corpus combos.
+@pytest.mark.parametrize("corpus", [None, ["#lyrics", "#bars", "#newmusic"], ["#freestyle", "#undergroundhiphop", "#trap"], ["#viral", "#rapmusic", "#hiphop"], ["#customtag"]])
+def test_content_none_is_byte_identical(corpus):
+    # FIREWALL: content=None must reproduce today's output exactly, across corpus combos.
     tags = ["#rap", "#bars", "#nonsense"]
-    base = vet_hashtags(tags, Platform.tiktok, "en", lean=lean, corpus=corpus)
-    withc = vet_hashtags(tags, Platform.tiktok, "en", lean=lean, corpus=corpus, content=None)
+    base = vet_hashtags(tags, Platform.tiktok, "en", corpus=corpus)
+    withc = vet_hashtags(tags, Platform.tiktok, "en", corpus=corpus, content=None)
     assert base == withc
 
 
@@ -63,7 +62,7 @@ def test_content_floor_reserves_one_slot_when_reach_fills_four():
 def test_arabic_region_floor_still_wins_over_content():
     # an Arabic clip under a lean keeps its region tag AND gets a content tag (both floors satisfied).
     out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "ar",
-                       lean="bold", content=["#loyalty"])
+                       corpus=["#viral", "#rapmusic", "#hiphop"], content=["#loyalty"])
     assert any(t in set(H._ARABIC) for t in out)       # region reach preserved
     assert "#loyalty" in out
 
@@ -71,7 +70,7 @@ def test_arabic_region_floor_still_wins_over_content():
 # ---- Task 3: provenance -- every shipped tag traces to a real signal ----------------------------------
 def test_every_kept_tag_has_a_source():
     tags, sources = vet_hashtags_traced(["#diss", "#rap"], Platform.tiktok, "en",
-                                        lean="bold", corpus=["#customtag"], content=["#diss"])
+                                        corpus=["#viral", "#rapmusic", "#hiphop", "#customtag"], content=["#diss"])
     assert set(sources) == set(tags)                   # one source per shipped tag
     assert all(sources[t] for t in tags)               # none empty/sourceless
 
@@ -85,7 +84,7 @@ def test_source_priority_content_over_reach():
 
 def test_traced_list_matches_plain_vet():
     # DRY contract: the traced list == the plain list for identical inputs.
-    kw = dict(lean="underground", corpus=["#customtag"], content=["#loyalty"])
+    kw = dict(corpus=["#freestyle", "#undergroundhiphop", "#trap", "#customtag"], content=["#loyalty"])
     plain = vet_hashtags(["#diss"], Platform.tiktok, "en", **kw)
     traced, _ = vet_hashtags_traced(["#diss"], Platform.tiktok, "en", **kw)
     assert plain == traced

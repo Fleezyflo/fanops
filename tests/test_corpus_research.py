@@ -16,19 +16,12 @@ from fanops.studio import views
 
 def test_research_proposes_reach_tags_not_in_corpus(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", tag_lean="tasteful")
+    pid = core.add_persona(cfg, name="P1")
     core.add_corpus_tag(cfg, pid, "#lyrics")           # already curated
     out = core.research_corpus(cfg, pid)
     assert "#lyrics" not in out                         # excludes what's already in the corpus
-    assert "#bars" in out                               # proposes the rest of the lean flavor
+    assert "#bars" in out                               # proposes the rest of the reach universe
     assert all(t.startswith("#") for t in out)
-
-
-def test_research_lean_flavor_leads(tmp_path):
-    cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", tag_lean="underground")
-    out = core.research_corpus(cfg, pid)
-    assert out[0] in {"#freestyle", "#undergroundhiphop", "#trap"}   # the persona's flavor leads
 
 
 def test_research_uses_reach_store_order(tmp_path):
@@ -55,7 +48,7 @@ def test_research_unknown_persona_raises(tmp_path):
 
 def test_studio_research_returns_proposals(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", tag_lean="bold")
+    pid = core.add_persona(cfg, name="P1")
     r = sp.research_corpus(cfg, pid)
     assert r.ok and r.detail["persona"] == pid and len(r.detail["proposals"]) >= 1
 
