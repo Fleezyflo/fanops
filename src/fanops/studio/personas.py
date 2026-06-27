@@ -12,24 +12,18 @@ from fanops.accounts import link_persona as _link_persona
 from fanops.studio.actions import ActionResult
 
 
-def _intake(genre: str = "") -> dict:
-    """Build the persona intake dict from the form. GENRE is the only intake field that drives anything —
-    it seeds B3's per-persona hashtag research (persona_research). language/reference_accounts/notes were
-    inert (language is derived from the SOURCE transcript, not the persona) and were removed. Blank -> {}."""
-    g = (genre or "").strip()
-    return {"genre": g} if g else {}
-
-
 def preview_compose(cfg: Config, form) -> ActionResult:
     """LIVE TRANSLATION — given the in-progress (UNSAVED) editor form, return what the persona compiles to
     (core.compose_breakdown): the exact casting/hook/caption directives + cut + lead tags, decomposed to the
     lever, with override-shadow + no-op flags. Builds a TRANSIENT Persona from the form — it NEVER calls the
     persisting writers, so personas.json is untouched. An existing persona's curated corpus (not a form field)
-    is merged in by `id` so the lead tags are accurate. A bad lever value -> a clean one-line error, never a
-    500. `form` is a Werkzeug MultiDict (or any object with .get/.getlist). The five clean levers only:
-    voice, content_focus, energy, hook_angle (+ the saved corpus); the cut is DERIVED from content_focus."""
+    is merged in by `id` so the lead tags are accurate. A bad lever value -> a clean one-line
+    error, never a 500. `form` is a Werkzeug MultiDict (or any object with .get/.getlist)."""
     try:
-        from fanops.personas import CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES
+        from fanops.bands import PROFILE_NAMES
+        from fanops.config import FRAMING_NAMES
+        from fanops.hashtags import TAG_LEANS
+        from fanops.personas import CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, HOOK_TONES
 
         def _enum(value, allowed, label):
             v = (value or "").strip()
@@ -48,9 +42,15 @@ def preview_compose(cfg: Config, form) -> ActionResult:
         for c in focus:
             if c not in CONTENT_FOCUS: raise ValueError(f"unknown content_focus: {c}")
         per = core.Persona(
-            id=(pid or "preview"), voice=form.get("voice", ""), hashtag_corpus=corpus,
+            id=(pid or "preview"), voice=form.get("voice", ""), brief=form.get("brief", ""),
+            tag_lean=_enum(form.get("tag_lean"), TAG_LEANS, "tag_lean"), hashtag_corpus=corpus,
             content_focus=focus, energy=_enum(form.get("energy"), ENERGY_LEVELS, "energy"),
-            hook_angle=_enum(form.get("hook_angle"), HOOK_ANGLES, "hook_angle"))
+            hook_angle=_enum(form.get("hook_angle"), HOOK_ANGLES, "hook_angle"),
+            hook_tone=_enum(form.get("hook_tone"), HOOK_TONES, "hook_tone"),
+            clip_profile=_enum(form.get("clip_profile"), PROFILE_NAMES, "clip_profile"),
+            framing=_enum(form.get("framing"), FRAMING_NAMES, "framing"),
+            casting_directive=form.get("casting_directive", ""), hook_directive=form.get("hook_directive", ""),
+            caption_directive=form.get("caption_directive", ""))
     except ValueError as exc:
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
@@ -58,15 +58,19 @@ def preview_compose(cfg: Config, form) -> ActionResult:
     return ActionResult(ok=True, detail=core.compose_breakdown(cfg, per))
 
 
-def create_persona(cfg: Config, name: str, voice: str = "",
-                   content_focus=None, energy: str = "", hook_angle: str = "") -> ActionResult:
-    """Create a NEW persona from the five clean levers (voice + content_focus/energy/hook_angle; the corpus is
-    curated on the card, genre via Research). Validates a non-blank name + each lever value at the A1 write
-    boundary; a duplicate id / unknown lever / blank name -> a clean one-line error, never a 500. The cut
-    (length) is DERIVED from content_focus."""
+def create_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
+                   content_focus=None, energy: str = "", hook_angle: str = "", hook_tone: str = "",
+                   clip_profile: str = "", framing: str = "", casting_directive: str = "",
+                   hook_directive: str = "", caption_directive: str = "") -> ActionResult:
+    """Create a NEW persona from the form + the lever engine. Validates a non-blank name, a known tag_lean,
+    and every lever value at the A1 write boundary; a duplicate id / bad lean / unknown lever / blank name
+    -> a clean one-line error, never a 500."""
     try:
-        pid = core.add_persona(cfg, name=name, voice=voice,
-                               content_focus=content_focus, energy=energy, hook_angle=hook_angle)
+        pid = core.add_persona(cfg, name=name, voice=voice, tag_lean=tag_lean,
+                               content_focus=content_focus, energy=energy, hook_angle=hook_angle,
+                               hook_tone=hook_tone, clip_profile=clip_profile, framing=framing,
+                               casting_directive=casting_directive, hook_directive=hook_directive,
+                               caption_directive=caption_directive)
     except ValueError as exc:                            # blank name / unknown lean or lever / duplicate id
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
@@ -74,17 +78,23 @@ def create_persona(cfg: Config, name: str, voice: str = "",
     return ActionResult(ok=True, detail={"created": pid})
 
 
-def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "",
-                 content_focus=None, energy: str = "", hook_angle: str = "") -> ActionResult:
-    """Save edits to a persona's five clean levers (name/voice + content_focus/energy/hook_angle). The edit
-    form is AUTHORITATIVE: an unchecked/blank lever CLEARS it. The cut (length) is DERIVED from content_focus,
-    so there is no length/framing knob. Unknown id / unknown lever / blank name -> a clean one-line error."""
+def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "", tag_lean: str = "",
+                 content_focus=None, energy: str = "", hook_angle: str = "", hook_tone: str = "",
+                 clip_profile: str = "", framing: str = "", brief: str = "", casting_directive: str = "",
+                 hook_directive: str = "", caption_directive: str = "") -> ActionResult:
+    """Save edits to a persona (name/voice/tag_lean + every lever + the locked brief). The edit form is
+    AUTHORITATIVE: an unchecked/blank lever CLEARS it, and the brief textarea is pre-filled so a Save
+    preserves it (emptying it clears the lock). Unknown id / bad lean / unknown lever / blank name -> a
+    clean one-line error."""
     pid = (pid or "").strip()
     if not pid:
         return ActionResult(ok=False, error="no persona selected")
     try:
-        core.update_persona(cfg, pid, name=name, voice=voice,
-                            content_focus=(content_focus or []), energy=energy, hook_angle=hook_angle)
+        core.update_persona(cfg, pid, name=name, voice=voice, tag_lean=tag_lean,
+                            content_focus=(content_focus or []), energy=energy, hook_angle=hook_angle,
+                            hook_tone=hook_tone, clip_profile=clip_profile, framing=framing, brief=brief,
+                            casting_directive=casting_directive, hook_directive=hook_directive,
+                            caption_directive=caption_directive)
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
     except ValueError as exc:                            # unknown lean or lever / blank name
@@ -182,18 +192,16 @@ def recommend_tag(cfg: Config, pid: str, tag: str) -> ActionResult:
                                          "engagement": m.get("engagement"), "recommend": True})
 
 
-def research_corpus(cfg: Config, pid: str, genre: str = "") -> ActionResult:
+def research_corpus(cfg: Config, pid: str) -> ActionResult:
     """M3: LIVE discovery — propose the hashtags the category's currently-winning posts use that this
     persona doesn't yet carry (Graph co-occurrence harvest), each with its co-occurrence evidence; the
-    panel renders them with one-click Add. The genre seed lives WITH this control (it is what research uses),
-    so a non-blank genre is saved to the persona's intake first. FAIL-OPEN: no Meta creds / nothing fresh ->
-    the offline re-rank. Unknown id -> a clean one-line error, never a 500."""
+    panel renders them with one-click Add. FAIL-OPEN: no Meta creds / nothing fresh -> the offline
+    research_corpus re-rank (wrapped as dicts inside core.discover_corpus). Unknown id -> a clean
+    one-line error, never a 500."""
     pid = (pid or "").strip()
     if not pid:
         return ActionResult(ok=False, error="no persona selected")
     try:
-        if (genre or "").strip():
-            core.update_persona(cfg, pid, intake=_intake(genre))   # persist the seed where it is set
         proposals = core.discover_corpus(cfg, pid)
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")

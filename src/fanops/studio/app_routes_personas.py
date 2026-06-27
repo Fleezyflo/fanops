@@ -41,16 +41,24 @@ def register_personas_routes(app, cfg):
     @app.post("/personas/add")
     def do_personas_add():
         return _personas_panel(studio_personas.create_persona(
-            cfg, request.form.get("name", ""), request.form.get("voice", ""),
+            cfg, request.form.get("name", ""), request.form.get("voice", ""), request.form.get("tag_lean", ""),
             content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
-            hook_angle=request.form.get("hook_angle", "")))
+            hook_angle=request.form.get("hook_angle", ""), hook_tone=request.form.get("hook_tone", ""),
+            clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", ""),
+            casting_directive=request.form.get("casting_directive", ""), hook_directive=request.form.get("hook_directive", ""),
+            caption_directive=request.form.get("caption_directive", "")))
 
     @app.post("/personas/edit")
     def do_personas_edit():
         return _personas_panel(studio_personas.edit_persona(
             cfg, request.form.get("id", ""), request.form.get("name", ""), request.form.get("voice", ""),
+            request.form.get("tag_lean", ""),
             content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
-            hook_angle=request.form.get("hook_angle", "")))
+            hook_angle=request.form.get("hook_angle", ""), hook_tone=request.form.get("hook_tone", ""),
+            clip_profile=request.form.get("clip_profile", ""), framing=request.form.get("framing", ""),
+            brief=request.form.get("brief", ""),
+            casting_directive=request.form.get("casting_directive", ""), hook_directive=request.form.get("hook_directive", ""),
+            caption_directive=request.form.get("caption_directive", "")))
 
     @app.post("/personas/delete")
     def do_personas_delete():
@@ -68,7 +76,7 @@ def register_personas_routes(app, cfg):
     def do_personas_research():
         # B3: propose the reach-best hashtags this persona lacks (bootstrap research) -> the panel renders
         # them with one-click Add. Grounded in the reach store + the persona's lean; instant + budget-free.
-        return _personas_panel(studio_personas.research_corpus(cfg, request.form.get("id", ""), request.form.get("genre", "")))
+        return _personas_panel(studio_personas.research_corpus(cfg, request.form.get("id", "")))
 
     @app.post("/personas/recommend")
     def do_personas_recommend():

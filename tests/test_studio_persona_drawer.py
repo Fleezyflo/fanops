@@ -46,8 +46,8 @@ def test_drawer_route_renders_levers_visible(tmp_path):
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert 'role="dialog"' in html and 'aria-modal="true"' in html
     assert 'id="persona-drawer-heading"' in html         # the labelled, focusable heading drawer.js focuses
-    # the five clean levers are PRESENT and not gated behind a second <details> collapse
-    assert 'name="content_focus"' in html and 'name="energy"' in html and 'name="hook_angle"' in html
+    # the levers are PRESENT and not gated behind a second <details> collapse
+    assert 'name="content_focus"' in html and 'name="energy"' in html and 'name="clip_profile"' in html
     assert '<details' not in html                         # nothing in the drawer is hidden behind an expand
     assert "Curator" in html
 
@@ -80,12 +80,13 @@ def test_drawer_unknown_persona_is_clean_not_500(tmp_path):
 
 def test_drawer_edit_persists_via_existing_route(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Z", voice="old")
+    pid = core.add_persona(cfg, name="Z", voice="old", tag_lean="bold")
     r = _client(cfg).post("/personas/edit", data={
-        "id": pid, "name": "Z2", "voice": "new voice", "content_focus": ["hype"], "hook_angle": "fomo"})
+        "id": pid, "name": "Z2", "voice": "new voice", "tag_lean": "underground",
+        "genre": "rap", "language": "ar", "refs": "", "notes": ""})
     assert r.status_code == 200
     p = core.Personas.load(cfg).get(pid)
-    assert p.name == "Z2" and p.voice == "new voice" and p.content_focus == ["hype"]
+    assert p.name == "Z2" and p.voice == "new voice" and p.tag_lean == "underground"
 
 
 def test_persona_with_no_levers_still_renders_drawer(tmp_path):
@@ -101,10 +102,10 @@ def test_compose_panel_shows_produces_prose(tmp_path):
     # OUTPUT (length/framing/hook/hashtags), not just the engineer-facing directive rows.
     cfg = Config(root=tmp_path)
     html = _client(cfg).post("/personas/compose", data={
-        "voice": "a devoted fan", "content_focus": "punchlines",
-        "hook_angle": "curiosity"}).get_data(as_text=True)
+        "voice": "a devoted fan", "clip_profile": "short", "framing": "top",
+        "hook_angle": "curiosity", "tag_lean": "tasteful"}).get_data(as_text=True)
     assert "produces-line" in html                       # the styled lead sentence is rendered
-    assert "curiosity hooks" in html and "clips" in html  # the hook ANGLE + the DERIVED length
+    assert "curiosity hooks" in html and "top-framed" in html
 
 def test_compose_panel_empty_levers_keeps_the_grid_no_produces_line(tmp_path):
     # an unconfigured persona still gets the live panel (the affordance), just no Produces lead (nothing to say).
@@ -119,9 +120,12 @@ def test_drawer_lever_fields_persist_via_edit(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Lever Test")
     r = _client(cfg).post("/personas/edit", data={
-        "id": pid, "name": "Lever Test", "voice": "v",
-        "content_focus": ["storytelling", "emotional"], "energy": "low", "hook_angle": "curiosity"})
+        "id": pid, "name": "Lever Test", "voice": "v", "tag_lean": "",
+        "genre": "", "language": "", "refs": "", "notes": "",
+        "content_focus": ["storytelling", "emotional"], "energy": "low",
+        "clip_profile": "long", "framing": "center", "hook_angle": "curiosity", "hook_tone": "restrained"})
     assert r.status_code == 200
     p = core.Personas.load(cfg).get(pid)
     assert set(p.content_focus) == {"storytelling", "emotional"}
-    assert p.energy == "low" and p.hook_angle == "curiosity"
+    assert p.energy == "low" and p.clip_profile == "long" and p.framing == "center"
+    assert p.hook_angle == "curiosity" and p.hook_tone == "restrained"
