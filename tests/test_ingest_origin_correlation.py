@@ -5,10 +5,9 @@
 # correlates origin to the actual download: download_url returns the media files IT produced (a before/after
 # inbox snapshot, version-independent — no yt-dlp stdout parsing), and ingest_drops stamps only those "url",
 # leaving every pre-existing file the "drop" default.
-from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.ingest import ingest_drops, download_url, download_source
+from fanops.ingest import download_url, download_source
 
 
 def _put(p, b):

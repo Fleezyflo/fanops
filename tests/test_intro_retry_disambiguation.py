@@ -9,13 +9,12 @@
 import json
 from pathlib import Path
 from fanops.config import Config
-from fanops.ledger import Ledger
 from fanops.models import StitchState
 import fanops.stitch_render as sr
 from fanops.stitch_render import render_approved_stitches, _stitch_clip_id
 
-# reuse the canonical seed/prewarm helpers from the sibling stitch test module
-from test_stitch_render import _seed_intro_approved, _prewarm_intro_composite
+# reuse the canonical seed helper from the sibling stitch test module
+from test_stitch_render import _seed_intro_approved
 
 
 def _intro_fail_marker(cfg, led):
