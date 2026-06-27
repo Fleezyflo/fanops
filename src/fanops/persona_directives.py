@@ -139,6 +139,28 @@ def _hook_fragments(p) -> list[dict]:
     return frags
 
 
+def _caption_fragments(p) -> list[dict]:
+    """The caption directive's pieces (M4 provenance): the caption text IS the voice (hashtags are
+    deterministic, not in this text), so the one fragment traces to the voice lever. No voice -> []."""
+    voice = _base_voice(p)
+    return [{"source": "voice", "text": voice}] if voice else []
+
+
+def _cut_fragments(p) -> list[dict]:
+    """The CUT's pieces (M4 provenance), each tagged with the lever that DERIVES it: content_focus -> the
+    length band, energy -> the framing. Empty when neither derives (a global cut, or a carrier-pin-only cut
+    with no levers). Reuses derive_cut_spec + band_for — the SAME resolvers the cut band itself uses."""
+    frags: list[dict] = []
+    d_prof, d_fr = derive_cut_spec(p)
+    if d_prof:
+        from fanops.bands import band_for
+        b = band_for(d_prof)
+        frags.append({"source": "content_focus", "text": f"{b.lo:g}-{b.hi:g}s ({d_prof}, derived from content_focus)"})
+    if d_fr:
+        frags.append({"source": "energy", "text": f"{d_fr} crop (derived from energy)"})
+    return frags
+
+
 def compose_breakdown(cfg: Config, p) -> dict:
     """THE LIVE COMPOSED TRANSLATION — what this persona compiles to RIGHT NOW: the exact casting/hook/caption
     directives the pipeline will read, the deterministic cut band + framing, and the lead hashtags, each
@@ -154,12 +176,13 @@ def compose_breakdown(cfg: Config, p) -> dict:
     hook = {"text": hook_directive(p), "override": False,
             "fragments": _hook_fragments(p), "shadowed": [],
             "angle": (getattr(p, "hook_angle", None) or None)}    # S7: the EFFECTIVE structured angle
-    caption = {"text": caption_directive(p), "override": False}
+    caption = {"text": caption_directive(p), "override": False, "fragments": _caption_fragments(p)}
     pin_prof = (getattr(p, "clip_profile", None) or "").strip()
     res_prof, res_fr = resolved_cut_spec(p)               # carrier pin > derived > None — the SAME floor hydration applies
     band = band_for(res_prof or "")
     cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": res_fr,
-           "source": ("persona" if pin_prof else ("derived" if res_prof else "global"))}
+           "source": ("persona" if pin_prof else ("derived" if res_prof else "global")),
+           "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (content_focus/energy)
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
     tags = {"lead": facts["lead_tags"],
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
@@ -169,6 +192,46 @@ def compose_breakdown(cfg: Config, p) -> dict:
     bd = {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
     bd["produces"] = produces_summary(bd)                 # S7: the operator-facing OUTPUT lead, from this same detail
     return bd
+
+
+def manifest(cfg: Config, p) -> list[dict]:
+    """M4 — THE LEVER MANIFEST: one row per EDITABLE lever — its current value, the output CHANNEL(s) it owns,
+    what it PRODUCES right now, and a HEALTH flag — DERIVED from the registry (persona_levers) + compose_breakdown
+    (the SAME resolvers the pipeline runs), so the operator view, this manifest, and the live output cannot
+    disagree (no-drift: mutate a lever and `produces` moves with it). Rows are in registry/declaration order.
+    health == 'ok' for a coherent lever (editable ∧ each owned channel single-owner); post-M3 every lever is
+    'ok'. Pure read; duck-typed (Persona/Account)."""
+    from fanops import persona_levers as levers
+    bd = compose_breakdown(cfg, p)
+    labels = {lv["key"]: lv["label"] for lv in lever_catalog()}
+
+    def _produces(key):
+        if key == "voice":
+            return next((f["text"] for f in bd["caption"]["fragments"] if f["source"] == "voice"), "")
+        if key == "content_focus":
+            return next((f["text"] for f in bd["cut"]["fragments"] if f["source"] == "content_focus"), bd["cut"]["band"])
+        if key == "energy":
+            return next((f["text"] for f in bd["cut"]["fragments"] if f["source"] == "energy"), (bd["cut"]["framing"] or "—"))
+        if key == "hook_angle":
+            return bd["hook"]["text"]
+        if key == "hashtag_corpus":
+            return bd["tags"]["lead"]
+        return ""
+
+    def _health(key):
+        if key not in levers.editable_fields():
+            return "incoherent"
+        for ch in levers.channels_of(key):              # distinctness: each owned channel has exactly THIS owner
+            if levers.owner_of(ch) != key:
+                return "incoherent"
+        return "ok"
+
+    out: list[dict] = []
+    for key in levers.PERSONA_EDITABLE_CHANNELS:        # declaration order: voice, content_focus, energy, hook_angle, hashtag_corpus
+        out.append({"key": key, "label": labels.get(key, key.replace("_", " ").title()),
+                    "channels": list(levers.channels_of(key)), "value": getattr(p, key, None),
+                    "produces": _produces(key), "source": key, "health": _health(key)})
+    return out
 
 
 def produces_summary(breakdown: dict) -> list[str]:

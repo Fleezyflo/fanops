@@ -104,6 +104,17 @@ def all_channels() -> frozenset:
     return frozenset(ch for chans in PERSONA_EDITABLE_CHANNELS.values() for ch in chans)
 
 
+def channels() -> frozenset:
+    """Alias of all_channels() — the full output-channel namespace (the M4 manifest reads it)."""
+    return all_channels()
+
+
+def owner_of(channel: str) -> str | None:
+    """The single editable lever that owns an output channel (None if no lever owns it). Distinctness
+    guarantees at most one owner, so this is unambiguous — the manifest maps fragment->channel->lever."""
+    return next((f for f, chans in PERSONA_EDITABLE_CHANNELS.items() if channel in chans), None)
+
+
 def lever(key: str) -> dict | None:
     """The registry descriptor for a lever key, or None."""
     return next((lv for lv in LEVER_REGISTRY if lv["key"] == key), None)

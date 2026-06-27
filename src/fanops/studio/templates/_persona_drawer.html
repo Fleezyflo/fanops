@@ -13,6 +13,23 @@
   </header>
   {% if p.linked_handles %}<p class="muted drawer-blast">Edits reach {{ p.linked_handles|join(', ') }}.</p>
   {% else %}<p class="muted drawer-blast">Not connected to any account yet.</p>{% endif %}
+  {# M4 — the LEVER MANIFEST / health: every lever, the channel(s) it owns, its current value, what it
+     produces RIGHT NOW (derived from the same resolvers the pipeline runs), and a ✓/⚠ coherence flag. ⚠ would
+     appear only if a future field were incoherent (dead/invisible/duplicate) — post-M3 every lever is ✓. #}
+  {% if p.lever_manifest %}
+  <section class="lever-manifest" aria-label="Lever health">
+    <h3 class="manifest-title">Lever health · what each lever produces</h3>
+    <table class="manifest-table"><tbody>
+    {% for row in p.lever_manifest %}
+      <tr class="manifest-row {{ 'lever-ok' if row.health == 'ok' else 'lever-warn' }}">
+        <td class="manifest-flag" title="{{ row.health }}">{{ '✓' if row.health == 'ok' else '⚠' }}</td>
+        <td class="manifest-lever">{{ row.label }} <span class="muted">({{ row.channels | join(' · ') }})</span></td>
+        <td class="manifest-produces">{% if row.produces is string %}{{ row.produces or '—' }}{% else %}{{ row.produces | join(' ') if row.produces else '—' }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody></table>
+  </section>
+  {% endif %}
   <form hx-post="{{ url_for('do_personas_edit') }}" hx-target="#personas-panel" hx-swap="outerHTML">
     <input type="hidden" name="id" value="{{ p.id }}">
     <label>Name <input type="text" name="name" value="{{ p.name }}" size="22"></label>

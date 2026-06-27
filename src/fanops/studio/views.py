@@ -257,6 +257,9 @@ class PersonaCard:
     # exactly what each lever produces). (M3e: the freeform OVERRIDE text fields were retired with the levers.)
     hook_text: str = ""
     caption_text: str = ""
+    # M4: the LEVER MANIFEST — per editable lever {key,label,channels,value,produces,source,health}, derived
+    # from the registry + the SAME resolvers the pipeline runs (no-drift). The drawer renders it as a health row.
+    lever_manifest: list = field(default_factory=list)
 
 
 @dataclass
@@ -280,7 +283,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     never 500s), mirroring golive_accounts. `led` is injectable (tests); else loaded lock-free."""
     try:
         from fanops.personas import (Personas, compose_persona_instruction, persona_facts,   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
-                                     hook_directive, caption_directive, resolved_cut_spec)
+                                     hook_directive, caption_directive, resolved_cut_spec, manifest)
         reg = Personas.load(cfg)
         accts = Accounts.load(cfg).accounts
     except Exception as exc:
@@ -318,7 +321,8 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],   # M3: the DERIVED tier (the per-persona pin is retired)
                          instruction=compose_persona_instruction(p),
                          length_band=facts["length_band"], lead_tags=facts["lead_tags"],
-                         hook_text=hook_directive(p), caption_text=caption_directive(p))
+                         hook_text=hook_directive(p), caption_text=caption_directive(p),
+                         lever_manifest=manifest(cfg, p))                  # M4: the per-lever produces + health read
              for p in reg.all() for facts in (persona_facts(cfg, p),)]
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)
