@@ -201,8 +201,31 @@ def casting_gate_pending(cfg, source_id) -> bool:
         if latest_request_id(cfg, "moment_casting", source_id) is None: return False   # no gate -> nothing to wait for
         return read_response(cfg, "moment_casting", source_id, MomentCastingDecision) is None
     except Exception as e:
-        try: get_logger(cfg)("casting", source_id, "gate_probe_error", err=str(e)[:120])   # fail-open, but leave a trace
-        except Exception: pass
+        with contextlib.suppress(Exception): get_logger(cfg)("casting", source_id, "gate_probe_error", err=str(e)[:120])  # fail-open, but leave a trace
+        return False
+
+
+def casting_gate_failed_to_open(cfg, led, accounts, source_id) -> bool:
+    """WS1 (audit xc-2): True iff casting is ON and this source SHOULD have opened a casting gate this pass —
+    it has CANDIDATE accounts (a truthy casting_directive, so the brief would list them) AND castable
+    (decided/clipped) moments — but NONE opened AND no selections were written. That is the fingerprint of a
+    request_moment_casting I/O failure: without this, account_selection_admits falls back to the legacy 'no
+    selections -> fan-to-all' path and a transient disk error silently downgrades a differentiated source to
+    undifferentiated fan-out for the pass. Crosspost must DEFER (retry next pass), mirroring casting_gate_pending.
+    Distinct from the LEGIT no-gate case (no candidate accounts -> nothing to differentiate -> fan-to-all is
+    correct), which returns False. Fail-open to False (never permanently strand a clip on a probe glitch)."""
+    try:
+        if not cfg.account_casting: return False
+        if latest_request_id(cfg, "moment_casting", source_id) is not None: return False  # gate exists -> casting_gate_pending owns it
+        if led.selections_of_source(source_id): return False                              # casting ran fine -> selections written
+        if not any(casting_directive(a) for a in accounts.active()): return False          # no candidate -> legit no-gate -> fan-to-all
+        castable = [m for m in led.moments.values()
+                    if m.parent_id == source_id and m.state in (MomentState.decided, MomentState.clipped)]
+        if not castable: return False                                                      # nothing to cast -> no gate expected
+        if any(m.affinities for m in castable): return False                              # legacy/heuristic affinities cast (no gate by design) -> not a failure
+        return True                                                                        # candidates + castable + no gate + no selections + no affinities -> request failed -> defer
+    except Exception as e:
+        with contextlib.suppress(Exception): get_logger(cfg)("casting", source_id, "gate_probe_error", err=str(e)[:120])
         return False
 
 

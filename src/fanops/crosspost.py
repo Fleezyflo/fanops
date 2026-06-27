@@ -18,7 +18,7 @@ from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 from fanops.timeutil import parse_iso as _parse, iso_z
-from fanops.casting import account_selection_admits, casting_gate_pending   # RF1 durable-selection gate + P1 casting-pending wait
+from fanops.casting import account_selection_admits, casting_gate_pending, casting_gate_failed_to_open   # RF1 durable-selection gate + P1 casting-pending wait + xc-2 failed-gate defer
 from fanops.log import get_logger
 
 # Staggering constants. _STEP_MIN is the fixed per-index spacing; _JITTER_MAX is the bounded
@@ -259,18 +259,27 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         # moment->source lineage (m.parent_id == source id). A non-empty target_accounts HARD-bounds
         # which surfaces a post is born for (the casting-OFF enforcement path); empty/missing => no skip.
         src = led.sources.get(m.parent_id) if m is not None else None
-        if src is not None and casting_gate_pending(cfg, src.id):
+        # P1 casting-pending wait + xc-2: defer when the casting answer hasn't landed (gate open, unanswered) OR
+        # when the gate SHOULD have opened but didn't (request_moment_casting I/O failure) — both mean "fan out
+        # NEXT pass," never silently fan-to-all this pass (mirror: a clip waits for its caption gate).
+        if src is not None and (casting_gate_pending(cfg, src.id)
+                                or casting_gate_failed_to_open(cfg, led, accounts, src.id)):
             get_logger(cfg)("crosspost", clip.id, "casting_pending_skip", source=src.id)
-            continue   # P1: casting answer not yet landed -> fan out NEXT pass (mirror: a clip waits for its caption gate)
+            continue
         src_batch = src.batch_id if src is not None else None
         tgt = led.get_batch(src_batch).target_accounts if (src_batch and led.get_batch(src_batch)) else []
         n_skipped = 0   # T5: per-CLIP tally of batch-target exclusions (reset each clip, never bled across clips)
+        posts_before = len(led.posts)   # c8-f2: detect a clip consumed with ZERO posts born (selection denied all)
         for i, surf in enumerate(surfaces):
             n_skipped += _mint_surface_post(led, cfg, clip, m, surf, i, base=base, date_str=date_str,
                                             clip_dur=clip_dur, tgt=tgt, src_batch=src_batch)
+        born = len(led.posts) - posts_before
         if tgt:   # T5: one structured exclusion summary per batched clip (the ONLY persistent record — excluded
                   # surfaces become no Post). Silent when tgt==[] (unbatched/ALL-sentinel) -> byte-identical fan-out.
             get_logger(cfg)("crosspost", clip.id, "batch_target_summary",
                             skipped=n_skipped, kept=len(surfaces) - n_skipped, batch=src_batch)
+        elif born == 0:   # c8-f2: an UNBATCHED clip consumed to `queued` with NO post born (every surface denied by
+                          # selection / cap / render-fail) — the ONLY crosspost-stage record of the silent drop.
+            get_logger(cfg)("crosspost", clip.id, "no_post_born", source=(src.id if src is not None else None))
         led.set_clip_state(clip.id, ClipState.queued)
     return led
