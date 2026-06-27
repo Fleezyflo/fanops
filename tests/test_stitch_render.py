@@ -269,6 +269,23 @@ def test_intro_tease_suggest_creates_plan_and_reroutes(tmp_path, monkeypatch):
     assert p.rank_score == 0.88 and p.rationale == "stage entrance"
     assert led.moments["m1"].hook_strategy == "stitch:intro_tease"   # the intro_tease handler acted
 
+def test_intro_tease_pairs_only_the_top_match_not_rank_two(tmp_path, monkeypatch):
+    # audit c7-f2 (MVP decision pinned): with several matcher pairings, the producer pairs ONLY the best-fit
+    # one — rank-2..N are not turned into plans or held as a fallback. A future mine pass re-pairs from the
+    # then-current matches; rank-2-on-dismiss is a deferred fast-follow. This test pins the top-only contract.
+    monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
+    cfg = Config(root=tmp_path)
+    led = _seed_intro(cfg, matches=[
+        {"asset_id": "intro1", "fit_score": 0.92, "rationale": "best", "tease_text": "wait for it"},
+        {"asset_id": "intro2", "fit_score": 0.71, "rationale": "second", "tease_text": "no"}])
+    led.add_source(Source(id="intro2", source_path=str(cfg.sources / "intro2.mp4"),
+                          state=SourceState.catalogued, origin_kind="third_party"))
+    _write_fp(cfg, "clip_base", "basefp")
+    mine_suggestions(led, cfg)
+    plans = [p for p in led.stitch_plans.values() if p.strategy_key == "intro_tease"]
+    assert len(plans) == 1                                            # exactly one plan, never one-per-match
+    assert plans[0].asset_ids == ["intro1"]                           # the TOP match, not rank-2 (intro2)
+
 def test_intro_tease_no_plan_when_unmatched(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
     cfg = Config(root=tmp_path)
@@ -402,24 +419,37 @@ def test_prewarm_intro_stamps_fp_lockfree(tmp_path, mocker):
 
 # ---- M6 Task 6: retry-cap (flaky matcher/compose pairs park after N failed passes) + per-format strategies
 # filter (the kill-switch freezes a disabled format's approved plans) + the disabled-format count. ----
+def _intro_fail_marker(cfg, led, *, asset_id="intro1"):
+    # the genuine-compose-failure marker the lock-free prewarm writes when prepend_intro produced no composite
+    # (audit c7-f3) — fp-matched to iplan's stitch clip, so the in-lock commit counts it as a real attempt.
+    from fanops.compose import _compose_fingerprint
+    base = led.clips["clip_base"]; intro = led.sources[asset_id]
+    cid = _stitch_clip_id("iplan", base.aspect.value)
+    fp = _compose_fingerprint(base.path, intro.source_path, led.stitch_plans["iplan"].plan_params, 1920, 1080)
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    (cfg.clips / f"{cid}.introfail.json").write_text(json.dumps({"fp": fp}))
+
 def test_intro_render_parks_after_retry_cap(tmp_path):
-    # no prewarmed composite -> each in-lock commit is a failed attempt (prewarm runs first every pass); after
-    # the cap the plan is PARKED (error), not retried forever. "until the clip/asset changes" = a new plan id.
+    # GENUINE compose failures (a fp-matched introfail marker each pass) burn the cap; after the cap the plan is
+    # PARKED (error), not retried forever (audit c7-f3 — only real failures count, not a not-yet-warm miss).
     import fanops.stitch_render as sr
     cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg)
     for _ in range(sr.MAX_INTRO_RENDER_ATTEMPTS - 1):
+        _intro_fail_marker(cfg, led)
         render_approved_stitches(led, cfg)
         assert led.stitch_plans["iplan"].state is StitchState.approved   # still trying, under the cap
+    _intro_fail_marker(cfg, led)
     render_approved_stitches(led, cfg)                                   # the capping pass
     assert led.stitch_plans["iplan"].state is StitchState.error
     assert "after" in (led.stitch_plans["iplan"].error_reason or "")
 
 def test_intro_render_attempts_reset_implicitly_on_adopt(tmp_path):
-    # a failed pass increments attempts; a later successful prewarm still adopts (attempts irrelevant once warm)
+    # a genuine-failure pass increments attempts; a later successful prewarm still adopts (attempts moot once warm)
     cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg)
-    render_approved_stitches(led, cfg)                                   # 1 failed attempt
+    _intro_fail_marker(cfg, led)
+    render_approved_stitches(led, cfg)                                   # 1 genuine-failure attempt
     assert led.stitch_plans["iplan"].render_attempts == 1
-    _prewarm_intro_composite(cfg, led)
+    _prewarm_intro_composite(cfg, led)                                   # success also clears the marker on adopt
     render_approved_stitches(led, cfg)
     assert led.stitch_plans["iplan"].state is StitchState.in_use
 
@@ -446,9 +476,9 @@ def test_approved_disabled_count(tmp_path):
     assert approved_disabled_count(led, enabled=set()) == 1              # both off -> frozen
 
 
-def test_commit_intro_logs_when_prewarm_not_ready(tmp_path, mocker):
-    # M6 observability: an approved intro_tease plan that isn't warm burns a render_attempt EACH pass; that
-    # silent burn left no log trace until the plan hit the retry cap and errored. It must leave a breadcrumb.
+def test_commit_intro_logs_and_burns_only_on_genuine_failure(tmp_path, mocker):
+    # M6 observability + audit c7-f3: an approved intro_tease plan that isn't warm because the prewarm ATTEMPTED
+    # and failed (a fp-matched introfail marker) burns a render_attempt AND leaves a breadcrumb naming the plan.
     from pathlib import Path
     from fanops.stitch_render import _commit_intro
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -457,7 +487,26 @@ def test_commit_intro_logs_when_prewarm_not_ready(tmp_path, mocker):
     mocker.patch("fanops.stitch_render._intro_compose_fp", return_value="fp")
     mocker.patch("fanops.stitch_render._intro_render_target",
                  return_value=(base, base, "cid_x", Path(str(tmp_path / "nope.mp4"))))   # out_path absent -> not warm
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    (cfg.clips / "cid_x.introfail.json").write_text(json.dumps({"fp": "fp"}))            # genuine failure marker
     _commit_intro(led, cfg, p, base)
-    assert p.render_attempts == 1                                        # an attempt was consumed
+    assert p.render_attempts == 1                                        # a genuine attempt was consumed
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "sp_intro" in log and "intro" in log.lower()                 # breadcrumb names the plan
+
+def test_commit_intro_transient_miss_waits_without_burning(tmp_path, mocker):
+    # audit c7-f3: not warm AND no failure marker = a transient/structural miss (the prewarm hasn't produced the
+    # composite yet). The plan must WAIT — no render_attempt burned — with a "waiting" breadcrumb, never parked.
+    from pathlib import Path
+    from fanops.stitch_render import _commit_intro
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    base = Clip(id="b", parent_id="m", path=str(tmp_path / "b.mp4"), state=ClipState.queued, aspect=Fmt.r9x16)
+    p = StitchPlan(id="sp_intro", clip_id="b", strategy_key="intro_tease", state=StitchState.approved)
+    mocker.patch("fanops.stitch_render._intro_compose_fp", return_value="fp")
+    mocker.patch("fanops.stitch_render._intro_render_target",
+                 return_value=(base, base, "cid_x", Path(str(tmp_path / "nope.mp4"))))   # not warm, NO marker
+    _commit_intro(led, cfg, p, base)
+    assert p.render_attempts == 0                                        # transient miss does NOT burn the cap
+    assert p.state is StitchState.approved                              # still waiting, never parked
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "sp_intro" in log and "waiting" in log.lower()              # breadcrumb shows the wait
