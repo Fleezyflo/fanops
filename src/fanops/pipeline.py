@@ -454,6 +454,15 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     # pass is excluded (typed LockBusyError, bounded by timeout), not silently overwritten. (Phase D: the
     # SLOW subprocesses already ran lock-free above; this transaction only flips state + does the cheap
     # gate/crosspost/publish work, so the lock-held window is short.)
+    # WHOLE-PASS ROLLBACK on a late UNCAUGHT raise is DELIBERATE (audit x-f5): Ledger.transaction saves
+    # ONLY on a clean exit, so an exception escaping any stage below discards EVERY in-memory transition this
+    # pass made and leaves the last committed snapshot on disk — a half-applied pass is never persisted
+    # (correctness). The volatile stages whose raise must NOT cost the pass (crosspost/publish) wrap their own
+    # work (AUDIT M2); anything still uncaught rolls the pass back BY DESIGN. This is SAFE despite the expense
+    # because the heavy artifacts (transcripts/renders/composites) were warmed OUT OF LOCK by _prewarm above,
+    # so a rolled-back pass loses only cheap in-memory state-flips: the next pass re-runs the stages, which
+    # fingerprint-SKIP on the warm artifacts and recover the work instead of redoing it (pinned by
+    # test_advance_rollback_recovers_warm_artifacts).
     with Ledger.transaction(cfg) as led:
         # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
         # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in
