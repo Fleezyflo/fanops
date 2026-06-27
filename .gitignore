@@ -43,6 +43,7 @@ coverage.json
 
 # claude harness — keep workflows, ignore transient locks + ephemeral planning artifacts
 .claude/scheduled_tasks.lock
+.claude/plan/
 .claude/plans/
 .claude/prds/
 .claude/PRPs/
@@ -67,3 +68,9 @@ client_secret_*.json
 MohFlow-FanOps/00_control/accounts.json
 MohFlow-FanOps/00_control/personas.json
 MohFlow-FanOps/00_control/*.json
+MohFlow-FanOps/00_control/*.lock
+
+# runtime/working artifacts kept on disk, never tracked
+*.docx
+docs/superpowers/
+tiktok-submission/
