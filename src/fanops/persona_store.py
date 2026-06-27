@@ -11,7 +11,7 @@ from fanops.config import Config, FRAMING_NAMES
 from fanops.hashtags import TAG_LEANS, _norm
 from fanops.bands import PROFILE_NAMES
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
-from fanops.personas import (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, HOOK_TONES, Personas, _slug)
+from fanops.personas import (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, Personas, _slug)
 
 _CORPUS_CAP = 40                # max curated tags per persona — keeps captions/budget bounded (cap, not a target)
 
@@ -61,8 +61,8 @@ _UNSET = object()
 
 def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
                 intake: Optional[dict] = None, id: str = "", *, content_focus=None,
-                energy: str = "", hook_angle: str = "", hook_tone: str = "",
-                clip_profile: str = "", framing: str = "", brief: str = "",
+                energy: str = "", hook_angle: str = "",
+                clip_profile: str = "", framing: str = "",
                 casting_directive: str = "", hook_directive: str = "", caption_directive: str = "") -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
     duplicate id and a blank name (never write a record that won't reload). Validates tag_lean AND every
@@ -79,7 +79,6 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
     focus = _norm_focus(content_focus)
     energy_v = _enum_or_none(energy, ENERGY_LEVELS, "energy")
     angle_v = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle")
-    tone_v = _enum_or_none(hook_tone, HOOK_TONES, "hook_tone")
     prof_v = _enum_or_none(clip_profile, PROFILE_NAMES, "clip_profile")
     fr_v = _enum_or_none(framing, FRAMING_NAMES, "framing")
     p = cfg.personas_path
@@ -89,8 +88,8 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""), "tag_lean": lean or None,
                       "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
-                      "energy": energy_v, "hook_angle": angle_v, "hook_tone": tone_v,
-                      "clip_profile": prof_v, "framing": fr_v, "brief": str(brief or ""),
+                      "energy": energy_v, "hook_angle": angle_v,
+                      "clip_profile": prof_v, "framing": fr_v,
                       "casting_directive": str(casting_directive or ""), "hook_directive": str(hook_directive or ""),
                       "caption_directive": str(caption_directive or "")})
         write_json_atomic(p, raw)
@@ -98,8 +97,8 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
 
 
 def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean=_UNSET, intake=_UNSET,
-                   content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET, hook_tone=_UNSET,
-                   clip_profile=_UNSET, framing=_UNSET, brief=_UNSET, casting_directive=_UNSET,
+                   content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET,
+                   clip_profile=_UNSET, framing=_UNSET, casting_directive=_UNSET,
                    hook_directive=_UNSET, caption_directive=_UNSET) -> str:
     """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; tag_lean=""
     CLEARS the lean (-> None) and likewise each lever clears on "". Validates tag_lean + every passed lever
@@ -111,7 +110,6 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean
     _focus = _norm_focus(content_focus) if content_focus is not _UNSET else _UNSET
     _energy = _enum_or_none(energy, ENERGY_LEVELS, "energy") if energy is not _UNSET else _UNSET
     _angle = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle") if hook_angle is not _UNSET else _UNSET
-    _tone = _enum_or_none(hook_tone, HOOK_TONES, "hook_tone") if hook_tone is not _UNSET else _UNSET
     _prof = _enum_or_none(clip_profile, PROFILE_NAMES, "clip_profile") if clip_profile is not _UNSET else _UNSET
     _fr = _enum_or_none(framing, FRAMING_NAMES, "framing") if framing is not _UNSET else _UNSET
     p = cfg.personas_path
@@ -130,10 +128,8 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean
                 if _focus is not _UNSET: d["content_focus"] = _focus
                 if _energy is not _UNSET: d["energy"] = _energy
                 if _angle is not _UNSET: d["hook_angle"] = _angle
-                if _tone is not _UNSET: d["hook_tone"] = _tone
                 if _prof is not _UNSET: d["clip_profile"] = _prof
                 if _fr is not _UNSET: d["framing"] = _fr
-                if brief is not _UNSET: d["brief"] = str(brief or "")
                 if casting_directive is not _UNSET: d["casting_directive"] = str(casting_directive or "")
                 if hook_directive is not _UNSET: d["hook_directive"] = str(hook_directive or "")
                 if caption_directive is not _UNSET: d["caption_directive"] = str(caption_directive or "")

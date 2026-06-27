@@ -29,7 +29,6 @@ from fanops.errors import ControlFileError, reason as _reason
 CONTENT_FOCUS = frozenset({"punchlines", "emotional", "hype", "storytelling", "visual", "bold-statement"})
 ENERGY_LEVELS = frozenset({"low", "medium", "high"})
 HOOK_ANGLES = frozenset({"curiosity", "challenge", "emotional", "result-first", "fomo"})
-HOOK_TONES = frozenset({"aggressive", "restrained", "playful"})
 
 
 class Persona(BaseModel):
@@ -45,19 +44,14 @@ class Persona(BaseModel):
     content_focus: list[str] = Field(default_factory=list)   # which moment KINDS to favor (casting): CONTENT_FOCUS
     energy: Optional[str] = None                  # clip energy: low|medium|high (ENERGY_LEVELS)
     hook_angle: Optional[str] = None              # on-screen hook strategy: curiosity|challenge|... (HOOK_ANGLES)
-    hook_tone: Optional[str] = None               # on-screen hook tone: aggressive|restrained|playful (HOOK_TONES)
     clip_profile: Optional[str] = None            # per-account LENGTH tier (bands.PROFILE_NAMES) — hydrates onto the account
     framing: Optional[str] = None                 # per-account vertical CROP bias (config.FRAMING_NAMES) — hydrates onto the account
-    brief: str = ""                               # M2 LOCK: an operator-APPROVED strategy frozen as the persona's downstream
-                                                  # anchor. compose appends it after `voice` so the real casting/hook/caption
-                                                  # prompts run against the agreed DEFINITION. Free text; ONLY a deliberate Save
-                                                  # writes it (a strategy check NEVER auto-locks). Empty -> byte-identical.
     # M3 DIRECTIVE ENGINE: the structured levers above compile into a SUBSTANTIVE per-dimension instruction
     # (casting/hook/caption) injected into THAT dimension's real prompt — not a glued adjective. The operator
     # can OVERRIDE the compiled text per persona (these fields); a non-empty override is used VERBATIM, else
     # the lever-compiled clauses are used, else the bare voice (the firewall). Empty -> byte-identical.
     casting_directive: str = ""                   # override for "which moments to clip" (else compiled from content_focus+energy)
-    hook_directive: str = ""                      # override for the on-screen hook brief (else compiled from hook_angle+hook_tone)
+    hook_directive: str = ""                      # override for the on-screen hook brief (else compiled from hook_angle)
     caption_directive: str = ""                   # override for the caption angle (else the voice; tags stay deterministic)
 
 
@@ -98,7 +92,7 @@ def _slug(s: str) -> str:
 from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; after foundation by design)
     derive_cut_spec, resolved_cut_spec, casting_directive, hook_directive, caption_directive,
     compose_persona_instruction, lever_catalog, compose_breakdown, produces_summary, persona_facts,
-    _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE, _TONE_CLAUSE, _FOCUS_PROFILE, _ENERGY_FRAMING)
+    _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _ENERGY_FRAMING)
 from fanops.persona_store import (   # noqa: E402,F401
     add_persona, update_persona, add_corpus_tag, remove_corpus_tag,
     delete_persona, migrate_from_accounts)

@@ -140,22 +140,22 @@ def test_load_unlinked_account_is_byte_identical(tmp_path):
 def test_unlinking_a_persona_leaves_no_stale_hydrated_state(tmp_path):
     # D3 (audit concern, proven NOT a defect): hydration is IN-MEMORY only — no writer persists a hydrated
     # field back to accounts.json (every writer mutates the raw dict; there is no Accounts.save). So
-    # clearing a link must leave the account byte-identical to its raw inline values: the persona's brief/
-    # voice never leak into accounts.json, and the next load reads the inline persona again. This pins that
-    # contract so a future hydrated-save path can't silently strand a stale brief on unlink.
+    # clearing a link must leave the account byte-identical to its raw inline values: the persona's voice/
+    # tag_lean never leak into accounts.json, and the next load reads the inline persona again. This pins that
+    # contract so a future hydrated-save path can't silently strand a stale hydrated value on unlink.
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="P1", voice="curator voice", tag_lean="tasteful", brief="locked strategy")
+    pid = P.add_persona(cfg, name="P1", voice="curator voice", tag_lean="tasteful")
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
                            "persona": "my own inline voice", "tag_lean": "bold"}])
     link_persona(cfg, "@a", pid)
     linked = Accounts.load(cfg).accounts[0]
-    assert linked.persona == "curator voice" and linked.brief == "locked strategy"   # hydrated in memory
+    assert linked.persona == "curator voice" and linked.tag_lean == "tasteful"   # hydrated in memory
     link_persona(cfg, "@a", "")                       # clear the link (blank -> persona_id None)
     raw = json.loads(cfg.accounts_path.read_text())["accounts"][0]
-    assert raw.get("persona_id") is None and "brief" not in raw   # no hydrated field persisted to disk
+    assert raw.get("persona_id") is None and raw.get("persona") == "my own inline voice"   # no hydrated value persisted
     after = Accounts.load(cfg).accounts[0]
     assert after.persona == "my own inline voice" and after.tag_lean == "bold"   # inline restored
-    assert after.brief == "" and after.persona_id is None         # no stale hydrated brief
+    assert after.persona_id is None
 
 
 # --- migration ---------------------------------------------------------------------------------

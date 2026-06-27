@@ -10,7 +10,7 @@ from fanops.config import Config
 
 # THE DIRECTIVE ENGINE (M3). Each structured lever value compiles into a SUBSTANTIVE instruction CLAUSE the
 # pipeline's prompt actually acts on — real selection/hook language, NOT a glued adjective ("favors moments:
-# punchlines"). content_focus + energy -> the CASTING directive; hook_angle + hook_tone -> the HOOK directive.
+# punchlines"). content_focus + energy -> the CASTING directive; hook_angle -> the HOOK directive.
 # These clauses are the curated DEFAULT; a persona may OVERRIDE the compiled text per dimension (the operator
 # owns the words). clip_profile/framing/tag_lean/corpus stay deterministic (cut + hashtags), NOT in this text.
 _FOCUS_CLAUSE = {
@@ -32,11 +32,6 @@ _ANGLE_CLAUSE = {
     "emotional": "name the high-arousal feeling the clip gives the viewer",
     "result-first": "open on the payoff, then reveal how it got there",
     "fomo": "carry genuine scarcity — a one-time, leaked, or unreleased drop",
-}
-_TONE_CLAUSE = {
-    "aggressive": "Write it hard and confrontational.",
-    "restrained": "Write it understated and quietly confident.",
-    "playful": "Write it playful, a little cheeky.",
 }
 
 

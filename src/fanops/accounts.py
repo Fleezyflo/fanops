@@ -55,14 +55,10 @@ class Account(BaseModel):
     # Lever engine (M-levers): explicit per-characteristic direction HYDRATED from the linked Persona at load,
     # which personas.compose_persona_instruction renders into the surface `persona` the casting/hook/caption
     # payloads carry. ADDITIVE — empty on every legacy/unlinked account, so compose returns the bare persona
-    # voice (byte-identical). content_focus/energy -> casting; hook_angle/hook_tone -> the on-screen hook.
+    # voice (byte-identical). content_focus/energy -> casting; hook_angle -> the on-screen hook.
     content_focus: list[str] = Field(default_factory=list)
     energy: Optional[str] = None
     hook_angle: Optional[str] = None
-    hook_tone: Optional[str] = None
-    brief: str = ""                        # M2 LOCK: the persona's operator-approved strategy, HYDRATED from the
-                                           # linked Persona; the directive compilers append it after the voice so it
-                                           # rides into the real casting/hook/caption prompts. Empty -> byte-identical.
     # M3 DIRECTIVE ENGINE: the per-dimension OVERRIDE text + the per-persona clip budget, HYDRATED from the
     # linked Persona. Empty/None -> the lever-compiled default / the global cast budget (byte-identical when unset).
     casting_directive: str = ""
@@ -199,7 +195,7 @@ class Accounts:
 
 
 def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
-    """A1: override each LINKED account's persona voice, tag_lean, corpus, levers (content_focus/energy/hook_angle/hook_tone), cut spec (clip_profile/framing), brief, and per-dimension directives IN MEMORY from its Persona (the source of truth
+    """A1: override each LINKED account's persona voice, tag_lean, corpus, levers (content_focus/energy/hook_angle), cut spec (clip_profile/framing), and per-dimension directives IN MEMORY from its Persona (the source of truth
     once linked), so every consumer reading a.persona / a.tag_lean sees the persona's value and an operator
     edit takes effect on the next load — with ZERO consumer rewiring. FAIL-OPEN: no personas.json, a
     dangling persona_id, or any error leaves the account's inline values exactly as today (byte-identical
@@ -224,11 +220,9 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.content_focus = list(per.content_focus)
         acc.energy = per.energy
         acc.hook_angle = per.hook_angle
-        acc.hook_tone = per.hook_tone
         _prof, _fr = resolved_cut_spec(per)   # P2: pin wins; else derived from content_focus/energy; else None (global stands)
         if _prof: acc.clip_profile = _prof; acc.persona_owns_profile = True   # S2 provenance: the persona TRULY owns the length
         if _fr: acc.framing = _fr
-        acc.brief = per.brief or ""   # M2: the persona owns the locked brief (empty -> compose ignores it)
         acc.casting_directive = per.casting_directive or ""   # M3: per-dimension override text (empty -> lever-compiled default)
         acc.hook_directive = per.hook_directive or ""
         acc.caption_directive = per.caption_directive or ""
