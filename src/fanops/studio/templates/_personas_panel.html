@@ -111,7 +111,7 @@
         <div class="persona-corpus">
           <span class="muted persona-corpus-label">Hashtags ({{ p.corpus|length }})</span>
           {% for t in p.corpus %}
-            <span class="chip tag{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if t in p.reach_tags %}<span class="reach" title="high reach — own-reach + Graph trends">★</span>{% endif %}{% if p.reach_means.get(t) %}<span class="reach-n" title="measured mean reach on this account's analyzed posts">· {{ (p.reach_means[t] / 1000) | round(1) }}k</span>{% endif %}
+            <span class="chip tag{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if t in p.reach_tags %}<span class="reach" title="currently most-active on the platform (live Graph reach)">★</span>{% endif %}{% if p.reach_means.get(t) %}<span class="reach-n" title="live Graph reach (top-media engagement)">· {{ (p.reach_means[t] / 1000) | round(1) }}k</span>{% endif %}
               <button type="button" title="remove {{ t }}" class="chip-x"
                 hx-post="{{ url_for('do_personas_corpus_remove') }}" hx-target="#personas-panel" hx-swap="outerHTML"
                 hx-vals='{{ {"id": p.id, "tag": t} | tojson }}'>×</button></span>

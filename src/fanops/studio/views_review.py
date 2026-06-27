@@ -55,7 +55,7 @@ class SurfacePost:
     day: Optional[str] = None              # Phase 4 pivot: the ingest day (clip -> moment -> source.created_at), set
                                            # only on the account-pivot flat rows for the running day header. None elsewhere.
     tag_sources: dict = field(default_factory=dict)   # per-tag provenance {tag: source} from the clip's meta_captions
-                                           # (content|corpus|lean|region|reach-store|discovery|genre-floor). {} when absent
+                                           # (content|corpus|region|graph-reach|discovery|genre-floor). {} when absent
                                            # (legacy entry / no caption yet) -> the chip row simply doesn't render.
 
 

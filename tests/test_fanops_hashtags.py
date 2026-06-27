@@ -1,146 +1,127 @@
 # tests/test_fanops_hashtags.py
-# M4 offline core: own-reach hashtag ranking -> 00_control/hashtags.json store, GATED on the F2
-# learn-doctor PASS verdict (don't trust reach until the analytics label reconciles). The live Meta
-# Graph trend fetch is a deferred, operator-gated follow-up (untestable without a Meta app).
+# Hashtag store builder — the ONLY judge of a hashtag is its LIVE Meta Graph reach (operator 2026-06-27).
+# refresh_store harvests co-occurring candidates from the niche seeds, measures their Graph reach within the
+# 30/7-day budget, ranks by reach, writes 00_control/hashtags.json. NO ledger, NO learn-doctor gate (the store
+# is independent of any published post). Own-post-reach attribution (tag_reach_means/rank_tags_by_reach) and
+# the doctor gate were DELETED — a post's outcome attributes to the hook/clip/account, never to the hashtag.
+import inspect
 import json
 from fanops.config import Config
-from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
+from fanops.models import Platform
 from fanops.hashtags import load_store, vetted_menu, vet_hashtags
-from fanops.fanops_hashtags import rank_tags_by_reach, refresh_store
+from fanops.fanops_hashtags import refresh_store
 
 
-def _analyzed_post(led, pid, tags, reach):
-    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, hashtags=tags, metrics={"reach": reach}))
-
-def _pass_doctor(cfg):
-    # write the F2 learn-doctor verdict file M4 reads (decoupled via the known 00_control path)
-    p = cfg.control / "learn_doctor.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"verdict": "PASS"}))
-
-
-def test_rank_tags_by_reach_orders_by_mean_reach_per_post(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _analyzed_post(led, "p1", ["#hiphop", "#bars"], 1000)      # #bars: 1000
-    _analyzed_post(led, "p2", ["#hiphop"], 9000)               # #hiphop: mean (1000+9000)/2 = 5000
-    ranked = rank_tags_by_reach(led)
-    assert ranked[0] == "#hiphop"                              # higher mean reach ranks first
-    assert "#bars" in ranked
-
-def test_tag_reach_means_computes_mean_per_tag(tmp_path):
-    # B4 (closed loop): the mean reach-per-post per tag, surfaced next to each curated corpus tag.
-    from fanops.fanops_hashtags import tag_reach_means
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _analyzed_post(led, "p1", ["#bars"], 1000)
-    _analyzed_post(led, "p2", ["#bars"], 3000)                 # #bars mean = 2000
-    _analyzed_post(led, "p3", ["#rap"], 500)
-    means = tag_reach_means(led)
-    assert means["#bars"] == 2000.0 and means["#rap"] == 500.0
-
-
-def test_rank_tags_by_reach_ignores_non_numeric_reach_and_unanalyzed(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _analyzed_post(led, "p1", ["#rap"], 500)
-    led.add_post(Post(id="p2", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.published, hashtags=["#nope"], metrics={}))  # not analyzed
-    ranked = rank_tags_by_reach(led)
-    assert ranked == ["#rap"]                                  # only the analyzed post with numeric reach
-
-def test_refresh_store_gates_on_doctor_pass(tmp_path):
-    # No learn-doctor verdict (or not PASS) -> refresh writes NOTHING (reach is garbage-in).
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _analyzed_post(led, "p1", ["#hiphop"], 1000)
-    out = refresh_store(led, cfg)
-    assert out["written"] is False and not cfg.hashtags_path.exists()
-
-def test_refresh_store_writes_reach_ranked_store_when_pass(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _analyzed_post(led, "p1", ["#undergroundhiphop"], 8000)
-    _pass_doctor(cfg)
-    out = refresh_store(led, cfg)
-    assert out["written"] is True and cfg.hashtags_path.exists()
-    store = json.loads(cfg.hashtags_path.read_text())["tags"]
-    assert store[0] == "#undergroundhiphop"                    # own-reach winner ranks first
-    assert "#hiphop" in store                                  # frozen seed merged so never-posted tags survive
-
-def test_load_store_reads_tags_or_none(tmp_path):
-    cfg = Config(root=tmp_path)
-    assert load_store(cfg) is None                             # absent -> None (fall back to frozen)
-    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"tags": ["#x", "#y"]}))
-    assert load_store(cfg) == ["#x", "#y"]
-    cfg.hashtags_path.write_text("{ corrupt")
-    assert load_store(cfg) is None                             # corrupt -> None, never raises
-
-
-def test_vetted_menu_uses_store_when_given_else_frozen():
-    assert vetted_menu(store=["#a", "#b"]) == ["#a", "#b"]     # dynamic store drives the menu
-    assert "#hiphop" in vetted_menu()                          # no store -> frozen pools (today)
-
-def test_vet_hashtags_store_aware_and_byte_identical_without_store():
-    # store=None -> exactly today's frozen behavior.
-    base = vet_hashtags(["#hiphop", "#garbageword"], Platform.instagram, "en")
-    assert vet_hashtags(["#hiphop", "#garbageword"], Platform.instagram, "en", store=None) == base
-    # with a store, the store IS the vetted set: an in-store tag survives, off-store is dropped + backfilled.
-    out = vet_hashtags(["#mytrend", "#garbageword"], Platform.instagram, "en", store=["#mytrend", "#second"])
-    assert "#mytrend" in out and "#garbageword" not in out
-    assert len(out) <= 4
-
-
-# --- M4 live trend half: refresh_store blends Meta Graph trend sampling on top of own-reach ----------
 class _Resp:
     def __init__(self, status=200, body=None): self.status_code = status; self._body = body
     def json(self):
         if self._body is None: raise ValueError("no json")
         return self._body
 
-def _trend_router(score_by_id):
+
+def _graph_router(reach_by_tag, *, cooccur=""):
+    """A fake Meta Graph `get`: ig_hashtag_search resolves '#tag'->'id-tag'; {hid}/top_media returns the
+    co-occurring caption (for the harvest) + like/comments = the tag's reach (for the measurement)."""
     def get(url, params=None, timeout=None):
+        p = params or {}
         if "ig_hashtag_search" in url:
-            return _Resp(200, {"data": [{"id": "id-" + (params or {}).get("q", "")}]})
-        if "top_media" in url:
-            return _Resp(200, {"data": [{"like_count": score_by_id, "comments_count": 0}]})
+            return _Resp(200, {"data": [{"id": "id-" + p.get("q", "")}]})
+        if url.endswith("/top_media"):
+            tag = "#" + url.rsplit("/", 2)[-2].replace("id-", "")
+            return _Resp(200, {"data": [{"caption": cooccur, "like_count": reach_by_tag.get(tag, 0),
+                                         "comments_count": 0}]})
         return _Resp(404, None)
     return get
 
-def test_refresh_store_trends_on_by_default_failopen_without_creds(tmp_path, monkeypatch):
-    # B2: FANOPS_HASHTAG_TRENDS now DEFAULTS ON (the Graph API is on by default). Without Meta creds,
-    # sample_trends no-ops -> the store is own-reach-only, byte-identical to the old default-OFF output.
-    # Default-ON is safe without a token (fail-open).
-    monkeypatch.delenv("FANOPS_HASHTAG_TRENDS", raising=False)
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _analyzed_post(led, "p1", ["#owned"], 5000); _pass_doctor(cfg)
-    out = refresh_store(led, cfg)
-    assert out["written"] is True and out.get("trend_sampled", 0) == 0   # no creds -> no trend sampling
-    assert json.loads(cfg.hashtags_path.read_text())["tags"][0] == "#owned"   # own-reach only, byte-identical
 
-def test_refresh_store_blends_trending_tag_when_enabled(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_HASHTAG_TRENDS", "1")
+def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch):
+    # The own-reach model is gone: refresh_store's signature carries NO `led`, and it writes WITHOUT any
+    # learn-doctor verdict on disk (the store does not depend on a published post).
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    assert "led" not in inspect.signature(refresh_store).parameters
+    cfg = Config(root=tmp_path)
+    assert not (cfg.control / "learn_doctor.json").exists()     # no doctor verdict anywhere
+    out = refresh_store(cfg)
+    assert out["written"] is True and cfg.hashtags_path.exists()  # still writes — no gate
+
+
+def test_refresh_store_ranks_by_live_graph_reach(tmp_path, monkeypatch):
+    # The store is ranked by LIVE Graph reach: a higher-reach co-occurring tag leads, regardless of any post.
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _analyzed_post(led, "p1", ["#owned"], 5000); _pass_doctor(cfg)
-    out = refresh_store(led, cfg, get=_trend_router(900))
+    cfg = Config(root=tmp_path)
+    from fanops import personas as P
+    P.add_persona(cfg, name="Curator", id="curator")
+    P.add_corpus_tag(cfg, "curator", "#seed")               # the niche seed the harvest reads from
+    get = _graph_router({"#beta": 900, "#alpha": 100}, cooccur="#alpha #beta")
+    out = refresh_store(cfg, get=get)
     store = json.loads(cfg.hashtags_path.read_text())["tags"]
-    assert store[0] == "#owned"                                 # own reach stays PRIMARY
-    assert out.get("trend_sampled", 0) >= 1                     # at least one tag trend-sampled
+    assert store[0] == "#beta"                              # highest LIVE Graph reach leads
+    assert store.index("#beta") < store.index("#alpha")     # reach order, not insertion order
+    assert out["measured"] >= 2
 
-def test_refresh_store_trends_fail_open_without_token(tmp_path, monkeypatch):
-    # flag on but NO token -> own-reach only, still written (never blocks on missing creds).
-    monkeypatch.setenv("FANOPS_HASHTAG_TRENDS", "1")
+
+def test_refresh_store_fail_open_without_creds_writes_frozen_floor(tmp_path, monkeypatch):
+    # No Meta creds -> harvest/measure no-op -> the frozen reach-ranked seed stands (never empty, never raises).
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _analyzed_post(led, "p1", ["#owned"], 5000); _pass_doctor(cfg)
-    out = refresh_store(led, cfg, get=_trend_router(900))
-    assert out["written"] is True and out.get("trend_sampled", 0) == 0
+    cfg = Config(root=tmp_path)
+    out = refresh_store(cfg)
+    store = json.loads(cfg.hashtags_path.read_text())["tags"]
+    assert out["written"] is True and out["measured"] == 0
+    assert store[0] == vetted_menu()[0]                     # frozen floor order, byte-stable
+    assert "#hiphop" in store
 
 
-# --- M4 (live discovery): `hashtags discover` reports fresh per-persona tags, NEVER writes the caption menu.
-# Auto-absorbing unvetted discoveries into the global menu was DROPPED: an engagement floor admits generic
-# spam (#love rides viral posts) and rejects niche tags, and it would bypass the operator's curation gate.
-# Curation stays operator-gated in the Studio; the closed loop is discover -> accept -> own-reach feedback.
+def test_load_store_reads_tags_or_none(tmp_path):
+    cfg = Config(root=tmp_path)
+    assert load_store(cfg) is None                          # absent -> None (fall back to frozen)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#x", "#y"]}))
+    assert load_store(cfg) == ["#x", "#y"]
+    cfg.hashtags_path.write_text("{ corrupt")
+    assert load_store(cfg) is None                          # corrupt -> None, never raises
+
+
+def test_refresh_store_flag_off_writes_frozen_floor_even_with_creds(tmp_path, monkeypatch):
+    # FANOPS_HASHTAG_TRENDS=0 is the operator escape hatch: the store is the frozen reach floor only — no Graph
+    # harvest/measure — even when Meta creds are present. Keeps the flag meaningful (not a dead switch).
+    monkeypatch.setenv("FANOPS_HASHTAG_TRENDS", "0")
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    out = refresh_store(cfg, get=_graph_router({"#beta": 900}, cooccur="#beta"))   # router present but must NOT be used
+    store = json.loads(cfg.hashtags_path.read_text())["tags"]
+    assert out["measured"] == 0 and out["harvested"] == 0       # Graph sampling skipped
+    assert store == vetted_menu()                               # frozen floor verbatim
+
+
+def test_load_store_reach_reads_graph_reach_map_or_empty(tmp_path):
+    # WS5: refresh_store persists {"reach": {tag: graph reach}} for the Studio surface; load_store_reach reads
+    # it normalized, fail-open to {} when absent / no reach key / corrupt.
+    from fanops.hashtags import load_store_reach
+    cfg = Config(root=tmp_path)
+    assert load_store_reach(cfg) == {}                      # absent -> {}
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#a"]}))     # no reach key -> {}
+    assert load_store_reach(cfg) == {}
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#a"], "reach": {"#A": 1200, "#b": "x"}}))
+    assert load_store_reach(cfg) == {"#a": 1200.0}          # normalized key; non-numeric dropped
+
+
+def test_vetted_menu_uses_store_when_given_else_frozen():
+    assert vetted_menu(store=["#a", "#b"]) == ["#a", "#b"]  # dynamic store drives the menu
+    assert "#hiphop" in vetted_menu()                       # no store -> frozen pools
+
+
+def test_vet_hashtags_store_aware_and_byte_identical_without_store():
+    base = vet_hashtags(["#hiphop", "#garbageword"], Platform.instagram, "en")
+    assert vet_hashtags(["#hiphop", "#garbageword"], Platform.instagram, "en", store=None) == base
+    out = vet_hashtags(["#mytrend", "#garbageword"], Platform.instagram, "en", store=["#mytrend", "#second"])
+    assert "#mytrend" in out and "#garbageword" not in out
+    assert len(out) <= 4
+
+
+# --- `hashtags discover` REPORTS fresh per-persona tags, NEVER writes the caption menu. Auto-absorbing
+# unvetted discoveries into the menu was DROPPED (an engagement floor admits spam + bypasses the operator
+# curation gate). Curation stays operator-gated in the Studio: discover -> operator ACCEPTS into a corpus.
 def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch, capsys):
     from fanops.fanops_hashtags import cmd_hashtags_discover
     from fanops import personas as P
@@ -151,10 +132,27 @@ def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch,
     rc = cmd_hashtags_discover(cfg)
     out = capsys.readouterr().out
     assert rc == 0 and "#detroitrap" in out and "curator" in out
-    assert not cfg.hashtags_path.exists()                      # discovery NEVER writes the caption menu
+    assert not cfg.hashtags_path.exists()                   # discovery NEVER writes the caption menu
 
 
 def test_cmd_hashtags_discover_no_personas(tmp_path, capsys):
     from fanops.fanops_hashtags import cmd_hashtags_discover
     rc = cmd_hashtags_discover(Config(root=tmp_path))
     assert rc == 0 and "no personas" in capsys.readouterr().out.lower()
+
+
+# --- WS2: the run loop refreshes the Graph-reach store on a throttle (constant update), fail-open.
+def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
+    import os
+    from fanops.fanops_hashtags import refresh_store_if_due
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    cfg = Config(root=tmp_path)
+    assert refresh_store_if_due(cfg)["refreshed"] is False       # no Meta creds -> clean no-op
+    assert not cfg.hashtags_path.exists()
+    monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    assert refresh_store_if_due(cfg)["refreshed"] is True        # no store yet -> writes (fail-open frozen floor)
+    assert cfg.hashtags_path.exists()
+    assert refresh_store_if_due(cfg, max_age_s=43200)["refreshed"] is False   # just written -> fresh -> throttled
+    old = cfg.hashtags_path.stat().st_mtime - 100000
+    os.utime(cfg.hashtags_path, (old, old))
+    assert refresh_store_if_due(cfg, max_age_s=10)["refreshed"] is True       # stale -> refresh again

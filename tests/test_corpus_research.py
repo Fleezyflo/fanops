@@ -1,7 +1,7 @@
 # tests/test_corpus_research.py
 # B3 — bootstrap research + active surfacing. research_corpus proposes the reach-best hashtags a persona
-# doesn't yet carry, grounded in the reach-ranked store (own-reach + Graph trends, default-ON) plus the
-# persona's lean flavor — instant + budget-free (the store already encodes the Graph signal); the operator
+# doesn't yet carry, grounded in the reach-ranked store (LIVE Meta Graph reach) minus the persona's current
+# corpus — instant + budget-free (the store already encodes the Graph signal); the operator
 # accepts the proposals. The Personas page then surfaces the corpus REACH-RANKED (store order, top-first)
 # with the high-reach (store-present) tags flagged.
 import json
@@ -30,7 +30,7 @@ def test_research_uses_reach_store_order(tmp_path):
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({"tags": ["#owned", "#hiphop"]}))
     out = core.research_corpus(cfg, pid)
-    assert out[0] == "#owned"                           # own-reach + trends store leads the proposal
+    assert out[0] == "#owned"                           # the live Graph-reach store leads the proposal
 
 
 def test_research_capped(tmp_path):

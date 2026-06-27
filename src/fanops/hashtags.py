@@ -35,10 +35,10 @@ VETTED = set(_MEGA) | set(_RELEVANCE) | set(_ARABIC) | {t for v in _DISCOVERY.va
 # corpus is the SOLE per-account hashtag differentiator. See docs / persona-lever-coherence M3.
 
 def load_store(cfg) -> list[str] | None:
-    """M4: the dynamic reach-ranked tag store (00_control/hashtags.json `{"tags": [...]}`), normalized.
+    """The dynamic reach-ranked tag store (00_control/hashtags.json `{"tags": [...]}`), normalized.
     Absent / corrupt / empty -> None so every caller falls back to the frozen pools (fail-open, like
-    tuning.json). Never raises. The store is WRITTEN by fanops_hashtags.refresh_store (own-reach,
-    doctor-gated); this is the read side the caption path consumes."""
+    tuning.json). Never raises. The store is WRITTEN by fanops_hashtags.refresh_store from LIVE Meta Graph
+    reach; this is the read side the caption path consumes."""
     p = cfg.hashtags_path
     if not p.exists():
         return None
@@ -49,6 +49,24 @@ def load_store(cfg) -> list[str] | None:
         return [t for t in out if t] or None
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         return None                                  # corrupt store -> frozen pools, never crash a run
+
+def load_store_reach(cfg) -> dict[str, float]:
+    """The per-tag LIVE Graph reach map persisted alongside the store (00_control/hashtags.json `{"reach":
+    {tag: score}}`, written by refresh_store). The Studio shows this number next to each curated tag — the
+    honest 'why this tag' signal (its measured platform reach), NOT own-post reach. Absent / corrupt / no
+    `reach` key -> {} (the number simply doesn't render). Never raises."""
+    p = cfg.hashtags_path
+    if not p.exists():
+        return {}
+    try:
+        d = json.loads(p.read_text())
+        r = d.get("reach") if isinstance(d, dict) else None
+        if not isinstance(r, dict):
+            return {}
+        return {_norm(k): float(v) for k, v in r.items()
+                if isinstance(k, str) and _norm(k) and isinstance(v, (int, float)) and not isinstance(v, bool)}
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return {}
 
 def vetted_menu(store: list[str] | None = None) -> list[str]:
     """The vetted tags as one flat, reach-ordered, de-duplicated list — the MENU the caption prompt
@@ -157,7 +175,7 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         h = _norm(t)
         if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
-    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, own-reach store, or frozen rank)
+    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, Graph-reach store, or frozen rank)
     # Reserved floors take the TAIL slots so the corpus/reach LEAD is preserved: region reach first
     # (non-negotiable under a corpus — a curated corpus must not strip AR reach), then ONE clip-content tag (the
     # operator's "tags based off information" ask). Each guarantees its signal reaches the <=max_tags line even
@@ -192,13 +210,14 @@ _DISCOVERY_SET = {t for v in _DISCOVERY.values() for t in v}
 
 def _tag_source(tag: str, *, content_set: set, corpus_set: set, store_set: set) -> str:
     """The provenance label for ONE shipped tag — the real signal it traces to. Priority (highest first):
-    content > corpus > region > reach-store > discovery > genre-floor. Never empty (genre-floor is the
-    catch-all for a frozen-pool backfill tag), so a sourceless tag — pure theater — cannot ship. (M3: the
-    `lean` source was retired with tag_lean; a former-lean tag now traces to `corpus`.)"""
+    content > corpus > region > graph-reach > discovery > genre-floor. Never empty (genre-floor is the
+    catch-all for a frozen-pool backfill tag), so a sourceless tag — pure theater — cannot ship. `graph-reach`
+    means the tag traces to the live Meta Graph reach store (the SOLE judge of a hashtag — refresh_store ranks
+    the store by platform reach, never by a post that used the tag). (M3: the `lean` source was retired.)"""
     if tag in content_set: return "content"
     if tag in corpus_set: return "corpus"
     if tag in _ARABIC_SET: return "region"
-    if store_set and tag in store_set: return "reach-store"
+    if store_set and tag in store_set: return "graph-reach"
     if tag in _DISCOVERY_SET: return "discovery"
     return "genre-floor"
 
@@ -207,7 +226,7 @@ def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: st
                         corpus: list[str] | None = None,
                         content: list[str] | None = None) -> tuple[list[str], dict[str, str]]:
     """vet_hashtags + a provenance `source` per shipped tag. SAME selection as vet_hashtags (DRY — it
-    calls it), then labels each kept tag by the signal it traces to (content|corpus|region|reach-store|
+    calls it), then labels each kept tag by the signal it traces to (content|corpus|region|graph-reach|
     discovery|genre-floor). This proves every shipped tag is evidence-backed — the hashtag-axis instance
     of the operator's 'every knob real, no theater' rule."""
     out = vet_hashtags(tags, platform, language, max_tags,

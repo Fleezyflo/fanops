@@ -786,9 +786,12 @@ def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, m
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "BlotatoAuthError" in log                         # the type name is in the breadcrumb
 
-def test_main_hashtags_refresh_skips_without_doctor_pass(tmp_path, monkeypatch, capsys):
-    # M4: `fanops hashtags refresh` is doctor-gated — with no learn-doctor PASS it writes nothing and
-    # exits 0 cleanly (reach is unreliable until the analytics label reconciles).
+def test_main_hashtags_refresh_writes_from_graph_failopen(tmp_path, monkeypatch, capsys):
+    # `fanops hashtags refresh` rebuilds the store from LIVE Graph reach — no ledger, no doctor gate. Without
+    # Meta creds it FAILS OPEN to the frozen reach floor (still writes), and exits 0 cleanly.
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     monkeypatch.chdir(tmp_path)
     assert main(["hashtags", "refresh"]) == 0
-    assert "skipped" in capsys.readouterr().out.lower()
+    out = capsys.readouterr().out.lower()
+    assert "refreshed from live graph reach" in out and "0 measured" in out   # fail-open: frozen floor stands
+    assert (tmp_path / "MohFlow-FanOps" / "00_control" / "hashtags.json").exists()

@@ -234,8 +234,8 @@ class Config:
     def meta_graph_token(self) -> str | None:
         # Meta Graph API access token (IG Business) for the M4 hashtag TREND sampling. WRITE-ONLY —
         # never logged/echoed (mirrors postiz_api_key); meta_graph sends it as the access_token param.
-        # Absent -> trend sampling fails open to own-reach-only ranking. Used ONLY by `hashtags refresh`,
-        # never on the publish path.
+        # Absent -> the Graph store build fails open to the frozen reach floor. Used ONLY by `hashtags
+        # refresh`, never on the publish path.
         v = os.getenv("META_GRAPH_TOKEN")
         return v.strip() if v and v.strip() else None
 
@@ -255,8 +255,8 @@ class Config:
     def hashtag_trends(self) -> bool:
         # B2 (2026-06-23): the Graph API is now ON BY DEFAULT — sample LIVE Meta Graph hashtag trends during
         # `hashtags refresh`. FAIL-OPEN: without META_GRAPH_TOKEN + META_IG_USER_ID, sample_trends no-ops and
-        # the refresh is own-reach-only (byte-identical to the old default-OFF output), so default-ON is safe
-        # on a deployment with no Meta app. Only the explicit OFF-words disable it (operator escape hatch).
+        # the refresh falls open to the frozen reach floor, so default-ON is safe on a deployment with no Meta
+        # app. Only the explicit OFF-words disable it (operator escape hatch).
         # NB: this gates the BACKGROUND refresh sampling only; the on-demand operator lookup (meta_graph.
         # tag_metrics) is gated by creds + budget, never this flag. Mirrors creative_variation's default-ON shape.
         v = (os.getenv("FANOPS_HASHTAG_TRENDS") or "").strip().lower()

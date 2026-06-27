@@ -419,9 +419,9 @@ def main(argv: list[str] | None = None) -> int:
     p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
     learn_sub = p_learn.add_subparsers(dest="learn_cmd", required=True)
     learn_sub.add_parser("doctor", help="read-only: does live Postiz analytics carry the reach signal lift_score needs?")
-    p_hash = sub.add_parser("hashtags", help="dynamic reach-ranked hashtag store (own-post reach, doctor-gated)")
+    p_hash = sub.add_parser("hashtags", help="reach-ranked hashtag store from LIVE Meta Graph reach")
     hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
-    hash_sub.add_parser("refresh", help="recompute 00_control/hashtags.json from analyzed posts' reach (needs learn-doctor PASS)")
+    hash_sub.add_parser("refresh", help="rebuild 00_control/hashtags.json from live Graph reach (harvest->measure->rank; needs Meta creds, fail-open)")
     hash_sub.add_parser("discover", help="report fresh per-persona hashtags from live category top_media (needs Meta creds; never writes the menu)")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
@@ -761,6 +761,18 @@ def _dispatch(cfg: Config, args) -> int:
                     led = apply_p4_dim_bias(led, cfg)
             except Exception as e:
                 get_logger(cfg)("p4_dim_bias", "-", "error", err=str(e)[:120])
+        # WS2: constant Graph-reach hashtag store update — refresh at most once per cadence (12h), throttled by
+        # the store mtime so the 10-min publish cadence doesn't hammer the 30/7-day Graph budget. NOT gated on
+        # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —
+        # only on Meta creds, handled inside the helper. Its OWN try/except; refresh_store_if_due never raises,
+        # so the unattended run can never break on a hashtag refresh.
+        try:
+            from fanops.fanops_hashtags import refresh_store_if_due
+            r = refresh_store_if_due(cfg)
+            if r.get("refreshed"):
+                get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
+        except Exception as e:
+            get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
         # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
         # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
         _heartbeat(cfg, s); print(s); return 0

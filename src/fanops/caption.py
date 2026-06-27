@@ -237,7 +237,7 @@ def _caption_entry(tags: list, hashtags_raw: list, *, fallback: bool = False, ta
     ROOT FIX: the caption gate no longer authors an on-screen hook (the frame-seeing moment gate does, via
     hooks_by_persona) -> hook/axis/rationale are always None. `fallback` marks a seed-tag synthesized entry.
     `tag_sources` is the per-tag provenance ({tag: source}) — proves every shipped tag traces to a real
-    signal (content|corpus|region|reach-store|discovery|genre-floor); Review renders it. Absent -> {}."""
+    signal (content|corpus|region|graph-reach|discovery|genre-floor); Review renders it. Absent -> {}."""
     entry = {"caption": " ".join(tags), "hashtags": tags, "hashtags_raw": hashtags_raw,
              "hook": None, "axis": None, "rationale": None, "tag_sources": tag_sources or {}}
     if fallback:
