@@ -23,7 +23,6 @@ _FOCUS_CLAUSE = {
 }
 _ENERGY_CLAUSE = {
     "low": "Favor calmer, more introspective moments over loud ones.",
-    "medium": "",
     "high": "Strongly prefer peak-intensity moments; skip calm, low-energy passages.",
 }
 _ANGLE_CLAUSE = {
@@ -73,9 +72,11 @@ def resolved_cut_spec(p):
 
 
 def _base_voice(p) -> str:
-    """The persona's freeform base instruction — its voice. Duck-typed (reads .voice OR the hydrated account's
-    .persona). The voice is the single freeform field; the old separate `brief` folded into it."""
-    return (getattr(p, "voice", None) or getattr(p, "persona", None) or "").strip()
+    """The persona's freeform base: the voice, then the LOCKED brief (M2) appended after it. Duck-typed
+    (reads .voice OR the hydrated account's .persona). Empty brief -> just the voice (the firewall floor)."""
+    voice = (getattr(p, "voice", None) or getattr(p, "persona", None) or "").strip()
+    brief = (getattr(p, "brief", None) or "").strip()
+    return ". ".join(s for s in (voice, brief) if s)
 
 
 def _join(voice: str, body: str) -> str:
@@ -101,14 +102,15 @@ def casting_directive(p) -> str:
 
 def hook_directive(p) -> str:
     """The ON-SCREEN HOOK brief for this account — injected into the hook prompt's per-account slot. Override
-    (Persona.hook_directive) wins VERBATIM; else compiled from hook_angle (the strategy); else the bare voice
-    (firewall). The hook's REGISTER comes from the voice (which leads this directive), so there is no separate
-    tone lever. Duck-typed."""
+    (Persona.hook_directive) wins VERBATIM; else compiled from hook_angle + hook_tone; else the bare voice
+    (firewall). Duck-typed."""
     override = (getattr(p, "hook_directive", None) or "").strip()
     if override: return override
     parts: list[str] = []
     a = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
     if a: parts.append("For the on-screen hook, " + a + ".")
+    t = _TONE_CLAUSE.get((getattr(p, "hook_tone", None) or "").strip().lower(), "")
+    if t: parts.append(t)
     return _join(_base_voice(p), " ".join(parts).strip())
 
 
@@ -132,27 +134,38 @@ def lever_catalog() -> list[dict]:
     sourced from the SAME engine constants the compilers/resolvers use (the clause maps above, bands.band_for,
     hashtags._LEANS), so the effect the operator reads is EXACTLY what the pipeline acts on (zero drift; a
     parity test forbids divergence). Pure, ordered (the editor + the reference render it). Each lever:
-    {key, label, kind, stage, does, options:[{value, effect}]}; corpus has no enumerated options. Per-PERSONA
-    the cut LENGTH is DERIVED from content_focus (no per-persona knob); `clip_profile` remains here only as the
-    GLOBAL clip-length lever (the Go-Live default) — its band labels feed that control. Hashtags are owned by
-    the curated corpus; there is no tag_lean/hook_tone/clip_count persona lever."""
+    {key, label, kind, stage, does, options:[{value, effect}]}; corpus has no enumerated options."""
     from fanops.bands import band_for
+    from fanops.hashtags import _LEANS
+    # An ORDERED display list (PROFILE_NAMES is a frozenset, no order). The coverage test asserts this set ==
+    # PROFILE_NAMES, so adding a band to bands.py fails the test until it is added here — keep the order, don't
+    # "fix" this to PROFILE_NAMES (that would lose the short->long->legacy reading order).
     _profiles = ["short", "medium", "long", "talk", "song"]
     return [
         {"key": "content_focus", "label": "Clips · favors moments", "kind": "multi", "stage": "casting",
-         "does": "which KINDS of moments this account clips for (casting prompt) — and DERIVES the cut LENGTH",
+         "does": "which KINDS of moments this account clips for (injected into the casting prompt)",
          "options": [{"value": k, "effect": v} for k, v in _FOCUS_CLAUSE.items()]},
         {"key": "energy", "label": "Energy", "kind": "select", "stage": "casting",
          "does": "biases moment selection toward calm or peak-intensity",
          "options": [{"value": k, "effect": (v or "no change — any energy")} for k, v in _ENERGY_CLAUSE.items()]},
         {"key": "hook_angle", "label": "Hook angle", "kind": "select", "stage": "hook",
-         "does": "the strategy of the burned on-screen hook (the register comes from the voice)",
+         "does": "the strategy of the burned on-screen hook (injected into the hook prompt)",
          "options": [{"value": k, "effect": v} for k, v in _ANGLE_CLAUSE.items()]},
+        {"key": "hook_tone", "label": "Hook tone", "kind": "select", "stage": "hook",
+         "does": "the voice of the burned on-screen hook",
+         "options": [{"value": k, "effect": v} for k, v in _TONE_CLAUSE.items()]},
         {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
-         "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)",
+         "does": "the deterministic cut-length band (the cut, not the prompt); if unset, derived from content_focus",
          "options": [{"value": n, "effect": f"{band_for(n).lo:g}-{band_for(n).hi:g}s cuts"} for n in _profiles]},
+        {"key": "framing", "label": "Framing", "kind": "select", "stage": "cut",
+         "does": "the deterministic vertical crop; if unset, derived from energy",
+         "options": [{"value": "top", "effect": "head-safe upper-third crop"},
+                     {"value": "center", "effect": "centered crop"}]},
+        {"key": "tag_lean", "label": "Tag lean", "kind": "select", "stage": "caption",
+         "does": "floats a flavor pool to the front of the caption hashtags (deterministic, not in the prompt)",
+         "options": [{"value": k, "effect": "leads with " + " ".join(v)} for k, v in _LEANS.items()]},
         {"key": "hashtag_corpus", "label": "Corpus", "kind": "tags", "stage": "caption",
-         "does": "your curated tags LEAD the caption hashtags", "options": []},
+         "does": "your curated tags LEAD the caption hashtags, ahead of the lean pool", "options": []},
     ]
 
 
@@ -175,6 +188,8 @@ def _hook_fragments(p) -> list[dict]:
     if voice: frags.append({"source": "voice", "text": voice})
     a = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
     if a: frags.append({"source": "hook_angle", "text": "For the on-screen hook, " + a + "."})
+    t = _TONE_CLAUSE.get((getattr(p, "hook_tone", None) or "").strip().lower(), "")
+    if t: frags.append({"source": "hook_tone", "text": t})
     return frags
 
 
@@ -182,7 +197,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
     """THE LIVE COMPOSED TRANSLATION — what this persona compiles to RIGHT NOW: the exact casting/hook/caption
     directives the pipeline will read, the deterministic cut band + framing, and the lead hashtags, each
     decomposed to the lever that produced it, with the engine's REAL precedence surfaced (an override SHADOWS
-    its structured levers; energy=medium is a no-op). The `text` of each dimension is the compiler's own output
+    its structured levers). The `text` of each dimension is the compiler's own output
     (parity — the panel can't drift); the fragments reconstruct the assembly for provenance. Pure read; the
     cut/tags reuse the same band_for / persona_facts resolvers the pipeline runs. Duck-typed (Persona/Account)."""
     from fanops.bands import band_for
@@ -194,7 +209,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
                "shadowed": (["content_focus", "energy"] if cast_override else [])}
     hook = {"text": hook_directive(p), "override": bool(hook_override),
             "fragments": ([{"source": "override", "text": hook_override}] if hook_override else _hook_fragments(p)),
-            "shadowed": (["hook_angle"] if hook_override else []),
+            "shadowed": (["hook_angle", "hook_tone"] if hook_override else []),
             # S7: the EFFECTIVE structured angle — None when a freeform override shadows it (so produces_summary
             # never names an angle that doesn't actually drive the hook).
             "angle": (None if hook_override else (getattr(p, "hook_angle", None) or None))}
@@ -207,9 +222,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
     tags = {"lead": facts["lead_tags"], "lean": getattr(p, "tag_lean", None),
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
-    noops: list[str] = []
-    if (getattr(p, "energy", None) or "").strip().lower() == "medium" and not cast_override:
-        noops.append("energy=medium has no effect on selection")
+    noops: list[str] = []                                 # energy=medium (the only no-op) removed; kept for shape
     bd = {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
     bd["produces"] = produces_summary(bd)                 # S7: the operator-facing OUTPUT lead, from this same detail
     return bd
@@ -226,6 +239,8 @@ def produces_summary(breakdown: dict) -> list[str]:
     cut = breakdown.get("cut") or {}
     if cut.get("source") and cut.get("source") != "global" and cut.get("band"):
         out.append(f"~{cut['band']} clips")
+    if cut.get("framing"):
+        out.append(f"{cut['framing']}-framed")
     angle = (breakdown.get("hook") or {}).get("angle")
     if angle:
         out.append(f"{angle} hooks")
@@ -247,12 +262,11 @@ def persona_facts(cfg: Config, p) -> dict:
     from fanops.bands import band_for
     from fanops.hashtags import vet_hashtags, load_store
     from fanops.models import Platform
-    prof, fr = resolved_cut_spec(p)          # the EFFECTIVE cut — pin OR derived from content_focus/energy (the
-    band = band_for(prof)                    # SAME spec hydration applies), so the card shows the REAL length, not
-    try:                                     # the raw-unset value (which made every persona read as one global band)
+    band = band_for(getattr(p, "clip_profile", None))
+    try:
         store = load_store(cfg)
     except Exception:
         store = None
     lead = vet_hashtags([], Platform.instagram, lean=getattr(p, "tag_lean", None),
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store)
-    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead}
+    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": getattr(p, "framing", None), "lead_tags": lead}

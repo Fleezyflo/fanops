@@ -26,11 +26,8 @@
     </div>
   {% endif %}
 
-  <details class="golive-step disclosure-step" {% if not (status.key_set or status.zernio_key_set) %}open{% endif %}>
-    <summary class="step-summary">1 · Connect Postiz
-      {%- if status.key_set %} <span class="step-done">✓ Postiz</span>{% endif %}
-      {%- if status.zernio_key_set %} <span class="step-done">✓ Zernio</span>{% endif %}
-      {%- if not (status.key_set or status.zernio_key_set) %} <span class="step-pending">○ not connected</span>{% endif %}</summary>
+  <section class="golive-step">
+    <h3>1 · Connect Postiz</h3>
     <p class="muted">Point at your running Postiz instance (hosted or self-hosted) and paste its public
       API key (Postiz → Settings → Developers → Public API). The key is stored write-only — tested
       against Postiz, never shown back.</p>
@@ -55,11 +52,10 @@
         <button type="submit">Save &amp; test</button>
       </form>
     </div>
-  </details>
+  </section>
 
-  <details class="golive-step disclosure-step" {% if not status.accounts %}open{% endif %}>
-    <summary class="step-summary">2 · Add an account
-      {%- if status.accounts %} <span class="step-done">✓ {{ status.accounts|length }} active</span>{% endif %}</summary>
+  <section class="golive-step">
+    <h3>2 · Add an account</h3>
     <p class="muted">Add a handle and tick the platforms it posts to — no JSON editing. It lands active,
       ready to map below. (FanOps never logs into the social network; Postiz holds the channel auth.)</p>
     <form hx-post="{{ url_for('do_golive_account_add') }}" hx-target="#golive-panel" hx-swap="outerHTML">
@@ -77,10 +73,10 @@
         </select></label>
       <button type="submit">Add account</button>
     </form>
-  </details>
+  </section>
 
   <section class="golive-step">
-    <h3>3 · Map channels &amp; tune accounts</h3>
+    <h3>3 · Map each channel to its scheduler</h3>
     <p class="muted">One-click: <strong>Discover</strong> lists every channel your connected schedulers
       (Postiz + Zernio) already hold and proposes a handle for each — tick the ones to adopt, edit the
       handle, optionally route them live. Or map a channel manually below.</p>
@@ -152,11 +148,11 @@
         </table>
         <button type="submit">Save channel mappings</button>
       </form>
-      <details class="channel-backends golive-sub">
-        <summary class="sub-summary"><strong>Scheduler per channel</strong> <span class="muted">— advanced routing (IG via Postiz, TikTok via Zernio)</span></summary>
-        <p class="muted">Which backend publishes each channel. <em>default</em> = the global. Routing a channel
-          to a LIVE backend (Postiz / Zernio) needs that scheduler connected above + a confirm — it's a
-          per-account go-live.</p>
+      <div class="channel-backends">
+        <p class="muted"><strong>Scheduler per channel</strong> — which backend publishes each channel.
+          <em>default</em> = the global. Routing a channel to a LIVE backend (Postiz / Zernio) needs that
+          scheduler connected above + a confirm — it's a per-account go-live. Lets IG publish via Postiz while
+          TikTok publishes via Zernio at once.</p>
         {% for a in status.accounts %}{% for ch in a.channels %}
         <form class="channel-backend-row meta" hx-post="{{ url_for('do_golive_account_backend') }}" hx-target="#golive-panel" hx-swap="outerHTML">
           <input type="hidden" name="handle" value="{{ a.handle }}">
@@ -171,7 +167,7 @@
           <button type="submit">Set backend</button>
         </form>
         {% endfor %}{% endfor %}
-      </details>
+      </div>
       <div class="account-manage">
         <p class="muted">Set each account's tag lean (persona differentiation), or demote/remove it. Demote stops
           publishing but keeps the row + history; remove clears a placeholder.</p>
@@ -223,8 +219,6 @@
         </div>
         {% endif %}
       </div>
-      <details class="golive-sub content-diff">
-        <summary class="sub-summary"><strong>Content &amp; differentiation</strong> <span class="muted">— on-screen hooks · casting · clip length</span></summary>
       <div class="account-hooks">
         <p class="muted">Per-account on-screen hooks: each account burns its OWN persona-flavored hook in the
           clip's first seconds. Default ON — turn OFF to make every account show the same shared hook.</p>
@@ -265,7 +259,6 @@
           <button type="submit">Set profile</button>
         </form>
       </div>
-      </details>
     {% else %}
       <p class="muted">No active accounts yet — add one above, then map its channels here.</p>
     {% endif %}
@@ -284,10 +277,8 @@
     {% for n in status.notes %}<p class="muted">{{ n }}</p>{% endfor %}
   </section>
 
-  <section class="golive-step golive-flip">
-    <h3>5 · Go live</h3>
+  <section class="golive-step">
     {% if status.is_live %}
-      <p class="muted">Publishing is LIVE — reviewed posts go to real accounts. Flip back to dryrun to stop.</p>
       <form hx-post="{{ url_for('do_golive_dryrun') }}" hx-target="#golive-panel" hx-swap="outerHTML">
         <button type="submit">Back to dryrun (stop publishing)</button>
       </form>
@@ -299,9 +290,8 @@
     {% endif %}
   </section>
 
-  <details class="golive-step disclosure-step">
-    <summary class="step-summary">6 · Validate learning <span class="step-opt">optional</span>
-      {%- if status.learning_validated %} <span class="step-done">✓ validated</span>{% endif %}</summary>
+  <section class="golive-step">
+    <h3>5 · Validate learning</h3>
     {% if status.learning_validated %}
       <p class="ok">✓ learning validated on Postiz — the loop is unfrozen (variant-amplify can act on real lift).</p>
     {% elif status.is_live and status.mode == 'postiz' %}
@@ -319,12 +309,12 @@
     {% else %}
       <p class="muted">GO LIVE on Postiz first, then validate the learning loop with one throwaway post.</p>
     {% endif %}
-  </details>
+  </section>
 
-  <details class="golive-step disclosure-step">
-    <summary class="step-summary">7 · Advanced learning <span class="step-opt">optional</span></summary>
+  <section class="golive-step">
+    <h3>6 · Advanced learning</h3>
     <p class="muted">A/B hook-learning strategies. All default <strong>OFF</strong> — these set intent; the loop
-      only acts once learning is validated on real metrics (Step 6). Safe to leave off.</p>
+      only acts once learning is validated on real metrics (Step 5). Safe to leave off.</p>
     <div class="learning-toggles">
       <div class="account-hooks">
         <p class="muted"><strong>Learning loop</strong> — pick a per-account hook leader from measured lift. Master switch for the three strategies below.</p>
@@ -355,5 +345,5 @@
         </form>
       </div>
     </div>
-  </details>
+  </section>
 </div>

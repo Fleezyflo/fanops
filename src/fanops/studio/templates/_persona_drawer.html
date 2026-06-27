@@ -16,8 +16,15 @@
   <form hx-post="{{ url_for('do_personas_edit') }}" hx-target="#personas-panel" hx-swap="outerHTML">
     <input type="hidden" name="id" value="{{ p.id }}">
     <label>Name <input type="text" name="name" value="{{ p.name }}" size="22"></label>
+    <label>Tag lean
+      <select name="tag_lean">
+        <option value="" {{ 'selected' if not p.tag_lean else '' }}>— none —</option>
+        {% for l in tag_leans %}<option value="{{ l }}" {{ 'selected' if p.tag_lean == l else '' }}>{{ l }}</option>{% endfor %}
+      </select></label>
     <label class="block">Voice <textarea name="voice" rows="2">{{ p.voice }}</textarea></label>
     {{ lever_fields(levers, effects, p) }}
+    <label class="block">Brief
+      <textarea name="brief" rows="2" placeholder="(optional) freeform direction this persona runs against — composed into the AI instruction after the voice">{{ p.brief }}</textarea></label>
     <div class="drawer-actions">
       <button type="submit" class="primary">Save</button>
       <button type="button" class="danger"

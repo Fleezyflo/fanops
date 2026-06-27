@@ -7,8 +7,11 @@
 from fanops.config import Config
 from fanops.personas import (Persona, lever_catalog, compose_breakdown, produces_summary, casting_directive,
                              hook_directive, caption_directive, add_persona, Personas,
-                             CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES,
-                             _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE)
+                             CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, HOOK_TONES,
+                             _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE, _TONE_CLAUSE)
+from fanops.hashtags import TAG_LEANS, _LEANS
+from fanops.bands import band_for, PROFILE_NAMES
+from fanops.config import FRAMING_NAMES
 
 
 # ---- lever_catalog: every option carries its ENGINE-TRUE effect (no hand-written prose) ----
@@ -22,27 +25,37 @@ def test_catalog_focus_effect_is_the_engine_clause():
     for k, clause in _FOCUS_CLAUSE.items():
         assert eff[k] == clause                                    # the catalog shows EXACTLY what the compiler injects
 
-def test_catalog_energy_angle_effects_are_engine_clauses():
+def test_catalog_energy_angle_tone_effects_are_engine_clauses():
     cat = _by_key(lever_catalog())
     energy = {o["value"]: o["effect"] for o in cat["energy"]["options"]}
-    assert energy["high"] == _ENERGY_CLAUSE["high"]
-    assert "any" in energy["medium"].lower()                       # medium's empty clause is shown as an explicit no-op note
+    assert energy["high"] == _ENERGY_CLAUSE["high"] and energy["low"] == _ENERGY_CLAUSE["low"]
+    assert "medium" not in energy                                  # the no-op value is removed, not just relabelled
     angle = {o["value"]: o["effect"] for o in cat["hook_angle"]["options"]}
     assert angle["curiosity"] == _ANGLE_CLAUSE["curiosity"]
+    tone = {o["value"]: o["effect"] for o in cat["hook_tone"]["options"]}
+    assert tone["aggressive"] == _TONE_CLAUSE["aggressive"]
 
-def test_catalog_omits_the_removed_persona_levers():
-    # tag_lean (corpus owns hashtags), hook_tone (voice carries register), clip_count, and the framing knob are
-    # gone as persona levers. clip_profile stays ONLY as the GLOBAL clip-length lever (Go-Live), never a per-
-    # persona knob — per persona the length is derived from content_focus.
-    keys = {lever["key"] for lever in lever_catalog()}
-    assert keys.isdisjoint({"tag_lean", "framing", "hook_tone", "clip_count"})
-    assert "clip_profile" in keys                                  # retained as the global cut-length lever
+def test_catalog_clip_profile_effect_is_the_real_band():
+    lev = _by_key(lever_catalog())["clip_profile"]
+    eff = {o["value"]: o["effect"] for o in lev["options"]}
+    b = band_for("short")
+    assert f"{b.lo:g}-{b.hi:g}s" in eff["short"]                   # 8-15s — the SAME band the cut uses
+
+def test_catalog_tag_lean_effect_lists_the_real_pool():
+    lev = _by_key(lever_catalog())["tag_lean"]
+    eff = {o["value"]: o["effect"] for o in lev["options"]}
+    for tag in _LEANS["tasteful"]:
+        assert tag in eff["tasteful"]                              # the effect names the real pool tags it floats
 
 def test_catalog_covers_every_validated_vocab_no_orphan_options():
     cat = _by_key(lever_catalog())
     assert {o["value"] for o in cat["content_focus"]["options"]} == set(CONTENT_FOCUS)
     assert {o["value"] for o in cat["energy"]["options"]} == set(ENERGY_LEVELS)
     assert {o["value"] for o in cat["hook_angle"]["options"]} == set(HOOK_ANGLES)
+    assert {o["value"] for o in cat["hook_tone"]["options"]} == set(HOOK_TONES)
+    assert {o["value"] for o in cat["tag_lean"]["options"]} == set(TAG_LEANS)
+    assert {o["value"] for o in cat["framing"]["options"]} == set(FRAMING_NAMES)
+    assert {o["value"] for o in cat["clip_profile"]["options"]} == set(PROFILE_NAMES)
 
 
 # ---- compose_breakdown: the LIVE composed translation, parity with the real compilers ----
@@ -79,13 +92,8 @@ def test_breakdown_override_shadows_structured_levers(tmp_path):
     d = compose_breakdown(cfg, Persona(id="p", hook_directive="my exact hook brief",
                                        hook_angle="curiosity", hook_tone="playful"))
     assert d["hook"]["override"] is True
-    assert set(d["hook"]["shadowed"]) == {"hook_angle"}               # the angle is DEAD under an override — surfaced, not hidden
+    assert set(d["hook"]["shadowed"]) == {"hook_angle", "hook_tone"}   # the angle/tone are DEAD — surfaced, not hidden
     assert d["hook"]["text"] == "my exact hook brief"
-
-def test_breakdown_flags_energy_medium_noop(tmp_path):
-    cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", voice="v", energy="medium", content_focus=["hype"]))
-    assert any("medium" in n for n in d["noops"])                 # medium compiles to nothing — say so
 
 def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
@@ -106,6 +114,7 @@ def test_produces_summary_lists_configured_dimensions(tmp_path):
     clauses = produces_summary(d)
     joined = " · ".join(clauses)
     assert "8-15s" in joined and "clips" in joined                 # the LENGTH band, from the same cut resolver
+    assert "top-framed" in clauses                                  # the FRAMING
     assert "curiosity hooks" in clauses                             # the hook ANGLE
     assert any(c.startswith("≤") and "hashtag" in c for c in clauses)  # the hashtag count (lean/corpus is set)
 
@@ -116,10 +125,11 @@ def test_produces_summary_unset_persona_is_empty(tmp_path):
     assert produces_summary(compose_breakdown(cfg, Persona(id="q", voice="v"))) == []
 
 def test_produces_summary_hashtag_clause_needs_a_deliberate_posture(tmp_path):
-    # length set but NO corpus -> the hashtag clause stays silent (the floor isn't a choice); clips still list.
+    # length/framing set but NO lean/corpus -> the hashtag clause stays silent (the floor isn't a choice);
+    # the other clauses still list.
     cfg = Config(root=tmp_path)
-    clauses = produces_summary(compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="long")))
-    assert any("clips" in c for c in clauses)
+    clauses = produces_summary(compose_breakdown(cfg, Persona(id="p", voice="v", clip_profile="long", framing="center")))
+    assert "center-framed" in clauses and any("clips" in c for c in clauses)
     assert not any("hashtag" in c for c in clauses)
 
 def test_produces_summary_is_embedded_in_breakdown_with_parity(tmp_path):
@@ -177,15 +187,17 @@ def test_personas_page_renders_lever_effects(tmp_path):
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "skip calm, low-energy passages" in html               # the energy=high effect is shown in the editor
+    assert "8-15s" in html                                        # the clip_profile=short band is shown
 
-def test_compose_route_renders_directives(tmp_path):
+def test_compose_route_renders_directives_and_override_warning(tmp_path):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().post("/personas/compose", data={
         "voice": "a devoted fan", "content_focus": "punchlines", "energy": "high",
-        "hook_angle": "curiosity"}).get_data(as_text=True)
-    assert "a devoted fan" in html                                 # the live compiled directive renders from the clean levers
+        "hook_directive": "my exact hook brief", "hook_angle": "curiosity"}).get_data(as_text=True)
+    assert "a devoted fan" in html and "peak-intensity" in html.lower() or "skip calm" in html.lower()
+    assert "not used" in html                                      # the hook override-shadow warning is rendered
 
 
 class _Form(dict):

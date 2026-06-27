@@ -239,7 +239,6 @@ class PersonaCard:
     voice: str
     tag_lean: Optional[str]
     corpus: list                       # the per-persona reach-vetted hashtag pool (B1), DISPLAYED reach-first (B3)
-    intake: dict                       # genre/language/reference_accounts/notes (seeds B3 research)
     linked_handles: list               # accounts whose persona_id points at this persona
     reach_tags: list = field(default_factory=list)   # B3: corpus tags present in the reach store (own-reach+trends) -> flag high-reach
     reach_means: dict = field(default_factory=dict)  # B4 (closed loop): {corpus tag -> measured mean reach} over analyzed posts
@@ -317,19 +316,19 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     def _ranked(corpus):
         return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
     cards = [PersonaCard(id=p.id, name=p.name, voice=p.voice, tag_lean=p.tag_lean,
-                         corpus=_ranked(p.hashtag_corpus), intake=dict(p.intake),
+                         corpus=_ranked(p.hashtag_corpus),
                          linked_handles=by_pid.get(p.id, []),
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
                          content_focus=list(p.content_focus), energy=p.energy, hook_angle=p.hook_angle,
-                         hook_tone=p.hook_tone, clip_profile=p.clip_profile, framing=facts["framing"],
+                         hook_tone=p.hook_tone, clip_profile=p.clip_profile, framing=p.framing,
                          instruction=compose_persona_instruction(p), brief=getattr(p, "brief", "") or "",
-                         length_band=facts["length_band"], lead_tags=facts["lead_tags"],
+                         length_band=(facts := persona_facts(cfg, p))["length_band"], lead_tags=facts["lead_tags"],
                          hook_text=hook_directive(p), caption_text=caption_directive(p),
                          casting_override=getattr(p, "casting_directive", "") or "",
                          hook_override=getattr(p, "hook_directive", "") or "",
                          caption_override=getattr(p, "caption_directive", "") or "")
-             for p in reg.all() for facts in (persona_facts(cfg, p),)]
+             for p in reg.all()]
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)
 

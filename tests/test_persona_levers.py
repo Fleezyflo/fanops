@@ -115,7 +115,7 @@ def test_casting_payload_only_voice_is_byte_identical(tmp_path):
     request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     payload = json.loads(request_path(cfg, "moment_casting", "src_1").read_text())
     p0 = payload["personas"][0]                                     # firewall: no levers -> the casting directive == raw voice
-    assert p0["handle"] == "@a" and p0["persona"] == "bold fan"
+    assert p0["handle"] == "@a" and p0["persona"] == "bold fan" and "clip_count" not in p0
 
 def test_casting_payload_carries_lever_direction(tmp_path):
     cfg = Config(root=tmp_path)
@@ -134,11 +134,11 @@ def test_studio_create_persona_persists_levers(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
     r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines", "hype"],
-                          energy="high", hook_angle="curiosity")
+                          energy="high", hook_angle="curiosity", clip_profile="short", framing="top")
     assert r.ok
     p = Personas.load(cfg).get(r.detail["created"])
     assert p.content_focus == ["punchlines", "hype"] and p.energy == "high"
-    assert p.hook_angle == "curiosity"                   # cut (length/framing) is DERIVED, not a settable knob
+    assert p.hook_angle == "curiosity" and p.clip_profile == "short" and p.framing == "top"
 
 def test_studio_create_persona_bad_lever_is_clean_error(tmp_path):
     from fanops.studio import personas as sp
@@ -175,6 +175,18 @@ def test_personas_panel_renders_lever_controls(tmp_path):
 def test_compose_empty_brief_is_byte_identical():
     assert compose_persona_instruction(Persona(id="p", voice="bold fan")) == "bold fan"   # brief default "" -> firewall holds
 
+def test_compose_appends_locked_brief_after_voice():
+    out = compose_persona_instruction(Persona(id="p", voice="a devoted fan", brief="Clip the lyrical moments; reach heads who care about wordplay."))
+    assert "a devoted fan" in out and "Clip the lyrical moments" in out
+    assert out.index("a devoted fan") < out.index("Clip the lyrical moments")   # voice first, locked brief after
+
+def test_compose_brief_with_levers_and_voice():
+    out = compose_persona_instruction(Persona(id="p", voice="v", brief="B", content_focus=["hype"], energy="high"))
+    assert out.startswith("v. B") and "hype moments" in out   # base (voice. brief) leads, then the substantive clip-for clause
+
+def test_compose_brief_only():
+    assert compose_persona_instruction(Persona(id="p", brief="just the locked strategy")) == "just the locked strategy"
+
 def test_update_persona_brief_roundtrips_and_clears(tmp_path):
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v")
@@ -183,6 +195,23 @@ def test_update_persona_brief_roundtrips_and_clears(tmp_path):
     update_persona(cfg, "p", brief="")                          # blank CLEARS (authoritative form)
     assert Personas.load(cfg).get("p").brief == ""
 
+def test_hydrate_brief_onto_linked_account(tmp_path):
+    cfg = Config(root=tmp_path)
+    _write(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                  "persona_id": "curator"}],
+           [{"id": "curator", "voice": "tasteful", "brief": "clip artistry; reach crate-diggers"}])
+    a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
+    assert "clip artistry" in compose_persona_instruction(a)    # the locked brief rides downstream via the account
+
+def test_brief_drives_casting_payload(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                       "persona": "bold fan", "persona_id": "p"}])
+    cfg.personas_path.write_text(json.dumps({"personas": [
+        {"id": "p", "voice": "bold fan", "brief": "clip the hardest punchlines for hype kids"}]}))
+    request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    payload = json.loads(request_path(cfg, "moment_casting", "src_1").read_text())
+    assert "clip the hardest punchlines" in payload["personas"][0]["persona"]
 
 
 # ---- transparency — facts derived from the REAL resolvers (length band + lead tags) ----
@@ -221,7 +250,7 @@ def test_personas_panel_renders_transparency_facts(tmp_path):
 # ======================================================================================
 # M3 — THE DIRECTIVE ENGINE. Each structured lever compiles into a SUBSTANTIVE per-dimension
 # instruction injected into THAT dimension's real prompt (not a glued adjective). The operator
-# can OVERRIDE the compiled text per dimension; clip_count is a per-persona clip ceiling. THE
+# can OVERRIDE the compiled text per dimension. THE
 # FIREWALL holds: no levers + no override -> the bare voice, byte-identical to today.
 # ======================================================================================
 from fanops.personas import casting_directive, hook_directive, caption_directive
@@ -231,11 +260,10 @@ def test_casting_directive_is_substantive_not_adjective():
     assert "punchline" in out and ("peak-intensity" in out or "skip calm" in out)
     assert "favors moments" not in out and "energy high" not in out      # the trivial phrasing is GONE
 
-def test_hook_directive_compiles_angle():
-    out = hook_directive(Persona(id="p", voice="bold fan", hook_angle="curiosity"))
-    assert "curiosity gap" in out                                         # the angle compiles into real hook language
+def test_hook_directive_compiles_angle_and_tone():
+    out = hook_directive(Persona(id="p", hook_angle="curiosity", hook_tone="aggressive"))
+    assert "curiosity gap" in out and ("hard" in out or "confrontational" in out)
     assert "hook angle" not in out                                        # substantive, not "hook angle curiosity"
-    assert out.startswith("bold fan")                                     # the voice leads (it carries the register)
 
 def test_hook_directive_is_separate_from_casting():
     # the on-screen hook levers shape the HOOK prompt, NOT the casting prompt (per-dimension split)
@@ -271,22 +299,22 @@ def test_directive_override_hydrates_and_drives_hook_payload(tmp_path):
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
     assert hook_directive(a) == "always a POV hook"                       # override hydrated + drives the hook prompt
 
-
 def test_personas_panel_renders_directive_ui(tmp_path):
-    # the per-persona UI: the compiled directives show per dimension (read-only "what this compiles to")
+    # the per-persona UI: the three compiled directives show per dimension, the override editors render
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity")
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "hook &#8594;" in html or "hook →" in html or "hook →" in html   # per-dimension directive shown (clips/hook/caption)
-    assert 'name="content_focus"' in html and 'name="hook_angle"' in html   # the clean lever controls
+    assert 'name="casting_directive"' in html and 'name="hook_directive"' in html  # the override editors
 
-def test_studio_edit_persona_persists_levers(tmp_path):
+def test_studio_edit_persona_persists_directives(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v")
-    r = sp.edit_persona(cfg, "p", name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity")
+    r = sp.edit_persona(cfg, "p", name="P", voice="v", casting_directive="only freestyles",
+                        hook_directive="POV only")
     assert r.ok
     p = Personas.load(cfg).get("p")
-    assert p.content_focus == ["punchlines"] and p.hook_angle == "curiosity"
+    assert p.casting_directive == "only freestyles" and p.hook_directive == "POV only"
