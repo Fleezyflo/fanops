@@ -35,7 +35,7 @@
     </div>
   </div>
   {% if d.casting.override %}<p class="compose-warn">⚠ clips override is set → content_focus / energy are not used</p>{% endif %}
-  {% if d.hook.override %}<p class="compose-warn">⚠ hook override is set → hook_angle / hook_tone are not used</p>{% endif %}
+  {% if d.hook.override %}<p class="compose-warn">⚠ hook override is set → hook_angle is not used</p>{% endif %}
   {% for n in d.noops %}<p class="compose-warn">⚠ {{ n }}</p>{% endfor %}
 {% elif result and not result.ok %}
   <p class="compose-warn">✗ {{ result.error }}</p>

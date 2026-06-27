@@ -248,13 +248,11 @@ class PersonaCard:
     content_focus: list = field(default_factory=list)
     energy: Optional[str] = None
     hook_angle: Optional[str] = None
-    hook_tone: Optional[str] = None
     clip_profile: Optional[str] = None
     framing: Optional[str] = None
     instruction: str = ""              # the COMPILED casting directive (the headline "AI reads ->")
-    # M2: the LOCKED brief + the TRANSPARENCY facts (length band + lead tags) derived from the REAL resolvers
-    # — so the operator sees, on the card, exactly what the config produces and what definition is frozen.
-    brief: str = ""
+    # TRANSPARENCY facts (length band + lead tags) derived from the REAL resolvers — so the operator sees, on
+    # the card, exactly what the config produces.
     length_band: str = ""
     lead_tags: list = field(default_factory=list)
     # M3 DIRECTIVE ENGINE: the COMPILED per-dimension directive the LLM actually reads (so the operator sees
@@ -322,8 +320,8 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
                          content_focus=list(p.content_focus), energy=p.energy, hook_angle=p.hook_angle,
-                         hook_tone=p.hook_tone, clip_profile=p.clip_profile, framing=facts["framing"],
-                         instruction=compose_persona_instruction(p), brief=getattr(p, "brief", "") or "",
+                         clip_profile=p.clip_profile, framing=facts["framing"],
+                         instruction=compose_persona_instruction(p),
                          length_band=facts["length_band"], lead_tags=facts["lead_tags"],
                          hook_text=hook_directive(p), caption_text=caption_directive(p),
                          casting_override=getattr(p, "casting_directive", "") or "",

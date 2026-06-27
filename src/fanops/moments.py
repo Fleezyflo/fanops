@@ -198,7 +198,7 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     src = led.sources[source_id]
     # Per-account voices reach the frame-seeing hook author so IT writes each handle's on-screen hook
     # (the root fix). Only accounts WITH a persona ride along; none -> [] -> no per-persona prompt block.
-    personas = ([{"handle": a.handle, "persona": instr}        # the HOOK directive (hook_angle/hook_tone + voice; no levers -> bare voice)
+    personas = ([{"handle": a.handle, "persona": instr}        # the HOOK directive (hook_angle + voice; no levers -> bare voice)
                  for a in accounts.accounts if (instr := hook_directive(a))]
                 if accounts is not None else [])
     # P4(c): cross-surface union of gated winning hook STYLES (the SAME signal caption uses). [] when the

@@ -49,7 +49,7 @@ def test_catalog_covers_every_validated_vocab_no_orphan_options():
 def test_breakdown_text_is_exactly_the_compiler_output(tmp_path):
     cfg = Config(root=tmp_path)
     for p in (Persona(id="p", voice="a devoted fan", content_focus=["punchlines"], energy="high",
-                      hook_angle="curiosity", hook_tone="playful"),
+                      hook_angle="curiosity"),
               Persona(id="q", voice="v"),
               Persona(id="r", casting_directive="hand-written override", hook_angle="fomo")):
         d = compose_breakdown(cfg, p)
@@ -68,7 +68,7 @@ def test_breakdown_fragment_text_is_substring_of_the_directive(tmp_path):
     # must appear verbatim in the dimension's authoritative text, else a clause-map edit would desync the badges
     cfg = Config(root=tmp_path)
     p = Persona(id="p", voice="a devoted fan", content_focus=["punchlines", "emotional"], energy="high",
-                hook_angle="curiosity", hook_tone="playful")
+                hook_angle="curiosity")
     d = compose_breakdown(cfg, p)
     for dim in ("casting", "hook"):
         for frag in d[dim]["fragments"]:
@@ -77,7 +77,7 @@ def test_breakdown_fragment_text_is_substring_of_the_directive(tmp_path):
 def test_breakdown_override_shadows_structured_levers(tmp_path):
     cfg = Config(root=tmp_path)
     d = compose_breakdown(cfg, Persona(id="p", hook_directive="my exact hook brief",
-                                       hook_angle="curiosity", hook_tone="playful"))
+                                       hook_angle="curiosity"))
     assert d["hook"]["override"] is True
     assert set(d["hook"]["shadowed"]) == {"hook_angle"}               # the angle is DEAD under an override — surfaced, not hidden
     assert d["hook"]["text"] == "my exact hook brief"

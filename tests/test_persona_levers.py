@@ -9,7 +9,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState
 from fanops.accounts import Accounts, Account
 from fanops.personas import (Persona, compose_persona_instruction, add_persona, update_persona, Personas,
-                             CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, HOOK_TONES)
+                             CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES)
 from fanops.agentstep import request_path
 from fanops.casting import request_moment_casting
 import pytest
@@ -48,10 +48,10 @@ def test_compose_ignores_cut_levers_in_text():
 def test_add_persona_persists_levers(tmp_path):
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="Curator", voice="tasteful crate-digger", content_focus=["storytelling", "visual"],
-                energy="low", hook_angle="emotional", hook_tone="restrained", clip_profile="long", framing="center")
+                energy="low", hook_angle="emotional", clip_profile="long", framing="center")
     p = Personas.load(cfg).get("curator")
     assert p.content_focus == ["storytelling", "visual"] and p.energy == "low"
-    assert p.hook_angle == "emotional" and p.hook_tone == "restrained"
+    assert p.hook_angle == "emotional"
     assert p.clip_profile == "long" and p.framing == "center"
 
 def test_add_persona_rejects_unknown_lever(tmp_path):
@@ -69,7 +69,7 @@ def test_update_persona_changes_levers_only_when_passed(tmp_path):
     assert p.voice == "v" and p.energy == "low" and p.hook_angle == "challenge"
 
 def test_lever_vocabularies_are_frozensets():
-    for v in (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, HOOK_TONES):
+    for v in (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES):
         assert isinstance(v, frozenset) and v
 
 
@@ -84,7 +84,7 @@ def test_hydrate_levers_onto_linked_account(tmp_path):
     _write(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
                   "persona_id": "curator"}],
            [{"id": "curator", "voice": "tasteful", "content_focus": ["storytelling"], "energy": "low",
-             "hook_angle": "emotional", "hook_tone": "restrained", "clip_profile": "long", "framing": "center"}])
+             "hook_angle": "emotional", "clip_profile": "long", "framing": "center"}])
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
     assert a.persona == "tasteful" and a.content_focus == ["storytelling"] and a.energy == "low"
     assert a.hook_angle == "emotional" and a.clip_profile == "long" and a.framing == "center"
@@ -175,16 +175,6 @@ def test_personas_panel_renders_lever_controls(tmp_path):
 def test_compose_empty_brief_is_byte_identical():
     assert compose_persona_instruction(Persona(id="p", voice="bold fan")) == "bold fan"   # brief default "" -> firewall holds
 
-def test_update_persona_brief_roundtrips_and_clears(tmp_path):
-    cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v")
-    update_persona(cfg, "p", brief="locked strategy text")
-    assert Personas.load(cfg).get("p").brief == "locked strategy text"
-    update_persona(cfg, "p", brief="")                          # blank CLEARS (authoritative form)
-    assert Personas.load(cfg).get("p").brief == ""
-
-
-
 # ---- transparency — facts derived from the REAL resolvers (length band + lead tags) ----
 def test_persona_facts_resolve_from_real_resolvers(tmp_path):
     from fanops.personas import persona_facts
@@ -201,12 +191,12 @@ def test_persona_facts_default_length_when_unset(tmp_path):
     f = persona_facts(cfg, Persona(id="p", voice="v"))
     assert f["length_band"] == "12-22s" and f["framing"] is None     # band_for(None) -> TALK default (pipeline-faithful)
 
-def test_personas_page_exposes_facts_and_brief(tmp_path):
+def test_personas_page_exposes_facts(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", clip_profile="long", brief="locked strategy")
+    add_persona(cfg, name="P", voice="v", clip_profile="long")
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
-    assert card.length_band == "28-45s" and card.brief == "locked strategy"
+    assert card.length_band == "28-45s"
     assert isinstance(card.lead_tags, list)
 
 def test_personas_panel_renders_transparency_facts(tmp_path):
