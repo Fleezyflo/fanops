@@ -192,13 +192,14 @@ _DISCOVERY_SET = {t for v in _DISCOVERY.values() for t in v}
 
 def _tag_source(tag: str, *, content_set: set, corpus_set: set, store_set: set) -> str:
     """The provenance label for ONE shipped tag — the real signal it traces to. Priority (highest first):
-    content > corpus > region > reach-store > discovery > genre-floor. Never empty (genre-floor is the
-    catch-all for a frozen-pool backfill tag), so a sourceless tag — pure theater — cannot ship. (M3: the
-    `lean` source was retired with tag_lean; a former-lean tag now traces to `corpus`.)"""
+    content > corpus > region > graph-reach > discovery > genre-floor. Never empty (genre-floor is the
+    catch-all for a frozen-pool backfill tag), so a sourceless tag — pure theater — cannot ship. `graph-reach`
+    means the tag traces to the live Meta Graph reach store (the SOLE judge of a hashtag — refresh_store ranks
+    the store by platform reach, never by a post that used the tag). (M3: the `lean` source was retired.)"""
     if tag in content_set: return "content"
     if tag in corpus_set: return "corpus"
     if tag in _ARABIC_SET: return "region"
-    if store_set and tag in store_set: return "reach-store"
+    if store_set and tag in store_set: return "graph-reach"
     if tag in _DISCOVERY_SET: return "discovery"
     return "genre-floor"
 
@@ -207,7 +208,7 @@ def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: st
                         corpus: list[str] | None = None,
                         content: list[str] | None = None) -> tuple[list[str], dict[str, str]]:
     """vet_hashtags + a provenance `source` per shipped tag. SAME selection as vet_hashtags (DRY — it
-    calls it), then labels each kept tag by the signal it traces to (content|corpus|region|reach-store|
+    calls it), then labels each kept tag by the signal it traces to (content|corpus|region|graph-reach|
     discovery|genre-floor). This proves every shipped tag is evidence-backed — the hashtag-axis instance
     of the operator's 'every knob real, no theater' rule."""
     out = vet_hashtags(tags, platform, language, max_tags,
