@@ -25,6 +25,12 @@ compose = ["moviepy>=2.0"]
 # extra, isolate_vocals returns RAW audio and transcribe falls back to the legacy `whisper` CLI, so a
 # no-[asr] install transcribes exactly as before. certifi ships the CA bundle (macOS model-download fix).
 asr = ["demucs>=4.0", "faster-whisper>=1.0", "certifi"]
+# Subject-aware reframe (smart framing): OpenCV detects the dominant face per cut window so the 9:16 crop
+# follows the subject instead of the blind top/center guess. OPTIONAL + lazy + FAIL-OPEN like the others —
+# `pip install -e .` stays OpenCV-free; only `.[framing]` pulls it (numpy already comes via [compose]).
+# fanops.framing imports cv2 lazily and returns None when absent, so a no-[framing] install crops centered
+# exactly as before. headless wheel = no GUI/Qt deps (it only reads frames + detects boxes).
+framing = ["opencv-python-headless>=4.9"]
 
 [project.scripts]
 fanops = "fanops.cli:main"
