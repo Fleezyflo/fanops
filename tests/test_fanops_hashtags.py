@@ -114,3 +114,20 @@ def test_cmd_hashtags_discover_no_personas(tmp_path, capsys):
     from fanops.fanops_hashtags import cmd_hashtags_discover
     rc = cmd_hashtags_discover(Config(root=tmp_path))
     assert rc == 0 and "no personas" in capsys.readouterr().out.lower()
+
+
+# --- WS2: the run loop refreshes the Graph-reach store on a throttle (constant update), fail-open.
+def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
+    import os
+    from fanops.fanops_hashtags import refresh_store_if_due
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    cfg = Config(root=tmp_path)
+    assert refresh_store_if_due(cfg)["refreshed"] is False       # no Meta creds -> clean no-op
+    assert not cfg.hashtags_path.exists()
+    monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    assert refresh_store_if_due(cfg)["refreshed"] is True        # no store yet -> writes (fail-open frozen floor)
+    assert cfg.hashtags_path.exists()
+    assert refresh_store_if_due(cfg, max_age_s=43200)["refreshed"] is False   # just written -> fresh -> throttled
+    old = cfg.hashtags_path.stat().st_mtime - 100000
+    os.utime(cfg.hashtags_path, (old, old))
+    assert refresh_store_if_due(cfg, max_age_s=10)["refreshed"] is True       # stale -> refresh again

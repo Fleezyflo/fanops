@@ -761,6 +761,18 @@ def _dispatch(cfg: Config, args) -> int:
                     led = apply_p4_dim_bias(led, cfg)
             except Exception as e:
                 get_logger(cfg)("p4_dim_bias", "-", "error", err=str(e)[:120])
+        # WS2: constant Graph-reach hashtag store update — refresh at most once per cadence (12h), throttled by
+        # the store mtime so the 10-min publish cadence doesn't hammer the 30/7-day Graph budget. NOT gated on
+        # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —
+        # only on Meta creds, handled inside the helper. Its OWN try/except; refresh_store_if_due never raises,
+        # so the unattended run can never break on a hashtag refresh.
+        try:
+            from fanops.fanops_hashtags import refresh_store_if_due
+            r = refresh_store_if_due(cfg)
+            if r.get("refreshed"):
+                get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
+        except Exception as e:
+            get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
         # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
         # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
         _heartbeat(cfg, s); print(s); return 0

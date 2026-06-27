@@ -62,6 +62,24 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     return {"written": True, "measured": len(measured), "harvested": len(harvested), "total": len(merged)}
 
 
+def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=None) -> dict:
+    """Constant-update hook the autonomous run loop calls each tick: refresh the Graph-reach store at most once
+    per `max_age_s` (default 12h). Needs Meta creds (else a clean no-op — the store is a Graph artifact). Throttled
+    by the store file's mtime so a 10-minute publish cadence does not hammer the 30/7-day ig_hashtag_search budget;
+    across ticks the budget window rolls, so candidates rotate. FAIL-OPEN: any error -> a reason, NEVER raises — it
+    must never crash the unattended run (independent of the publish backend; not gated on is_live_backend)."""
+    import time
+    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+        return {"refreshed": False, "reason": "no Meta creds"}
+    try:
+        p = cfg.hashtags_path
+        if p.exists() and (time.time() - p.stat().st_mtime) < max_age_s:
+            return {"refreshed": False, "reason": "fresh"}
+        return {"refreshed": True, **refresh_store(cfg, get=get, now=now)}
+    except Exception as exc:
+        return {"refreshed": False, "reason": f"error: {str(exc)[:120]}"}
+
+
 def cmd_hashtags_refresh(cfg: Config) -> int:
     """`fanops hashtags refresh` — rebuild the reach-ranked store from LIVE Meta Graph reach (harvest ->
     measure -> rank). Writes ONLY 00_control/hashtags.json; needs no ledger and no learn-doctor verdict.
