@@ -360,9 +360,16 @@ def _publish_safe(cfg: Config, log) -> None:
         log("publish", "-", "error", err=str(e)[:120])
 
 
+# WS2 (audit x-f2/xc-3): the ONE canonical list of agent-gate kinds. Every surface that enumerates gates —
+# the awaiting summary, the convergence check, the LOUD blocked-note, the run.log breadcrumb, `fanops status` —
+# derives from THIS so a future 5th gate cannot be silently omitted from any of them (the bug was a 4th gate,
+# moment_casting, added to the awaiting dict but never to the operator-facing surfaces). Order = pipeline order.
+GATE_KINDS = ("moments", "moment_hooks", "moment_casting", "captions")
+
+
 class AwaitingCounts(TypedDict):
     """The per-kind count of agent gates still awaiting a responder answer (the run loop converges only
-    when all are 0). Keys mirror responder._SCHEMA / agentstep.pending kinds."""
+    when all are 0). Keys mirror GATE_KINDS / responder._SCHEMA / agentstep.pending kinds."""
     moments: int
     moment_hooks: int
     moment_casting: int
@@ -421,10 +428,9 @@ def _build_summary(cfg: Config, before: set) -> RunSummary:
         # All three agent-gate kinds the responder answers (responder._SCHEMA): moments (pick) blocks the
         # hook gate, moment_hooks blocks the clip/caption stages, captions blocks crosspost — so `fanops
         # run` must see every one to know it has NOT converged.
-        "awaiting": {"moments": len(pending(cfg, kind="moments")),
-                     "moment_hooks": len(pending(cfg, kind="moment_hooks")),
-                     "moment_casting": len(pending(cfg, kind="moment_casting")),   # P1: the run loop must WAIT for casting
-                     "captions": len(pending(cfg, kind="captions"))},
+        # WS2: built from GATE_KINDS (the single source) so every gate — incl. moment_casting (P1: the run loop
+        # must WAIT for casting) and any future kind — is counted without a per-call edit here.
+        "awaiting": {k: len(pending(cfg, kind=k)) for k in GATE_KINDS},
     }
     write_digest(led, cfg)                               # read-only reporting, same snapshot, OUTSIDE the lock
     return summary

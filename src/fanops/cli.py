@@ -11,7 +11,7 @@ from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadErr
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState
-from fanops.pipeline import advance
+from fanops.pipeline import advance, GATE_KINDS
 from fanops.ingest import ingest_drops, download_url
 from fanops.digest import write_digest
 from fanops.agentstep import pending
@@ -29,10 +29,11 @@ def _gates_blocked_note(s) -> str | None:
     from 'nothing to do' (which the bare summary buries). None when converged / no status, so the
     caller can `if (note := ...)` unconditionally."""
     aw = (s or {}).get("awaiting", {})
-    # All three agent gates block downstream work: moments (pick) blocks the hook gate, moment_hooks
-    # blocks the clip/caption stages, captions blocks crosspost — a run that ends with ANY open has NOT
-    # converged, so each raises the same loud signal (a stuck hook gate must never read as convergence).
-    open_gates = {k: v for k in ("moments", "moment_hooks", "captions") if (v := aw.get(k, 0))}
+    # WS2 (audit x-f2): EVERY agent gate blocks downstream work — moments (pick) blocks the hook gate,
+    # moment_hooks blocks the clip/caption stages, moment_casting blocks crosspost, captions blocks crosspost.
+    # Iterate the awaiting dict itself (built from pipeline.GATE_KINDS) so a stuck moment_casting (the bug) — or
+    # any future gate — raises the same loud signal; a hardcoded subset let a wedged casting gate read as converged.
+    open_gates = {k: v for k, v in aw.items() if v}
     if open_gates:
         detail = " ".join(f"{k}={v}" for k, v in open_gates.items())
         return (f"gates STILL BLOCKED after the run loop: {detail} — the responder is not clearing "
@@ -61,9 +62,9 @@ def cmd_status(cfg: Config) -> int:
           # so the operator sees them without opening the digest.
           f"needs_reconcile={len(led.posts_in_state(PostState.needs_reconcile))} "
           f"backend={cfg.poster_backend} "
-          f"awaiting_moments={len(pending(cfg, kind='moments'))} "
-          f"awaiting_moment_hooks={len(pending(cfg, kind='moment_hooks'))} "
-          f"awaiting_captions={len(pending(cfg, kind='captions'))}")
+          # WS2 (audit xc-3): one awaiting_<kind>= per GATE_KINDS (the single source) so a stuck moment_casting
+          # gate is visible on `fanops status` — previously only moments/moment_hooks/captions printed.
+          + " ".join(f"awaiting_{k}={len(pending(cfg, kind=k))}" for k in GATE_KINDS))
     return 0
 
 def cmd_track(cfg: Config, window: str) -> int:
@@ -720,8 +721,7 @@ def _dispatch(cfg: Config, args) -> int:
         # crash; the distinct stderr line + run.log event is what monitoring greps.
         if (note := _gates_blocked_note(s)):
             print(note, file=sys.stderr)
-            get_logger(cfg)("run", "-", "gates_blocked",
-                            moments=s["awaiting"]["moments"], captions=s["awaiting"]["captions"])
+            get_logger(cfg)("run", "-", "gates_blocked", **s["awaiting"])   # WS2: log EVERY gate kind, not just moments/captions
         # E1: post-loop learning pass — close the feedback loop ONCE per `run` after respond+advance
         # converges. Gated by the identical reconcile guard (pipeline.py:106): live backend + key
         # only. In dryrun (default) the guard short-circuits and the pass is NEVER entered. Runs in
