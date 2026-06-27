@@ -379,6 +379,16 @@ class Config:
         return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
 
     @property
+    def smart_framing(self) -> bool:
+        # Subject-aware reframe (framing.subject_focus): slide the 9:16 crop onto the detected subject
+        # instead of the blind top/center bias. DEFAULT ON — but only because the pass is FAIL-OPEN: with
+        # the [framing] extra absent or no subject detected, subject_focus returns None and the render
+        # crops centered exactly as today, so default-on is never worse than the old behavior. Only the
+        # explicit off-words disable it. Mirrors visual_start (the weakest link closed by default).
+        v = (os.getenv("FANOPS_SMART_FRAMING") or "").strip().lower()
+        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
+
+    @property
     def whisper_model(self) -> str:
         # The legacy `whisper` CLI model — used ONLY when faster-whisper (the [asr] extra) is absent.
         # Default "turbo" (fast, good timestamps). Pin a smaller model (e.g. "tiny"/"base") for
