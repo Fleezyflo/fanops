@@ -7,43 +7,29 @@ Everything here is PURE + duck-typed (serves a Persona OR a hydrated Account); a
 re-exported from fanops.personas so every existing `from fanops.personas import ...` keeps working."""
 from __future__ import annotations
 from fanops.config import Config
+from fanops import persona_levers as _levers
 
 # THE DIRECTIVE ENGINE (M3). Each structured lever value compiles into a SUBSTANTIVE instruction CLAUSE the
 # pipeline's prompt actually acts on — real selection/hook language, NOT a glued adjective ("favors moments:
 # punchlines"). content_focus + energy -> the CASTING directive; hook_angle -> the HOOK directive.
 # These clauses are the curated DEFAULT; a persona may OVERRIDE the compiled text per dimension (the operator
 # owns the words). clip_profile/framing/tag_lean/corpus stay deterministic (cut + hashtags), NOT in this text.
-_FOCUS_CLAUSE = {
-    "punchlines": "moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line",
-    "emotional": "moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels",
-    "hype": "the highest-energy hype moments — the hardest delivery, the beat drop, the room going up",
-    "storytelling": "moments that tell a story or reveal something — an origin, a turn, a payoff",
-    "visual": "visually arresting moments — a strong scene, motion, or setting, not audio alone",
-    "bold-statement": "a bold or contrarian statement that stops the scroll",
-}
-_ENERGY_CLAUSE = {
-    "low": "Favor calmer, more introspective moments over loud ones.",
-    "medium": "",
-    "high": "Strongly prefer peak-intensity moments; skip calm, low-energy passages.",
-}
-_ANGLE_CLAUSE = {
-    "curiosity": "open a curiosity gap the viewer has to close",
-    "challenge": "dare or challenge the viewer to react",
-    "emotional": "name the high-arousal feeling the clip gives the viewer",
-    "result-first": "open on the payoff, then reveal how it got there",
-    "fomo": "carry genuine scarcity — a one-time, leaked, or unreleased drop",
-}
+# M1: the clause maps are PROJECTIONS of the single lever registry (fanops.persona_levers) — the SAME
+# declaration personas' vocabularies + lever_catalog() derive from, so the three can no longer drift.
+_FOCUS_CLAUSE = _levers.clause_map("content_focus")
+_ENERGY_CLAUSE = _levers.clause_map("energy")
+_ANGLE_CLAUSE = _levers.clause_map("hook_angle")
 
 
 # P2: DERIVE a per-account CUT default (length tier + framing) from the persona's already-set content_focus +
 # energy, so DEFINING a distinct persona IS defining a distinct CLIP — no hand-set clip_profile needed. The
 # wire (hydrate -> resolve_clip_profile/top_bias -> account_render_spec.wants_cut -> render_account_cut) is
 # already whole; this only supplies its inputs. content_focus -> length (a punchline is a quick rewatchable
-# unit; a story needs room), energy -> framing (high=center action, low=top head-safe). Priority ORDER below
-# is longer-bias-first, so a multi-focus persona derives deterministically (story+punchlines -> long).
-_FOCUS_PROFILE = {"storytelling": "long", "emotional": "medium", "visual": "medium",
-                  "punchlines": "short", "hype": "short", "bold-statement": "short"}
-_ENERGY_FRAMING = {"high": "center", "low": "top"}   # medium -> absent -> None (no opinion -> global crop)
+# unit; a story needs room), energy -> framing (high=center action, low=top head-safe). M1: both maps are
+# registry projections; _FOCUS_PROFILE is ordered LONGER-bias-first (the registry sorts by tier), so a
+# multi-focus persona derives deterministically via next() (story+punchlines -> long).
+_FOCUS_PROFILE = dict(_levers.focus_profile_map())
+_ENERGY_FRAMING = _levers.energy_framing_map()        # medium -> absent -> None (no opinion -> global crop)
 
 
 def derive_cut_spec(p):
@@ -123,32 +109,16 @@ def compose_persona_instruction(p) -> str:
 
 
 def lever_catalog() -> list[dict]:
-    """EXPOSE THE LEVERS — the operator-facing catalog of every persona lever and what each option DOES,
-    sourced from the SAME engine constants the compilers/resolvers use (the clause maps above, bands.band_for,
-    hashtags._LEANS), so the effect the operator reads is EXACTLY what the pipeline acts on (zero drift; a
-    parity test forbids divergence). Pure, ordered (the editor + the reference render it). Each lever:
-    {key, label, kind, stage, does, options:[{value, effect}]}; corpus has no enumerated options. Per-PERSONA
-    the cut LENGTH is DERIVED from content_focus (no per-persona knob); `clip_profile` remains here only as the
-    GLOBAL clip-length lever (the Go-Live default) — its band labels feed that control. Hashtags are owned by
+    """EXPOSE THE LEVERS — the operator-facing catalog of every persona lever and what each option DOES. M1:
+    DERIVED from the single lever registry (fanops.persona_levers.build_catalog), the SAME declaration the
+    clause maps + the persona vocabularies project from, so the effect the operator reads is EXACTLY what the
+    pipeline acts on (zero drift — structural now, not a parity promise). Pure, ordered (the editor + the
+    reference render it). Each lever: {key, label, kind, stage, does, options:[{value, effect}]}; corpus has no
+    enumerated options. Per-PERSONA the cut LENGTH is DERIVED from content_focus (no per-persona knob);
+    `clip_profile` remains here only as the GLOBAL clip-length lever (the Go-Live default) — its band labels
+    feed that control (effect computed lazily from bands.band_for inside build_catalog). Hashtags are owned by
     the curated corpus; there is no tag_lean/hook_tone/clip_count persona lever."""
-    from fanops.bands import band_for
-    _profiles = ["short", "medium", "long", "talk", "song"]
-    return [
-        {"key": "content_focus", "label": "Clips · favors moments", "kind": "multi", "stage": "casting",
-         "does": "which KINDS of moments this account clips for (casting prompt) — and DERIVES the cut LENGTH",
-         "options": [{"value": k, "effect": v} for k, v in _FOCUS_CLAUSE.items()]},
-        {"key": "energy", "label": "Energy", "kind": "select", "stage": "casting",
-         "does": "biases moment selection toward calm or peak-intensity",
-         "options": [{"value": k, "effect": (v or "no change — any energy")} for k, v in _ENERGY_CLAUSE.items()]},
-        {"key": "hook_angle", "label": "Hook angle", "kind": "select", "stage": "hook",
-         "does": "the strategy of the burned on-screen hook (the register comes from the voice)",
-         "options": [{"value": k, "effect": v} for k, v in _ANGLE_CLAUSE.items()]},
-        {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
-         "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)",
-         "options": [{"value": n, "effect": f"{band_for(n).lo:g}-{band_for(n).hi:g}s cuts"} for n in _profiles]},
-        {"key": "hashtag_corpus", "label": "Corpus", "kind": "tags", "stage": "caption",
-         "does": "your curated tags LEAD the caption hashtags", "options": []},
-    ]
+    return _levers.build_catalog()
 
 
 def _casting_fragments(p) -> list[dict]:
