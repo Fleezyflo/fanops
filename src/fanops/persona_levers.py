@@ -60,6 +60,50 @@ LEVER_REGISTRY = [
 ]
 
 
+# -------------------------------------------------------------------------------------------------------------
+# M2 COHERENCE FACETS — the model-FIELD coherence declaration the fail-closed guard reads. This is a SEPARATE
+# namespace from LEVER_REGISTRY on purpose: LEVER_REGISTRY's keys are the editor CATALOG levers (incl. the
+# GLOBAL `clip_profile` band lever), whereas the guard reasons about PERSONA MODEL FIELDS. Conflating them is
+# the exact over-claim trap (the catalog's global `clip_profile` is NOT the persona `clip_profile` pin). So
+# EDITABILITY here is defined as "the persona save route persists this field" — kept honest by the behavioral
+# editor-parity test — NOT by catalog-key presence.
+PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "intake"})   # identity / research-seed metadata, not a per-clip output lever
+
+# The EDITABLE coherent levers: model field -> the output CHANNEL(s) it owns. Distinctness rule = "<=1 owner per
+# channel". Two levers legitimately own TWO channels each (content_focus -> casting-selection + cut-length;
+# energy -> casting-energy + cut-framing) — still one owner per channel. `voice` owns the freeform register
+# (the base of all three directives, modeled as its own channel). The 6 incoherent fields are deliberately
+# ABSENT (quarantined in the guard): tag_lean/clip_profile/framing/the 3 directives have NO save-route control
+# and/or duplicate a channel an editable lever already owns. M3 removes them from the model entirely.
+PERSONA_EDITABLE_CHANNELS = {
+    "voice": ("voice",),
+    "content_focus": ("casting-selection", "cut-length"),
+    "energy": ("casting-energy", "cut-framing"),
+    "hook_angle": ("hook-angle",),
+    "hashtag_corpus": ("hashtags",),
+}
+
+
+def is_exempt(field: str) -> bool:
+    """True if a model field is an identity/metadata exemption (not a per-clip output lever)."""
+    return field in PERSONA_FIELD_EXEMPT
+
+
+def editable_fields() -> frozenset:
+    """The persona model fields the save route persists (the coherent editable lever set)."""
+    return frozenset(PERSONA_EDITABLE_CHANNELS)
+
+
+def channels_of(field: str) -> tuple:
+    """The output channel(s) an editable lever owns (() for a non-editable field)."""
+    return PERSONA_EDITABLE_CHANNELS.get(field, ())
+
+
+def all_channels() -> frozenset:
+    """Every output channel owned by an editable lever — the distinctness namespace."""
+    return frozenset(ch for chans in PERSONA_EDITABLE_CHANNELS.values() for ch in chans)
+
+
 def lever(key: str) -> dict | None:
     """The registry descriptor for a lever key, or None."""
     return next((lv for lv in LEVER_REGISTRY if lv["key"] == key), None)
