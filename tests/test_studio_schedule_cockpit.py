@@ -71,6 +71,18 @@ def test_get_schedule_shows_integration_publish_sendback_respread(tmp_path):
     assert b"Send back" in html                # un-approve
     assert b"Reschedule all" in html           # routine respread
 
+def test_schedule_row_renders_lazy_clip_preview(tmp_path):
+    # The Schedule bucket previews each clip without re-introducing the 150-<video> perf hit the table was
+    # built to avoid: a collapsed thumbnail (lazy poster) that expands to a preload=none player, mirroring
+    # the Publish-by-hand pattern. ScheduleRow already carries clip_id + post_id, so this is template-only.
+    cfg = Config(root=tmp_path); _seed(cfg, pid="p1", account_id="ig_integ_1")
+    html = _client(cfg).get("/schedule").data.decode()
+    assert "/clip-thumb/clip_1" in html          # the poster frame for the row's clip
+    assert 'loading="lazy"' in html              # the collapsed thumbnail never fetches off-screen
+    assert 'preload="none"' in html              # the player bytes are not fetched until the operator hits play
+    assert "/media/p1" in html                   # expands to this post's (per-account) media
+
+
 def test_schedule_respread_route_moves_posts(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", when=_z(_NOW + timedelta(hours=9)))
     r = _client(cfg).post("/schedule/respread")
