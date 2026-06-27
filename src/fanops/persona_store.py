@@ -60,7 +60,7 @@ _UNSET = object()
 
 
 def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
-                id: str = "", *, content_focus=None,
+                intake: Optional[dict] = None, id: str = "", *, content_focus=None,
                 energy: str = "", hook_angle: str = "", hook_tone: str = "",
                 clip_profile: str = "", framing: str = "", brief: str = "",
                 casting_directive: str = "", hook_directive: str = "", caption_directive: str = "") -> str:
@@ -88,7 +88,7 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
         if any(isinstance(d, dict) and d.get("id") == pid for d in plist):
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""), "tag_lean": lean or None,
-                      "hashtag_corpus": [], "content_focus": focus,
+                      "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
                       "energy": energy_v, "hook_angle": angle_v, "hook_tone": tone_v,
                       "clip_profile": prof_v, "framing": fr_v, "brief": str(brief or ""),
                       "casting_directive": str(casting_directive or ""), "hook_directive": str(hook_directive or ""),
@@ -97,7 +97,7 @@ def add_persona(cfg: Config, name: str, voice: str = "", tag_lean: str = "",
     return pid
 
 
-def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean=_UNSET,
+def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean=_UNSET, intake=_UNSET,
                    content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET, hook_tone=_UNSET,
                    clip_profile=_UNSET, framing=_UNSET, brief=_UNSET, casting_directive=_UNSET,
                    hook_directive=_UNSET, caption_directive=_UNSET) -> str:
@@ -126,6 +126,7 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, tag_lean
                     d["name"] = _nm
                 if voice is not _UNSET: d["voice"] = str(voice or "")
                 if tag_lean is not _UNSET: d["tag_lean"] = ((tag_lean or "").strip().lower() or None)
+                if intake is not _UNSET: d["intake"] = dict(intake or {})
                 if _focus is not _UNSET: d["content_focus"] = _focus
                 if _energy is not _UNSET: d["energy"] = _energy
                 if _angle is not _UNSET: d["hook_angle"] = _angle
