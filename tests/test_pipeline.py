@@ -198,6 +198,63 @@ def test_advance_mutations_are_all_under_a_held_lock(tmp_path, monkeypatch, mock
     assert spy.call_count == 2            # ingest tx + main tx; slow work runs lock-free between them
 
 
+def test_advance_rollback_recovers_warm_artifacts(tmp_path, monkeypatch, mocker):
+    # audit x-f5: a LATE uncaught raise inside the main transaction rolls the WHOLE pass back (deliberate —
+    # never persist a half-applied pass). That is SAFE because the heavy work was warmed OUT OF LOCK: the
+    # transcript artifact survives the rollback and the NEXT pass adopts it instead of re-running whisper.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    _put(cfg.inbox / "vid.mp4", b"V")
+    asr_calls = []
+    def fake(cmd, **kw):
+        joined = " ".join(cmd)
+        if _is_asr(cmd):
+            asr_calls.append(tuple(cmd))                      # count the EXPENSIVE whisper invocations
+            outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+            (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
+                {"language": "en", "segments": [{"start": 14.0, "end": 18.0, "text": "they slept on me"}]}))
+            class R: returncode=0; stderr=""; stdout=""
+            return R()
+        if cmd[0] == "ffprobe":
+            class R:
+                returncode=0; stderr=""
+                stdout = "video" if "codec_type" in joined else "1920\n1080\n20.0\n"
+            return R()
+        if cmd[0] == "ffmpeg" and "null" in cmd:
+            class R: returncode=0; stdout=""; stderr="silence_end: 16.0 | silence_duration: 1.0"
+            return R()
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode=0; stderr=""; stdout=""
+        return R()
+    for mod in ("transcribe", "signals", "clip", "ingest"):
+        mocker.patch(f"fanops.{mod}.subprocess.run", side_effect=fake)
+
+    # PASS 1: force a late uncaught raise from an in-transaction stage -> the whole main transaction rolls back.
+    mocker.patch("fanops.pipeline._stage_structural_hooks", side_effect=RuntimeError("late boom"))
+    import pytest
+    with pytest.raises(RuntimeError, match="late boom"):
+        advance(cfg, base_time="2026-06-02T18:00:00Z")
+    after_p1 = len(asr_calls)
+    src = next(iter(Ledger.load(cfg).sources.values()))
+    src_id = src.id
+    assert src.state is SourceState.catalogued             # rolled back to pre-main-tx state
+    transcript = cfg.agent_io / "transcripts" / f"{Path(src.source_path).stem}.json"
+    assert after_p1 >= 1 and transcript.exists()           # the warm artifact SURVIVED the rollback
+
+    # PASS 2: clean (no forced raise). The source must advance WITHOUT re-running whisper — the warm
+    # transcript is adopted, proving the rolled-back pass's expensive work was recovered, not redone.
+    mocker.stopall()
+    for mod in ("transcribe", "signals", "clip", "ingest"):
+        mocker.patch(f"fanops.{mod}.subprocess.run", side_effect=fake)
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
+    assert Ledger.load(cfg).sources[src_id].state is not SourceState.catalogued   # progressed past catalogued
+    assert len(asr_calls) == after_p1, "whisper re-ran — the warm artifact was not recovered after rollback"
+
+
 def test_advance_persists_progress_when_crosspost_raises(tmp_path, monkeypatch, mocker):
     # AUDIT M2 (hardened, NOT merely subsumed by B1): a raise from the volatile crosspost stage
     # must NOT discard the pass's earlier in-memory progress. Before this guard, a crosspost raise

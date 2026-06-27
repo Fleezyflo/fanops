@@ -118,9 +118,19 @@ def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str,
                           duration=dur or None, created_at=iso_z(datetime.now(timezone.utc)),  # ingest-day anchor (aware)
                           batch_id=batch_id, meta={"bytes": f.stat().st_size}))   # AUDIT: no original_name (PII)
 
+def _inbox_media(inbox: Path) -> set[Path]:
+    """Resolved paths of the media files currently in `inbox` — the snapshot domain for per-file origin
+    correlation (audit c0-f1). Mirrors ingest_drops' own symlink/MEDIA_EXT filter so a before/after delta
+    is apples-to-apples; deliberately skips the has_video_stream probe (a subprocess) — the delta only needs
+    to identify which paths are NEW, and a non-video new file is dropped at ingest anyway."""
+    if not inbox.exists(): return set()
+    return {f.resolve() for f in inbox.rglob("*")
+            if not f.is_symlink() and f.is_file() and f.suffix.lower() in MEDIA_EXT}
+
 def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
                  origin_kind: Literal["native", "third_party"] = "native",
-                 inbox: Path | None = None, batch_id: str | None = None) -> Ledger:
+                 inbox: Path | None = None, batch_id: str | None = None,
+                 origin_paths: set[Path] | None = None) -> Ledger:
     cfg.sources.mkdir(parents=True, exist_ok=True)
     for f in sorted((inbox or cfg.inbox).rglob("*")):     # inbox= lets third-party scan its own staging dir
         # ECC fix #9: skip symlinks BEFORE any probe/copy. f.is_file() follows links, and the copy2
@@ -132,10 +142,16 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
             continue
         if not has_video_stream(f):
             continue                              # audio-only (no video stream): not a clip source (FIX)
-        _catalogue_file(led, cfg, f, origin=origin, origin_kind=origin_kind, batch_id=batch_id)
+        # source_origin is correlated PER-FILE to the actual download (audit c0-f1): when origin_paths is
+        # given (a url pull names the files yt-dlp just produced), ONLY those carry the pull `origin`; any
+        # pre-existing inbox file (a manual drop awaiting `ingest`, or a prior pull's leftover) keeps the
+        # "drop" default instead of being pass-wide mislabeled as this pull's origin. origin_paths=None
+        # (a plain `ingest` / third-party scan) is byte-identical: every file gets the pass `origin`.
+        file_origin = origin if (origin_paths is None or f.resolve() in origin_paths) else "drop"
+        _catalogue_file(led, cfg, f, origin=file_origin, origin_kind=origin_kind, batch_id=batch_id)
     return led
 
-def download_url(cfg: Config, url: str) -> None:
+def download_url(cfg: Config, url: str) -> set[Path]:
     """Network-only half of a URL pull: shell yt-dlp to drop the media into the inbox. Holds NO
     ledger lock — the slow download must run OUTSIDE the ledger transaction (cmd_pull then ingests
     what landed inside a tight transaction), so a download never serializes behind the ledger flock
@@ -144,8 +160,14 @@ def download_url(cfg: Config, url: str) -> None:
     surface the typed, cli-catchable ToolchainMissingError (-> clean exit 2 + 'install yt-dlp').
     A HUNG download is killed at _YTDLP_TIMEOUT; the TimeoutExpired propagates BY DESIGN to
     cli.main's guard (one clean stderr line + exit 2). yt-dlp's partial *.part file is ignored by
-    ingest (not in MEDIA_EXT), so a killed download never catalogues a truncated source."""
+    ingest (not in MEDIA_EXT), so a killed download never catalogues a truncated source.
+
+    RETURNS the resolved media paths THIS download produced (a before/after inbox snapshot, audit c0-f1):
+    cmd_pull threads them into ingest_drops(origin="url", origin_paths=...) so ONLY the pulled files are
+    stamped "url" and a pre-existing manual drop in the same inbox is not mislabeled. Snapshot-diff is
+    deliberate over parsing yt-dlp stdout — version-independent and robust to the merge/post-process rename."""
     cfg.inbox.mkdir(parents=True, exist_ok=True)
+    before = _inbox_media(cfg.inbox)
     try:
         r = subprocess.run(["yt-dlp", "-o", str(cfg.inbox / "%(title).80s.%(ext)s"),
                             "--no-playlist", "--merge-output-format", "mp4", url],
@@ -161,13 +183,14 @@ def download_url(cfg: Config, url: str) -> None:
         tail = (r.stderr or r.stdout or "").strip().splitlines()
         why = tail[-1][:200] if tail else f"exit {r.returncode}"
         raise DownloadError(f"yt-dlp failed (exit {r.returncode}): {why}")
+    return _inbox_media(cfg.inbox) - before          # the media files THIS pull produced (per-file origin domain)
 
 
 def download_source(led: Ledger, cfg: Config, url: str) -> Ledger:
     """Download + ingest in one call (kept for any direct caller/test). The CLI's `pull` command
     splits these (download outside the lock, ingest inside a transaction) — see cli.cmd_pull."""
-    download_url(cfg, url)
-    return ingest_drops(led, cfg, origin="url")
+    produced = download_url(cfg, url)
+    return ingest_drops(led, cfg, origin="url", origin_paths=produced)
 
 def scan_local(roots: list[Path]) -> list[str]:
     out: list[str] = []

@@ -168,10 +168,12 @@ def _quarantine(coll, eid, error_state, stage, exc, log) -> None:
     """The per-unit failure stamp shared by the source/moment/clip stage loops (FIX F03): flip the entity
     to its error state, record the typed reason, and log — so one bad unit is skipped, never wedging the
     whole pass. `coll` is the LIVE ledger collection passed at call time (after any in-block reassignment),
-    so the same object the stage was operating on is the one stamped."""
+    so the same object the stage was operating on is the one stamped. The stamp lands via an IMMUTABLE
+    model_copy(update=...) setter (audit x-f1): these are ledger records, and the day any of Source/Moment/Clip
+    gains frozen=True an in-place `obj.state = ...` would raise INSIDE this except handler and wedge the whole
+    pass — the precise failure F03 added quarantine to prevent. Replacing the collection entry keeps it safe."""
     obj = coll[eid]
-    obj.state = error_state
-    obj.error_reason = f"{type(exc).__name__}: {exc}"
+    coll[eid] = obj.model_copy(update={"state": error_state, "error_reason": f"{type(exc).__name__}: {exc}"})
     log(stage, eid, "error", err=str(exc)[:120])
 
 
@@ -458,6 +460,15 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     # pass is excluded (typed LockBusyError, bounded by timeout), not silently overwritten. (Phase D: the
     # SLOW subprocesses already ran lock-free above; this transaction only flips state + does the cheap
     # gate/crosspost/publish work, so the lock-held window is short.)
+    # WHOLE-PASS ROLLBACK on a late UNCAUGHT raise is DELIBERATE (audit x-f5): Ledger.transaction saves
+    # ONLY on a clean exit, so an exception escaping any stage below discards EVERY in-memory transition this
+    # pass made and leaves the last committed snapshot on disk — a half-applied pass is never persisted
+    # (correctness). The volatile stages whose raise must NOT cost the pass (crosspost/publish) wrap their own
+    # work (AUDIT M2); anything still uncaught rolls the pass back BY DESIGN. This is SAFE despite the expense
+    # because the heavy artifacts (transcripts/renders/composites) were warmed OUT OF LOCK by _prewarm above,
+    # so a rolled-back pass loses only cheap in-memory state-flips: the next pass re-runs the stages, which
+    # fingerprint-SKIP on the warm artifacts and recover the work instead of redoing it (pinned by
+    # test_advance_rollback_recovers_warm_artifacts).
     with Ledger.transaction(cfg) as led:
         # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
         # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in

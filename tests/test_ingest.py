@@ -126,11 +126,12 @@ def test_download_url_surfaces_ytdlp_failure(tmp_path, mocker):
         download_url(cfg, "https://example.com/dead")
 
 def test_download_url_succeeds_on_zero_rc(tmp_path, mocker):
-    # The happy path stays silent: rc 0 -> no raise, download_url returns None as before.
+    # The happy path: rc 0 -> no raise. download_url now returns the media files it produced (audit c0-f1);
+    # a no-op download (yt-dlp wrote nothing — mocked) yields the empty set, never an error.
     cfg = Config(root=tmp_path)
     class R: returncode = 0; stdout = ""; stderr = ""
     mocker.patch("fanops.ingest.subprocess.run", return_value=R())
-    assert download_url(cfg, "https://example.com/ok") is None
+    assert download_url(cfg, "https://example.com/ok") == set()
 
 def test_catalogues_and_probes(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")

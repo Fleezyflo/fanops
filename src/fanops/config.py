@@ -413,6 +413,16 @@ class Config:
         if os.getenv("FANOPS_ASR_MODEL", "").strip(): return self.asr_model
         return "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "medium"
 
+    def whisper_model_for(self, duration_seconds: float | None) -> str:
+        # Duration-aware selection for the LEGACY `whisper` CLI fallback (audit c0-f2) — the analog of
+        # asr_model_for for the [asr]-extra-absent path (CI / air-gapped). An explicit FANOPS_WHISPER_MODEL
+        # pin is the operator's call and wins verbatim; otherwise a short source UPGRADES to large-v3
+        # (accuracy is cheap on little audio) and a long/unknown source holds the fast "turbo" default (lands
+        # under transcribe._WHISPER_TIMEOUT). transcribe._resolve_model still remaps to a cached checkpoint
+        # offline, so this only chooses the IDEAL model. NOT a frugality cap — short sources upgrade.
+        if os.getenv("FANOPS_WHISPER_MODEL", "").strip(): return self.whisper_model
+        return "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "turbo"
+
     @property
     def asr_language(self) -> str:
         # Default "en,ar" — a comma list PINS the candidate languages: the runner enables faster-whisper

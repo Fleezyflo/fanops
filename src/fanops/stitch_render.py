@@ -10,7 +10,7 @@ into operator-approved, rendered structural hooks.
 Both are gated by the caller on `cfg.impact_cut` (default OFF). mining only mutates the ledger, so it
 runs inside the advance transaction; the heavy render in render_approved_stitches runs LOCK-FREE."""
 from __future__ import annotations
-import json
+import contextlib, json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ClipState, StitchState, StitchPlan, stitch_plan_id, Clip
@@ -43,6 +43,24 @@ def _read_fingerprint(cfg: Config, clip_id: str) -> str | None:
         return json.loads((cfg.clips / f"{clip_id}.render.json").read_text()).get("fp")
     except (OSError, json.JSONDecodeError, ValueError):
         return None
+
+
+def _intro_fail_fp(cfg: Config, cid: str) -> str | None:
+    """The fp of the LAST genuine intro-compose failure for this stitch clip (audit c7-f3), or None. The
+    lock-free prewarm writes {cid}.introfail.json ONLY when it ATTEMPTED prepend_intro and got no composite;
+    the in-lock commit uses it to tell a real unrenderable pairing (burn the retry cap) from a transient/
+    structural miss where the prewarm never attempted (keep waiting — no burn)."""
+    try:
+        return json.loads((cfg.clips / f"{cid}.introfail.json").read_text()).get("fp")
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def _clear_intro_fail(cfg: Config, cid: str) -> None:
+    """Drop the genuine-failure marker — on a warm adopt or a later successful prewarm, so a now-renderable
+    pairing isn't held back by a stale failure from an earlier pass."""
+    with contextlib.suppress(OSError):
+        (cfg.clips / f"{cid}.introfail.json").unlink()
 
 
 # M5: the routine pass emits at most this many NEW suggestions per pass — an anti-spam UX bound (PRD),
@@ -88,6 +106,10 @@ def _intro_tease_candidates(led: Ledger, cfg: Config, log) -> list[tuple]:
         matches = m.intro_matches or []
         if not matches:                                  # matcher not answered (or no usable pairing) -> benign skip
             continue
+        # MVP decision (audit c7-f2): pair ONLY the top (best-fit) match — rank-2..N are NOT held as a
+        # fallback. If the top pairing later dismisses (base superseded) or parks (compose unrenderable), a
+        # subsequent mine pass re-pairs from the then-current matches; there is deliberately no automatic
+        # rank-2 promotion in the producer. A rank-2-on-dismiss fallback is a deferred fast-follow, not a bug.
         top = matches[0]                                 # ingest sorted best-fit first
         for c in list(led.clips.values()):
             if c.parent_id != m.id or c.state in _NON_BASE_STATES:
@@ -236,7 +258,8 @@ def _prewarm_intro(led: Ledger, cfg: Config, p: StitchPlan, log) -> None:
         return
     fp = _intro_compose_fp(led, base, intro, p.plan_params)
     if out_path.exists() and out_path.stat().st_size > 0 and _read_fingerprint(cfg, cid) == fp:
-        return                                            # already warm
+        _clear_intro_fail(cfg, cid); return               # already warm
+    fail_marker = cfg.clips / f"{cid}.introfail.json"
     try:
         ok = prepend_intro(base.path, intro.source_path, str(out_path),
                            tease_text=p.plan_params.get("tease_text", ""),
@@ -244,17 +267,24 @@ def _prewarm_intro(led: Ledger, cfg: Config, p: StitchPlan, log) -> None:
                            log=lambda m: log("intro_tease", p.id, "warn", err=m))
         if ok:                                            # stamp the skip fingerprint ONLY on a real composite
             (cfg.clips / f"{cid}.render.json").write_text(json.dumps({"fp": fp}))
+            _clear_intro_fail(cfg, cid)                   # success clears any prior genuine-failure marker
+        else:                                             # ATTEMPTED + produced no composite -> a GENUINE failure
+            fail_marker.write_text(json.dumps({"fp": fp}))   # (audit c7-f3: lets the commit burn the cap, not a transient miss)
     except Exception as e:                                # belt-and-braces: prepend_intro itself fails open, so rare
+        with contextlib.suppress(OSError):
+            fail_marker.write_text(json.dumps({"fp": fp}))   # an attempt that raised is still a genuine compose failure
         log("intro_tease", p.id, "warn", err=str(e)[:120])
 
 
 def render_approved_stitches(led: Ledger, cfg: Config, strategies=None) -> Ledger:
-    """In-lock commit for each approved plan (of an ENABLED format). COMMON supersede precedence (PRD, CLOSED
-    requirement) runs first for every strategy: base clip gone -> `error` "base clip missing"; base fingerprint
-    drifted -> auto-`dismissed` "base superseded"; a LIVE base post exists -> `error` "cannot supersede a live
-    post". Then the render DISPATCHES by strategy_key (impact_cut -> render_moment cut-window; intro_tease ->
-    adopt the prewarmed compose composite). A successful commit sets the plan `in_use` and RETIRES any
-    still-queued base post; a failed render errors the plan (the bare clip already shipped upstream)."""
+    """In-lock commit for each approved plan (of an ENABLED format). COMMON correctness precheck (`_precheck`)
+    runs first for every strategy: base clip gone -> `error` "base clip missing"; base fingerprint drifted ->
+    auto-`dismissed` "base re-rendered since planned". There is deliberately NO live-base-post guard (audit
+    c7-f1): a stitch is ADDITIVE for fan accounts — the bare clip and the stitch each ship, so an already-
+    published base does NOT block its stitch (see `_precheck` + test_intro_render_renders_even_with_live_base_post).
+    Then the render DISPATCHES by strategy_key (impact_cut -> render_moment cut-window; intro_tease -> adopt the
+    prewarmed compose composite). A successful commit sets the plan `in_use` and leaves the bare base post to
+    ship too; a failed render errors the plan (the bare clip already shipped upstream)."""
     from fanops.clip import render_moment
     for p in _approved_plans(led, strategies):
         base = _precheck(led, cfg, p)
@@ -309,11 +339,18 @@ def _commit_intro(led: Ledger, cfg: Config, p: StitchPlan, base: Clip) -> None:
         led.clips[cid] = Clip(id=cid, parent_id=base.parent_id, state=ClipState.stitch_draft,
                               path=str(out_path), aspect=base.aspect)
         p.state = StitchState.in_use                      # additive: the bare base post is left to ship too
+        _clear_intro_fail(cfg, cid)                       # warm: any earlier failure marker is moot
         return
-    # not warm: the prewarm ran first this pass and produced no valid composite -> a FAILED attempt. Bound the
-    # retries (flaky matcher pair / unrenderable intro asset) — park at the cap instead of looping forever.
-    get_logger(cfg)("intro_tease", p.id, "warn", err=f"prewarm not ready (attempt {p.render_attempts + 1}/{MAX_INTRO_RENDER_ATTEMPTS})")   # breadcrumb: the silent retry-burn was invisible until the cap errored
-    p.render_attempts += 1
-    if p.render_attempts >= MAX_INTRO_RENDER_ATTEMPTS:
-        p.state = StitchState.error
-        p.error_reason = f"intro compose failed after {p.render_attempts} attempts"
+    # not warm — distinguish (audit c7-f3) a GENUINE compose failure (the lock-free prewarm ATTEMPTED
+    # prepend_intro for THIS fp and produced no composite -> introfail marker) from a TRANSIENT/structural
+    # miss (the prewarm hasn't produced it yet, or skipped because the base wasn't a valid base this pass ->
+    # no marker). Only a genuine failure burns the bounded retry cap and parks; a transient miss WAITS, so a
+    # renderable pair is never parked as "unrenderable" just because the prewarm hadn't caught up.
+    if _intro_fail_fp(cfg, cid) == fp:
+        get_logger(cfg)("intro_tease", p.id, "warn", err=f"compose failed (attempt {p.render_attempts + 1}/{MAX_INTRO_RENDER_ATTEMPTS})")
+        p.render_attempts += 1
+        if p.render_attempts >= MAX_INTRO_RENDER_ATTEMPTS:
+            p.state = StitchState.error
+            p.error_reason = f"intro compose failed after {p.render_attempts} attempts"
+    else:
+        get_logger(cfg)("intro_tease", p.id, "warn", err="prewarm not ready — waiting (no attempt burned)")
