@@ -155,7 +155,7 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         for t in grp:
             if t not in preferred: preferred.append(t)
     rank = {**base_rank, **{t: i - len(preferred) for i, t in enumerate(preferred)}}
-    lang_floor = _ARABIC[:1] if (pool and (language or "").strip().lower().startswith("ar")) else []
+    lang_floor = _ARABIC[:1] if ((pool or corpus_norm) and (language or "").strip().lower().startswith("ar")) else []
     seen: set[str] = set()
     kept: list[str] = []
     for h in corpus_norm:                           # B1: seed the WHOLE curated corpus first (the reach-sort + the final
@@ -168,11 +168,12 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
             seen.add(h); kept.append(h)
     kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, lean pool, own-reach store, or frozen rank)
     # Reserved floors take the TAIL slots so the corpus/lean/reach LEAD is preserved: region reach first
-    # (non-negotiable under a lean — a flavor lean must not strip AR reach), then ONE clip-content tag (the
-    # operator's "tags based off information" ask). Each guarantees its signal reaches the <=max_tags line
-    # even when the model already filled every slot. Detect against the CAP WINDOW, not `seen` (the model's
-    # own AR/content tag may be in seen but sorted PAST the cap). No lean + no content -> reserved empty ->
-    # byte-identical.
+    # (non-negotiable under a lean OR a corpus — a flavor lean / curated corpus must not strip AR reach), then
+    # ONE clip-content tag (the operator's "tags based off information" ask). Each guarantees its signal reaches
+    # the <=max_tags line even when the model already filled every slot. Detect against the CAP WINDOW, not
+    # `seen` (the model's own AR/content tag may be in seen but sorted PAST the cap). M3a: lang_floor now fires
+    # on `pool or corpus_norm` (not pool alone), so a corpus-led persona keeps region reach once tag_lean folds
+    # into corpus. No lean + no corpus + no content -> reserved empty -> byte-identical.
     arabic = set(_ARABIC); content_set = set(content_norm)
     reserved: list[str] = []
     if lang_floor and not any(h in arabic for h in kept[:max_tags]):
@@ -182,11 +183,12 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     if reserved:
         head = [h for h in kept if h not in reserved][:max_tags - len(reserved)]
         kept = head + reserved; seen = set(kept)
-    # M3: a leaned account keeps one platform DISCOVERY tag (#fyp/#reels/…) — backfill it right after the
-    # lean pool so a flavor lean (e.g. tasteful) can't eat all 4 slots and lose its reach. Gated on `pool`
-    # (leaned only) -> no-lean backfill is byte-identical. An AR clip's region floor still wins the reserved
-    # last slot above, so AR accounts prioritise region reach over discovery (acceptable).
-    disc_floor = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)[:1] if pool else []
+    # M3: a leaned OR corpus-led account keeps one platform DISCOVERY tag (#fyp/#reels/…) — backfill it right
+    # after the lean/corpus pool so a flavor lean or curated corpus (e.g. tasteful) can't eat all 4 slots and
+    # lose its reach. M3a: gated on `pool or corpus_norm` (was `pool` alone) -> no-lean+no-corpus backfill is
+    # byte-identical. An AR clip's region floor still wins the reserved last slot above, so AR accounts
+    # prioritise region reach over discovery (acceptable).
+    disc_floor = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)[:1] if (pool or corpus_norm) else []
     # Backfill is REACH-first; content trails. The content FLOOR above already guarantees ONE content slot,
     # so a seed-fallback clip ships 1 content + reach (not all-content) — content adds more only if reach is
     # exhausted. content=[] -> identical tail -> byte-identical.
