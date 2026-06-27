@@ -22,25 +22,23 @@ import fanops.persona_levers as pl
 
 
 # The original incoherent fields — the QUARANTINE CEILING (hard-coded, separate from the mutable set below so
-# the ratchet test reds if anything NEW is grandfathered). M3 shrinks `_KNOWN_INCOHERENT` to empty. (M3c: the
-# 6th member `tag_lean` was RETIRED from the model — folded into hashtag_corpus — so it leaves both sets.)
-_ORIGINAL_SIX = frozenset({"casting_directive", "hook_directive", "caption_directive"})
-# The live quarantine: seeded with the remaining incoherent fields, only ever shrinks. (M3f sets this to frozenset().)
+# the ratchet test reds if anything NEW is grandfathered). M3 RESOLVED all six end-to-end (M3c tag_lean ->
+# corpus; M3d clip_profile/framing pins -> derived; M3e the 3 directive overrides), so BOTH sets are now EMPTY
+# — the coherence guard enforces editable ∧ wired ∧ distinct across EVERY model field with ZERO grandfathering.
+_ORIGINAL_SIX = frozenset()
+# The live quarantine: EMPTY (M3f). The guard below is green with no grandfathered field — coherence PROVEN.
 _KNOWN_INCOHERENT = set(_ORIGINAL_SIX)
 
 # Each lever field paired with (baseline, mutated) — two DISTINCT valid settings proving OUTPUT-SENSITIVITY.
-# NB: all six quarantined fields ARE output-sensitive (they appear here and move output); they are quarantined
-# for failing EDITABILITY and/or DISTINCTNESS, not output-sensitivity — which is precisely why M2 must check
-# more than output. A non-exempt model field absent here is a DEAD (output-insensitive) lever and fails below.
+# Post-M3 this is EXACTLY the editable lever set (the 6 incoherent fields were resolved end-to-end and left
+# the model): every non-exempt model field is a covered, editable, wired, distinct lever. A non-exempt model
+# field absent here is a DEAD (output-insensitive) lever and fails the coverage gate below.
 _MUTATIONS = {
     "voice": ("a devoted fan", "a blunt critic"),
     "content_focus": (["punchlines"], ["hype"]),
     "energy": ("high", "low"),
     "hook_angle": ("curiosity", "fomo"),
     "hashtag_corpus": (["#aaa"], ["#bbb"]),
-    "casting_directive": ("", "ONLY clip the freestyle bars"),
-    "hook_directive": ("", "POV hooks only"),
-    "caption_directive": ("", "hype-fan caption energy"),
 }
 
 
@@ -99,19 +97,17 @@ def test_each_lever_mutation_changes_the_compiled_output(tmp_path):
             f"mutating {f!r} did not change the compiled output — it is a dead lever (wired into nothing)")
 
 
-def test_quarantine_teeth_bite_on_the_editability_axis():
-    # THE GUARD'S TEETH — proving it would catch the exact Phase-1 over-claim. casting_directive (the freeform
-    # override) is OUTPUT-SENSITIVE (it is in _MUTATIONS and moves output), so an output-only guard PASSES it.
-    # The NEW power is editability: the override has NO save-route control. Un-quarantining it must red the
-    # coherence guard SPECIFICALLY on editability. (Probe walks the quarantine as M3 shrinks it: tag_lean ->
-    # clip_profile -> casting_directive.)
-    probe = "casting_directive"
-    assert probe in _MUTATIONS                            # it DOES move output — output-sensitivity alone passes it
-    assert probe not in pl.editable_fields()              # but it is NOT editable — the discriminating fact
-    q_without = _KNOWN_INCOHERENT - {probe}
-    violators = [f for f in Persona.model_fields
-                 if not pl.is_exempt(f) and f not in q_without and f not in pl.editable_fields()]
-    assert probe in violators, "removing a quarantined field must red the guard on the editability axis"
+def test_quarantine_teeth_a_hypothetical_incoherent_field_would_red():
+    # THE GUARD'S TEETH — with the quarantine EMPTY (M3 resolved all six), no REAL field demonstrates the bite,
+    # so prove it SYNTHETICALLY: the guard's predicate flags a non-exempt, non-editable field. This is the exact
+    # editability axis that catches the Phase-1 over-claim — a field wired to output but with NO save-route
+    # control is a violator even though output-sensitivity alone would pass it.
+    phantom = "phantom_invisible_lever"
+    assert not pl.is_exempt(phantom) and phantom not in pl.editable_fields()
+    is_violator = (not pl.is_exempt(phantom)
+                   and phantom not in _KNOWN_INCOHERENT
+                   and phantom not in pl.editable_fields())
+    assert is_violator, "the guard predicate must flag a non-exempt, non-editable, non-quarantined field"
 
 
 def test_runtime_is_fail_open_on_malformed_fields():

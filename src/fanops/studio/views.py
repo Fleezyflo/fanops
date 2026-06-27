@@ -254,12 +254,9 @@ class PersonaCard:
     length_band: str = ""
     lead_tags: list = field(default_factory=list)
     # M3 DIRECTIVE ENGINE: the COMPILED per-dimension directive the LLM actually reads (so the operator sees
-    # exactly what each lever produces) + the raw OVERRIDE text (pre-fills the edit boxes) + the clip ceiling.
+    # exactly what each lever produces). (M3e: the freeform OVERRIDE text fields were retired with the levers.)
     hook_text: str = ""
     caption_text: str = ""
-    casting_override: str = ""
-    hook_override: str = ""
-    caption_override: str = ""
 
 
 @dataclass
@@ -321,10 +318,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],   # M3: the DERIVED tier (the per-persona pin is retired)
                          instruction=compose_persona_instruction(p),
                          length_band=facts["length_band"], lead_tags=facts["lead_tags"],
-                         hook_text=hook_directive(p), caption_text=caption_directive(p),
-                         casting_override=getattr(p, "casting_directive", "") or "",
-                         hook_override=getattr(p, "hook_directive", "") or "",
-                         caption_override=getattr(p, "caption_directive", "") or "")
+                         hook_text=hook_directive(p), caption_text=caption_directive(p))
              for p in reg.all() for facts in (persona_facts(cfg, p),)]
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)

@@ -67,11 +67,10 @@ def _join(voice: str, body: str) -> str:
 
 def casting_directive(p) -> str:
     """WHICH MOMENTS this account clips for — the substantive instruction injected into the casting prompt's
-    per-account slot. Override (Persona.casting_directive) wins VERBATIM; else compiled from content_focus +
-    energy into real selection language; else the bare voice. THE FIREWALL: no levers + no override -> the
-    bare voice, byte-identical to today. Duck-typed (Persona or hydrated Account)."""
-    override = (getattr(p, "casting_directive", None) or "").strip()
-    if override: return override
+    per-account slot. Compiled from content_focus + energy into real selection language; else the bare voice.
+    THE FIREWALL: no levers -> the bare voice, byte-identical to today. Duck-typed (Persona or hydrated
+    Account). (M3e: the freeform casting_directive OVERRIDE was retired — an invisible duplicate of the
+    structured levers; the voice carries any freeform register.)"""
     parts: list[str] = []
     foc = [_FOCUS_CLAUSE[c] for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
     if foc: parts.append("Clip for this account: " + "; ".join(foc) + ".")
@@ -81,12 +80,10 @@ def casting_directive(p) -> str:
 
 
 def hook_directive(p) -> str:
-    """The ON-SCREEN HOOK brief for this account — injected into the hook prompt's per-account slot. Override
-    (Persona.hook_directive) wins VERBATIM; else compiled from hook_angle (the strategy); else the bare voice
-    (firewall). The hook's REGISTER comes from the voice (which leads this directive), so there is no separate
-    tone lever. Duck-typed."""
-    override = (getattr(p, "hook_directive", None) or "").strip()
-    if override: return override
+    """The ON-SCREEN HOOK brief for this account — injected into the hook prompt's per-account slot. Compiled
+    from hook_angle (the strategy); else the bare voice (firewall). The hook's REGISTER comes from the voice
+    (which leads this directive), so there is no separate tone lever. Duck-typed. (M3e: the freeform
+    hook_directive OVERRIDE was retired.)"""
     parts: list[str] = []
     a = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
     if a: parts.append("For the on-screen hook, " + a + ".")
@@ -94,11 +91,10 @@ def hook_directive(p) -> str:
 
 
 def caption_directive(p) -> str:
-    """The CAPTION angle for this account — injected into the caption prompt's per-surface slot. Override
-    (Persona.caption_directive) wins VERBATIM; else the bare voice (tag_lean/corpus drive the hashtags
-    deterministically elsewhere, so the caption directive is purely the voice/angle). Duck-typed; firewall-safe."""
-    override = (getattr(p, "caption_directive", None) or "").strip()
-    return override or _base_voice(p)
+    """The CAPTION angle for this account — injected into the caption prompt's per-surface slot. It is the bare
+    voice (the curated corpus drives the hashtags deterministically elsewhere, so the caption directive is
+    purely the voice). Duck-typed; firewall-safe. (M3e: the freeform caption_directive OVERRIDE was retired.)"""
+    return _base_voice(p)
 
 
 def compose_persona_instruction(p) -> str:
@@ -146,26 +142,21 @@ def _hook_fragments(p) -> list[dict]:
 def compose_breakdown(cfg: Config, p) -> dict:
     """THE LIVE COMPOSED TRANSLATION — what this persona compiles to RIGHT NOW: the exact casting/hook/caption
     directives the pipeline will read, the deterministic cut band + framing, and the lead hashtags, each
-    decomposed to the lever that produced it, with the engine's REAL precedence surfaced (an override SHADOWS
-    its structured levers; energy=medium is a no-op). The `text` of each dimension is the compiler's own output
-    (parity — the panel can't drift); the fragments reconstruct the assembly for provenance. Pure read; the
-    cut/tags reuse the same band_for / persona_facts resolvers the pipeline runs. Duck-typed (Persona/Account)."""
+    decomposed to the lever that produced it (energy=medium is a no-op, surfaced). The `text` of each dimension
+    is the compiler's own output (parity — the panel can't drift); the fragments reconstruct the assembly for
+    provenance. Pure read; the cut/tags reuse the same band_for / persona_facts resolvers the pipeline runs.
+    Duck-typed (Persona/Account). (M3e: the freeform directive OVERRIDES were retired — no `override`/`shadowed`
+    surface remains; every dimension is the structured-lever compile.) (M3d: a persona never pins the cut — the
+    `persona` cut source is reachable only via an Account carrier pin.)"""
     from fanops.bands import band_for
-    cast_override = (getattr(p, "casting_directive", None) or "").strip()
-    hook_override = (getattr(p, "hook_directive", None) or "").strip()
-    cap_override = (getattr(p, "caption_directive", None) or "").strip()
-    casting = {"text": casting_directive(p), "override": bool(cast_override),
-               "fragments": ([{"source": "override", "text": cast_override}] if cast_override else _casting_fragments(p)),
-               "shadowed": (["content_focus", "energy"] if cast_override else [])}
-    hook = {"text": hook_directive(p), "override": bool(hook_override),
-            "fragments": ([{"source": "override", "text": hook_override}] if hook_override else _hook_fragments(p)),
-            "shadowed": (["hook_angle"] if hook_override else []),
-            # S7: the EFFECTIVE structured angle — None when a freeform override shadows it (so produces_summary
-            # never names an angle that doesn't actually drive the hook).
-            "angle": (None if hook_override else (getattr(p, "hook_angle", None) or None))}
-    caption = {"text": caption_directive(p), "override": bool(cap_override)}
+    casting = {"text": casting_directive(p), "override": False,
+               "fragments": _casting_fragments(p), "shadowed": []}
+    hook = {"text": hook_directive(p), "override": False,
+            "fragments": _hook_fragments(p), "shadowed": [],
+            "angle": (getattr(p, "hook_angle", None) or None)}    # S7: the EFFECTIVE structured angle
+    caption = {"text": caption_directive(p), "override": False}
     pin_prof = (getattr(p, "clip_profile", None) or "").strip()
-    res_prof, res_fr = resolved_cut_spec(p)               # pin > derived > None — the SAME floor hydration applies
+    res_prof, res_fr = resolved_cut_spec(p)               # carrier pin > derived > None — the SAME floor hydration applies
     band = band_for(res_prof or "")
     cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": res_fr,
            "source": ("persona" if pin_prof else ("derived" if res_prof else "global"))}
@@ -173,7 +164,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
     tags = {"lead": facts["lead_tags"],
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
     noops: list[str] = []
-    if (getattr(p, "energy", None) or "").strip().lower() == "medium" and not cast_override:
+    if (getattr(p, "energy", None) or "").strip().lower() == "medium":
         noops.append("energy=medium has no effect on selection")
     bd = {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
     bd["produces"] = produces_summary(bd)                 # S7: the operator-facing OUTPUT lead, from this same detail

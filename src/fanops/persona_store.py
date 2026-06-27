@@ -60,8 +60,7 @@ _UNSET = object()
 
 def add_persona(cfg: Config, name: str, voice: str = "",
                 intake: Optional[dict] = None, id: str = "", *, content_focus=None,
-                energy: str = "", hook_angle: str = "",
-                casting_directive: str = "", hook_directive: str = "", caption_directive: str = "") -> str:
+                energy: str = "", hook_angle: str = "") -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
     duplicate id and a blank name (never write a record that won't reload). Validates every lever-engine
     field against its vocabulary. Returns the id; raises ValueError on bad input. (M3: tag_lean retired —
@@ -83,19 +82,16 @@ def add_persona(cfg: Config, name: str, voice: str = "",
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""),
                       "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
-                      "energy": energy_v, "hook_angle": angle_v,
-                      "casting_directive": str(casting_directive or ""), "hook_directive": str(hook_directive or ""),
-                      "caption_directive": str(caption_directive or "")})
+                      "energy": energy_v, "hook_angle": angle_v})
         write_json_atomic(p, raw)
     return pid
 
 
 def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_UNSET,
-                   content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET, casting_directive=_UNSET,
-                   hook_directive=_UNSET, caption_directive=_UNSET) -> str:
+                   content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET) -> str:
     """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; each lever
     clears on "". Validates every passed lever against its vocabulary BEFORE the lock (never write a typo).
-    Unknown id -> KeyError. (M3: tag_lean + the clip_profile/framing pins retired.)"""
+    Unknown id -> KeyError. (M3: tag_lean, the clip_profile/framing pins, and the directive overrides retired.)"""
     _focus = _norm_focus(content_focus) if content_focus is not _UNSET else _UNSET
     _energy = _enum_or_none(energy, ENERGY_LEVELS, "energy") if energy is not _UNSET else _UNSET
     _angle = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle") if hook_angle is not _UNSET else _UNSET
@@ -114,9 +110,6 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_
                 if _focus is not _UNSET: d["content_focus"] = _focus
                 if _energy is not _UNSET: d["energy"] = _energy
                 if _angle is not _UNSET: d["hook_angle"] = _angle
-                if casting_directive is not _UNSET: d["casting_directive"] = str(casting_directive or "")
-                if hook_directive is not _UNSET: d["hook_directive"] = str(hook_directive or "")
-                if caption_directive is not _UNSET: d["caption_directive"] = str(caption_directive or "")
                 found = True
         if not found:
             raise KeyError(pid)

@@ -235,33 +235,15 @@ def test_hook_directive_is_separate_from_casting():
     assert "curiosity gap" in hook_directive(p) and "curiosity gap" not in casting_directive(p)
     assert "hype moments" in casting_directive(p) and "hype moments" not in hook_directive(p)
 
-def test_directive_override_wins_verbatim():
-    p = Persona(id="p", voice="ignored", content_focus=["hype"], casting_directive="ONLY clip the freestyle bars.")
-    assert casting_directive(p) == "ONLY clip the freestyle bars."        # operator text wins, verbatim
-    assert hook_directive(Persona(id="p", hook_directive="POV hooks only")) == "POV hooks only"
-    assert caption_directive(Persona(id="p", caption_directive="hype-fan energy")) == "hype-fan energy"
-
+# (M3e: the freeform directive OVERRIDE tests were removed — the per-dimension overrides were retired as
+# invisible shadow-duplicates of the structured levers. The compile FUNCTIONS remain; their firewall + bare-
+# voice behavior is covered below and the structured-lever compile is covered above.)
 def test_directives_firewall_to_bare_voice():
-    p = Persona(id="p", voice="bold fan")                                 # no levers, no override
+    p = Persona(id="p", voice="bold fan")                                 # no levers set
     assert casting_directive(p) == "bold fan" and hook_directive(p) == "bold fan" and caption_directive(p) == "bold fan"
 
-def test_caption_directive_is_voice_or_override():
-    assert caption_directive(Persona(id="p", voice="v")) == "v"   # tags stay deterministic, not in the text
-
-def test_directive_fields_roundtrip(tmp_path):
-    cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", casting_directive="cd", hook_directive="hd", caption_directive="capd")
-    p = Personas.load(cfg).get("p")
-    assert p.casting_directive == "cd" and p.hook_directive == "hd" and p.caption_directive == "capd"
-
-def test_directive_override_hydrates_and_drives_hook_payload(tmp_path):
-    # a linked persona's hook_directive override hydrates onto the account and drives the HOOK payload downstream
-    cfg = Config(root=tmp_path)
-    _write(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-                  "persona_id": "p"}],
-           [{"id": "p", "voice": "v", "hook_directive": "always a POV hook"}])
-    a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
-    assert hook_directive(a) == "always a POV hook"                       # override hydrated + drives the hook prompt
+def test_caption_directive_is_the_voice():
+    assert caption_directive(Persona(id="p", voice="v")) == "v"   # hashtags stay deterministic, not in the text
 
 
 def test_personas_panel_renders_directive_ui(tmp_path):

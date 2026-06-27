@@ -74,13 +74,8 @@ def test_breakdown_fragment_text_is_substring_of_the_directive(tmp_path):
         for frag in d[dim]["fragments"]:
             assert frag["text"] in d[dim]["text"], f"{dim} fragment {frag['source']!r} not in the directive"
 
-def test_breakdown_override_shadows_structured_levers(tmp_path):
-    cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", hook_directive="my exact hook brief",
-                                       hook_angle="curiosity"))
-    assert d["hook"]["override"] is True
-    assert set(d["hook"]["shadowed"]) == {"hook_angle"}               # the angle is DEAD under an override — surfaced, not hidden
-    assert d["hook"]["text"] == "my exact hook brief"
+# (M3e: test_breakdown_override_shadows_structured_levers removed — the freeform directive overrides were
+# retired, so no dimension can shadow its structured levers; `override` is always False, `shadowed` always [].)
 
 def test_breakdown_flags_energy_medium_noop(tmp_path):
     cfg = Config(root=tmp_path)
@@ -129,12 +124,8 @@ def test_produces_summary_is_embedded_in_breakdown_with_parity(tmp_path):
     assert d["produces"] == produces_summary(d)                     # parity: embedded == standalone
     assert "angle" in d["hook"]                                     # the additive hook['angle'] key
 
-def test_produces_summary_skips_angle_when_hook_overridden(tmp_path):
-    # a freeform hook override SHADOWS the structured angle -> no "curiosity hooks" clause (it isn't what runs).
-    cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", voice="v", hook_directive="my brief", hook_angle="curiosity"))
-    assert d["hook"]["angle"] is None
-    assert not any("hooks" in c for c in produces_summary(d))
+# (M3e: test_produces_summary_skips_angle_when_hook_overridden removed — with the hook override retired, the
+# structured hook_angle always drives the hook, so there is no shadow case to skip.)
 
 def test_produces_summary_is_pure_no_persistence(tmp_path):
     cfg = Config(root=tmp_path)

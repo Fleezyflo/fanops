@@ -56,11 +56,8 @@ class Account(BaseModel):
     content_focus: list[str] = Field(default_factory=list)
     energy: Optional[str] = None
     hook_angle: Optional[str] = None
-    # M3 DIRECTIVE ENGINE: the per-dimension OVERRIDE text + the per-persona clip budget, HYDRATED from the
-    # linked Persona. Empty/None -> the lever-compiled default / the global cast budget (byte-identical when unset).
-    casting_directive: str = ""
-    hook_directive: str = ""
-    caption_directive: str = ""
+    # M3e: the 3 per-dimension OVERRIDE carriers (casting/hook/caption_directive) were RETIRED with the Persona
+    # overrides — the structured levers always compile the directives now; the voice carries freeform register.
     # Provenance (S2): True only when the LINKED persona actually supplied clip_profile (resolved_cut_spec
     # returned a profile at hydration). HYDRATION-ONLY — never written back to accounts.json (set_* mutate the
     # raw dict). Lets the Studio attribute a length to the persona vs the account's own pin truthfully; default
@@ -216,17 +213,16 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.content_focus = list(per.content_focus)
         acc.energy = per.energy
         acc.hook_angle = per.hook_angle
-        _prof, _fr = resolved_cut_spec(per)   # P2: pin wins; else derived from content_focus/energy; else None (global stands)
+        _prof, _fr = resolved_cut_spec(per)   # P2: derived from content_focus/energy; else None (global stands)
         if _prof: acc.clip_profile = _prof; acc.persona_owns_profile = True   # S2 provenance: the persona TRULY owns the length
         if _fr: acc.framing = _fr
-        acc.casting_directive = per.casting_directive or ""   # M3: per-dimension override text (empty -> lever-compiled default)
-        acc.hook_directive = per.hook_directive or ""
-        acc.caption_directive = per.caption_directive or ""
+        # M3e: the per-dimension directive OVERRIDES were retired — nothing to hydrate; the structured levers
+        # (content_focus/energy/hook_angle) above always compile the directives, the voice carries the register.
 
 
 def link_persona(cfg: Config, handle: str, persona_id: str) -> str:
     """Link ONE account to a first-class Persona (set persona_id) atomically — the A2 connect control. A
-    BLANK persona_id CLEARS the link (-> the account's inline persona/tag_lean stand again). Scans ALL
+    BLANK persona_id CLEARS the link (-> the account's inline persona stands again). Scans ALL
     rows (dup-handle safety, mirrors set_status); preserves every sibling + unknown field. Unknown
     handle -> KeyError (caller -> clean ActionResult). Does NOT validate the id exists (a dangling link
     fails open at load) — the Studio resolves the id from the live registry before calling."""
