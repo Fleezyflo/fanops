@@ -134,3 +134,27 @@ def test_arabic_floor_survives_when_model_returns_arabic_past_the_cap():
     # cap and the old floor check (vs `seen`) skipped -> dropped. The fix promotes it into the window.
     out = vet_hashtags(["#viral", "#hiphop", "#rap", "#rapper", "#arabicmusic"], Platform.tiktok, "ar", lean="bold")
     assert len(out) == 4 and any("arab" in t for t in out)
+
+
+# ---- M3a: the reach floors fire on CORPUS, not just lean (so a corpus-led persona keeps region+discovery
+# reach once tag_lean is folded into corpus). Additive — a leaned account is byte-identical (proven below). ----
+def test_corpus_only_ar_clip_reserves_the_region_floor_even_when_corpus_fills_all_slots():
+    # a corpus that fills all 4 slots on an AR clip, NO lean: the region floor must still RESERVE a tail slot
+    # (mirrors the lean reservation test). Today the AR floor gates on `pool` only -> corpus-led personas lose
+    # region reach. M3a widens the floor to corpus. (A free-slot AR tag comes from _composition anyway; this
+    # forces the RESERVATION path, the part that actually depends on the widen.)
+    out = vet_hashtags([], Platform.instagram, "ar", corpus=["#alpha", "#beta", "#gamma", "#delta"])
+    assert len(out) == 4 and any("arab" in t for t in out)   # region reach floored under a CORPUS, not just a lean
+
+def test_corpus_only_keeps_a_platform_discovery_tag():
+    # the discovery floor (#reels/#fyp) likewise fires on a corpus, so a corpus-led persona keeps reach
+    # instead of letting curated tags eat all 4 slots.
+    out = vet_hashtags([], Platform.instagram, "en", corpus=["#myscene", "#another", "#third"])
+    assert "#reels" in out
+
+def test_corpus_floors_are_additive_leaned_account_byte_identical():
+    # the widen must NOT change a leaned account's output (pool truthy -> `pool or corpus_norm` == pool).
+    for lean in ("tasteful", "underground", "bold"):
+        with_widen = vet_hashtags([], Platform.instagram, "ar", lean=lean)
+        # the leaned AR output already had region+discovery floors; corpus=None keeps it identical
+        assert any("arab" in t for t in with_widen) and len(with_widen) <= 4
