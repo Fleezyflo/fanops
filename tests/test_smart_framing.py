@@ -49,6 +49,70 @@ def test_focus_ignored_on_scale_only_and_unknown_source():
     assert "pad=" in reframe_filter("9:16", 0, 0, focus=(0.8, 0.2))                              # unknown dims -> pad branch
 
 
+# ---------------------------------------------------------------- zoom-to-face + eyeline (T5) ----
+def _crop_dims(vf):
+    # parse "crop=W:H:X:Y" (numeric form) -> (W,H,X,Y) ints
+    body = vf.split("crop=", 1)[1].split(",", 1)[0]
+    return [int(p) for p in body.split(":")]
+
+def test_legacy_2tuple_focus_is_unchanged_no_zoom():
+    # a 2-tuple focus (no face height) must NOT zoom -> byte-identical to the pre-zoom symbolic form.
+    assert reframe_filter("9:16", 1920, 1080, focus=(0.8, 0.5)) == "crop=ih*1080/1920:ih:1232:0,scale=1080:1920,setsar=1"
+
+def test_4tuple_focus_zooms_to_target_face_fraction():
+    # face fh=0.24 (within the zoom cap) -> crop height SHRINKS so the face fills ~TARGET_FACE_FRAC(0.32).
+    vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.24, 0.40), content_type=framing.CT_SINGLE)
+    w, h, x, y = _crop_dims(vf)
+    assert h < 1080                                              # zoomed in (crop height below full height)
+    assert abs(h - round(1080 * 0.24 / 0.32)) <= 2              # ch = src_h*fh/TARGET_FACE_FRAC(0.32), under the cap
+    assert abs(w - round(h * 1080 / 1920)) <= 1                 # crop keeps 9:16
+    assert vf.endswith("scale=1080:1920,setsar=1")
+
+def test_zoom_bounded_by_max_so_tiny_face_never_blurs():
+    # an extreme tiny face would demand a huge zoom -> clamped to _ZOOM_MAX (crop never smaller than ch0/MAX).
+    vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.02, 0.40), content_type=framing.CT_SINGLE)
+    _w, h, _x, _y = _crop_dims(vf)
+    from fanops.clip import _ZOOM_MAX
+    assert h == round(1080 / _ZOOM_MAX)                         # clamped to the upscale bound, not 0.02-driven
+
+def test_music_uses_wider_zoom_than_talk():
+    # music keeps more stage/body context -> a wider crop (taller ch) than talk for the same face.
+    talk = _crop_dims(reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.16, 0.40), content_type=framing.CT_SINGLE))
+    music = _crop_dims(reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.16, 0.40), content_type=framing.CT_MUSIC))
+    assert music[1] > talk[1]                                   # music crop height larger (less zoom)
+
+def test_eyeline_places_eyes_in_upper_portion():
+    # eye-line ey -> crop top so the eyes sit at ~EYELINE_FRAC of the frame (not centered).
+    from fanops.clip import _EYELINE_FRAC
+    vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.5, 0.16, 0.30), content_type=framing.CT_SINGLE)
+    _w, h, _x, y = _crop_dims(vf)
+    assert y == max(0, round(0.30 * 1080 - _EYELINE_FRAC * h))  # eyes anchored, not face-centered
+
+def test_already_9x16_passthrough_when_face_well_sized():
+    # a normal vertical with a normal face -> scale-only (NO destructive crop), byte-identical to today.
+    assert reframe_filter("9:16", 1080, 1920, focus=(0.5, 0.45, 0.30, 0.40)) == "scale=1080:1920,setsar=1"
+
+def test_already_9x16_gentle_zoom_when_face_tiny():
+    # a vertical where the face is TINY -> a bounded gentle zoom-in (still 9:16), never worse than passthrough.
+    from fanops.clip import _GENTLE_ZOOM_MAX
+    vf = reframe_filter("9:16", 1080, 1920, focus=(0.5, 0.45, 0.05, 0.40), content_type=framing.CT_SINGLE)
+    assert "crop=" in vf                                        # gentle crop applied
+    _w, h, _x, _y = _crop_dims(vf)
+    assert h >= round(1920 / _GENTLE_ZOOM_MAX)                  # zoom bounded (never more than the gentle cap)
+
+def test_square_source_to_9x16_is_width_crop_zoom():
+    # 1:1 -> 9:16: src_ar(1.0) > tgt_ar(0.5625) -> width-crop branch, zoom applies.
+    vf = reframe_filter("9:16", 1080, 1080, focus=(0.5, 0.45, 0.16, 0.40), content_type=framing.CT_SINGLE)
+    w, h, _x, _y = _crop_dims(vf)
+    assert abs(w - round(h * 1080 / 1920)) <= 1 and h <= 1080
+
+def test_portrait_non_9x16_to_9x16_is_height_crop_zoom():
+    # 1080x1350 (4:5, src_ar 0.8 < tgt 0.5625? no: 0.8>0.5625 -> width-crop). Use 1080x2000 (0.54<0.5625) -> height-crop.
+    vf = reframe_filter("9:16", 1080, 2000, focus=(0.5, 0.45, 0.16, 0.40), content_type=framing.CT_SINGLE)
+    w, h, _x, _y = _crop_dims(vf)
+    assert w <= 1080 and h <= 2000 and abs(w - round(h * 1080 / 1920)) <= 1
+
+
 # ---------------------------------------------------------------- render fingerprint ----
 def test_fingerprint_focus_is_additive():
     base = _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "")
@@ -156,23 +220,26 @@ def test_detect_window_samples_at_detection_resolution(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- active-speaker track (time-varying crop) ----
-def test_time_expr_builds_escaped_nested_if():
-    from fanops.clip import _time_expr
-    assert _time_expr([], [400]) == "400"                                   # single value -> no if
-    assert _time_expr([4.33], [163, 1195]) == "if(lt(t\\,4.33)\\,163\\,1195)"
-    assert _time_expr([4.33, 8.67], [163, 1195, 147]) == \
-        "if(lt(t\\,4.33)\\,163\\,if(lt(t\\,8.67)\\,1195\\,147))"           # commas escaped for filtergraph
+def test_lerp_expr_is_a_smooth_ramp_not_a_step():
+    from fanops.clip import _lerp_expr
+    assert _lerp_expr([], [400], ramp=0.4) == "400"                         # single value -> constant
+    expr = _lerp_expr([5.0], [118, 1232], ramp=0.4)
+    assert "clip((t-4.6)/0.4\\,0\\,1)" in expr                             # linear ramp ENDING at the switch (5.0-0.4)
+    assert expr.startswith("118+") and "(1114)" in expr                   # base + (delta=1232-118) * ramp
+    assert "if(lt(" not in expr                                            # NOT the old hard step
 
-def test_reframe_track_cuts_x_over_time():
-    track = [(0.0, 5.0, 0.22, 0.5), (5.0, 10.0, 0.80, 0.45)]               # left then right speaker
-    vf = reframe_filter("9:16", 1920, 1080, track=track)
-    assert vf.startswith("crop=w=ih*1080/1920:h=ih:x=if(lt(t\\,5.0)\\,")    # time-varying x crop
-    assert "118" in vf and "1232" in vf and vf.endswith("scale=1080:1920,setsar=1")   # fx .22->x118, .80->x1232
+def test_reframe_track_smooth_zoomed_pan():
+    # 6-tuple track (with face-height+eyeline): zoomed crop (constant w/h) + smooth x ramp between speakers.
+    track = [(0.0, 5.0, 0.22, 0.5, 0.18, 0.42), (5.0, 10.0, 0.80, 0.45, 0.18, 0.40)]
+    vf = reframe_filter("9:16", 1920, 1080, track=track, content_type=framing.CT_MULTI)
+    assert vf.startswith("crop=w=") and "x=" in vf and "clip((t-" in vf    # constant w/h, smooth time-varying x
+    assert "if(lt(t" not in vf                                             # no hard teleport
+    assert vf.endswith("scale=1080:1920,setsar=1")
 
 def test_reframe_track_overrides_static_focus():
-    track = [(0.0, 5.0, 0.22, 0.5), (5.0, 10.0, 0.80, 0.45)]
-    vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.5), track=track)
-    assert "if(lt(t\\," in vf                                              # the dynamic track wins over a static focus
+    track = [(0.0, 5.0, 0.22, 0.5, 0.18, 0.42), (5.0, 10.0, 0.80, 0.45, 0.18, 0.40)]
+    vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.5, 0.2, 0.4), track=track, content_type=framing.CT_MULTI)
+    assert "clip((t-" in vf                                                # the dynamic track wins over a static focus
 
 def test_reframe_track_none_is_today():
     # no track -> unchanged: identical to the focus/centered paths (single-subject clips never change).
