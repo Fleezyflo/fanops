@@ -12,7 +12,7 @@ import contextlib, json, os
 from pathlib import Path
 from statistics import median
 
-_SIDECAR_V = 3               # track-sidecar schema version (v3: segments carry face-height + eye-line for zoom)
+_SIDECAR_V = 4               # track-sidecar schema (v4: finer ASD fps + shorter hysteresis + p75 face-height)
 _KF_COUNT = 5                # frames sampled across the window — enough for a stable median, cheap to probe
 _KF_WIDTH = 960              # detection sampling width: Haar/YuNet need real pixels — a 480px face (~37px on a
                              # 1080p source) is undetectable; 960 lands a 1080p face at ~74px, reliably found.
@@ -193,8 +193,10 @@ def classify_window(cfg, src, *, start: float, end: float, stats: dict | None) -
     vocals = bool((getattr(src, "meta", None) or {}).get("vocals_isolated"))
     return CT_MUSIC if vocals else CT_SILENT
 
-_ASD_FPS = 4.0             # per-FRAME active-speaker sampling rate (one grid pass) — replaces the old 2s bin model
-_ASD_HOLD_S = 0.8          # min DWELL before the frame switches speakers — anti-flicker hysteresis (~0.8s, was ~4s lag)
+_ASD_FPS = 9.0             # per-FRAME active-speaker sampling rate (one grid pass): 9fps resolves who's talking to
+                           # ~0.1s and gives mouth-motion enough samples — the 4fps grid was the "slow to recognise" lag
+_ASD_HOLD_S = 0.35         # min DWELL before the committed speaker switches — anti-flicker hysteresis. 0.35s (was 0.8s,
+                           # and ~4s before that) lands the cut within ~0.45s of the real turn — responsive, not laggy
 _ASD_RATIO = 1.2           # the talker's mouth must out-move the other by this factor to be the instantaneous speaker
 _ASD_SAME_TOL = 0.08       # two centroids within this normalized x are "the same shot" -> merge (no needless cut)
 _ASD_SIDE_SPLIT = 0.5      # faces left/right of this normalized x are different speakers (the 2-shot split)
@@ -259,6 +261,16 @@ def _track_observe(cv2, det, frames: list[str]) -> list[dict]:
         obs.append(per)
     return obs
 
+def _pctl(vals: list[float], q: float) -> float:
+    """The q-quantile (0..1) by nearest-rank on a sorted copy — robust for the tiny per-segment samples
+    where statistics.quantiles is overkill. Used for per-segment FACE HEIGHT: a speaker's true face size is
+    the CLEAREST full-face detection, not the median (which an intermittent pop-filter occlusion or a profile
+    turn drags DOWN, the root of the '2-shot renders at random/wrong sizes' defect). Position stays median."""
+    s = sorted(vals)
+    if not s:
+        return 0.0
+    return s[min(len(s) - 1, max(0, round(q * (len(s) - 1))))]
+
 def _assemble_track(obs: list[dict], fps: float):
     """PURE reduction of per-frame observations -> active-speaker segments [t0,t1,fx,fy,fh,ey] (relative s),
     or None when there's only one position (the static path is identical + cheaper). Per frame the louder
@@ -298,7 +310,7 @@ def _assemble_track(obs: list[dict], fps: float):
             if vis:
                 segments.append([round(i / fps, 2), round(j / fps, 2),
                                  round(median(v[0] for v in vis), 4), round(median(v[1] for v in vis), 4),
-                                 round(median(v[2] for v in vis), 4), round(median(v[3] for v in vis), 4)])
+                                 round(_pctl([v[2] for v in vis], 0.75), 4), round(median(v[3] for v in vis), 4)])
         i = j
     if not segments:
         return None
