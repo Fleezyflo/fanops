@@ -12,7 +12,7 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.errors import AuthError, redact
 from fanops.ledger import Ledger
-from fanops.models import Post, PostState
+from fanops.models import Post, PostState, is_real_submission_id
 from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media
 from fanops.timeutil import parse_iso as _parse, iso_z
@@ -72,6 +72,10 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
 # ({state, submission_id, error_reason, public_url}) + the two run.py sets here (media_urls upload
 # result, published_at stamp). The throwaway network ledger is otherwise DISCARDED — only these
 # travel into the persisted ledger, so a concurrent writer's other changes are never clobbered (B4).
+# XC-5: account_id is merged back so a published post records the integration it ACTUALLY published to
+# (the network-phase refresh) — "in-flight wins" is deliberate (a post must carry the id it published TO,
+# not a remap that landed after the POST). The finalize writes it ONLY when it changed, so a concurrent
+# Go-Live remap to a DIFFERENT channel is not churn-clobbered by an identical value.
 _NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at", "account_id")
 
 
@@ -140,6 +144,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         post = led.posts.get(post_id)
         if post is None or post.state is not PostState.queued:
             return None                                # lost the race / not eligible — no-op (F11)
+        if is_real_submission_id(post.submission_id):  # XC-7: re-publishing a post that already has a real id MAY
+            get_logger(cfg)("publish", post_id, "republish_with_real_id", sub=post.submission_id)   # double-post (repost-freely OK, log it)
         post.state = PostState.submitting              # crash-safe intent, persisted on txn exit (F11/B4)
     # ---- NETWORK (no lock held) ----
     led = Ledger.load(cfg)
@@ -184,7 +190,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         p = led.posts.get(post_id)
         if p is None:
             return final_state.value if final_state else None   # gone (shouldn't happen) — nothing to merge
-        for f, v in net.items(): setattr(p, f, v)
+        for f, v in net.items():
+            if f == "account_id" and v == getattr(p, f): continue   # XC-5: don't rewrite an unchanged id over a fresher on-disk one
+            setattr(p, f, v)
         c = led.clips.get(p.parent_id)
         if c is not None and clip_media and not c.media_url:
             c.media_url = clip_media                   # persist the once-per-clip upload (FIX F44)

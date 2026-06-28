@@ -119,3 +119,22 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
         l.posts["p1"].state = PostState.queued; l.posts["p1"].media_urls = [f"file://{vf}"]   # simulate a re-approval re-stamp
     publish_post(cfg, "p1")
     assert calls["n"] == 1                                            # uploaded ONCE total, not per cycle
+
+
+def test_republish_of_real_id_post_warns(tmp_path, monkeypatch):
+    # XC-7: re-publishing a post that already carries a REAL submission_id may double-post (repost-freely
+    # OK, but the claim must breadcrumb it).
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)                          # dryrun
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
+    with Ledger.transaction(cfg) as l: l.posts["p1"].submission_id = "blotato_1"
+    publish_post(cfg, "p1")
+    assert "republish_with_real_id" in cfg.log_path.read_text()
+
+def test_publish_records_the_integration_id_it_used(tmp_path, monkeypatch):
+    # XC-5 (characterization): a published post records the integration id it ACTUALLY published to.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)                          # dryrun
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")          # account_id="98432"
+    assert publish_post(cfg, "p1") == "published"
+    assert Ledger.load(cfg).posts["p1"].account_id == "98432"                   # the id it published to is recorded
