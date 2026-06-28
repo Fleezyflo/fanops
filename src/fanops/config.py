@@ -722,6 +722,17 @@ class Config:
         return v if v >= 1 else 30
 
     @property
+    def upload_max_bytes(self) -> int:
+        # The Studio upload body ceiling (ING-8). DEFAULT 2048 MB (2 GiB — a long raw clip fits; an abusive
+        # body is refused with 413). Configurable via FANOPS_UPLOAD_MAX_MB for a trusted localhost that ingests
+        # larger masters. CLAMPED >= 1 MB (a 0/negative cap would refuse every upload). Non-int env -> default.
+        try:
+            mb = int(os.getenv("FANOPS_UPLOAD_MAX_MB", "2048"))
+        except ValueError:
+            return 2048 * 1024 * 1024
+        return max(1, mb) * 1024 * 1024
+
+    @property
     def publish_lead_minutes(self) -> int:
         # The editorial window (spec §4): a CONSTANT offset added to every post's deterministic
         # scheduled_time at CROSSPOST time, so a freshly-queued post sits in `queued` for ~lead

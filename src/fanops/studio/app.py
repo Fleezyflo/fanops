@@ -27,7 +27,6 @@ _CATALOG = lever_catalog()
 _LEVERS = {lv["key"]: [o["value"] for o in lv["options"]] for lv in _CATALOG if lv["options"]}
 _LEVER_EFFECTS = {lv["key"]: {o["value"]: o["effect"] for o in lv["options"]} for lv in _CATALOG}
 _LEVER_REF = _CATALOG
-_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024      # 2 GiB upload cap — a long raw clip fits; an abusive body is refused (DoS)
 
 # Slice 1: which endpoints carry the workflow spine, mapping each to its stage key ('here'). `index` shows the
 # stepper with no active stage (None). Everything else (Setup/Insights/htmx partials/404) is skipped via the
@@ -205,7 +204,7 @@ def _card_chips(cards, active):
 
 def create_app(cfg: Config) -> Flask:
     app = Flask(__name__, template_folder=str(_HERE / "templates"), static_folder=str(_HERE / "static"))
-    app.config["MAX_CONTENT_LENGTH"] = _MAX_UPLOAD_BYTES    # Werkzeug refuses an oversize upload body BEFORE the view runs (413)
+    app.config["MAX_CONTENT_LENGTH"] = cfg.upload_max_bytes    # ING-8: configurable upload ceiling (FANOPS_UPLOAD_MAX_MB); Werkzeug 413s an oversize body before the view runs
     # Stored times are canonical UTC; render them in the operator's local tz. `localdt` -> friendly display,
     # `localinput` -> the naive-local value an <input type=datetime-local> edits. (Inverse: _time_arg below.)
     # Both return "" on None/absent/garbage, so a display cell reads `{{ t | localdt or '—' }}` (filter binds

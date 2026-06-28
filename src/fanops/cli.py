@@ -568,21 +568,23 @@ def _dispatch(cfg: Config, args) -> int:
         # call to keep out, and the dedup (already_seen) needs the loaded ledger, so one transaction
         # is the right unit.
         with Ledger.transaction(cfg) as led:
-            led = ingest_drops(led, cfg)
-            n = len(led.sources)
+            led, counts = ingest_drops(led, cfg)
+            total = len(led.sources)
         write_digest(Ledger.load(cfg), cfg)
-        print(f"ingested -> {n} sources"); return 0
+        print(f"ingested -> {counts.added} new ({total} total; {counts.deduped} dup, "
+              f"{counts.excluded} excluded, {counts.skipped} skipped)"); return 0   # ING-2: this-pass delta, not cumulative
     if args.cmd == "pull":
         # Phase-B-followup: the yt-dlp DOWNLOAD (network, slow) runs OUTSIDE the lock; only the
         # ingest of what landed runs inside the transaction.
-        produced = download_url(cfg, args.url)       # network, NO lock held; returns the files it produced
+        from fanops.ingest import _pull_stage
+        produced = download_url(cfg, args.url)       # network, NO lock held; returns the files it produced (in .pull stage)
         with Ledger.transaction(cfg) as led:
-            # per-file origin (audit c0-f1): only the freshly-pulled files are "url"; a manual drop already
-            # waiting in the inbox keeps "drop" instead of being mislabeled by this pull.
-            led = ingest_drops(led, cfg, origin="url", origin_paths=produced)
-            n = len(led.sources)
+            # per-file origin (audit c0-f1 / ING-6): the pull catalogues ONLY its isolated .pull stage, so a
+            # manual drop sitting in the inbox is never re-scanned or mislabeled by this pull.
+            led, counts = ingest_drops(led, cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
+            total = len(led.sources)
         write_digest(Ledger.load(cfg), cfg)
-        print(f"pulled -> {n} sources"); return 0
+        print(f"pulled -> {counts.added} new ({total} total)"); return 0
     if args.cmd == "respond":
         n = get_responder(cfg).answer_pending(cfg); print(f"responder answered {n} request(s)"); return 0
     if args.cmd == "digest":

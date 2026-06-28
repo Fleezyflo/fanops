@@ -26,7 +26,7 @@ def test_ingest_drops_skips_symlinks(tmp_path, mocker):
     cfg.inbox.mkdir(parents=True, exist_ok=True)
     (cfg.inbox / "link.mp4").symlink_to(outside)
     spy = mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    led = ingest_drops(Ledger.load(cfg), cfg)
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 0, "a symlinked inbox entry was ingested — links must be skipped"
     spy.assert_not_called()                    # skipped before the video-stream probe
 
@@ -137,7 +137,7 @@ def test_catalogues_and_probes(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
-    led = ingest_drops(Ledger.load(cfg), cfg)
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
     s = next(iter(led.sources.values()))
     assert s.state is SourceState.catalogued and s.source_origin == "drop" and s.sha256
     assert s.width == 1920 and s.height == 1080 and s.duration == 12.0
@@ -147,9 +147,9 @@ def test_dedupe_by_content_not_path(tmp_path, mocker):
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 0.0))
     _put(cfg.inbox / "a.mp4", b"SAME"); _put(cfg.inbox / "b.mp4", b"SAME")
-    led = ingest_drops(Ledger.load(cfg), cfg)
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 1
-    led = ingest_drops(led, cfg)
+    led, _ = ingest_drops(led, cfg)
     assert len(led.sources) == 1
 
 def test_ingest_stamps_batch_id_write_once(tmp_path, mocker):
@@ -158,10 +158,11 @@ def test_ingest_stamps_batch_id_write_once(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
-    led = ingest_drops(Ledger.load(cfg), cfg, batch_id="batch_x")
+    led, _ = ingest_drops(Ledger.load(cfg), cfg, batch_id="batch_x")
     src = next(iter(led.sources.values()))
     assert src.batch_id == "batch_x"
-    led = ingest_drops(led, cfg, batch_id="batch_y")          # same bytes, new batch
+    _put(cfg.inbox / "a.mp4", b"V")                           # operator RE-drops the same bytes (inbox drained on pass 1)
+    led, _ = ingest_drops(led, cfg, batch_id="batch_y")          # same bytes, new batch
     assert led.sources[src.id].batch_id == "batch_x" and len(led.sources) == 1   # write-once: prior wins
     assert "batch_conflict" in cfg.log_path.read_text()       # the conflict is visible (mirrors origin_conflict)
 
@@ -170,7 +171,7 @@ def test_ingest_no_batch_is_byte_identical(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
-    led = ingest_drops(Ledger.load(cfg), cfg)
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert next(iter(led.sources.values())).batch_id is None
 
 def test_catalogue_stamps_created_at(tmp_path, mocker):
@@ -179,11 +180,12 @@ def test_catalogue_stamps_created_at(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
-    led = ingest_drops(Ledger.load(cfg), cfg)
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
     s = next(iter(led.sources.values()))
     assert s.created_at and parse_iso(s.created_at).tzinfo is not None     # aware (no naive-tz shift)
     first = s.created_at
-    led = ingest_drops(led, cfg)                                           # re-ingest same bytes -> setdefault no-op
+    _put(cfg.inbox / "a.mp4", b"V")                                          # operator RE-drops same bytes (inbox drained on pass 1)
+    led, _ = ingest_drops(led, cfg)                                           # re-ingest same bytes -> setdefault no-op
     assert next(iter(led.sources.values())).created_at == first           # write-once at first catalogue
 
 def test_skips_audio_only_drop(tmp_path, mocker):
@@ -195,7 +197,7 @@ def test_skips_audio_only_drop(tmp_path, mocker):
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
     mocker.patch("fanops.ingest.has_video_stream",
                  side_effect=lambda p: p.suffix.lower() != ".wav")
-    led = ingest_drops(Ledger.load(cfg), cfg)
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 1
     assert "original_name" not in next(iter(led.sources.values())).meta
 
@@ -209,7 +211,7 @@ def test_skips_pii(tmp_path, mocker):
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 0.0))
     _put(cfg.inbox / "passport scan.jpg", b"S"); _put(cfg.inbox / "perf.mp4", b"V")
-    led = ingest_drops(Ledger.load(cfg), cfg)
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 1
     assert "original_name" not in next(iter(led.sources.values())).meta
 
@@ -222,7 +224,7 @@ def test_ingest_does_not_persist_original_filename(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put(cfg.inbox / "MY-PRIVATE-NAME.mp4", b"V")
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
-    led = ingest_drops(Ledger.load(cfg), cfg)
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
     s = next(iter(led.sources.values()))
     assert "original_name" not in s.meta
     assert "MY-PRIVATE-NAME" not in json.dumps(s.model_dump())   # the filename is nowhere in the unit
@@ -232,14 +234,14 @@ def test_ingest_stamps_third_party_origin_kind(tmp_path, mocker):
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"AAA")
-    led = ingest_drops(Ledger.load(cfg), cfg, origin_kind="third_party")
+    led, _ = ingest_drops(Ledger.load(cfg), cfg, origin_kind="third_party")
     assert next(iter(led.sources.values())).origin_kind == "third_party"
 
 def test_ingest_default_origin_kind_is_native(tmp_path, mocker):
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"AAA")
-    led = ingest_drops(Ledger.load(cfg), cfg)
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert next(iter(led.sources.values())).origin_kind == "native"
 
 def test_ingest_scans_explicit_inbox(tmp_path, mocker):
@@ -247,7 +249,7 @@ def test_ingest_scans_explicit_inbox(tmp_path, mocker):
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
     cfg = Config(root=tmp_path); staging = tmp_path / "staging"; _put(staging / "b.mp4", b"BBB")
-    led = ingest_drops(Ledger.load(cfg), cfg, inbox=staging, origin_kind="third_party")
+    led, _ = ingest_drops(Ledger.load(cfg), cfg, inbox=staging, origin_kind="third_party")
     assert len(led.sources) == 1 and next(iter(led.sources.values())).origin_kind == "third_party"
 
 def test_ingest_same_sha_keeps_origin_and_warns(tmp_path, mocker):
@@ -265,3 +267,82 @@ def test_ingest_same_sha_keeps_origin_and_warns(tmp_path, mocker):
     led3 = Ledger.load(cfg)
     assert led3.sources[sid].origin_kind == "native"                 # unchanged (no silent flip)
     assert "origin_conflict" in cfg.log_path.read_text()             # the conflict is visible
+
+
+# ---- WS-I1 Task 1 (ING-1/10/11/copy2): per-pass inbox lifecycle ----
+def test_ingest_drains_inbox_and_does_not_rehash(tmp_path, mocker):
+    # ING-1: after a file is catalogued, the inbox copy is archived OUT of the scan domain. A SECOND pass
+    # must NOT sha256 it again (the steady-state re-hash bleed). A spy on sha256_of proves the second pass
+    # never reads the disposed file, and the inbox no longer contains it (the original is preserved, archived).
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    led, c1 = ingest_drops(Ledger.load(cfg), cfg)
+    assert c1.added == 1 and len(led.sources) == 1
+    assert not (cfg.inbox / "a.mp4").exists()                        # disposed → archived
+    assert (cfg.inbox / ".ingested" / "a.mp4").exists()             # original preserved, not deleted
+    spy = mocker.patch("fanops.ingest.sha256_of", wraps=sha256_of)
+    led2, c2 = ingest_drops(led, cfg)                                # second pass
+    assert c2.added == 0 and len(led2.sources) == 1
+    spy.assert_not_called()                                          # the archived file is never re-hashed
+
+def test_ingest_sweeps_partial_orphans(tmp_path, mocker):
+    # ING-10: a leaked *.uploadpart / *.part (crashed upload / killed yt-dlp) is cleared on ingest start.
+    cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)
+    (cfg.inbox / "leak.mp4.uploadpart").write_bytes(b"X"); (cfg.inbox / "half.part").write_bytes(b"Y")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 0.0))
+    ingest_drops(Ledger.load(cfg), cfg)
+    assert not list(cfg.inbox.glob("*.uploadpart")) and not list(cfg.inbox.glob("*.part"))
+
+def test_ingest_uses_one_now_per_pass(tmp_path, mocker):
+    # ING-11: two files catalogued in ONE pass share the SAME created_at (one clock read), not two.
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"AAA"); _put(cfg.inbox / "b.mp4", b"BBB")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
+    stamps = {s.created_at for s in led.sources.values()}
+    assert len(led.sources) == 2 and len(stamps) == 1               # one now, not per-file
+
+def test_copy2_enospc_is_per_file_skip_not_pass_rollback(tmp_path, mocker):
+    # copy2 guard: an ENOSPC on ONE file's copy must NOT raise out of the pass (which would roll back the
+    # transaction over one bad file). It is a per-file skip + breadcrumb; a sibling good file still catalogues.
+    import shutil as _shutil
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "good.mp4", b"G"); _put(cfg.inbox / "bad.mp4", b"B")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    real_copy = _shutil.copy2
+    def maybe_enospc(src, dst, *a, **k):
+        if "bad" in str(src): raise OSError(28, "No space left on device")
+        return real_copy(src, dst, *a, **k)
+    mocker.patch("fanops.ingest.shutil.copy2", side_effect=maybe_enospc)
+    led, c = ingest_drops(Ledger.load(cfg), cfg)                     # must NOT raise
+    assert len(led.sources) == 1 and c.skipped == 1                 # the good one landed; the bad one skipped
+    assert "copy_failed" in cfg.log_path.read_text()
+
+
+# ---- WS-I1 Task 3 (ING-7): probe-fail degraded_reason + reprobe ----
+def test_probe_failure_catalogues_degraded_then_reprobes(tmp_path, mocker):
+    # ING-7: a first-pass probe TIMEOUT (returns 0×0) must NOT freeze a clean 0×0 source. It catalogues with
+    # degraded_reason='probe_failed'; a LATER pass with a working probe fills real dimensions + clears the flag.
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 0.0))    # first pass: probe failed
+    with Ledger.transaction(cfg) as led:
+        ingest_drops(led, cfg)
+    s = next(iter(Ledger.load(cfg).sources.values()))
+    assert s.width == 0 and s.degraded_reason == "probe_failed"
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))   # probe recovers
+    with Ledger.transaction(cfg) as led:
+        ingest_drops(led, cfg)                                        # re-probe pass
+    s2 = next(iter(Ledger.load(cfg).sources.values()))
+    assert s2.width == 1080 and s2.height == 1920 and s2.degraded_reason is None
+    assert "reprobe_ok" in cfg.log_path.read_text()
+
+def test_clean_probe_sets_no_degraded_reason(tmp_path, mocker):
+    # non-regression: a successful probe leaves degraded_reason None (byte-identical to today).
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)
+    assert next(iter(led.sources.values())).degraded_reason is None

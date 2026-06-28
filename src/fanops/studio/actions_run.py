@@ -3,7 +3,7 @@
 of the post-production surfaces — depends only on actions_common (ActionResult/_now); never on a sibling action
 module, so the import graph stays acyclic."""
 from __future__ import annotations
-import os
+import os, uuid
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -31,46 +31,54 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=()) -> Acti
     from fanops.digest import write_digest
     from fanops.batches import create_batch
     from fanops.accounts import Accounts
-    n = 0; batch = None
+    from fanops.models import batch_id as _batch_id
+    n = added = 0; batch = None; counts = None
     try:
         with Ledger.transaction(cfg) as led:
+            bid = None; now_iso = iso_z(_now(None))
             if batch_name.strip():
+                bid = _batch_id(batch_name.strip(), now_iso)   # ING-3: deterministic id, computed BEFORE catalogue (write-once on the Source)
+            led, counts = ingest_drops(led, cfg, batch_id=bid)
+            added = counts.added
+            if bid is not None and added >= 1:                 # ING-3: mint the Batch RECORD only when ≥1 source actually attached
                 # Account-First (T1/T4): feed the active-handle set so a batch targeting a dead/typo'd
                 # handle is FLAGGED at creation (else crosspost silently skips every surface -> 0 posts).
                 active = {a.handle for a in Accounts.load(cfg).active()}   # loaded only on the batched path (byte-identical otherwise)
                 batch = create_batch(led, name=batch_name, target_accounts=list(target_accounts),
-                                     now_iso=iso_z(_now(None)), active_handles=active)
-            led = ingest_drops(led, cfg, batch_id=(batch.id if batch else None))
+                                     now_iso=now_iso, active_handles=active)   # same (name, now_iso) -> same id == bid stamped above
             n = len(led.sources)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
-    detail = {"sources": n}
+    detail = {"sources": n, "added": added}
+    if counts is not None and counts.excluded: detail["excluded"] = counts.excluded   # ING-5: PII drops visible on native path too
     if batch is not None:
         detail.update(batch=batch.name, batch_id=batch.id)
         if batch.error_reason: detail["warnings"] = [batch.error_reason]   # zero-target advisory -> Studio Run panel
+    elif batch_name.strip() and added == 0:                    # named a batch but nothing landed → no orphan, tell the operator
+        detail["batch_skipped"] = "no new footage — batch not created (inbox empty or all duplicates)"
     return ActionResult(ok=True, detail=detail)
 
 
 def run_pull(cfg: Config, url: str) -> ActionResult:
     """Drive `fanops pull <url>`: yt-dlp the URL (network, NO lock) then ingest under a transaction.
     Rejects a non-http(s) URL up front (mirrors the CLI's _http_url validator)."""
-    from fanops.ingest import download_url, ingest_drops
+    from fanops.ingest import download_url, ingest_drops, _pull_stage
     from fanops.digest import write_digest
     if not (url or "").strip().startswith(("http://", "https://")):
         return ActionResult(ok=False, error=f"url must be http(s):// — got {url!r}")
-    n = 0
+    n = added = 0
     try:
         produced = download_url(cfg, url.strip())
         with Ledger.transaction(cfg) as led:
-            # per-file origin (audit c0-f1): only the freshly-pulled files are "url"; a manual drop already
-            # in the inbox keeps "drop" — same correlation as the CLI's cmd_pull, so neither surface mislabels.
-            led = ingest_drops(led, cfg, origin="url", origin_paths=produced)
-            n = len(led.sources)
+            # per-file origin (audit c0-f1 / ING-6): the pull catalogues ONLY its isolated .pull stage, so a
+            # manual drop sitting in the inbox is never re-scanned or mislabeled — same as the CLI's cmd_pull.
+            led, counts = ingest_drops(led, cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
+            n = len(led.sources); added = counts.added
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"pull failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"sources": n})
+    return ActionResult(ok=True, detail={"sources": n, "added": added})
 
 
 def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = True,
@@ -102,6 +110,9 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
         dest = (inbox / name).resolve()
         if not dest.is_relative_to(inbox):                             # belt-and-braces: final path MUST stay in the inbox
             skipped.append((raw, "escapes inbox")); continue
+        if dest.exists():                                             # ING-4: a truncated/sanitized collision must NOT os.replace over a DIFFERENT video
+            stem = Path(name).stem[:255 - len(suffix) - len(".uploadpart") - 9]   # leave room for a -xxxxxxxx discriminator
+            name = f"{stem}-{uuid.uuid4().hex[:8]}{suffix}"; dest = (inbox / name).resolve()   # sha identity is downstream; the inbox name is pure staging
         tmp = inbox / f"{name}.uploadpart"                            # same-dir temp → os.replace is atomic; suffix ∉ MEDIA_EXT so a leaked temp is never ingested
         try:
             f.save(str(tmp))                                          # FileStorage.save streams in chunks (no full-buffer)
@@ -116,7 +127,8 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
                 if not has_video_stream(dest):
                     dest.unlink(missing_ok=True); skipped.append((raw, "no video stream")); continue
             except ToolchainMissingError:
-                pass                                                  # ffprobe absent → don't reject; ingest re-checks later
+                dest.unlink(missing_ok=True)                         # ING-9: an unverifiable upload would later ABORT the whole native ingest pass
+                skipped.append((raw, "cannot verify video — install ffmpeg")); continue   # reject, don't keep-then-abort
         saved.append(name)
     if not saved:                                                     # every file was rejected → a real failure, not a green "0 saved"
         return ActionResult(ok=False, error=f"nothing saved — {len(skipped)} file(s) rejected (wrong type, unsafe name, or unreadable)", detail={"saved": saved, "skipped": skipped})
@@ -166,7 +178,7 @@ def run_ingest_thirdparty(cfg: Config) -> ActionResult:
     try:
         with Ledger.transaction(cfg) as led:
             before = sum(1 for s in led.sources.values() if s.origin_kind == "third_party")
-            led = ingest_drops(led, cfg, origin="upload", origin_kind="third_party", inbox=cfg.thirdparty_inbox)
+            led, _ = ingest_drops(led, cfg, origin="upload", origin_kind="third_party", inbox=cfg.thirdparty_inbox)
             n = sum(1 for s in led.sources.values() if s.origin_kind == "third_party")
             added = n - before                                    # THIS call's delta (sha256 dedup → 0 on a repeat)
         write_digest(Ledger.load(cfg), cfg)

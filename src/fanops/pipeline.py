@@ -447,7 +447,7 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     # lock-free pre-warm below — otherwise its transcribe would run inside the main lock. ingest_drops is
     # idempotent (content-addressed dedup), so this never double-catalogues.
     with Ledger.transaction(cfg) as led:
-        led = ingest_drops(led, cfg)
+        led, _ = ingest_drops(led, cfg)
     # Phase D: warm the slow subprocess stages with NO lock held (see _prewarm). The main transaction
     # then re-runs them and they skip on the warm artifacts — so a render no longer starves a concurrent
     # Studio write / second pass. Lock-free; saves nothing; fail-open.
