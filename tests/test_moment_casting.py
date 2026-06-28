@@ -1,9 +1,9 @@
 # tests/test_moment_casting.py — M1: LLM-driven per-account moment SELECTION (Option C, generous).
 # A frame/persona-aware agent gate (kind="moment_casting") chooses, per account, that account's OWN set of
 # moments from the shared decided pool — writing Moment.affinities, which the EXISTING crosspost affinity
-# gate already honors (a cast moment fans ONLY to its accounts). GENEROUS: no count cap (unlike the heuristic
-# cast_moments budget) — an account gets every moment the selector assigns it; overlap across accounts is
-# allowed (a moment can suit several personas). Mirrors the moments gate request->respond->ingest harness.
+# gate already honors (a cast moment fans ONLY to its accounts). GENEROUS: no count cap — an account gets
+# every moment the selector assigns it; overlap across accounts is allowed (a moment can suit several
+# personas). Mirrors the moments gate request->respond->ingest harness.
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -180,3 +180,36 @@ def test_ingest_writes_llm_selection_facts(tmp_path):
     assert fa["m0"].source_id == "src_1" and fa["m0"].created_at is not None
     fb = led.selection_facts_of_account("@b")
     assert len(fb) == 1 and fb[0].moment_id == "m2" and fb[0].method == "llm"
+
+
+# ---- MOM-2: a persona-bearing candidate given ZERO picks becomes an EXPLICIT, labeled state (no silent vanish) ----
+def test_persona_bearing_zero_pick_emits_breadcrumb_not_silent(tmp_path):
+    # @a is picked; @b (persona-bearing, in the brief) gets ZERO moments from the selector. @b must NOT silently
+    # vanish: a labeled breadcrumb names it (the operator can cast manually) and NO auto-fan record is written
+    # (the no-fan-leak contract). An account that WAS picked is not named.
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, [_acct("@a", "hype"), _acct("@b", "lyric", aid="2")])
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    led = _respond_and_ingest(led, cfg, {"@a": ["m0", "m1"], "@b": []})   # @b: zero picks
+    src = led.sources["src_1"]
+    assert src.degraded_reason and "@b" in src.degraded_reason            # @b named, VISIBLE
+    assert "@a" not in (src.degraded_reason or "")                       # @a was picked -> not named
+    assert led.account_selection_for("src_1", "@b") is None              # NO auto-fan record (no-fan-leak)
+    assert led.account_selection_for("src_1", "@a") is not None          # @a got its real selection
+
+
+def test_zero_cast_candidate_shows_review_badge(tmp_path):
+    # The same zero-pick @b surfaces a "0 cast" badge in the Review lane (cast_count 0 + zero_cast True), while a
+    # picked @a does not. OFF byte-identity: with no chosen selection on the source the badge never fires.
+    from datetime import datetime, timezone
+    from fanops.studio.views_review import account_lanes
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, [_acct("@a", "hype"), _acct("@b", "lyric", aid="2")])
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    led = _respond_and_ingest(led, cfg, {"@a": ["m0"], "@b": []})
+    led.save(); led = Ledger.load(cfg)
+    lanes = account_lanes(led, Accounts.load(cfg), cfg, source_id="src_1", now=datetime.now(timezone.utc))
+    lane_b = next(ln for ln in lanes.lanes if ln.account == "@b")
+    assert lane_b.cast_count == 0 and lane_b.zero_cast is True           # the explicit labeled state
+    lane_a = next(ln for ln in lanes.lanes if ln.account == "@a")
+    assert lane_a.zero_cast is False                                     # @a was picked -> not flagged

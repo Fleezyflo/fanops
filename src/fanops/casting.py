@@ -1,16 +1,13 @@
 # src/fanops/casting.py — Account-First Studio: per-account moment casting (Face 3).
 # THE crosspost gate is the DURABLE AccountSelection (RF1), read by `account_selection_admits` below —
 # `Moment.affinities` is the LEGACY non-durable tag, honored only as the fallback for a source that never
-# wrote a selection (pre-v9 / casting-never-ran). Two selectors over the already-decided moment pool:
-#   - the default-ON **LLM gate** (`request_moment_casting`/`ingest_moment_casting`, wired into the
-#     pipeline — an LLM SELECTION, GENEROUS, no count cap): writes the DURABLE AccountSelection (the real
-#     gate input) AND mirrors it onto Moment.affinities for the legacy readers.
-#   - the retained-but-unwired token-overlap **heuristic** (`cast_moments` — a pure persona-fit scorer,
-#     up to `budget` (default 6) best-fitting moments per account, bounded by that moment's batch target):
-#     writes ONLY affinities (+ a SelectionFact audit row), NOT an AccountSelection — so it feeds only the
-#     legacy fallback path. It is the documented no-LLM/manual fallback (CLAUDE.md), tested but NOT wired
-#     into the pipeline; re-activating it as a production selector would require also emitting AccountSelection
-#     to be RF1-gate-consistent (audit c5-f4).
+# wrote a selection (pre-v9 / casting-never-ran). The sole selector over the already-decided moment pool is
+# the default-ON **LLM gate** (`request_moment_casting`/`ingest_moment_casting`, wired into the pipeline — an
+# LLM SELECTION, GENEROUS, no count cap): it writes the DURABLE AccountSelection (the real gate input) AND
+# mirrors it onto Moment.affinities for the legacy load/fallback path. (The old token-overlap heuristic
+# `cast_moments` was DELETED in WS-M1/MOM-7 — it wrote affinities WITHOUT an AccountSelection, the exact
+# divergence MOM-3 collapsed by making affinities a DERIVED view; the operator override `cast_add`/`cast_remove`
+# is the manual selection path, and it writes the durable AccountSelection like the gate.)
 # Neither does ffmpeg or a per-account author re-run (moments are SOURCE-keyed, so the base render stays
 # shared — per-account differentiation is the existing cheap hook overlay).
 # C1-safe: reads persona + signal_score, writes ONLY affinities/AccountSelection — never touches amplify/retire/cascade/track.
@@ -19,7 +16,6 @@ import contextlib
 from datetime import datetime, timezone
 from fanops.models import (MomentState, MomentCastingRequest, MomentCastingDecision, SelectionFact,
                            SelectionMethod, AccountSelection, account_selection_id)
-from fanops.variant_transfer import _persona_tokens
 from fanops.personas import casting_directive
 from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.control import load_guidance
@@ -43,60 +39,8 @@ def _record_fact(led, m, handle, *, method, overlap=None, signal=None, rank=None
         pass
 
 
-def persona_fit_score(persona, moment) -> tuple:
-    """Deterministic, totally-ordered fit key (higher = better): (overlap_count, signal_score, id).
-    overlap = persona tokens ∩ the moment corpus (reason + hook + transcript_excerpt). A zero-overlap
-    persona still orders by signal_score, so no account is ever zero-cast while moments exist. Pure."""
-    corpus = f"{moment.reason} {moment.hook or ''} {moment.transcript_excerpt}".lower().split()
-    overlap = len(_persona_tokens(persona) & set(corpus))
-    return (overlap, moment.signal_score, moment.id)
-
-
-def cast_moments(led, cfg, accounts, *, account_target=None, budget: int = 6):
-    """Assign per-account affinities over the decided, uncast moment pool; returns `led`. The token-overlap
-    HEURISTIC (no-LLM fallback / manual mode — UNWIRED from the pipeline). Each active account is allotted up
-    to `budget` of its best persona-fit moments (default 6; this is the heuristic's OWN cap, not a global
-    config knob — the wired LLM path is uncapped by design), bounded PER MOMENT by that moment's batch target
-    (Source.batch_id -> Batch.target_accounts; empty/missing -> all active), so affinities ⊆ the batch target
-    (it can only NARROW). account_target overrides the per-moment resolution for standalone callers (None ->
-    resolve per moment). Idempotent (only affinities==[] moments are considered) + fail-open (returns led
-    unchanged, logged once, on any internal error). NON-DURABLE across a moment re-decision. c5-f4: this writes
-    ONLY affinities (+ a SelectionFact audit row), NOT a durable AccountSelection — so it feeds only the legacy
-    fallback gate path; re-wiring it as a production selector must also emit AccountSelection (RF1-consistency)."""
-    try:
-        active = list(accounts.active())
-        active_handles = {a.handle for a in active}
-        pool = [m for m in led.moments.values() if m.state is MomentState.decided and not m.affinities]
-        budget = max(1, int(budget))
-        def allowed(m):
-            if account_target is not None: return set(account_target) & active_handles
-            src = led.sources.get(m.parent_id)
-            bid = getattr(src, "batch_id", None) if src is not None else None
-            b = led.get_batch(bid) if bid else None
-            bt = b.target_accounts if b is not None else None
-            return (set(bt) if bt else active_handles) & active_handles   # [] target == ALL active
-        assign = {}
-        for a in active:
-            # score each eligible moment ONCE (persona_fit_score = (overlap, signal, id); total order, no ties),
-            # sort desc, take the budget. score[0] is reused as the fact's `overlap` (no double-compute).
-            scored = sorted(((persona_fit_score(a.persona, m), m) for m in pool if a.handle in allowed(m)),
-                            key=lambda t: t[0], reverse=True)
-            for rank, (score, m) in enumerate(scored[:budget]):
-                assign.setdefault(m.id, set()).add(a.handle)
-                _record_fact(led, m, a.handle, method=SelectionMethod.heuristic,
-                             overlap=score[0], signal=m.signal_score, rank=rank)   # M4: the durable why + pick rank
-        for mid, handles in assign.items():
-            led.moments[mid].affinities = sorted(handles)
-        return led
-    except Exception as e:
-        try: get_logger(cfg)("casting", "-", "error", err=str(e)[:120])
-        except Exception: pass
-        return led
-
-
 # ---- M1 (Option C): LLM-driven per-account moment SELECTION (the generous, persona-smart selector) ----
-# cast_moments above is the deterministic token-overlap HEURISTIC (the no-LLM fallback / manual mode). The
-# gate below is the default selector when account_casting is ON with a responder: it sees each persona and
+# This LLM gate is the default selector when account_casting is ON with a responder: it sees each persona and
 # the whole decided pool and assigns each account its OWN moments — genuinely different per account, GENEROUS
 # (no count cap), reusing Moment.affinities + the existing crosspost gate. Request/respond/ingest mirrors the
 # moments gate; the deterministic ingest is fully testable with a mocked decision (no live LLM).
@@ -187,6 +131,21 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
                     moment_ids=[], method=SelectionMethod.fan_all_default, batch_id=bid, created_at=now))
                 with contextlib.suppress(Exception):
                     get_logger(cfg)("casting", source_id, "fan_all_default", account=a.handle)
+            # MOM-2: a persona-BEARING active account that WAS a candidate (in the brief) but the selector
+            # returned ZERO moments for, on a CAST source, gets NO record and DENIES silently — a real "this
+            # account posts nothing for this source" outcome. Make it an EXPLICIT, labeled breadcrumb so the
+            # operator can intervene (cast manually). We do NOT write an auto-fan record (that would resurrect the
+            # silent collapse RF1 closes — the no-fan-leak contract); the operator decides.
+            zero_cast = sorted(h for h in candidates if h not in per_account
+                               and led.account_selection_for(source_id, h) is None)
+            cur = led.sources.get(source_id)
+            if zero_cast and cur is not None:
+                led.sources[source_id] = cur.model_copy(update={
+                    "degraded_reason": f"casting selected nothing for {', '.join(zero_cast)} "
+                                       "(persona-bearing, zero moments — operator may cast manually)"})
+                for h in zero_cast:
+                    with contextlib.suppress(Exception):
+                        get_logger(cfg)("casting", source_id, "zero_cast_account", account=h)
         if not per_account and src is not None and active:   # casting ran but picked NO ONE -> visible, never silent
             led.sources[source_id] = src.model_copy(
                 update={"degraded_reason": "casting produced no selections (source falls back to fan-to-all)"})
@@ -199,14 +158,22 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
         return led
 
 
-def casting_gate_pending(cfg, source_id) -> bool:
+def casting_gate_pending(cfg, source_id, led=None) -> bool:
     """P1: True iff casting is ON and this source's moment_casting gate is OPEN but UNANSWERED — the crosspost
     fan-out must WAIT (else a post is minted fan-to-all BEFORE affinities land, and posts never un-mint). A
     source with no gate (no personas / casting OFF / nothing to cast) returns False -> fan out now. Fail-open
     to False (a probe glitch must never permanently strand a clip). Mirrors how the caption gate blocks
-    crosspost: a clip is fan-out-eligible only once its prerequisite gate has converged."""
+    crosspost: a clip is fan-out-eligible only once its prerequisite gate has converged.
+    MOM-1: when `led` is passed and the source has a re-picked moment (state==`picked`), its selections have
+    been dropped + the gate discarded by ingest_moments and a FRESH cast is incoming — treat it as pending so
+    crosspost DEFERS (never fans a surviving captioned clip on stale intent before the re-cast lands). `led` is
+    optional for signature stability: callers that pass it get the stricter check; legacy callers keep today's
+    gate-file-only behavior."""
     try:
         if not cfg.account_casting: return False
+        if led is not None and any(m.parent_id == source_id and m.state is MomentState.picked
+                                   for m in led.moments.values()):
+            return True                                                                 # re-pick in flight -> defer
         if latest_request_id(cfg, "moment_casting", source_id) is None: return False   # no gate -> nothing to wait for
         return read_response(cfg, "moment_casting", source_id, MomentCastingDecision) is None
     except Exception as e:

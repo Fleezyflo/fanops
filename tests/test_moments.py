@@ -489,3 +489,13 @@ def test_within_source_template_cluster_still_strips_surplus(tmp_path):
     assert [h[1] for h in hooks] == ["wait for the beat drop", "wait for the last line",
                                      "wait for the hometown bar", None]      # 4th stripped within-source
     assert hooks[3][2] == "wait for the final verse"                         # preserved for Review
+
+
+def test_validate_pick_rejects_blank_reason():
+    # MOM-6: a pick whose rationale is blank/whitespace is invalid — a rationale-less pick rides the casting
+    # fit signal + hook brief blind. A real reason passes; a timing-valid but reason-less pick is rejected.
+    from fanops.moments import validate_pick
+    from fanops.models import MomentPick
+    assert validate_pick(MomentPick(start=0, end=7, reason="strong drop here"), duration=60) is None
+    assert validate_pick(MomentPick(start=0, end=7, reason="   "), duration=60) == "blank reason"
+    assert validate_pick(MomentPick(start=0, end=7, reason=""), duration=60) == "blank reason"

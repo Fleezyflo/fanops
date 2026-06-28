@@ -102,6 +102,8 @@ def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
         return f"end>{duration} ({pick.end})"
     if (pick.end - pick.start) < _MIN_MOMENT_S:
         return f"too short ({pick.end - pick.start:.2f}s)"
+    if not (pick.reason or "").strip():
+        return "blank reason"   # MOM-6: a rationale-less pick rides the casting fit signal + hook brief blind
     return None
 
 def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
@@ -184,6 +186,13 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     # moments must get a FRESH selection). The casting gate is keyed on source_id (one per source), so a
     # single discard suffices. Without this, request_moment_casting's write-once guard would skip re-asking.
     discard_gate(cfg, "moment_casting", source_id)
+    # MOM-1: a re-pick changed this source's moment set; the prior per-account AccountSelections reference
+    # possibly-gone moments and STALE casting intent. Drop them ALL here (symmetric to the gate discard above)
+    # so the re-opened casting gate writes a FRESH selection and the crosspost gate can't fan a surviving
+    # captioned clip on stale intent before the re-cast lands. (selections key on (source, account); iterate
+    # this source's selections.) Only on the reconcile path — the empty/error early-returns above preserve them.
+    for sel in list(led.selections_of_source(source_id)):
+        led.drop_account_selection(source_id, sel.account)
     led.reconcile_moments(source_id, keep)          # upsert + cascade-delete dropped lineages
     led.set_source_state(source_id, SourceState.picks_decided)   # M1b: picks reconciled; hook gates next
     return led

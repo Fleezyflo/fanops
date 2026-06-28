@@ -20,7 +20,7 @@
     <header class="lane-head">
       <span class="lane-handle">{{ lane.account }}</span>
       <span class="lane-cast muted">cast {{ lane.cast_count }} of {{ lane.moment_count }}</span>
-      {% if lane.fans_all %}<span class="chip lane-method warn" title="no specific cast — every moment fans to all accounts">fans to all</span>{% elif lane.method %}<span class="chip lane-method" title="how this account was cast">{{ lane.method }}</span>{% endif %}
+      {% if lane.zero_cast %}<span class="chip lane-method danger" title="this account was a casting candidate but the selector gave it zero moments — it posts NOTHING for this source until you cast it manually">0 cast — posts nothing</span>{% elif lane.fans_all %}<span class="chip lane-method warn" title="no specific cast — every moment fans to all accounts">fans to all</span>{% elif lane.method %}<span class="chip lane-method" title="how this account was cast">{{ lane.method }}</span>{% endif %}
     </header>
     {% if not lane.rows %}
       <div class="empty muted">No decided moments yet for this source.</div>
