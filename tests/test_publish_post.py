@@ -74,7 +74,7 @@ def test_empty_integration_id_is_skipped_not_posted(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
-    with Ledger.transaction(cfg) as l: l.posts["p1"].account_id = ""           # never-mapped channel reached queued
+    with Ledger.transaction(cfg) as lg: lg.posts["p1"].account_id = ""           # never-mapped channel reached queued
     monkeypatch.setattr("fanops.post.run.get_poster",
                         lambda cfg, backend=None: (_ for _ in ()).throw(AssertionError("must not POST")))
     out = publish_due(cfg, now="2000-01-02T00:00:00Z")
@@ -107,7 +107,9 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
                       render_id=rid, media_urls=[f"file://{vf}"]))
     led.save()
     calls = {"n": 0}
-    up = lambda cfg, backend=None: (lambda c, pth: (calls.__setitem__("n", calls["n"] + 1) or "https://cdn/v.mp4"))
+    def up(cfg, backend=None):
+        def _u(c, pth): calls["n"] += 1; return "https://cdn/v.mp4"
+        return _u
     monkeypatch.setattr("fanops.post.get_media_uploader", up)        # ensure_render_media (media.py) path
     monkeypatch.setattr("fanops.post.run.get_media_uploader", up)    # the legacy run.py direct-upload path
     class FakePoster:
@@ -115,8 +117,8 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
     monkeypatch.setattr("fanops.post.run.get_poster", lambda cfg, backend=None: FakePoster())
     assert publish_post(cfg, "p1") == "published"
     assert Ledger.load(cfg).renders[rid].media_url == "https://cdn/v.mp4"   # cached on the Render
-    with Ledger.transaction(cfg) as l:
-        l.posts["p1"].state = PostState.queued; l.posts["p1"].media_urls = [f"file://{vf}"]   # simulate a re-approval re-stamp
+    with Ledger.transaction(cfg) as lg:
+        lg.posts["p1"].state = PostState.queued; lg.posts["p1"].media_urls = [f"file://{vf}"]   # simulate a re-approval re-stamp
     publish_post(cfg, "p1")
     assert calls["n"] == 1                                            # uploaded ONCE total, not per cycle
 
@@ -127,7 +129,7 @@ def test_republish_of_real_id_post_warns(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)                          # dryrun
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
-    with Ledger.transaction(cfg) as l: l.posts["p1"].submission_id = "blotato_1"
+    with Ledger.transaction(cfg) as lg: lg.posts["p1"].submission_id = "blotato_1"
     publish_post(cfg, "p1")
     assert "republish_with_real_id" in cfg.log_path.read_text()
 

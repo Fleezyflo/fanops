@@ -29,7 +29,8 @@ def _accounts(tmp_path, rows):
 
 def _queued(led, pid, handle, platform, acct_id="x"):
     led.add_post(Post(id=pid, parent_id="c", account=handle, account_id=acct_id, platform=platform,
-                      caption="c", state=PostState.queued, media_urls=["https://x/v.mp4"]))
+                      caption="c", state=PostState.queued, media_urls=["https://x/v.mp4"],
+                      scheduled_time="2000-01-01T00:00:00Z"))   # CULM-4: a due time (no-schedule now parks)
 
 
 # ---------------------------------------------------------------- effective_provider ----
@@ -105,7 +106,7 @@ def test_publish_due_skips_live_channel_with_no_provider(tmp_path, monkeypatch, 
     gp = mocker.patch("fanops.post.run.get_poster")
     res = publish_due(cfg)
     gp.assert_not_called()                                    # never tried to publish
-    assert res == {"due": 1, "published": 0, "no_provider": 1}
+    assert res == {"due": 1, "published": 0, "no_provider": 1, "no_integration_id": 0}
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued   # left queued (not failed) — waits for a provider
 
 

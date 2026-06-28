@@ -196,8 +196,9 @@ def test_publish_failure_redacts_api_key_from_error_reason(tmp_path, monkeypatch
     assert "SUPERSECRETKEY" not in er           # the key is scrubbed from the durable record
     assert "***" in er and "503" in er          # redaction marker present; the diagnostic detail survives
 
-def test_publish_no_schedule_publishes_immediately(tmp_path, monkeypatch):
-    # A post with no scheduled_time is due now (no schedule => publish).
+def test_publish_no_schedule_parks_not_publishes(tmp_path, monkeypatch):
+    # CULM-4: a queued post with NO scheduled_time must NOT auto-publish via publish_due (no-auto-publish
+    # defense-in-depth) — it parks (stays queued). publish_post (manual Publish-now) still ships a timeless post.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_ns.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
@@ -206,7 +207,7 @@ def test_publish_no_schedule_publishes_immediately(tmp_path, monkeypatch):
                       platform=Platform.instagram, caption="x", state=PostState.queued))  # no scheduled_time
     led.save()
     publish_due(cfg, now="2026-06-02T18:00:00Z")
-    assert Ledger.load(cfg).posts["pns"].state is PostState.published
+    assert Ledger.load(cfg).posts["pns"].state is PostState.queued   # CULM-4: parked, never auto-published
 
 def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch, mocker):
     # #1 resolve-at-publish: account_id is FROZEN onto the post at crosspost; a later Go-Live integration
