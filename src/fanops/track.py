@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.metrics_schedule import due_offset
-from fanops.models import LIFT_SCORE, PostState
+from fanops.models import LIFT_SCORE, PostState, is_real_submission_id
 from fanops.timeutil import iso_z
 
 # DEFAULT lift weights: saves/shares are the real algorithmic signal; likes ~ noise (deweighted).
@@ -67,16 +67,25 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     prior = post.state
     if prior not in (PostState.published, PostState.analyzed):
         return led
-    # Wholesale replace: each pull returns the full current snapshot, so latest-snapshot-wins is correct
-    # (a merge could retain a metric the backend later dropped). weights is the resolved override (or
-    # None -> default _W) threaded from pull_metrics. Post.metrics STAYS the LATEST snapshot exactly as
-    # today (no offset/captured_at keys) — every existing reader is byte-identical.
-    post.metrics = {**metrics, LIFT_SCORE: lift_score(metrics, weights)}
+    # CULM-6: a transiently-partial pull must not REGRESS a complete snapshot. Carry forward any PRIMARY
+    # weighted key the new row DROPS but the stored snapshot still had (a non-null value), then score the
+    # MERGED row so lift reflects the richest known truth, never a mid-cadence regression. The append-only
+    # metrics_series keeps every RAW row for forensics; this protects only the latest-wins `metrics`.
+    # Non-primary keys still follow latest-wins. A backend dropping a metric FOREVER keeps the carried value
+    # (the series shows the drop; latest-wins must not regress lift). weights is the resolved override
+    # (None -> default _W) threaded from pull_metrics; Post.metrics stays the LATEST snapshot (no offset/
+    # captured_at keys) so every existing reader is byte-identical.
+    prior_metrics = {k: v for k, v in (post.metrics or {}).items()
+                     if k not in (LIFT_SCORE, "lift_degraded", "lift_missing_keys")}
+    recovered = {k: prior_metrics[k] for k in _missing_high_weight(metrics, weights)
+                 if prior_metrics.get(k) is not None}
+    merged = {**metrics, **recovered}
+    post.metrics = {**merged, LIFT_SCORE: lift_score(merged, weights)}
     # T4: ADDITIVE honest-lift marker (NOT a scoring change — lift_score is untouched). When a primary
-    # weighted metric is absent from the row, the objective is partial; surface it so the operator does
-    # not trust a degraded lift as a full one. Marker keys are not weights, so a later lift_score ignores
-    # them. Absent any missing primary key -> no marker -> byte-identical to today.
-    missing = _missing_high_weight(metrics, weights)
+    # weighted metric is absent from the MERGED row, the objective is partial; surface it so the operator
+    # does not trust a degraded lift as a full one. Marker keys are not weights, so a later lift_score
+    # ignores them. Absent any missing primary key -> no marker -> byte-identical to today.
+    missing = _missing_high_weight(merged, weights)
     if missing:
         post.metrics["lift_degraded"] = True
         post.metrics["lift_missing_keys"] = missing
@@ -146,8 +155,14 @@ def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = 
     # Resolve the operator's lift-weight override ONCE per pull (audit b) and thread it down so the
     # real metrics path scores against the tuned optimization target; None -> the default _W.
     weights = cfg.tuning().get("lift_weights")
-    by_sub = {p.submission_id: p for p in led.posts.values()
-              if p.submission_id and p.state in pollable}
+    log = get_logger(cfg)
+    by_sub = {}
+    for p in led.posts.values():
+        if not (p.submission_id and p.state in pollable): continue
+        if not is_real_submission_id(p.submission_id):
+            log("track", p.id, "skip_unreal_submission_id", sub=p.submission_id)   # CULM-3: fanops_ token -> can't attribute
+            continue
+        by_sub[p.submission_id] = p
     for row in fetch(window):
         post = by_sub.get(row.get("postSubmissionId"))
         if post is not None:
@@ -167,13 +182,20 @@ def _auto_validate_metrics_shape(led: Ledger, cfg: Config) -> None:
     `learning_validated` unfreezes with NO operator probe. dryrun never reaches a real analytics row, so it
     never falsely unfreezes; a DEGRADED row (a primary weighted key absent) is the unproven/mis-keyed case
     the gate exists for and never stamps. Idempotent (skips once confirmed); the manual cutover still works."""
+    log = get_logger(cfg)
     if not cfg.is_live:
-        return                                                   # no live analytics -> the shape is never proven here
+        log("learning", "auto_validate", "frozen_not_live"); return   # dryrun never proves a real shape
     from fanops.validation_gate import learning_validated
     if learning_validated(cfg):
-        return                                                   # already proven (manual cutover or a prior pull)
-    proven = any(p.state is PostState.analyzed and LIFT_SCORE in p.metrics and not p.metrics.get("lift_degraded")
-                 for p in led.posts.values())
-    if proven:
-        from fanops import cutover
-        cutover._save_state(cfg, {"metrics_confirmed": True, "metrics_confirmed_auto": True})  # real data proved it
+        return                                                   # already proven -> not frozen, nothing to explain
+    analyzed = [p for p in led.posts.values() if p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
+    proven = next((p for p in analyzed if not p.metrics.get("lift_degraded")), None)
+    if proven is None:                                           # XC-4: name WHY learning stays frozen, per branch
+        if not analyzed:
+            log("learning", "auto_validate", "frozen_no_analyzed_metric")    # no analyzed row yet (waiting on a pull)
+        else:
+            log("learning", "auto_validate", "frozen_all_degraded", n=len(analyzed))   # rows exist, all missing a primary key
+        return
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True, "metrics_confirmed_auto": True})  # real data proved it
+    log("learning", "auto_validate", "unfrozen_on_real_metric", post=proven.id)   # the proof landed

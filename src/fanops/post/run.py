@@ -12,7 +12,7 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.errors import AuthError, redact
 from fanops.ledger import Ledger
-from fanops.models import Post, PostState
+from fanops.models import Post, PostState, is_real_submission_id
 from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media
 from fanops.timeutil import parse_iso as _parse, iso_z
@@ -72,6 +72,10 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
 # ({state, submission_id, error_reason, public_url}) + the two run.py sets here (media_urls upload
 # result, published_at stamp). The throwaway network ledger is otherwise DISCARDED — only these
 # travel into the persisted ledger, so a concurrent writer's other changes are never clobbered (B4).
+# XC-5: account_id is merged back so a published post records the integration it ACTUALLY published to
+# (the network-phase refresh) — "in-flight wins" is deliberate (a post must carry the id it published TO,
+# not a remap that landed after the POST). The finalize writes it ONLY when it changed, so a concurrent
+# Go-Live remap to a DIFFERENT channel is not churn-clobbered by an identical value.
 _NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at", "account_id")
 
 
@@ -110,9 +114,16 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str) -> None:
         # upload and ship the LOCAL path to Blotato, which cannot fetch it — every live variant post
         # died. Upload the variant FILE itself, NOT ensure_clip_media (the clip cache holds the
         # parent's BASE render — using it would drop the burned hook). dryrun keeps file:// (offline).
-        _upload = get_media_uploader(cfg, backend)
-        post.media_urls = [_upload(cfg, Path(u.removeprefix("file://")))
-                           if u.startswith("file://") else u for u in post.media_urls]
+        from fanops.post.media import ensure_render_media
+        new = []
+        for u in post.media_urls:
+            if u.startswith("file://") and post.render_id:
+                new.append(ensure_render_media(led, cfg, post.render_id, u.removeprefix("file://"), backend))   # CULM-2: once per render
+            elif u.startswith("file://"):
+                new.append(get_media_uploader(cfg, backend)(cfg, Path(u.removeprefix("file://"))))               # no render home -> direct
+            else:
+                new.append(u)
+        post.media_urls = new
 
 
 def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | None = None) -> str | None:
@@ -133,6 +144,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         post = led.posts.get(post_id)
         if post is None or post.state is not PostState.queued:
             return None                                # lost the race / not eligible — no-op (F11)
+        if is_real_submission_id(post.submission_id):  # XC-7: re-publishing a post that already has a real id MAY
+            get_logger(cfg)("publish", post_id, "republish_with_real_id", sub=post.submission_id)   # double-post (repost-freely OK, log it)
         post.state = PostState.submitting              # crash-safe intent, persisted on txn exit (F11/B4)
     # ---- NETWORK (no lock held) ----
     led = Ledger.load(cfg)
@@ -142,6 +155,16 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
     if account_id and account_id != post.account_id:   # #1: a Go-Live integration REMAP since crosspost
         get_logger(cfg)("publish", post_id, "account_id_refreshed", was=post.account_id, new=account_id)
         post.account_id = account_id                    # send the CURRENT integration id, not the frozen one
+    if backend != "dryrun" and not (post.account_id or "").strip():
+        # CULM-1: a live POST with an empty integration id ships integration:{id:""} (postiz.py) — a silent
+        # dead post. Never construct it. Un-claim to queued (it never went to the network) + breadcrumb; a
+        # later Go-Live map fixes the channel. Not needs_reconcile (nothing was sent), not failed (recoverable).
+        with Ledger.transaction(cfg) as led2:
+            p2 = led2.posts.get(post_id)
+            if p2 is not None and p2.state is PostState.submitting:
+                p2.state = PostState.queued
+        get_logger(cfg)("publish", post_id, "no_integration_id", account=post.account, platform=post.platform.value)
+        return None
     poster = get_poster(cfg, backend)                  # per-account backend (slice 2), default = global
     try:
         _ensure_media(led, cfg, post, backend)
@@ -159,16 +182,23 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
     net = {f: getattr(post, f) for f in _NET_POST_FIELDS}
     clip = led.clips.get(post.parent_id)
     clip_media = clip.media_url if clip is not None else None   # carry the F44 upload cache forward
+    render = led.get_render(post.render_id) if post.render_id else None
+    render_media = render.media_url if render is not None else None   # CULM-2: persist the once-per-render upload
     final_state = net["state"]
     # ---- FINALIZE ----
     with Ledger.transaction(cfg) as led:
         p = led.posts.get(post_id)
         if p is None:
             return final_state.value if final_state else None   # gone (shouldn't happen) — nothing to merge
-        for f, v in net.items(): setattr(p, f, v)
+        for f, v in net.items():
+            if f == "account_id" and v == getattr(p, f): continue   # XC-5: don't rewrite an unchanged id over a fresher on-disk one
+            setattr(p, f, v)
         c = led.clips.get(p.parent_id)
         if c is not None and clip_media and not c.media_url:
             c.media_url = clip_media                   # persist the once-per-clip upload (FIX F44)
+        r = led.get_render(p.render_id) if p.render_id else None
+        if r is not None and render_media and not r.media_url:
+            r.media_url = render_media                 # CULM-2: persist the once-per-render upload (FIX-F44 parity)
     # content-lifecycle Phase 3: fail-open day-bucketed record, OUTSIDE the finalize txn so an archive
     # write can NEVER roll back the just-committed publish. The network-phase `post` carries every field
     # the archive reads (loaded from disk) PLUS the network mutations. Fires only on a confirmed publish.
@@ -181,7 +211,11 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
     """Schedule gate (FIX F12): True if the post is due now. A malformed/naive scheduled_time (hand-edit,
     corruption) is a per-post FAILURE — marked failed in a short txn (FIX F54), returns False."""
     if not post.scheduled_time:
-        return True                                    # no schedule => due now
+        # CULM-4: a queued post with NO scheduled_time is NOT due — it parks (breadcrumb, stays queued), so a
+        # timeless queued post can no longer auto-publish (no-auto-publish defense-in-depth; clear_time
+        # un-approves first, but enforce it in code not by convention). publish_post (manual) is unaffected.
+        get_logger(cfg)("publish", post.id, "timeless_queued_parked", account=post.account, platform=post.platform.value)
+        return False
     try:
         return _parse(post.scheduled_time) <= cutoff
     except (ValueError, TypeError) as exc:
@@ -206,16 +240,21 @@ def publish_due(cfg: Config, *, now: str | None = None) -> dict:
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)
     log = get_logger(cfg)
-    published = no_provider = 0
+    published = no_provider = no_integration_id = 0
     for post in due:
         provider = _post_provider(cfg, accounts, post)
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
             no_provider += 1
             log("publish", post.id, "no_provider", account=post.account, platform=post.platform.value)
             continue
-        if _publish_one(cfg, post.id, provider, account_id=_resolve_publish_account_id(accounts, post)) == PostState.published.value:
+        acct_id = _resolve_publish_account_id(accounts, post)
+        if provider != "dryrun" and not ((acct_id or post.account_id or "").strip()):
+            no_integration_id += 1                     # CULM-1: never claim a post we can't address; stays queued
+            log("publish", post.id, "no_integration_id", account=post.account, platform=post.platform.value)
+            continue
+        if _publish_one(cfg, post.id, provider, account_id=acct_id) == PostState.published.value:
             published += 1
-    return {"due": len(due), "published": published, "no_provider": no_provider}
+    return {"due": len(due), "published": published, "no_provider": no_provider, "no_integration_id": no_integration_id}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:

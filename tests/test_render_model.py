@@ -82,3 +82,12 @@ def test_migration_v5_to_v6_injects_renders_and_keeps_rows(tmp_path):
     # idempotent reload
     led2 = Ledger.load(cfg)
     assert led2.renders == {} and set(led2.posts) == {"p1"}
+
+
+def test_render_state_is_reserved_not_driven():
+    # CULM-9 (decided: RESERVE): a Render is BORN `rendered` and NO driver advances it. This pins the
+    # decision — the members are kept (views_results._SHIPPABLE_RENDER reads them by name) but the lifecycle
+    # is undriven. If an advancer/GC is ever wired, this test must change to assert the new arc.
+    assert Render(id="r", clip_id="c", account="@a", surface_key="@a|instagram", path="/v.mp4").state \
+        is RenderState.rendered                                              # born rendered, default
+    assert [s.value for s in RenderState] == ["rendered", "queued", "published", "analyzed", "retired"]

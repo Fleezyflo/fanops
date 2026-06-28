@@ -207,3 +207,29 @@ def test_off_mode_approval_mints_no_render(tmp_path, monkeypatch, mocker):
     assert led.renders == {}                                          # OFF firewall holds at approval too
     p = next(iter(led.posts.values()))
     assert p.state is PostState.queued and p.render_id is None and p.media_urls == []
+
+
+def test_realized_cut_over_platform_cap_is_not_queued(tmp_path, monkeypatch, mocker):
+    # CULM-5: a per-account CUT can widen past the platform cap (IG 90s) even when the moment window fit.
+    # The realized length is known only at approval; an over-cap realized cut must NOT reach queued.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1"); _mock_burn(mocker)
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _seed_clip(led, cfg, hooks_by_persona={"@a": "hook A"}, surfaces=("@a/instagram",)); led.save()
+    led = _crosspost(cfg)
+    p = next(pp for pp in led.posts.values() if pp.account == "@a")
+    from fanops.crosspost import account_render_spec
+    from fanops.models import Render, RenderState
+    from fanops.studio.actions_approve import _acct_for
+    accts = Accounts.load(cfg); clip = led.clips["clip_1"]
+    rid, *_ = account_render_spec(cfg, clip=clip, hook=p.variant_hook, acct=_acct_for(accts, "@a"))
+    vf = cfg.clips / "over.mp4"; vf.write_bytes(b"V")
+    led.add_render(Render(id=rid, clip_id="clip_1", account="@a", surface_key="@a|instagram",
+                          hook_text=p.variant_hook, path=str(vf), state=RenderState.rendered,
+                          is_account_cut=True, cut_seconds=120.0))   # IG cap is 90 -> over-cap
+    led.save()
+    approve_posts(cfg, [p.id])
+    p2 = Ledger.load(cfg).posts[p.id]
+    assert p2.state is PostState.awaiting_approval                  # NOT queued
+    assert "exceeds" in (p2.error_reason or "")                    # the over-cap reason survives (not RENDER_PENDING)

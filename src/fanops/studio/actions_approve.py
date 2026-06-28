@@ -11,7 +11,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.ids import surface_key
-from fanops.models import ClipState, PostState, Render, RenderState
+from fanops.models import ClipState, PostState, Render, RenderState, PLATFORM_MAX_SECONDS
 from fanops.crosspost import account_render_spec, render_account_file
 from fanops.log import get_logger
 from fanops.timeutil import iso_z
@@ -73,6 +73,11 @@ def _adopt_render(led: Ledger, cfg: Config, post, plan, accts: Accounts) -> None
                               batch_id=plan.batch_id, source_id=plan.source_id, is_account_cut=plan.produced,
                               hook_source=plan.hook_source, cut_seconds=plan.realized))   # first-write-wins (race-safe)
     r = led.get_render(rid)                                          # authoritative (a racing writer may have added it)
+    cap = PLATFORM_MAX_SECONDS.get(post.platform)                    # CULM-5: a per-account CUT can widen past the cap even
+    if r.is_account_cut and r.cut_seconds is not None and cap is not None and r.cut_seconds > cap:
+        post.error_reason = f"realized cut {round(r.cut_seconds, 1)}s exceeds {post.platform.value} cap {cap}s"
+        get_logger(cfg)("approve", post.id, "cut_over_cap", realized=round(r.cut_seconds, 1), cap=cap)
+        return                                                       # leave media EMPTY -> spine's no-media guard skips approval
     post.render_id = rid
     post.media_urls = [f"file://{r.path}"]
     if post.error_reason == RENDER_PENDING_REASON:                   # #4: a prior warm-miss is now resolved -> clear the marker
@@ -99,8 +104,9 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                 post = led.posts.get(pid)
                 if post is not None and cfg.creative_variation:
                     _adopt_render(led, cfg, post, plans.get(pid), accts)   # render BEFORE queued (publish-needs-media)
-                    if post.variant_hook and not post.media_urls:   # render could NOT be materialized (e.g. clip gone)
-                        post.error_reason = RENDER_PENDING_REASON   # #4: durable marker -> Review flags it (not just a log line)
+                    if post.variant_hook and not post.media_urls:   # render could NOT be materialized (e.g. clip gone) OR over-cap (CULM-5)
+                        if not post.error_reason:                   # CULM-5: a SPECIFIC reason (over-cap) set by _adopt_render survives
+                            post.error_reason = RENDER_PENDING_REASON   # #4: durable marker -> Review flags it (not just a log line)
                         get_logger(cfg)("approve", pid, "render_unavailable_skip_approve")   # surface it; never a silent hookless ship
                         render_pending += 1
                         continue                                    # don't queue a variant post without its burned file

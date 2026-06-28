@@ -124,3 +124,20 @@ def test_account_render_spec_bare_for_default_tagged_for_override(tmp_path):
     b = band_for("short")
     assert cut1 is True and prof1 == "short"                             # override -> wants a cut
     assert rid1 == child_id("render", "clip_1", f"H\x1fband:{b.lo:g}-{b.hi:g}") and rid1 != rid0   # band-tagged, distinct
+
+
+def test_account_render_spec_shared_focus_contract_same_id(tmp_path):
+    # CULM-7 pin: two accounts with the SAME (clip, hook, band, frame) compute the SAME render id -> ONE
+    # render. Today smart-framing focus is SOURCE-derived (not per-account), so the shared id is correct. IF
+    # per-account focus is ever added, this test MUST change (append a focus token) or the two accounts
+    # silently COLLIDE on one render id.
+    from fanops.crosspost import account_render_spec
+    from fanops.accounts import Account
+    from fanops.models import Clip, Fmt
+    cfg = Config(root=tmp_path)
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16)
+    a = Account(handle="@a", account_id="1", platforms=["instagram"])
+    b = Account(handle="@b", account_id="2", platforms=["instagram"])
+    rid_a, *_ = account_render_spec(cfg, clip=clip, hook="watch this", acct=a)
+    rid_b, *_ = account_render_spec(cfg, clip=clip, hook="watch this", acct=b)
+    assert rid_a == rid_b                                  # same spec -> one render id (shared source-derived focus)

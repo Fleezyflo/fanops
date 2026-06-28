@@ -334,3 +334,29 @@ def test_reconcile_halts_on_postiz_auth_error(tmp_path):
         raise PostizAuthError("Postiz 401 — bad key (body withheld)")
     with pytest.raises(PostizAuthError):
         reconcile_posts(led, cfg, get_status=get_status)
+
+
+def test_reconcile_published_captures_real_id_over_fanops_token(tmp_path):
+    # CULM-3: a post recovered to published via reconcile must capture the REAL backend id, replacing the
+    # birth fanops_ idempotency token (which analytics 404s) — else pull_metrics can never attribute it.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "p1", PostState.needs_reconcile, sub="fanops_deadbeef")
+    info = {"postSubmissionId": "blotato_99", "status": "published", "publicUrl": "https://ig.com/p/1"}
+    led = reconcile_posts(led, cfg, get_status=lambda sid: info)
+    assert led.posts["p1"].state is PostState.published
+    assert led.posts["p1"].submission_id == "blotato_99"          # real id captured
+
+def test_reconcile_published_without_real_id_keeps_token_not_none(tmp_path):
+    # No real id in the poll body -> never overwrite the (pollable) token with None.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "p1", PostState.needs_reconcile, sub="fanops_deadbeef")
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published"})
+    assert led.posts["p1"].state is PostState.published
+    assert led.posts["p1"].submission_id == "fanops_deadbeef"     # NOT overwritten by None
+
+def test_reconcile_published_post_is_archived(tmp_path):
+    # CULM-Q3: a reconcile-recovered published post must land in the day-bucketed Posted archive too.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "p1", PostState.needs_reconcile, sub="blotato_7")
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "https://ig/p/7"})
+    assert list(cfg.published.rglob("p1.json")), "reconcile-recovered published post must be archived"

@@ -461,3 +461,46 @@ def test_pull_degraded_metric_never_auto_validates(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_post(led); led.save()
     pull_metrics(led, cfg, list_posts=lambda w: [{"postSubmissionId": "sub1", "metrics": _DEGRADED}])
     assert learning_validated(cfg) is False
+
+
+def test_pull_skips_post_with_fanops_token_submission_id(tmp_path):
+    # CULM-3: a published post still carrying the fanops_ birth token must NOT be attributed (the analytics
+    # endpoint 404s a fanops_ id) — it's a logged un-attributable outcome, never a silent freeze.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.published, submission_id="fanops_abc"))
+    rows = [{"postSubmissionId": "fanops_abc", "metrics": {"saves": 9}}]
+    led = pull_metrics(led, cfg, list_posts=lambda w: rows)
+    assert "lift_score" not in led.posts["p1"].metrics            # never attributed to a fake id
+    assert led.posts["p1"].state is PostState.published           # not flipped to analyzed
+
+
+def test_partial_row_does_not_regress_a_complete_snapshot(tmp_path):
+    # CULM-6: a transiently-partial pull (backend momentarily drops a primary key) must NOT overwrite a
+    # complete snapshot and regress lift. Carry forward the dropped primary key; score the MERGED row.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"saves": 50, "shares": 20, "retention": 0.8})   # complete
+    full_lift = led.posts["p1"].metrics["lift_score"]
+    led = record_metrics(led, "p1", {"shares": 20, "retention": 0.8})               # partial: saves dropped
+    assert led.posts["p1"].metrics["saves"] == 50                                  # carried forward
+    assert led.posts["p1"].metrics["lift_score"] == full_lift                      # no regression
+    assert not led.posts["p1"].metrics.get("lift_degraded")                        # merged row is complete
+
+
+def test_frozen_learning_logs_no_analyzed_reason(tmp_path, monkeypatch):
+    # XC-4: a frozen-learning state must be a logged outcome, not silence. Live + no analyzed row yet ->
+    # frozen_no_analyzed_metric breadcrumb.
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    from fanops.track import _auto_validate_metrics_shape
+    _auto_validate_metrics_shape(led, cfg)
+    assert "frozen_no_analyzed_metric" in cfg.log_path.read_text()
+
+def test_frozen_all_degraded_reason(tmp_path, monkeypatch):
+    # XC-4: live + analyzed rows exist but all degraded (a primary weighted key absent) -> a distinct reason.
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    record_metrics(led, "p1", {"reach": 9000})                                 # degraded (primary keys absent)
+    from fanops.track import _auto_validate_metrics_shape
+    _auto_validate_metrics_shape(led, cfg)
+    assert "frozen_all_degraded" in cfg.log_path.read_text()
