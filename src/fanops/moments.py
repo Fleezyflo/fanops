@@ -102,6 +102,8 @@ def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
         return f"end>{duration} ({pick.end})"
     if (pick.end - pick.start) < _MIN_MOMENT_S:
         return f"too short ({pick.end - pick.start:.2f}s)"
+    if not (pick.reason or "").strip():
+        return "blank reason"   # MOM-6: a rationale-less pick rides the casting fit signal + hook brief blind
     return None
 
 def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
