@@ -10,12 +10,18 @@ from fanops.config import Config
 import fanops.framing as framing
 
 
+# NB: detection now flows through detect_window -> keyframes.extract_frames_grid (the single-pass sampler),
+# so the per-(source,window) tmp-dir guard is asserted on the grid pass, not the retired extract_keyframes.
+def _force_detection(monkeypatch, seen):
+    def fake_grid(video_path, start, end, *, fps, out_dir, **kw):
+        seen.append(str(out_dir)); return []      # no frames -> fail-open to None; we only assert the dir
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", fake_grid)
+    monkeypatch.setattr(framing, "_cv2", lambda: object())     # force the detection branch (pretend cv2 present)
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())   # ... with a usable detector
+
 def test_keyframe_tmp_dir_is_unique_per_source(tmp_path, monkeypatch):
     seen = []
-    def fake_extract(video_path, start, end, *, count, out_dir, **kw):
-        seen.append(str(out_dir)); return []      # no frames -> fail-open to None; we only assert the dir
-    monkeypatch.setattr("fanops.keyframes.extract_keyframes", fake_extract)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())     # force the detection branch (pretend cv2 present)
+    _force_detection(monkeypatch, seen)
     cfg = Config(root=tmp_path)
     framing.subject_focus(cfg, SimpleNamespace(id="src_a", source_path="/a.mp4"), start=0.0, end=7.0)
     framing.subject_focus(cfg, SimpleNamespace(id="src_b", source_path="/b.mp4"), start=0.0, end=7.0)  # SAME window
@@ -26,10 +32,7 @@ def test_keyframe_tmp_dir_is_unique_per_source(tmp_path, monkeypatch):
 
 def test_keyframe_tmp_dir_is_unique_per_window(tmp_path, monkeypatch):
     seen = []
-    def fake_extract(video_path, start, end, *, count, out_dir, **kw):
-        seen.append(str(out_dir)); return []
-    monkeypatch.setattr("fanops.keyframes.extract_keyframes", fake_extract)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    _force_detection(monkeypatch, seen)
     cfg = Config(root=tmp_path)
     src = SimpleNamespace(id="src_a", source_path="/a.mp4")
     framing.subject_focus(cfg, src, start=0.0, end=7.0)

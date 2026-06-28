@@ -5,6 +5,7 @@ render_aspects_for renders one clip per distinct aspect the active platforms nee
 from __future__ import annotations
 import hashlib, json, os, subprocess
 from pathlib import Path
+from statistics import median
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
@@ -191,27 +192,92 @@ def pick_visual_start(src_path: str, start: float, end: float, *, scene_peaks, o
 def _clamp(v: int, lo: int, hi: int) -> int:
     return lo if v < lo else (hi if v > hi else v)
 
-def _time_expr(bounds: list[float], vals: list[int]) -> str:
-    """A per-frame ffmpeg crop-offset expression that STEPS through `vals` at the `bounds` times (seconds,
-    relative to the clip) — the active-speaker cut. `vals` has one more entry than `bounds` (the final value
-    is the else branch). Commas inside if() are escaped (\\,) so the expression survives filtergraph parsing
-    as one option value (verified: named options + escaped commas render; positional/quoted do not)."""
+# ---- Dynamic-reframe geometry (T5): zoom each subject to a consistent on-screen face fraction + place the
+# eye-line, and pan SMOOTHLY (linear ramp) between active speakers — vs the old full-height no-zoom hard cut.
+# ffmpeg evaluates crop x/y per-frame but w/h ONCE, so the crop box is constant per window (one zoom) and the
+# pan lives in the x/y t-expression. A focus WITHOUT a face height (a 2-tuple, or saliency) never zooms ->
+# byte-identical to the pre-zoom behaviour. ----
+_FACE_FRAC_TALK = 0.32      # target on-screen face-box height fraction for talk (tight, head-and-shoulders)
+_FACE_FRAC_MUSIC = 0.22     # ... for music/performance: wider, keeps stage/body context
+_EYELINE_FRAC = 0.40        # place the eyes at ~0.40 of the output height (eyes on the upper third)
+_ZOOM_MAX = 1.6             # max zoom MAGNIFICATION beyond the branch baseline (bounds upscale blur)
+_GENTLE_MIN_FACE_FRAC = 0.12   # an already-9:16 clip only gets a gentle zoom when the face is smaller than this
+_GENTLE_ZOOM_MAX = 1.15        # ... and that gentle zoom never exceeds this magnification
+
+def _target_frac(content_type: str | None) -> float:
+    return _FACE_FRAC_MUSIC if content_type == "music" else _FACE_FRAC_TALK
+
+def _zoom_h(src_h: int, ch0: int, fh, frac: float, zoom_max: float = _ZOOM_MAX) -> int:
+    """Crop extent in the SCALED axis: shrink the baseline ch0 so a face of normalized height fh fills `frac`
+    of the output, bounded so magnification (ch0/ch) never exceeds zoom_max (caps upscale blur). fh falsy
+    (a 2-tuple focus / saliency) -> no zoom -> ch0 (today's full extent)."""
+    if not fh or fh <= 0 or not frac:
+        return ch0
+    ch = round(src_h * fh / frac)
+    return _clamp(ch, round(ch0 / zoom_max), ch0)
+
+def _place(src_w: int, src_h: int, cw: int, ch: int, fx: float, ay: float, eyeline: float):
+    """Clamped crop ORIGIN (x,y): x centres the box on fx; y puts the vertical anchor ay (eye-line or
+    centroid) at `eyeline` of the crop. Both clamped so the window never runs off the frame."""
+    x = _clamp(round(fx * src_w - cw / 2), 0, max(0, src_w - cw))
+    y = _clamp(round(ay * src_h - eyeline * ch), 0, max(0, src_h - ch))
+    return x, y
+
+def _step_expr(bounds: list[float], vals: list[int]) -> str:
+    """A per-frame ffmpeg crop-offset expression that HARD-CUTS through `vals` at the `bounds` switch times
+    (instant reframe to the active speaker — the short-form standard, vs panning across the dead space
+    between two seats). `vals` has one more entry than `bounds` (the final value is the else branch). Commas
+    inside if() are escaped (\\,) so it survives filtergraph parsing as one option value. Single value -> the
+    constant. A cut between distant speakers reads as energetic editing; a slow pan across the gap reads as a
+    glitch (it shows the empty middle) — proven on real 2-shot footage."""
+    if len(vals) <= 1:
+        return str(vals[0]) if vals else "0"
     expr = str(vals[-1])
     for b, v in zip(reversed(bounds), reversed(vals[:-1])):
         expr = f"if(lt(t\\,{round(b, 2)})\\,{v}\\,{expr})"
     return expr
 
+def _track_crop(track: list, src_w: int, src_h: int, tw: int, th: int, ch0: int, frac: float, *, axis: str) -> str:
+    """Active-speaker crop: ONE zoom for the window (from the segments' median face height) + a SMOOTH pan
+    of the crop origin between per-segment anchors. crop w/h constant (ffmpeg evals them once); x/y are the
+    t-expressions. `axis` is just documentation — both x and y are emitted; a constant axis collapses to an int."""
+    fhs = [s[4] for s in track if len(s) > 4 and s[4]]
+    ch = _zoom_h(src_h, ch0, median(fhs) if fhs else None, frac)
+    cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
+    bounds = [round(s[1], 2) for s in track[:-1]]
+    xs, ys = [], []
+    for s in track:
+        ey = s[5] if len(s) > 5 else s[3]
+        x, y = _place(src_w, src_h, cw, ch, s[2], ey, _EYELINE_FRAC if len(s) > 5 else 0.5)
+        xs.append(x); ys.append(y)
+    xexpr = _step_expr(bounds, xs)
+    yexpr = _step_expr(bounds, ys)
+    return f"crop=w={cw}:h={ch}:x={xexpr}:y={yexpr},scale={tw}:{th},setsar=1"
+
+def _focus_crop(focus: tuple, src_w: int, src_h: int, tw: int, th: int, ch0: int, frac: float,
+                *, symbolic_w: str, symbolic_full: bool) -> str:
+    """Static subject-lock crop: zoom to the target face fraction + eye-line. When a 2-tuple focus produces
+    NO zoom (full baseline extent), emit the legacy SYMBOLIC form so a pre-zoom focus clip is byte-identical
+    (no needless re-render); otherwise a numeric zoomed crop."""
+    fh = focus[2] if len(focus) > 2 else None
+    ey = focus[3] if len(focus) > 3 else None
+    ch = _zoom_h(src_h, ch0, fh, frac)
+    cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
+    eyeline = _EYELINE_FRAC if ey is not None else 0.5
+    x, y = _place(src_w, src_h, cw, ch, focus[0], ey if ey is not None else focus[1], eyeline)
+    if symbolic_full and ch == ch0 and cw == round(ch0 * tw / th):
+        # no zoom -> keep the exact pre-zoom string (byte-identical): width-crop "ih*tw/th:ih:x:y", height-crop "iw:iw*th/tw:x:y"
+        return symbolic_w.format(x=x, y=y) + f",scale={tw}:{th},setsar=1"
+    return f"crop={cw}:{ch}:{x}:{y},scale={tw}:{th},setsar=1"
+
 def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = False,
-                   focus: tuple[float, float] | None = None,
-                   track: list | None = None) -> str:
-    """Pick a safe ffmpeg -vf for the target aspect given the source dimensions. With `focus`
-    (smart framing — a normalized (fx, fy) subject centroid from framing.subject_focus) the crop window
-    is OFFSET to keep that subject in the safe area: x on the width-crop branch (landscape->vertical, where
-    the speaker sits off-centre), y on the height-crop branch — taking precedence over the blind `top_bias`
-    guess. With `top_bias` (Theme 2, opt-in) and no focus, a VERTICAL height-crop offsets its window UP —
-    keeping headroom so the upper third isn't decapitated by ffmpeg's default centre crop. focus=None AND
-    top_bias=False is byte-identical to today; an offset is clamped in-bounds so the crop never runs off
-    the frame. The scale-only and unknown-source branches keep the full frame, so focus is moot there."""
+                   focus: tuple | None = None, track: list | None = None,
+                   content_type: str | None = None) -> str:
+    """A safe ffmpeg -vf for the target aspect given the source dims, content-adaptive and aspect-adaptive.
+    `focus` ((fx,fy) or (fx,fy,fh,ey)) locks + zooms a static subject; `track` (6-tuples with face height +
+    eye-line) follows the active speaker with a smooth pan; `content_type` tunes the zoom (music wider). A
+    focus with no face height never zooms -> byte-identical to before; focus=None AND track=None AND
+    top_bias=False is the exact centered crop of old. Every branch clamps in-bounds and falls open safely."""
     tw, th = _TARGETS[aspect]
     if not src_w or not src_h:
         # unknown source: scale to fit + pad to exact target (never an impossible crop)
@@ -219,46 +285,52 @@ def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = Fals
                 f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1")
     src_ar = src_w / src_h
     tgt_ar = tw / th
+    frac = _target_frac(content_type)
     if abs(src_ar - tgt_ar) < 0.01:
-        return f"scale={tw}:{th},setsar=1"
+        return _already_aspect(tw, th, src_w, src_h, focus, frac)   # passthrough or a bounded gentle zoom
     if src_ar > tgt_ar:
-        # source wider than target -> crop width (full height kept -> no vertical decapitation).
-        # smart framing slides the x-window onto the subject; else ffmpeg's default centre (today).
-        if track:                                             # active-speaker: x-window CUTS to the talker over time
-            cw = round(src_h * tw / th)
-            vals = [_clamp(round(seg[2] * src_w) - cw // 2, 0, max(0, src_w - cw)) for seg in track]
-            xexpr = _time_expr([seg[1] for seg in track[:-1]], vals)
-            return f"crop=w=ih*{tw}/{th}:h=ih:x={xexpr}:y=0,scale={tw}:{th},setsar=1"
+        # source wider than target -> crop width (full height kept). track/focus zoom + slide onto the subject.
+        ch0 = src_h
+        if track:
+            return _track_crop(track, src_w, src_h, tw, th, ch0, frac, axis="x")
         if focus is not None:
-            cw = round(src_h * tw / th)
-            x = _clamp(round(focus[0] * src_w) - cw // 2, 0, max(0, src_w - cw))
-            return f"crop=ih*{tw}/{th}:ih:{x}:0,scale={tw}:{th},setsar=1"
+            return _focus_crop(focus, src_w, src_h, tw, th, ch0, frac,
+                               symbolic_w=f"crop=ih*{tw}/{th}:ih:{{x}}:{{y}}", symbolic_full=True)
         return f"crop=ih*{tw}/{th}:ih,scale={tw}:{th},setsar=1"
-    # source taller/narrower than target -> crop height. smart framing slides the y-window onto the
-    # subject; else top_bias lifts to the upper quarter; else centre (today).
-    if track:                                                 # active-speaker on a tall source: y-window cuts to the talker
-        ch = round(src_w * th / tw)
-        vals = [_clamp(round(seg[3] * src_h) - ch // 2, 0, max(0, src_h - ch)) for seg in track]
-        yexpr = _time_expr([seg[1] for seg in track[:-1]], vals)
-        return f"crop=w=iw:h=iw*{th}/{tw}:x=0:y={yexpr},scale={tw}:{th},setsar=1"
+    # source taller/narrower than target -> crop height.
+    ch0 = round(src_w * th / tw)
+    if track:
+        return _track_crop(track, src_w, src_h, tw, th, ch0, frac, axis="y")
     if focus is not None:
-        ch = round(src_w * th / tw)
-        y = _clamp(round(focus[1] * src_h) - ch // 2, 0, max(0, src_h - ch))
-        return f"crop=iw:iw*{th}/{tw}:0:{y},scale={tw}:{th},setsar=1"
+        return _focus_crop(focus, src_w, src_h, tw, th, ch0, frac,
+                           symbolic_w=f"crop=iw:iw*{th}/{tw}:{{x}}:{{y}}", symbolic_full=True)
     if top_bias:
         return f"crop=iw:iw*{th}/{tw}:0:(ih-iw*{th}/{tw})/4,scale={tw}:{th},setsar=1"
     return f"crop=iw:iw*{th}/{tw},scale={tw}:{th},setsar=1"
 
+def _already_aspect(tw: int, th: int, src_w: int, src_h: int, focus: tuple | None, frac: float) -> str:
+    """Source ALREADY at the target aspect: scale-only by default (byte-identical to today). ONLY when a
+    small face is detected (fh < _GENTLE_MIN_FACE_FRAC) apply a BOUNDED gentle zoom-in (still target AR) with
+    eye-line recentre — never a destructive crop, never worse than passthrough."""
+    fh = focus[2] if (focus is not None and len(focus) > 2) else None
+    if not fh or fh >= _GENTLE_MIN_FACE_FRAC:
+        return f"scale={tw}:{th},setsar=1"
+    ch = _zoom_h(src_h, src_h, fh, frac, zoom_max=_GENTLE_ZOOM_MAX)
+    cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
+    ey = focus[3] if len(focus) > 3 else focus[1]
+    x, y = _place(src_w, src_h, cw, ch, focus[0], ey, _EYELINE_FRAC)
+    return f"crop={cw}:{ch}:{x}:{y},scale={tw}:{th},setsar=1"
+
 def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
                     *, src_w: int = 0, src_h: int = 0, extra_vf: str | None = None,
-                    top_bias: bool = False, focus: tuple[float, float] | None = None,
-                    track: list | None = None) -> list[str]:
+                    top_bias: bool = False, focus: tuple | None = None,
+                    track: list | None = None, content_type: str | None = None) -> list[str]:
     # -ss before -i (fast seek) makes output-position -to a DURATION measured from the seek
     # point, so it must be (end - start), not the absolute end. Verified on ffmpeg 8.0.1:
     # `-ss 1.5 -to 6.5` yields a 6.5s clip; passing 8.0 here would yield 8.0s (the F39 bug).
     # extra_vf (e.g. the burned-subtitles `subtitles=...` token) is chained AFTER the reframe
     # with a comma so it operates on the already-reframed frame; default None == old behavior.
-    vf = reframe_filter(aspect, src_w, src_h, top_bias=top_bias, focus=focus, track=track)
+    vf = reframe_filter(aspect, src_w, src_h, top_bias=top_bias, focus=focus, track=track, content_type=content_type)
     if extra_vf:
         vf = f"{vf},{extra_vf}"
     return ["ffmpeg", "-y", "-ss", str(start), "-i", src, "-to", str(end - start),
@@ -315,19 +387,52 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
 # determines the rendered bytes (source, window, aspect, source dims, the burned .ass text), so the
 # lock-free pre-warm and the in-lock commit agree on when an existing mp4 may be reused. This is what
 # lets the heavy ffmpeg run OUTSIDE the ledger lock and the commit pass skip it.
+_REFRAME_GEOM_V = 1          # bump to force re-render of ZOOM/eyeline/dynamic clips after a geometry-math change
+
 def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
                         src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
-                        focus: tuple[float, float] | None = None, track: list | None = None) -> str:
+                        focus: tuple | None = None, track: list | None = None,
+                        content_type: str | None = None) -> str:
     payload = {"src": src_path, "cs": round(cs, 3), "ce": round(ce, 3), "aspect": aspect_value,
                "w": src_w, "h": src_h, "ass": ass_text}
     if top_bias:                                          # additive: absent key -> byte-identical fp to today
         payload["top_bias"] = True
-    if focus is not None:                                 # additive: smart-framing offset -> re-render on change
-        payload["focus"] = [round(focus[0], 3), round(focus[1], 3)]
-    if track:                                             # additive: active-speaker cut track -> re-render on change
-        payload["track"] = [[round(s[0], 2), round(s[1], 2), round(s[2], 3), round(s[3], 3)] for s in track]
+    if focus is not None:                                 # ALL elements: a 2-tuple hashes [fx,fy] (== old);
+        payload["focus"] = [round(v, 3) for v in focus]  # a 4-tuple adds fh,ey -> zoom changes bytes -> re-render
+    if track:                                             # full 6-tuple (fh,ey carried) -> dynamic crop re-renders
+        payload["track"] = [[round(s[0], 2), round(s[1], 2)] + [round(v, 3) for v in s[2:]] for s in track]
+    geom = bool(track) or (focus is not None and len(focus) > 2)   # zoom/eyeline/dynamic present?
+    if content_type and geom:                            # content_type only alters bytes when a zoom applies
+        payload["ct"] = content_type
+    if geom:                                              # version the new geometry so a future change can bust it
+        payload["geom"] = _REFRAME_GEOM_V
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
+
+def _resolve_framing(cfg: Config, src, cs: float, ce: float):
+    """Pick the reframe strategy for this window: (focus, track, content_type). Classify the window once,
+    then route — active-speaker TRACK only for real multi-speaker talk; subject-lock FOCUS (zoomed) for a
+    single/music/silent subject; motion-SALIENCY (a no-zoom 2-tuple) for music/silent/no-people with no face;
+    else centered (None,None,None). Gated entirely by cfg.smart_framing so OFF is byte-identical to today.
+    Every framing call is fail-open (None), so any miss degrades to the centered crop."""
+    if not cfg.smart_framing:
+        return None, None, None
+    stats = framing.detect_window(cfg, src, start=cs, end=ce)
+    ct = framing.classify_window(cfg, src, start=cs, end=ce, stats=stats)
+    if ct == framing.CT_MULTI:
+        track = framing.speaker_track(cfg, src, start=cs, end=ce, src_w=src.width or 0, src_h=src.height or 0)
+        if track:
+            return None, track, ct
+        ct = framing.CT_SINGLE                            # classed multi but not a real 2-shot -> single lock
+    if ct in (framing.CT_SINGLE, framing.CT_MUSIC, framing.CT_SILENT):
+        focus = framing.subject_focus(cfg, src, start=cs, end=ce)
+        if focus is not None:
+            return focus, None, ct
+    if ct in (framing.CT_MUSIC, framing.CT_SILENT, framing.CT_NOPEOPLE):
+        sal = framing.motion_saliency(cfg, src, start=cs, end=ce)   # follow the action when there's no face
+        if sal is not None:
+            return sal, None, None                       # 2-tuple -> pan only, NO zoom (no subject to size to)
+    return None, None, None                              # centered crop (today)
 
 def _fingerprint_matches(fp_path, fp: str) -> bool:
     try:
@@ -381,10 +486,12 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     # crop onto the speaker/action instead of the blind top/center guess. None (no [framing] extra / no
     # detection) -> today's centered crop. Resolved here (window final) + cached, so the in-lock commit
     # re-probes nothing — and it feeds BOTH the fingerprint and the render so a fp-match can't reuse a stale crop.
-    # Active-speaker first: in a 2-shot the crop CUTS to whoever's talking (a time-varying window); a
-    # single-camera window yields None -> fall back to the STATIC subject_focus (one crop) -> centered.
-    track = framing.speaker_track(cfg, src, start=cs, end=ce, src_w=src.width or 0, src_h=src.height or 0) if cfg.smart_framing else None
-    focus = None if track else (framing.subject_focus(cfg, src, start=cs, end=ce) if cfg.smart_framing else None)
+    # Content-adaptive: classify the window (multi-speaker / single / music / silent / no-people) and route to
+    # the right crop — active-speaker TRACK only for real talk 2-shots, subject-lock FOCUS (zoomed) for a
+    # single/music/silent subject, motion SALIENCY for no-face music/silent, else centered. content_type tunes
+    # the zoom (music wider). All fail-open -> centered. Resolved here (window final) + cached so the in-lock
+    # commit re-probes nothing, and it feeds BOTH the fingerprint and the render (no stale-crop reuse).
+    focus, track, content_type = _resolve_framing(cfg, src, cs, ce)
     extra_vf, hook_burn_failed = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
     # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
     # render (a pre-warm pass produced it), adopt it and SKIP ffmpeg — record the clip + advance the
@@ -392,7 +499,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     ass_path = cfg.clips / f"{cid}.ass"
     ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
     fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0,
-                             ass_text, top_bias=cfg.aware_reframe, focus=focus, track=track)
+                             ass_text, top_bias=cfg.aware_reframe, focus=focus, track=track, content_type=content_type)
     fp_path = cfg.clips / f"{cid}.render.json"
     if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
         # An fp-match means a prior render of THIS exact window already passed (the fp is stamped only
@@ -406,7 +513,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         return led, clip
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                          top_bias=cfg.aware_reframe, focus=focus, track=track)
+                          top_bias=cfg.aware_reframe, focus=focus, track=track, content_type=content_type)
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
@@ -502,8 +609,7 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
             cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
         realized = ce - cs                                    # P3: the account cut's REALIZED window length (post snap+visual-start)
-        track = framing.speaker_track(cfg, src, start=cs, end=ce, src_w=src.width or 0, src_h=src.height or 0) if cfg.smart_framing else None
-        focus = None if track else (framing.subject_focus(cfg, src, start=cs, end=ce) if cfg.smart_framing else None)  # subject-aware crop (fail-open None)
+        focus, track, content_type = _resolve_framing(cfg, src, cs, ce)   # content-adaptive crop (fail-open -> centered)
         tw, th = _TARGETS[aspect.value]
         extra_vf = None
         if (hook or "").strip() and overlay.ffmpeg_has_textfilter():
@@ -517,7 +623,7 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
                 extra_vf = overlay.subtitles_vf(ass_path)
         cmd = ffmpeg_clip_cmd(src.source_path, tmp, cs, ce, aspect.value,
                               src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                              top_bias=top_bias, focus=focus, track=track)
+                              top_bias=top_bias, focus=focus, track=track, content_type=content_type)
         try:
             r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):

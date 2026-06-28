@@ -159,6 +159,8 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     if cfg.isolate_vocals:
         voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
         if voc != src.source_path:
+            src.meta["vocals_isolated"] = True            # a demucs vocal stem exists -> framing.classify_window
+                                                          # reads non-speech windows as MUSIC (wider lock), not silence
             target = out_dir / f"{Path(src.source_path).stem}.mp3"
             # ECC fix #3: on a move failure (e.g. cross-device) fall back to the SOURCE path, NOT the
             # vocals path. The vocals stem ("vocals") made whisper write vocals.json, which the
