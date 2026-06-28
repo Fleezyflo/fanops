@@ -81,6 +81,64 @@ def test_run_ingest_wraps_toolchain_error(tmp_path, mocker):
     assert not res.ok and "ffprobe" in (res.error or "")
 
 
+# ---- WS-I1 Task 2 (ING-6/12): a URL pull catalogues ONLY its staged download, never inbox residue ----
+def test_run_pull_ingests_only_staged_download_not_inbox_residue(tmp_path, mocker):
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
+    cfg.inbox.mkdir(parents=True, exist_ok=True); (cfg.inbox / "manual.mp4").write_bytes(b"MANUAL")
+    def fake_ytdlp(cmd, **kw):
+        from fanops.ingest import _pull_stage
+        (_pull_stage(cfg) / "pulled.mp4").write_bytes(b"PULLED")
+        class R: returncode = 0; stdout = ""; stderr = ""
+        return R()
+    mocker.patch("fanops.ingest.subprocess.run", side_effect=fake_ytdlp)
+    res = actions.run_pull(cfg, "https://example.com/v")
+    assert res.ok
+    led = Ledger.load(cfg)
+    assert len(led.sources) == 1                                    # ONLY the pulled file
+    assert next(iter(led.sources.values())).source_origin == "url"
+    assert (cfg.inbox / "manual.mp4").exists()                      # the manual drop is left for a native pass
+
+
+# ---- WS-I1 Task 4 (ING-2): report the this-pass delta, not the cumulative total ----
+def test_run_ingest_reports_added_delta_not_cumulative(tmp_path, mocker):
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker, name="a.mp4")
+    r1 = actions.run_ingest(cfg)
+    assert r1.detail["added"] == 1 and r1.detail["sources"] == 1
+    _src_in_inbox(cfg, mocker, name="b.mp4")
+    (cfg.inbox / "b.mp4").write_bytes(b"DIFFERENT")                  # ensure distinct sha
+    r2 = actions.run_ingest(cfg)
+    assert r2.detail["added"] == 1 and r2.detail["sources"] == 2
+    r3 = actions.run_ingest(cfg)                                     # inbox now drained → nothing new
+    assert r3.detail["added"] == 0 and r3.detail["sources"] == 2    # honest "Added 0", not 2
+
+
+# ---- WS-I1 Task 5 (ING-3/5): no orphan batch; deterministic id; native PII count ----
+def test_run_ingest_empty_inbox_mints_no_batch(tmp_path, mocker):
+    cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)   # exists but empty
+    res = actions.run_ingest(cfg, batch_name="Ghost batch", target_accounts=["@a"])
+    assert res.ok and res.detail["added"] == 0
+    assert "batch" not in res.detail and res.detail.get("batch_skipped")        # no orphan; operator told why
+    assert len(Ledger.load(cfg).batches) == 0
+
+def test_run_ingest_real_drop_mints_one_batch_with_matching_id(tmp_path, mocker):
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    res = actions.run_ingest(cfg, batch_name="Real batch")
+    assert res.ok and res.detail["added"] == 1 and res.detail["batch"] == "Real batch"
+    led = Ledger.load(cfg); assert len(led.batches) == 1
+    b = next(iter(led.batches.values()))
+    assert next(iter(led.sources.values())).batch_id == b.id        # ids match (no silent orphan stamp)
+
+def test_run_ingest_surfaces_native_pii_count(tmp_path, mocker):
+    cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)
+    (cfg.inbox / "passport scan.mp4").write_bytes(b"S"); (cfg.inbox / "perf.mp4").write_bytes(b"V")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    res = actions.run_ingest(cfg)
+    assert res.detail["added"] == 1 and res.detail["excluded"] == 1
+
+
 # ---- actions.run_advance ----
 def test_run_advance_returns_summary(tmp_path):
     cfg = Config(root=tmp_path)
@@ -225,22 +283,23 @@ def test_run_pull_rejects_non_http_url(tmp_path):
 
 
 def test_run_pull_does_not_mislabel_a_pre_existing_drop_as_url(tmp_path, mocker):
-    # audit c0-f1: the Studio URL-ingest path mirrors the CLI's cmd_pull — a manual drop already in the inbox
-    # must keep "drop", only the freshly-pulled file becomes "url" (no pass-wide mislabel on this surface either).
+    # audit c0-f1 / ING-6: the Studio URL-ingest path catalogues ONLY its isolated .pull stage, so a manual drop
+    # already in the inbox is never scanned by the pull — it CANNOT be mislabeled "url" (it waits for a native pass).
     cfg = Config(root=tmp_path)
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
     (cfg.inbox).mkdir(parents=True, exist_ok=True); (cfg.inbox / "drop.mp4").write_bytes(b"DROPPED")
     def fake_ytdlp(cmd, **kw):
-        (cfg.inbox / "pulled.mp4").write_bytes(b"PULLED")
+        from fanops.ingest import _pull_stage
+        (_pull_stage(cfg) / "pulled.mp4").write_bytes(b"PULLED")
         class R: returncode = 0; stdout = ""; stderr = ""
         return R()
     mocker.patch("fanops.ingest.subprocess.run", side_effect=fake_ytdlp)
     res = actions.run_pull(cfg, "https://example.com/v")
     assert res.ok
     led = Ledger.load(cfg)
-    origins = {s.meta["bytes"]: s.source_origin for s in led.sources.values()}
-    assert origins[len(b"DROPPED")] == "drop" and origins[len(b"PULLED")] == "url"
+    assert {s.source_origin for s in led.sources.values()} == {"url"}   # only the staged pull is catalogued
+    assert (cfg.inbox / "drop.mp4").exists()                            # the manual drop is left for a native pass
 
 
 # ---- views.pipeline_status ----

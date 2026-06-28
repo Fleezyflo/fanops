@@ -273,7 +273,7 @@ def test_advance_persists_progress_when_crosspost_raises(tmp_path, monkeypatch, 
     def fake_ingest(led, cfg, **kw):
         led.add_source(Source(id="src_prog", source_path=str(cfg.sources / "src_prog.mp4"),
                               state=SourceState.error))   # terminal state: no further stage touches it
-        return led
+        return led, None                                # ING-1: ingest_drops now returns (led, IngestCounts)
     mocker.patch("fanops.pipeline.ingest_drops", side_effect=fake_ingest)
     # make crosspost blow up mid-pass
     mocker.patch("fanops.pipeline.crosspost_clips", side_effect=RuntimeError("crosspost boom"))
@@ -296,7 +296,7 @@ def test_advance_persists_progress_when_publish_raises_nonauth(tmp_path, monkeyp
     def fake_ingest(led, cfg, **kw):
         led.add_source(Source(id="src_prog", source_path=str(cfg.sources / "src_prog.mp4"),
                               state=SourceState.error))   # terminal: no further stage touches it
-        return led
+        return led, None                                # ING-1: ingest_drops now returns (led, IngestCounts)
     mocker.patch("fanops.pipeline.ingest_drops", side_effect=fake_ingest)
     mocker.patch("fanops.pipeline.publish_due", side_effect=RuntimeError("publish boom"))
     advance(cfg, base_time="2026-06-02T18:00:00Z")   # must NOT raise

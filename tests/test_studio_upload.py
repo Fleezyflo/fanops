@@ -106,8 +106,8 @@ def test_save_uploads_same_file_twice_is_idempotent_at_ingest(tmp_path, mocker):
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
     cfg = Config(root=tmp_path)
     actions.save_uploads(cfg, [_Up("dup.mp4", b"SAMEBYTES")], probe=False)   # 1st upload
-    actions.save_uploads(cfg, [_Up("dup.mp4", b"SAMEBYTES")], probe=False)   # 2nd identical → os.replace overwrites
-    assert len(list(cfg.inbox.glob("*.mp4"))) == 1                            # one file on disk, not two
+    actions.save_uploads(cfg, [_Up("dup.mp4", b"SAMEBYTES")], probe=False)   # 2nd identical → disambiguated dest (ING-4: never clobber)
+    assert len(list(cfg.inbox.glob("*.mp4"))) == 2                            # both land (no os.replace over a sibling)
     assert actions.run_ingest(cfg).detail["sources"] == 1                     # SHA256 dedup → catalogued once
 
 
@@ -119,12 +119,8 @@ def test_save_uploads_skips_audio_only_when_probing(tmp_path, mocker):
     assert res.detail["skipped"] and not res.detail["saved"]
     assert not (cfg.inbox / "audio.mp4").exists()           # removed after the probe rejected it
 
-def test_save_uploads_probe_toolchain_absent_keeps_file(tmp_path, mocker):
-    from fanops.errors import ToolchainMissingError
-    mocker.patch("fanops.ingest.has_video_stream", side_effect=ToolchainMissingError("no ffprobe"))
-    cfg = Config(root=tmp_path)
-    res = actions.save_uploads(cfg, [_Up("clip.mp4")], probe=True)
-    assert res.ok and res.detail["saved"] == ["clip.mp4"]   # ffprobe missing must NOT drop a real upload
+# NB ffprobe-absent-during-probe is covered by test_save_uploads_rejects_unverifiable_when_ffprobe_absent
+# (ING-9): an unverifiable upload is REJECTED, not kept — keeping it would later abort the native ingest pass.
 
 
 # ---- Task 4: POST /run/upload route + MAX_CONTENT_LENGTH cap + oversize handler ----
@@ -134,8 +130,8 @@ def test_upload_route_lands_file_then_ingest_catalogues(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     r = _client(cfg).post("/run/upload", data={"files": (io.BytesIO(b"VID"), "up.mp4")},
                           content_type="multipart/form-data")
-    assert r.status_code == 200 and (cfg.inbox / "up.mp4").exists()
-    assert actions.run_ingest(cfg).detail["sources"] == 1   # the uploaded file is catalogued, one click later
+    assert r.status_code == 200 and (cfg.inbox / ".ingested" / "up.mp4").exists()   # auto-ingested → archived (ING-1)
+    assert actions.run_ingest(cfg).detail["sources"] == 1   # catalogued by the route; a 2nd ingest is an idempotent no-op
 
 def test_upload_route_rejects_oversize_with_clean_panel(tmp_path):
     from fanops.studio.app import create_app
@@ -233,5 +229,48 @@ def test_native_ingest_cannot_reach_thirdparty_inbox(tmp_path, mocker):
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
     cfg = Config(root=tmp_path)
     actions.save_thirdparty_uploads(cfg, [_Up("clip.mp4")])     # lands in cfg.thirdparty_inbox
-    led = ingest_drops(Ledger.load(cfg), cfg)                   # native pass, default inbox
+    led, _ = ingest_drops(Ledger.load(cfg), cfg)               # native pass, default inbox
     assert len(led.sources) == 0                                # rglob can't descend into the peer dir
+
+
+# ---- WS-I1 Task 6 (ING-4/9): collision-safe upload dest + reject the unverifiable upload ----
+def test_save_uploads_disambiguates_colliding_names(tmp_path, mocker):
+    # ING-4: two DIFFERENT videos whose sanitized/truncated names collide must BOTH survive — the second
+    # must not os.replace over the first. (The inbox name is pure staging; sha identity is downstream.)
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    actions.save_uploads(cfg, [_Up("clip.mp4", b"FIRST")], probe=False)
+    actions.save_uploads(cfg, [_Up("clip.mp4", b"SECOND")], probe=False)    # same name, different bytes
+    landed = sorted(cfg.inbox.glob("*.mp4"))
+    assert len(landed) == 2                                          # both survived (no clobber)
+    assert {p.read_bytes() for p in landed} == {b"FIRST", b"SECOND"}
+    assert actions.run_ingest(cfg).detail["sources"] == 2           # two distinct sha → two sources
+
+def test_save_uploads_rejects_unverifiable_when_ffprobe_absent(tmp_path, mocker):
+    # ING-9: ffprobe absent → an upload that can't be verified is REJECTED, not kept. Keeping it would later
+    # ABORT the whole native ingest pass (ingest_drops raises ToolchainMissingError on the same absent ffprobe).
+    from fanops.errors import ToolchainMissingError
+    mocker.patch("fanops.ingest.has_video_stream", side_effect=ToolchainMissingError("no ffprobe"))
+    cfg = Config(root=tmp_path)
+    res = actions.save_uploads(cfg, [_Up("clip.mp4")], probe=True)
+    assert not res.ok and res.detail["skipped"]                     # rejected, not saved
+    assert not (cfg.inbox / "clip.mp4").exists()                    # nothing left to poison the next ingest
+    assert "install ffmpeg" in res.detail["skipped"][0][1]
+
+
+# ---- WS-I1 Task 7 (ING-8): configurable upload cap ----
+def test_upload_cap_is_configurable_via_env(tmp_path, monkeypatch):
+    from fanops.studio.app import create_app
+    monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "1")                  # 1 MB cap
+    app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
+    assert app.config["MAX_CONTENT_LENGTH"] == 1 * 1024 * 1024
+    r = app.test_client().post("/run/upload",
+            data={"files": (io.BytesIO(b"X" * (2 * 1024 * 1024)), "big.mp4")}, content_type="multipart/form-data")
+    assert r.status_code == 200 and b"too large" in r.data
+
+def test_upload_cap_clamps_bad_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "0")                  # would refuse everything → clamped to 1 MB
+    assert Config(root=tmp_path).upload_max_bytes == 1 * 1024 * 1024
+    monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "notanint")          # non-int → default 2048 MB
+    assert Config(root=tmp_path).upload_max_bytes == 2048 * 1024 * 1024

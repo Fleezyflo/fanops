@@ -15,33 +15,34 @@ def _put(p, b):
 
 
 def test_pull_does_not_mislabel_a_pre_existing_drop_as_url(tmp_path, mocker):
+    # ING-6: the pull now catalogues ONLY its isolated .pull stage, so a manual drop sitting in the inbox is
+    # never scanned by the pull — it CANNOT be mislabeled "url" (it waits for a later native ingest pass). This
+    # is the same c0-f1 guarantee, made structural: the drop and the pull no longer share a scan domain.
     cfg = Config(root=tmp_path)
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
     _put(cfg.inbox / "manual_drop.mp4", b"DROPPED")        # already in the inbox before the pull
-    # yt-dlp "downloads" a new file into the inbox during the subprocess call.
     def fake_ytdlp(cmd, **kw):
-        _put(cfg.inbox / "pulled_video.mp4", b"PULLED")
+        from fanops.ingest import _pull_stage
+        _put(_pull_stage(cfg) / "pulled_video.mp4", b"PULLED")
         class R: returncode = 0; stdout = ""; stderr = ""
         return R()
     mocker.patch("fanops.ingest.subprocess.run", side_effect=fake_ytdlp)
     led = download_source(Ledger.load(cfg), cfg, "https://example.com/v")
-    origins = {s.source_origin for s in led.sources.values()}
-    assert origins == {"drop", "url"}, f"per-file origin lost — got {origins}"
-    # the file that existed before the pull is "drop"; the one yt-dlp produced is "url" (bytes-len distinguishes)
-    drop_src = next(s for s in led.sources.values() if s.meta["bytes"] == len(b"DROPPED"))
-    url_src = next(s for s in led.sources.values() if s.meta["bytes"] == len(b"PULLED"))
-    assert drop_src.source_origin == "drop"
-    assert url_src.source_origin == "url"
+    assert len(led.sources) == 1                               # ONLY the pulled file is catalogued
+    url_src = next(iter(led.sources.values()))
+    assert url_src.source_origin == "url" and url_src.meta["bytes"] == len(b"PULLED")
+    assert (cfg.inbox / "manual_drop.mp4").exists()            # the manual drop is left for a native pass
 
 
 def test_download_url_returns_the_files_it_produced(tmp_path, mocker):
+    from fanops.ingest import _pull_stage
     cfg = Config(root=tmp_path)
-    _put(cfg.inbox / "preexisting.mp4", b"OLD")
+    _put(cfg.inbox / "preexisting.mp4", b"OLD")               # a manual drop in the inbox — NOT in the pull stage
     def fake_ytdlp(cmd, **kw):
-        _put(cfg.inbox / "new.mp4", b"NEW")
+        _put(_pull_stage(cfg) / "new.mp4", b"NEW")
         class R: returncode = 0; stdout = ""; stderr = ""
         return R()
     mocker.patch("fanops.ingest.subprocess.run", side_effect=fake_ytdlp)
     produced = download_url(cfg, "https://example.com/v")
-    assert produced == {(cfg.inbox / "new.mp4").resolve()}     # the delta, not the whole inbox
+    assert produced == {(_pull_stage(cfg) / "new.mp4").resolve()}   # the stage delta, not the inbox
