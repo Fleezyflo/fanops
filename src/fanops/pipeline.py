@@ -215,7 +215,7 @@ def _stage_moment_hooks(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledge
         if s.state is SourceState.picks_decided:
             try:
                 led = request_moment_hooks(led, cfg, s.id, accounts=accts)   # personas + learned hook styles ride here
-                led = ingest_moment_hooks(led, cfg, s.id)
+                led = ingest_moment_hooks(led, cfg, s.id, accounts=accts)   # AGENT-5: intersect author-echoed handle keys with real accounts
             except Exception as e:
                 _quarantine(led.sources, s.id, SourceState.error, "moment_hooks", e, log)
     return led

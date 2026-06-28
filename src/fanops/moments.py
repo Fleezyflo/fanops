@@ -268,7 +268,7 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         write_request(cfg, kind="moment_hooks", key=key, payload=payload)
     return led
 
-def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
+def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     """M1b PASS 2 ingest — apply the window-grounded hooks to a source's `picked` moments and promote them
     to `decided`. ATOMIC PER SOURCE (review fix): we wait until EVERY pick's gate has a valid answer, then
     author all of them in ONE deterministic (start,end)-ordered pass — exactly like the old single-pass
@@ -315,7 +315,21 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         # per-account hooks: sanitize each (em-dash/quote burn-safety) + drop a THIRD-PERSON one; a
         # dropped handle falls back to the shared `hook` at crosspost. No cross-clip dedup (these are
         # per-account variants of ONE clip).
-        hbp = {hh: s for hh, ph in (dec.hooks_by_persona or {}).items()
+        raw_hbp = dec.hooks_by_persona or {}
+        # AGENT-5: crosspost reads m.hooks_by_persona.get(surf.account) by EXACT handle, so an author-echoed
+        # key matching no real account (a near-miss like @MohFlow vs @mohflow, or a hallucinated handle)
+        # would silently fall back to the shared hook with no trace -- the per-account hook just vanishes.
+        # When the active accounts are known, intersect the returned keys with the REAL handles and DROP +
+        # LOG each unmatched one (a VISIBLE breadcrumb, not a silent collapse). accounts=None (legacy/test)
+        # keeps every key -- byte-identical to before.
+        if accounts is not None:
+            valid = {a.handle for a in accounts.accounts}
+            unknown = [hh for hh in raw_hbp if hh not in valid]
+            if unknown:
+                get_logger(cfg)("source", source_id, "hook_persona_unknown_handle",
+                                moment=m.id, handles=",".join(sorted(unknown)))
+            raw_hbp = {hh: ph for hh, ph in raw_hbp.items() if hh in valid}
+        hbp = {hh: s for hh, ph in raw_hbp.items()
                if (s := sanitize_generated_text(ph)) and not narration_signature(s)
                and not has_artist_reference(s, cfg.artist_name) and not brand_risk_flag(s, cfg)}
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
