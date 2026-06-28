@@ -28,7 +28,10 @@ def test_empty_spec_failopens_to_base_copy(tmp_path):
 def test_success_returns_true_and_keeps_renderer_output(tmp_path):
     base = _basefile(tmp_path); out = tmp_path / "out.mp4"
     def fake_render(b, o, spec, *, timeout): Path(o).write_bytes(b"COMPOSED")
-    ok = compose_clip(str(base), str(out), TemplateSpec(title="Hi"), render=fake_render)
+    # compose-gate: a fake render writes bytes ffprobe can't measure, so inject a probe stub (a real
+    # composite is never shorter than the base; here both probe equal -> valid wrap).
+    ok = compose_clip(str(base), str(out), TemplateSpec(title="Hi"), render=fake_render,
+                      probe_duration=lambda p: 5.0)
     assert ok is True and out.read_bytes() == b"COMPOSED"
 
 def test_render_exception_failopens_to_base(tmp_path):
@@ -192,3 +195,20 @@ def test_prepend_passes_intro_tease_and_seconds_to_renderer(tmp_path):
     prepend_intro(str(base), str(intro), str(out), tease_text="3 incoming", intro_seconds=1.5, timeout=42.0,
                   render=r, probe_duration=_stub_probe({str(base): 8.0, str(out): 9.5}))
     assert seen == {"intro": str(intro), "tease": "3 incoming", "secs": 1.5, "t": 42.0}
+
+
+def test_compose_rejects_a_short_corrupt_render(tmp_path):
+    # compose-gate: a composite WRAPS the base, so a nonempty output SHORTER than the base is corrupt
+    # (dropped base body) and must fail open to the base, mirroring prepend_intro's duration gate.
+    base = tmp_path / "b.mp4"; base.write_bytes(b"BASE"); out = tmp_path / "o.mp4"
+    def render(b, o, spec, *, timeout): Path(o).write_bytes(b"X")       # nonempty but corrupt
+    probes = {str(base): 10.0, str(out): 1.0}                           # composite SHORTER than base
+    ok = compose_clip(str(base), str(out), TemplateSpec(title="hi"), render=render, probe_duration=lambda p: probes.get(p))
+    assert ok is False                                                  # fail-open to the base, not shipped
+
+def test_compose_accepts_a_valid_wrap(tmp_path):
+    base = tmp_path / "b.mp4"; base.write_bytes(b"BASE"); out = tmp_path / "o.mp4"
+    def render(b, o, spec, *, timeout): Path(o).write_bytes(b"XXXX")
+    probes = {str(base): 10.0, str(out): 12.0}                          # wraps -> longer than base
+    ok = compose_clip(str(base), str(out), TemplateSpec(title="hi"), render=render, probe_duration=lambda p: probes.get(p))
+    assert ok is True

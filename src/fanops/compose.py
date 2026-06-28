@@ -88,6 +88,7 @@ def _failopen(base: Path, out_path: str, log: Optional[Callable[[str], None]], r
 def compose_clip(base_clip_path: str, out_path: str, spec: TemplateSpec, *,
                  timeout: float = _RENDER_TIMEOUT,
                  render: Optional[Callable] = None,
+                 probe_duration: Optional[Callable[[str], Optional[float]]] = None,
                  log: Optional[Callable[[str], None]] = None) -> bool:
     """Produce `out_path` from `base_clip_path` per `spec`. Returns True iff MoviePy produced a real
     composed file; FAILS OPEN to a byte-copy of the base clip (returning False) on an empty spec,
@@ -107,6 +108,18 @@ def compose_clip(base_clip_path: str, out_path: str, spec: TemplateSpec, *,
     out = Path(out_path)
     if not out.exists() or out.stat().st_size == 0:
         _failopen(base, out_path, log, "compose produced no output — using base clip")
+        return False
+    # compose-gate: a corrupt-but-nonempty composite (dropped base body) passes the size check and ships.
+    # A composite WRAPS the base (cards/title), so it is NEVER shorter than the base — reject a short output.
+    # Mirror prepend_intro's duration gate (impact_cut.DURATION_TOLERANCE, the injectable _probe).
+    from fanops.impact_cut import DURATION_TOLERANCE
+    probe = probe_duration or _probe
+    base_dur, actual = probe(base_clip_path), probe(out_path)
+    if base_dur is None or actual is None:             # can't prove validity -> never ship a maybe-broken composite
+        _failopen(base, out_path, log, "compose duration unprobeable — using base clip")
+        return False
+    if actual < base_dur - DURATION_TOLERANCE:         # shorter than the base => the base body was dropped => corrupt
+        _failopen(base, out_path, log, f"compose duration {round(actual, 2)} shorter than base {round(base_dur, 2)} — using base clip")
         return False
     return True
 

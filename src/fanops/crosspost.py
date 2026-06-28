@@ -82,6 +82,11 @@ def account_render_spec(cfg: Config, *, clip, hook: str, acct):
     tag = [hook]
     if band_differs: tag.append(f"band:{band.lo:g}-{band.hi:g}")
     if frame_differs: tag.append(f"frame:{'top' if top_bias else 'center'}")
+    # CULM-7 (latent): the render id captures the framing AXIS (top/center) but NOT the smart-framing focus
+    # CENTROID. Today focus derives from source+window (NOT per account), so two accounts sharing
+    # (clip,hook,band,frame) share one focus -> one render -> the id is correct. IF per-account focus is ever
+    # added, append a focus token here or two accounts COLLIDE on one render id. Pinned: test_render_mint
+    # asserts the shared-focus contract (same spec -> same id), so a future focus-diverging change must update this.
     return child_id("render", clip.id, "\x1f".join(tag)), wants_cut, profile, top_bias
 
 @dataclass
