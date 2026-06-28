@@ -230,26 +230,28 @@ def test_detect_window_samples_at_detection_resolution(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- active-speaker track (time-varying crop) ----
-def test_lerp_expr_is_a_smooth_ramp_not_a_step():
-    from fanops.clip import _lerp_expr
-    assert _lerp_expr([], [400], ramp=0.4) == "400"                         # single value -> constant
-    expr = _lerp_expr([5.0], [118, 1232], ramp=0.4)
-    assert "clip((t-4.6)/0.4\\,0\\,1)" in expr                             # linear ramp ENDING at the switch (5.0-0.4)
-    assert expr.startswith("118+") and "(1114)" in expr                   # base + (delta=1232-118) * ramp
-    assert "if(lt(" not in expr                                            # NOT the old hard step
+def test_step_expr_is_a_hard_cut_not_a_pan():
+    from fanops.clip import _step_expr
+    assert _step_expr([], [400]) == "400"                                   # single value -> constant
+    expr = _step_expr([5.0], [118, 1232])
+    assert expr == "if(lt(t\\,5.0)\\,118\\,1232)"                          # INSTANT cut at the switch time
+    assert "clip(" not in expr                                             # NOT a slow pan across the gap
 
-def test_reframe_track_smooth_zoomed_pan():
-    # 6-tuple track (with face-height+eyeline): zoomed crop (constant w/h) + smooth x ramp between speakers.
+def test_reframe_track_hard_cut_zoomed():
+    # 6-tuple track (face-height+eyeline): zoomed crop (constant w/h) + a HARD CUT x between speakers
+    # (no pan across the empty middle of a 2-shot — proven on real footage to read as a glitch).
     track = [(0.0, 5.0, 0.22, 0.5, 0.18, 0.42), (5.0, 10.0, 0.80, 0.45, 0.18, 0.40)]
     vf = reframe_filter("9:16", 1920, 1080, track=track, content_type=framing.CT_MULTI)
-    assert vf.startswith("crop=w=") and "x=" in vf and "clip((t-" in vf    # constant w/h, smooth time-varying x
-    assert "if(lt(t" not in vf                                             # no hard teleport
+    assert vf.startswith("crop=w=") and "x=if(lt(t\\,5.0)\\," in vf        # constant w/h, instant cut at the switch
+    assert "clip((t-" not in vf                                            # no slow pan
+    h = int(vf.split("crop=w=", 1)[1].split(":")[1].split(":")[0].replace("h=", ""))
+    assert h < 1080                                                        # zoomed (not full-height blind crop)
     assert vf.endswith("scale=1080:1920,setsar=1")
 
 def test_reframe_track_overrides_static_focus():
     track = [(0.0, 5.0, 0.22, 0.5, 0.18, 0.42), (5.0, 10.0, 0.80, 0.45, 0.18, 0.40)]
     vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.5, 0.2, 0.4), track=track, content_type=framing.CT_MULTI)
-    assert "clip((t-" in vf                                                # the dynamic track wins over a static focus
+    assert "if(lt(t\\," in vf                                              # the dynamic track wins over a static focus
 
 def test_reframe_track_none_is_today():
     # no track -> unchanged: identical to the focus/centered paths (single-subject clips never change).

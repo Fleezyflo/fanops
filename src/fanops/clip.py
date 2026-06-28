@@ -201,7 +201,6 @@ _FACE_FRAC_TALK = 0.32      # target on-screen face-box height fraction for talk
 _FACE_FRAC_MUSIC = 0.22     # ... for music/performance: wider, keeps stage/body context
 _EYELINE_FRAC = 0.40        # place the eyes at ~0.40 of the output height (eyes on the upper third)
 _ZOOM_MAX = 1.6             # max zoom MAGNIFICATION beyond the branch baseline (bounds upscale blur)
-_SWITCH_RAMP_S = 0.4        # speaker-switch pan duration — a fast glide, not a teleport
 _GENTLE_MIN_FACE_FRAC = 0.12   # an already-9:16 clip only gets a gentle zoom when the face is smaller than this
 _GENTLE_ZOOM_MAX = 1.15        # ... and that gentle zoom never exceeds this magnification
 
@@ -224,19 +223,19 @@ def _place(src_w: int, src_h: int, cw: int, ch: int, fx: float, ay: float, eyeli
     y = _clamp(round(ay * src_h - eyeline * ch), 0, max(0, src_h - ch))
     return x, y
 
-def _lerp_expr(bounds: list[float], vals: list[int], *, ramp: float) -> str:
-    """A per-frame ffmpeg crop-offset expression that SMOOTHLY ramps through `vals` at the `bounds` switch
-    times (a fast linear glide over `ramp` seconds ending at each switch), vs the old hard if() step. `vals`
-    has one more entry than `bounds`. Built as base + sum of clamped linear ramps; commas inside clip() are
-    escaped (\\,) so it survives filtergraph parsing as one option value. Single value -> the constant."""
+def _step_expr(bounds: list[float], vals: list[int]) -> str:
+    """A per-frame ffmpeg crop-offset expression that HARD-CUTS through `vals` at the `bounds` switch times
+    (instant reframe to the active speaker — the short-form standard, vs panning across the dead space
+    between two seats). `vals` has one more entry than `bounds` (the final value is the else branch). Commas
+    inside if() are escaped (\\,) so it survives filtergraph parsing as one option value. Single value -> the
+    constant. A cut between distant speakers reads as energetic editing; a slow pan across the gap reads as a
+    glitch (it shows the empty middle) — proven on real 2-shot footage."""
     if len(vals) <= 1:
         return str(vals[0]) if vals else "0"
-    parts = [str(vals[0])]
-    for k, b in enumerate(bounds, start=1):
-        dv = vals[k] - vals[k - 1]
-        if dv == 0: continue                                  # no move at this boundary -> no term
-        parts.append(f"({dv})*clip((t-{round(b - ramp, 2)})/{ramp}\\,0\\,1)")
-    return "+".join(parts)
+    expr = str(vals[-1])
+    for b, v in zip(reversed(bounds), reversed(vals[:-1])):
+        expr = f"if(lt(t\\,{round(b, 2)})\\,{v}\\,{expr})"
+    return expr
 
 def _track_crop(track: list, src_w: int, src_h: int, tw: int, th: int, ch0: int, frac: float, *, axis: str) -> str:
     """Active-speaker crop: ONE zoom for the window (from the segments' median face height) + a SMOOTH pan
@@ -251,8 +250,8 @@ def _track_crop(track: list, src_w: int, src_h: int, tw: int, th: int, ch0: int,
         ey = s[5] if len(s) > 5 else s[3]
         x, y = _place(src_w, src_h, cw, ch, s[2], ey, _EYELINE_FRAC if len(s) > 5 else 0.5)
         xs.append(x); ys.append(y)
-    xexpr = _lerp_expr(bounds, xs, ramp=_SWITCH_RAMP_S)
-    yexpr = _lerp_expr(bounds, ys, ramp=_SWITCH_RAMP_S)
+    xexpr = _step_expr(bounds, xs)
+    yexpr = _step_expr(bounds, ys)
     return f"crop=w={cw}:h={ch}:x={xexpr}:y={yexpr},scale={tw}:{th},setsar=1"
 
 def _focus_crop(focus: tuple, src_w: int, src_h: int, tw: int, th: int, ch0: int, frac: float,
