@@ -166,13 +166,17 @@ def test_ingest_stamps_batch_id_write_once(tmp_path, mocker):
     assert led.sources[src.id].batch_id == "batch_x" and len(led.sources) == 1   # write-once: prior wins
     assert "batch_conflict" in cfg.log_path.read_text()       # the conflict is visible (mirrors origin_conflict)
 
-def test_ingest_no_batch_is_byte_identical(tmp_path, mocker):
-    # No batch_id => Source.batch_id is None (today's path, byte-identical).
+def test_ingest_no_batch_auto_resolves_drop_batch(tmp_path, mocker):
+    # ROOT CONTRACT (supersedes the earlier "no batch => None" path): when the caller does not pass a
+    # batch_id, ingest_drops auto-resolves a day-stable `drop-{date}` batch and stamps it onto the new
+    # Source — so every catalogued Source carries a real batch_id and the Studio Review "Ungrouped"
+    # group can never be constructed from this path. Detailed contract in test_ingest_auto_batch.py.
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
     led, _ = ingest_drops(Ledger.load(cfg), cfg)
-    assert next(iter(led.sources.values())).batch_id is None
+    src = next(iter(led.sources.values()))
+    assert src.batch_id is not None and led.get_batch(src.batch_id).name.startswith("drop-")
 
 def test_catalogue_stamps_created_at(tmp_path, mocker):
     # content-lifecycle Phase 2: a freshly catalogued Source carries a parseable ISO-Z created_at (ingest day).
