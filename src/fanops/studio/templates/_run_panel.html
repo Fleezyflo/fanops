@@ -1,15 +1,31 @@
-{# src/fanops/studio/templates/_run_panel.html — the pipeline-driver panel (htmx-swapped in place) #}
+{# src/fanops/studio/templates/_run_panel.html — Make page rewritten as a 3-stage console (Add → Make →
+   Review). The signature device is the transport-rail eyebrow that names the stages by what they DO,
+   not what the underlying CLI verb is called; each stage card holds exactly the inputs scoped to it. The
+   dead-weight "Ingest added videos" button was retired with PR #231 (ingest_drops auto-batches inbox
+   drops on the next Make pass), so the legacy escape hatch is structurally unnecessary — the file
+   picker AND a manual finder-drop both land in the same queue, made on the same press. #}
 <div id="run-panel" aria-live="polite">
-  <h2>Make clips</h2>
   {# Phase 2: read-only echo of the casting/volume config (the levers live in Go Live → Routing/casting). #}
   {% if cast_state %}<p class="meta cast-state">Routing: {% if cast_state.casting %}casting ON — {{ cast_state.budget }} moments per account{% else %}casting off (every account gets every moment){% endif %} · clip profile <strong>{{ cast_state.profile }}</strong></p>{% endif %}
-  <p class="muted">Add a video, then let the system cut clips and write captions. They land in
-    <strong>Review</strong>.</p>
 
-  {# S3: the one "do this next" affordance — derived from the same `status` counts, updates on every panel swap. #}
+  {# Transport rail — the page's signature. Marks which stage the operator is in by lighting the dot.
+     The "live" stage is derived from the same status counts the run_next banner reads, so the rail and
+     the next-step copy never disagree. #}
+  {% set _next = run_next_step(status) %}
+  <ol class="stage-rail" aria-label="Make pipeline stages">
+    <li class="stage-step {% if _next.key in ('add',) %}is-live{% endif %} {% if status.sources > 0 %}is-done{% endif %}">
+      <span class="stage-num">01</span><span class="stage-label">Add footage</span>
+    </li>
+    <li class="stage-step {% if _next.key in ('prepare','gate') %}is-live{% endif %}">
+      <span class="stage-num">02</span><span class="stage-label">Make clips</span>
+    </li>
+    <li class="stage-step {% if _next.key == 'review' %}is-live{% endif %}">
+      <span class="stage-num">03</span><span class="stage-label">Review</span>
+    </li>
+  </ol>
+
+  {# The next-step banner stays — same projection, but now it sits BELOW the rail as a one-line nudge. #}
   {% include "_run_next.html" %}
-
-  {% include "_run_status.html" %}
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
@@ -18,40 +34,92 @@
     </div>
   {% endif %}
 
-  {# ONE dominant action: Prepare everything (cut clips + write captions, no gates to answer). #}
-  <form class="run-primary" hx-post="{{ url_for('do_run_prepare') }}" hx-target="#run-panel" hx-swap="outerHTML">
-    {% if status.backend != 'dryrun' %}
-      <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
-        publish to REAL accounts (mode: {{ status.backend }})</label>
-    {% endif %}
-    <button type="submit" class="primary">Prepare everything</button>
-    <span class="muted">Cuts clips and writes captions for you — watch them appear in Review.</span>
-  </form>
+  {# ── ① ADD FOOTAGE ─────────────────────────────────────────────────────────────────────────────── #}
+  <section class="stage-card">
+    <header class="stage-card-head">
+      <span class="stage-card-num">01</span>
+      <h3>Add footage</h3>
+      <span class="stage-card-hint">Pick video files (or paste a link). They land in the queue.</span>
+    </header>
 
-  <div class="run-add">
     <form hx-post="{{ url_for('do_run_upload') }}" hx-target="#run-panel" hx-swap="outerHTML"
-          hx-encoding="multipart/form-data" class="upload-form">
-      <input type="file" name="files" accept="video/*" multiple aria-label="Choose video files to add" title="Choose video files to add">
-      <input type="text" name="batch_name" placeholder="Batch name (optional)" aria-label="Batch name" class="batch-name">
-      <label class="no-subs-opt"><input type="checkbox" name="no_subs" value="1"> Skip subtitles (e.g. music clips) <span class="muted">— otherwise burned from the transcript</span></label>
+          hx-encoding="multipart/form-data" class="stage-form">
+      <label class="field">
+        <span class="field-label">Files</span>
+        <input type="file" name="files" accept="video/*" multiple aria-label="Choose video files to add" title="Choose video files to add">
+      </label>
+
+      <label class="field">
+        <span class="field-label">Batch name <span class="muted">(optional)</span></span>
+        <input type="text" name="batch_name" placeholder="e.g. June launch" aria-label="Batch name" class="batch-name">
+      </label>
+
       {% if status.accounts and status.accounts|length >= 2 %}
-        <fieldset class="batch-target">
-          <legend>Run for</legend>
-          <span class="muted">All accounts, or tick specific ones:</span>
+        <fieldset class="batch-target field">
+          <legend class="field-label">Targets</legend>
+          <span class="muted">All active accounts unless you tick specific ones.</span>
           {% for h in status.accounts %}
-            <label><input type="checkbox" name="target_accounts" value="{{ h }}"> {{ h }}</label>
+            <label class="check-row"><input type="checkbox" name="target_accounts" value="{{ h }}"> {{ h }}</label>
           {% endfor %}
         </fieldset>
       {% endif %}
-      <button type="submit">Add video</button>
+
+      <label class="check-row no-subs-opt"><input type="checkbox" name="no_subs" value="1"> Skip subtitles <span class="muted">— burn from transcript by default</span></label>
+
+      <div class="stage-actions">
+        <button type="submit">Add to queue</button>
+        <span class="muted">Add via Finder works too — the next Make press picks it up.</span>
+      </div>
     </form>
-    <form hx-post="{{ url_for('do_run_ingest') }}" hx-target="#run-panel" hx-swap="outerHTML">
-      <button type="submit">Ingest added videos</button>
+
+    <details class="stage-altlink">
+      <summary>Or add from a link</summary>
+      <form hx-post="{{ url_for('do_run_pull') }}" hx-target="#run-panel" hx-swap="outerHTML" class="stage-form-inline">
+        <input name="url" aria-label="Video link to add" placeholder="https://…" size="32">
+        <button type="submit">Fetch link</button>
+      </form>
+    </details>
+  </section>
+
+  {# ── ② MAKE CLIPS ──────────────────────────────────────────────────────────────────────────────── #}
+  <section class="stage-card stage-card-primary">
+    <header class="stage-card-head">
+      <span class="stage-card-num">02</span>
+      <h3>Make clips</h3>
+      <span class="stage-card-hint">Cut every queued source into clips with captions. New clips appear in Review.</span>
+    </header>
+
+    <div class="queue-meter">
+      <span><strong>{{ status.sources }}</strong> source{{ '' if status.sources == 1 else 's' }} queued</span>
+      <span><strong>{{ status.pending_moments + status.pending_captions }}</strong> awaiting decisions</span>
+      <span><strong>{{ status.holds }}</strong> on hold</span>
+    </div>
+
+    <form class="run-primary" hx-post="{{ url_for('do_run_prepare') }}" hx-target="#run-panel" hx-swap="outerHTML">
+      {% if status.backend != 'dryrun' %}
+        <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
+          publish to REAL accounts (mode: {{ status.backend }})</label>
+      {% endif %}
+      <button type="submit" class="primary">Make clips</button>
+      <span class="muted">Cuts, captions, and routes every queued source end-to-end. Around a minute per source.</span>
     </form>
-  </div>
+  </section>
+
+  {# ── ③ REVIEW (hand-off, not an action here) ──────────────────────────────────────────────────── #}
+  <section class="stage-card stage-card-handoff">
+    <header class="stage-card-head">
+      <span class="stage-card-num">03</span>
+      <h3>Review</h3>
+      <span class="stage-card-hint">Approve clips per account, then schedule.</span>
+    </header>
+    <p class="stage-handoff-line">
+      <a href="{{ url_for('review') }}" class="stage-handoff-link">Open Review →</a>
+      <span class="muted">{{ status.posts }} post{{ '' if status.posts == 1 else 's' }} in the ledger.</span>
+    </p>
+  </section>
 
   <details class="run-advanced">
-    <summary>More</summary>
+    <summary>More controls</summary>
     <div class="run-advanced-body">
       <div class="status status-sub">
         <span>Sources<strong>{{ status.sources }}</strong></span>
@@ -60,16 +128,13 @@
         <span>Held<strong>{{ status.holds }}</strong></span>
         <span>Awaiting<strong>{{ status.pending_moments + status.pending_captions }}</strong></span>
       </div>
-      <form hx-post="{{ url_for('do_run_pull') }}" hx-target="#run-panel" hx-swap="outerHTML">
-        <input name="url" aria-label="Video link to add" placeholder="paste a video link…" size="30">
-        <button type="submit">Add from link</button>
-      </form>
       <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML">
         {% if status.backend != 'dryrun' %}
           <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
             publish to REAL accounts (mode: {{ status.backend }})</label>
         {% endif %}
-        <button type="submit">Run one step</button>
+        <button type="submit">Run one pipeline step</button>
+        <span class="muted">For debugging — Make clips runs the full loop.</span>
       </form>
     </div>
   </details>

@@ -273,11 +273,14 @@ def test_run_prepare_route(tmp_path, monkeypatch):
     r = app.test_client().post("/run/prepare")
     assert r.status_code == 200
 
-def test_run_route_shows_prepare_button(tmp_path):
+def test_run_route_shows_primary_make_button(tmp_path):
+    # The Make page's dominant action — relabelled from "Prepare everything" to plain "Make clips" in
+    # the 3-stage console rewrite. The button still posts to do_run_prepare (same backend verb), the
+    # surface label is what changed; this pins the label so a future swap can't silently drop it.
     from fanops.studio.app import create_app
     app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
     r = app.test_client().get("/run")
-    assert b"Prepare" in r.data
+    assert b"Make clips" in r.data
 
 
 # ---- actions.run_pull ----
@@ -333,10 +336,14 @@ def test_pipeline_status_awaiting_counts_moments_not_posts(tmp_path):
 
 # ---- Flask wiring ----
 def test_run_route_renders(tmp_path):
+    # Smoke-test the route + a stable rewrite-survivable string. The legacy "Ingest" button was
+    # retired with PR #231 (ingest_drops auto-batches inbox drops on the next Make pass, so the
+    # "Ingest added videos" escape hatch is structurally unnecessary). Pin a string that names the
+    # Make page itself — "Add footage" is the stage-① card heading and survives copy tweaks.
     from fanops.studio.app import create_app
     app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
     r = app.test_client().get("/run")
-    assert r.status_code == 200 and b"Ingest" in r.data
+    assert r.status_code == 200 and b"Add footage" in r.data
 
 def test_run_ingest_route_drives_ingest(tmp_path, mocker):
     from fanops.studio.app import create_app
