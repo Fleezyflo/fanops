@@ -234,8 +234,8 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
           active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
     accts = acct_by_handle or {}
-    mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed + affinities (clip -> moment)
-    _affs = getattr(mom, "affinities", None) or []        # S2: thread the cast set into each surface for cast_cause
+    mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed (clip -> moment)
+    _affs = led.cast_handles_for(mom.parent_id, mom.id) if mom is not None else []   # MOM-3: DERIVED from durable AccountSelection, not the stored tag
     surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account), affinities=_affs)
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     src_key = mom.parent_id if mom is not None else None   # Phase 4: stable source id (clip -> moment.parent_id); the ?source= key
@@ -259,7 +259,7 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         batch_targets=tgts, batch_state=(b.state.value if b is not None else None),
         batch_created=(b.created_at if b is not None else None), batch_excluded=excluded,
         batch_excluded_names=excluded_names,
-        affinities=(getattr(mom, "affinities", None) or []), source_key=src_key)
+        affinities=_affs, source_key=src_key)   # MOM-3: derived view, not the stored tag
 
 def _card_day(led: Ledger, card: ReviewCard) -> str:
     """The ingest day (YYYY-MM-DD) a Review card buckets under: clip -> moment -> source.created_at.
@@ -365,9 +365,10 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
             key = f"{p.account}{_CH}{p.platform.value}"
             by_channel.setdefault(key, []).append(p); channels[key] = (p.account, p.platform.value)
         cells: dict = {}
+        _aff = led.cast_handles_for(source_id, m.id)   # MOM-3: DERIVED from the durable AccountSelection (operator overrides included), not the legacy Moment.affinities tag
         for key, plist in by_channel.items():
             lead = _pick_lead(plist)
-            sp = _surface(lead, persona=None, now=now, cfg=cfg, led=led, acct=acct_by_handle.get(lead.account), affinities=(getattr(m, "affinities", None) or []))
+            sp = _surface(lead, persona=None, now=now, cfg=cfg, led=led, acct=acct_by_handle.get(lead.account), affinities=_aff)
             cells[key] = MatrixCell(channel=key, account=lead.account, platform=lead.platform.value,
                                     post_ids=[p.id for p in plist], lead_post_id=lead.id, state=sp.state,
                                     hook=sp.variant_hook, length_label=sp.length_label, framing=sp.framing,
@@ -376,7 +377,7 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
                                     multiplicity=len(plist), length_cause=sp.length_cause, framing_cause=sp.framing_cause,
                                     render_pending=(lead.error_reason == RENDER_PENDING_REASON))   # #4: warm-miss flag
         rows.append(MatrixRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
-                              hook=m.hook, affinities=list(getattr(m, "affinities", None) or []), cells=cells))
+                              hook=m.hook, affinities=_aff, cells=cells))   # MOM-3: derived view, not the stored tag
     cols = sorted(channels.items(), key=lambda kv: (col_rank.get(kv[1][0], 999), kv[1][1]))
     columns = [(k, h, pf) for k, (h, pf) in cols]
     # S4: now the column set is known, give every empty "—" cell a reason (off-target > budget > no-platform).
@@ -454,7 +455,7 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
             mposts = [p for c in clips_by_moment.get(m.id, []) for p in posts_by_clip.get(c.id, [])
                       if p.account == handle and _state_matches(p, state)]
             sp = _surface(_pick_lead(mposts), persona=persona, now=now, cfg=cfg, led=led, acct=acct,
-                          affinities=(getattr(m, "affinities", None) or [])) if mposts else None
+                          affinities=led.cast_handles_for(source_id, m.id)) if mposts else None   # MOM-3: derived view, not the stored tag
             rows.append(LaneRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
                                 hook=m.hook, is_cast=m.id in cast_ids,
                                 preview_url=preview_by_moment.get(m.id, ""), post=sp))
