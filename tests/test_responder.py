@@ -299,3 +299,27 @@ def test_context_limit_failure_marks_source_degraded_not_infinite_pending(tmp_pa
     assert not response_path(cfg, "moments", "src_1").exists()        # no answer written
     src = Ledger.load(cfg).sources["src_1"]
     assert src.degraded_reason and "context limit" in src.degraded_reason.lower()   # LABELLED, not silent-pending
+
+
+# ---- AGENT-1: the responder VERIFIES the model's rid echo (logs a mismatch) and self-stamps the authoritative rid ----
+def test_rid_mismatch_logged_and_authoritative_rid_stamped(tmp_path, monkeypatch):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request, response_path, latest_request_id
+    from fanops.responder import LlmResponder
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 9.0, "transcript": [], "signal_peaks": []})
+    rid = latest_request_id(cfg, "moments", "src_1")
+    def wrong_echo(kind, payload):                                    # the model echoes a STALE/garbage rid
+        return {"request_id": "garbage-rid", "source_id": "src_1",
+                "picks": [{"start": 0.0, "end": 7.0, "reason": "drop"}]}
+    events = []
+    monkeypatch.setattr("fanops.responder.get_logger", lambda cfg: (lambda *a, **k: events.append(a)))
+    n = LlmResponder(cfg, model=wrong_echo).answer_pending(cfg)
+    assert n == 1                                                     # the answer is still applied (responder is authoritative)
+    data = json.loads(response_path(cfg, "moments", "src_1").read_text())
+    assert data["request_id"] == rid                                 # stamped with the AUTHORITATIVE rid, not "garbage-rid"
+    assert any("rid_mismatch" in ev for ev in events)                # the mismatch is now a VISIBLE breadcrumb

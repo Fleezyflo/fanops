@@ -96,7 +96,10 @@ class LlmResponder:
                 log("responder", f"{kind}:{key}", "stale",
                     err=f"gate re-seeded mid-call ({rid_before}->{rid_after}); dropping stale answer")
                 return False                    # do not write a stale-payload answer
-            out = {**out, "request_id": rid_before}   # == rid_after (the still-latest rid)
+            echoed = out.get("request_id")            # AGENT-1: the model is ASKED to echo the rid — VERIFY it
+            if echoed is not None and echoed != rid_before:   # a stale/garbage echo is a real signal, not noise
+                log("responder", f"{kind}:{key}", "rid_mismatch", err=f"model echoed {echoed!r} != {rid_before!r}")
+            out = {**out, "request_id": rid_before}   # responder self-stamps the authoritative rid (== rid_after)
             if kind == "moments":           # MomentDecision requires source_id; the GATE is
                 out["source_id"] = payload.get("source_id")   # authoritative (review Issue A) — gate wins, not the model
             obj = model_cls(**out)          # decision (a): validate; ValidationError -> pending + log

@@ -428,7 +428,8 @@ def batch_id(name: str, created_at: str) -> str:
     return content_id("batch", name, created_at)
 
 
-# ---- agent-step contracts (all carry request_id for correlation — FIX F21) ----
+# ---- agent-step contracts (all carry request_id for correlation — FIX F21; the LLM responder self-stamps the
+# authoritative rid and VERIFIES the model's echo, logging rid_mismatch on divergence — AGENT-1, not silently trusted) ----
 class MomentRequest(BaseModel):
     source_id: str
     request_id: str
