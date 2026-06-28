@@ -12,8 +12,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, Fmt
 from fanops import framing
 from fanops.clip import (reframe_filter, _render_fingerprint, render_account_cut,
-                         _segments_filter_complex, ffmpeg_segments_cmd, render_reframed, _ch0_for,
-                         _active_side_at, _pick_subject, _perframe_state)
+                         _segments_filter_complex, ffmpeg_segments_cmd, render_reframed, _ch0_for)
 import fanops.clip as clipmod
 from fanops import overlay
 
@@ -73,11 +72,10 @@ def test_4tuple_focus_zooms_to_target_face_fraction():
     assert vf.endswith("scale=1080:1920,setsar=1")
 
 def test_zoom_bounded_by_max_so_tiny_face_never_blurs():
-    # an extreme tiny face would demand a huge zoom -> clamped to _ZOOM_MAX (crop never smaller than ch0/MAX).
+    # an extreme tiny face is FAR -> held WIDE (clamped by _ZOOM_MAX_FAR), never an unbounded upscale-blur punch-in.
     vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.02, 0.40), content_type=framing.CT_SINGLE)
     _w, h, _x, _y = _crop_dims(vf)
-    from fanops.clip import _ZOOM_MAX
-    assert h == round(1080 / _ZOOM_MAX)                         # clamped to the upscale bound, not 0.02-driven
+    assert h == round(1080 / clipmod._ZOOM_MAX_FAR)            # clamped to the far/wide cap, not 0.02-driven
 
 def test_music_uses_wider_zoom_than_talk():
     # music keeps more stage/body context -> a wider crop (taller ch) than talk for the same face.
@@ -273,14 +271,14 @@ def test_fingerprint_track_is_additive():
 def test_segments_filter_complex_sizes_each_speaker_independently():
     # The core fix: a 2-shot whose two speakers differ in source face-size must get DIFFERENT crop heights,
     # so each lands at a consistent on-screen size (one ffmpeg crop can't — it sets w/h once per stream).
-    track = [(0.0, 5.0, 0.80, 0.40, 0.30, 0.40), (5.0, 10.0, 0.22, 0.45, 0.15, 0.45)]  # near speaker vs far speaker
+    track = [(0.0, 5.0, 0.80, 0.40, 0.30, 0.40), (5.0, 10.0, 0.22, 0.45, 0.20, 0.45)]  # both NEAR, different sizes
     fc = _segments_filter_complex(track, 1920, 1080, "9:16", framing.CT_MULTI)
     chains = [c for c in fc.split(";") if c.startswith("[0:v]") or c.startswith("[1:v]")]
     assert len(chains) == 2
     h0 = int(re.search(r"crop=\d+:(\d+):", chains[0]).group(1))
     h1 = int(re.search(r"crop=\d+:(\d+):", chains[1]).group(1))
     assert h0 != h1                                          # different zoom per speaker (each sized to itself)
-    assert h0 > h1                                           # bigger source face (0.30) needs LESS zoom -> TALLER crop than the far speaker (0.15)
+    assert h0 > h1                                           # bigger near face (0.30) needs LESS zoom -> TALLER crop than 0.20
     assert "concat=n=2:v=1:a=1[vout][aout]" in fc           # video+audio concatenated, mapped out
 
 def test_segments_filter_complex_threads_subtitles():
@@ -347,53 +345,40 @@ def test_render_reframed_falls_back_when_segments_rejected(monkeypatch):
     assert len(calls) == 2 and "-filter_complex" in calls[0] and "-vf" in calls[1]
 
 
-# ---------------------------------------------------------------- per-frame auto-reframe (the real fix) ----
-def test_active_side_at_maps_time_to_speaker_and_segment():
-    track = [(0.0, 5.0, 0.25, 0.4, 0.2, 0.4), (5.0, 10.0, 0.80, 0.4, 0.2, 0.4)]
-    assert _active_side_at(track, 1.0) == ("L", 0)         # left speaker, segment 0
-    assert _active_side_at(track, 7.0) == ("R", 1)         # right speaker, segment 1 (index change == a hard cut)
-    assert _active_side_at(track, 99.0)[1] == 1            # past the end clamps to the last segment
-    assert _active_side_at(None, 3.0) == (None, -1)        # no track -> no side, no cut
+# ---------------------------------------------------------------- stable render: static crop + adaptive far zoom ----
+def test_far_face_held_wide_not_punched_into_mic():
+    # a FAR/small face (< _SMALL_FACE_FRAC) is held WIDE (contextual) — a near face of the SAME source size band
+    # would punch in tighter. Proves the adaptive cap keeps a far/occluded speaker out of a tight mic crop.
+    far = _crop_dims(reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.14, 0.40), content_type=framing.CT_SINGLE))
+    near = _crop_dims(reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.30, 0.40), content_type=framing.CT_SINGLE))
+    # far crop height is clamped by the FAR cap (a wide shot): ch >= ch0 / _ZOOM_MAX_FAR
+    assert far[1] >= round(1080 / clipmod._ZOOM_MAX_FAR) - 1
+    assert far[1] > near[1]                                  # the far subject's crop is WIDER (less zoom) than the near punch-in
 
-def test_pick_subject_prefers_active_side_then_largest():
-    L_small = (0.20, 0.5, 0.10, 0.45, 1000.0); R_big = (0.80, 0.5, 0.30, 0.40, 9000.0)
-    assert _pick_subject([L_small, R_big], "L") == L_small  # the active (left) speaker even though smaller
-    assert _pick_subject([L_small, R_big], "R") == R_big
-    assert _pick_subject([L_small, R_big], None) == R_big   # no side -> the largest face overall
-    assert _pick_subject([], "L") is None                   # no faces -> hold last crop
+def test_segment_chain_far_speaker_held_wide():
+    # in a 2-shot, the far speaker's segment crop must be WIDER (less zoom) than the near speaker's.
+    track = [(0.0, 5.0, 0.80, 0.4, 0.30, 0.40), (5.0, 10.0, 0.22, 0.45, 0.13, 0.45)]  # near (0.30) then far (0.13)
+    fc = _segments_filter_complex(track, 1920, 1080, "9:16", framing.CT_MULTI)
+    chains = [c for c in fc.split(";") if c.startswith("[0:v]") or c.startswith("[1:v]")]
+    h_near = int(re.search(r"crop=\d+:(\d+):", chains[0]).group(1))
+    h_far = int(re.search(r"crop=\d+:(\d+):", chains[1]).group(1))
+    assert h_far > h_near                                    # far speaker held wider (context), near punches in
 
-def test_perframe_state_near_faces_size_consistently():
-    # among NEAR (well-framed) subjects, the bigger source face -> TALLER crop (less zoom) -> consistent size.
-    big = _perframe_state((0.5, 0.5, 0.30, 0.45), 1920, 1080, 1080, 1920, 0.42)
-    small_near = _perframe_state((0.5, 0.5, 0.22, 0.45), 1920, 1080, 1080, 1920, 0.42)
-    assert big[2] > small_near[2]                            # larger near face -> taller crop (zooms less)
+def test_merge_brief_segments_absorbs_interjections():
+    # a brief shot (< _ASD_MIN_SEG_S) must be absorbed -> no cut-away-and-back (rapid cuts read as jitter).
+    segs = [[0.0, 5.0, 0.25, 0.4, 0.2, 0.4], [5.0, 5.6, 0.80, 0.4, 0.2, 0.4], [5.6, 12.0, 0.25, 0.4, 0.2, 0.4]]
+    out = framing._merge_brief_segments(segs)
+    assert len(out) == 1                                     # the 0.6s interjection vanishes -> one stable shot
+    assert out[0][0] == 0.0 and out[0][1] == 12.0
 
-def test_perframe_state_far_face_is_held_wide_not_punched_in():
-    # a FAR/small face (< _SMALL_FACE_FRAC) is intentionally held WIDE (contextual) — NOT punched into the mic.
-    ch_max = min(1080, 1920 * 1920 / 1080)
-    far = _perframe_state((0.5, 0.5, 0.12, 0.45), 1920, 1080, 1080, 1920, 0.42)
-    assert far[2] >= ch_max / clipmod._ZOOM_MAX_FAR - 1      # clamped by the FAR cap (a wide shot), not the near cap
-    near = _perframe_state((0.5, 0.5, 0.30, 0.45), 1920, 1080, 1080, 1920, 0.42)
-    assert far[2] > near[2]                                  # the far subject's crop is WIDER than the near punch-in
+def test_merge_brief_segments_keeps_real_turns():
+    segs = [[0.0, 5.0, 0.25, 0.4, 0.2, 0.4], [5.0, 12.0, 0.80, 0.4, 0.2, 0.4]]   # two real turns
+    out = framing._merge_brief_segments(segs)
+    assert len(out) == 2                                     # both shots long enough -> the cut is kept
 
-def test_render_reframed_prefers_perframe_when_it_succeeds(monkeypatch):
-    ran = {"perframe": False, "ffmpeg": False}
-    def fake_perframe(*a, **k):
-        ran["perframe"] = True
-        return True                                         # per-frame succeeds -> ffmpeg must NOT run
-    monkeypatch.setattr(clipmod, "_render_perframe", fake_perframe)
-    monkeypatch.setattr("fanops.clip.subprocess.run", lambda *a, **k: ran.__setitem__("ffmpeg", True))
-    r = render_reframed("src.mp4", "out.mp4", 0.0, 6.0, "9:16", src_w=1920, src_h=1080,
-                        focus=(0.5, 0.45, 0.3, 0.4), content_type=framing.CT_SINGLE)
-    assert ran["perframe"] is True and ran["ffmpeg"] is False and r.returncode == 0
-
-def test_render_reframed_centered_skips_perframe(monkeypatch):
-    # no subject (focus and track both None) -> centered single-pass, per-frame never invoked (byte-identical path).
-    ran = {"perframe": False}
-    monkeypatch.setattr(clipmod, "_render_perframe", lambda *a, **k: ran.__setitem__("perframe", True) or True)
-    monkeypatch.setattr("fanops.clip.subprocess.run", lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=""))
-    render_reframed("src.mp4", "out.mp4", 0.0, 6.0, "9:16", src_w=1920, src_h=1080)
-    assert ran["perframe"] is False                         # centered clips never pay the per-frame pass
+def test_render_reframed_static_no_perframe_symbol():
+    # the per-frame renderer is GONE: render_reframed must not reference it (no jitter path can be constructed).
+    assert not hasattr(clipmod, "_render_perframe")
 
 
 def test_speaker_track_no_extra_is_none(tmp_path, monkeypatch):

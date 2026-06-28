@@ -12,7 +12,7 @@ import contextlib, json, os
 from pathlib import Path
 from statistics import median
 
-_SIDECAR_V = 4               # track-sidecar schema (v4: finer ASD fps + shorter hysteresis + p75 face-height)
+_SIDECAR_V = 5               # track-sidecar schema (v5: + min-shot-duration merge — no rapid cut-away-and-back)
 _KF_COUNT = 5                # frames sampled across the window — enough for a stable median, cheap to probe
 _KF_WIDTH = 960              # detection sampling width: Haar/YuNet need real pixels — a 480px face (~37px on a
                              # 1080p source) is undetectable; 960 lands a 1080p face at ~74px, reliably found.
@@ -200,6 +200,8 @@ _ASD_HOLD_S = 0.35         # min DWELL before the committed speaker switches —
 _ASD_RATIO = 1.2           # the talker's mouth must out-move the other by this factor to be the instantaneous speaker
 _ASD_SAME_TOL = 0.08       # two centroids within this normalized x are "the same shot" -> merge (no needless cut)
 _ASD_SIDE_SPLIT = 0.5      # faces left/right of this normalized x are different speakers (the 2-shot split)
+_ASD_MIN_SEG_S = 1.5       # a shot shorter than this is a brief INTERJECTION, not a turn — absorb it into its
+                           # neighbour so we don't cut away-and-back (rapid cuts are themselves a kind of jitter)
 
 def _mouth_roi(cv2, img, face):
     """A fixed-size grayscale crop of the mouth region of one YuNet face, for frame-to-frame motion. YuNet
@@ -271,6 +273,26 @@ def _pctl(vals: list[float], q: float) -> float:
         return 0.0
     return s[min(len(s) - 1, max(0, round(q * (len(s) - 1))))]
 
+def _merge_brief_segments(segs):
+    """Absorb any shot shorter than _ASD_MIN_SEG_S into a neighbour so a brief interjection never triggers a
+    cut-away-and-back (rapid cuts read as jitter). A brief non-first shot extends the PREVIOUS shot over it; a
+    brief first shot is swallowed by the next. Re-coalesces adjacent same-position shots after."""
+    if not segs:
+        return segs
+    out: list = []
+    for seg in segs:
+        if out and (seg[1] - seg[0]) < _ASD_MIN_SEG_S:
+            out[-1][1] = seg[1]                               # extend previous shot to cover the brief one (no cut)
+        else:
+            out.append(list(seg))
+    if len(out) > 1 and (out[0][1] - out[0][0]) < _ASD_MIN_SEG_S:
+        out[1][0] = out[0][0]; out = out[1:]                  # a brief FIRST shot -> the next shot starts at 0
+    coal = [out[0]]                                            # re-coalesce same-position shots the absorb created
+    for seg in out[1:]:
+        if abs(seg[2] - coal[-1][2]) <= _ASD_SAME_TOL: coal[-1][1] = seg[1]
+        else: coal.append(seg)
+    return coal
+
 def _assemble_track(obs: list[dict], fps: float):
     """PURE reduction of per-frame observations -> active-speaker segments [t0,t1,fx,fy,fh,ey] (relative s),
     or None when there's only one position (the static path is identical + cheaper). Per frame the louder
@@ -318,6 +340,7 @@ def _assemble_track(obs: list[dict], fps: float):
     for seg in segments[1:]:
         if abs(seg[2] - merged[-1][2]) <= _ASD_SAME_TOL: merged[-1][1] = seg[1]
         else: merged.append(seg)
+    merged = _merge_brief_segments(merged)                     # absorb interjections -> no cut-away-and-back
     if len(merged) <= 1:
         return None                                           # one position the whole clip -> static focus identical
     return [tuple(s) for s in merged]
