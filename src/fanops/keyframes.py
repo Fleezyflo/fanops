@@ -33,3 +33,29 @@ def extract_keyframes(video_path: str, start: float, end: float, *, count: int =
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return []                                        # ffmpeg unusable -> degrade to text-only
     return written
+
+_GRID_TIMEOUT = 60.0   # one bounded ffmpeg for the WHOLE window; a hung grid is reaped, never wedges the pass
+
+def extract_frames_grid(video_path: str, start: float, end: float, *, fps: float,
+                        out_dir: str | Path, width: int = 960, timeout: float = _GRID_TIMEOUT) -> list[str]:
+    """SINGLE-PASS frame sampler: ONE ffmpeg `-vf fps=N,scale=W:-2` pass writing numbered jpgs across the
+    whole [start,end) window, vs extract_keyframes' one -ss spawn PER frame. This is what makes fine-grained
+    (sub-second) face/speaker detection affordable — fps=4 over a 20s window is 1 ffmpeg call (~80 frames),
+    not 80. Returns the jpg paths SORTED (so list index == time order; frame i ~= start + i/fps). Same
+    fail-open contract as extract_keyframes: non-positive window / absent-unspawnable ffmpeg / timeout /
+    nonzero exit -> [] (caller degrades to the static keyframe path or centered crop). NEVER raises.
+    scale uses -2 (even dim, AR-preserving) so the encoder never rejects an odd dimension."""
+    if not (end > start):
+        return []
+    out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
+    stamp = int(round(start * 100))                       # window-keyed prefix so concurrent windows don't collide
+    pattern = out / f"grid_{stamp}_%05d.jpg"
+    try:
+        r = subprocess.run(["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", video_path,
+                            "-t", f"{end - start:.3f}", "-vf", f"fps={fps},scale={width}:-2", str(pattern)],
+                           check=False, capture_output=True, text=True, timeout=timeout)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return []                                        # ffmpeg unusable -> degrade
+    if r.returncode != 0:
+        return []                                        # encode failed -> degrade (no partial grid)
+    return [str(p) for p in sorted(out.glob(f"grid_{stamp}_*.jpg"))]
