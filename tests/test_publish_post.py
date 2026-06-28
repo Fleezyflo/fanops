@@ -90,3 +90,32 @@ def test_timeless_queued_post_does_not_auto_publish(tmp_path, monkeypatch):
     out = publish_due(cfg, now="2030-01-01T00:00:00Z")
     assert out["published"] == 0
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued              # parked, never published
+
+
+def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch):
+    # CULM-2: a per-account render's file must be uploaded at most ONCE (cached on Render.media_url),
+    # not re-uploaded every approve->publish cycle (approval re-points media_urls to file://<render>).
+    from fanops.models import Render
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    rid = "render_x"; vf = cfg.clips / "v.mp4"; vf.parent.mkdir(parents=True, exist_ok=True); vf.write_bytes(b"V")
+    led.add_render(Render(id=rid, clip_id="c1", account="@a", surface_key="@a|instagram", path=str(vf)))
+    led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(vf), state=ClipState.queued))
+    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="98", platform=Platform.instagram,
+                      caption="x", state=PostState.queued, scheduled_time="2000-01-01T00:00:00Z",
+                      render_id=rid, media_urls=[f"file://{vf}"]))
+    led.save()
+    calls = {"n": 0}
+    up = lambda cfg, backend=None: (lambda c, pth: (calls.__setitem__("n", calls["n"] + 1) or "https://cdn/v.mp4"))
+    monkeypatch.setattr("fanops.post.get_media_uploader", up)        # ensure_render_media (media.py) path
+    monkeypatch.setattr("fanops.post.run.get_media_uploader", up)    # the legacy run.py direct-upload path
+    class FakePoster:
+        def publish(self, led, pid): led.posts[pid].state = PostState.submitted; return led
+    monkeypatch.setattr("fanops.post.run.get_poster", lambda cfg, backend=None: FakePoster())
+    assert publish_post(cfg, "p1") == "published"
+    assert Ledger.load(cfg).renders[rid].media_url == "https://cdn/v.mp4"   # cached on the Render
+    with Ledger.transaction(cfg) as l:
+        l.posts["p1"].state = PostState.queued; l.posts["p1"].media_urls = [f"file://{vf}"]   # simulate a re-approval re-stamp
+    publish_post(cfg, "p1")
+    assert calls["n"] == 1                                            # uploaded ONCE total, not per cycle

@@ -110,9 +110,16 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str) -> None:
         # upload and ship the LOCAL path to Blotato, which cannot fetch it — every live variant post
         # died. Upload the variant FILE itself, NOT ensure_clip_media (the clip cache holds the
         # parent's BASE render — using it would drop the burned hook). dryrun keeps file:// (offline).
-        _upload = get_media_uploader(cfg, backend)
-        post.media_urls = [_upload(cfg, Path(u.removeprefix("file://")))
-                           if u.startswith("file://") else u for u in post.media_urls]
+        from fanops.post.media import ensure_render_media
+        new = []
+        for u in post.media_urls:
+            if u.startswith("file://") and post.render_id:
+                new.append(ensure_render_media(led, cfg, post.render_id, u.removeprefix("file://"), backend))   # CULM-2: once per render
+            elif u.startswith("file://"):
+                new.append(get_media_uploader(cfg, backend)(cfg, Path(u.removeprefix("file://"))))               # no render home -> direct
+            else:
+                new.append(u)
+        post.media_urls = new
 
 
 def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | None = None) -> str | None:
@@ -169,6 +176,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
     net = {f: getattr(post, f) for f in _NET_POST_FIELDS}
     clip = led.clips.get(post.parent_id)
     clip_media = clip.media_url if clip is not None else None   # carry the F44 upload cache forward
+    render = led.get_render(post.render_id) if post.render_id else None
+    render_media = render.media_url if render is not None else None   # CULM-2: persist the once-per-render upload
     final_state = net["state"]
     # ---- FINALIZE ----
     with Ledger.transaction(cfg) as led:
@@ -179,6 +188,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         c = led.clips.get(p.parent_id)
         if c is not None and clip_media and not c.media_url:
             c.media_url = clip_media                   # persist the once-per-clip upload (FIX F44)
+        r = led.get_render(p.render_id) if p.render_id else None
+        if r is not None and render_media and not r.media_url:
+            r.media_url = render_media                 # CULM-2: persist the once-per-render upload (FIX-F44 parity)
     # content-lifecycle Phase 3: fail-open day-bucketed record, OUTSIDE the finalize txn so an archive
     # write can NEVER roll back the just-committed publish. The network-phase `post` carries every field
     # the archive reads (loaded from disk) PLUS the network mutations. Fires only on a confirmed publish.

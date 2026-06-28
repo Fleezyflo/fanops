@@ -70,6 +70,19 @@ def upload_media(cfg: Config, path: Path) -> str:
         raise RuntimeError(f"Blotato media PUT failed ({put.status_code}): {redact(put.text, key, limit=300)}")
     return presign["publicUrl"]
 
+def ensure_render_media(led: Ledger, cfg: Config, render_id: str, local_path: str, backend: str) -> str:
+    """Upload a per-account render's file ONCE; cache the public URL on the Render and reuse it (FIX-F44
+    parity for variants — CULM-2; approval re-points media_urls to file://<render> every cycle, so without a
+    per-render cache each approve->publish re-uploaded). A missing render (race/GC) falls back to a direct
+    upload (no cache home), never crashes the publish. The cache is PERSISTED by run.py's finalize txn."""
+    r = led.get_render(render_id) if render_id else None
+    if r is not None and r.media_url:
+        return r.media_url
+    from fanops.post import get_media_uploader          # lazy: avoid the post/__init__ <-> media import cycle
+    url = get_media_uploader(cfg, backend)(cfg, Path(local_path))
+    if r is not None: r.media_url = url                 # persisted in run.py's finalize txn (mirrors clip_media)
+    return url
+
 def ensure_clip_media(led: Ledger, cfg: Config, clip_id: str) -> str:
     """Upload the clip's file once; cache the public URL on the Clip and reuse it."""
     clip = led.clips[clip_id]
