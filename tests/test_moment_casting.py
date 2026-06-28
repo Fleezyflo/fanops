@@ -240,3 +240,14 @@ def test_casting_payload_text_only_when_no_frames(tmp_path, mocker):
     payload = json.loads(_req_path(cfg, "src_1").read_text())
     assert not any("frame" in m for m in payload["moments"])  # byte-identical text-only path preserved
     assert "frames" not in payload                            # no top-level frames -> casting stays text-only
+
+
+def test_casting_answer_skips_ids_absent_from_current_pool(tmp_path):
+    # AGENT-10 (characterization): a casting answer naming a moment id no longer in the pool (a superseded
+    # re-pick) applies ONLY the still-present ids — the stale id is silently skipped, never resurrected. This
+    # pins that casting correlates by source_id+rid + the skip-unknown guard, not a pool fingerprint.
+    cfg = Config(root=tmp_path); led = _seed(cfg, [_acct("@a", "guitar")], moments=("m0", "m1"))
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    led = _respond_and_ingest(led, cfg, {"@a": ["m0", "GHOST"]})   # GHOST is not in the current pool
+    assert led.moments["m0"].affinities == ["@a"]
+    assert "GHOST" not in led.moments                             # the stale/unknown id is never resurrected

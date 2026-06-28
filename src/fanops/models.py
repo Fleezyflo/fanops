@@ -532,9 +532,11 @@ class CaptionItem(BaseModel):
     caption: str
     hashtags: list[str] = Field(default_factory=list)
     language: Optional[str] = None      # AUDIT H5: the LLM declares the caption's language
-    hook: Optional[str] = None          # per-surface on-screen hook (creative variation); None -> use moment default
-    axis: Optional[str] = None          # P2: the ONE cheap-text axis this variant moves (normalized at ingest)
-    rationale: Optional[str] = None     # P2: one-line WHY this variant is a coherent, justified difference
+    # AGENT-7: hook/axis/rationale were REMOVED — the caption gate is hashtags-only (the frame-seeing moment
+    # gate owns hooks via hooks_by_persona), so these were never read and only widened the LLM --json-schema,
+    # tempting the model to author a hook here. The DORMANT variant A/B machinery's persisted side lives on the
+    # stored meta_captions entry (_caption_entry hook/axis keys, read by variant_amplify/digest/crosspost) and
+    # is untouched. Old on-disk responses carrying these keys still parse (pydantic extra="ignore").
 
 class CaptionSet(BaseModel):
     request_id: str

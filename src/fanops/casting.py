@@ -111,6 +111,10 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
         add: dict = {}
         for handle, mids in (dec.selections or {}).items():
             if handle not in active: continue          # an inactive/unknown handle never casts
+            # AGENT-10 (characterized): casting correlates by source_id + rid (the gate key + read_response's
+            # request_id check), NOT a pool fingerprint. A re-pick discards this gate (moments.discard_gate),
+            # and an unknown/foreign/non-decided id is SKIPPED below — so a stale answer to a SUPERSEDED pool
+            # can never resurrect a moment that no longer exists. (Pinned: test_casting_answer_skips_ids_absent_from_current_pool.)
             for mid in mids:
                 m = led.moments.get(mid)
                 if m is None or m.parent_id != source_id or m.state not in (MomentState.decided, MomentState.clipped):

@@ -247,7 +247,10 @@ def _caption_entry(tags: list, hashtags_raw: list, *, fallback: bool = False, ta
     """One surface's stored meta_captions entry. The posted caption IS the vetted <=4-tag line (hashtags-only).
     hashtags_raw keeps the model's RAW picks verbatim (finding #3: Studio shows picked-vs-vetted; display-only).
     ROOT FIX: the caption gate no longer authors an on-screen hook (the frame-seeing moment gate does, via
-    hooks_by_persona) -> hook/axis/rationale are always None. `fallback` marks a seed-tag synthesized entry.
+    hooks_by_persona) -> hook/axis/rationale are always None here. They are KEPT on the persisted entry (not on
+    the CaptionItem model — AGENT-7 dropped those) as the DORMANT variant-A/B contract the dormant readers
+    expect (variant_amplify/digest read entry.get("hook"); crosspost reads cap.get("axis")). `fallback` marks a
+    seed-tag synthesized entry.
     `tag_sources` is the per-tag provenance ({tag: source}) — proves every shipped tag traces to a real
     signal (content|corpus|region|graph-reach|discovery|genre-floor); Review renders it. Absent -> {}."""
     entry = {"caption": " ".join(tags), "hashtags": tags, "hashtags_raw": hashtags_raw,
