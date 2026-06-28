@@ -442,3 +442,47 @@ def test_run_next_banner_is_flag_independent(tmp_path, monkeypatch):
     app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
     html = app.test_client().get("/run").data.decode()
     assert "run-next" in html
+
+
+# ── WS-D1 Phase 3: ingest event-kick (de-lazify — drive immediately, not after a daemon interval) ──
+import pytest
+from fanops.studio import actions_run
+
+
+@pytest.fixture(autouse=True)
+def _no_real_run_spawn(monkeypatch):
+    # The event-kick spawns a DETACHED `fanops run`; never let a TEST spawn a real one. Neutralize the
+    # spawn module-wide so every run_ingest test stays hermetic; the kick tests below override with their
+    # own Popen mock to assert.
+    monkeypatch.setattr(actions_run.subprocess, "Popen", lambda *a, **k: None)
+
+
+def test_run_ingest_kicks_prepare_when_footage_added(tmp_path, mocker):
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    kick = mocker.patch("fanops.studio.actions_run.kick_prepare")
+    res = actions.run_ingest(cfg)
+    assert res.ok and res.detail["added"] == 1
+    kick.assert_called_once()                              # a fresh drop drives immediately (no interval wait)
+
+
+def test_run_ingest_no_kick_when_nothing_added(tmp_path, mocker):
+    cfg = Config(root=tmp_path)                            # empty inbox -> added 0
+    kick = mocker.patch("fanops.studio.actions_run.kick_prepare")
+    res = actions.run_ingest(cfg)
+    assert res.ok and res.detail["added"] == 0
+    kick.assert_not_called()                               # no new footage -> no wasted run
+
+
+def test_kick_prepare_spawns_detached_run_then_debounces(tmp_path, mocker):
+    cfg = Config(root=tmp_path)
+    popen = mocker.patch("fanops.studio.actions_run.subprocess.Popen")
+    assert actions_run.kick_prepare(cfg) is True           # no recent kick -> spawn
+    assert popen.call_count == 1 and popen.call_args[0][0][1] == "run"   # spawns `fanops run`
+    assert actions_run.kick_prepare(cfg) is False          # fresh lockfile -> debounced
+    assert popen.call_count == 1                           # ...no second spawn
+
+
+def test_kick_prepare_is_fail_open_on_spawn_error(tmp_path, mocker):
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.studio.actions_run.subprocess.Popen", side_effect=OSError("boom"))
+    assert actions_run.kick_prepare(cfg) is False          # swallowed -> ingest never breaks

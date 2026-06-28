@@ -64,6 +64,37 @@ def test_home_links_to_golive(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     assert b"/golive" in _client(cfg).get("/").data        # onboarding CTA into the Go-Live connect flow
 
+
+# ── WS-D1 Phase 2: the daemon-driver health banner (the silent-driver-death root) ─────────────
+def test_home_includes_daemon_health_loader(tmp_path):
+    # Home lazy-loads the driver-health partial via htmx (mirrors /golive/health) so a dead/stale launchd
+    # driver surfaces where the operator looks — the gap that let it rot exit-127 for ~2 weeks unseen.
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    assert b"/home/daemon-health" in _client(cfg).get("/").data
+
+def test_daemon_health_banner_when_not_alive(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    import fanops.studio.views as V
+    monkeypatch.setattr(V, "daemon_health", lambda c: {"verdict": "loaded but stale (last heartbeat 99999s ago)",
+                        "loaded": True, "last_exit": 0, "pid": None, "heartbeat_age_s": 99999})
+    html = _client(cfg).get("/home/daemon-health").data.decode()
+    assert "data-daemon-warn" in html and "stale" in html        # loud banner carries the verdict
+
+def test_daemon_health_silent_when_alive(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    import fanops.studio.views as V
+    monkeypatch.setattr(V, "daemon_health", lambda c: {"verdict": "alive", "loaded": True,
+                        "last_exit": 0, "pid": 1, "heartbeat_age_s": 5})
+    assert b"data-daemon-warn" not in _client(cfg).get("/home/daemon-health").data
+
+def test_daemon_health_none_is_silent_not_500(tmp_path, monkeypatch):
+    # non-darwin / launchctl absent -> daemon_health None -> no banner, no 500, no false alarm on a dev box.
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    import fanops.studio.views as V
+    monkeypatch.setattr(V, "daemon_health", lambda c: None)
+    r = _client(cfg).get("/home/daemon-health")
+    assert r.status_code == 200 and b"data-daemon-warn" not in r.data
+
 def test_home_metrics_per_account(tmp_path):
     # S10: an ACTIVE account's post count renders INLINE on its account row; the #home-metrics table is now
     # only the orphan fallback (handles with history but no active account), so it is absent when @a is active.

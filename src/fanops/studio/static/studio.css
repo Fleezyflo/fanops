@@ -157,6 +157,7 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 .banner.dryrun { color:var(--muted); }
 .banner.live { color:var(--danger); border-color:var(--danger); background:var(--danger-dim); box-shadow:0 0 0 1px var(--danger-dim), 0 8px 24px var(--danger-dim); }
 .banner.live::before { animation:pulse 1.6s var(--ease) infinite; }
+.banner.warn { color:var(--danger); border-color:var(--danger); background:var(--danger-dim); }   /* WS-D1: pipeline-driver down/stale — loud, distinct from the LIVE pulse */
 @keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.45; transform:scale(.82); } }
 
 /* ── Forms ──────────────────────────────────────────────────────────────── */

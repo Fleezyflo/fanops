@@ -11,6 +11,10 @@
   {% if status.is_live %}<div class="banner live">● LIVE ({{ status.mode }}) — reviewed posts publish to REAL accounts</div>
   {% else %}<div class="banner dryrun">● DRYRUN ({{ status.mode }}) — writes payloads, posts nothing</div>{% endif %}
 
+  {# WS-D1 Phase 2: lazy-load the launchd pipeline-driver health (mirrors /golive/health) so a dead/stale
+     driver surfaces HERE instead of silently halting the pipeline. Empty partial when alive / non-mac. #}
+  <div hx-get="{{ url_for('home_daemon_health') }}" hx-trigger="load" hx-swap="outerHTML"></div>
+
   {# S10: ONE next-action. The workflow spine (the bar above) is the SOLE "do this next" CTA. This panel is
      pure ORIENTATION — shown ONLY at the true zero-state (no accounts AND no footage), carrying NO competing
      done/next/todo ladder. The moment the operator has either accounts or footage the spine alone guides

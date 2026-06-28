@@ -281,6 +281,13 @@ def create_app(cfg: Config) -> Flask:
         # here (Home renders no per-surface chip row — the chip universe is a per-tab concern).
         return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), tab="home")
 
+    @app.get("/home/daemon-health")
+    def home_daemon_health():
+        # WS-D1 Phase 2: the launchd PIPELINE-DRIVER liveness banner, htmx-loaded on Home (mirrors
+        # /golive/health) so a dead/stale driver surfaces where the operator looks instead of rotting
+        # exit-127 unseen. Fail-open: daemon_health is None on non-darwin/launchctl-absent -> empty partial.
+        return render_template("_daemon_health.html", daemon=views.daemon_health(cfg))
+
     from fanops.studio.app_routes_review import register_review_routes
     register_review_routes(app, cfg)
 
