@@ -512,6 +512,8 @@ class MomentCastingRequest(BaseModel):
     personas: list[dict] = Field(default_factory=list)  # [{handle, persona}] active fan accounts to cast for
     language: Optional[str] = None
     guidance: str = ""
+    learned: dict = Field(default_factory=dict)   # AGENT-4: per-account history hint (handle -> [prior selection reasons]);
+                                                  # {} -> none (byte-identical). READ-ONLY history, NOT a live metric (no unfreeze).
 
 class MomentCastingDecision(BaseModel):
     request_id: str

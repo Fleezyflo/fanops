@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from fanops.models import (MomentState, MomentCastingRequest, MomentCastingDecision, SelectionFact,
                            SelectionMethod, AccountSelection, account_selection_id)
 from fanops.personas import casting_directive
+from fanops.keyframes import extract_keyframes          # AGENT-4: the casting eyes (same helper the hook gate uses); fail-open []
 from fanops.agentstep import write_request, read_response, latest_request_id
 from fanops.control import load_guidance
 from fanops.ids import child_id
@@ -37,6 +38,20 @@ def _record_fact(led, m, handle, *, method, overlap=None, signal=None, rank=None
             created_at=iso_z(datetime.now(timezone.utc))))
     except Exception:
         pass
+
+
+def _learned_account_signal(led, handles: list[str]) -> dict:
+    """AGENT-4: a DETERMINISTIC per-account hint for the casting brain — a compact summary of what each account
+    HISTORICALLY took (its prior AccountSelections' moment reasons), so the selector leans toward an account's
+    demonstrated taste. READ-ONLY history, NOT a live metric (learning stays validation-frozen — a hint, never
+    an unfreeze). An account with no history is OMITTED (no empty block -> byte-identical). Capped at 5 reasons."""
+    out: dict = {}
+    for h in handles:
+        prior = [s for s in led.account_selections.values() if getattr(s, "account", None) == h]
+        reasons = [led.moments[mid].reason for s in prior for mid in s.moment_ids
+                   if mid in led.moments and led.moments[mid].reason][:5]
+        if reasons: out[h] = reasons
+    return out
 
 
 # ---- M1 (Option C): LLM-driven per-account moment SELECTION (the generous, persona-smart selector) ----
@@ -63,12 +78,23 @@ def request_moment_casting(led, cfg, source_id, accounts):
     if not pool or not personas: return led           # nothing to cast / no persona to differentiate -> no gate
     if latest_request_id(cfg, "moment_casting", source_id) is not None:
         return led                                    # write-ONCE: never re-stamp an in-flight gate
+    def _moment_frame(m):                              # AGENT-4: ONE still over the moment window (the casting eyes).
+        if not (src.source_path and src.duration):    # no real source (tests / not-downloaded) -> text-only, byte-identical
+            return None
+        fs = extract_keyframes(src.source_path, m.start, m.end, count=1,
+                               out_dir=cfg.agent_io / "keyframes" / source_id)   # fail-open [] (no ffmpeg / probe fail)
+        return fs[0] if fs else None
     moments = [{"moment_id": m.id, "reason": m.reason, "hook": m.hook or "",
                 "transcript_excerpt": m.transcript_excerpt, "signal_score": m.signal_score,
-                "start": m.start, "end": m.end} for m in pool]
+                "start": m.start, "end": m.end,
+                **({"frame": fr} if (fr := _moment_frame(m)) else {})} for m in pool]
+    learned = _learned_account_signal(led, [p["handle"] for p in personas])   # deterministic per-account history hint
     payload = MomentCastingRequest(source_id=source_id, request_id="", moments=moments, personas=personas,
-                                   language=src.language, guidance=load_guidance(cfg)).model_dump()
+                                   language=src.language, guidance=load_guidance(cfg), learned=learned).model_dump()
     payload.pop("request_id", None)
+    if not learned: payload.pop("learned", None)       # {} -> drop the key (byte-identical text-only path)
+    frames = [m["frame"] for m in moments if m.get("frame")]   # AGENT-4: top-level list the responder attaches as images
+    if frames: payload["frames"] = frames              # only when at least one was extracted -> no-frame call stays text-only
     write_request(cfg, kind="moment_casting", key=source_id, payload=payload)
     return led
 

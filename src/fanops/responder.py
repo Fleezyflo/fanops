@@ -27,7 +27,8 @@ _SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision,
            "moment_casting": MomentCastingDecision, "captions": CaptionSet}
 _PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt,
            "moment_casting": moment_casting_prompt, "captions": caption_prompt}
-_VISION_GATES = ("moments", "moment_hooks")   # gates whose payload carries top-level `frames` to attach as images
+_VISION_GATES = ("moments", "moment_hooks", "moment_casting")   # gates whose payload MAY carry top-level `frames` to attach
+# (moment_casting only carries `frames` when keyframes were extracted; an empty/absent list -> images=None -> text-only)
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg
