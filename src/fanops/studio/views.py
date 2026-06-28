@@ -402,6 +402,20 @@ def home_status(cfg: Config) -> HomeStatus:
     return HomeStatus(mode=mode, is_live=cfg.is_live, counts=counts, accounts=accounts, by_account=by_account)
 
 
+def daemon_health(cfg: Config) -> Optional[dict]:
+    """Fail-open liveness of the launchd PIPELINE DRIVER for the Home banner. Returns daemon.status()'s
+    verdict dict (loaded/pid/last_exit/heartbeat_age_s/verdict), or None when it can't be judged — non-darwin,
+    launchctl absent, or any error — so Home never 500s and a non-mac dev box shows no false alarm. The
+    detection already exists in daemon.status(); this only SURFACES it where the operator looks. Lazy import
+    keeps the launchd/subprocess dependency off the core view path; htmx-loaded on-demand (mirrors
+    /golive/health) so it never runs a subprocess on the spine's every-surface home_status read."""
+    try:
+        from fanops import daemon
+        return daemon.status(cfg, interval=daemon.installed_interval(cfg) or 600)
+    except Exception:
+        return None
+
+
 def home_batches(cfg: Config) -> list[HomeBatch]:
     """Lock-free, fail-open batch list for the Home entry point — each row deep-links ?batch=<id> into Review
     and carries posts_born + a zero-result flag (a non-empty target that birthed NO post — the silent

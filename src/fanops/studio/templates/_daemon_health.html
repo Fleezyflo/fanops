@@ -1,0 +1,12 @@
+{# _daemon_health.html — WS-D1 Phase 2: the launchd PIPELINE-DRIVER liveness banner (htmx-loaded on Home).
+   Loud when the driver is not `alive` so a dead/stale driver can't rot exit-127 unseen (the 2-week failure).
+   `daemon` is daemon.status()'s verdict dict, or None (non-darwin / launchctl absent) -> render nothing. #}
+{% if daemon and daemon.verdict != "alive" %}
+<div class="banner warn" data-daemon-warn="{{ daemon.verdict }}" role="alert">
+  ⚠ Pipeline driver {{ daemon.verdict }} — nothing processes hands-off until it's fixed
+  (a dropped video won't become clips/posts on its own).
+  Fix: <code>fanops daemon status</code> → <code>fanops daemon install</code>.
+</div>
+{% else %}
+<div data-daemon-ok hidden></div>
+{% endif %}

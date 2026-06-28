@@ -3,7 +3,7 @@
 of the post-production surfaces — depends only on actions_common (ActionResult/_now); never on a sibling action
 module, so the import graph stays acyclic."""
 from __future__ import annotations
-import os, uuid
+import os, subprocess, time, uuid
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -20,6 +20,32 @@ from fanops.studio.actions_common import ActionResult, _now
 
 _VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}   # the has_video_stream subset of MEDIA_EXT
 if not (_VIDEO_EXT <= MEDIA_EXT): raise ValueError("_VIDEO_EXT drifted out of ingest.MEDIA_EXT")  # import-time drift guard (not assert — survives -O)
+
+_KICK_TTL_S = 300   # WS-D1: debounce window for the ingest event-kick (< the daemon interval) so repeated ingests don't stack runs
+
+
+def kick_prepare(cfg: Config) -> bool:
+    """WS-D1 Phase 3 — de-lazify: spawn a DETACHED `fanops run` so a fresh browser ingest starts processing
+    IMMEDIATELY instead of waiting up to one daemon interval. BEST-EFFORT + FAIL-OPEN: every failure is
+    swallowed (logged), so the kick is an optimization, never a precondition for ingest — the launchd daemon
+    remains the GUARANTEED driver. Debounced by a short-TTL lockfile so repeated ingests don't stack concurrent
+    runs; the ledger flock + content-addressed caches make any overlap merely wasteful, never corrupting.
+    Uses the daemon's own spawn helpers (the codebase-blessed `fanops run` invocation). Returns True iff it
+    spawned. FANOPS_RESPONDER defaults to llm (hands-off gate answering) but honors an explicit operator mode."""
+    from fanops.daemon import _fanops_bin, _daemon_path
+    from fanops.log import get_logger
+    lock = cfg.control / ".run-kick"
+    try:
+        if lock.exists() and (time.time() - lock.stat().st_mtime) < _KICK_TTL_S:
+            return False                                   # a recent kick is still plausibly running
+        env = {**os.environ, "PATH": _daemon_path()}; env.setdefault("FANOPS_RESPONDER", "llm")
+        subprocess.Popen([_fanops_bin(), "run", "--base-time", iso_z(_now(None))],
+                         cwd=str(cfg.root), env=env, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)   # detached: survives the request, OS-reaped
+        lock.parent.mkdir(parents=True, exist_ok=True); lock.write_text(iso_z(_now(None)))   # stamp AFTER a clean spawn
+        return True
+    except Exception as exc:
+        get_logger(cfg)("run", "-", "kick_failed", err=str(exc)[:160]); return False
 
 
 def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=()) -> ActionResult:
@@ -50,6 +76,7 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=()) -> Acti
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
+    if added >= 1: kick_prepare(cfg)                        # WS-D1: new footage -> drive NOW (best-effort; daemon backstops). Covers the one-click upload path too (it delegates here).
     detail = {"sources": n, "added": added}
     if counts is not None and counts.excluded: detail["excluded"] = counts.excluded   # ING-5: PII drops visible on native path too
     if batch is not None:
