@@ -85,38 +85,35 @@ def test_subject_focus_non_positive_window_is_none(tmp_path):
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080)
     assert framing.subject_focus(cfg, src, start=5.0, end=5.0) is None
 
-def test_subject_focus_returns_median_centroid(tmp_path, monkeypatch):
+def test_subject_focus_returns_median_quad(tmp_path, monkeypatch):
+    # NEW shape (fx,fy,fh,ey): the dominant (largest-fh) face's median over the window, read from detect stats.
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())                      # pretend the extra is installed
-    monkeypatch.setattr("fanops.keyframes.extract_keyframes", lambda *a, **k: ["f0", "f1", "f2", "f3", "f4"])
-    monkeypatch.setattr(framing, "_detect_centroids", lambda cv2, frames: [(0.8, 0.4), (0.82, 0.42), (0.78, 0.38), (0.8, 0.4)])
-    assert framing.subject_focus(cfg, src, start=10.0, end=14.0) == (0.8, 0.4)  # 4 of 5 frames -> conf 0.8 >= 0.34
+    stats = {"fps": 4.0, "frames": [[[0.8, 0.4, 0.2, 0.36]]] * 4 + [[]]}        # 4 of 5 frames have a face
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
+    assert framing.subject_focus(cfg, src, start=10.0, end=14.0) == (0.8, 0.4, 0.2, 0.36)
+
+def test_subject_focus_picks_dominant_largest_face(tmp_path, monkeypatch):
+    # two faces per frame -> the LARGER (fh) one is the subject for the static lock.
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    stats = {"fps": 4.0, "frames": [[[0.2, 0.5, 0.10, 0.45], [0.8, 0.5, 0.30, 0.40]]] * 4}
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
+    fx, fy, fh, ey = framing.subject_focus(cfg, src, start=10.0, end=14.0)
+    assert fx == 0.8 and fh == 0.30                                             # the bigger face wins
 
 def test_subject_focus_low_confidence_is_none(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr("fanops.keyframes.extract_keyframes", lambda *a, **k: ["f0", "f1", "f2", "f3", "f4"])
-    monkeypatch.setattr(framing, "_detect_centroids", lambda cv2, frames: [(0.8, 0.4)])   # 1 of 5 -> conf 0.2 < 0.34
+    stats = {"fps": 4.0, "frames": [[[0.8, 0.4, 0.2, 0.36]]] + [[]] * 4}        # 1 of 5 -> conf 0.2 < 0.34
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
     assert framing.subject_focus(cfg, src, start=10.0, end=14.0) is None
 
-def test_subject_focus_caches_to_sidecar_and_skips_reprobe(tmp_path, monkeypatch):
+def test_subject_focus_no_detection_is_none(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    calls = {"n": 0}
-    def _extract(*a, **k):
-        calls["n"] += 1
-        return ["f0", "f1", "f2", "f3", "f4"]
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr("fanops.keyframes.extract_keyframes", _extract)
-    monkeypatch.setattr(framing, "_detect_centroids", lambda cv2, frames: [(0.5, 0.5)] * 5)
-    first = framing.subject_focus(cfg, src, start=10.0, end=14.0)
-    second = framing.subject_focus(cfg, src, start=10.0, end=14.0)        # window key matches -> cache hit
-    assert first == second == (0.5, 0.5)
-    assert calls["n"] == 1                                                # the SECOND call never re-probed
-    sidecar = cfg.agent_io / "framing" / "s1.json"
-    assert sidecar.exists() and json.loads(sidecar.read_text())["windows"]["10.0-14.0"]["fx"] == 0.5
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)         # fail-open -> None
+    assert framing.subject_focus(cfg, src, start=10.0, end=14.0) is None
 
 
 # ---------------------------------------------------------------- YuNet detector (v2) ----
@@ -125,10 +122,10 @@ def test_vendored_yunet_model_ships_in_package():
     mp = framing._model_path()
     assert mp.exists() and mp.suffix == ".onnx" and mp.stat().st_size > 100_000
 
-def test_detect_centroids_no_model_is_empty(monkeypatch, tmp_path):
-    # model asset missing -> _detector None -> [] (fail-open to center crop), never raises.
+def test_detector_none_when_model_absent(monkeypatch, tmp_path):
+    # model asset missing -> _detector None -> detect_window None -> center crop (fail-open), never raises.
     monkeypatch.setattr(framing, "_model_path", lambda: tmp_path / "absent.onnx")
-    assert framing._detect_centroids(object(), ["f0", "f1"]) == []
+    assert framing._detector(object()) is None
 
 def test_detector_none_on_old_cv2_without_yunet(monkeypatch, tmp_path):
     # an OpenCV too old to expose FaceDetectorYN -> None, not an AttributeError crash.
@@ -137,24 +134,24 @@ def test_detector_none_on_old_cv2_without_yunet(monkeypatch, tmp_path):
     class OldCv2: pass                                    # no FaceDetectorYN attribute
     assert framing._detector(OldCv2()) is None
 
-def test_sidecar_v1_cache_is_invalidated_by_v2(tmp_path):
-    # the Haar-era (v1) all-null sidecars must NOT be trusted now the detector changed -> recompute.
+def test_track_sidecar_stale_version_invalidated(tmp_path):
+    # an older track sidecar (pre face-height/eyeline schema) must NOT be trusted -> recompute.
     p = tmp_path / "old.json"
-    p.write_text(json.dumps({"v": 1, "windows": {"10.0-14.0": {"fx": 0.5, "fy": 0.5}}}))
+    p.write_text(json.dumps({"v": framing._SIDECAR_V - 1, "windows": {"10.0-14.0": [[0.0, 5.0, 0.5, 0.5]]}}))
     assert framing._load_cache(p) == {}                   # version mismatch -> empty -> re-probe
 
-def test_subject_focus_samples_at_detection_resolution(tmp_path, monkeypatch):
-    # faces are undetectable at the 480px hook-author default; detection must request higher-res frames.
+def test_detect_window_samples_at_detection_resolution(tmp_path, monkeypatch):
+    # faces are undetectable at the 480px hook-author default; the grid pass must request higher-res frames.
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     seen = {}
-    def _extract(*a, **k):
-        seen["width"] = k.get("width")
-        return ["f0", "f1", "f2", "f3", "f4"]
+    def _grid(*a, **k):
+        seen["width"] = k.get("width"); return ["g0", "g1"]
     monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr("fanops.keyframes.extract_keyframes", _extract)
-    monkeypatch.setattr(framing, "_detect_centroids", lambda cv2, frames: [(0.5, 0.5)] * 5)
-    framing.subject_focus(cfg, src, start=10.0, end=14.0)
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid)
+    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: [(0.5, 0.5, 0.2, 0.45)])
+    framing.detect_window(cfg, src, start=10.0, end=14.0)
     assert seen["width"] == framing._KF_WIDTH and framing._KF_WIDTH >= 960
 
 
@@ -194,22 +191,48 @@ def test_speaker_track_no_extra_is_none(tmp_path, monkeypatch):
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     assert framing.speaker_track(cfg, src, start=10.0, end=30.0, src_w=1920, src_h=1080) is None
 
+def _obs(loud_side, fhL=0.2, fhR=0.18):
+    # one frame's observation: each side -> ((fx,fy,fh,ey), mouth-motion). loud_side gets high motion.
+    L = ((0.22, 0.50, fhL, 0.45), 50.0 if loud_side == "L" else 5.0)
+    R = ((0.80, 0.45, fhR, 0.40), 50.0 if loud_side == "R" else 5.0)
+    return {"L": L, "R": R}
+
 def test_speaker_track_follows_active_speaker(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     monkeypatch.setattr(framing, "_cv2", lambda: object())
     monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_keyframes", lambda *a, **k: ["f0", "f1", "f2", "f3"])
-    seq = [{"L": ((0.22, 0.5), 50.0), "R": ((0.80, 0.45), 10.0)} if i < 5    # first half: LEFT louder
-           else {"L": ((0.22, 0.5), 10.0), "R": ((0.80, 0.45), 50.0)} for i in range(10)]  # second half: RIGHT
-    n = {"i": 0}
-    def _fake_bin(cv2, det, frames):
-        d = seq[n["i"]]; n["i"] += 1; return d
-    monkeypatch.setattr(framing, "_bin_active", _fake_bin)
-    tr = framing.speaker_track(cfg, src, start=0.0, end=20.0, src_w=1920, src_h=1080)
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [f"g{i}" for i in range(40)])
+    obs = [_obs("L")] * 20 + [_obs("R")] * 20                               # 40 frames @4fps = 10s; LEFT then RIGHT
+    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: obs)
+    tr = framing.speaker_track(cfg, src, start=0.0, end=10.0, src_w=1920, src_h=1080)
     assert tr is not None and len(tr) == 2                                  # merged into LEFT-then-RIGHT
-    assert abs(tr[0][2] - 0.22) < 0.01 and abs(tr[1][2] - 0.80) < 0.01      # follows the speaker
-    assert tr[0][0] == 0.0 and tr[-1][1] == 20.0                            # covers the whole window
+    assert len(tr[0]) == 6                                                  # 6-tuple: t0,t1,fx,fy,fh,ey
+    assert abs(tr[0][2] - 0.22) < 0.01 and abs(tr[1][2] - 0.80) < 0.01      # fx follows the speaker
+    assert tr[0][4] == 0.2 and tr[1][4] == 0.18                            # face HEIGHT carried per segment (for zoom)
+    assert tr[0][0] == 0.0 and tr[-1][1] == 10.0                            # covers the whole window
+
+def test_speaker_track_switch_is_responsive(tmp_path, monkeypatch):
+    # the switch lands ~1s after the real change (frame 20 = 5.0s), NOT the old ~4s lag.
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [f"g{i}" for i in range(40)])
+    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: [_obs("L")] * 20 + [_obs("R")] * 20)
+    tr = framing.speaker_track(cfg, src, start=0.0, end=10.0, src_w=1920, src_h=1080)
+    assert 5.0 <= tr[0][1] <= 6.0                                           # boundary within ~1s of the real switch
+
+def test_speaker_track_one_frame_blip_does_not_flip(tmp_path, monkeypatch):
+    # a single louder-RIGHT frame inside an all-LEFT window must NOT cause a cut (hysteresis dwell).
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [f"g{i}" for i in range(20)])
+    obs = [_obs("L")] * 20; obs[10] = _obs("R")                             # one blip
+    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: obs)
+    assert framing.speaker_track(cfg, src, start=0.0, end=5.0, src_w=1920, src_h=1080) is None   # 1 position -> None
 
 def test_speaker_track_one_dominant_face_is_none(tmp_path, monkeypatch):
     # both visible but the SAME person always talks -> one position -> None (static focus is identical).
@@ -217,9 +240,25 @@ def test_speaker_track_one_dominant_face_is_none(tmp_path, monkeypatch):
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     monkeypatch.setattr(framing, "_cv2", lambda: object())
     monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_keyframes", lambda *a, **k: ["f0", "f1", "f2", "f3"])
-    monkeypatch.setattr(framing, "_bin_active", lambda *a: {"L": ((0.22, 0.5), 50.0), "R": ((0.80, 0.45), 5.0)})
-    assert framing.speaker_track(cfg, src, start=0.0, end=20.0, src_w=1920, src_h=1080) is None
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [f"g{i}" for i in range(20)])
+    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: [_obs("L")] * 20)
+    assert framing.speaker_track(cfg, src, start=0.0, end=5.0, src_w=1920, src_h=1080) is None
+
+
+# ---------------------------------------------------------------- motion_saliency (no-face follow) ----
+def test_motion_saliency_returns_change_centroid(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: ["g0", "g1", "g2"])
+    monkeypatch.setattr(framing, "_saliency_centroid", lambda cv2, frames: (0.7, 0.4))
+    assert framing.motion_saliency(cfg, src, start=10.0, end=14.0) == (0.7, 0.4)
+
+def test_motion_saliency_no_cv2_is_none(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    monkeypatch.setattr(framing, "_cv2", lambda: None)
+    assert framing.motion_saliency(cfg, src, start=10.0, end=14.0) is None
 
 
 # ---------------------------------------------------------------- detect_window (single grid pass) ----

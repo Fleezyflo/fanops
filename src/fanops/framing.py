@@ -12,7 +12,7 @@ import contextlib, json, os
 from pathlib import Path
 from statistics import median
 
-_SIDECAR_V = 2               # bump to invalidate cached focuses when the detector changes (v2: Haar -> YuNet)
+_SIDECAR_V = 3               # track-sidecar schema version (v3: segments carry face-height + eye-line for zoom)
 _KF_COUNT = 5                # frames sampled across the window — enough for a stable median, cheap to probe
 _KF_WIDTH = 960              # detection sampling width: Haar/YuNet need real pixels — a 480px face (~37px on a
                              # 1080p source) is undetectable; 960 lands a 1080p face at ~74px, reliably found.
@@ -45,33 +45,6 @@ def _detector(cv2):
         return cv2.FaceDetectorYN.create(str(mp), "", (320, 320), _SCORE_THRESH)
     except Exception:
         return None                                           # old cv2 without FaceDetectorYN, or any build error
-
-def _detect_centroids(cv2, frames: list[str]) -> list[tuple[float, float]]:
-    """Per frame, the normalized center of the LARGEST detected face (the dominant subject). A frame with
-    no face contributes nothing. Any per-frame read/decode error is skipped, never fatal (fail-open)."""
-    det = _detector(cv2)
-    if det is None:
-        return []                                             # detector unavailable -> no detection
-    out: list[tuple[float, float]] = []
-    for fp in frames:
-        try:
-            img = cv2.imread(fp)
-            if img is None: continue
-            h, w = img.shape[:2]
-            if not (w and h): continue
-            det.setInputSize((w, h))
-            _n, faces = det.detect(img)
-            if faces is None or len(faces) == 0: continue
-            b = max(faces, key=lambda f: float(f[2]) * float(f[3]))   # widest*tallest box = the dominant subject
-            cx = min(1.0, max(0.0, (float(b[0]) + float(b[2]) / 2) / w))
-            cy = min(1.0, max(0.0, (float(b[1]) + float(b[3]) / 2) / h))
-            out.append((cx, cy))
-        except Exception:
-            continue                                          # a single bad frame never sinks the window
-    return out
-
-def _sidecar(cfg, source_id: str) -> Path:
-    return cfg.agent_io / "framing" / f"{source_id}.json"
 
 def _wkey(start: float, end: float) -> str:
     return f"{round(start, 2)}-{round(end, 2)}"
@@ -220,9 +193,9 @@ def classify_window(cfg, src, *, start: float, end: float, stats: dict | None) -
     vocals = bool((getattr(src, "meta", None) or {}).get("vocals_isolated"))
     return CT_MUSIC if vocals else CT_SILENT
 
-_ASD_BIN_S = 2.0             # active-speaker decision granularity: re-pick the on-screen speaker every ~2s
-_ASD_FRAMES = 4             # frames per bin for the mouth-motion measure (>=2 needed for a temporal diff)
-_ASD_RATIO = 1.25          # the louder mouth must out-move the other by this factor to STEAL the frame (else hold)
+_ASD_FPS = 4.0             # per-FRAME active-speaker sampling rate (one grid pass) — replaces the old 2s bin model
+_ASD_HOLD_S = 0.8          # min DWELL before the frame switches speakers — anti-flicker hysteresis (~0.8s, was ~4s lag)
+_ASD_RATIO = 1.2           # the talker's mouth must out-move the other by this factor to be the instantaneous speaker
 _ASD_SAME_TOL = 0.08       # two centroids within this normalized x are "the same shot" -> merge (no needless cut)
 _ASD_SIDE_SPLIT = 0.5      # faces left/right of this normalized x are different speakers (the 2-shot split)
 
@@ -245,45 +218,105 @@ def _mouth_roi(cv2, img, face):
 def _track_sidecar(cfg, source_id: str) -> Path:
     return cfg.agent_io / "framing" / f"{source_id}.track.json"
 
-def _bin_active(cv2, det, frames: list[str]):
-    """Across one bin's frames, return {side: (centroid, motion)} per occupied side (L/R of _ASD_SIDE_SPLIT).
-    motion = mean abs frame-to-frame diff of the side's mouth ROI (speaking -> high). A side seen <2 frames
-    has motion 0.0 (can't measure)."""
+def _track_observe(cv2, det, frames: list[str]) -> list[dict]:
+    """PER FRAME of the grid, observe each 2-shot side (L/R of _ASD_SIDE_SPLIT): {side: ((fx,fy,fh,ey), motion)}
+    where motion = mean abs diff of that side's mouth ROI vs its PREVIOUS frame (lip movement -> high). The
+    dominant (largest box) face per side wins the frame. A frame that can't be read contributes an empty dict
+    (fail-open). This is the pixel layer the pure _assemble_track reduces — kept separate so the hysteresis/
+    segment logic is testable without cv2."""
     import numpy as np
-    cents = {"L": [], "R": []}; rois = {"L": [], "R": []}
+    prev_roi = {"L": None, "R": None}
+    obs: list[dict] = []
     for fp in frames:
+        per: dict = {}
         try:
             img = cv2.imread(fp)
-            if img is None: continue
+            if img is None: obs.append(per); continue
             h, w = img.shape[:2]
-            if not (w and h): continue
+            if not (w and h): obs.append(per); continue
             det.setInputSize((w, h))
             _n, faces = det.detect(img)
-            if faces is None: continue
-            for f in faces:
-                cx = (float(f[0]) + float(f[2]) / 2) / w
-                side = "L" if cx < _ASD_SIDE_SPLIT else "R"
-                cents[side].append((min(1.0, max(0.0, cx)), min(1.0, max(0.0, (float(f[1]) + float(f[3]) / 2) / h))))
-                roi = _mouth_roi(cv2, img, f)
-                if roi is not None: rois[side].append(roi)
+            if faces is not None:
+                bysd: dict = {"L": [], "R": []}
+                for f in faces:
+                    cx = (float(f[0]) + float(f[2]) / 2) / w
+                    bysd["L" if cx < _ASD_SIDE_SPLIT else "R"].append(f)
+                for side in ("L", "R"):
+                    if not bysd[side]: continue
+                    f = max(bysd[side], key=lambda x: float(x[2]) * float(x[3]))   # dominant face on this side
+                    cx = min(1.0, max(0.0, (float(f[0]) + float(f[2]) / 2) / w))
+                    cy = min(1.0, max(0.0, (float(f[1]) + float(f[3]) / 2) / h))
+                    fh = min(1.0, max(0.0, float(f[3]) / h))
+                    try: ey = min(1.0, max(0.0, ((float(f[5]) + float(f[7])) / 2) / h))
+                    except (IndexError, ValueError, TypeError): ey = cy
+                    roi = _mouth_roi(cv2, img, f); motion = 0.0
+                    if roi is not None and prev_roi[side] is not None and prev_roi[side].shape == roi.shape:
+                        motion = float(np.mean(np.abs(roi.astype(int) - prev_roi[side].astype(int))))
+                    if roi is not None: prev_roi[side] = roi
+                    per[side] = ((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4)), motion)
         except Exception:
-            continue                                          # a single bad frame never sinks the bin (fail-open)
-    out = {}
-    for side in ("L", "R"):
-        if not cents[side]: continue
-        fx = round(median(c[0] for c in cents[side]), 4); fy = round(median(c[1] for c in cents[side]), 4)
-        diffs = [float(np.mean(np.abs(rois[side][i].astype(int) - rois[side][i - 1].astype(int))))
-                 for i in range(1, len(rois[side]))]
-        out[side] = ((fx, fy), (sum(diffs) / len(diffs)) if diffs else 0.0)
-    return out
+            per = {}                                          # a single bad frame never sinks the window (fail-open)
+        obs.append(per)
+    return obs
+
+def _assemble_track(obs: list[dict], fps: float):
+    """PURE reduction of per-frame observations -> active-speaker segments [t0,t1,fx,fy,fh,ey] (relative s),
+    or None when there's only one position (the static path is identical + cheaper). Per frame the louder
+    mouth (by _ASD_RATIO) is the instantaneous talker; a HYSTERESIS dwell (_ASD_HOLD_S) must elapse before
+    the committed speaker actually switches, so a one-frame blip never cuts. Times come from the frame index
+    / fps."""
+    if not obs or fps <= 0:
+        return None
+    hold = max(1, round(_ASD_HOLD_S * fps))
+    talker = []                                               # per-frame instantaneous talker side or None
+    for per in obs:
+        if "L" in per and "R" in per:
+            lm, rm = per["L"][1], per["R"][1]
+            if lm >= _ASD_RATIO * max(rm, 1e-6): talker.append("L")
+            elif rm >= _ASD_RATIO * max(lm, 1e-6): talker.append("R")
+            else: talker.append(None)                          # too close to call -> hold
+        elif len(per) == 1:
+            talker.append(next(iter(per)))                     # only one face visible -> that's who's on screen
+        else:
+            talker.append(None)
+    committed = []; cur = None; run_side = None; run = 0       # hysteresis commit
+    for t in talker:
+        if t is not None and t != cur:
+            if t == run_side: run += 1
+            else: run_side, run = t, 1
+            if cur is None or run >= hold:
+                cur, run_side, run = t, None, 0
+        elif t == cur:
+            run_side, run = None, 0
+        committed.append(cur)
+    segments = []; i = 0; n = len(committed)                   # group consecutive committed runs -> segments
+    while i < n:
+        s = committed[i]; j = i
+        while j < n and committed[j] == s: j += 1
+        if s is not None:
+            vis = [obs[k][s][0] for k in range(i, j) if s in obs[k]]
+            if vis:
+                segments.append([round(i / fps, 2), round(j / fps, 2),
+                                 round(median(v[0] for v in vis), 4), round(median(v[1] for v in vis), 4),
+                                 round(median(v[2] for v in vis), 4), round(median(v[3] for v in vis), 4)])
+        i = j
+    if not segments:
+        return None
+    merged = [segments[0]]                                     # coalesce adjacent same-x segments (no needless cut)
+    for seg in segments[1:]:
+        if abs(seg[2] - merged[-1][2]) <= _ASD_SAME_TOL: merged[-1][1] = seg[1]
+        else: merged.append(seg)
+    if len(merged) <= 1:
+        return None                                           # one position the whole clip -> static focus identical
+    return [tuple(s) for s in merged]
 
 def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int):
-    """Follow the ACTIVE speaker across a 2-shot: a time-ordered list of (t0_rel, t1_rel, fx, fy) segments
-    (times RELATIVE to the clip start) where fx/fy is the speaking subject's normalized centroid. Returns
-    None — the fail-open signal that the caller should use the STATIC subject_focus (today's single crop) —
+    """Follow the ACTIVE speaker across a 2-shot: a time-ordered list of (t0,t1,fx,fy,fh,ey) segments (times
+    RELATIVE to the clip start) — fx/fy the talker's centroid, fh the face height (drives per-segment zoom),
+    ey the eye-line (drives composition). Returns None — the fail-open signal to use the STATIC subject_focus —
     whenever there's nothing dynamic to do: no [framing] extra, a single-camera window (one face throughout),
-    one detected position, or any error. So a single-subject clip is byte-identical to before; only a real
-    two-person 2-shot gets a speaker-following cut. NEVER raises. Cached per (source, window)."""
+    one position, or any error. So a single-subject clip is byte-identical to before; only a real two-person
+    2-shot gets a speaker-following cut. NEVER raises. Cached per (source, window)."""
     if not (end > start):
         return None
     path = _track_sidecar(cfg, getattr(src, "id", "nosrc"))
@@ -309,93 +342,101 @@ def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int)
     return result
 
 def _compute_track(cv2, det, cfg, src, start: float, end: float):
-    """The detection body of speaker_track (kept separate so the cache/fail-open wrapper stays tiny)."""
-    from fanops.keyframes import extract_keyframes
-    # Per-(source, window) tmp dir — same concurrency-collision fix as subject_focus (WS4): the prewarm pool
-    # would otherwise let two workers clobber each other's bin frames in a shared dir.
+    """speaker_track's detection body: ONE grid pass (extract_frames_grid) -> per-frame _track_observe ->
+    pure _assemble_track. The active-speaker decision needs PIXELS (mouth motion), which the JSON detect
+    stats can't carry, so this runs its own grid pass; only multi-speaker windows pay it. The first/last
+    segment snap to [0, dur] so the render's time-expression covers the whole clip."""
+    from fanops import keyframes
     tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_asd_{_wkey(start, end)}"
-    dur = end - start
-    nbins = max(1, int(dur // _ASD_BIN_S))
-    raw = []                                                  # [t0_rel, t1_rel, fx, fy] per bin
-    prev = None                                               # last chosen (fx, fy) — held through ambiguous/empty bins
-    for i in range(nbins):
-        bs, be = start + dur * i / nbins, start + dur * (i + 1) / nbins
-        frames = extract_keyframes(getattr(src, "source_path", ""), bs, be,
-                                   count=_ASD_FRAMES, out_dir=tmp, width=_KF_WIDTH)
-        sides = _bin_active(cv2, det, frames)
-        for f in frames:
-            with contextlib.suppress(OSError):
-                os.unlink(f)
-        if len(sides) >= 2:
-            ranked = sorted(sides.items(), key=lambda kv: kv[1][1], reverse=True)   # by motion desc
-            top_c, top_m = ranked[0][1]; snd_m = ranked[1][1][1]
-            chosen = top_c if top_m >= _ASD_RATIO * max(snd_m, 1e-6) else (prev or top_c)
-        elif len(sides) == 1:
-            chosen = next(iter(sides.values()))[0]
-        else:
-            chosen = prev                                     # no face this bin -> hold the last speaker
-        if chosen is not None:
-            prev = chosen
-            raw.append([round(bs - start, 2), round(be - start, 2), chosen[0], chosen[1]])
-    with contextlib.suppress(OSError):                        # remove the now-empty per-call dir (frames already unlinked)
-        os.rmdir(tmp)
-    if not raw:
-        return None                                           # nothing detected anywhere -> static path
-    merged = [raw[0]]                                         # coalesce adjacent same-position bins (no needless cut)
-    for seg in raw[1:]:
-        if abs(seg[2] - merged[-1][2]) <= _ASD_SAME_TOL:
-            merged[-1][1] = seg[1]
-        else:
-            merged.append(seg)
-    if len(merged) <= 1:
-        return None                                           # one position the whole clip -> static focus is identical (+ cheaper)
-    return [tuple(seg) for seg in merged]
-
-def subject_focus(cfg, src, *, start: float, end: float):
-    """The dominant subject's normalized centroid (fx, fy) in [0,1] across this cut window, or None when
-    smart framing can't place it (no [framing] extra, no/too-few detections, or any failure). Cached per
-    (source, window) in a versioned sidecar. NEVER raises — a None result is the universal fail-open signal
-    and the render falls back to the centered crop."""
-    if not (end > start):
-        return None
-    key = _wkey(start, end)
-    path = _sidecar(cfg, getattr(src, "id", "nosrc"))
-    cache = _load_cache(path)
-    if key in cache:
-        e = cache[key]
-        return (e["fx"], e["fy"]) if e and e.get("fx") is not None else None
-    cv2 = _cv2()
-    frames: list[str] = []
-    fx = fy = None
-    # WS4 (audit c0-f2/c2-f1): a PER-(source, window) tmp dir, not one shared framing/tmp. extract_keyframes
-    # names files only by (rounded-start, index), so two sources whose windows share a start would collide in a
-    # shared dir — under FANOPS_CONCURRENT_SOURCES the prewarm runs this in a thread pool and a worker would
-    # clobber/unlink another's frames (silently wrong crop or a None read). Keying the dir on (source, window)
-    # makes the collision domain per-call, so the race can't be constructed (safe to default the flag on).
-    tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_{key}"
+    frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
+                                           fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH)
     try:
-        if cv2 is not None:
-            from fanops.keyframes import extract_keyframes
-            frames = extract_keyframes(getattr(src, "source_path", ""), start, end,
-                                       count=_KF_COUNT, out_dir=tmp, width=_KF_WIDTH)
-            if frames:
-                cents = _detect_centroids(cv2, frames)
-                if cents and (len(cents) / len(frames)) >= _MIN_CONF:
-                    fx = round(median(c[0] for c in cents), 4)
-                    fy = round(median(c[1] for c in cents), 4)
-    except Exception:
-        fx = fy = None                                        # fail-open by contract
+        track = _assemble_track(_track_observe(cv2, det, frames), _ASD_FPS)
     finally:
         for f in frames:
             with contextlib.suppress(OSError):
                 os.unlink(f)
-        with contextlib.suppress(OSError):                   # remove the now-empty per-call dir (no accumulation)
+        with contextlib.suppress(OSError):
             os.rmdir(tmp)
-    cache[key] = {"fx": fx, "fy": fy}
-    result = (fx, fy) if fx is not None else None
+    if not track:
+        return None
+    dur = end - start
+    snapped = [list(s) for s in track]
+    snapped[0][0] = 0.0; snapped[-1][1] = round(dur, 2)       # cover the whole window for the time-expression
+    return [tuple(s) for s in snapped]
+
+def _median_face(stats: dict | None):
+    """The DOMINANT (largest face-height) face per frame, reduced to the median (fx,fy,fh,ey) over the
+    window plus detection confidence = fraction of frames with a face. None when no frames/faces."""
+    frames = (stats or {}).get("frames") or []
+    if not frames:
+        return None
+    picks = [max(fr, key=lambda x: x[2]) for fr in frames if fr]   # largest-fh face per occupied frame
+    if not picks:
+        return None
+    conf = len(picks) / len(frames)
+    return (round(median(p[0] for p in picks), 4), round(median(p[1] for p in picks), 4),
+            round(median(p[2] for p in picks), 4), round(median(p[3] for p in picks), 4), conf)
+
+def subject_focus(cfg, src, *, start: float, end: float):
+    """The dominant subject as (fx, fy, fh, ey) in [0,1] across this window — centroid + face HEIGHT (for
+    zoom-to-consistent-size) + eye-line (for composition) — reduced from the SINGLE detect_window grid pass
+    (so no separate keyframe probe). None when smart framing can't place it (no [framing] extra, fewer than
+    _MIN_CONF frames with a face, or any failure) -> the render falls back to the centered crop. NEVER raises."""
+    if not (end > start):
+        return None
+    m = _median_face(detect_window(cfg, src, start=start, end=end))
+    if m is None or m[4] < _MIN_CONF:
+        return None                                           # too few detections -> fail-open to centered crop
+    return (m[0], m[1], m[2], m[3])
+
+def _saliency_centroid(cv2, frames: list[str]):
+    """The normalized centroid of inter-frame CHANGE across the grid (where the motion is) — for music /
+    silent / no-face windows with no subject to lock. None when there's no usable motion. Pixel layer kept
+    separate so motion_saliency is testable without cv2."""
+    import numpy as np
+    prev = None; acc = None
+    for fp in frames:
+        try:
+            img = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
+            if img is None: continue
+            a = img.astype(np.float32)
+            if prev is not None and prev.shape == a.shape:
+                d = np.abs(a - prev)
+                acc = d if acc is None else acc + d
+            prev = a
+        except Exception:
+            continue                                          # a bad frame never sinks the window
+    if acc is None or float(acc.sum()) <= 0.0:
+        return None
+    h, w = acc.shape[:2]
+    ys, xs = np.indices((h, w))
+    total = float(acc.sum())
+    fx = float((xs * acc).sum() / total) / max(1, w - 1)
+    fy = float((ys * acc).sum() / total) / max(1, h - 1)
+    return (round(min(1.0, max(0.0, fx)), 4), round(min(1.0, max(0.0, fy)), 4))
+
+def motion_saliency(cfg, src, *, start: float, end: float):
+    """For music / silent / no-people windows with NO face to lock: the centroid of inter-frame motion, so
+    the crop drifts toward where the action is instead of a blind center. ONE grid pass; (fx,fy) or None
+    (fail-open -> centered). NEVER raises."""
+    if not (end > start):
+        return None
+    cv2 = _cv2()
+    if cv2 is None:
+        return None
+    from fanops import keyframes
+    tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_sal_{_wkey(start, end)}"
+    frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
+                                           fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"v": _SIDECAR_V, "windows": cache}))
-    except OSError:
-        return result                                         # cache write failure just re-probes next time
+        result = _saliency_centroid(cv2, frames) if frames else None
+    except Exception:
+        result = None
+    finally:
+        for f in frames:
+            with contextlib.suppress(OSError):
+                os.unlink(f)
+        with contextlib.suppress(OSError):
+            os.rmdir(tmp)
     return result
