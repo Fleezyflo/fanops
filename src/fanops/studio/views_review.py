@@ -12,6 +12,7 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import PostState, SelectionMethod, MomentState
+from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
 from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, _imminent, suggest_time
@@ -410,6 +411,7 @@ class AccountLane:
     cast_count: int                     # how many of THESE rows (decided moments) the account is cast on
     moment_count: int                   # the row count (decided moments) — the "N of M" denominator
     fans_all: bool                      # sel is None OR fan_all_default — every row uncast, header reads "fans to all"
+    zero_cast: bool = False             # MOM-2: persona-bearing candidate with NO record on a CAST source -> posts NOTHING (operator must cast manually)
 
 @dataclass
 class LaneView:
@@ -444,6 +446,11 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
     handles = active_order + sorted(h for h in extra if h not in set(active_order))
     # first-clip per moment owns the MASTER preview (clip -> source player), matching the cards/matrix.
     preview_by_moment = {mid: f"/clips/{cs[0].id}" for mid, cs in clips_by_moment.items() if cs}
+    # MOM-2: who was a casting CANDIDATE (active + persona-bearing, the SAME predicate request_moment_casting
+    # filters on) and is this a CAST source (any chosen selection — moment_ids non-empty per the sum-type)? A
+    # candidate with NO record on a cast source posts nothing -> the lane shows a "0 cast" badge (visibility only).
+    candidates = {a.handle for a in accounts.active() if casting_directive(a)}
+    source_has_chosen = any(s.moment_ids for s in led.selections_of_source(source_id))
     lanes: list = []
     for handle in handles:
         sel = led.account_selection_for(source_id, handle)
@@ -459,8 +466,12 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
             rows.append(LaneRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
                                 hook=m.hook, is_cast=m.id in cast_ids,
                                 preview_url=preview_by_moment.get(m.id, ""), post=sp))
+        # MOM-2: a candidate with NO durable record (sel is None -> not a fan_all_default/pending row either) on
+        # a cast source is denied everywhere -> posts nothing. Flag it; the operator casts it manually (no auto-fan).
+        zero_cast = sel is None and source_has_chosen and handle in candidates
         lanes.append(AccountLane(account=handle, rows=rows, method=(sel.method.value if sel else None),
-                                 cast_count=len(cast_ids & moment_ids), moment_count=len(moments), fans_all=fans_all))
+                                 cast_count=len(cast_ids & moment_ids), moment_count=len(moments),
+                                 fans_all=fans_all, zero_cast=zero_cast))
     return LaneView(source_id=source_id, source_name=_source_label(src), lanes=lanes)
 
 # Phase 4: the ?state= filter maps an operator-facing state word to its ReviewCard.bucket. 'awaiting' is the

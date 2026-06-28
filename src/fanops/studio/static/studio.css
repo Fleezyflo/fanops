@@ -532,6 +532,7 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 /* Provenance chips (S2) — "value ← why": tone maps to existing colour tokens; .cause is the muted WHY phrase. */
 .chip.ok { color:var(--ok); border-color:var(--ok); }
 .chip.warn { color:var(--warn); border-color:var(--warn); }
+.chip.danger { color:var(--danger); border-color:var(--danger); }   /* MOM-2: zero-cast candidate — posts nothing */
 .chip .cause { font-style:normal; color:var(--faint); font-size:var(--t-eyebrow); margin-left:.1rem; }
 /* Lineage (S6) — winner star, "N in lineage" chip, muted Δ-vs-best, and the proportional metric micro-bar. */
 .chip.win { color:var(--ok); border-color:var(--ok); background:oklch(76% 0.16 152 / .1); }

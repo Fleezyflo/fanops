@@ -131,6 +131,21 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
                     moment_ids=[], method=SelectionMethod.fan_all_default, batch_id=bid, created_at=now))
                 with contextlib.suppress(Exception):
                     get_logger(cfg)("casting", source_id, "fan_all_default", account=a.handle)
+            # MOM-2: a persona-BEARING active account that WAS a candidate (in the brief) but the selector
+            # returned ZERO moments for, on a CAST source, gets NO record and DENIES silently — a real "this
+            # account posts nothing for this source" outcome. Make it an EXPLICIT, labeled breadcrumb so the
+            # operator can intervene (cast manually). We do NOT write an auto-fan record (that would resurrect the
+            # silent collapse RF1 closes — the no-fan-leak contract); the operator decides.
+            zero_cast = sorted(h for h in candidates if h not in per_account
+                               and led.account_selection_for(source_id, h) is None)
+            cur = led.sources.get(source_id)
+            if zero_cast and cur is not None:
+                led.sources[source_id] = cur.model_copy(update={
+                    "degraded_reason": f"casting selected nothing for {', '.join(zero_cast)} "
+                                       "(persona-bearing, zero moments — operator may cast manually)"})
+                for h in zero_cast:
+                    with contextlib.suppress(Exception):
+                        get_logger(cfg)("casting", source_id, "zero_cast_account", account=h)
         if not per_account and src is not None and active:   # casting ran but picked NO ONE -> visible, never silent
             led.sources[source_id] = src.model_copy(
                 update={"degraded_reason": "casting produced no selections (source falls back to fan-to-all)"})
