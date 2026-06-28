@@ -40,10 +40,15 @@ class ClipState(str, Enum):
                                     # operator approval transitions it to captioned. Reusing `held` is forbidden.
 
 class RenderState(str, Enum):
-    # Per-account Render lifecycle (mirrors the shippable arc of ClipState, minus the substrate-only
-    # states). A Render is BORN `rendered`; it rides its Post's approve->publish->analyze arc and is
-    # `retired` when GC sweeps it. Distinct enum (not ClipState) so the per-account artifact's lifecycle
-    # never entangles with the shared substrate Clip's caption/stitch states.
+    # Per-account Render lifecycle. CULM-9 (decided 2026-06: RESERVE, not wire): a Render is BORN `rendered`
+    # and NO driver advances it today — nothing moves it to queued/published/analyzed, and no GC retires it
+    # (the Post carries the publish/analyze arc; the Render is just the artifact pointer). The members are
+    # KEPT (not dropped) because views_results._SHIPPABLE_RENDER reads the enum by name (queued/published/
+    # analyzed count as shippable; only `retired` would gate) — so the reader's guard is currently a no-op
+    # (a render is always `rendered`), an HONEST reserved-for-future-lifecycle surface, NOT an active arc.
+    # Wiring an advancer + a retire-GC is a deferred lifecycle decision (YAGNI — don't build a speculative
+    # GC for an enum). Pinned by test_render_model. Distinct enum (not ClipState) so the per-account
+    # artifact never entangles with the shared substrate Clip's caption/stitch states.
     rendered = "rendered"; queued = "queued"; published = "published"; analyzed = "analyzed"; retired = "retired"
 
 class PostState(str, Enum):
