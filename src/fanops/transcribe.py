@@ -16,10 +16,23 @@ from fanops.ledger import Ledger
 from fanops.models import SourceState
 from fanops.vocals import isolate_vocals
 
-# Hard bound on the whisper run — THE flock-critical timeout: transcribe_source is called INSIDE
-# Ledger.transaction (pipeline.py), so an UNBOUNDED hang held the ledger lock against every cron
-# pass, Studio write and recovery verb. 45min covers a long (~26min) source on CPU at the medium model.
+# Hard bound on the whisper run when it runs INSIDE Ledger.transaction (the flock-critical IN-LOCK path):
+# an UNBOUNDED hang there holds the ledger lock against every cron pass, Studio write and recovery verb.
+# 45min covers a long (~26min) source on CPU at the medium model.
 _WHISPER_TIMEOUT = 2700.0
+# The OUT-OF-LOCK prewarm (pipeline._prewarm) holds NO lock, so a long source must get a budget that SCALES
+# with its length instead of wedging at the fixed in-lock cap — that fixed cap was the root of "a 58-min
+# source can't finish in 45min -> never transcribes -> source frozen at `catalogued` forever". 1.5x realtime
+# comfortably covers faster-whisper medium (int8) on CPU; a long run out of the lock starves nothing.
+_PREWARM_TIMEOUT_FACTOR = 1.5
+
+def _whisper_timeout(duration_seconds: float | None, *, lock_held: bool) -> float:
+    """The whisper subprocess bound. IN-LOCK -> the tight fixed cap (protect the flock; the prewarm should
+    have warmed the cache so this rarely runs). OUT-OF-LOCK prewarm -> scale to the source length so a long
+    source actually FINISHES and commits its cache, closing the fixed-cap wedge. Never below the in-lock floor."""
+    if lock_held or not duration_seconds:
+        return _WHISPER_TIMEOUT
+    return max(_WHISPER_TIMEOUT, float(duration_seconds) * _PREWARM_TIMEOUT_FACTOR)
 
 def _cached_models() -> list[str]:
     """Model names whose checkpoint is already on disk (no download needed). whisper stores
@@ -114,7 +127,8 @@ def _segment(s: dict) -> dict:
         seg["words"] = [{"word": w["word"], "start": w.get("start"), "end": w.get("end")} for w in words]
     return seg
 
-def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None) -> Ledger:
+def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None,
+                      lock_held: bool = True) -> Ledger:
     src = led.sources[source_id]
     if src.meta.get("transcribed") is True:           # FIX: idempotent only when it actually ran
         return led
@@ -163,8 +177,9 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         cmd = fw_cmd(audio, str(out_dir), model or cfg.asr_model_for(src.duration), cfg.asr_language)
     else:
         cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model or cfg.whisper_model_for(src.duration)))
+    timeout_s = _whisper_timeout(src.duration, lock_held=lock_held)
     try:
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_WHISPER_TIMEOUT)
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout_s)
     except (FileNotFoundError, OSError) as e:
         # whisper ABSENT from PATH (or unspawnable): subprocess.run raises before the process
         # starts, which check=False does not cover (it only suppresses a nonzero RETURNCODE).
@@ -178,7 +193,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         # window stays finite. Same graceful shape as the branches above/below; `transcribed`
         # stays unset so a recovered source re-runs.
         src.state = SourceState.error
-        src.error_reason = f"whisper timed out after {_WHISPER_TIMEOUT:.0f}s"
+        src.error_reason = f"whisper timed out after {timeout_s:.0f}s"
         return led
     js = out_dir / f"{Path(audio).stem}.json"        # whisper names its json by the INPUT stem
     if not js.exists():

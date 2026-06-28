@@ -48,7 +48,7 @@ def kick_prepare(cfg: Config) -> bool:
         get_logger(cfg)("run", "-", "kick_failed", err=str(exc)[:160]); return False
 
 
-def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=()) -> ActionResult:
+def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_subs: bool | None = None) -> ActionResult:
     """Drive `fanops ingest` from the browser: catalogue 01_inbox under one transaction (the exact
     cmd_ingest path). When batch_name is non-blank, mint a named, account-targeted Batch in the SAME
     transaction and catalogue the inbox under its id (blank name => today's ungrouped ingest, byte-
@@ -71,7 +71,7 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=()) -> Acti
                 # handle is FLAGGED at creation (else crosspost silently skips every surface -> 0 posts).
                 active = {a.handle for a in Accounts.load(cfg).active()}   # loaded only on the batched path (byte-identical otherwise)
                 batch = create_batch(led, name=batch_name, target_accounts=list(target_accounts),
-                                     now_iso=now_iso, active_handles=active)   # same (name, now_iso) -> same id == bid stamped above
+                                     now_iso=now_iso, active_handles=active, burn_subs=burn_subs)   # same (name, now_iso) -> same id == bid stamped above
             n = len(led.sources)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
@@ -163,7 +163,7 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
 
 
 def save_uploads_and_ingest(cfg: Config, files: Sequence[FileStorage], *, batch_name: str = "",
-                            target_accounts=()) -> ActionResult:
+                            target_accounts=(), burn_subs: bool | None = None) -> ActionResult:
     """One-click upload->catalogue (M5 fast-follow): stream the uploads (save_uploads) and, IF any landed,
     immediately run the ingest pass so the operator doesn't need a second 'Ingest inbox' click. A save
     failure short-circuits (nothing landed -> nothing to ingest). An ingest failure is surfaced but the
@@ -173,7 +173,7 @@ def save_uploads_and_ingest(cfg: Config, files: Sequence[FileStorage], *, batch_
     up = save_uploads(cfg, files)
     if not up.ok:
         return up                                          # nothing landed -> nothing to ingest
-    ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts)
+    ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts, burn_subs=burn_subs)
     detail = {**(up.detail or {}), **(ing.detail or {})}
     if not ing.ok:
         n = len((up.detail or {}).get("saved", []))

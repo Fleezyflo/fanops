@@ -438,6 +438,8 @@ class Batch(BaseModel):
     state: BatchState = BatchState.open                  # (Account.handle == Surface.account == Post.account)
     created_at: Optional[str] = None                     # ISO-8601 UTC birth (microsecond); None on a hand-built Batch
     error_reason: Optional[str] = None
+    burn_subs: Optional[bool] = None                     # per-batch subtitle override: None => use global cfg.burn_subs;
+                                                         # False => skip (e.g. music clips where lyric subs hurt); True => force on
 
 def batch_id(name: str, created_at: str) -> str:
     """Content-addressed id keyed on (name, microsecond-precision created_at): a re-submit of the same

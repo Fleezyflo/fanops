@@ -42,6 +42,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Vendored YuNet face-detection model for smart framing ([framing] extra). Shipped in-package so
+# detection is offline + deterministic (no first-use download). ~232KB.
+fanops = ["data/*.onnx"]
+
 [tool.ruff]
 # Lint is wired for ENFORCEMENT GOING FORWARD (catch unused/undefined names, syntax errors),
 # not to mass-reformat the existing tree (audit (i)). Conservative select: pyflakes (F — the

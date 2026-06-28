@@ -119,6 +119,109 @@ def test_subject_focus_caches_to_sidecar_and_skips_reprobe(tmp_path, monkeypatch
     assert sidecar.exists() and json.loads(sidecar.read_text())["windows"]["10.0-14.0"]["fx"] == 0.5
 
 
+# ---------------------------------------------------------------- YuNet detector (v2) ----
+def test_vendored_yunet_model_ships_in_package():
+    # the detector is useless without its model; assert the vendored asset is present + non-trivial.
+    mp = framing._model_path()
+    assert mp.exists() and mp.suffix == ".onnx" and mp.stat().st_size > 100_000
+
+def test_detect_centroids_no_model_is_empty(monkeypatch, tmp_path):
+    # model asset missing -> _detector None -> [] (fail-open to center crop), never raises.
+    monkeypatch.setattr(framing, "_model_path", lambda: tmp_path / "absent.onnx")
+    assert framing._detect_centroids(object(), ["f0", "f1"]) == []
+
+def test_detector_none_on_old_cv2_without_yunet(monkeypatch, tmp_path):
+    # an OpenCV too old to expose FaceDetectorYN -> None, not an AttributeError crash.
+    monkeypatch.setattr(framing, "_model_path", lambda: tmp_path / "m.onnx")
+    (tmp_path / "m.onnx").write_bytes(b"x" * 200_000)
+    class OldCv2: pass                                    # no FaceDetectorYN attribute
+    assert framing._detector(OldCv2()) is None
+
+def test_sidecar_v1_cache_is_invalidated_by_v2(tmp_path):
+    # the Haar-era (v1) all-null sidecars must NOT be trusted now the detector changed -> recompute.
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"v": 1, "windows": {"10.0-14.0": {"fx": 0.5, "fy": 0.5}}}))
+    assert framing._load_cache(p) == {}                   # version mismatch -> empty -> re-probe
+
+def test_subject_focus_samples_at_detection_resolution(tmp_path, monkeypatch):
+    # faces are undetectable at the 480px hook-author default; detection must request higher-res frames.
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    seen = {}
+    def _extract(*a, **k):
+        seen["width"] = k.get("width")
+        return ["f0", "f1", "f2", "f3", "f4"]
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr("fanops.keyframes.extract_keyframes", _extract)
+    monkeypatch.setattr(framing, "_detect_centroids", lambda cv2, frames: [(0.5, 0.5)] * 5)
+    framing.subject_focus(cfg, src, start=10.0, end=14.0)
+    assert seen["width"] == framing._KF_WIDTH and framing._KF_WIDTH >= 960
+
+
+# ---------------------------------------------------------------- active-speaker track (time-varying crop) ----
+def test_time_expr_builds_escaped_nested_if():
+    from fanops.clip import _time_expr
+    assert _time_expr([], [400]) == "400"                                   # single value -> no if
+    assert _time_expr([4.33], [163, 1195]) == "if(lt(t\\,4.33)\\,163\\,1195)"
+    assert _time_expr([4.33, 8.67], [163, 1195, 147]) == \
+        "if(lt(t\\,4.33)\\,163\\,if(lt(t\\,8.67)\\,1195\\,147))"           # commas escaped for filtergraph
+
+def test_reframe_track_cuts_x_over_time():
+    track = [(0.0, 5.0, 0.22, 0.5), (5.0, 10.0, 0.80, 0.45)]               # left then right speaker
+    vf = reframe_filter("9:16", 1920, 1080, track=track)
+    assert vf.startswith("crop=w=ih*1080/1920:h=ih:x=if(lt(t\\,5.0)\\,")    # time-varying x crop
+    assert "118" in vf and "1232" in vf and vf.endswith("scale=1080:1920,setsar=1")   # fx .22->x118, .80->x1232
+
+def test_reframe_track_overrides_static_focus():
+    track = [(0.0, 5.0, 0.22, 0.5), (5.0, 10.0, 0.80, 0.45)]
+    vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.5), track=track)
+    assert "if(lt(t\\," in vf                                              # the dynamic track wins over a static focus
+
+def test_reframe_track_none_is_today():
+    # no track -> unchanged: identical to the focus/centered paths (single-subject clips never change).
+    assert reframe_filter("9:16", 1920, 1080, track=None) == "crop=ih*1080/1920:ih,scale=1080:1920,setsar=1"
+
+def test_fingerprint_track_is_additive():
+    base = _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "")
+    tr = [(0.0, 2.0, 0.22, 0.5), (2.0, 5.0, 0.80, 0.45)]
+    with_tr = _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "", track=tr)
+    assert with_tr != base                                                 # a track -> re-render
+    assert _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "", track=None) == base
+
+def test_speaker_track_no_extra_is_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(framing, "_cv2", lambda: None)                     # cv2 absent (CI) -> static path
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    assert framing.speaker_track(cfg, src, start=10.0, end=30.0, src_w=1920, src_h=1080) is None
+
+def test_speaker_track_follows_active_speaker(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
+    monkeypatch.setattr("fanops.keyframes.extract_keyframes", lambda *a, **k: ["f0", "f1", "f2", "f3"])
+    seq = [{"L": ((0.22, 0.5), 50.0), "R": ((0.80, 0.45), 10.0)} if i < 5    # first half: LEFT louder
+           else {"L": ((0.22, 0.5), 10.0), "R": ((0.80, 0.45), 50.0)} for i in range(10)]  # second half: RIGHT
+    n = {"i": 0}
+    def _fake_bin(cv2, det, frames):
+        d = seq[n["i"]]; n["i"] += 1; return d
+    monkeypatch.setattr(framing, "_bin_active", _fake_bin)
+    tr = framing.speaker_track(cfg, src, start=0.0, end=20.0, src_w=1920, src_h=1080)
+    assert tr is not None and len(tr) == 2                                  # merged into LEFT-then-RIGHT
+    assert abs(tr[0][2] - 0.22) < 0.01 and abs(tr[1][2] - 0.80) < 0.01      # follows the speaker
+    assert tr[0][0] == 0.0 and tr[-1][1] == 20.0                            # covers the whole window
+
+def test_speaker_track_one_dominant_face_is_none(tmp_path, monkeypatch):
+    # both visible but the SAME person always talks -> one position -> None (static focus is identical).
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
+    monkeypatch.setattr("fanops.keyframes.extract_keyframes", lambda *a, **k: ["f0", "f1", "f2", "f3"])
+    monkeypatch.setattr(framing, "_bin_active", lambda *a: {"L": ((0.22, 0.5), 50.0), "R": ((0.80, 0.45), 5.0)})
+    assert framing.speaker_track(cfg, src, start=0.0, end=20.0, src_w=1920, src_h=1080) is None
+
+
 # ---------------------------------------------------------------- render path threading ----
 def _src_moment(cfg, *, start=10, end=14, dur=120.0):
     led = Ledger.load(cfg)
