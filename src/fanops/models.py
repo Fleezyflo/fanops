@@ -434,6 +434,7 @@ class MomentRequest(BaseModel):
     request_id: str
     duration: float
     transcript: list[dict] = Field(default_factory=list)
+    transcript_total: int = 0       # AGENT-2: FULL segment count (transcript may be budget-truncated); 0 == not truncated
     signal_peaks: list[dict] = Field(default_factory=list)
     language: Optional[str] = None
     guidance: str = ""

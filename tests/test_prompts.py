@@ -462,3 +462,14 @@ def test_caption_prompt_has_no_decision_pollution():
     assert "attached frames" not in p                # the visual read is hook-only
     assert "select the hook by reading" not in p     # the decision header is hook-only
     assert "msa" not in p                            # the register/dialect read is hook-only
+
+
+# ---- AGENT-2: the pick prompt renders an M-of-N truncation marker when the transcript was budget-trimmed ----
+def test_pick_prompt_renders_truncation_marker():
+    from fanops.prompts import moment_pick_prompt
+    p = moment_pick_prompt({"duration": 100.0, "transcript": [{"start": 1, "end": 2, "text": "a"}],
+                            "transcript_total": 50, "signal_peaks": [], "language": "en", "guidance": ""})
+    assert "truncated" in p.lower() and "50" in p    # the M-of-N marker is visible to the model
+    q = moment_pick_prompt({"duration": 100.0, "transcript": [{"start": 1, "end": 2, "text": "a"}],
+                            "transcript_total": 1, "signal_peaks": [], "language": "en", "guidance": ""})
+    assert "truncated" not in q.lower()              # not truncated -> no marker (small sources unchanged)

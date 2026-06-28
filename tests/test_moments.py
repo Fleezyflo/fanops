@@ -499,3 +499,14 @@ def test_validate_pick_rejects_blank_reason():
     assert validate_pick(MomentPick(start=0, end=7, reason="strong drop here"), duration=60) is None
     assert validate_pick(MomentPick(start=0, end=7, reason="   "), duration=60) == "blank reason"
     assert validate_pick(MomentPick(start=0, end=7, reason=""), duration=60) == "blank reason"
+
+
+# ---- AGENT-2: the pick-payload transcript is bounded (sampled near peaks), small inputs byte-identical ----
+def test_long_transcript_is_truncated_with_marker():
+    from fanops.moments import _bounded_transcript
+    segs = [{"start": float(i), "end": float(i) + 1, "text": "x" * 1000} for i in range(200)]
+    peaks = [{"t": 50.0, "kind": "scene_cut", "score": 9.0}]
+    kept, dropped = _bounded_transcript(segs, peaks)
+    assert dropped > 0 and kept and len(kept) < len(segs)
+    assert kept == sorted(kept, key=lambda s: s["start"])         # chronological order restored
+    assert _bounded_transcript(segs[:2], peaks) == (segs[:2], 0)  # short -> unchanged (byte-identical)

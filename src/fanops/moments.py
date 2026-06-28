@@ -106,15 +106,47 @@ def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
         return "blank reason"   # MOM-6: a rationale-less pick rides the casting fit signal + hook brief blind
     return None
 
+# AGENT-2: the pick prompt must stay under the claude -p context ceiling. A long source's whole transcript
+# can blow the prompt and wedge the gate. Bound it to a char budget, SAMPLING segments near a signal peak (the
+# picker reads signals to find energy, so keep the segments around them) and dropping the rest with a marker. A
+# transcript already under budget is returned UNCHANGED (small inputs byte-identical).
+_TRANSCRIPT_CHAR_BUDGET = 60000   # generous: a real talk source fits; a pathological one is trimmed, not wedged
+def _is_num(v) -> bool:
+    try: float(v); return True
+    except (TypeError, ValueError): return False
+def _bounded_transcript(transcript: list, peaks: list) -> tuple:
+    """Return (segments_to_send, dropped_count). Keeps segments whose [start,end] midpoint is nearest a peak's
+    `t` until the char budget is spent; preserves chronological order. Empty/under-budget -> (transcript, 0)."""
+    segs = transcript or []
+    if sum(len(str(s.get("text", ""))) for s in segs) <= _TRANSCRIPT_CHAR_BUDGET:
+        return segs, 0
+    pts = sorted({float(p.get("t")) for p in (peaks or []) if isinstance(p, dict) and _is_num(p.get("t"))})
+    def _near(s):
+        try: mid = (float(s.get("start", 0)) + float(s.get("end", 0))) / 2
+        except (TypeError, ValueError): return 1e9
+        return min((abs(mid - t) for t in pts), default=0.0)
+    ranked = sorted(enumerate(segs), key=lambda it: _near(it[1]))   # nearest-peak first, stable on index (deterministic)
+    spent, keep_idx = 0, set()
+    for i, s in ranked:
+        c = len(str(s.get("text", "")))
+        if spent + c > _TRANSCRIPT_CHAR_BUDGET: break
+        spent += c; keep_idx.add(i)
+    kept = [s for i, s in enumerate(segs) if i in keep_idx]         # restore chronological order
+    return kept, len(segs) - len(kept)
+
 def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     """M1b PASS 1 — request the WINDOWS only. The on-screen hook (and the per-account hooks + learned
     hook styles) ride the SEPARATE moment_hooks gate (request_moment_hooks), which sees each picked
     window's own frames. `accounts` is accepted for caller-signature stability but unused here — personas
     and learned styles belong to the hook pass, not picking."""
     src = led.sources[source_id]
+    transcript, dropped = _bounded_transcript(src.transcript or [], src.signal_peaks or [])   # AGENT-2: bound the payload
+    if dropped:
+        get_logger(cfg)("source", source_id, "transcript_truncated", dropped=dropped, total=len(src.transcript or []))
     payload = MomentRequest(source_id=source_id, request_id="",   # filled by write_request
                             duration=src.duration or 0.0,
-                            transcript=src.transcript or [],
+                            transcript=transcript,
+                            transcript_total=len(src.transcript or []),   # for the prompt's M-of-N truncation marker
                             signal_peaks=src.signal_peaks or [],
                             language=src.language,
                             guidance=load_guidance(cfg),

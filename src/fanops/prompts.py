@@ -205,6 +205,9 @@ def moment_pick_prompt(payload: dict) -> str:
         + _brief_fence(payload.get('guidance', '')) +
         f"LANGUAGE: {payload.get('language')}\n"
         f"TRANSCRIPT (JSON):\n{json.dumps(payload.get('transcript', []), ensure_ascii=False)}\n"
+        + (f"[truncated: showing {len(payload.get('transcript', []))} of {payload.get('transcript_total')} "
+           "segments, sampled near the signal peaks]\n"
+           if payload.get('transcript_total', 0) > len(payload.get('transcript', [])) else "") +
         f"SIGNAL PEAKS (JSON):\n{json.dumps(payload.get('signal_peaks', []), ensure_ascii=False)}\n"
     )
 
