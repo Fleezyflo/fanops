@@ -227,8 +227,8 @@ def _stage_casting(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
     the render loop. The crosspost affinity gate then fans a cast moment ONLY to its accounts. request is
     write-once; ingest applies the selection once the responder answers (a no-op until then). Per-source
     quarantine, fail-open (log-only — affinities just stay []). OFF -> no gate, byte-identical fan-out. NB:
-    the LLM gate is now the SOLE production selector; casting.cast_moments (the token-overlap heuristic) is
-    no longer wired here (retained as a tested standalone selector, not a fallback)."""
+    the LLM gate is the SOLE production selector (the old token-overlap heuristic casting.cast_moments was
+    removed in WS-M1/MOM-7; the operator cast_add/cast_remove override is the manual selection path)."""
     if not cfg.account_casting:
         return led
     for s in list(led.sources.values()):

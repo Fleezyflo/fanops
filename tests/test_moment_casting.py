@@ -1,9 +1,9 @@
 # tests/test_moment_casting.py — M1: LLM-driven per-account moment SELECTION (Option C, generous).
 # A frame/persona-aware agent gate (kind="moment_casting") chooses, per account, that account's OWN set of
 # moments from the shared decided pool — writing Moment.affinities, which the EXISTING crosspost affinity
-# gate already honors (a cast moment fans ONLY to its accounts). GENEROUS: no count cap (unlike the heuristic
-# cast_moments budget) — an account gets every moment the selector assigns it; overlap across accounts is
-# allowed (a moment can suit several personas). Mirrors the moments gate request->respond->ingest harness.
+# gate already honors (a cast moment fans ONLY to its accounts). GENEROUS: no count cap — an account gets
+# every moment the selector assigns it; overlap across accounts is allowed (a moment can suit several
+# personas). Mirrors the moments gate request->respond->ingest harness.
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger

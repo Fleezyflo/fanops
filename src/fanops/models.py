@@ -175,10 +175,11 @@ class Moment(BaseModel):
                                                 # this moment — [{asset_id, fit_score, rationale, tease_text}, ...],
                                                 # best-fit first. None = unmatched (matcher off / no answer / old
                                                 # ledgers load). One writer: intro_match.ingest_intro_match.
-    affinities: list[str] = Field(default_factory=list)   # Account-First: handles this moment was CAST to
-                                                # (sole writer casting.cast_moments, default-OFF). [] = uncast =
-                                                # ALL active accounts (byte-identical). SUBSET of the batch target;
-                                                # NON-DURABLE across a re-decision (re-derived each gated pass).
+    affinities: list[str] = Field(default_factory=list)   # Account-First: handles this moment was CAST to.
+                                                # LEGACY stored tag — readers now DERIVE via ledger.cast_handles_for
+                                                # (off AccountSelection, MOM-3); the LLM ingest still mirrors here +
+                                                # pre-v9 loads carry it. [] = uncast = ALL active accounts
+                                                # (byte-identical). SUBSET of the batch target; NON-DURABLE across a re-decision.
     error_reason: Optional[str] = None
 
 class Clip(BaseModel):
@@ -293,7 +294,7 @@ class Render(BaseModel):
 
 
 class SelectionMethod(str, Enum):
-    heuristic = "heuristic"   # persona_fit_score (token overlap + signal) picked it
+    heuristic = "heuristic"   # token-overlap heuristic pick (cast_moments scorer removed WS-M1; member kept for legacy/migrated rows)
     llm = "llm"               # the moment_casting LLM gate selected it
     operator = "operator"     # RF1: a human override (Studio cast action) selected it
     fan_all_default = "fan_all_default"   # RF1: an active account got NO pick -> ships fan-to-all, LABELLED
@@ -304,7 +305,7 @@ class SelectionMethod(str, Enum):
 class SelectionFact(BaseModel):
     # M4: the DURABLE audit record of the selector — WHICH account got WHICH moment and WHY. Casting writes
     # only Moment.affinities (handles), which is NON-durable (reset to [] on each re-decision) and carries no
-    # "why" — the persona_fit_score (overlap, signal) and the LLM choice were computed-and-discarded. A
+    # "why" — the LLM choice's reasoning was computed-and-discarded. A
     # SelectionFact persists that decision + its reasoning. CONTENT-ADDRESSED one-per-(moment, account):
     # child_id("selfact", moment_id, account) so a re-cast OVERWRITES (the CURRENT durable selection, not a
     # growing history). Facts reflect selections AS MADE — superseded on a RE-CAST, NOT on a moment re-decision:
@@ -492,8 +493,8 @@ class MomentHookDecision(BaseModel):
 # M1 (Option C — per-account moment SELECTION): an agent gate that, seeing the source's DECIDED moments +
 # each active account's persona, chooses per account that account's OWN set of moments. The decision writes
 # Moment.affinities, which the EXISTING crosspost affinity gate already honors (a cast moment fans ONLY to
-# its accounts). GENEROUS — no count cap (unlike the heuristic cast_moments budget); overlap allowed (a
-# moment can suit several personas). Gate key = source_id (one selection gate per source, like the moments gate).
+# its accounts). GENEROUS — no count cap; overlap allowed (a moment can suit several personas). Gate key =
+# source_id (one selection gate per source, like the moments gate).
 class MomentCastingRequest(BaseModel):
     source_id: str
     request_id: str
