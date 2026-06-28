@@ -171,6 +171,55 @@ def detect_window(cfg, src, *, start: float, end: float) -> dict | None:
         return stats                                          # cache write failure just re-probes next time
     return stats
 
+# ---- Content-type classification (T3): route each cut WINDOW to a reframe strategy. The two reliable
+# signals are transcript-over-window (speech) and grid face-count; music-vs-silent is weakly separable and
+# only changes ZOOM tightness (both lock the subject, never flicker), so it's derived from a clean fact
+# (a demucs vocal stem) and fails safe. Active-speaker switching is gated to multi-speaker-talk ONLY. ----
+CT_MULTI = "multi-speaker-talk"     # >=2 faces + speech -> active-speaker pan (the ONLY switching strategy)
+CT_SINGLE = "single-speaker-talk"   # 1 face + speech -> subject lock + zoom + eyeline
+CT_MUSIC = "music"                  # face + vocal/audio, no speech -> wider lock (stage/body context), no flicker
+CT_SILENT = "silent"               # face, no speech, no vocal stem -> subject lock, no flicker
+CT_NOPEOPLE = "no-people"          # no face -> safe center / motion-saliency follow
+_SPEECH_MIN_WORDS = 2              # >=2 alpha words overlapping the window == real speech (mirrors real_transcript_signal)
+
+def _window_has_speech(src, start: float, end: float) -> bool:
+    """True when the source transcript has real spoken words overlapping [start,end). Mirrors the
+    transcribe.real_transcript_signal bar (alphabetic tokens + numeric timing), scoped to the window.
+    None/[] transcript -> False (untranscribed or ran-no-speech)."""
+    words = 0
+    for seg in (getattr(src, "transcript", None) or []):
+        try:
+            s, e = seg.get("start"), seg.get("end")
+            if not isinstance(s, (int, float)) or not isinstance(e, (int, float)): continue
+            if e > start and s < end:                         # segment overlaps the window
+                words += sum(1 for tok in (seg.get("text") or "").split() if any(c.isalpha() for c in tok))
+        except (AttributeError, TypeError):
+            continue                                          # a malformed segment never sinks the check
+    return words >= _SPEECH_MIN_WORDS
+
+def _face_count(stats: dict | None) -> int:
+    """The MODAL number of faces per sampled frame (the steady people-count), 0 when stats absent/empty.
+    A liberal estimate: speaker_track still refuses unless two STABLE L/R positions actually exist, so an
+    over-count only OFFERS the switching path, never forces it."""
+    frames = (stats or {}).get("frames") or []
+    if not frames:
+        return 0
+    counts = sorted(len(fr) for fr in frames)
+    return counts[len(counts) // 2]                           # median per-frame face count
+
+def classify_window(cfg, src, *, start: float, end: float, stats: dict | None) -> str:
+    """Pure routing over the cached detect stats + transcript: one of the five CT_* strings. No ffmpeg,
+    no cv2. faces==0 -> no-people; faces>=2 + speech -> multi-speaker-talk; 1 face + speech -> single;
+    face + no speech -> music (a demucs vocal stem present) else silent. Stats None -> no-people (the
+    caller fails open to the centered crop regardless)."""
+    faces = _face_count(stats)
+    if faces <= 0:
+        return CT_NOPEOPLE
+    if _window_has_speech(src, start, end):
+        return CT_MULTI if faces >= 2 else CT_SINGLE
+    vocals = bool((getattr(src, "meta", None) or {}).get("vocals_isolated"))
+    return CT_MUSIC if vocals else CT_SILENT
+
 _ASD_BIN_S = 2.0             # active-speaker decision granularity: re-pick the on-screen speaker every ~2s
 _ASD_FRAMES = 4             # frames per bin for the mouth-motion measure (>=2 needed for a temporal diff)
 _ASD_RATIO = 1.25          # the louder mouth must out-move the other by this factor to STEAL the frame (else hold)

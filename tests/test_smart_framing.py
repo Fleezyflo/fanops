@@ -276,6 +276,53 @@ def test_detect_sidecar_version_invalidated(tmp_path):
     assert framing._load_detect_cache(p) == {}                       # stale version -> recompute
 
 
+# ---------------------------------------------------------------- classify_window (content type) ----
+def _stats(faces_per_frame):
+    # faces_per_frame: list of per-frame face lists, each face [cx,cy,fh,ey]
+    return {"fps": 4.0, "frames": faces_per_frame}
+
+def _talk_src(**kw):
+    base = dict(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    base.update(kw); return Source(**base)
+
+def test_classify_multi_speaker_talk():
+    # >=2 stable faces + real speech in the window -> the ONLY content type that switches speakers.
+    src = _talk_src(transcript=[{"start": 10.0, "end": 13.5, "text": "so tell me about your new record"}])
+    st = _stats([[[0.25, 0.5, 0.2, 0.45], [0.78, 0.45, 0.18, 0.4]]] * 4)
+    assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_MULTI
+
+def test_classify_single_speaker_talk():
+    src = _talk_src(transcript=[{"start": 10.0, "end": 13.5, "text": "let me explain how this works"}])
+    st = _stats([[[0.5, 0.5, 0.22, 0.45]]] * 4)
+    assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_SINGLE
+
+def test_classify_music_when_vocals_but_no_speech():
+    # face present, NO recognized speech in window, demucs produced a vocal stem -> music (wider lock, no flicker).
+    src = _talk_src(transcript=[], meta={"vocals_isolated": True})
+    st = _stats([[[0.5, 0.5, 0.3, 0.45]]] * 4)
+    assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_MUSIC
+
+def test_classify_silent_when_no_speech_no_vocals():
+    src = _talk_src(transcript=[], meta={})
+    st = _stats([[[0.5, 0.5, 0.3, 0.45]]] * 4)
+    assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_SILENT
+
+def test_classify_no_people_when_no_faces():
+    src = _talk_src(transcript=[{"start": 10.0, "end": 13.0, "text": "music plays over a city skyline"}])
+    st = _stats([[], [], [], []])                                  # frames with no faces
+    assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_NOPEOPLE
+
+def test_classify_old_source_without_meta_does_not_crash():
+    src = _talk_src(transcript=None)                               # untranscribed, meta default
+    st = _stats([[[0.5, 0.5, 0.3, 0.45]]] * 4)
+    assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_SILENT
+
+def test_classify_stats_none_is_no_people():
+    # detection unavailable -> no face data -> no-people (caller fails open to centered crop regardless).
+    src = _talk_src(transcript=[{"start": 10.0, "end": 13.0, "text": "hello there friend"}])
+    assert framing.classify_window(None, src, start=10.0, end=14.0, stats=None) == framing.CT_NOPEOPLE
+
+
 # ---------------------------------------------------------------- render path threading ----
 def _src_moment(cfg, *, start=10, end=14, dur=120.0):
     led = Ledger.load(cfg)
