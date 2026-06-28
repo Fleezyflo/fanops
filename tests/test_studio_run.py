@@ -34,13 +34,17 @@ def test_run_ingest_with_batch_name_mints_batch_and_stamps_source(tmp_path, mock
     assert res.detail["batch"] == "Launch week" and res.detail["batch_id"] == b.id
     assert next(iter(led.sources.values())).batch_id == b.id          # source stamped under the batch
 
-def test_run_ingest_blank_batch_name_is_byte_identical(tmp_path, mocker):
-    # Blank batch_name => today's ungrouped ingest: no batch minted, source.batch_id None.
+def test_run_ingest_blank_batch_name_falls_back_to_drop_batch(tmp_path, mocker):
+    # ROOT CONTRACT (supersedes earlier "no batch => None"): a blank batch_name leaves run_ingest's
+    # `batch` detail unset (no operator-named batch surfaced), but ingest_drops still resolves the day's
+    # auto drop-batch and stamps it onto the new Source — so the Studio Review "Ungrouped" group can
+    # never be constructed from this path. Detailed contract in tests/test_ingest_auto_batch.py.
     cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
     res = actions.run_ingest(cfg, batch_name="   ")
-    assert res.ok and "batch" not in res.detail
+    assert res.ok and "batch" not in res.detail              # no operator-named batch surfaced
     led = Ledger.load(cfg)
-    assert len(led.batches) == 0 and next(iter(led.sources.values())).batch_id is None
+    src = next(iter(led.sources.values()))
+    assert src.batch_id is not None and led.get_batch(src.batch_id).name.startswith("drop-")
 
 def _seed_accounts(cfg, handles):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)

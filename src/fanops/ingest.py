@@ -211,6 +211,11 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
     _reprobe_degraded(led, cfg)                                          # ING-7: retry sources frozen at 0×0 on a bad probe
     now_iso = iso_z(datetime.now(timezone.utc))                         # ING-11: ONE clock read per pass, threaded below
     counts = IngestCounts()
+    # Root contract: every catalogued Source MUST carry a real batch_id, so every downstream Post does
+    # too (no more Studio Review "Ungrouped" group). Auto-resolve a day-stable drop-batch on the lazy
+    # path — minted on the FIRST file we actually catalogue this pass (mint-on-demand: an empty inbox
+    # leaves the ledger untouched). The caller-supplied batch_id (Studio "Add video" named batch) wins.
+    _auto_batch_id: str | None = None
     archive = _archive_dir(box).resolve()                              # NEVER re-scan the archive (it lives under the inbox)
     for f in sorted(box.rglob("*")):
         # ECC fix #9: skip symlinks BEFORE any probe/copy. f.is_file() follows links, and the copy2
@@ -233,8 +238,14 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
         # (a plain `ingest` / third-party scan) is byte-identical: every file gets the pass `origin`.
         file_origin = origin if (origin_paths is None or f.resolve() in origin_paths) else "drop"
         n_before = len(led.sources)
+        # Lazy resolve: only mint the drop-batch on the FIRST file we'll actually try to catalogue this
+        # pass (empty inbox => no batch litter; idempotent on the day, so a later pass reuses it).
+        if batch_id is None and _auto_batch_id is None:
+            from fanops.batches import resolve_or_mint_drop_batch
+            _auto_batch_id = resolve_or_mint_drop_batch(led).id
+        effective_batch_id = batch_id or _auto_batch_id
         disposed = _catalogue_file(led, cfg, f, origin=file_origin, now_iso=now_iso,
-                                   origin_kind=origin_kind, batch_id=batch_id)
+                                   origin_kind=origin_kind, batch_id=effective_batch_id)
         if not disposed:                                              # copy failed → leave in inbox for a next-pass retry
             counts.skipped += 1; continue
         if len(led.sources) > n_before: counts.added += 1             # newly minted
