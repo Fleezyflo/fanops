@@ -144,10 +144,13 @@ def test_upload_route_rejects_oversize_with_clean_panel(tmp_path):
 
 # ---- Task 5: the upload form renders in the Run tab ----
 def test_run_route_shows_upload_form(tmp_path):
+    # The 3-stage console rewrite relabelled the upload submit from "Add video" to "Add to queue"
+    # (the stage ① card explains what "queue" means; the button names the system effect). Same form,
+    # same POST target — the surface label is what changed.
     from fanops.studio.app import create_app
     app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
     r = app.test_client().get("/run")
-    assert r.status_code == 200 and b'type="file"' in r.data and b"Add video" in r.data
+    assert r.status_code == 200 and b'type="file"' in r.data and b"Add to queue" in r.data
 
 
 # ---- M1 (structural-hooks): third-party asset intake — peer staging dir, photos allowed ----

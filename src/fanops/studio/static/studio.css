@@ -229,6 +229,72 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .run-add { display:flex; flex-wrap:wrap; gap:var(--s-3); align-items:flex-end; margin:var(--s-3) 0; }
 .run-add form { display:flex; gap:.5rem; align-items:flex-end; margin:0; flex-wrap:wrap; }
 .upload-form { gap:.5rem; }
+
+/* ── Make-page console: 3-stage transport rail + stacked stage cards ─────────────────────────────
+   The rail names the operator's mental model (add → make → review) so the buttons stop competing —
+   exactly ONE action per stage. The "live" dot tracks the same run_next projection used by the
+   next-step banner, so the rail and the copy can't disagree. */
+.stage-rail { list-style:none; margin:0 0 var(--s-3); padding:.6rem .9rem; display:flex; gap:0;
+  background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r-md); }
+.stage-step { flex:1; display:flex; align-items:center; gap:.55rem; position:relative; padding:.15rem 0;
+  color:var(--faint); font-size:var(--t-meta); }
+.stage-step + .stage-step { padding-left:1.1rem; }
+.stage-step + .stage-step::before { content:""; position:absolute; left:.1rem; top:50%; width:.9rem; height:1px;
+  background:var(--line-bright); transform:translateY(-.5px); }
+.stage-step .stage-num { font:600 var(--t-eyebrow) var(--mono); letter-spacing:.08em; padding:.1rem .35rem;
+  border:1px solid var(--line-bright); border-radius:4px; color:var(--faint); background:var(--surface-2); }
+.stage-step .stage-label { letter-spacing:.01em; }
+.stage-step.is-done { color:var(--muted); }
+.stage-step.is-done .stage-num { color:var(--muted); }
+.stage-step.is-live { color:var(--ink); }
+.stage-step.is-live .stage-num { color:var(--accent-ink); background:var(--accent-bright); border-color:var(--accent-bright);
+  box-shadow:0 0 0 3px var(--accent-dim); }
+.stage-step.is-live .stage-label { color:var(--ink); font-weight:600; }
+
+/* Stage card: one per stage. The primary one (Make clips) gets the deeper surface treatment so the
+   page has a single visual centre of gravity. */
+.stage-card { border:1px solid var(--line); border-radius:var(--r-lg); background:var(--surface-1);
+  padding:var(--s-4); margin:var(--s-3) 0; box-shadow:var(--elev-1); }
+.stage-card-primary { background:linear-gradient(180deg, var(--surface-2), var(--surface-1));
+  border-color:var(--line-bright); }
+.stage-card-handoff { background:transparent; box-shadow:none; padding:var(--s-3) var(--s-4); }
+.stage-card-head { display:flex; align-items:baseline; gap:.7rem; flex-wrap:wrap; margin:0 0 var(--s-3); }
+.stage-card-head h3 { margin:0; }
+.stage-card-head h3::before { display:none; }
+.stage-card-num { font:600 var(--t-eyebrow) var(--mono); letter-spacing:.08em; padding:.15rem .45rem;
+  border:1px solid var(--line-bright); border-radius:4px; color:var(--accent-bright); background:var(--surface-2); }
+.stage-card-hint { color:var(--muted); font-size:var(--t-meta); flex-basis:100%; margin-top:.1rem; }
+
+/* Stage form: one field per row, labelled, scoped. Replaces the inline horizontal wrap that buried
+   the batch-name input next to the file picker. */
+.stage-form { display:grid; gap:var(--s-3); margin:0; }
+.stage-form .field { display:grid; gap:.3rem; margin:0; }
+.stage-form .field-label { font:600 var(--t-meta) var(--sans); color:var(--muted); letter-spacing:.01em; }
+.stage-form .field input[type=text], .stage-form .field input[type=url],
+.stage-form .field input[type=file] { max-width:32rem; }
+.stage-form .check-row { display:flex; align-items:center; gap:.4rem; font-size:var(--t-meta); color:var(--ink); }
+.stage-form .batch-target { border:1px solid var(--line); border-radius:var(--r-sm); padding:.6rem .8rem; }
+.stage-form .batch-target legend { padding:0 .35rem; }
+.stage-actions { display:flex; align-items:center; gap:.7rem; flex-wrap:wrap; margin-top:.2rem; }
+.stage-actions .muted { margin:0; font-size:var(--t-meta); }
+
+/* Inline secondary (Add-from-link) — disclosure, hidden until needed. */
+.stage-altlink { margin-top:var(--s-3); border-top:1px dashed var(--line); padding-top:var(--s-3); }
+.stage-altlink > summary { color:var(--muted); font-size:var(--t-meta); cursor:pointer; -webkit-user-select:none; user-select:none; }
+.stage-altlink > summary:hover { color:var(--ink); }
+.stage-form-inline { display:flex; gap:.5rem; align-items:center; margin-top:var(--s-3); flex-wrap:wrap; }
+
+/* Queue meter under stage ②: the operator wants to know what they're about to chew through. */
+.queue-meter { display:flex; gap:1.4rem; flex-wrap:wrap; margin:0 0 var(--s-3); font-size:var(--t-meta); color:var(--muted); }
+.queue-meter strong { color:var(--ink); font-variant-numeric:tabular-nums; margin-right:.25rem; }
+
+/* The .run-primary form is nested inside stage-card-primary now — strip the duplicate surface. */
+.stage-card-primary .run-primary { margin:0; padding:0; background:none; border:0; box-shadow:none; }
+
+/* Handoff line for stage ③: not a card, just a clean affordance. */
+.stage-handoff-line { margin:.2rem 0 0; display:flex; gap:1rem; align-items:baseline; flex-wrap:wrap; }
+.stage-handoff-link { font-weight:600; font-size:var(--t-lg); color:var(--accent-bright); }
+.stage-handoff-link:hover { color:var(--ink); }
 .run-advanced { border:1px solid var(--line); border-radius:var(--r-md); background:oklch(16% 0.012 280 / .4); margin-top:var(--s-4); }
 .run-advanced > summary { padding:.6rem .85rem; font-size:var(--t-meta); color:var(--muted); cursor:pointer; -webkit-user-select:none; user-select:none; }
 .run-advanced > summary:hover { color:var(--ink); }
