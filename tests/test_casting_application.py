@@ -9,10 +9,11 @@ import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, ClipState, MomentState, Fmt, MomentCastingDecision,
-                           AccountSelection, SelectionMethod, account_selection_id)
+                           MomentDecision, MomentPick, AccountSelection, SelectionMethod, account_selection_id)
 from fanops.accounts import Accounts
 from fanops.casting import request_moment_casting, ingest_moment_casting, casting_gate_pending
-from fanops.crosspost import crosspost_clips
+from fanops.crosspost import crosspost_clips, _seed_clips
+from fanops.moments import ingest_moments
 from fanops.agentstep import latest_request_id, response_path, write_request
 
 
@@ -172,3 +173,53 @@ def test_disjoint_account_selections_yield_disjoint_posts_end_to_end(tmp_path):
     assert b_moments == {"mom_3", "mom_4"}                            # @b posts ONLY on its cast moments
     assert a_moments.isdisjoint(b_moments)                           # no cross-account fan leak reached the output
     assert all(p.account in ("@a", "@b") for p in posts)             # no third surface leaked in
+
+
+# ---- MOM-1: a same-window re-pick must not be governed by a STALE selection ----
+def test_re_pick_drops_stale_account_selection(tmp_path, monkeypatch):
+    # ROOT: a re-pick (amplify / re-request) changes a source's moment set. ingest_moments discards the casting
+    # GATE but (pre-fix) NOT the durable AccountSelection, so a surviving captioned clip could fan on stale
+    # casting intent. The fix drops every selection of the re-picked source here (symmetric to the gate discard).
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
+    led = _src(cfg)
+    led.add_account_selection(AccountSelection(id=account_selection_id("src_1", "@a"), source_id="src_1",
+                              account="@a", moment_ids=["mom_stale"], method=SelectionMethod.llm))
+    assert led.selections_of_source("src_1")                          # precondition: a prior durable cast exists
+    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})   # re-pick through the real gate
+    rid = latest_request_id(cfg, "moments", "src_1")
+    response_path(cfg, "moments", "src_1").write_text(
+        MomentDecision(source_id="src_1", request_id=rid,
+                       picks=[MomentPick(start=0, end=7, reason="fresh window")]).model_dump_json())
+    led = ingest_moments(led, cfg, "src_1")
+    assert led.selections_of_source("src_1") == []                    # MOM-1: stale selection dropped on re-pick
+    assert any(m.parent_id == "src_1" and m.state is MomentState.picked
+               for m in led.moments.values())                        # proves it went through the reconcile path
+
+
+def test_casting_gate_pending_defers_picked_moment_with_led(tmp_path, monkeypatch):
+    # MOM-1 (belt): a source with a re-picked (state==picked) moment has had its selections dropped + the gate
+    # discarded; a FRESH cast is incoming. With `led` passed, casting_gate_pending treats it as pending so
+    # crosspost DEFERS. Legacy callers (no `led`) keep today's gate-file-only behavior (no regression).
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a")])
+    led = _src(cfg)
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          transcript_excerpt="x", state=MomentState.picked))
+    assert casting_gate_pending(cfg, "src_1", led=led) is True        # picked -> re-cast incoming -> defer
+    assert casting_gate_pending(cfg, "src_1") is False                # legacy (no led): no gate on disk -> not pending
+    led.moments["mom_1"] = led.moments["mom_1"].model_copy(update={"state": MomentState.decided})
+    assert casting_gate_pending(cfg, "src_1", led=led) is False       # re-decided -> no longer deferred
+
+
+def test_seed_clips_excludes_picked_moment_clip(tmp_path):
+    # MOM-1 (belt): a surviving captioned clip whose moment is no longer a live render target (re-pick -> picked)
+    # must NOT seed a crosspost. A MISSING moment keeps the existing fail-open; a decided/clipped moment seeds.
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a")])
+    led = _src(cfg)
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          transcript_excerpt="x", state=MomentState.picked))   # re-picked: NOT a render target
+    led.add_clip(_captioned_clip())                                  # surviving captioned clip (parent mom_1)
+    assert "clip_1" not in {c.id for c in _seed_clips(led)}          # excluded while its moment is `picked`
+    led.moments["mom_1"] = led.moments["mom_1"].model_copy(update={"state": MomentState.decided})
+    assert "clip_1" in {c.id for c in _seed_clips(led)}              # re-decided -> seeds again

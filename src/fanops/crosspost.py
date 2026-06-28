@@ -12,7 +12,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.bands import band_for
-from fanops.models import (Post, PostState, ClipState, Fmt, HookSource,
+from fanops.models import (Post, PostState, ClipState, MomentState, Fmt, HookSource,
                            PLATFORM_ASPECT, PLATFORM_MAX_SECONDS)
 from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut
@@ -132,11 +132,22 @@ def render_account_file(led: Ledger, cfg: Config, *, post, acct, target_clip, sr
             get_logger(cfg)(caller, target_clip.id, "hook_burn_failed", surface=surface)
     return RenderPlan(rid, vpath, produced, realized, profile, hook_source, batch_id, source_id)
 
+def _moment_is_live_target(m) -> bool:
+    """MOM-1: a captioned clip may seed a post only while its moment is a live render target (`decided`/
+    `clipped`). A re-pick resets a moment to `picked` (and `error`/`retired` are dead) — its surviving captioned
+    clip must NOT fan on stale casting intent until it re-decides. A MISSING moment keeps the existing fail-open
+    (seed; the fan-out loop already handles `m is None` with an unknown duration) — narrowing that orphan path
+    is out of MOM-1 scope."""
+    return m is None or m.state in (MomentState.decided, MomentState.clipped)
+
 def _seed_clips(led: Ledger) -> list:
-    """The crosspost seed set: clips that are captioned + not held + not retired (clip or its moment)."""
+    """The crosspost seed set: clips that are captioned + not held + not retired (clip or its moment), AND whose
+    moment is still a live render target (decided/clipped, or absent -> existing fail-open). MOM-1: a re-pick
+    resets a moment to `picked`; its surviving captioned clip must not seed a post on stale casting intent."""
     return [c for c in led.clips_in_state(ClipState.captioned)
             if not c.held and not led.is_retired_clip(c.id)
-            and not led.is_retired_moment(c.parent_id)]
+            and not led.is_retired_moment(c.parent_id)
+            and _moment_is_live_target(led.moments.get(c.parent_id))]
 
 
 def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
@@ -262,7 +273,7 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         # P1 casting-pending wait + xc-2: defer when the casting answer hasn't landed (gate open, unanswered) OR
         # when the gate SHOULD have opened but didn't (request_moment_casting I/O failure) — both mean "fan out
         # NEXT pass," never silently fan-to-all this pass (mirror: a clip waits for its caption gate).
-        if src is not None and (casting_gate_pending(cfg, src.id)
+        if src is not None and (casting_gate_pending(cfg, src.id, led=led)
                                 or casting_gate_failed_to_open(cfg, led, accounts, src.id)):
             get_logger(cfg)("crosspost", clip.id, "casting_pending_skip", source=src.id)
             continue

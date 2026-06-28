@@ -143,14 +143,22 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
         return led
 
 
-def casting_gate_pending(cfg, source_id) -> bool:
+def casting_gate_pending(cfg, source_id, led=None) -> bool:
     """P1: True iff casting is ON and this source's moment_casting gate is OPEN but UNANSWERED — the crosspost
     fan-out must WAIT (else a post is minted fan-to-all BEFORE affinities land, and posts never un-mint). A
     source with no gate (no personas / casting OFF / nothing to cast) returns False -> fan out now. Fail-open
     to False (a probe glitch must never permanently strand a clip). Mirrors how the caption gate blocks
-    crosspost: a clip is fan-out-eligible only once its prerequisite gate has converged."""
+    crosspost: a clip is fan-out-eligible only once its prerequisite gate has converged.
+    MOM-1: when `led` is passed and the source has a re-picked moment (state==`picked`), its selections have
+    been dropped + the gate discarded by ingest_moments and a FRESH cast is incoming — treat it as pending so
+    crosspost DEFERS (never fans a surviving captioned clip on stale intent before the re-cast lands). `led` is
+    optional for signature stability: callers that pass it get the stricter check; legacy callers keep today's
+    gate-file-only behavior."""
     try:
         if not cfg.account_casting: return False
+        if led is not None and any(m.parent_id == source_id and m.state is MomentState.picked
+                                   for m in led.moments.values()):
+            return True                                                                 # re-pick in flight -> defer
         if latest_request_id(cfg, "moment_casting", source_id) is None: return False   # no gate -> nothing to wait for
         return read_response(cfg, "moment_casting", source_id, MomentCastingDecision) is None
     except Exception as e:
