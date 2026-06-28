@@ -253,3 +253,36 @@ def test_selection_dropped_when_all_its_moments_orphaned(tmp_path):
     led.reconcile_moments("src_1", {})                              # drop everything
     assert led.account_selection_for("src_1", "@a") is None         # emptied CHOSEN row dropped, not left invalid
     led.save(); assert Ledger.load(cfg) is not None                 # and the ledger reloads (no validator raise)
+
+
+# ---- coverage gap: the headline disjoint-posts promise driven through the REAL casting GATE (not injected) ----
+def test_casting_gate_drives_disjoint_posts_end_to_end(tmp_path, monkeypatch, mocker):
+    # The disjoint-posts e2e above INJECTS AccountSelections; this drives the gate path itself —
+    # request_moment_casting -> write the LLM decision -> ingest_moment_casting (writes the durable selections +
+    # affinities) -> crosspost_clips — so a regression in request/ingest can't hide behind an injected fixture.
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [_acct("@a", persona="hype"), _acct("@b", persona="lyric", aid="2")])
+    led = _src(cfg)
+    bands = {"mom_1": (0, 7), "mom_2": (8, 15), "mom_3": (16, 23), "mom_4": (24, 31)}
+    for i, (mid, (lo, hi)) in enumerate(bands.items(), 1):
+        led.add_moment(_moment_n(mid, lo, hi)); led.add_clip(_captioned_clip_for(mid, f"clip_{i}"))
+    led.save(); led = Ledger.load(cfg); accts = Accounts.load(cfg)
+    led = request_moment_casting(led, cfg, "src_1", accts)            # open the gate
+    rid = latest_request_id(cfg, "moment_casting", "src_1")
+    response_path(cfg, "moment_casting", "src_1").write_text(
+        MomentCastingDecision(request_id=rid,
+                              selections={"@a": ["mom_1", "mom_2"], "@b": ["mom_3", "mom_4"]}).model_dump_json())
+    led = ingest_moment_casting(led, cfg, "src_1", accts)             # the gate writes the durable selections
+    assert led.account_selection_for("src_1", "@a").moment_ids == ["mom_1", "mom_2"]
+    assert led.account_selection_for("src_1", "@b").moment_ids == ["mom_3", "mom_4"]
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
+    posts = list(led.posts.values())
+    assert posts, "casting-gate-driven crosspost minted no posts"
+    def moment_of(p): return led.clips[p.parent_id].parent_id
+    a_moments = {moment_of(p) for p in posts if p.account == "@a"}
+    b_moments = {moment_of(p) for p in posts if p.account == "@b"}
+    assert a_moments == {"mom_1", "mom_2"}                           # @a posts ONLY on its gate-cast moments
+    assert b_moments == {"mom_3", "mom_4"}                           # @b posts ONLY on its gate-cast moments
+    assert a_moments.isdisjoint(b_moments)                          # no cross-account fan leak through the gate path
