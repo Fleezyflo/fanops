@@ -3,7 +3,7 @@
 Reframe is chosen from the PROBED source dimensions so vertical/odd sources don't break.
 render_aspects_for renders one clip per distinct aspect the active platforms need."""
 from __future__ import annotations
-import hashlib, json, os, subprocess
+import contextlib, hashlib, json, os, subprocess
 from pathlib import Path
 from statistics import median
 from fanops.config import Config
@@ -197,10 +197,13 @@ def _clamp(v: int, lo: int, hi: int) -> int:
 # ffmpeg evaluates crop x/y per-frame but w/h ONCE, so the crop box is constant per window (one zoom) and the
 # pan lives in the x/y t-expression. A focus WITHOUT a face height (a 2-tuple, or saliency) never zooms ->
 # byte-identical to the pre-zoom behaviour. ----
-_FACE_FRAC_TALK = 0.32      # target on-screen face-box height fraction for talk (tight, head-and-shoulders)
-_FACE_FRAC_MUSIC = 0.22     # ... for music/performance: wider, keeps stage/body context
+_FACE_FRAC_TALK = 0.42      # target on-screen face-box height for talk: a DELIBERATE head-and-shoulders short-form
+                            # frame (the old 0.32 read as timid — output never left ~0.27). Bounded by _ZOOM_MAX.
+_FACE_FRAC_MUSIC = 0.26     # ... for music/performance: wider, keeps stage/body context (still tighter than the old 0.22)
 _EYELINE_FRAC = 0.40        # place the eyes at ~0.40 of the output height (eyes on the upper third)
-_ZOOM_MAX = 1.6             # max zoom MAGNIFICATION beyond the branch baseline (bounds upscale blur)
+_ZOOM_MAX = 1.6             # max zoom MAGNIFICATION for the STATIC single-subject crop (bounds upscale blur)
+_ZOOM_MAX_TRACK = 2.4       # ... but a 2-shot's FAR speaker needs more zoom to match the near one's on-screen size;
+                            # a per-segment crop is a small region upscaled, so allow more magnification there
 _GENTLE_MIN_FACE_FRAC = 0.12   # an already-9:16 clip only gets a gentle zoom when the face is smaller than this
 _GENTLE_ZOOM_MAX = 1.15        # ... and that gentle zoom never exceeds this magnification
 
@@ -337,6 +340,276 @@ def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
             "-vf", vf,
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
 
+# ---- Per-segment active-speaker render (the fix for "random sizes" in 2-shots) ----
+# A single ffmpeg `crop` evaluates w/h ONCE per stream, so a 2-shot got ONE zoom for two speakers whose source
+# face sizes differ >2x -> one of them was always wrong-sized (the operator's "cutting to random sizes"). The
+# fix renders each active-speaker SEGMENT as its OWN correctly-sized crop and joins them with the concat filter
+# in a SINGLE pass: N seeked inputs -> per-segment crop chains -> concat (sample-accurate, no container seams)
+# -> optional subtitle burn -> one encode. Each speaker now lands at a consistent on-screen face size.
+def _crop_box(fx: float, fy: float, fh, ey, src_w: int, src_h: int, tw: int, th: int,
+              ch0: int, frac: float, zoom_max: float):
+    """Numeric crop (cw, ch, x, y) that zooms a subject of normalized face-height fh to `frac` of the output
+    (bounded by zoom_max) and anchors its eye-line ey at _EYELINE_FRAC. Shared sizing math so the static focus
+    crop and the per-segment active-speaker crops are consistent. fh falsy -> no zoom (full ch0 extent)."""
+    ch = _zoom_h(src_h, ch0, fh, frac, zoom_max=zoom_max)
+    cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
+    eyeline = _EYELINE_FRAC if (ey is not None and fh) else 0.5
+    anchor = ey if (ey is not None and fh) else fy
+    x, y = _place(src_w, src_h, cw, ch, fx, anchor, eyeline)
+    return cw, ch, x, y
+
+def _ch0_for(aspect_value: str, src_w: int, src_h: int):
+    """Baseline crop extent in the scaled axis for source->target: full height for a wider source, full-width-
+    derived height for a taller one. None when the source is ALREADY the target aspect (segment -> scale-only)."""
+    tw, th = _TARGETS[aspect_value]
+    if not src_w or not src_h:
+        return None
+    src_ar = src_w / src_h; tgt_ar = tw / th
+    if abs(src_ar - tgt_ar) < 0.01:
+        return None
+    return src_h if src_ar > tgt_ar else round(src_w * th / tw)
+
+def _segment_chain(idx: int, seg, src_w: int, src_h: int, tw: int, th: int, ch0, frac: float) -> str:
+    """One concat input's video chain: crop the active speaker (this segment's own fx,fy,fh,ey -> own zoom +
+    eye-line) then scale to the target, labeled [v{idx}]. ch0 None (already-aspect / unknown dims) -> scale-only."""
+    if ch0 is None:
+        return f"[{idx}:v]scale={tw}:{th},setsar=1[v{idx}]"
+    fh = seg[4] if len(seg) > 4 else None
+    ey = seg[5] if len(seg) > 5 else None
+    cw, ch, x, y = _crop_box(seg[2], seg[3], fh, ey, src_w, src_h, tw, th, ch0, frac, _ZOOM_MAX_TRACK)
+    return f"[{idx}:v]crop={cw}:{ch}:{x}:{y},scale={tw}:{th},setsar=1[v{idx}]"
+
+def _segments_filter_complex(track: list, src_w: int, src_h: int, aspect_value: str,
+                             content_type: str | None, *, sub_token: str | None = None) -> str:
+    """The full -filter_complex: each segment's crop chain; a concat filter joining all (video+audio) in order;
+    then the optional subtitle burn -> [vout],[aout]. The .ass timeline (0..clip-dur) aligns because concat
+    rebuilds a continuous 0-based timeline from the contiguous segments."""
+    tw, th = _TARGETS[aspect_value]
+    frac = _target_frac(content_type)
+    ch0 = _ch0_for(aspect_value, src_w, src_h)
+    chains = [_segment_chain(i, seg, src_w, src_h, tw, th, ch0, frac) for i, seg in enumerate(track)]
+    concat_in = "".join(f"[v{i}][{i}:a]" for i in range(len(track)))
+    vlabel = "[vc]" if sub_token else "[vout]"
+    parts = chains + [f"{concat_in}concat=n={len(track)}:v=1:a=1{vlabel}[aout]"]
+    if sub_token:
+        parts.append(f"[vc]{sub_token}[vout]")
+    return ";".join(parts)
+
+def ffmpeg_segments_cmd(src: str, dst: str, cs: float, ce: float, aspect_value: str, track: list,
+                        *, src_w: int, src_h: int, content_type: str | None = None,
+                        sub_token: str | None = None) -> list[str]:
+    """ffmpeg command for the per-segment concat render: one seeked input per segment (`-ss`/`-t` before each
+    `-i` = fast + accurate), a single -filter_complex (per-segment crop -> concat -> subtitles), one encode.
+    Segment times are RELATIVE to the clip; each input window is (cs+t0) for (t1-t0) seconds."""
+    cmd = ["ffmpeg", "-y"]
+    for seg in track:
+        seg_cs = cs + float(seg[0]); seg_dur = float(seg[1]) - float(seg[0])
+        cmd += ["-ss", f"{seg_cs:.3f}", "-t", f"{seg_dur:.3f}", "-i", src]
+    fc = _segments_filter_complex(track, src_w, src_h, aspect_value, content_type, sub_token=sub_token)
+    cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
+            "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
+    return cmd
+
+# ---- REAL per-frame auto-reframe (the actual fix for "consistent on-screen face size") ----
+# ffmpeg `crop` fixes w/h ONCE per stream, so as a subject leans in/out or turns, the rendered face SIZE drifts
+# and the framing slides off-centre — measured, and the dominant defect on single-subject clips. A real
+# auto-reframe holds the face at a constant fraction by RE-SIZING the crop EVERY frame. ffmpeg can't (crop w/h
+# isn't per-frame and isn't runtime-commandable), so this reads the window frame-by-frame with OpenCV, locks an
+# EMA-smoothed crop onto the active subject sized to `frac` each frame (smooth pan + gentle zoom; a HARD CUT
+# when the active speaker changes), writes a video-only temp, then muxes the source audio (+burned subtitles).
+# FAIL-OPEN: absent [framing] extra / unreadable source / any error -> False -> caller drops to the ffmpeg crop.
+_PERFRAME_EMA = 0.4          # crop-state smoothing per frame (0..1): higher = snappier follow, lower = calmer
+_ZOOM_MAX_PERFRAME = 1.7     # per-frame zoom cap for a NEAR/well-framed subject (bounds upscale blur)
+_SMALL_FACE_FRAC = 0.18      # below this source face height the subject is FAR (often profile + mic-occluded) — a
+                             # tight punch-in just frames the foreground mic, so cap the zoom hard and show context
+_ZOOM_MAX_FAR = 1.25         # the far-subject zoom cap: a wide, contextual shot (real framing punches in on the
+                             # near subject, holds wide on the far/turned one) — never a tight crop of an occlusion
+
+def _detect_frame_faces(cv2, det, frame):
+    """Every face in one BGR frame as (cx, cy, fh, ey, area) normalized to the frame. Fail-open -> []."""
+    try:
+        h, w = frame.shape[:2]
+        if not (w and h): return []
+        det.setInputSize((w, h))
+        _n, faces = det.detect(frame)
+        if faces is None: return []
+        out = []
+        for f in faces:
+            cx = min(1.0, max(0.0, (float(f[0]) + float(f[2]) / 2) / w))
+            cy = min(1.0, max(0.0, (float(f[1]) + float(f[3]) / 2) / h))
+            fh = min(1.0, max(0.0, float(f[3]) / h))
+            try: ey = min(1.0, max(0.0, ((float(f[5]) + float(f[7])) / 2) / h))
+            except (IndexError, ValueError, TypeError): ey = cy
+            out.append((cx, cy, fh, ey, float(f[2]) * float(f[3])))
+        return out
+    except Exception:
+        return []
+
+def _active_side_at(track, t: float):
+    """(side, segment_index) for relative time t over an active-speaker track, or (None, -1) when no track.
+    side is 'L'/'R' by the segment centroid; the index flags a hard-cut boundary (a change == a speaker switch)."""
+    if not track:
+        return None, -1
+    for i, seg in enumerate(track):
+        if seg[0] <= t < seg[1]:
+            return ("L" if seg[2] < framing._ASD_SIDE_SPLIT else "R"), i
+    seg = track[-1]
+    return ("L" if seg[2] < framing._ASD_SIDE_SPLIT else "R"), len(track) - 1
+
+def _pick_subject(faces, side):
+    """The face to lock onto: the largest on the ACTIVE side (2-shot), else the largest overall (single
+    subject), else None (caller falls back to the segment/focus anchor)."""
+    if not faces:
+        return None
+    if side is not None:
+        same = [f for f in faces if (f[0] < framing._ASD_SIDE_SPLIT) == (side == "L")]
+        if same:
+            return max(same, key=lambda f: f[4])
+    return max(faces, key=lambda f: f[4])
+
+def _anchor_subject(track, seg_i: int, focus):
+    """The KNOWN subject location for the current context, used when a frame's detection misses (a far/occluded
+    speaker, a profile turn) — so the crop holds the speaker's actual position+size instead of a stale wrong one
+    (the 'crop drifts onto the mic/empty wall' defect). The active track segment's (fx,fy,fh,ey) for a 2-shot,
+    else the static focus, else None."""
+    if track and 0 <= seg_i < len(track):
+        s = track[seg_i]
+        return (s[2], s[3], s[4] if len(s) > 4 else 0.0, s[5] if len(s) > 5 else s[3], 0.0)
+    if focus is not None and len(focus) >= 4:
+        return (focus[0], focus[1], focus[2], focus[3], 0.0)
+    if focus is not None and len(focus) >= 2:
+        return (focus[0], focus[1], 0.0, focus[1], 0.0)
+    return None
+
+def _perframe_state(subj, sw: int, sh: int, tw: int, th: int, frac: float):
+    """Raw crop target (cx_px, eye_px, ch_px) for a subject (cx,cy,fh,ey): crop height sized so the face fills
+    `frac` of the output, with the eye-line as the vertical anchor. The zoom cap is FACE-SIZE-ADAPTIVE — a near
+    subject punches in (to _ZOOM_MAX_PERFRAME); a far/small one (often profile + mic-occluded) is held WIDE (to
+    _ZOOM_MAX_FAR) so the crop shows the person in context, never a tight frame of the foreground mic."""
+    ch_max = min(sh, sw * th / tw)                         # largest valid crop of the target aspect (least zoom)
+    fh = subj[2] or 0.0
+    zmax = _ZOOM_MAX_PERFRAME if fh >= _SMALL_FACE_FRAC else _ZOOM_MAX_FAR
+    ch = (fh * sh / frac) if (fh and frac) else ch_max
+    ch = max(ch_max / zmax, min(ch, ch_max))
+    return subj[0] * sw, subj[3] * sh, ch                  # cx px, eye-line px, crop height px
+
+def _crop_from_state(cv2, frame, state, sw: int, sh: int, tw: int, th: int):
+    """Crop `frame` to the smoothed state (cx_px, eye_px, ch_px) and resize to (tw,th), eye-line anchored at
+    _EYELINE_FRAC, all clamped in-bounds."""
+    cxpx, eypx, chf = state
+    ch = int(round(min(chf, sh)))
+    cw = int(round(min(ch * tw / th, sw)))
+    x = int(_clamp(round(cxpx - cw / 2), 0, max(0, sw - cw)))
+    y = int(_clamp(round(eypx - _EYELINE_FRAC * ch), 0, max(0, sh - ch)))
+    return cv2.resize(frame[y:y + ch, x:x + cw], (tw, th), interpolation=cv2.INTER_LINEAR)
+
+def _mux_av(video: str, src: str, dst: str, cs: float, ce: float, extra_vf, timeout) -> bool:
+    """Mux the reframed video-only temp with the source audio for [cs,ce] (+ optional burned subtitles, applied
+    to the already-0-based reframed video). True on a non-empty output. ffmpeg-absent/timeout raise so the
+    caller's render_moment handler records toolchain-missing exactly as for the single-pass path."""
+    dur = round(ce - cs, 3)
+    cmd = ["ffmpeg", "-y", "-i", video, "-ss", f"{cs:.3f}", "-t", f"{dur:.3f}", "-i", src]
+    if extra_vf:
+        cmd += ["-filter_complex", f"[0:v]{extra_vf}[v]", "-map", "[v]", "-map", "1:a"]
+    else:
+        cmd += ["-map", "0:v", "-map", "1:a"]
+    cmd += ["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", "-shortest", dst]
+    r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+    return r.returncode == 0 and Path(dst).exists() and Path(dst).stat().st_size > 0
+
+def _render_perframe(src_path: str, dst: str, cs: float, ce: float, tw: int, th: int, *,
+                     frac: float, focus, track, extra_vf, timeout) -> bool:
+    """The per-frame auto-reframe render. Returns True on success, False fail-open (caller -> ffmpeg crop).
+    A ffmpeg-absent / timeout during the audio mux RAISES (handled like the single-pass call it replaces)."""
+    cv2 = framing._cv2()
+    if cv2 is None:
+        return False
+    det = framing._detector(cv2)
+    if det is None:
+        return False
+    cap = cv2.VideoCapture(src_path)
+    tmp = dst + ".perframe.mp4"
+    vw = None
+    wrote = 0
+    try:
+        if not cap.isOpened():
+            return False
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        sw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)); sh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if not (fps and sw and sh):
+            return False
+        start_f = int(round(cs * fps)); end_f = int(round(ce * fps))
+        if end_f <= start_f:
+            return False
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
+        vw = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (tw, th))
+        if not vw.isOpened():
+            return False
+        state = None; prev_seg = -2; f = start_f
+        while f < end_f:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            t = (f - start_f) / fps
+            side, seg_i = _active_side_at(track, t)
+            subj = _pick_subject(_detect_frame_faces(cv2, det, frame), side)
+            if subj is None:
+                subj = _anchor_subject(track, seg_i, focus)         # detection miss -> hold the KNOWN speaker spot
+            raw = _perframe_state(subj, sw, sh, tw, th, frac) if subj is not None else state
+            if raw is None:
+                raw = (sw / 2.0, sh / 2.0, min(sh, sw * th / tw))   # no detection yet -> centered baseline
+            if state is None or (track and seg_i != prev_seg):
+                state = raw                                          # first frame OR speaker switch -> HARD CUT (snap)
+            else:
+                a = _PERFRAME_EMA
+                state = tuple(state[i] + a * (raw[i] - state[i]) for i in range(3))   # smooth pan + gentle zoom
+            prev_seg = seg_i
+            vw.write(_crop_from_state(cv2, frame, state, sw, sh, tw, th))
+            wrote += 1; f += 1
+    except Exception:
+        return False
+    finally:
+        cap.release()
+        if vw is not None:
+            vw.release()
+    if wrote <= 0:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        return False
+    try:
+        return _mux_av(tmp, src_path, dst, cs, ce, extra_vf, timeout)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
+def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value: str, *,
+                    src_w: int, src_h: int, extra_vf: str | None = None, top_bias: bool = False,
+                    focus: tuple | None = None, track: list | None = None,
+                    content_type: str | None = None, timeout: float = _FFMPEG_TIMEOUT):
+    """Render the reframed clip to `dst`, picking the strategy in a fail-open ladder:
+      1. PER-FRAME OpenCV auto-reframe (a resolved subject focus/track) — holds face size constant + pans
+         smoothly + hard-cuts speaker switches (the real fix; what ffmpeg crop structurally can't do);
+      2. segment-concat (a 2-shot track, per-frame unavailable) — each speaker its own correctly-sized crop;
+      3. single-pass ffmpeg crop (no subject / both above failed) — today's behaviour, byte-identical centered.
+    Returns a subprocess-style result (returncode/stderr) for the caller's existing handling; FileNotFoundError/
+    OSError/TimeoutExpired propagate exactly like the single-pass `subprocess.run` they replace."""
+    if focus is not None or (track and len(track) > 1):
+        tw, th = _TARGETS[aspect_value]
+        if _render_perframe(src_path, dst, cs, ce, tw, th, frac=_target_frac(content_type),
+                            focus=focus, track=track, extra_vf=extra_vf, timeout=timeout):
+            return subprocess.CompletedProcess([], 0, "", "")
+        # per-frame unavailable/failed -> fall through to the ffmpeg crop ladder (fail-open)
+    if track and len(track) > 1:
+        seg_cmd = ffmpeg_segments_cmd(src_path, dst, cs, ce, aspect_value, track,
+                                      src_w=src_w, src_h=src_h, content_type=content_type, sub_token=extra_vf)
+        r = subprocess.run(seg_cmd, check=False, capture_output=True, text=True, timeout=timeout)
+        if r.returncode == 0 and Path(dst).exists() and Path(dst).stat().st_size > 0:
+            return r
+        # a working ffmpeg rejected the segment graph -> fall through to the single-pass crop (fail-open)
+    cmd = ffmpeg_clip_cmd(src_path, dst, cs, ce, aspect_value, src_w=src_w, src_h=src_h, extra_vf=extra_vf,
+                          top_bias=top_bias, focus=focus, track=track, content_type=content_type)
+    return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+
 def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
                   *, clip_start: float, clip_end: float):
     """Build the burned-on-screen-text `-vf` fragment for this clip, or return None (reframe only).
@@ -387,7 +660,8 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
 # determines the rendered bytes (source, window, aspect, source dims, the burned .ass text), so the
 # lock-free pre-warm and the in-lock commit agree on when an existing mp4 may be reused. This is what
 # lets the heavy ffmpeg run OUTSIDE the ledger lock and the commit pass skip it.
-_REFRAME_GEOM_V = 1          # bump to force re-render of ZOOM/eyeline/dynamic clips after a geometry-math change
+_REFRAME_GEOM_V = 3          # bump to force re-render of ZOOM/eyeline/dynamic clips after a geometry-math change
+                             # (v3: per-frame OpenCV auto-reframe — constant face size + smooth pan + hard-cut switch)
 
 def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
                         src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
@@ -511,11 +785,11 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         if not is_stitch:                                     # a stitch never advances the moment (the bare clip owns it)
             led.set_moment_state(moment_id, MomentState.clipped)
         return led, clip
-    cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
-                          src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                          top_bias=cfg.aware_reframe, focus=focus, track=track, content_type=content_type)
     try:
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
+        r = render_reframed(src.source_path, str(dst), cs, ce, aspect.value,
+                            src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
+                            top_bias=cfg.aware_reframe, focus=focus, track=track,
+                            content_type=content_type, timeout=_FFMPEG_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
         # ffmpeg ABSENT from PATH (or otherwise unspawnable): subprocess.run raises BEFORE the
         # process starts, so check=False (which only suppresses a nonzero RETURNCODE) does not
@@ -525,7 +799,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         # TERMINAL MomentState.error (never re-rendered) — a transient PATH glitch would wedge
         # it permanently, contradicting this module's fail-safe philosophy.
         clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
-                    aspect=aspect, error_reason=f"toolchain missing: {cmd[0]} ({type(e).__name__})")
+                    aspect=aspect, error_reason=f"toolchain missing: ffmpeg ({type(e).__name__})")
         led.clips[cid] = clip
         return led, clip
     except subprocess.TimeoutExpired:
@@ -621,11 +895,11 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
                 ass_path = str(Path(out_path).with_suffix(".ass"))
                 overlay.write_ass(ass_text, ass_path)
                 extra_vf = overlay.subtitles_vf(ass_path)
-        cmd = ffmpeg_clip_cmd(src.source_path, tmp, cs, ce, aspect.value,
-                              src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                              top_bias=top_bias, focus=focus, track=track, content_type=content_type)
         try:
-            r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
+            r = render_reframed(src.source_path, tmp, cs, ce, aspect.value,
+                                src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
+                                top_bias=top_bias, focus=focus, track=track,
+                                content_type=content_type, timeout=_FFMPEG_TIMEOUT)
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
             return False, None                                # ffmpeg absent/hung -> fail-open to the shared burn
         if r.returncode != 0 or not Path(tmp).exists():

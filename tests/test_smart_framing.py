@@ -4,14 +4,17 @@
 # through ffmpeg_clip_cmd + the render fingerprint. Everything is FAIL-OPEN: no [framing] extra / no
 # detection / flag off -> focus=None -> today's centered crop, byte-identical. cv2 is absent in CI, so the
 # no-extra path is the live default; the detection path is exercised with stubs.
-import json
+import json, re, types
 from pathlib import Path
 import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, Fmt
 from fanops import framing
-from fanops.clip import reframe_filter, _render_fingerprint, render_account_cut
+from fanops.clip import (reframe_filter, _render_fingerprint, render_account_cut,
+                         _segments_filter_complex, ffmpeg_segments_cmd, render_reframed, _ch0_for,
+                         _active_side_at, _pick_subject, _perframe_state)
+import fanops.clip as clipmod
 from fanops import overlay
 
 
@@ -60,11 +63,12 @@ def test_legacy_2tuple_focus_is_unchanged_no_zoom():
     assert reframe_filter("9:16", 1920, 1080, focus=(0.8, 0.5)) == "crop=ih*1080/1920:ih:1232:0,scale=1080:1920,setsar=1"
 
 def test_4tuple_focus_zooms_to_target_face_fraction():
-    # face fh=0.24 (within the zoom cap) -> crop height SHRINKS so the face fills ~TARGET_FACE_FRAC(0.32).
-    vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.24, 0.40), content_type=framing.CT_SINGLE)
+    # face fh=0.30 (within the zoom cap at the 0.42 target) -> crop height SHRINKS so the face fills the target.
+    from fanops.clip import _FACE_FRAC_TALK
+    vf = reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.30, 0.40), content_type=framing.CT_SINGLE)
     w, h, x, y = _crop_dims(vf)
     assert h < 1080                                              # zoomed in (crop height below full height)
-    assert abs(h - round(1080 * 0.24 / 0.32)) <= 2              # ch = src_h*fh/TARGET_FACE_FRAC(0.32), under the cap
+    assert abs(h - round(1080 * 0.30 / _FACE_FRAC_TALK)) <= 2   # ch = src_h*fh/_FACE_FRAC_TALK, under the cap
     assert abs(w - round(h * 1080 / 1920)) <= 1                 # crop keeps 9:16
     assert vf.endswith("scale=1080:1920,setsar=1")
 
@@ -77,8 +81,8 @@ def test_zoom_bounded_by_max_so_tiny_face_never_blurs():
 
 def test_music_uses_wider_zoom_than_talk():
     # music keeps more stage/body context -> a wider crop (taller ch) than talk for the same face.
-    talk = _crop_dims(reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.16, 0.40), content_type=framing.CT_SINGLE))
-    music = _crop_dims(reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.16, 0.40), content_type=framing.CT_MUSIC))
+    talk = _crop_dims(reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.20, 0.40), content_type=framing.CT_SINGLE))
+    music = _crop_dims(reframe_filter("9:16", 1920, 1080, focus=(0.5, 0.45, 0.20, 0.40), content_type=framing.CT_MUSIC))
     assert music[1] > talk[1]                                   # music crop height larger (less zoom)
 
 def test_eyeline_places_eyes_in_upper_portion():
@@ -264,6 +268,134 @@ def test_fingerprint_track_is_additive():
     assert with_tr != base                                                 # a track -> re-render
     assert _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "", track=None) == base
 
+
+# ---------------------------------------------------------------- per-segment concat render (random-sizes fix) ----
+def test_segments_filter_complex_sizes_each_speaker_independently():
+    # The core fix: a 2-shot whose two speakers differ in source face-size must get DIFFERENT crop heights,
+    # so each lands at a consistent on-screen size (one ffmpeg crop can't — it sets w/h once per stream).
+    track = [(0.0, 5.0, 0.80, 0.40, 0.30, 0.40), (5.0, 10.0, 0.22, 0.45, 0.15, 0.45)]  # near speaker vs far speaker
+    fc = _segments_filter_complex(track, 1920, 1080, "9:16", framing.CT_MULTI)
+    chains = [c for c in fc.split(";") if c.startswith("[0:v]") or c.startswith("[1:v]")]
+    assert len(chains) == 2
+    h0 = int(re.search(r"crop=\d+:(\d+):", chains[0]).group(1))
+    h1 = int(re.search(r"crop=\d+:(\d+):", chains[1]).group(1))
+    assert h0 != h1                                          # different zoom per speaker (each sized to itself)
+    assert h0 > h1                                           # bigger source face (0.30) needs LESS zoom -> TALLER crop than the far speaker (0.15)
+    assert "concat=n=2:v=1:a=1[vout][aout]" in fc           # video+audio concatenated, mapped out
+
+def test_segments_filter_complex_threads_subtitles():
+    track = [(0.0, 3.0, 0.30, 0.4, 0.2, 0.4), (3.0, 6.0, 0.70, 0.4, 0.2, 0.4)]
+    fc = _segments_filter_complex(track, 1920, 1080, "9:16", framing.CT_MULTI, sub_token="subtitles='x.ass'")
+    assert "concat=n=2:v=1:a=1[vc][aout]" in fc             # concat -> [vc], then subs -> [vout]
+    assert fc.strip().endswith("[vc]subtitles='x.ass'[vout]")
+
+def test_ffmpeg_segments_cmd_one_seeked_input_per_segment():
+    track = [(0.0, 2.0, 0.3, 0.4, 0.2, 0.4), (2.0, 5.0, 0.7, 0.4, 0.2, 0.4), (5.0, 8.0, 0.3, 0.4, 0.2, 0.4)]
+    cmd = ffmpeg_segments_cmd("src.mp4", "out.mp4", 100.0, 108.0, "9:16", track, src_w=1920, src_h=1080)
+    sss = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-ss"]
+    assert sss == ["100.000", "102.000", "105.000"]         # absolute seek = clip start + each segment's t0
+    ts = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-t"]
+    assert ts == ["2.000", "3.000", "3.000"]                # each input limited to its segment duration
+    assert cmd.count("-i") == 3 and "-filter_complex" in cmd
+    assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "-map"] == ["[vout]", "[aout]"]
+
+def test_ch0_for_routes_by_aspect():
+    assert _ch0_for("9:16", 1920, 1080) == 1080             # wide source -> width-crop -> full height baseline
+    assert _ch0_for("9:16", 1080, 2000) == round(1080 * 1920 / 1080)  # tall source -> height-crop baseline
+    assert _ch0_for("9:16", 1080, 1920) is None             # already 9:16 -> segment scale-only
+    assert _ch0_for("9:16", 0, 0) is None                   # unknown dims -> scale-only (fail-open)
+
+def test_render_reframed_uses_segments_for_a_track(monkeypatch):
+    seen = {}
+    def fake_run(cmd, **k):
+        seen["cmd"] = cmd
+        from pathlib import Path as _P; _P(cmd[-1]).write_bytes(b"x")   # pretend ffmpeg wrote the file
+        return types.SimpleNamespace(returncode=0, stderr="")
+    monkeypatch.setattr("fanops.clip.subprocess.run", fake_run)
+    track = [(0.0, 3.0, 0.3, 0.4, 0.2, 0.4), (3.0, 6.0, 0.7, 0.4, 0.2, 0.4)]
+    out = str(_tmp_out := __import__("tempfile").mktemp(suffix=".mp4"))
+    r = render_reframed("src.mp4", out, 0.0, 6.0, "9:16", src_w=1920, src_h=1080, track=track, content_type=framing.CT_MULTI)
+    assert r.returncode == 0
+    assert "-filter_complex" in seen["cmd"]                 # took the per-segment concat path, not single-pass crop
+
+def test_render_reframed_single_pass_without_track(monkeypatch):
+    seen = {}
+    def fake_run(cmd, **k):
+        seen["cmd"] = cmd
+        from pathlib import Path as _P; _P(cmd[-1]).write_bytes(b"x")
+        return types.SimpleNamespace(returncode=0, stderr="")
+    monkeypatch.setattr("fanops.clip.subprocess.run", fake_run)
+    out = str(__import__("tempfile").mktemp(suffix=".mp4"))
+    render_reframed("src.mp4", out, 0.0, 6.0, "9:16", src_w=1920, src_h=1080, focus=(0.5, 0.45, 0.3, 0.4),
+                    content_type=framing.CT_SINGLE)
+    assert "-filter_complex" not in seen["cmd"] and "-vf" in seen["cmd"]   # single-pass crop, not concat
+
+def test_render_reframed_falls_back_when_segments_rejected(monkeypatch):
+    calls = []
+    def fake_run(cmd, **k):
+        calls.append(cmd)
+        from pathlib import Path as _P
+        if "-filter_complex" in cmd:                        # segment graph rejected by a working ffmpeg
+            return types.SimpleNamespace(returncode=1, stderr="bad filter")
+        _P(cmd[-1]).write_bytes(b"x")                       # single-pass fallback succeeds
+        return types.SimpleNamespace(returncode=0, stderr="")
+    monkeypatch.setattr("fanops.clip.subprocess.run", fake_run)
+    out = str(__import__("tempfile").mktemp(suffix=".mp4"))
+    track = [(0.0, 3.0, 0.3, 0.4, 0.2, 0.4), (3.0, 6.0, 0.7, 0.4, 0.2, 0.4)]
+    r = render_reframed("src.mp4", out, 0.0, 6.0, "9:16", src_w=1920, src_h=1080, track=track, content_type=framing.CT_MULTI)
+    assert r.returncode == 0                                 # fell back to single-pass and succeeded (fail-open)
+    assert len(calls) == 2 and "-filter_complex" in calls[0] and "-vf" in calls[1]
+
+
+# ---------------------------------------------------------------- per-frame auto-reframe (the real fix) ----
+def test_active_side_at_maps_time_to_speaker_and_segment():
+    track = [(0.0, 5.0, 0.25, 0.4, 0.2, 0.4), (5.0, 10.0, 0.80, 0.4, 0.2, 0.4)]
+    assert _active_side_at(track, 1.0) == ("L", 0)         # left speaker, segment 0
+    assert _active_side_at(track, 7.0) == ("R", 1)         # right speaker, segment 1 (index change == a hard cut)
+    assert _active_side_at(track, 99.0)[1] == 1            # past the end clamps to the last segment
+    assert _active_side_at(None, 3.0) == (None, -1)        # no track -> no side, no cut
+
+def test_pick_subject_prefers_active_side_then_largest():
+    L_small = (0.20, 0.5, 0.10, 0.45, 1000.0); R_big = (0.80, 0.5, 0.30, 0.40, 9000.0)
+    assert _pick_subject([L_small, R_big], "L") == L_small  # the active (left) speaker even though smaller
+    assert _pick_subject([L_small, R_big], "R") == R_big
+    assert _pick_subject([L_small, R_big], None) == R_big   # no side -> the largest face overall
+    assert _pick_subject([], "L") is None                   # no faces -> hold last crop
+
+def test_perframe_state_near_faces_size_consistently():
+    # among NEAR (well-framed) subjects, the bigger source face -> TALLER crop (less zoom) -> consistent size.
+    big = _perframe_state((0.5, 0.5, 0.30, 0.45), 1920, 1080, 1080, 1920, 0.42)
+    small_near = _perframe_state((0.5, 0.5, 0.22, 0.45), 1920, 1080, 1080, 1920, 0.42)
+    assert big[2] > small_near[2]                            # larger near face -> taller crop (zooms less)
+
+def test_perframe_state_far_face_is_held_wide_not_punched_in():
+    # a FAR/small face (< _SMALL_FACE_FRAC) is intentionally held WIDE (contextual) — NOT punched into the mic.
+    ch_max = min(1080, 1920 * 1920 / 1080)
+    far = _perframe_state((0.5, 0.5, 0.12, 0.45), 1920, 1080, 1080, 1920, 0.42)
+    assert far[2] >= ch_max / clipmod._ZOOM_MAX_FAR - 1      # clamped by the FAR cap (a wide shot), not the near cap
+    near = _perframe_state((0.5, 0.5, 0.30, 0.45), 1920, 1080, 1080, 1920, 0.42)
+    assert far[2] > near[2]                                  # the far subject's crop is WIDER than the near punch-in
+
+def test_render_reframed_prefers_perframe_when_it_succeeds(monkeypatch):
+    ran = {"perframe": False, "ffmpeg": False}
+    def fake_perframe(*a, **k):
+        ran["perframe"] = True
+        return True                                         # per-frame succeeds -> ffmpeg must NOT run
+    monkeypatch.setattr(clipmod, "_render_perframe", fake_perframe)
+    monkeypatch.setattr("fanops.clip.subprocess.run", lambda *a, **k: ran.__setitem__("ffmpeg", True))
+    r = render_reframed("src.mp4", "out.mp4", 0.0, 6.0, "9:16", src_w=1920, src_h=1080,
+                        focus=(0.5, 0.45, 0.3, 0.4), content_type=framing.CT_SINGLE)
+    assert ran["perframe"] is True and ran["ffmpeg"] is False and r.returncode == 0
+
+def test_render_reframed_centered_skips_perframe(monkeypatch):
+    # no subject (focus and track both None) -> centered single-pass, per-frame never invoked (byte-identical path).
+    ran = {"perframe": False}
+    monkeypatch.setattr(clipmod, "_render_perframe", lambda *a, **k: ran.__setitem__("perframe", True) or True)
+    monkeypatch.setattr("fanops.clip.subprocess.run", lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=""))
+    render_reframed("src.mp4", "out.mp4", 0.0, 6.0, "9:16", src_w=1920, src_h=1080)
+    assert ran["perframe"] is False                         # centered clips never pay the per-frame pass
+
+
 def test_speaker_track_no_extra_is_none(tmp_path, monkeypatch):
     monkeypatch.setattr(framing, "_cv2", lambda: None)                     # cv2 absent (CI) -> static path
     cfg = Config(root=tmp_path)
@@ -276,31 +408,38 @@ def _obs(loud_side, fhL=0.2, fhR=0.18):
     R = ((0.80, 0.45, fhR, 0.40), 50.0 if loud_side == "R" else 5.0)
     return {"L": L, "R": R}
 
+def _grid(n):
+    return lambda *a, **k: [f"g{i}" for i in range(n)]
+
 def test_speaker_track_follows_active_speaker(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     monkeypatch.setattr(framing, "_cv2", lambda: object())
     monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [f"g{i}" for i in range(40)])
-    obs = [_obs("L")] * 20 + [_obs("R")] * 20                               # 40 frames @4fps = 10s; LEFT then RIGHT
+    half = round(5.0 * framing._ASD_FPS)                                    # 5s LEFT then 5s RIGHT at the real ASD fps
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid(half * 2))
+    obs = [_obs("L")] * half + [_obs("R")] * half
     monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: obs)
     tr = framing.speaker_track(cfg, src, start=0.0, end=10.0, src_w=1920, src_h=1080)
     assert tr is not None and len(tr) == 2                                  # merged into LEFT-then-RIGHT
     assert len(tr[0]) == 6                                                  # 6-tuple: t0,t1,fx,fy,fh,ey
     assert abs(tr[0][2] - 0.22) < 0.01 and abs(tr[1][2] - 0.80) < 0.01      # fx follows the speaker
-    assert tr[0][4] == 0.2 and tr[1][4] == 0.18                            # face HEIGHT carried per segment (for zoom)
+    assert tr[0][4] == 0.2 and tr[1][4] == 0.18                            # face HEIGHT (p75) carried per segment (for zoom)
     assert tr[0][0] == 0.0 and tr[-1][1] == 10.0                            # covers the whole window
 
 def test_speaker_track_switch_is_responsive(tmp_path, monkeypatch):
-    # the switch lands ~1s after the real change (frame 20 = 5.0s), NOT the old ~4s lag.
+    # the committed switch lands within hysteresis (_ASD_HOLD_S) of the real change, NOT the old ~1-4s lag.
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     monkeypatch.setattr(framing, "_cv2", lambda: object())
     monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [f"g{i}" for i in range(40)])
-    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: [_obs("L")] * 20 + [_obs("R")] * 20)
+    half = round(5.0 * framing._ASD_FPS)
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid(half * 2))
+    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: [_obs("L")] * half + [_obs("R")] * half)
     tr = framing.speaker_track(cfg, src, start=0.0, end=10.0, src_w=1920, src_h=1080)
-    assert 5.0 <= tr[0][1] <= 6.0                                           # boundary within ~1s of the real switch
+    expected = (half + round(framing._ASD_HOLD_S * framing._ASD_FPS)) / framing._ASD_FPS   # commit = real turn + dwell
+    assert abs(tr[0][1] - expected) < 0.2                                   # boundary at ~5.0 + the short dwell, not laggy
+    assert tr[0][1] - 5.0 <= framing._ASD_HOLD_S + 0.2                      # dwell is small -> responsive
 
 def test_speaker_track_one_frame_blip_does_not_flip(tmp_path, monkeypatch):
     # a single louder-RIGHT frame inside an all-LEFT window must NOT cause a cut (hysteresis dwell).
@@ -308,8 +447,9 @@ def test_speaker_track_one_frame_blip_does_not_flip(tmp_path, monkeypatch):
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     monkeypatch.setattr(framing, "_cv2", lambda: object())
     monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [f"g{i}" for i in range(20)])
-    obs = [_obs("L")] * 20; obs[10] = _obs("R")                             # one blip
+    n = round(5.0 * framing._ASD_FPS)
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid(n))
+    obs = [_obs("L")] * n; obs[n // 2] = _obs("R")                          # one blip
     monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: obs)
     assert framing.speaker_track(cfg, src, start=0.0, end=5.0, src_w=1920, src_h=1080) is None   # 1 position -> None
 
@@ -319,8 +459,9 @@ def test_speaker_track_one_dominant_face_is_none(tmp_path, monkeypatch):
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     monkeypatch.setattr(framing, "_cv2", lambda: object())
     monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [f"g{i}" for i in range(20)])
-    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: [_obs("L")] * 20)
+    n = round(5.0 * framing._ASD_FPS)
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid(n))
+    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: [_obs("L")] * n)
     assert framing.speaker_track(cfg, src, start=0.0, end=5.0, src_w=1920, src_h=1080) is None
 
 
