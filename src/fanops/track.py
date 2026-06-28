@@ -67,16 +67,25 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     prior = post.state
     if prior not in (PostState.published, PostState.analyzed):
         return led
-    # Wholesale replace: each pull returns the full current snapshot, so latest-snapshot-wins is correct
-    # (a merge could retain a metric the backend later dropped). weights is the resolved override (or
-    # None -> default _W) threaded from pull_metrics. Post.metrics STAYS the LATEST snapshot exactly as
-    # today (no offset/captured_at keys) — every existing reader is byte-identical.
-    post.metrics = {**metrics, LIFT_SCORE: lift_score(metrics, weights)}
+    # CULM-6: a transiently-partial pull must not REGRESS a complete snapshot. Carry forward any PRIMARY
+    # weighted key the new row DROPS but the stored snapshot still had (a non-null value), then score the
+    # MERGED row so lift reflects the richest known truth, never a mid-cadence regression. The append-only
+    # metrics_series keeps every RAW row for forensics; this protects only the latest-wins `metrics`.
+    # Non-primary keys still follow latest-wins. A backend dropping a metric FOREVER keeps the carried value
+    # (the series shows the drop; latest-wins must not regress lift). weights is the resolved override
+    # (None -> default _W) threaded from pull_metrics; Post.metrics stays the LATEST snapshot (no offset/
+    # captured_at keys) so every existing reader is byte-identical.
+    prior_metrics = {k: v for k, v in (post.metrics or {}).items()
+                     if k not in (LIFT_SCORE, "lift_degraded", "lift_missing_keys")}
+    recovered = {k: prior_metrics[k] for k in _missing_high_weight(metrics, weights)
+                 if prior_metrics.get(k) is not None}
+    merged = {**metrics, **recovered}
+    post.metrics = {**merged, LIFT_SCORE: lift_score(merged, weights)}
     # T4: ADDITIVE honest-lift marker (NOT a scoring change — lift_score is untouched). When a primary
-    # weighted metric is absent from the row, the objective is partial; surface it so the operator does
-    # not trust a degraded lift as a full one. Marker keys are not weights, so a later lift_score ignores
-    # them. Absent any missing primary key -> no marker -> byte-identical to today.
-    missing = _missing_high_weight(metrics, weights)
+    # weighted metric is absent from the MERGED row, the objective is partial; surface it so the operator
+    # does not trust a degraded lift as a full one. Marker keys are not weights, so a later lift_score
+    # ignores them. Absent any missing primary key -> no marker -> byte-identical to today.
+    missing = _missing_high_weight(merged, weights)
     if missing:
         post.metrics["lift_degraded"] = True
         post.metrics["lift_missing_keys"] = missing

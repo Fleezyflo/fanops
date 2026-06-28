@@ -473,3 +473,15 @@ def test_pull_skips_post_with_fanops_token_submission_id(tmp_path):
     led = pull_metrics(led, cfg, list_posts=lambda w: rows)
     assert "lift_score" not in led.posts["p1"].metrics            # never attributed to a fake id
     assert led.posts["p1"].state is PostState.published           # not flipped to analyzed
+
+
+def test_partial_row_does_not_regress_a_complete_snapshot(tmp_path):
+    # CULM-6: a transiently-partial pull (backend momentarily drops a primary key) must NOT overwrite a
+    # complete snapshot and regress lift. Carry forward the dropped primary key; score the MERGED row.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"saves": 50, "shares": 20, "retention": 0.8})   # complete
+    full_lift = led.posts["p1"].metrics["lift_score"]
+    led = record_metrics(led, "p1", {"shares": 20, "retention": 0.8})               # partial: saves dropped
+    assert led.posts["p1"].metrics["saves"] == 50                                  # carried forward
+    assert led.posts["p1"].metrics["lift_score"] == full_lift                      # no regression
+    assert not led.posts["p1"].metrics.get("lift_degraded")                        # merged row is complete
