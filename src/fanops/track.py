@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.metrics_schedule import due_offset
-from fanops.models import LIFT_SCORE, PostState
+from fanops.models import LIFT_SCORE, PostState, is_real_submission_id
 from fanops.timeutil import iso_z
 
 # DEFAULT lift weights: saves/shares are the real algorithmic signal; likes ~ noise (deweighted).
@@ -146,8 +146,14 @@ def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = 
     # Resolve the operator's lift-weight override ONCE per pull (audit b) and thread it down so the
     # real metrics path scores against the tuned optimization target; None -> the default _W.
     weights = cfg.tuning().get("lift_weights")
-    by_sub = {p.submission_id: p for p in led.posts.values()
-              if p.submission_id and p.state in pollable}
+    log = get_logger(cfg)
+    by_sub = {}
+    for p in led.posts.values():
+        if not (p.submission_id and p.state in pollable): continue
+        if not is_real_submission_id(p.submission_id):
+            log("track", p.id, "skip_unreal_submission_id", sub=p.submission_id)   # CULM-3: fanops_ token -> can't attribute
+            continue
+        by_sub[p.submission_id] = p
     for row in fetch(window):
         post = by_sub.get(row.get("postSubmissionId"))
         if post is not None:

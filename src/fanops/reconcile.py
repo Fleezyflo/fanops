@@ -34,7 +34,7 @@ from fanops.config import Config
 from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.models import PostState
+from fanops.models import PostState, is_real_submission_id
 from fanops.text import safe_public_url
 from fanops.timeutil import parse_iso
 from datetime import datetime, timezone, timedelta
@@ -184,10 +184,23 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             continue
         status = (info.get("status") or "").lower()
         if status == "published":
-            led.posts[post.id] = post.model_copy(update={
-                "state": PostState.published,
-                "public_url": safe_public_url(info.get("publicUrl")) or post.public_url,   # M2: https-only or keep existing
-                "error_reason": None})                    # a transient poll-error reason must not survive a successful publish
+            # CULM-3: capture the REAL backend id the poll surfaced (Blotato postSubmissionId / Postiz+Zernio
+            # id), preferring it over the birth fanops_ token; never overwrite an already-real id with None.
+            real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
+                         if is_real_submission_id(info.get(k))), None)
+            new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
+            upd = {"state": PostState.published,
+                   "public_url": safe_public_url(info.get("publicUrl")) or post.public_url,   # M2: https-only or keep existing
+                   "error_reason": None}                  # a transient poll-error reason must not survive a successful publish
+            if new_sub: upd["submission_id"] = new_sub
+            led.posts[post.id] = post.model_copy(update=upd)
+            if new_sub is None:                           # published but still no real id -> attribution can't bind
+                log("reconcile", post.id, "published_no_real_id")   # first-class: a logged outcome, not silence
+            try:                                          # CULM-Q3: archive includes reconcile-recovered posts
+                from fanops.post.run import _archive_published   # lazy: reconcile must not import the publish stage eagerly
+                _archive_published(cfg, led.posts[post.id])
+            except Exception as exc:
+                log("reconcile", post.id, "archive_error", err=str(exc)[:120])   # fail-open: never block a recovered publish
             log("reconcile", post.id, "published")
         elif status == "failed":
             led.posts[post.id] = post.model_copy(update={

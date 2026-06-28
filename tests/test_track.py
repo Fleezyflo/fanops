@@ -461,3 +461,15 @@ def test_pull_degraded_metric_never_auto_validates(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub_post(led); led.save()
     pull_metrics(led, cfg, list_posts=lambda w: [{"postSubmissionId": "sub1", "metrics": _DEGRADED}])
     assert learning_validated(cfg) is False
+
+
+def test_pull_skips_post_with_fanops_token_submission_id(tmp_path):
+    # CULM-3: a published post still carrying the fanops_ birth token must NOT be attributed (the analytics
+    # endpoint 404s a fanops_ id) — it's a logged un-attributable outcome, never a silent freeze.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.published, submission_id="fanops_abc"))
+    rows = [{"postSubmissionId": "fanops_abc", "metrics": {"saves": 9}}]
+    led = pull_metrics(led, cfg, list_posts=lambda w: rows)
+    assert "lift_score" not in led.posts["p1"].metrics            # never attributed to a fake id
+    assert led.posts["p1"].state is PostState.published           # not flipped to analyzed

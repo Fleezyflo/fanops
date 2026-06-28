@@ -256,6 +256,14 @@ class Post(BaseModel):
                                         # published; old/in-flight rows fall back to scheduled_time in the grouper.
 
 
+def is_real_submission_id(sid: Optional[str]) -> bool:
+    # CULM-3: a REAL backend post id, NOT the birth client idempotency token (crosspost stamps
+    # submission_id="fanops_<hash>" so an ambiguous publish stays pollable). Analytics + status are keyed by
+    # the REAL id; a fanops_ token 404s. A published/analyzed post must carry a real id before pull_metrics
+    # attributes, else learning silently freezes (the post never reaches a non-degraded analyzed shape).
+    return bool(sid) and not sid.startswith("fanops_")
+
+
 class HookSource(str, Enum):
     per_account = "per_account"          # this account's OWN persona-authored hook (m.hooks_by_persona[handle])
     shared_fallback = "shared_fallback"  # fell back to the shared moment hook (m.hook)
