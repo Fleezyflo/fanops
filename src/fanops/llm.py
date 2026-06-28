@@ -35,6 +35,16 @@ class LlmRateLimitError(RuntimeError):
     Typed so the responder fails LOUDLY on a sustained rate limit instead of silently producing
     nothing (the asymmetry the publishers' backoff already fixed; the creative path lacked it)."""
 
+class LlmContextLimitError(RuntimeError):
+    """`claude -p` rejected the request as too large for the model context. Typed (AGENT-2) so the responder
+    turns a payload-too-big failure into a VISIBLE degraded gate state instead of an infinite-pending wedge."""
+
+_CONTEXT_LIMIT_MARKERS = ("prompt is too long", "context length", "exceeds the maximum", "too many tokens",
+                          "maximum context")
+def _is_context_limit(text: str) -> bool:
+    t = (text or "").lower()
+    return any(m in t for m in _CONTEXT_LIMIT_MARKERS)
+
 # HTTP statuses claude -p surfaces (in the stdout envelope's api_error_status) when the request is
 # rejected pre-processing and is therefore SAFE to retry. A 429 is the common one (usage spike).
 _RATELIMIT_STATUSES = {429, 503, 529}
@@ -119,7 +129,10 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
             _sleep(delay + random.uniform(0, delay))         # jitter so many gates don't retry in lockstep
             delay *= 2
         if r.returncode != 0:
-            raise RuntimeError(f"claude -p failed (rc={r.returncode}): {(r.stderr or r.stdout or '')[:300]}")
+            body = (r.stderr or r.stdout or "")[:300]
+            if _is_context_limit(body):                       # AGENT-2: a too-big payload -> typed, not generic
+                raise LlmContextLimitError(f"claude -p context limit (rc={r.returncode}): {body}")
+            raise RuntimeError(f"claude -p failed (rc={r.returncode}): {body}")
         try:
             env = json.loads(r.stdout)
         except Exception as e:

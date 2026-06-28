@@ -279,3 +279,23 @@ def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
     assert n == 1
     data = json.loads(response_path(cfg, "moment_hooks", key).read_text())
     assert data["hook"] == "the line you replay" and data["hooks_by_persona"]["@a"] and "request_id" in data
+
+
+# ---- AGENT-2: a context-limit failure becomes a LABELLED degraded source, never an infinite-pending wedge ----
+def test_context_limit_failure_marks_source_degraded_not_infinite_pending(tmp_path, monkeypatch):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmContextLimitError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 99.0, "transcript": [], "signal_peaks": []})
+    def boom(kind, payload): raise LlmContextLimitError("claude -p context limit: prompt is too long")
+    n = LlmResponder(cfg, model=boom).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "moments", "src_1").exists()        # no answer written
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.degraded_reason and "context limit" in src.degraded_reason.lower()   # LABELLED, not silent-pending

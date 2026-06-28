@@ -6,6 +6,7 @@ prompt + the exact pydantic JSON schema, validates the output, and writes the re
 is QUARANTINED (one bad gate logs + stays pending, never halts the others — mirrors advance()'s
 per-unit quarantine). get_responder() picks by FANOPS_RESPONDER and returns a WORKING llm responder."""
 from __future__ import annotations
+import contextlib
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,7 +15,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.models import MomentDecision, MomentHookDecision, MomentCastingDecision, CaptionSet
 from fanops.agentstep import pending, request_path, write_response, latest_request_id
-from fanops.llm import claude_json_meta, LlmTimeoutError
+from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, moment_casting_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
@@ -101,11 +102,35 @@ class LlmResponder:
             obj = model_cls(**out)          # decision (a): validate; ValidationError -> pending + log
             write_response(cfg, kind, key, obj.model_dump_json(indent=2))   # ATOMIC (audit): no torn-read window for a concurrent reader
             return True
+        except LlmContextLimitError as e:   # AGENT-2: a too-big payload is a LABELLED degraded state, never an
+            log("responder", f"{kind}:{key}", "context_limit", err=str(e)[:160])   # infinite-pending wedge
+            self._mark_context_limit(cfg, kind, key, str(e)[:160])
+            return False
         except ValidationError as e:        # present-but-invalid: log "invalid", gate stays pending
             log("responder", f"{kind}:{key}", "invalid", err=str(e)[:160])
         except Exception as e:              # transient model/CLI failure (incl. ToolchainMissing): log, leave pending
             log("responder", f"{kind}:{key}", "error", err=str(e)[:160])
         return False
+
+    def _mark_context_limit(self, cfg: Config, kind: str, key: str, reason: str) -> None:
+        """AGENT-2: park the wedged gate's source-owner with a VISIBLE degraded_reason so the operator sees WHY
+        it stalls (master principle: no silent degradation). Best-effort + a breadcrumb; the gate stays pending
+        (operator can shrink the source / re-request) but is now diagnosable. The captions gate keys on a clip
+        id, not a source, so it has no source-owner (sid=None) — the context_limit breadcrumb above still fires.
+        Loads + saves the ledger OUTSIDE the advance() flock (gates live outside the lock), so a fresh load+save
+        is safe. Ledger imported lazily to avoid a module cycle (ledger imports widely)."""
+        from fanops.ledger import Ledger
+        sid = key.split(".", 1)[0] if kind in ("moments", "moment_hooks", "moment_casting") else None
+        if sid is None: return
+        try:
+            led = Ledger.load(cfg)
+            src = led.sources.get(sid)
+            if src is not None:
+                led.sources[sid] = src.model_copy(update={"degraded_reason": f"agent gate {kind} over context limit: {reason}"})
+                led.save()
+        except Exception as e:              # best-effort: a load/save failure must not crash the responder pass
+            with contextlib.suppress(Exception):
+                get_logger(cfg)("responder", f"{kind}:{key}", "mark_degraded_failed", err=str(e)[:120])
 
     def answer_pending(self, cfg: Config) -> int:
         log = get_logger(cfg)
