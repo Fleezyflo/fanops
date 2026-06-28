@@ -89,7 +89,7 @@ def _produce_source(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> S
         return SourceResult(source_id, None)              # gone / inert — nothing to warm
     try:
         if s.state is SourceState.catalogued:
-            led = transcribe_source(led, cfg, source_id)
+            led = transcribe_source(led, cfg, source_id, lock_held=False)   # out-of-lock: length-scaled timeout
         if led.sources[source_id].state is SourceState.transcribed:
             led = detect_signals(led, cfg, source_id)
     except Exception as e:                                # fail-open: the commit pass retries in-lock
@@ -145,7 +145,7 @@ def _prewarm_sequential(cfg: Config, aspects: set[Fmt], log) -> None:
         if s.origin_kind == "third_party": continue       # M1: third-party assets are INERT to clip-production
         try:
             if s.state is SourceState.catalogued:
-                led = transcribe_source(led, cfg, s.id)
+                led = transcribe_source(led, cfg, s.id, lock_held=False)   # out-of-lock: length-scaled timeout
             if led.sources[s.id].state is SourceState.transcribed:
                 led = detect_signals(led, cfg, s.id)
         except Exception as e:                            # fail-open: the commit pass retries in-lock

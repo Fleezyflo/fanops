@@ -6,7 +6,8 @@ from __future__ import annotations
 from fanops.models import Batch, batch_id
 
 
-def create_batch(led, *, name: str, target_accounts, now_iso: str, active_handles: set[str] | None = None) -> Batch:
+def create_batch(led, *, name: str, target_accounts, now_iso: str, active_handles: set[str] | None = None,
+                 burn_subs: bool | None = None) -> Batch:
     """Validate + normalize at the boundary, mint a content-addressed id, idempotent-add to `led`.
     `name` is required non-blank (stripped → canonical, so the id is stable; ValueError otherwise).
     `target_accounts` is normalized to a stripped, blank-dropped, deduped HANDLE list preserving
@@ -24,6 +25,7 @@ def create_batch(led, *, name: str, target_accounts, now_iso: str, active_handle
     err = None
     if active_handles is not None and tgt and not (set(tgt) & active_handles):
         err = "targets no active account: " + ", ".join(sorted(tgt))   # advisory, mirrors ingest.py origin/batch_conflict
-    b = Batch(id=batch_id(name, now_iso), name=name, target_accounts=tgt, created_at=now_iso, error_reason=err)
+    b = Batch(id=batch_id(name, now_iso), name=name, target_accounts=tgt, created_at=now_iso, error_reason=err,
+              burn_subs=burn_subs)
     led.add_batch(b)
     return b

@@ -30,7 +30,8 @@ def register_run_routes(app, cfg):
     @app.post("/run/ingest")
     def do_run_ingest():
         return _run_panel(actions.run_ingest(cfg, batch_name=request.form.get("batch_name", ""),
-                                             target_accounts=request.form.getlist("target_accounts")))
+                                             target_accounts=request.form.getlist("target_accounts"),
+                                             burn_subs=(False if request.form.get("no_subs") else None)))
 
     @app.post("/run/pull")
     def do_run_pull():
@@ -42,9 +43,12 @@ def register_run_routes(app, cfg):
         # — the browser replacement for a Finder drag + Ingest. save_uploads owns validation + atomic
         # os.replace; save_uploads_and_ingest chains the ingest pass; the panel re-renders with fresh
         # counts (htmx outerHTML). The manual "Ingest inbox" button stays for a re-ingest / failed retry.
+        # "no_subs" checkbox (e.g. a music batch) -> burn_subs=False override; unchecked -> None -> global default.
+        burn_subs = False if request.form.get("no_subs") else None
         return _run_panel(actions.save_uploads_and_ingest(cfg, request.files.getlist("files"),
                                                            batch_name=request.form.get("batch_name", ""),
-                                                           target_accounts=request.form.getlist("target_accounts")))
+                                                           target_accounts=request.form.getlist("target_accounts"),
+                                                           burn_subs=burn_subs))
 
     @app.post("/run/advance")
     def do_run_advance():

@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Moment, MomentState, ClipState, Fmt
+from fanops.models import Source, Moment, MomentState, ClipState, Fmt, Batch
 from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for, fit_window, snap_window
 from fanops import overlay
 
@@ -255,6 +255,49 @@ def test_render_failopen_when_no_textfilter(tmp_path, mocker, monkeypatch):
     # one warning logged about the missing text filter
     log = cfg.log_path.read_text()
     assert "subtitles" in log.lower() and "without" in log.lower()
+
+
+def _render_with_batch_subs(tmp_path, mocker, monkeypatch, *, global_on, batch_burn):
+    """Render one transcript-carrying, HOOKLESS moment whose source belongs to a Batch with
+    burn_subs=batch_burn, while the GLOBAL cfg.burn_subs is global_on. Returns the -vf string +
+    the cfg so callers assert whether the TRANSCRIPT was burned. Hookless so the only on-screen
+    text in play is the transcript — isolating the per-batch override resolution."""
+    if global_on: monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    else: monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_batch(Batch(id="b_1", name="b", burn_subs=batch_burn))
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, batch_id="b_1",
+                          transcript=[{"start": 0.0, "end": 3.0, "text": "hello world"}]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook=""))   # hookless
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    return _vf_of(captured["cmd"]), cfg
+
+def test_batch_burn_subs_true_overrides_global_off(tmp_path, mocker, monkeypatch):
+    # GLOBAL burn_subs OFF, but the source's Batch sets burn_subs=True -> transcript IS burned for
+    # this talk batch (the override turns subs ON over a global default of OFF).
+    vf, cfg = _render_with_batch_subs(tmp_path, mocker, monkeypatch, global_on=False, batch_burn=True)
+    assert "subtitles=" in vf                                # batch override forced transcript on
+    assert list(cfg.clips.glob("*.ass")), "expected an .ass written from the transcript"
+
+def test_batch_burn_subs_false_overrides_global_on(tmp_path, mocker, monkeypatch):
+    # GLOBAL burn_subs ON, but the source's Batch sets burn_subs=False -> transcript is SUPPRESSED for
+    # this music batch (lyric subs hurt). Hookless source -> the clip carries no burned text at all.
+    vf, cfg = _render_with_batch_subs(tmp_path, mocker, monkeypatch, global_on=True, batch_burn=False)
+    assert "subtitles=" not in vf                            # batch override suppressed transcript
+    assert vf == reframe_filter("9:16", 1920, 1080)         # plain reframe only
+    assert not list(cfg.clips.glob("*.ass"))                # no .ass written
+
+def test_batch_burn_subs_none_falls_back_to_global(tmp_path, mocker, monkeypatch):
+    # A Batch with burn_subs=None defers to the global: global ON -> transcript burns; the None case
+    # must NOT suppress (proves the override is None-aware, not just truthy-aware).
+    vf, _ = _render_with_batch_subs(tmp_path, mocker, monkeypatch, global_on=True, batch_burn=None)
+    assert "subtitles=" in vf                                # None -> global ON -> burned
 
 
 def _fake_run_writing_clip(captured):
@@ -678,6 +721,7 @@ def test_visual_start_provenance_honest_with_transcript(tmp_path, mocker, monkey
 def test_render_moment_visual_start_off_does_not_probe(tmp_path, mocker, monkeypatch):
     # FANOPS_VISUAL_START=0 -> no signalstats probe at all, start unchanged, first_frame_kind None.
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")   # isolate visual_start: smart framing is a SEPARATE keyframe prober (default ON, fires when the [framing] extra is present)
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
