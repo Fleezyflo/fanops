@@ -222,6 +222,60 @@ def test_speaker_track_one_dominant_face_is_none(tmp_path, monkeypatch):
     assert framing.speaker_track(cfg, src, start=0.0, end=20.0, src_w=1920, src_h=1080) is None
 
 
+# ---------------------------------------------------------------- detect_window (single grid pass) ----
+def test_detect_window_builds_per_frame_face_stats(tmp_path, monkeypatch):
+    # ONE grid pass -> per-frame list of [cx,cy,fh,ey] faces, cached to a .detect.json sidecar.
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    faces = {"g0": [(0.25, 0.50, 0.20, 0.45)],
+             "g1": [(0.25, 0.50, 0.20, 0.45), (0.78, 0.45, 0.18, 0.40)]}
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: ["g0", "g1"])
+    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: faces[fp])
+    st = framing.detect_window(cfg, src, start=10.0, end=14.0)
+    assert st is not None
+    assert st["frames"] == [[[0.25, 0.5, 0.2, 0.45]],
+                            [[0.25, 0.5, 0.2, 0.45], [0.78, 0.45, 0.18, 0.4]]]
+    assert st["fps"] == framing._DETECT_FPS
+    sidecar = cfg.agent_io / "framing" / "s1.detect.json"
+    assert sidecar.exists() and json.loads(sidecar.read_text())["v"] == framing._DETECT_V
+
+def test_detect_window_no_cv2_is_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(framing, "_cv2", lambda: None)             # extra absent -> None (fail-open)
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    assert framing.detect_window(cfg, src, start=10.0, end=14.0) is None
+
+def test_detect_window_empty_grid_is_none(tmp_path, monkeypatch):
+    # ffmpeg gave no frames -> None (fail-open to center crop), never a crash.
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [])
+    assert framing.detect_window(cfg, src, start=10.0, end=14.0) is None
+
+def test_detect_window_caches_and_skips_reprobe(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    calls = {"n": 0}
+    def _grid(*a, **k):
+        calls["n"] += 1; return ["g0"]
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid)
+    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: [(0.5, 0.5, 0.2, 0.45)])
+    a = framing.detect_window(cfg, src, start=10.0, end=14.0)
+    b = framing.detect_window(cfg, src, start=10.0, end=14.0)        # cache hit -> no second grid
+    assert a == b and calls["n"] == 1
+
+def test_detect_sidecar_version_invalidated(tmp_path):
+    p = tmp_path / "old.detect.json"
+    p.write_text(json.dumps({"v": framing._DETECT_V - 1, "windows": {"10.0-14.0": {"frames": []}}}))
+    assert framing._load_detect_cache(p) == {}                       # stale version -> recompute
+
+
 # ---------------------------------------------------------------- render path threading ----
 def _src_moment(cfg, *, start=10, end=14, dur=120.0):
     led = Ledger.load(cfg)

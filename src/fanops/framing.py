@@ -84,6 +84,93 @@ def _load_cache(path: Path) -> dict:
     except (OSError, json.JSONDecodeError, TypeError):
         return {}                                             # corrupt sidecar -> recompute (overwrites)
 
+# ---- Single detection pass (T2): ONE grid of frames per (source,window), every face's normalized box +
+# eye-line, persisted so classify_window / subject_focus / speaker_track / motion_saliency all read the SAME
+# stats — not four ffmpeg passes. The grid sidecar is versioned independently of the focus/track sidecar. ----
+_DETECT_V = 1               # bump to invalidate cached grid stats when the detection SHAPE changes
+_DETECT_FPS = 4.0           # grid sampling rate: 4 frames/s is fine for ~1s active-speaker decisions, cheap in one pass
+
+def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, float]]:
+    """Every face in one frame as (cx, cy, fh, ey) normalized to [0,1]: center x/y, face-box HEIGHT
+    (drives zoom-to-consistent-size), and EYE-LINE y (drives eyeline composition). YuNet rows are
+    [x,y,w,h, rEye(4,5), lEye(6,7), nose(8,9), rMouth(10,11), lMouth(12,13), score]. Fail-open: an
+    unreadable frame / missing landmark -> [] or ey=cy, never raises."""
+    out: list[tuple[float, float, float, float]] = []
+    try:
+        img = cv2.imread(img_path)
+        if img is None: return out
+        h, w = img.shape[:2]
+        if not (w and h): return out
+        det.setInputSize((w, h))
+        _n, faces = det.detect(img)
+        if faces is None: return out
+        for f in faces:
+            cx = min(1.0, max(0.0, (float(f[0]) + float(f[2]) / 2) / w))
+            cy = min(1.0, max(0.0, (float(f[1]) + float(f[3]) / 2) / h))
+            fh = min(1.0, max(0.0, float(f[3]) / h))
+            try: ey = min(1.0, max(0.0, ((float(f[5]) + float(f[7])) / 2) / h))   # eye-line from rEye/lEye y
+            except (IndexError, ValueError, TypeError): ey = cy                    # no landmark -> face center
+            out.append((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4)))
+    except Exception:
+        return out                                            # a single bad frame never sinks the window
+    return out
+
+def _detect_sidecar(cfg, source_id: str) -> Path:
+    return cfg.agent_io / "framing" / f"{source_id}.detect.json"
+
+def _load_detect_cache(path: Path) -> dict:
+    try:
+        d = json.loads(path.read_text())
+        if d.get("v") != _DETECT_V: return {}                 # stale detection shape -> recompute
+        return d.get("windows") or {}
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+
+def detect_window(cfg, src, *, start: float, end: float) -> dict | None:
+    """ONE grid pass over [start,end) -> {fps, frames:[[ [cx,cy,fh,ey], ... per face ], ... per frame ]},
+    cached per (source, window) in a `<source_id>.detect.json` sidecar. This is the SINGLE detection that
+    feeds classify_window + subject_focus + speaker_track + motion_saliency. Returns None on every fail-open
+    path (no [framing] extra, no detector, no frames, any error) -> callers fall back to the centered crop.
+    NEVER raises."""
+    if not (end > start):
+        return None
+    path = _detect_sidecar(cfg, getattr(src, "id", "nosrc"))
+    cache = _load_detect_cache(path)
+    key = _wkey(start, end)
+    if key in cache:
+        return cache[key]                                     # cached stats (may be a real dict) -> no re-probe
+    cv2 = _cv2()
+    if cv2 is None:
+        return None
+    det = _detector(cv2)
+    if det is None:
+        return None
+    from fanops import keyframes
+    tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_grid_{key}"
+    frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
+                                           fps=_DETECT_FPS, out_dir=tmp, width=_KF_WIDTH)
+    stats = None
+    try:
+        if frames:
+            stats = {"fps": _DETECT_FPS, "frames": [[list(t) for t in _detect_faces(cv2, det, fp)] for fp in frames]}
+    except Exception:
+        stats = None                                          # fail-open by contract
+    finally:
+        for fp in frames:
+            with contextlib.suppress(OSError):
+                os.unlink(fp)
+        with contextlib.suppress(OSError):
+            os.rmdir(tmp)
+    if stats is None:
+        return None
+    cache[key] = stats
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"v": _DETECT_V, "windows": cache}))
+    except OSError:
+        return stats                                          # cache write failure just re-probes next time
+    return stats
+
 _ASD_BIN_S = 2.0             # active-speaker decision granularity: re-pick the on-screen speaker every ~2s
 _ASD_FRAMES = 4             # frames per bin for the mouth-motion measure (>=2 needed for a temporal diff)
 _ASD_RATIO = 1.25          # the louder mouth must out-move the other by this factor to STEAL the frame (else hold)
