@@ -6,7 +6,7 @@
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Clip, PostState, ClipState, Platform
-from fanops.post.run import publish_post
+from fanops.post.run import publish_post, publish_due
 
 
 def _queued(led, cfg, pid="p1", cid="clip_1", when="2999-01-01T00:00:00Z"):
@@ -66,3 +66,27 @@ def test_publish_post_propagates_fatal_auth(tmp_path, monkeypatch):
         publish_post(cfg, "p1"); assert False, "expected BlotatoAuthError to propagate"
     except BlotatoAuthError:
         pass
+
+
+def test_empty_integration_id_is_skipped_not_posted(tmp_path, monkeypatch):
+    # CULM-1: a live post whose channel resolves to an EMPTY integration id must NOT be POSTed
+    # (it would ship integration:{id:""} -> a silent dead post). It stays queued + breadcrumbs.
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
+    with Ledger.transaction(cfg) as l: l.posts["p1"].account_id = ""           # never-mapped channel reached queued
+    monkeypatch.setattr("fanops.post.run.get_poster",
+                        lambda cfg, backend=None: (_ for _ in ()).throw(AssertionError("must not POST")))
+    out = publish_due(cfg, now="2000-01-02T00:00:00Z")
+    assert out["no_integration_id"] == 1 and out["published"] == 0
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued              # stays queued, re-driveable
+
+def test_timeless_queued_post_does_not_auto_publish(tmp_path, monkeypatch):
+    # CULM-4: a queued post with NO scheduled_time must NOT auto-publish via publish_due (defense-in-depth
+    # on no-auto-publish). It parks (stays queued); publish_post (manual) is unaffected.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)                          # dryrun
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when=None)                            # queued but NO scheduled_time
+    out = publish_due(cfg, now="2030-01-01T00:00:00Z")
+    assert out["published"] == 0
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued              # parked, never published

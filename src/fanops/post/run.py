@@ -142,6 +142,16 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
     if account_id and account_id != post.account_id:   # #1: a Go-Live integration REMAP since crosspost
         get_logger(cfg)("publish", post_id, "account_id_refreshed", was=post.account_id, new=account_id)
         post.account_id = account_id                    # send the CURRENT integration id, not the frozen one
+    if backend != "dryrun" and not (post.account_id or "").strip():
+        # CULM-1: a live POST with an empty integration id ships integration:{id:""} (postiz.py) — a silent
+        # dead post. Never construct it. Un-claim to queued (it never went to the network) + breadcrumb; a
+        # later Go-Live map fixes the channel. Not needs_reconcile (nothing was sent), not failed (recoverable).
+        with Ledger.transaction(cfg) as led2:
+            p2 = led2.posts.get(post_id)
+            if p2 is not None and p2.state is PostState.submitting:
+                p2.state = PostState.queued
+        get_logger(cfg)("publish", post_id, "no_integration_id", account=post.account, platform=post.platform.value)
+        return None
     poster = get_poster(cfg, backend)                  # per-account backend (slice 2), default = global
     try:
         _ensure_media(led, cfg, post, backend)
@@ -181,7 +191,11 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
     """Schedule gate (FIX F12): True if the post is due now. A malformed/naive scheduled_time (hand-edit,
     corruption) is a per-post FAILURE — marked failed in a short txn (FIX F54), returns False."""
     if not post.scheduled_time:
-        return True                                    # no schedule => due now
+        # CULM-4: a queued post with NO scheduled_time is NOT due — it parks (breadcrumb, stays queued), so a
+        # timeless queued post can no longer auto-publish (no-auto-publish defense-in-depth; clear_time
+        # un-approves first, but enforce it in code not by convention). publish_post (manual) is unaffected.
+        get_logger(cfg)("publish", post.id, "timeless_queued_parked", account=post.account, platform=post.platform.value)
+        return False
     try:
         return _parse(post.scheduled_time) <= cutoff
     except (ValueError, TypeError) as exc:
@@ -206,16 +220,21 @@ def publish_due(cfg: Config, *, now: str | None = None) -> dict:
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)
     log = get_logger(cfg)
-    published = no_provider = 0
+    published = no_provider = no_integration_id = 0
     for post in due:
         provider = _post_provider(cfg, accounts, post)
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
             no_provider += 1
             log("publish", post.id, "no_provider", account=post.account, platform=post.platform.value)
             continue
-        if _publish_one(cfg, post.id, provider, account_id=_resolve_publish_account_id(accounts, post)) == PostState.published.value:
+        acct_id = _resolve_publish_account_id(accounts, post)
+        if provider != "dryrun" and not ((acct_id or post.account_id or "").strip()):
+            no_integration_id += 1                     # CULM-1: never claim a post we can't address; stays queued
+            log("publish", post.id, "no_integration_id", account=post.account, platform=post.platform.value)
+            continue
+        if _publish_one(cfg, post.id, provider, account_id=acct_id) == PostState.published.value:
             published += 1
-    return {"due": len(due), "published": published, "no_provider": no_provider}
+    return {"due": len(due), "published": published, "no_provider": no_provider, "no_integration_id": no_integration_id}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:
