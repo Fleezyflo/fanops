@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import requests
 from fanops.config import Config
+from fanops.controlio import write_json_atomic
 from fanops.errors import CutoverError
 from fanops.post.blotato_base import BASE_URL
 from fanops.post.blotato_rest import _extract_submission_id
@@ -40,9 +41,11 @@ def _load_state(cfg: Config) -> dict:
         return {}                                            # corrupt scratch file -> start clean, never crash
 
 def _save_state(cfg: Config, patch: dict) -> None:
-    p = cfg.cutover_path
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({**_load_state(cfg), **patch}, indent=2, default=str))
+    # XC-3: atomic (tmp + os.replace) like every other control file (controlio.write_json_atomic). A crash
+    # mid-write must leave the PRIOR valid cutover.json, never a torn one — a torn file reads fail-closed
+    # (validation_gate.learning_validated -> False) and would silently RE-FREEZE learning. write_json_atomic
+    # serializes the dict itself (every persisted value here is JSON-native), so drop the manual json.dumps.
+    write_json_atomic(cfg.cutover_path, {**_load_state(cfg), **patch})
 
 
 def reconcile_fields(metrics: dict) -> dict:

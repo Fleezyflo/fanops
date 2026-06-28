@@ -15,6 +15,7 @@ is sent as auth by PostizMetricsClient and never logged/echoed here (mirror its 
 from __future__ import annotations
 import json
 from fanops.config import Config
+from fanops.controlio import write_json_atomic
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.track import _W
@@ -80,9 +81,10 @@ def load_verdict(cfg: Config) -> dict:
 
 
 def _persist_verdict(cfg: Config, report: dict) -> None:
-    p = cfg.learn_doctor_path
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(report, indent=2, default=str))
+    # XC-3: atomic like every other control file (controlio.write_json_atomic). A crash mid-write must leave
+    # the PRIOR verdict, never a torn sidecar (load_verdict reads fail-closed -> {} -> M4 treats as 'not
+    # validated'). write_json_atomic serializes the dict (every value here is JSON-native), so no json.dumps.
+    write_json_atomic(cfg.learn_doctor_path, report)
 
 
 def cmd_learn_doctor(cfg: Config, *, list_posts=None) -> int:

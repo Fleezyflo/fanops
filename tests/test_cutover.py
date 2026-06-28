@@ -225,3 +225,32 @@ def test_post_non_2xx_withholds_response_body(tmp_path, monkeypatch):
     msg = str(ei.value)
     assert "BODY_SENTINEL" not in msg                         # raw body withheld
     assert "500" in msg and "withheld" in msg.lower()         # status kept, body explicitly withheld
+
+
+# ---- WS-R1 XC-3: cutover.json written atomically (no torn file re-freezes learning) -------------
+def test_save_state_is_atomic_no_torn_file_on_crash(tmp_path, monkeypatch):
+    # XC-3: a crash mid-write leaves the PRIOR valid cutover.json (atomic os.replace), never a half-file.
+    # Simulate the crash by making os.replace raise AFTER the tmp is written, then assert the original stands.
+    from fanops import controlio
+    cfg = Config(root=tmp_path)
+    cutover._save_state(cfg, {"metrics_confirmed": True, "submission_id": "sub_1"})   # establish a valid file
+    good = cfg.cutover_path.read_text()
+    real_replace = controlio.os.replace
+    def boom(src, dst):
+        raise OSError("simulated crash during replace")
+    monkeypatch.setattr(controlio.os, "replace", boom)
+    with pytest.raises(OSError):
+        cutover._save_state(cfg, {"metrics_confirmed": False})                        # the "crash"
+    monkeypatch.setattr(controlio.os, "replace", real_replace)
+    assert cfg.cutover_path.read_text() == good           # prior valid file intact — never torn
+    # and no leftover .tmp turd in the control dir (cleanup-on-failure)
+    assert not list(cfg.cutover_path.parent.glob(cfg.cutover_path.name + ".*tmp"))
+
+
+def test_learning_validated_still_fail_closed_on_corrupt_file(tmp_path):
+    # The fail-closed read MUST still hold: a genuinely-corrupt cutover.json reads as unvalidated.
+    from fanops.validation_gate import learning_validated
+    cfg = Config(root=tmp_path)
+    cfg.cutover_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.cutover_path.write_text("{ this is not json")
+    assert learning_validated(cfg) is False
