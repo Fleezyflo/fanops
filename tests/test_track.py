@@ -485,3 +485,22 @@ def test_partial_row_does_not_regress_a_complete_snapshot(tmp_path):
     assert led.posts["p1"].metrics["saves"] == 50                                  # carried forward
     assert led.posts["p1"].metrics["lift_score"] == full_lift                      # no regression
     assert not led.posts["p1"].metrics.get("lift_degraded")                        # merged row is complete
+
+
+def test_frozen_learning_logs_no_analyzed_reason(tmp_path, monkeypatch):
+    # XC-4: a frozen-learning state must be a logged outcome, not silence. Live + no analyzed row yet ->
+    # frozen_no_analyzed_metric breadcrumb.
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    from fanops.track import _auto_validate_metrics_shape
+    _auto_validate_metrics_shape(led, cfg)
+    assert "frozen_no_analyzed_metric" in cfg.log_path.read_text()
+
+def test_frozen_all_degraded_reason(tmp_path, monkeypatch):
+    # XC-4: live + analyzed rows exist but all degraded (a primary weighted key absent) -> a distinct reason.
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    record_metrics(led, "p1", {"reach": 9000})                                 # degraded (primary keys absent)
+    from fanops.track import _auto_validate_metrics_shape
+    _auto_validate_metrics_shape(led, cfg)
+    assert "frozen_all_degraded" in cfg.log_path.read_text()

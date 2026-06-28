@@ -182,13 +182,20 @@ def _auto_validate_metrics_shape(led: Ledger, cfg: Config) -> None:
     `learning_validated` unfreezes with NO operator probe. dryrun never reaches a real analytics row, so it
     never falsely unfreezes; a DEGRADED row (a primary weighted key absent) is the unproven/mis-keyed case
     the gate exists for and never stamps. Idempotent (skips once confirmed); the manual cutover still works."""
+    log = get_logger(cfg)
     if not cfg.is_live:
-        return                                                   # no live analytics -> the shape is never proven here
+        log("learning", "auto_validate", "frozen_not_live"); return   # dryrun never proves a real shape
     from fanops.validation_gate import learning_validated
     if learning_validated(cfg):
-        return                                                   # already proven (manual cutover or a prior pull)
-    proven = any(p.state is PostState.analyzed and LIFT_SCORE in p.metrics and not p.metrics.get("lift_degraded")
-                 for p in led.posts.values())
-    if proven:
-        from fanops import cutover
-        cutover._save_state(cfg, {"metrics_confirmed": True, "metrics_confirmed_auto": True})  # real data proved it
+        return                                                   # already proven -> not frozen, nothing to explain
+    analyzed = [p for p in led.posts.values() if p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
+    proven = next((p for p in analyzed if not p.metrics.get("lift_degraded")), None)
+    if proven is None:                                           # XC-4: name WHY learning stays frozen, per branch
+        if not analyzed:
+            log("learning", "auto_validate", "frozen_no_analyzed_metric")    # no analyzed row yet (waiting on a pull)
+        else:
+            log("learning", "auto_validate", "frozen_all_degraded", n=len(analyzed))   # rows exist, all missing a primary key
+        return
+    from fanops import cutover
+    cutover._save_state(cfg, {"metrics_confirmed": True, "metrics_confirmed_auto": True})  # real data proved it
+    log("learning", "auto_validate", "unfrozen_on_real_metric", post=proven.id)   # the proof landed
