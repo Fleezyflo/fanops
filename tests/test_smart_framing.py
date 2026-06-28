@@ -123,6 +123,16 @@ def test_fingerprint_focus_is_additive():
     other = _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "", focus=(0.2, 0.5))
     assert other != with_focus                      # a DIFFERENT focus -> a different fp
 
+def test_fingerprint_face_height_and_content_type_bust():
+    # adding face-height/eyeline (zoom) or changing content_type changes the bytes -> must re-render once.
+    base2 = _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "", focus=(0.5, 0.5))
+    quad = _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "", focus=(0.5, 0.5, 0.2, 0.4), content_type="single-speaker-talk")
+    assert quad != base2                             # a sized/eyelined focus -> new fp (zoom changes the pixels)
+    music = _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "", focus=(0.5, 0.5, 0.2, 0.4), content_type="music")
+    assert music != quad                            # music zooms wider -> different bytes -> different fp
+    # a 2-tuple focus with no content_type stays byte-identical to the pre-zoom fingerprint (no needless re-render)
+    assert _render_fingerprint("s.mp4", 0.0, 5.0, "9:16", 1920, 1080, "", focus=(0.5, 0.5), content_type=None) == base2
+
 
 # ---------------------------------------------------------------- Config.smart_framing flag ----
 def test_smart_framing_defaults_on(tmp_path, monkeypatch):
@@ -429,6 +439,61 @@ def test_classify_stats_none_is_no_people():
     assert framing.classify_window(None, src, start=10.0, end=14.0, stats=None) == framing.CT_NOPEOPLE
 
 
+# ---------------------------------------------------------------- _resolve_framing strategy router ----
+def test_resolve_multi_uses_track(tmp_path, monkeypatch):
+    from fanops.clip import _resolve_framing
+    cfg = Config(root=tmp_path); src = _talk_src()
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[[0.2, 0.5, 0.2, 0.45]]]})
+    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MULTI)
+    monkeypatch.setattr(framing, "speaker_track", lambda *a, **k: [(0.0, 5.0, 0.22, 0.5, 0.2, 0.45), (5.0, 10.0, 0.8, 0.45, 0.2, 0.4)])
+    focus, track, ct = _resolve_framing(cfg, src, 0.0, 10.0)
+    assert track and focus is None and ct == framing.CT_MULTI
+
+def test_resolve_multi_falls_to_single_when_track_refuses(tmp_path, monkeypatch):
+    from fanops.clip import _resolve_framing
+    cfg = Config(root=tmp_path); src = _talk_src()
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": []})
+    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MULTI)
+    monkeypatch.setattr(framing, "speaker_track", lambda *a, **k: None)        # not a real 2-shot
+    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.5, 0.5, 0.22, 0.4))
+    focus, track, ct = _resolve_framing(cfg, src, 0.0, 10.0)
+    assert track is None and focus == (0.5, 0.5, 0.22, 0.4) and ct == framing.CT_SINGLE
+
+def test_resolve_single_uses_focus(tmp_path, monkeypatch):
+    from fanops.clip import _resolve_framing
+    cfg = Config(root=tmp_path); src = _talk_src()
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": []})
+    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_SINGLE)
+    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.6, 0.45, 0.25, 0.4))
+    focus, track, ct = _resolve_framing(cfg, src, 0.0, 10.0)
+    assert focus == (0.6, 0.45, 0.25, 0.4) and track is None and ct == framing.CT_SINGLE
+
+def test_resolve_music_no_face_uses_saliency(tmp_path, monkeypatch):
+    from fanops.clip import _resolve_framing
+    cfg = Config(root=tmp_path); src = _talk_src()
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[]]})
+    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MUSIC)
+    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: None)        # no face
+    monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: (0.7, 0.4))
+    focus, track, ct = _resolve_framing(cfg, src, 0.0, 10.0)
+    assert focus == (0.7, 0.4) and track is None and ct is None                # saliency 2-tuple, NO zoom
+
+def test_resolve_no_people_centers_when_no_motion(tmp_path, monkeypatch):
+    from fanops.clip import _resolve_framing
+    cfg = Config(root=tmp_path); src = _talk_src()
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)
+    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
+    monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
+    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)         # centered (today)
+
+def test_resolve_smart_framing_off_is_none(tmp_path, monkeypatch):
+    from fanops.clip import _resolve_framing
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    cfg = Config(root=tmp_path); src = _talk_src()
+    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.8, 0.5, 0.2, 0.4))   # would return, but gated off
+    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)
+
+
 # ---------------------------------------------------------------- render path threading ----
 def _src_moment(cfg, *, start=10, end=14, dur=120.0):
     led = Ledger.load(cfg)
@@ -454,7 +519,9 @@ def test_account_cut_applies_detected_focus(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "1")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)        # isolate the reframe (no subs chain)
-    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.8, 0.5))   # a detected subject on the right
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[[0.8, 0.5, 0.2, 0.45]]]})
+    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_SINGLE)
+    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.8, 0.5))   # a detected subject (2-tuple -> no zoom)
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))

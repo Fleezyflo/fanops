@@ -416,17 +416,27 @@ def _saliency_centroid(cv2, frames: list[str]):
     fy = float((ys * acc).sum() / total) / max(1, h - 1)
     return (round(min(1.0, max(0.0, fx)), 4), round(min(1.0, max(0.0, fy)), 4))
 
+def _saliency_sidecar(cfg, source_id: str) -> Path:
+    return cfg.agent_io / "framing" / f"{source_id}.saliency.json"
+
 def motion_saliency(cfg, src, *, start: float, end: float):
     """For music / silent / no-people windows with NO face to lock: the centroid of inter-frame motion, so
     the crop drifts toward where the action is instead of a blind center. ONE grid pass; (fx,fy) or None
-    (fail-open -> centered). NEVER raises."""
+    (fail-open -> centered). CACHED per (source, window) — like detect_window/speaker_track — so the in-lock
+    commit re-probes nothing and the warm-artifact skip never re-spawns ffmpeg. NEVER raises."""
     if not (end > start):
         return None
+    path = _saliency_sidecar(cfg, getattr(src, "id", "nosrc"))
+    cache = _load_cache(path)
+    key = _wkey(start, end)
+    if key in cache:
+        e = cache[key]
+        return tuple(e) if e else None
     cv2 = _cv2()
     if cv2 is None:
-        return None
+        return None                                           # extra absent -> don't cache (may install later)
     from fanops import keyframes
-    tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_sal_{_wkey(start, end)}"
+    tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_sal_{key}"
     frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
                                            fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH)
     try:
@@ -439,4 +449,10 @@ def motion_saliency(cfg, src, *, start: float, end: float):
                 os.unlink(f)
         with contextlib.suppress(OSError):
             os.rmdir(tmp)
+    cache[key] = list(result) if result else None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"v": _SIDECAR_V, "windows": cache}))
+    except OSError:
+        return result                                         # cache write failure just re-probes next time
     return result

@@ -388,19 +388,52 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
 # determines the rendered bytes (source, window, aspect, source dims, the burned .ass text), so the
 # lock-free pre-warm and the in-lock commit agree on when an existing mp4 may be reused. This is what
 # lets the heavy ffmpeg run OUTSIDE the ledger lock and the commit pass skip it.
+_REFRAME_GEOM_V = 1          # bump to force re-render of ZOOM/eyeline/dynamic clips after a geometry-math change
+
 def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
                         src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
-                        focus: tuple[float, float] | None = None, track: list | None = None) -> str:
+                        focus: tuple | None = None, track: list | None = None,
+                        content_type: str | None = None) -> str:
     payload = {"src": src_path, "cs": round(cs, 3), "ce": round(ce, 3), "aspect": aspect_value,
                "w": src_w, "h": src_h, "ass": ass_text}
     if top_bias:                                          # additive: absent key -> byte-identical fp to today
         payload["top_bias"] = True
-    if focus is not None:                                 # additive: smart-framing offset -> re-render on change
-        payload["focus"] = [round(focus[0], 3), round(focus[1], 3)]
-    if track:                                             # additive: active-speaker cut track -> re-render on change
-        payload["track"] = [[round(s[0], 2), round(s[1], 2), round(s[2], 3), round(s[3], 3)] for s in track]
+    if focus is not None:                                 # ALL elements: a 2-tuple hashes [fx,fy] (== old);
+        payload["focus"] = [round(v, 3) for v in focus]  # a 4-tuple adds fh,ey -> zoom changes bytes -> re-render
+    if track:                                             # full 6-tuple (fh,ey carried) -> dynamic crop re-renders
+        payload["track"] = [[round(s[0], 2), round(s[1], 2)] + [round(v, 3) for v in s[2:]] for s in track]
+    geom = bool(track) or (focus is not None and len(focus) > 2)   # zoom/eyeline/dynamic present?
+    if content_type and geom:                            # content_type only alters bytes when a zoom applies
+        payload["ct"] = content_type
+    if geom:                                              # version the new geometry so a future change can bust it
+        payload["geom"] = _REFRAME_GEOM_V
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
+
+def _resolve_framing(cfg: Config, src, cs: float, ce: float):
+    """Pick the reframe strategy for this window: (focus, track, content_type). Classify the window once,
+    then route — active-speaker TRACK only for real multi-speaker talk; subject-lock FOCUS (zoomed) for a
+    single/music/silent subject; motion-SALIENCY (a no-zoom 2-tuple) for music/silent/no-people with no face;
+    else centered (None,None,None). Gated entirely by cfg.smart_framing so OFF is byte-identical to today.
+    Every framing call is fail-open (None), so any miss degrades to the centered crop."""
+    if not cfg.smart_framing:
+        return None, None, None
+    stats = framing.detect_window(cfg, src, start=cs, end=ce)
+    ct = framing.classify_window(cfg, src, start=cs, end=ce, stats=stats)
+    if ct == framing.CT_MULTI:
+        track = framing.speaker_track(cfg, src, start=cs, end=ce, src_w=src.width or 0, src_h=src.height or 0)
+        if track:
+            return None, track, ct
+        ct = framing.CT_SINGLE                            # classed multi but not a real 2-shot -> single lock
+    if ct in (framing.CT_SINGLE, framing.CT_MUSIC, framing.CT_SILENT):
+        focus = framing.subject_focus(cfg, src, start=cs, end=ce)
+        if focus is not None:
+            return focus, None, ct
+    if ct in (framing.CT_MUSIC, framing.CT_SILENT, framing.CT_NOPEOPLE):
+        sal = framing.motion_saliency(cfg, src, start=cs, end=ce)   # follow the action when there's no face
+        if sal is not None:
+            return sal, None, None                       # 2-tuple -> pan only, NO zoom (no subject to size to)
+    return None, None, None                              # centered crop (today)
 
 def _fingerprint_matches(fp_path, fp: str) -> bool:
     try:
@@ -454,10 +487,12 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     # crop onto the speaker/action instead of the blind top/center guess. None (no [framing] extra / no
     # detection) -> today's centered crop. Resolved here (window final) + cached, so the in-lock commit
     # re-probes nothing — and it feeds BOTH the fingerprint and the render so a fp-match can't reuse a stale crop.
-    # Active-speaker first: in a 2-shot the crop CUTS to whoever's talking (a time-varying window); a
-    # single-camera window yields None -> fall back to the STATIC subject_focus (one crop) -> centered.
-    track = framing.speaker_track(cfg, src, start=cs, end=ce, src_w=src.width or 0, src_h=src.height or 0) if cfg.smart_framing else None
-    focus = None if track else (framing.subject_focus(cfg, src, start=cs, end=ce) if cfg.smart_framing else None)
+    # Content-adaptive: classify the window (multi-speaker / single / music / silent / no-people) and route to
+    # the right crop — active-speaker TRACK only for real talk 2-shots, subject-lock FOCUS (zoomed) for a
+    # single/music/silent subject, motion SALIENCY for no-face music/silent, else centered. content_type tunes
+    # the zoom (music wider). All fail-open -> centered. Resolved here (window final) + cached so the in-lock
+    # commit re-probes nothing, and it feeds BOTH the fingerprint and the render (no stale-crop reuse).
+    focus, track, content_type = _resolve_framing(cfg, src, cs, ce)
     extra_vf, hook_burn_failed = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
     # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
     # render (a pre-warm pass produced it), adopt it and SKIP ffmpeg — record the clip + advance the
@@ -465,7 +500,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     ass_path = cfg.clips / f"{cid}.ass"
     ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
     fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0,
-                             ass_text, top_bias=cfg.aware_reframe, focus=focus, track=track)
+                             ass_text, top_bias=cfg.aware_reframe, focus=focus, track=track, content_type=content_type)
     fp_path = cfg.clips / f"{cid}.render.json"
     if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
         # An fp-match means a prior render of THIS exact window already passed (the fp is stamped only
@@ -479,7 +514,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         return led, clip
     cmd = ffmpeg_clip_cmd(src.source_path, str(dst), cs, ce, aspect.value,
                           src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                          top_bias=cfg.aware_reframe, focus=focus, track=track)
+                          top_bias=cfg.aware_reframe, focus=focus, track=track, content_type=content_type)
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
@@ -575,8 +610,7 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
             cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
         realized = ce - cs                                    # P3: the account cut's REALIZED window length (post snap+visual-start)
-        track = framing.speaker_track(cfg, src, start=cs, end=ce, src_w=src.width or 0, src_h=src.height or 0) if cfg.smart_framing else None
-        focus = None if track else (framing.subject_focus(cfg, src, start=cs, end=ce) if cfg.smart_framing else None)  # subject-aware crop (fail-open None)
+        focus, track, content_type = _resolve_framing(cfg, src, cs, ce)   # content-adaptive crop (fail-open -> centered)
         tw, th = _TARGETS[aspect.value]
         extra_vf = None
         if (hook or "").strip() and overlay.ffmpeg_has_textfilter():
@@ -590,7 +624,7 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
                 extra_vf = overlay.subtitles_vf(ass_path)
         cmd = ffmpeg_clip_cmd(src.source_path, tmp, cs, ce, aspect.value,
                               src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                              top_bias=top_bias, focus=focus, track=track)
+                              top_bias=top_bias, focus=focus, track=track, content_type=content_type)
         try:
             r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
