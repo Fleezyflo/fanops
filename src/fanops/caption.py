@@ -218,24 +218,39 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     led.set_clip_state(clip_id, ClipState.captions_requested)
     return led
 
-def _request_surfaces(cfg: Config, clip_id: str) -> tuple[set, dict, list]:
-    """The crosspost request is the source of truth for completeness: which surfaces were ASKED for, and the
+def _request_surfaces(cfg: Config, clip_id: str) -> tuple[set, dict, dict, list]:
+    """The crosspost request is the source of truth for completeness: which surfaces were ASKED for, the
     per-surface curated corpus (B1 — the per-account hashtag differentiator) each carried (None/absent when
-    unset) so vet_hashtags can float it, plus the CLIP-level content_tags (the per-clip content signal, same
-    for every surface). Returns (requested, surface_corpus, content_tags). Pure read. (M3: tag_lean retired.)"""
+    unset) so vet_hashtags can float it, the per-surface REQUESTED platform (AGENT-6 — the vetting truth, not a
+    re-parse of the model's echoed string), plus the CLIP-level content_tags (the per-clip content signal, same
+    for every surface). Returns (requested, surface_corpus, surface_platform, content_tags). Pure read."""
     req = json.loads(request_path(cfg, "captions", clip_id).read_text())
     surfaces = req.get("surfaces", [])
     requested = {s["surface"] for s in surfaces}
     surface_corpus = {s["surface"]: s.get("corpus") for s in surfaces}
+    surface_platform = {s["surface"]: s.get("platform") for s in surfaces}   # AGENT-6: the REQUESTED platform (truth)
     content_tags = req.get("content_tags") or []
-    return requested, surface_corpus, content_tags
+    return requested, surface_corpus, surface_platform, content_tags
+
+def _platform_for_surface(surface: str, surface_platform: dict) -> Platform:
+    """AGENT-6: the platform we ASKED to caption (from the request record), not a re-parse of the model's
+    echoed surface string. A mangled model surface can no longer vet/cap under the wrong platform's discovery
+    set. Falls back to the legacy tail-parse ONLY when the request omits the platform (older on-disk request)."""
+    p = surface_platform.get(surface)
+    if p:
+        try: return Platform(p)
+        except ValueError: pass
+    return _platform_of(surface)
 
 
 def _caption_entry(tags: list, hashtags_raw: list, *, fallback: bool = False, tag_sources: dict | None = None) -> dict:
     """One surface's stored meta_captions entry. The posted caption IS the vetted <=4-tag line (hashtags-only).
     hashtags_raw keeps the model's RAW picks verbatim (finding #3: Studio shows picked-vs-vetted; display-only).
     ROOT FIX: the caption gate no longer authors an on-screen hook (the frame-seeing moment gate does, via
-    hooks_by_persona) -> hook/axis/rationale are always None. `fallback` marks a seed-tag synthesized entry.
+    hooks_by_persona) -> hook/axis/rationale are always None here. They are KEPT on the persisted entry (not on
+    the CaptionItem model — AGENT-7 dropped those) as the DORMANT variant-A/B contract the dormant readers
+    expect (variant_amplify/digest read entry.get("hook"); crosspost reads cap.get("axis")). `fallback` marks a
+    seed-tag synthesized entry.
     `tag_sources` is the per-tag provenance ({tag: source}) — proves every shipped tag traces to a real
     signal (content|corpus|region|graph-reach|discovery|genre-floor); Review renders it. Absent -> {}."""
     entry = {"caption": " ".join(tags), "hashtags": tags, "hashtags_raw": hashtags_raw,
@@ -253,7 +268,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     # the clip's source language is the contract the caption must match (AUDIT H5).
     src = led.sources.get(led.moments[clip.parent_id].parent_id)
     # what surfaces did we ask for, and their per-surface curated corpus? (the request is the truth)
-    requested, surface_corpus, content_tags = _request_surfaces(cfg, clip_id)
+    requested, surface_corpus, surface_platform, content_tags = _request_surfaces(cfg, clip_id)
     # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
     # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
     # logic so a typo'd-but-present caption is not mislabelled "missing".
@@ -289,7 +304,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         # ...THEN the hashtags are vetted: the model's tags filtered to the reach-vetted set,
         # reach-ordered, backfilled, and HARD-capped at 4 (operator rule). Whatever it returned
         # (5-15 random words) becomes <=4 proven tags. The posted caption IS that vetted tag line.
-        plat = _platform_of(item.surface)
+        plat = _platform_for_surface(item.surface, surface_platform)   # AGENT-6: vet under the REQUESTED platform
         tags, sources = vet_hashtags_traced(item.hashtags or _tags_in(item.caption), plat,
                             src.language if src else None, store=load_store(cfg),   # M4: live store when present
                             corpus=surface_corpus.get(item.surface),                # B1: per-persona curated pool leads (the hashtag differentiator)
@@ -305,7 +320,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     # let the clip through to the operator's Review queue, logged. This is NOT F74's "silent default to
     # publish": the post is born awaiting_approval, so a human still reviews it before anything ships.
     for surface in sorted(missing):
-        plat = _platform_of(surface)
+        plat = _platform_for_surface(surface, surface_platform)   # AGENT-6: vet under the REQUESTED platform
         tags, sources = vet_hashtags_traced(None, plat, src.language if src else None, store=load_store(cfg),
                             corpus=surface_corpus.get(surface),   # B1: the curated corpus leads the seed (the hashtag differentiator)
                             content=content_tags)              # ...and the clip's content tags STILL reach the line (the 83% case)

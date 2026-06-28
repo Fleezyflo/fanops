@@ -37,7 +37,7 @@ def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
         rid = latest_request_id(cfg, "moment_hooks", key)
         response_path(cfg, "moment_hooks", key).write_text(
             MomentHookDecision(request_id=rid, hook=hook, hooks_by_persona=hbp or {}).model_dump_json())
-    return ingest_moment_hooks(led, cfg, source_id)
+    return ingest_moment_hooks(led, cfg, source_id, accounts=accounts)
 
 def _src(led, cfg, dur=20.0):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -362,6 +362,28 @@ def test_decide_hooks_rejects_off_brand_per_account_hook_falls_back(tmp_path):
     assert hbp.get("@a") == "you won't expect the switch"   # clean kept
     assert "@b" not in hbp                                   # off-brand dropped -> falls back to shared
 
+def test_decide_hooks_drops_and_logs_unknown_persona_handle(tmp_path):
+    # AGENT-5: the hook author can echo a near-miss / unknown handle key (@MohFlow vs the real @mohflow).
+    # crosspost does an EXACT m.hooks_by_persona.get(surf.account) lookup, so a key matching no real account
+    # would silently fall back to the shared hook with NO breadcrumb — the per-account hook vanishes. ingest
+    # now intersects the returned keys with the REAL account handles, dropping each unmatched key and leaving
+    # a hook_persona_unknown_handle breadcrumb (no silent collapse).
+    from fanops.accounts import Accounts, Account
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = Accounts(cfg); accts.accounts = [Account(handle="@mohflow", platforms=["instagram"])]
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1",
+                        {"14.00-18.50": ("the part you'll replay",
+                                         {"@mohflow": "you won't expect the switch",
+                                          "@MohFlow": "you won't expect the switch"})},
+                        accounts=accts)
+    hbp = led.moments_of("src_1")[0].hooks_by_persona
+    assert hbp.get("@mohflow") == "you won't expect the switch"   # the real handle kept
+    assert "@MohFlow" not in hbp                                  # near-miss handle dropped, not silently kept
+    log = cfg.log_path.read_text()
+    assert "hook_persona_unknown_handle" in log and "@MohFlow" in log
+
 def test_decide_hooks_brand_risk_honors_tuning_override(tmp_path):
     # The hook gate honors the SAME tuning.json offbrand override as captions: clearing both lists
     # disables it, so a would-be-flagged hook ships (operator owns the guardrail vocabulary).
@@ -499,3 +521,14 @@ def test_validate_pick_rejects_blank_reason():
     assert validate_pick(MomentPick(start=0, end=7, reason="strong drop here"), duration=60) is None
     assert validate_pick(MomentPick(start=0, end=7, reason="   "), duration=60) == "blank reason"
     assert validate_pick(MomentPick(start=0, end=7, reason=""), duration=60) == "blank reason"
+
+
+# ---- AGENT-2: the pick-payload transcript is bounded (sampled near peaks), small inputs byte-identical ----
+def test_long_transcript_is_truncated_with_marker():
+    from fanops.moments import _bounded_transcript
+    segs = [{"start": float(i), "end": float(i) + 1, "text": "x" * 1000} for i in range(200)]
+    peaks = [{"t": 50.0, "kind": "scene_cut", "score": 9.0}]
+    kept, dropped = _bounded_transcript(segs, peaks)
+    assert dropped > 0 and kept and len(kept) < len(segs)
+    assert kept == sorted(kept, key=lambda s: s["start"])         # chronological order restored
+    assert _bounded_transcript(segs[:2], peaks) == (segs[:2], 0)  # short -> unchanged (byte-identical)

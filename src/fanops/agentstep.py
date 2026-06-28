@@ -1,8 +1,9 @@
 # src/fanops/agentstep.py
 """File contract between deterministic code and the agent. Code writes
-<kind>__<key>.request.json (stamped with a fresh request_id); the agent writes
-<kind>__<key>.response.json echoing that request_id; code validates it AND checks the id
-matches the latest request (FIX F21 — a stale response can never be applied)."""
+<kind>__<key>.request.json (stamped with a fresh request_id); a response echoes that request_id and
+read_response checks it matches the latest request (FIX F21 — a stale response can never be applied).
+On the LLM path the responder SELF-STAMPS the authoritative request_id and VERIFIES the model's echo,
+logging a rid_mismatch breadcrumb on divergence (AGENT-1) — the echo is no longer silently trusted."""
 from __future__ import annotations
 import json, os
 from pathlib import Path

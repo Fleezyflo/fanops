@@ -180,6 +180,11 @@ class Moment(BaseModel):
                                                 # (off AccountSelection, MOM-3); the LLM ingest still mirrors here +
                                                 # pre-v9 loads carry it. [] = uncast = ALL active accounts
                                                 # (byte-identical). SUBSET of the batch target; NON-DURABLE across a re-decision.
+    hook_frames_unread: bool = False            # AGENT-9: True when this pick's hook was authored with frames
+                                                # ATTACHED but UNREAD (the model answered single-shot, the granted
+                                                # Read never fired) -> a text-grounded, NOT frame-grounded hook.
+                                                # Additive (default False; old ledgers load fine); counted in
+                                                # RunSummary.frames_unread so the degraded hook is VISIBLE.
     error_reason: Optional[str] = None
 
 class Clip(BaseModel):
@@ -428,12 +433,14 @@ def batch_id(name: str, created_at: str) -> str:
     return content_id("batch", name, created_at)
 
 
-# ---- agent-step contracts (all carry request_id for correlation — FIX F21) ----
+# ---- agent-step contracts (all carry request_id for correlation — FIX F21; the LLM responder self-stamps the
+# authoritative rid and VERIFIES the model's echo, logging rid_mismatch on divergence — AGENT-1, not silently trusted) ----
 class MomentRequest(BaseModel):
     source_id: str
     request_id: str
     duration: float
     transcript: list[dict] = Field(default_factory=list)
+    transcript_total: int = 0       # AGENT-2: FULL segment count (transcript may be budget-truncated); 0 == not truncated
     signal_peaks: list[dict] = Field(default_factory=list)
     language: Optional[str] = None
     guidance: str = ""
@@ -489,6 +496,9 @@ class MomentHookDecision(BaseModel):
     request_id: str
     hook: Optional[str] = None      # the window-grounded on-screen RETENTION hook; None/"" -> this pick ships CLEAN (valid)
     hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own window-grounded hook
+    hook_frames_unread: bool = False   # AGENT-9: NOT a model field — the responder STAMPS it (like request_id) when
+                                       # claude_json_meta proves the attached frames were never read; ingest lifts it
+                                       # onto Moment.hook_frames_unread. Default False -> a model-only answer is unchanged.
 
 # M1 (Option C — per-account moment SELECTION): an agent gate that, seeing the source's DECIDED moments +
 # each active account's persona, chooses per account that account's OWN set of moments. The decision writes
@@ -502,6 +512,8 @@ class MomentCastingRequest(BaseModel):
     personas: list[dict] = Field(default_factory=list)  # [{handle, persona}] active fan accounts to cast for
     language: Optional[str] = None
     guidance: str = ""
+    learned: dict = Field(default_factory=dict)   # AGENT-4: per-account history hint (handle -> [prior selection reasons]);
+                                                  # {} -> none (byte-identical). READ-ONLY history, NOT a live metric (no unfreeze).
 
 class MomentCastingDecision(BaseModel):
     request_id: str
@@ -520,9 +532,11 @@ class CaptionItem(BaseModel):
     caption: str
     hashtags: list[str] = Field(default_factory=list)
     language: Optional[str] = None      # AUDIT H5: the LLM declares the caption's language
-    hook: Optional[str] = None          # per-surface on-screen hook (creative variation); None -> use moment default
-    axis: Optional[str] = None          # P2: the ONE cheap-text axis this variant moves (normalized at ingest)
-    rationale: Optional[str] = None     # P2: one-line WHY this variant is a coherent, justified difference
+    # AGENT-7: hook/axis/rationale were REMOVED — the caption gate is hashtags-only (the frame-seeing moment
+    # gate owns hooks via hooks_by_persona), so these were never read and only widened the LLM --json-schema,
+    # tempting the model to author a hook here. The DORMANT variant A/B machinery's persisted side lives on the
+    # stored meta_captions entry (_caption_entry hook/axis keys, read by variant_amplify/digest/crosspost) and
+    # is untouched. Old on-disk responses carrying these keys still parse (pydantic extra="ignore").
 
 class CaptionSet(BaseModel):
     request_id: str

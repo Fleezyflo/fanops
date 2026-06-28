@@ -58,7 +58,7 @@ def test_get_responder_llm_is_usable_without_explicit_model(tmp_path, monkeypatc
     # stub the claude -p call at the seam used by the production default model: (one valid pick, model)
     mocker.patch("fanops.responder.claude_json_meta",
                  return_value=({"picks": [{"start": 1.0, "end": 4.0, "reason": "bar",
-                                           "transcript_excerpt": "x", "signal_score": 0.0}]}, "opus"))
+                                           "transcript_excerpt": "x", "signal_score": 0.0}]}, "opus", False))
     from fanops.responder import get_responder
     r = get_responder(cfg)
     n = r.answer_pending(cfg)
@@ -187,13 +187,13 @@ def test_moments_model_passes_frames_as_images_for_vision(mocker):
     # claude as images so the hook is written SEEING the footage. The moments payload carries frames
     # at the TOP level.
     from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None, False))
     _default_claude_model("moments", {"source_id": "s", "duration": 10.0, "frames": ["/k/a.jpg", "/k/b.jpg"]})
     assert spy.call_args.kwargs.get("images") == ["/k/a.jpg", "/k/b.jpg"]
 
 def test_moments_model_without_frames_stays_text_only(mocker):
     from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None, False))
     _default_claude_model("moments", {"source_id": "s", "duration": 10.0})   # no frames -> fail-open text-only
     assert not spy.call_args.kwargs.get("images")
 
@@ -206,7 +206,7 @@ def test_default_model_pins_llm_model_and_logs_provenance(mocker, tmp_path):
     cfg.context_path.write_text("BRAND: confident")
     from fanops.responder import _default_claude_model
     meta = mocker.patch("fanops.responder.claude_json_meta",
-                        return_value=({"picks": []}, "claude-opus-4-x"))   # the model that answered
+                        return_value=({"picks": []}, "claude-opus-4-x", False))   # the model that answered
     logfn = mocker.Mock()
     out = _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
     assert out == {"picks": []}
@@ -222,7 +222,7 @@ def test_default_model_provenance_falls_back_to_pinned_when_envelope_lacks_model
     # (never empty), and "absent" brief_sha when there's no brief.
     cfg = Config(root=tmp_path)
     from fanops.responder import _default_claude_model
-    mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None))
+    mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None, False))
     logfn = mocker.Mock()
     _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
     prov = next(c for c in logfn.call_args_list if c.args[2] == "call")
@@ -246,7 +246,7 @@ def test_moment_hooks_model_passes_window_frames_as_images(mocker):
     # The whole point of the split: the HOOK pass is a vision call grounded in the PICKED WINDOW's
     # frames. The responder must attach moment_hooks `frames` as images (same plumbing as the pick pass).
     from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, None))
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, None, False))
     _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
                                            "start": 1.0, "end": 5.0, "frames": ["/k/w0.jpg", "/k/w1.jpg"]})
     assert spy.call_args.kwargs.get("images") == ["/k/w0.jpg", "/k/w1.jpg"]
@@ -255,7 +255,7 @@ def test_moment_hooks_gate_pins_opus(mocker, tmp_path):
     # The hook author is the CREATIVE vision gate -> opus (the watch-through driver), like the old
     # single-pass moments gate. (The pick pass also stays opus; the cost is owned, see plan D5.)
     cfg = Config(root=tmp_path)
-    meta = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, "claude-opus-4-x"))
+    meta = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, "claude-opus-4-x", False))
     from fanops.responder import _default_claude_model
     _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
                                            "start": 1.0, "end": 5.0}, cfg=cfg)
@@ -279,3 +279,47 @@ def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
     assert n == 1
     data = json.loads(response_path(cfg, "moment_hooks", key).read_text())
     assert data["hook"] == "the line you replay" and data["hooks_by_persona"]["@a"] and "request_id" in data
+
+
+# ---- AGENT-2: a context-limit failure becomes a LABELLED degraded source, never an infinite-pending wedge ----
+def test_context_limit_failure_marks_source_degraded_not_infinite_pending(tmp_path, monkeypatch):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmContextLimitError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 99.0, "transcript": [], "signal_peaks": []})
+    def boom(kind, payload): raise LlmContextLimitError("claude -p context limit: prompt is too long")
+    n = LlmResponder(cfg, model=boom).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "moments", "src_1").exists()        # no answer written
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.degraded_reason and "context limit" in src.degraded_reason.lower()   # LABELLED, not silent-pending
+
+
+# ---- AGENT-1: the responder VERIFIES the model's rid echo (logs a mismatch) and self-stamps the authoritative rid ----
+def test_rid_mismatch_logged_and_authoritative_rid_stamped(tmp_path, monkeypatch):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request, response_path, latest_request_id
+    from fanops.responder import LlmResponder
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 9.0, "transcript": [], "signal_peaks": []})
+    rid = latest_request_id(cfg, "moments", "src_1")
+    def wrong_echo(kind, payload):                                    # the model echoes a STALE/garbage rid
+        return {"request_id": "garbage-rid", "source_id": "src_1",
+                "picks": [{"start": 0.0, "end": 7.0, "reason": "drop"}]}
+    events = []
+    monkeypatch.setattr("fanops.responder.get_logger", lambda cfg: (lambda *a, **k: events.append(a)))
+    n = LlmResponder(cfg, model=wrong_echo).answer_pending(cfg)
+    assert n == 1                                                     # the answer is still applied (responder is authoritative)
+    data = json.loads(response_path(cfg, "moments", "src_1").read_text())
+    assert data["request_id"] == rid                                 # stamped with the AUTHORITATIVE rid, not "garbage-rid"
+    assert any("rid_mismatch" in ev for ev in events)                # the mismatch is now a VISIBLE breadcrumb

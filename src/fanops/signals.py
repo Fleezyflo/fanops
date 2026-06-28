@@ -18,7 +18,21 @@ _SCD = re.compile(r"lavfi\.scd\.score:\s*([0-9.]+),\s*lavfi\.scd\.time:\s*([0-9.
 # Sidecar schema version (C2/H2). Theme 1 changed the peak `score` shape (energy-derived speech +
 # normalized scene), so a pre-Theme-1 sidecar (no/lower `v`) MUST be a cache miss — else an
 # already-ingested source serves the old constant 0.5 forever. Bump this on any peak-shape change.
-_SIDECAR_V = 2
+_SIDECAR_V = 3   # AGENT-2/ASSET-8: peaks are now top-N-capped at persist; an old (v<3) sidecar is a cache miss
+_MAX_PEAKS = 400   # CEILING on persisted peaks: a flashing/long source can mint thousands of scene_cuts. Keep the
+                   # top-N by score (richest signal) so the moment prompt + ledger stay bounded; chronological order
+                   # is preserved for window-scoping (rank to pick the top-N, then re-sort by t).
+def _cap_peaks(peaks: list) -> list:
+    """Top-_MAX_PEAKS by score, re-sorted chronologically. A set already <= cap is returned UNCHANGED (identical
+    list), so today's short sources are byte-identical. Fail-soft per peak: a missing/non-numeric score sorts as
+    0.0, never raises. Stable sort -> deterministic (no random tie-break)."""
+    if len(peaks) <= _MAX_PEAKS:
+        return peaks
+    def _s(p):
+        try: return float(p.get("score") or 0.0)
+        except (TypeError, ValueError): return 0.0
+    top = sorted(peaks, key=_s, reverse=True)[:_MAX_PEAKS]
+    return sorted(top, key=lambda p: p["t"])
 # scdet score is a 0..100 change metric; energy strength is [0,1]. To let them compete in the SAME
 # `score` field (impact_cut._impact_peak) we normalize scene scores into [0,1] — but ONLY in energy
 # mode, so the no-energy fallback stays byte-identical to today (scene raw, speech 0.5).
@@ -123,6 +137,7 @@ def detect_signals(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         windows = []
     peaks = apply_energy(peaks, windows)
     peaks.sort(key=lambda p: p["t"])
+    peaks = _cap_peaks(peaks)                          # AGENT-2/ASSET-8: bound the persisted + prompted peak set
     src.signal_peaks = peaks
     if not src.duration:                              # FIX F76/F85 — guarantee duration here too
         _, _, dur = probe_dimensions(src.source_path)

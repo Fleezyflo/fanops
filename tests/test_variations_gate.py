@@ -16,13 +16,13 @@ def _clip(led, cfg):
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
 
 
-def test_caption_item_carries_axis_and_rationale():
-    it = CaptionItem(surface="@a/instagram", caption="x", axis="hook_string", rationale="different opening words")
-    assert it.axis == "hook_string" and it.rationale == "different opening words"
-
-def test_caption_item_axis_defaults_none():
-    it = CaptionItem(surface="@a/instagram", caption="x")
-    assert it.axis is None and it.rationale is None
+def test_caption_item_schema_drops_dead_hook_axis_rationale():
+    # AGENT-7: the caption gate is hashtags-only, so the LLM --json-schema must NOT offer hook/axis/rationale
+    # (dead fields the model could otherwise author into a hashtags-only gate). Pydantic ignores them on an
+    # old on-disk response, but the SCHEMA we hand claude -p no longer lists them.
+    props = CaptionItem.model_json_schema()["properties"]
+    assert "hook" not in props and "axis" not in props and "rationale" not in props
+    assert "caption" in props and "hashtags" in props and "surface" in props   # the live surface is intact
 
 def test_normalize_variation_axis_known_and_unknown():
     for a in VARIATION_AXES:

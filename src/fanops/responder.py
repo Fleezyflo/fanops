@@ -6,6 +6,7 @@ prompt + the exact pydantic JSON schema, validates the output, and writes the re
 is QUARANTINED (one bad gate logs + stays pending, never halts the others — mirrors advance()'s
 per-unit quarantine). get_responder() picks by FANOPS_RESPONDER and returns a WORKING llm responder."""
 from __future__ import annotations
+import contextlib
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,7 +15,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.models import MomentDecision, MomentHookDecision, MomentCastingDecision, CaptionSet
 from fanops.agentstep import pending, request_path, write_response, latest_request_id
-from fanops.llm import claude_json_meta, LlmTimeoutError
+from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, moment_casting_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
@@ -26,7 +27,8 @@ _SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision,
            "moment_casting": MomentCastingDecision, "captions": CaptionSet}
 _PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt,
            "moment_casting": moment_casting_prompt, "captions": caption_prompt}
-_VISION_GATES = ("moments", "moment_hooks")   # gates whose payload carries top-level `frames` to attach as images
+_VISION_GATES = ("moments", "moment_hooks", "moment_casting")   # gates whose payload MAY carry top-level `frames` to attach
+# (moment_casting only carries `frames` when keyframes were extracted; an empty/absent list -> images=None -> text-only)
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg
@@ -46,7 +48,7 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
     schema = _SCHEMA[kind].model_json_schema()
     images = (payload.get("frames") or None) if kind in _VISION_GATES else None   # M1b: pick pass SEES source stills; hook pass SEES the picked WINDOW's stills
     prompt = _PROMPT[kind](payload)
-    out, answered = claude_json_meta(prompt, schema, images=images,
+    out, answered, frames_unread = claude_json_meta(prompt, schema, images=images,
                                      model=(cfg.llm_model_for(kind) if cfg else None))
     if cfg is not None:
         emit = log or get_logger(cfg)
@@ -54,6 +56,10 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
         emit("llm", uid, "call", model=answered or cfg.llm_model_for(kind),
              prompt_sha=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
              brief_sha=guidance_sha(cfg))
+        if frames_unread:                               # AGENT-9: a degraded, text-grounded hook — VISIBLE in run.log
+            emit("llm", uid, "frames_unread")
+    if kind == "moment_hooks" and frames_unread:        # AGENT-9: STAMP the response so ingest lifts it onto the moment
+        out = {**out, "hook_frames_unread": True}        # (MomentHookDecision tolerates the key; default False otherwise)
     return out
 
 class LlmResponder:
@@ -95,17 +101,44 @@ class LlmResponder:
                 log("responder", f"{kind}:{key}", "stale",
                     err=f"gate re-seeded mid-call ({rid_before}->{rid_after}); dropping stale answer")
                 return False                    # do not write a stale-payload answer
-            out = {**out, "request_id": rid_before}   # == rid_after (the still-latest rid)
+            echoed = out.get("request_id")            # AGENT-1: the model is ASKED to echo the rid — VERIFY it
+            if echoed is not None and echoed != rid_before:   # a stale/garbage echo is a real signal, not noise
+                log("responder", f"{kind}:{key}", "rid_mismatch", err=f"model echoed {echoed!r} != {rid_before!r}")
+            out = {**out, "request_id": rid_before}   # responder self-stamps the authoritative rid (== rid_after)
             if kind == "moments":           # MomentDecision requires source_id; the GATE is
                 out["source_id"] = payload.get("source_id")   # authoritative (review Issue A) — gate wins, not the model
             obj = model_cls(**out)          # decision (a): validate; ValidationError -> pending + log
             write_response(cfg, kind, key, obj.model_dump_json(indent=2))   # ATOMIC (audit): no torn-read window for a concurrent reader
             return True
+        except LlmContextLimitError as e:   # AGENT-2: a too-big payload is a LABELLED degraded state, never an
+            log("responder", f"{kind}:{key}", "context_limit", err=str(e)[:160])   # infinite-pending wedge
+            self._mark_context_limit(cfg, kind, key, str(e)[:160])
+            return False
         except ValidationError as e:        # present-but-invalid: log "invalid", gate stays pending
             log("responder", f"{kind}:{key}", "invalid", err=str(e)[:160])
         except Exception as e:              # transient model/CLI failure (incl. ToolchainMissing): log, leave pending
             log("responder", f"{kind}:{key}", "error", err=str(e)[:160])
         return False
+
+    def _mark_context_limit(self, cfg: Config, kind: str, key: str, reason: str) -> None:
+        """AGENT-2: park the wedged gate's source-owner with a VISIBLE degraded_reason so the operator sees WHY
+        it stalls (master principle: no silent degradation). Best-effort + a breadcrumb; the gate stays pending
+        (operator can shrink the source / re-request) but is now diagnosable. The captions gate keys on a clip
+        id, not a source, so it has no source-owner (sid=None) — the context_limit breadcrumb above still fires.
+        Loads + saves the ledger OUTSIDE the advance() flock (gates live outside the lock), so a fresh load+save
+        is safe. Ledger imported lazily to avoid a module cycle (ledger imports widely)."""
+        from fanops.ledger import Ledger
+        sid = key.split(".", 1)[0] if kind in ("moments", "moment_hooks", "moment_casting") else None
+        if sid is None: return
+        try:
+            led = Ledger.load(cfg)
+            src = led.sources.get(sid)
+            if src is not None:
+                led.sources[sid] = src.model_copy(update={"degraded_reason": f"agent gate {kind} over context limit: {reason}"})
+                led.save()
+        except Exception as e:              # best-effort: a load/save failure must not crash the responder pass
+            with contextlib.suppress(Exception):
+                get_logger(cfg)("responder", f"{kind}:{key}", "mark_degraded_failed", err=str(e)[:120])
 
     def answer_pending(self, cfg: Config) -> int:
         log = get_logger(cfg)

@@ -541,3 +541,31 @@ def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
     mc = led.clips["clip_1"].meta_captions["@a/instagram"]["hashtags"]
     content = content_tag_candidates("they slept on me")      # the _clip helper's transcript
     assert mc == vet_hashtags(tags, Platform.instagram, "en", content=content)  # no lean; content still rides
+
+
+# ---- AGENT-6: the vetting platform comes from the REQUEST record, not a re-parse of the model's surface ----
+def test_platform_for_surface_prefers_request_over_parse():
+    from fanops.caption import _platform_for_surface
+    # the surface KEY tail says instagram, but the request recorded tiktok -> the request wins (vet truth)
+    assert _platform_for_surface("@a/instagram", {"@a/instagram": "tiktok"}) == Platform.tiktok
+    assert _platform_for_surface("@a/tiktok", {}) == Platform.tiktok          # request omits it -> legacy parse fallback
+    assert _platform_for_surface("@a/tiktok", {"@a/tiktok": "garbage"}) == Platform.tiktok   # bad value -> parse, never crash
+
+def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
+    # End to end: a request whose surface KEY tail diverges from its recorded platform must vet under the
+    # RECORDED platform. (Synthetic divergence: the normal request path keys surface==handle/platform.value,
+    # so we hand-diverge the on-disk request to prove the request is authoritative, not the parsed string.)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    req = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    req["surfaces"][0]["platform"] = "tiktok"                 # diverge: key stays @a/instagram, platform now tiktok
+    request_path(cfg, "captions", "clip_1").write_text(json.dumps(req))   # preserves request_id -> response still matches
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(
+        request_id=rid, items=[CaptionItem(surface="@a/instagram", caption="#hiphop")]).model_dump_json())
+    import fanops.caption as capmod
+    real = capmod.vet_hashtags_traced; captured = {}
+    def spy(tags, plat, *a, **k): captured["plat"] = plat; return real(tags, plat, *a, **k)
+    mocker.patch("fanops.caption.vet_hashtags_traced", side_effect=spy)
+    ingest_captions(led, cfg, "clip_1")
+    assert captured["plat"] == Platform.tiktok               # vetted under the REQUESTED platform, not the parsed @a/instagram

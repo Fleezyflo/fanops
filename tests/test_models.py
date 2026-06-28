@@ -119,12 +119,6 @@ def test_moment_hook_request_carries_window_and_frames():
                           personas=[{"handle": "@a", "persona": "underground"}])
     assert r.frames == ["/k/a.jpg"] and r.start == 14.0 and r.moment_id == "moment_x"
 
-def test_caption_item_has_optional_hook():
-    from fanops.models import CaptionItem
-    item = CaptionItem(surface="@a/instagram", caption="x", hashtags=[], language="en", hook="WATCH THIS")
-    assert item.hook == "WATCH THIS"
-    # optional: old payloads without hook still validate
-    assert CaptionItem(surface="@a/instagram", caption="x").hook is None
 
 def test_post_has_optional_variant_fields():
     from fanops.models import Post, Platform, PostState

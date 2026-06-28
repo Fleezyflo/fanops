@@ -148,7 +148,7 @@ def test_claude_json_meta_returns_resolved_model(mocker):
     envelope = {"structured_output": {"x": 9}, "model": "claude-opus-4-x", "session_id": "s"}
     class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    out, model = claude_json_meta("pick", _SCHEMA, model="opus")
+    out, model, _ = claude_json_meta("pick", _SCHEMA, model="opus")
     assert out == {"x": 9} and model == "claude-opus-4-x"
 
 def test_claude_json_meta_falls_back_to_configured_model_when_envelope_lacks_it(mocker):
@@ -158,7 +158,7 @@ def test_claude_json_meta_falls_back_to_configured_model_when_envelope_lacks_it(
     envelope = {"structured_output": {"x": 1}, "session_id": "s"}   # no "model" key
     class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    out, model = claude_json_meta("pick", _SCHEMA, model="opus")
+    out, model, _ = claude_json_meta("pick", _SCHEMA, model="opus")
     assert out == {"x": 1} and model == "opus"
 
 
@@ -172,7 +172,7 @@ def test_claude_json_meta_reasks_when_frames_unread(mocker):
     def fake(cmd, **kw):
         return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
     run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
-    out, _ = claude_json_meta("hook", _SCHEMA, images=["/f/1.jpg"])
+    out, _, _ = claude_json_meta("hook", _SCHEMA, images=["/f/1.jpg"])
     assert out == {"x": 2} and run.call_count == 2          # re-asked; the frame-reading answer won
 
 
@@ -180,7 +180,7 @@ def test_claude_json_meta_no_reask_when_frames_read(mocker):
     from fanops.llm import claude_json_meta
     run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
         "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 9}, "num_turns": 2}), "stderr": ""})())
-    out, _ = claude_json_meta("hook", _SCHEMA, images=["/f/1.jpg"])
+    out, _, _ = claude_json_meta("hook", _SCHEMA, images=["/f/1.jpg"])
     assert out == {"x": 9} and run.call_count == 1          # frames read first try -> no re-ask
 
 
@@ -189,5 +189,31 @@ def test_claude_json_meta_no_reask_without_images(mocker):
     from fanops.llm import claude_json_meta
     run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
         "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 5}, "num_turns": 1}), "stderr": ""})())
-    out, _ = claude_json_meta("pick", _SCHEMA)
+    out, _, _ = claude_json_meta("pick", _SCHEMA)
     assert out == {"x": 5} and run.call_count == 1
+
+
+# ---- AGENT-9: claude_json_meta surfaces the frames-unread signal; claude_json bare-dict unaffected ----
+def test_claude_json_meta_reports_frames_unread_after_reask(mocker):
+    env = {"structured_output": {"hook": "x"}, "num_turns": 1, "model": "opus"}   # num_turns<=1 twice -> unread
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    from fanops.llm import claude_json_meta
+    out, model, unread = claude_json_meta("author a hook", {"type": "object"}, images=["/tmp/a.jpg"])
+    assert unread is True                                  # the degraded, text-grounded signal is RETURNED
+    assert out == {"hook": "x"}
+
+def test_claude_json_meta_frames_read_not_unread(mocker):
+    env = {"structured_output": {"hook": "x"}, "num_turns": 2, "model": "opus"}   # a Read turn fired -> read
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    from fanops.llm import claude_json_meta
+    _out, _model, unread = claude_json_meta("p", {"type": "object"}, images=["/tmp/a.jpg"])
+    assert unread is False
+
+def test_claude_json_bare_dict_unaffected(mocker):
+    env = {"structured_output": {"x": 1}, "num_turns": 2}
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    from fanops.llm import claude_json
+    assert claude_json("p", {"type": "object"}, images=["/tmp/a.jpg"]) == {"x": 1}   # still a plain dict

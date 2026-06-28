@@ -213,3 +213,41 @@ def test_zero_cast_candidate_shows_review_badge(tmp_path):
     assert lane_b.cast_count == 0 and lane_b.zero_cast is True           # the explicit labeled state
     lane_a = next(ln for ln in lanes.lanes if ln.account == "@a")
     assert lane_a.zero_cast is False                                     # @a was picked -> not flagged
+
+
+# ---- AGENT-4: the casting brain gets eyes (per-moment keyframe) + memory (per-account history hint) ----
+def test_casting_payload_carries_frame_and_learned_signal(tmp_path, mocker):
+    from fanops.models import AccountSelection, SelectionMethod, account_selection_id
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, [_acct("@a", "guitar")])
+    led.sources["src_1"] = led.sources["src_1"].model_copy(update={"duration": 20.0})   # probed -> casting eyes sample
+    led.add_account_selection(AccountSelection(
+        id=account_selection_id("src_0", "@a"), source_id="src_0", account="@a",
+        moment_ids=["m0"], method=SelectionMethod.llm))      # prior history hint for @a (references existing m0)
+    led.save(); led = Ledger.load(cfg)
+    mocker.patch("fanops.casting.extract_keyframes", return_value=["/kf/m0.jpg"])   # frames available (ffmpeg present)
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    payload = json.loads(_req_path(cfg, "src_1").read_text())
+    assert any(m.get("frame") for m in payload["moments"])    # per-moment keyframe threaded (casting eyes)
+    assert payload["frames"]                                  # top-level frames list for the responder to attach
+    assert payload.get("learned", {}).get("@a")               # learned per-account history hint threaded (memory)
+
+def test_casting_payload_text_only_when_no_frames(tmp_path, mocker):
+    cfg = Config(root=tmp_path); led = _seed(cfg, [_acct("@a", "guitar")])
+    led.sources["src_1"] = led.sources["src_1"].model_copy(update={"duration": 20.0}); led.save(); led = Ledger.load(cfg)
+    mocker.patch("fanops.casting.extract_keyframes", return_value=[])   # no ffmpeg / no frames -> fail-open
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    payload = json.loads(_req_path(cfg, "src_1").read_text())
+    assert not any("frame" in m for m in payload["moments"])  # byte-identical text-only path preserved
+    assert "frames" not in payload                            # no top-level frames -> casting stays text-only
+
+
+def test_casting_answer_skips_ids_absent_from_current_pool(tmp_path):
+    # AGENT-10 (characterization): a casting answer naming a moment id no longer in the pool (a superseded
+    # re-pick) applies ONLY the still-present ids — the stale id is silently skipped, never resurrected. This
+    # pins that casting correlates by source_id+rid + the skip-unknown guard, not a pool fingerprint.
+    cfg = Config(root=tmp_path); led = _seed(cfg, [_acct("@a", "guitar")], moments=("m0", "m1"))
+    led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
+    led = _respond_and_ingest(led, cfg, {"@a": ["m0", "GHOST"]})   # GHOST is not in the current pool
+    assert led.moments["m0"].affinities == ["@a"]
+    assert "GHOST" not in led.moments                             # the stale/unknown id is never resurrected

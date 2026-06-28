@@ -75,12 +75,13 @@ def test_detect_signals_adopts_sidecar_and_skips_ffmpeg(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.transcribed, meta={"transcribed": True}))
+    from fanops.signals import _SIDECAR_V
     sc = cfg.agent_io / "signals"; sc.mkdir(parents=True, exist_ok=True)
     (sc / "src_1.json").write_text(json.dumps(
-        {"v": 2, "peaks": [{"t": 4.0, "kind": "speech_resume", "score": 0.5}], "duration": 12.0}))
+        {"v": _SIDECAR_V, "peaks": [{"t": 4.0, "kind": "speech_resume", "score": 0.5}], "duration": 12.0}))
     spy = mocker.patch("fanops.signals.subprocess.run")
     led = detect_signals(led, cfg, "src_1")
-    spy.assert_not_called()                                  # warm v2 sidecar reused — no ffmpeg
+    spy.assert_not_called()                                  # warm current-version sidecar reused — no ffmpeg
     s = led.sources["src_1"]
     assert s.state is SourceState.signalled and s.duration == 12.0
     assert s.signal_peaks[0]["kind"] == "speech_resume"
@@ -153,7 +154,7 @@ def test_detect_signals_v1_sidecar_not_adopted_recomputes(tmp_path, mocker):
     detect_signals(led, cfg, "src_1")
     spy.assert_called()                                       # stale sidecar rejected -> ffmpeg ran
     d = json.loads((sc / "src_1.json").read_text())
-    assert d["v"] == 2                                        # rewritten with the schema version
+    assert d["v"] == 3                                        # rewritten with the schema version (AGENT-2 peak cap bump)
 
 def test_detect_signals_writes_versioned_sidecar(tmp_path, mocker):
     import json
@@ -164,7 +165,7 @@ def test_detect_signals_writes_versioned_sidecar(tmp_path, mocker):
     mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
     detect_signals(led, cfg, "src_1")
     d = json.loads((cfg.agent_io / "signals" / "src_1.json").read_text())
-    assert d["v"] == 2 and "peaks" in d
+    assert d["v"] == 3 and "peaks" in d
 
 def test_detect_signals_raises_toolchain_error_when_ffmpeg_absent(tmp_path, mocker):
     # ffmpeg off PATH -> subprocess.run raises FileNotFoundError before the process starts
@@ -199,3 +200,13 @@ def test_detect_signals_is_time_bounded_and_timeout_propagates(tmp_path, mocker)
     with pytest.raises(subprocess.TimeoutExpired):
         detect_signals(led, cfg, "src_1")
     assert seen.get("timeout") == 600.0                               # the bound is actually wired
+
+
+# ---- AGENT-2/ASSET-8: peaks are top-N capped at persist so a flashing/long source can't unbound the payload ----
+def test_peaks_are_capped_at_persist():
+    from fanops.signals import _cap_peaks, _MAX_PEAKS
+    peaks = [{"t": float(i), "kind": "scene_cut", "score": float(i % 7)} for i in range(_MAX_PEAKS + 50)]
+    out = _cap_peaks(peaks)
+    assert len(out) == _MAX_PEAKS
+    assert out == sorted(out, key=lambda p: p["t"])                   # chronological order preserved for window-scoping
+    assert _cap_peaks(peaks[:10]) == peaks[:10]                       # under cap -> byte-identical (small sources unchanged)
