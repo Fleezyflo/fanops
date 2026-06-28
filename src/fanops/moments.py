@@ -334,6 +334,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
                and not has_artist_reference(s, cfg.artist_name) and not brand_risk_flag(s, cfg)}
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
                                                  "hooks_by_persona": hbp,
+                                                 "hook_frames_unread": bool(getattr(dec, "hook_frames_unread", False)),  # AGENT-9
                                                  "state": MomentState.decided})
     led.set_source_state(source_id, SourceState.moments_decided)   # every pick's hook landed atomically
     return led

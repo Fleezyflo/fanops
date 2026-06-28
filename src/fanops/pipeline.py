@@ -394,6 +394,7 @@ class RunSummary(TypedDict):
     needs_reconcile: int
     holds: int
     hook_burn_failed: int
+    frames_unread: int
     errors: int
     awaiting: AwaitingCounts
 
@@ -426,6 +427,9 @@ def _build_summary(cfg: Config, before: set) -> RunSummary:
         # V2 M1/F9: clips that rendered but silently lost their on-screen hook (couldn't burn) —
         # surfaced here so the unattended operator sees the drop, not only in run.log.
         "hook_burn_failed": sum(1 for c in led.clips.values() if c.hook_burn_failed),
+        # AGENT-9: hooks authored with frames ATTACHED but UNREAD (text-grounded, not frame-grounded) —
+        # surfaced like hook_burn_failed so the operator sees the degraded grounding, not only run.log.
+        "frames_unread": sum(1 for m in led.moments.values() if m.hook_frames_unread),
         "errors": sum(1 for s in led.sources.values() if s.state is SourceState.error),
         # All three agent-gate kinds the responder answers (responder._SCHEMA): moments (pick) blocks the
         # hook gate, moment_hooks blocks the clip/caption stages, captions blocks crosspost — so `fanops

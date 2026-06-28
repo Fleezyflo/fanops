@@ -180,6 +180,11 @@ class Moment(BaseModel):
                                                 # (off AccountSelection, MOM-3); the LLM ingest still mirrors here +
                                                 # pre-v9 loads carry it. [] = uncast = ALL active accounts
                                                 # (byte-identical). SUBSET of the batch target; NON-DURABLE across a re-decision.
+    hook_frames_unread: bool = False            # AGENT-9: True when this pick's hook was authored with frames
+                                                # ATTACHED but UNREAD (the model answered single-shot, the granted
+                                                # Read never fired) -> a text-grounded, NOT frame-grounded hook.
+                                                # Additive (default False; old ledgers load fine); counted in
+                                                # RunSummary.frames_unread so the degraded hook is VISIBLE.
     error_reason: Optional[str] = None
 
 class Clip(BaseModel):
@@ -491,6 +496,9 @@ class MomentHookDecision(BaseModel):
     request_id: str
     hook: Optional[str] = None      # the window-grounded on-screen RETENTION hook; None/"" -> this pick ships CLEAN (valid)
     hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own window-grounded hook
+    hook_frames_unread: bool = False   # AGENT-9: NOT a model field — the responder STAMPS it (like request_id) when
+                                       # claude_json_meta proves the attached frames were never read; ingest lifts it
+                                       # onto Moment.hook_frames_unread. Default False -> a model-only answer is unchanged.
 
 # M1 (Option C — per-account moment SELECTION): an agent gate that, seeing the source's DECIDED moments +
 # each active account's persona, chooses per account that account's OWN set of moments. The decision writes

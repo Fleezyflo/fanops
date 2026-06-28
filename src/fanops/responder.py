@@ -47,7 +47,7 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
     schema = _SCHEMA[kind].model_json_schema()
     images = (payload.get("frames") or None) if kind in _VISION_GATES else None   # M1b: pick pass SEES source stills; hook pass SEES the picked WINDOW's stills
     prompt = _PROMPT[kind](payload)
-    out, answered = claude_json_meta(prompt, schema, images=images,
+    out, answered, frames_unread = claude_json_meta(prompt, schema, images=images,
                                      model=(cfg.llm_model_for(kind) if cfg else None))
     if cfg is not None:
         emit = log or get_logger(cfg)
@@ -55,6 +55,10 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
         emit("llm", uid, "call", model=answered or cfg.llm_model_for(kind),
              prompt_sha=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
              brief_sha=guidance_sha(cfg))
+        if frames_unread:                               # AGENT-9: a degraded, text-grounded hook — VISIBLE in run.log
+            emit("llm", uid, "frames_unread")
+    if kind == "moment_hooks" and frames_unread:        # AGENT-9: STAMP the response so ingest lifts it onto the moment
+        out = {**out, "hook_frames_unread": True}        # (MomentHookDecision tolerates the key; default False otherwise)
     return out
 
 class LlmResponder:

@@ -651,3 +651,19 @@ def test_intro_tease_killswitch_warns(tmp_path, monkeypatch, mocker):
     assert led.stitch_plans["plan_i"].state is StitchState.approved      # frozen, not rendered
     assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
     assert "feature OFF" in cfg.log_path.read_text()
+
+
+def test_run_summary_carries_frames_unread_count(tmp_path):
+    # AGENT-9: a moment whose hook was authored frames-attached-but-unread is counted in the heartbeat
+    # (like hook_burn_failed) so the degraded, text-grounded hook is VISIBLE, not just a log line.
+    from fanops.models import Moment, MomentState
+    from fanops.pipeline import _build_summary
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.moments_decided, duration=20.0))
+    led.moments["m1"] = Moment(id="m1", parent_id="s1", start=1.0, end=5.0, reason="r",
+                               state=MomentState.decided, hook_frames_unread=True)
+    led.moments["m2"] = Moment(id="m2", parent_id="s1", start=6.0, end=9.0, reason="r",
+                               state=MomentState.decided)   # frames read -> NOT counted
+    led.save()
+    s = _build_summary(cfg, before=set())
+    assert s["frames_unread"] == 1

@@ -75,8 +75,11 @@ def _frames_unread(env: dict) -> bool:
 
 
 def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
-                     images: list[str] | None = None, model: str | None = None) -> tuple[dict, str | None]:
-    """Call `claude -p` with a JSON schema; return (schema-valid object, model-that-answered).
+                     images: list[str] | None = None, model: str | None = None) -> tuple[dict, str | None, bool]:
+    """Call `claude -p` with a JSON schema; return (schema-valid object, model-that-answered,
+    frames_unread). frames_unread is True ONLY when frames were ATTACHED but the model answered
+    without ever opening them (num_turns<=1 after a re-ask) — a degraded, text-grounded hook the
+    responder breadcrumbs + RunSummary counts (AGENT-9); False on every non-vision / frames-read call.
     Prefers the envelope's `structured_output`; falls back to json.loads(`result`).
     Raises ToolchainMissingError if `claude` is absent, RuntimeError on nonzero exit or
     unparseable output. The CALLER (the responder) validates against the pydantic model and
@@ -145,6 +148,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     # OPENED them (num_turns proves a Read turn fired — Read is the only tool granted). If it answered
     # text-only, re-ask ONCE forcing the Read; if STILL unread, proceed but log a degraded breadcrumb
     # (the hook is then text-grounded, not frame-grounded — the narration_signature strip backstops it).
+    frames_unread = False                                    # AGENT-9: True iff frames were ATTACHED but never opened
     if images:
         env = _run("FIRST read these image frames with the Read tool, then answer using what you SEE:\n"
                    + "\n".join(images) + "\n\n" + prompt)
@@ -155,6 +159,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
             if not _frames_unread(env2):
                 env = env2
             else:
+                frames_unread = True                         # AGENT-9: surfaced to the responder, not just logged
                 logger.warning("hook frames appear unread (num_turns<=1) after re-ask — hook is text-grounded")
     else:
         env = _run(prompt)
@@ -163,11 +168,11 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     resolved = rep if isinstance(rep, str) and rep.strip() else model   # else fall back to the pinned value
     so = env.get("structured_output")
     if isinstance(so, dict):
-        return so, resolved
+        return so, resolved, frames_unread
     result = env.get("result")
     if isinstance(result, str):
         try:
-            return json.loads(result), resolved
+            return json.loads(result), resolved, frames_unread
         except Exception as e:
             raise RuntimeError(f"claude -p `result` was not JSON: {result[:300]}") from e
     raise RuntimeError(f"claude -p envelope had no structured_output or JSON result: {env}")
