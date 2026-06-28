@@ -223,3 +223,33 @@ def test_seed_clips_excludes_picked_moment_clip(tmp_path):
     assert "clip_1" not in {c.id for c in _seed_clips(led)}          # excluded while its moment is `picked`
     led.moments["mom_1"] = led.moments["mom_1"].model_copy(update={"state": MomentState.decided})
     assert "clip_1" in {c.id for c in _seed_clips(led)}              # re-decided -> seeds again
+
+
+# ---- MOM-4: reconcile prunes orphaned moment_ids from selections (drops a record that empties) ----
+def test_orphan_moment_id_pruned_from_selection_on_reconcile(tmp_path):
+    # A reconcile that drops mom_2 (e.g. a retire/adjust path that doesn't go through ingest_moments' whole-source
+    # drop) must prune it from @a's selection while keeping mom_1 — an orphan id can never post.
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a")])
+    led = _src(cfg)
+    for mid, (lo, hi) in {"mom_1": (0, 7), "mom_2": (8, 15)}.items():
+        led.add_moment(Moment(id=mid, parent_id="src_1", content_token=f"{lo}-{hi}", start=lo, end=hi,
+                              reason="r", transcript_excerpt="x", state=MomentState.decided))
+    led.add_account_selection(AccountSelection(id=account_selection_id("src_1", "@a"), source_id="src_1",
+                              account="@a", moment_ids=["mom_1", "mom_2"], method=SelectionMethod.llm))
+    led.reconcile_moments("src_1", {"mom_1": led.moments["mom_1"]})  # keep ONLY mom_1 -> mom_2 cascade-deleted
+    sel = led.account_selection_for("src_1", "@a")
+    assert sel is not None and sel.moment_ids == ["mom_1"]           # orphan mom_2 pruned, mom_1 kept
+
+
+def test_selection_dropped_when_all_its_moments_orphaned(tmp_path):
+    # A selection whose every moment is dropped EMPTIES -> the record is dropped, never left as an illegal
+    # empty-CHOSEN row the sum-type validator would reject on the next load.
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a")])
+    led = _src(cfg)
+    led.add_moment(Moment(id="mom_2", parent_id="src_1", content_token="8-15", start=8, end=15,
+                          reason="r", transcript_excerpt="x", state=MomentState.decided))
+    led.add_account_selection(AccountSelection(id=account_selection_id("src_1", "@a"), source_id="src_1",
+                              account="@a", moment_ids=["mom_2"], method=SelectionMethod.llm))
+    led.reconcile_moments("src_1", {})                              # drop everything
+    assert led.account_selection_for("src_1", "@a") is None         # emptied CHOSEN row dropped, not left invalid
+    led.save(); assert Ledger.load(cfg) is not None                 # and the ledger reloads (no validator raise)

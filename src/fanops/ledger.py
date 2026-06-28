@@ -469,6 +469,26 @@ class Ledger:
                 # upserted in place, so legitimate re-decision keeps working.)
                 continue
             self.moments[mid] = m
+        self._prune_orphan_selection_ids(source_id)   # MOM-4: drop selection ids for moments no longer render-targeting
+
+    def _prune_orphan_selection_ids(self, source_id: str) -> None:
+        """MOM-4: after a reconcile, an AccountSelection may list a moment id that was cascade-DELETED or RETIRED
+        (so it can never post). Prune those ids; if a CHOSEN selection empties, DROP the record (the sum-type
+        validator forbids an empty CHOSEN row, and an absent record correctly DENIES the account on a cast source).
+        A TAG row (fan_all_default/pending) carries no ids and is untouched. Idempotent. Distinct from Task-5's
+        re-pick drop (which clears the WHOLE source); this closes the retire/adjust paths that drop ONE moment
+        without going through ingest_moments, leaving an orphan id in an otherwise-valid selection."""
+        live = {m.id for m in self.moments_of(source_id) if m.state is not MomentState.retired}
+        for sel in list(self.selections_of_source(source_id)):
+            if not sel.moment_ids:
+                continue                                   # TAG row (fan_all_default/pending) -> nothing to prune
+            pruned = sorted(set(sel.moment_ids) & live)
+            if pruned == sorted(sel.moment_ids):
+                continue                                   # no orphan -> leave it
+            if pruned:
+                self.add_account_selection(sel.model_copy(update={"moment_ids": pruned}))   # re-validates (still CHOSEN)
+            else:
+                self.drop_account_selection(source_id, sel.account)   # emptied CHOSEN row -> drop, never an illegal []
 
     # Clip/Post states that mean "live on the platform / carries the performance record" —
     # these are NEVER cascade-deleted (deleting them would orphan a live post: untrackable by
