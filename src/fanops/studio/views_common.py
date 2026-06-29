@@ -113,11 +113,21 @@ def suggest_time(cfg: Config, post, *, now: datetime) -> str:
 
 # M4: per-account approve-batch spread. The cadence floor is wider than the crosspost-mint stagger
 # (which is per-(clip,surface) anti-collision, not a believable post cadence) — 30 min is the
-# operator-visible "never machine-gun" floor a bulk-approve must respect by construction. A future
-# milestone (M2 in the realistic-per-account-scheduling PRD) widens this to 2-3h jittered for the
-# Reschedule path; the floor here is the SAFE LOWER BOUND that prevents the M4 collide regardless.
+# operator-visible "never machine-gun" floor a bulk-approve must respect by construction.
+# M2 (PRD: 'leaning jittered 2-3h for a human feel') widens the DEFAULT band when
+# cfg.realistic_cadence is ON; the M4 30-min floor stays as the SAFE LOWER BOUND when it's OFF.
 _BULK_APPROVE_MIN_GAP_MIN = 30
 _BULK_APPROVE_JITTER_MAX_MIN = 7   # < _STEP so the per-account schedule stays strictly monotonic
+_REALISTIC_MIN_GAP_MIN = 120       # M2: 2h floor on the human-cadence band
+_REALISTIC_JITTER_MAX_MIN = 60     # M2: up to +1h jitter -> the band reaches ~3h (2-3h band)
+
+
+def _cadence_for(cfg: Config) -> "tuple[int, int]":
+    """M2: resolve (STEP, JITTER_MAX) from cfg. Realistic ON -> 2-3h band; default -> M4 30-min
+    floor. Pure read. Honors the operator's FANOPS_REALISTIC_CADENCE product call."""
+    if getattr(cfg, "realistic_cadence", False):
+        return (_REALISTIC_MIN_GAP_MIN, _REALISTIC_JITTER_MAX_MIN)
+    return (_BULK_APPROVE_MIN_GAP_MIN, _BULK_APPROVE_JITTER_MAX_MIN)
 
 
 def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, str]:
@@ -133,14 +143,19 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
 
     Algorithm: group posts by account; within each group seed an account-local RNG from the
     account + date so two operators on the same day produce the same suggestion (no surprise),
-    walk each post at `now + i*STEP + jitter` with STEP = _BULK_APPROVE_MIN_GAP_MIN, jitter
-    bounded < STEP (monotonic-by-index, mirrors crosspost.surface_time's H1/H2 monotonicity
-    proof). Inter-account anchors stagger by a small per-account hash offset so two accounts
-    don't open the batch on the same minute either.
+    walk each post at `now + i*STEP + jitter` with STEP and JITTER_MAX from `_cadence_for(cfg)`
+    (M4 30-min floor by default; M2 2-3h band when cfg.realistic_cadence is on). The walk is
+    CUMULATIVE — each gap is `STEP + jitter_i >= STEP` by construction.
 
-    Pure (no I/O, no ledger write). Pinned by tests/test_bulk_approve_spread.py."""
+    M7: when cfg.account_window(handle) returns (open_h, close_h), slot hours are kept within
+    that band — a candidate that falls outside is rolled forward to the next open hour. Window
+    is in OPERATOR-LOCAL hours (cfg.operator_tz); None == 24h open.
+
+    Pure (no I/O beyond cfg.account_window which is a JSON read at the seam). Pinned by
+    tests/test_bulk_approve_spread.py + tests/test_operator_timezone_cadence_window.py."""
     import hashlib, random
     from fanops.timeutil import iso_z
+    step, jitter_max = _cadence_for(cfg)
     # Stable account order (deterministic across processes, no Python hash() salt).
     by_account: dict[str, list] = {}
     for p in posts:
@@ -152,7 +167,9 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
         rng = random.Random(int(hashlib.sha1(f"{handle}|{date_str}".encode()).hexdigest()[:8], 16))
         # Per-account anchor offset: a small minute offset (< STEP) keyed on the account so two
         # accounts don't both open at minute 0. Bounded so the first slot stays near `now`.
-        anchor_offset = rng.randint(0, _BULK_APPROVE_MIN_GAP_MIN - 1)
+        anchor_offset = rng.randint(0, step - 1)
+        # M7: read the per-account daily window. None -> 24h open (default-open seam).
+        window = cfg.account_window(handle) if hasattr(cfg, "account_window") else None
         # Deterministic order WITHIN the account (post id) so the same selection produces the same
         # times across runs / processes. The walk is CUMULATIVE — each slot is the previous slot
         # PLUS step PLUS jitter — so every consecutive gap is `STEP + jitter_i >= STEP` by
@@ -165,10 +182,42 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
             t = now + timedelta(minutes=cursor_min)
             if t <= now:                       # belt-and-braces (lead_minutes < 0 hand-edit)
                 t = now + timedelta(seconds=1)
+            t = _roll_into_window(t, window, cfg)    # M7: roll forward to the next open hour if outside
             out[p.id] = iso_z(t)
-            jitter = rng.randint(0, _BULK_APPROVE_JITTER_MAX_MIN - 1)
-            cursor_min += _BULK_APPROVE_MIN_GAP_MIN + jitter   # forward-only walk: gap >= STEP
+            jitter = rng.randint(0, jitter_max - 1)
+            cursor_min += step + jitter   # forward-only walk: gap >= STEP
     return out
+
+
+def _roll_into_window(t: datetime, window, cfg) -> datetime:
+    """M7: roll `t` forward into the account's [open_h, close_h) operator-local hour band. None
+    window -> unchanged (24h open). Honors cfg.operator_tz for the local-hour read. Pure."""
+    if window is None:
+        return t
+    from fanops.timeutil import _operator_zone
+    zone = _operator_zone(cfg)
+    if zone is None:
+        return t                                 # back-compat: no operator tz -> skip the rollover
+    open_h, close_h = window
+    # Read the operator-local hour at t.
+    while True:
+        local = t.astimezone(zone)
+        h = local.hour
+        if open_h <= close_h:                    # window does NOT cross midnight
+            if open_h <= h < close_h:
+                return t
+            # outside the band -> jump to today's open if it's still ahead, else tomorrow's open
+            local_open = local.replace(hour=open_h, minute=0, second=0, microsecond=0)
+            if h >= close_h:
+                local_open = local_open + timedelta(days=1)
+            t = local_open.astimezone(t.tzinfo)
+        else:                                    # window crosses midnight (e.g. 22 -> 4)
+            if h >= open_h or h < close_h:
+                return t
+            local_open = local.replace(hour=open_h, minute=0, second=0, microsecond=0)
+            t = local_open.astimezone(t.tzinfo)
+        # safety break: at most one iteration is ever needed
+        return t
 
 
 def _batch_title(led: Ledger, bid: Optional[str]) -> Optional[str]:
