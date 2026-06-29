@@ -16,6 +16,7 @@ from fanops.crosspost import account_render_spec, render_account_file
 from fanops.log import get_logger
 from fanops.timeutil import iso_z
 from fanops.studio.views import suggest_time
+from fanops.studio.views_common import suggest_times_for_batch
 from fanops.studio.actions_common import ActionResult, _now, _inherit_captions, RENDER_PENDING_REASON
 
 
@@ -100,7 +101,14 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
     approved = 0; render_pending = 0
     try:
         with Ledger.transaction(cfg) as led:
-            for pid in list(resolve_ids(led)):                       # P1: untimed/stale post -> a strictly-future suggestion (not now)
+            ids_in_batch = list(resolve_ids(led))                    # M4: resolve ONCE in-lock and own the spread
+            # M4 — batch-aware spread: precompute per-account, per-post strictly-future suggestions
+            # so N stale-time approvals get N pairwise-distinct times by construction. The
+            # `suggest_time`-per-post path (now hot-path on M3 reschedule_bucket and single-row
+            # approve) is preserved unchanged. Pin: tests/test_bulk_approve_spread.py.
+            batch_posts = [led.posts[i] for i in ids_in_batch if i in led.posts]
+            sched = suggest_times_for_batch(cfg, batch_posts, now=now)
+            for pid in ids_in_batch:                                 # P1: untimed/stale post -> a strictly-future suggestion (not now)
                 post = led.posts.get(pid)
                 if post is not None and cfg.creative_variation:
                     _adopt_render(led, cfg, post, plans.get(pid), accts)   # render BEFORE queued (publish-needs-media)
@@ -110,7 +118,9 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                         get_logger(cfg)("approve", pid, "render_unavailable_skip_approve")   # surface it; never a silent hookless ship
                         render_pending += 1
                         continue                                    # don't queue a variant post without its burned file
-                sugg = suggest_time(cfg, post, now=now) if post is not None else None
+                # M4: per-post suggestion comes from the precomputed batch schedule; fallback to the
+                # legacy single-post suggester ONLY if the batch map missed this id (unknown post id).
+                sugg = sched.get(pid) or (suggest_time(cfg, post, now=now) if post is not None else None)
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
                 approved += 1
     except Exception as exc:
