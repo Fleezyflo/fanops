@@ -225,8 +225,9 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     from fanops.pipeline import advance
     from fanops.accounts import Accounts
     if cfg.is_live and not confirmed:
-        return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): a pass PUBLISHES "
-                            "due posts to real accounts — tick the confirm box, then run again.")
+        # UI-LIE-FIX: per-channel truth, not the legacy global.
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.effective_publish_mode()}): a pass "
+                            "PUBLISHES due posts to real accounts — tick the confirm box, then run again.")
     try:
         problems = Accounts.load(cfg).validate()       # malformed accounts.json -> clean error, not 500
     except Exception as exc:
@@ -239,8 +240,12 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     except AuthError as exc:
         # F52 parity: a bad/missing key fails EVERY post — advance's own transaction already rolled
         # back (it saves only on clean exit), but surface the FATAL severity, not a soft "failed".
-        # Name the right key per backend (ecc holistic audit GAP 2 — was Blotato-only).
-        key = "POSTIZ_API_KEY" if cfg.poster_backend == "postiz" else "BLOTATO_API_KEY"
+        # UI-LIE-FIX: a multi-backend deployment can fail auth on either side; surface the FIRST
+        # live-ready provider's key (advance iterates accounts in deterministic order, so the first
+        # failure is the first provider). Falls back to FANOPS_POSTER if no live channel exists.
+        # UI-LIE-FIX: derive the auth-key name from the EXCEPTION CLASS, not a backend guess.
+        # The error type IS the truth (BlotatoAuthError -> BLOTATO_API_KEY, etc).
+        key = Config.auth_key_name_from_error(exc)
         return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
     except Exception as exc:
         return ActionResult(ok=False, error=f"advance failed: {str(exc)[:160]}")
@@ -258,8 +263,9 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     from fanops.accounts import Accounts
     from fanops.responder import get_responder
     if cfg.is_live and not confirmed:
-        return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): a prepare pass "
-                            "PUBLISHES due posts to real accounts — tick the confirm box, then run again.")
+        # UI-LIE-FIX: per-channel truth, not the legacy global.
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.effective_publish_mode()}): a prepare "
+                            "pass PUBLISHES due posts to real accounts — tick the confirm box, then run again.")
     try:
         problems = Accounts.load(cfg).validate()       # malformed/empty-id accounts -> clean error, not 500
     except Exception as exc:
@@ -275,7 +281,8 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
             responder.answer_pending(cfg)              # llm answers the gates; manual writes nothing
             summary = advance(cfg, base_time=bt)
         except AuthError as exc:
-            key = "POSTIZ_API_KEY" if cfg.poster_backend == "postiz" else "BLOTATO_API_KEY"
+            # UI-LIE-FIX: derive the auth-key name from the EXCEPTION CLASS — the structural truth.
+            key = Config.auth_key_name_from_error(exc)
             return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
         except Exception as exc:
             return ActionResult(ok=False, error=f"prepare failed: {str(exc)[:160]}")

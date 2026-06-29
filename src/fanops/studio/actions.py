@@ -301,8 +301,9 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     — this actually drives the poster."""
     from fanops.post.run import publish_post
     if cfg.is_live and not confirmed:
-        return ActionResult(ok=False, error=f"LIVE backend ({cfg.poster_backend}): this PUBLISHES the "
-                            "post to a real account — tick the confirm box, then click again.")
+        # UI-LIE-FIX: per-channel truth, not the legacy global.
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.effective_publish_mode()}): this "
+                            "PUBLISHES the post to a real account — tick the confirm box, then click again.")
     # Short lock-free guard read for a friendly message; publish_post's own CLAIM transaction is the
     # authoritative queued-only gate (a state change in the gap is re-validated there -> a clean no-op).
     led = Ledger.load(cfg)
@@ -316,8 +317,11 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
         # holds the flock across the publish round-trip, so a concurrent daemon pass isn't starved.
         state = publish_post(cfg, post_id)
     except AuthError as exc:
-        # bad/missing key fails every post — publish_post re-raises (halt); name the right key per backend.
-        key = "POSTIZ_API_KEY" if cfg.poster_backend == "postiz" else "BLOTATO_API_KEY"
+        # UI-LIE-FIX: the auth-key name comes from the EXCEPTION CLASS, not a backend guess
+        # (BlotatoAuthError -> BLOTATO_API_KEY, etc). This is unambiguous: the backend that raised
+        # owns the key. Replaces the old `if cfg.poster_backend == 'postiz'` ternary that lied on
+        # per-channel deployments and didn't even know zernio existed.
+        key = Config.auth_key_name_from_error(exc)
         return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
     except Exception as exc:
         # A non-auth failure (media upload RuntimeError, corrupt clip.path, etc.) must NOT escape to
@@ -329,8 +333,9 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     # the claim) — tell the operator to retry rather than print a confusing "post is None".
     if state == "published":
         # R3/D17: audit the SUCCESS — only after publish_post returned 'published'.
+        # UI-LIE-FIX: audit the per-channel truth, not the legacy global.
         write_audit(cfg, "publish_now", [post_id], reason="studio_publish_now",
-                    backend=cfg.poster_backend)
+                    backend=cfg.effective_publish_mode())
         return ActionResult(ok=True, detail={"post_id": post_id, "state": state})
     if state is None:
         return ActionResult(ok=False, error="post was not claimable (it may be publishing already) — refresh and try again")

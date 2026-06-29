@@ -146,7 +146,16 @@ def pipeline_status(cfg: Config) -> dict:
         "pending_moments": len(pending(cfg, kind="moments")),
         "pending_moment_hooks": len(pending(cfg, kind="moment_hooks")),
         "pending_captions": len(pending(cfg, kind="captions")),
-        "backend": cfg.poster_backend,
+        # R3-followup: the UI mode label MUST be the per-channel truth, not the legacy global. On a live
+        # deployment with per-channel routing, cfg.poster_backend still reads 'dryrun' (the legacy
+        # FANOPS_POSTER is the fallback bridge, not the per-channel source of truth) — surfacing it
+        # printed 'dryrun' on a system that was actually publishing live, the UI lie that triggered this fix.
+        # _publish_mode_label resolves to the distinct providers actually publishing (e.g. 'postiz, zernio'),
+        # or 'dryrun' when cfg.is_live is False. ONE source for every status surface — no more divergence
+        # between Home (which already used _publish_mode_label) and Make/Schedule/Publish (which used the
+        # legacy global). hx-confirm gates that read `backend != 'dryrun'` still trigger when ANY channel
+        # publishes live, which is the correct behavior (a live publish_now needs a confirm).
+        "backend": _publish_mode_label(cfg),
         "accounts": [a.handle for a in Accounts.load(cfg).active()],   # Account-First: Run-form batch-target options
     }
 
@@ -362,18 +371,10 @@ def golive_demoted_accounts(cfg: Config) -> list:
 
 
 def _publish_mode_label(cfg: Config) -> str:
-    """The publish-mode label for the status banner under the provider model (M3): 'dryrun' when the system
-    is not live, else the distinct providers that would ACTUALLY publish (e.g. 'postiz' / 'postiz, zernio'),
-    else 'live' (live but no resolved channel yet). Replaces the old cfg.poster_backend, which now reads
-    'dryrun' on a per-channel-provider deployment even when live — a contradictory 'LIVE (dryrun)' banner.
-    Fail-open: any accounts read error degrades to 'live' (the is_live truth is already shown separately)."""
-    if not cfg.is_live:
-        return "dryrun"
-    try:
-        provs = sorted({p for _, _, p in Accounts.load(cfg).live_ready_channels()})
-        return ", ".join(provs) if provs else "live"
-    except Exception:
-        return "live"
+    """Thin delegate to cfg.effective_publish_mode (UI-LIE-FIX root: the truth lives on Config so
+    every caller — display, hx-confirm, friendly error — reads the SAME source). Kept as the
+    historical helper name for the call sites that already use it."""
+    return cfg.effective_publish_mode()
 
 
 def home_status(cfg: Config) -> HomeStatus:

@@ -71,7 +71,9 @@ def autopilot(cfg: Config, *, interval: int, install_daemon: bool = True) -> dic
 
     return {
         "responder": "llm",
-        "backend": cfg.poster_backend,
+        # UI-LIE-FIX: per-channel truth (M3), not the legacy global. The autopilot summary is shown
+        # to the operator; lying about the publish mode here was the same bug as the Studio status.
+        "backend": cfg.effective_publish_mode(),
         "checks": report["checks"],
         "notes": report["notes"],
         "daemon": daemon_res,
