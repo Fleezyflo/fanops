@@ -282,6 +282,38 @@ def cmd_resolve(cfg: Config, args) -> int:
     print(f"resolved {args.post_id} -> {args.status}"); return 0
 
 
+def cmd_audit(cfg: Config, args) -> int:
+    """(R3/D7) `fanops audit tail [-n 20]` — print the last N lines of the operator
+    audit log. Read-only; missing log -> 0 with a clear note."""
+    sub = getattr(args, "audit_cmd", None) or "tail"
+    if sub == "tail":
+        from fanops.audit import read_audit_tail
+        n = getattr(args, "n", 20) or 20
+        lines = read_audit_tail(cfg, n=n)
+        if not lines:
+            print("(audit log empty — no state-changing actions recorded yet)")
+            return 0
+        for line in lines:
+            print(line)
+        return 0
+    print(f"unknown audit subcommand: {sub!r}", file=sys.stderr); return 2
+
+
+def cmd_bulk_send_to_review(cfg: Config, args) -> int:
+    """(R3/D7) `fanops bulk-send-to-review p1 p2 ... --reason=…` — revert N posts to
+    awaiting_approval and clear publish telemetry. Atomic; audited."""
+    from fanops.studio.actions import bulk_send_to_review
+    res = bulk_send_to_review(cfg, list(args.post_ids), reason=args.reason)
+    if not res.ok:
+        print(res.error, file=sys.stderr); return 2
+    d = res.detail or {}
+    print(f"moved {d.get('moved', 0)} -> awaiting_approval")
+    unknown = d.get("unknown") or []
+    if unknown:
+        print(f"unknown ids skipped: {', '.join(unknown)}")
+    return 0
+
+
 def cmd_doctor_fix_ghosts(cfg: Config, args) -> int:
     """R1 migration: heal any pre-existing ghost rows (state=published, public_url='') in a ledger
     written BEFORE the R1 invariant landed. Reads ledger.json as RAW JSON (bypassing the Pydantic
@@ -525,6 +557,13 @@ def main(argv: list[str] | None = None) -> int:
     p_doctor.add_argument("--fix-routing", action="store_true",
                           help="(R2) READ-ONLY: list every accounts.json (handle, platform) routing-drift state with a proposed fix")
     sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
+    p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
+    audit_sub = p_audit.add_subparsers(dest="audit_cmd")
+    p_at = audit_sub.add_parser("tail", help="print the last N lines of 00_control/studio_audit.log")
+    p_at.add_argument("-n", type=int, default=20)
+    p_bsr = sub.add_parser("bulk-send-to-review", help="(R3) revert posts to awaiting_approval; clears scheduled_time/public_url/metrics/published_at")
+    p_bsr.add_argument("post_ids", nargs="+")
+    p_bsr.add_argument("--reason", required=True, help="operator intent recorded in the audit (e.g. bad_batch_revert)")
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
     p_studio.add_argument("--port", type=int, default=8787)
@@ -744,6 +783,10 @@ def _dispatch(cfg: Config, args) -> int:
         return cmd_resolve(cfg, args)
     if args.cmd == "doctor-fix-ghosts":
         return cmd_doctor_fix_ghosts(cfg, args)
+    if args.cmd == "audit":
+        return cmd_audit(cfg, args)
+    if args.cmd == "bulk-send-to-review":
+        return cmd_bulk_send_to_review(cfg, args)
     if args.cmd == "unhold":
         # RUNTIME backlog (f): clear a brand-risk hold WITHOUT a hand-edit of ledger.json. When a
         # clip was parked in `held` (held=True, held_reason set) by the brand-risk gate, the

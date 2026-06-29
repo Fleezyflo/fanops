@@ -15,7 +15,6 @@ These tests pin: D7 (bulk_send_to_review API), D17 (audit log of state-changing
 actions), D18 (Posted-tub batch grouping/filter)."""
 from __future__ import annotations
 import json
-import pytest
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -328,4 +327,4 @@ def test_posted_view_chip_links_to_batch_filter(tmp_path):
     assert "batch_c59d718170ea" in body, (
         "Posted tub does not surface the batch id on the row")
     assert "?batch=batch_c59d718170ea" in body or "&batch=batch_c59d718170ea" in body, (
-        f"Posted tub does not link the batch chip to the filter")
+        "Posted tub does not link the batch chip to the filter")
