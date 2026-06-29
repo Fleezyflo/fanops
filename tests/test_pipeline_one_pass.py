@@ -1,18 +1,20 @@
 # tests/test_pipeline_one_pass.py
-"""M1 invariant — two concurrent transcribe_source calls on the same source spawn ONE whisper
-subprocess, not two. The race the M1 milestone closes: advance() called twice in rapid succession
-ran transcribe in prewarm (lock-free) AND in the main pass (in-lock), both saw the cache JSON
-absent (whisper still running), both spawned a subprocess on the same audio, both ground 70+ CPU
-minutes against each other while the daemon's flock starved.
+"""M1+M3 invariants — the slow stages run lock-free in `produce.run_all` (M3) and the reducer
+in `pipeline.advance()` adopts the warm artifacts inside a SHORT main transaction.
 
-The fix is the per-stage producer lock (src/fanops/stage_lock.py). Re-check the JSON INSIDE the
-lock: the first acquirer runs whisper and writes JSON atomically; the second acquirer enters the
-critical section, finds the JSON, short-circuits. The bad path becomes unconstructable, not
-guarded by a sentinel that can be re-raced.
+M1 race the producer lock closes: two concurrent transcribe_source calls for the same source
+must spawn ONE whisper subprocess. The per-(stage, source) producer lock + on-disk artifact
+short-circuit makes the bad path unconstructable, not guarded by a re-raceable sentinel.
 
-Mutation proof: removing the stage_lock acquire in transcribe_source makes
-test_double_transcribe_spawns_one_whisper fail (two subprocess.run calls).
-"""
+M3 reduce-txn invariant: on a produced source (transcript JSON warm), advance()'s main
+ledger transaction completes in well under one wall-clock second — the in-lock transcribe
+call is a microsecond cache hit by construction. A future regression that re-introduces an
+in-lock subprocess spawn would balloon this past 1s.
+
+Mutation proofs:
+- Remove the transcribe stage_lock acquire -> test_double_transcribe_spawns_one_whisper fails.
+- Re-introduce a slow in-lock subprocess inside _stage_source_to_moments -> the wall-clock
+  bound in test_main_reduce_txn_is_short fails."""
 import json
 import threading
 import time
@@ -107,3 +109,78 @@ def test_transcribe_short_circuits_on_existing_json(tmp_path, mocker, monkeypatc
     assert calls == [], (
         f"transcribe_source spawned a subprocess despite an existing JSON: {calls}")
     assert led.sources["src_warm"].state is SourceState.transcribed
+
+
+def test_main_reduce_txn_is_short(tmp_path, monkeypatch, mocker):
+    """M3 — on a source whose transcript JSON is already warm (the producer wrote it lock-free),
+    the main reduce transaction in advance() completes in well under one second. The reducer's
+    in-lock transcribe_source call is a microsecond cache hit by construction; a future
+    regression that re-introduced a slow in-lock subprocess would balloon this past the bound.
+
+    Setup: one catalogued source + a pre-warmed transcript JSON on disk. Mock ingest_drops so we
+    don't shell ffprobe; mock subprocess.run so a stray subprocess (a bug) would be visible. The
+    in-lock `_stage_source_to_moments`'s transcribe call adopts the cache and flips state without
+    ever entering subprocess.run."""
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")
+    mocker.patch("fanops.transcribe._fw_available", return_value=True)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+
+    # Seed a catalogued source.
+    src_path = cfg.sources / "src_warm.mp4"
+    src_path.parent.mkdir(parents=True, exist_ok=True)
+    src_path.write_bytes(b"V")
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_warm", source_path=str(src_path),
+                          duration=10.0, state=SourceState.catalogued))
+    led.save()
+    # Pre-warm the transcript JSON (simulates a prior producer's lock-free output).
+    out_dir = cfg.agent_io / "transcripts"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "src_warm.json").write_text(json.dumps({"language": "en", "segments": [
+        {"start": 0.0, "end": 1.0, "text": "warm"}]}))
+
+    # If the producer's stitch prewarm tries to shell anything, return a no-op.
+    def noop(cmd, **kw):
+        class R:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=noop)
+    mocker.patch("fanops.signals.subprocess.run", side_effect=noop)
+    mocker.patch("fanops.clip.subprocess.run", side_effect=noop)
+    mocker.patch("fanops.ingest.subprocess.run", side_effect=noop)
+    # ingest_drops is a no-op (the source is already catalogued).
+    mocker.patch("fanops.pipeline.ingest_drops",
+                 side_effect=lambda led, cfg, **kw: (led, None))
+
+    # Spy the ledger transaction so we can isolate the time spent INSIDE its critical section.
+    import fanops.ledger as ledger_mod
+    real_transaction = ledger_mod.Ledger.transaction
+    txn_durations: list[float] = []
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def timing_transaction(cfg_arg, *a, **kw):
+        t0 = time.monotonic()
+        with real_transaction(cfg_arg, *a, **kw) as led_inner:
+            yield led_inner
+        txn_durations.append(time.monotonic() - t0)
+
+    mocker.patch.object(ledger_mod.Ledger, "transaction", staticmethod(timing_transaction))
+
+    from fanops.pipeline import advance
+    advance(cfg, base_time="2026-06-29T12:00:00Z")
+
+    # advance() opens 2 transactions: the short ingest one and the main reduce one. Both must be
+    # under 1s wall clock on a warm source.
+    assert len(txn_durations) >= 1
+    longest = max(txn_durations)
+    assert longest < 1.0, (
+        f"main reduce txn held the ledger flock for {longest:.3f}s — a slow in-lock subprocess "
+        f"has regressed; M3's lock-free produce contract is broken")
