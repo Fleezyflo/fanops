@@ -78,8 +78,9 @@ def test_ready_channels_excludes_inactive_accounts(tmp_path, monkeypatch):
 # ------------------------------------------------------------------ go_live / go_dryrun ----
 def test_go_live_writes_fanops_live_not_poster(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+    # R2: validate() requires integrations[p] AND backends[p] paired (no drift) — pair them.
     _seed(cfg, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"], "status": "active",
-                 "backends": {"tiktok": "zernio"}}])
+                 "integrations": {"tiktok": "tk_1"}, "backends": {"tiktok": "zernio"}}])
     res = golive.go_live(cfg, confirmed=True)
     assert res.ok is True and res.detail["live"] is True
     assert os.environ["FANOPS_LIVE"] == "1"                                 # in-process
@@ -99,8 +100,9 @@ def test_go_live_blocked_when_no_channel_has_a_provider(tmp_path, monkeypatch):
 
 def test_go_live_needs_confirm_even_when_ready(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+    # R2: validate() requires integrations[p] AND backends[p] paired (no drift) — pair them.
     _seed(cfg, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"], "status": "active",
-                 "backends": {"tiktok": "zernio"}}])
+                 "integrations": {"tiktok": "tk_1"}, "backends": {"tiktok": "zernio"}}])
     res = golive.go_live(cfg, confirmed=False)
     assert res.ok is False and "confirm" in res.error.lower()
     assert cfg.is_live is False                               # ready, but withheld without the human gate

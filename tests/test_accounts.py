@@ -149,17 +149,24 @@ def test_resolve_account_id_platform_unmapped_no_fallback_raises(tmp_path):
 
 def test_validate_flags_per_platform_unmapped_channel(tmp_path):
     # instagram is mapped, tiktok is not and there's no shared account_id -> validate flags tiktok by name.
+    # R2: also pair instagram with its backend so the new co-constraint rule passes; this test pins the
+    # *missing id* problem, not the routing-drift problem.
     cfg = Config(root=tmp_path)
     _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"],
-                 "status": "active", "integrations": {"instagram": "ig_1"}}])
+                 "status": "active", "integrations": {"instagram": "ig_1"},
+                 "backends": {"instagram": "postiz"}}])
     problems = Accounts.load(cfg).validate()
     assert any("tiktok" in p for p in problems)
-    assert not any("instagram" in p for p in problems)   # the mapped channel is NOT flagged
+    # R2: the only instagram mention allowed is one that doesn't carry the missing-id phrasing.
+    bad_ig = [p for p in problems if "instagram" in p and "no account_id" in p]
+    assert not bad_ig, f"the mapped channel is NOT flagged for a missing id: {bad_ig}"
 
 def test_validate_passes_fully_per_platform_mapped(tmp_path):
+    # R2: a fully-mapped account pairs each integration with its backend (the canonical happy path).
     cfg = Config(root=tmp_path)
     _seed(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"],
-                 "status": "active", "integrations": {"instagram": "ig_1", "tiktok": "tk_9"}}])
+                 "status": "active", "integrations": {"instagram": "ig_1", "tiktok": "tk_9"},
+                 "backends": {"instagram": "postiz", "tiktok": "postiz"}}])
     assert Accounts.load(cfg).validate() == []
 
 def test_validate_legacy_single_account_id_still_passes(tmp_path):

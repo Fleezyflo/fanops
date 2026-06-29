@@ -185,9 +185,13 @@ def cmd_publish_queue(cfg: Config) -> int:
     print(f"-- {len(rows)} post(s). Post each clip by hand, then: fanops resolve <post_id> published --url <live-url>")
     return 0
 
-def cmd_doctor(cfg: Config) -> int:
+def cmd_doctor(cfg: Config, args=None) -> int:
     # Read-only first-run health screen (Phase 3b). Prints PASS/FAIL per setup gate + notes; exits 1
     # if any check fails (setup incomplete), else 0. Performs nothing — pure diagnosis + pointers.
+    # R2: --fix-routing branches into the per-channel routing surveyor (read-only, lists every
+    # accounts.json (handle, platform) drift state with a proposed fix; never auto-writes).
+    if args is not None and getattr(args, "fix_routing", False):
+        return _cmd_doctor_fix_routing(cfg)
     from fanops.doctor import doctor_report
     rep = doctor_report(cfg)
     print("fanops doctor")
@@ -202,6 +206,46 @@ def cmd_doctor(cfg: Config) -> int:
     for n in rep["notes"]:
         print(f"  - {n}")
     return 1 if failed else 0
+
+
+def _cmd_doctor_fix_routing(cfg: Config) -> int:
+    """R2 read-only surveyor: walk accounts.json, list every (handle, platform) routing-drift state
+    with a proposed fix the operator can paste. NEVER auto-writes — drift is a sensitive config
+    decision (which backend owns this id?), the operator picks. Drift = integrations[p] XOR backends[p].
+    Proposes `postiz` for an IG/YouTube integration (the only realistic provider today) and asks the
+    operator to pick postiz-or-zernio for TikTok. Exit 0 (read-only, never the failure exit)."""
+    from fanops.accounts import load_accounts_safe
+    accts, err = load_accounts_safe(cfg)
+    if err:
+        print(f"accounts.json unreadable: {err}", file=sys.stderr)
+        return 0                                    # read-only surveyor never fails the exit
+    print("fanops doctor --fix-routing (R2: routing-drift survey, read-only)")
+    drift_count = 0
+    for a in accts.accounts:
+        for p in a.platforms:
+            has_integ = bool(a.integrations.get(p.value))
+            has_backend = bool(a.backends.get(p.value))
+            if has_integ == has_backend:
+                continue                            # both set (clean) or both unset (legacy) — fine
+            drift_count += 1
+            if has_integ and not has_backend:
+                proposal = ("postiz" if p.value in ("instagram", "youtube")
+                            else "postiz OR zernio (operator picks)")
+                integ_id = a.integrations.get(p.value)
+                print(f"  DRIFT: {a.handle}/{p.value}: integrations={integ_id!r}, backends=<UNSET>")
+                print(f"     fix: fanops set-channel-routing --handle {a.handle} --platform {p.value} "
+                      f"--backend {proposal} --integration-id {integ_id}")
+                print("     reason: legacy FANOPS_POSTER bridge would silently route to dryrun on a live config")
+            else:
+                bk = a.backends.get(p.value)
+                print(f"  DRIFT: {a.handle}/{p.value}: backends={bk!r}, integrations=<UNSET>")
+                print(f"     fix: connect the {bk} integration first (Studio Go-Live tab), then re-route")
+                print("     reason: backend has no id to publish through")
+    if not drift_count:
+        print("  no routing-drift found — every (handle, platform) is consistent.")
+    else:
+        print(f"  total drift channels: {drift_count}. NONE was modified — paste the proposed fix to apply.")
+    return 0
 
 def cmd_resolve(cfg: Config, args) -> int:
     """AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve a
@@ -477,7 +521,9 @@ def main(argv: list[str] | None = None) -> int:
     p_comp.add_argument("--title", default=None, help="on-screen title (default: the clip's hook)")
     p_comp.add_argument("--intro", default=None, help="intro card text (default: artist name; pass '' to disable)")
     p_comp.add_argument("--outro", default=None, help="outro card text, e.g. an @handle (default: none)")
-    sub.add_parser("doctor", help="read-only first-run health screen (toolchain/accounts/key/go-live readiness)")
+    p_doctor = sub.add_parser("doctor", help="read-only first-run health screen (toolchain/accounts/key/go-live readiness)")
+    p_doctor.add_argument("--fix-routing", action="store_true",
+                          help="(R2) READ-ONLY: list every accounts.json (handle, platform) routing-drift state with a proposed fix")
     sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
@@ -688,7 +734,7 @@ def _dispatch(cfg: Config, args) -> int:
             from fanops.fanops_hashtags import cmd_hashtags_discover  # lazy: keeps it off the hot path
             return cmd_hashtags_discover(cfg)
         return 2
-    if args.cmd == "doctor":   return cmd_doctor(cfg)
+    if args.cmd == "doctor":   return cmd_doctor(cfg, args)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)

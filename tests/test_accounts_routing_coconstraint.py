@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import pytest
 from fanops.config import Config
-from fanops.accounts import Accounts, set_backend, write_integration
+from fanops.accounts import Accounts, set_backend
 
 
 # ---------- D5/D15: validator must catch (integration set, backend unset) ----------
@@ -255,8 +255,8 @@ def test_legacy_set_backend_alone_leaves_drift_caught_by_validator(tmp_path):
              if "backend" in p.lower() and "integration" in p.lower()]
     # The mirror case of the cisumwolfhom incident — equally bad, same rule must catch it.
     assert drift, (
-        f"validate() did not catch the inverse drift (backend set, integration unset). "
-        f"R2: the structural rule must cover both sides of the asymmetric pair.")
+        "validate() did not catch the inverse drift (backend set, integration unset). "
+        "R2: the structural rule must cover both sides of the asymmetric pair.")
 
 
 # ---------- doctor --fix-routing scaffold ----------

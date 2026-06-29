@@ -166,7 +166,10 @@ class Accounts:
         """Config problems to surface before a run. Per-platform: each active account's every platform
         must resolve to an id (its integrations[platform] OR the shared account_id) — so a multi-platform
         handle with one channel unmapped is flagged by name, while a legacy single-account_id account
-        still passes via the fallback."""
+        still passes via the fallback. R2/D5/D15: also rejects the drift state where ONE side of the
+        per-platform routing pair is set without the other — integrations[p] set + backends[p] unset
+        (or vice versa) silently fell back to the legacy FANOPS_POSTER=dryrun bridge on a 'live' config
+        (the cisumwolfhom incident). The structural rule closes the bad path at go_live time."""
         problems = []
         for a in self.active():
             if not a.platforms:
@@ -174,6 +177,19 @@ class Accounts:
             for p in a.platforms:
                 if not (a.integrations.get(p.value) or a.account_id):
                     problems.append(f"active account {a.handle} has no account_id for {p.value}")
+                # R2/D5/D15: per-platform routing pair must be atomically set or atomically unset.
+                # Either side present without the other is the drift state — the legacy bridge
+                # would silently route the channel to dryrun. Refuse it.
+                has_integ = bool(a.integrations.get(p.value))
+                has_backend = bool(a.backends.get(p.value))
+                if has_integ and not has_backend:
+                    problems.append(f"{a.handle}/{p.value}: integration id set without a backend — "
+                                    f"set backends.{p.value} or clear integrations.{p.value} "
+                                    f"(R2/D5: would silently route to the legacy FANOPS_POSTER bridge)")
+                elif has_backend and not has_integ:
+                    problems.append(f"{a.handle}/{p.value}: backend set without an integration id — "
+                                    f"set integrations.{p.value} or clear backends.{p.value} "
+                                    f"(R2/D4: backend would have no id to publish through)")
         seen = set()
         for a in self.accounts:
             if a.handle in seen:
@@ -326,6 +342,55 @@ def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
                 if clearing: bk.pop(str(platform), None)
                 else: bk[str(platform)] = backend
                 a["backends"] = bk; found = True
+        if not found:
+            raise KeyError(handle)
+        write_json_atomic(p, raw)
+    return handle
+
+
+def set_channel_routing(cfg: Config, handle: str, platform: str, *,
+                        backend: str, integration_id: str | int) -> str:
+    """Atomically map ONE (handle, platform) channel to its provider + integration id in a SINGLE
+    accounts.json write — the canonical R2 routing setter that REPLACES the legacy
+    `write_integration` + `set_backend` two-write seam, which silently drifted (the cisumwolfhom
+    incident). Writes integrations[platform] AND backends[platform] together, never one without
+    the other; the post-write validate is clean by construction. Validates strictly at the
+    control-file boundary: a non-blank handle, a known Platform.value, a non-blank integration_id,
+    a non-blank backend in _VALID_BACKENDS, AND the platform is one the account actually carries
+    (config error vs silent write). Refuses BOTH `clearing` modes — clearing belongs on the
+    legacy setters; this API only WRITES a complete pair (the doctor surveys, the operator clears
+    via the legacy seam). Scans ALL rows (dup-handle safety, mirrors set_backend/write_integration);
+    preserves every sibling, unknown field, and the account's other platforms. Unknown handle ->
+    KeyError (caller -> clean ActionResult)."""
+    platform = getattr(platform, "value", platform)
+    if platform not in {pf.value for pf in Platform}:
+        raise ValueError(f"unknown platform: {platform!r}")
+    integration_id = str(integration_id or "").strip()
+    if not integration_id:
+        raise ValueError("integration_id is required — set_channel_routing writes a complete pair "
+                         "(use set_backend with blank to clear a routing instead)")
+    backend = (backend or "").strip().lower()
+    if not backend:
+        raise ValueError("backend is required — set_channel_routing writes a complete pair "
+                         "(use set_backend with blank to clear a routing instead)")
+    if backend not in _VALID_BACKENDS:
+        raise ValueError(f"unknown backend: {backend!r} (valid: {', '.join(sorted(_VALID_BACKENDS))})")
+    p = cfg.accounts_path
+    with _accounts_txn(cfg):
+        raw, accounts = _load_raw_accounts(p)
+        found = False
+        for a in accounts:                                       # scan ALL rows (dup-handle safety)
+            if isinstance(a, dict) and a.get("handle") == handle:
+                if platform not in (a.get("platforms") or []):
+                    raise ValueError(f"{handle} does not carry {platform!r} — add the platform first")
+                integ = a.get("integrations")
+                if not isinstance(integ, dict): integ = {}
+                bk = a.get("backends")
+                if not isinstance(bk, dict): bk = {}
+                integ[str(platform)] = integration_id
+                bk[str(platform)] = backend
+                a["integrations"] = integ; a["backends"] = bk
+                found = True
         if not found:
             raise KeyError(handle)
         write_json_atomic(p, raw)

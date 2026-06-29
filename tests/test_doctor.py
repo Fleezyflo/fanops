@@ -13,8 +13,11 @@ def _postiz_cfg(tmp_path, *, mapped=True, validated=True):
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     integ = {"instagram": "ig_1"} if mapped else {}
+    # R2: a mapped channel pairs integrations[p] with backends[p] (no drift); unmapped stays empty.
+    backs = {"instagram": "postiz"} if mapped else {}
     cfg.accounts_path.write_text(json.dumps({"accounts": [
-        {"handle": "@probe", "platforms": ["instagram"], "status": "active", "access": "postiz", "integrations": integ}]}))
+        {"handle": "@probe", "platforms": ["instagram"], "status": "active", "access": "postiz",
+         "integrations": integ, "backends": backs}]}))
     cfg.cutover_path.write_text(json.dumps({"metrics_confirmed": bool(validated)}))
     return cfg
 
