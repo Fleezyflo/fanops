@@ -104,45 +104,71 @@ def detect_window(cfg, src, *, start: float, end: float) -> dict | None:
     cached per (source, window) in a `<source_id>.detect.json` sidecar. This is the SINGLE detection that
     feeds classify_window + subject_focus + speaker_track + motion_saliency. Returns None on every fail-open
     path (no [framing] extra, no detector, no frames, any error) -> callers fall back to the centered crop.
-    NEVER raises."""
+    NEVER raises.
+
+    M2 — bracketed by a per-(framing, source_id) stage_lock so two concurrent callers don't both
+    spawn the OpenCV detection pass and racingly clobber the sidecar (last-writer-wins lost work).
+    The first acquirer fills the cache; the second enters the critical section, finds the cached
+    window, returns. Cache is checked BEFORE the lock as a fast path (no contention on a warm
+    sidecar) AND AFTER acquisition as the race-closing re-check. Atomic sidecar write (tmp +
+    os.replace) so a torn write never poisons a concurrent reader."""
     if not (end > start):
         return None
-    path = _detect_sidecar(cfg, getattr(src, "id", "nosrc"))
-    cache = _load_detect_cache(path)
+    source_id = getattr(src, "id", "nosrc")
+    path = _detect_sidecar(cfg, source_id)
     key = _wkey(start, end)
+    # Fast path: a warm sidecar with this window cached -> return without acquiring the lock.
+    cache = _load_detect_cache(path)
     if key in cache:
-        return cache[key]                                     # cached stats (may be a real dict) -> no re-probe
+        return cache[key]
     cv2 = _cv2()
     if cv2 is None:
         return None
     det = _detector(cv2)
     if det is None:
         return None
-    from fanops import keyframes
-    tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_grid_{key}"
-    frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
-                                           fps=_DETECT_FPS, out_dir=tmp, width=_KF_WIDTH)
-    stats = None
-    try:
-        if frames:
-            stats = {"fps": _DETECT_FPS, "frames": [[list(t) for t in _detect_faces(cv2, det, fp)] for fp in frames]}
-    except Exception:
-        stats = None                                          # fail-open by contract
-    finally:
-        for fp in frames:
+    # Slow path: per-(framing, source_id) lock so the detection runs ONCE for this source. Re-check
+    # the sidecar inside the lock — the first acquirer wrote it during its critical section.
+    from fanops.stage_lock import stage_lock
+    with stage_lock(cfg, stage="framing", key=source_id):
+        cache = _load_detect_cache(path)
+        if key in cache:
+            return cache[key]
+        from fanops import keyframes
+        tmp = cfg.agent_io / "framing" / "tmp" / f"{source_id}_grid_{key}"
+        # M2: thread source_id+cfg so the grid pass hits the content-addressed cache. detect_window,
+        # speaker_track, and motion_saliency all call this on the same source — without the cache
+        # they re-extract the same window 3× per pass; with it, the second + third callers find
+        # the frames on disk and short-circuit.
+        frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
+                                               fps=_DETECT_FPS, out_dir=tmp, width=_KF_WIDTH,
+                                               source_id=source_id, cfg=cfg)
+        stats = None
+        try:
+            if frames:
+                stats = {"fps": _DETECT_FPS,
+                         "frames": [[list(t) for t in _detect_faces(cv2, det, fp)] for fp in frames]}
+        except Exception:
+            stats = None                                      # fail-open by contract
+        finally:
+            for fp in frames:
+                with contextlib.suppress(OSError):
+                    os.unlink(fp)
             with contextlib.suppress(OSError):
-                os.unlink(fp)
-        with contextlib.suppress(OSError):
-            os.rmdir(tmp)
-    if stats is None:
-        return None
-    cache[key] = stats
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"v": _DETECT_V, "windows": cache}))
-    except OSError:
-        return stats                                          # cache write failure just re-probes next time
-    return stats
+                os.rmdir(tmp)
+        if stats is None:
+            return None
+        cache[key] = stats
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Atomic write — tmp + os.replace. A reader opening the JSON mid-write (race outside
+            # this lock, e.g. a parallel speaker_track sidecar reader) never sees a truncated file.
+            tmpf = path.with_suffix(path.suffix + ".tmp")
+            tmpf.write_text(json.dumps({"v": _DETECT_V, "windows": cache}))
+            os.replace(str(tmpf), str(path))
+        except OSError:
+            return stats                                      # cache write failure just re-probes next time
+        return stats
 
 # ---- Content-type classification (T3): route each cut WINDOW to a reframe strategy. The two reliable
 # signals are transcript-over-window (speech) and grid face-count; music-vs-silent is weakly separable and
@@ -382,9 +408,13 @@ def _compute_track(cv2, det, cfg, src, start: float, end: float):
     stats can't carry, so this runs its own grid pass; only multi-speaker windows pay it. The first/last
     segment snap to [0, dur] so the render's time-expression covers the whole clip."""
     from fanops import keyframes
-    tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_asd_{_wkey(start, end)}"
+    source_id = getattr(src, "id", "nosrc")
+    tmp = cfg.agent_io / "framing" / "tmp" / f"{source_id}_asd_{_wkey(start, end)}"
+    # M2: source_id+cfg threaded so the grid pass shares the content-addressed cache with
+    # detect_window and motion_saliency on the same window — one ffmpeg, not three.
     frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
-                                           fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH)
+                                           fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH,
+                                           source_id=source_id, cfg=cfg)
     try:
         track = _assemble_track(_track_observe(cv2, det, frames), _ASD_FPS)
     finally:
@@ -471,9 +501,13 @@ def motion_saliency(cfg, src, *, start: float, end: float):
     if cv2 is None:
         return None                                           # extra absent -> don't cache (may install later)
     from fanops import keyframes
-    tmp = cfg.agent_io / "framing" / "tmp" / f"{getattr(src, 'id', 'nosrc')}_sal_{key}"
+    source_id = getattr(src, "id", "nosrc")
+    tmp = cfg.agent_io / "framing" / "tmp" / f"{source_id}_sal_{key}"
+    # M2: source_id+cfg threaded so the grid pass shares the content-addressed cache with
+    # detect_window and speaker_track on the same window.
     frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
-                                           fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH)
+                                           fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH,
+                                           source_id=source_id, cfg=cfg)
     try:
         result = _saliency_centroid(cv2, frames) if frames else None
     except Exception:
