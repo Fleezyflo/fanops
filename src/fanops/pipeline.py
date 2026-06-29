@@ -3,8 +3,6 @@ chain as far as it can and PAUSES at each agent gate (moments, captions). EVERY 
 call is wrapped so one bad source/moment/clip goes to `error` and is skipped — it never wedges
 the whole pass (FIX F03). Returns counts + awaiting{moments,captions}."""
 from __future__ import annotations
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from typing import Optional, TypedDict
 from datetime import datetime, timezone
 from fanops.config import Config
@@ -20,7 +18,7 @@ from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
 from fanops.casting import request_moment_casting, ingest_moment_casting, scoped_caption_surfaces
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
-                                  prewarm_approved_stitches, approved_disabled_count)
+                                  approved_disabled_count)
 from fanops.intro_match import request_intro_match, ingest_intro_match
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions
@@ -31,6 +29,7 @@ from fanops.digest import write_digest
 from fanops.log import get_logger
 from fanops.agentstep import pending
 from fanops.timeutil import parse_iso
+from fanops import produce
 
 def _aspects_for(accts: Accounts) -> set[Fmt]:
     return {PLATFORM_ASPECT.get(s.platform, Fmt.r9x16) for s in accts.surfaces()} or {Fmt.r9x16}
@@ -50,119 +49,15 @@ def _parse(ts):
     except Exception:
         return None
 
-def _prewarm(cfg: Config, aspects: set[Fmt], log) -> None:
-    """Pre-warm dispatcher (parallel-source pipeline). DEFAULT OFF -> the EXACT existing sequential
-    body below (byte-identical; the pool is never constructed). With FANOPS_CONCURRENT_SOURCES on,
-    the slow per-source subprocess stages run in a bounded thread pool instead — see _prewarm_concurrent.
-    Either path leaves the SAME on-disk artifacts warm; the main transaction in advance() (the single
-    serial reduce / one writer) re-runs the stages in-lock and skips on the warm artifacts exactly as
-    today, so the committed ledger state is identical regardless of this flag."""
-    if cfg.concurrent_sources:
-        _prewarm_concurrent(cfg, aspects, log); return
-    _prewarm_sequential(cfg, aspects, log)
-
-@dataclass(frozen=True)
-class SourceResult:
-    """The PURE result of a worker's per-source produce pass — a source id + an optional error reason.
-    A worker NEVER mutates a shared ledger / calls save / opens a transaction; it loads its own private
-    throwaway snapshot, runs the slow stages (writing only deterministic on-disk artifacts), and returns
-    one of these. The main transaction (the only writer) re-derives the real state in-lock."""
-    source_id: str
-    error_reason: str | None = None
-
-def _produce_source(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> SourceResult:
-    """Worker body for ONE source: load a PRIVATE throwaway Ledger.load(cfg) snapshot, run the slow
-    subprocess chain (transcribe -> detect_signals) on this source, then render THIS source's decided
-    moments — warming the exact same on-disk artifacts (transcript JSON, signals sidecar, clip mp4 +
-    fingerprint) the sequential _prewarm warms today. Mirrors _prewarm's per-unit fail-open quarantine
-    but RETURNS a SourceResult instead of mutating in place. NEVER calls led.save()/_save_unlocked/
-    Ledger.transaction — the private in-memory ledger is discarded; only the artifacts + the result
-    survive. The on-screen hook is final at decision time (vision author + is_weak_hook floor), so a
-    decided moment's render fingerprint is stable — no feed-level hook stage to wait on (determinism)."""
-    err: str | None = None
-    try:
-        led = Ledger.load(cfg)
-    except Exception as e:
-        log("prewarm", source_id, "warn", err=str(e)[:120]); return SourceResult(source_id, str(e)[:120])
-    s = led.sources.get(source_id)
-    if s is None or s.origin_kind == "third_party":
-        return SourceResult(source_id, None)              # gone / inert — nothing to warm
-    try:
-        if s.state is SourceState.catalogued:
-            led = transcribe_source(led, cfg, source_id)   # M1: stage_lock-protected; length-scaled timeout
-        if led.sources[source_id].state is SourceState.transcribed:
-            led = detect_signals(led, cfg, source_id)
-    except Exception as e:                                # fail-open: the commit pass retries in-lock
-        log("prewarm", source_id, "warn", err=str(e)[:120]); err = f"{type(e).__name__}: {e}"
-    for m in list(led.moments.values()):
-        if m.parent_id != source_id: continue             # render only THIS source's moments (disjoint paths)
-        if m.state is MomentState.decided:
-            try:
-                led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
-            except Exception as e:
-                log("prewarm", m.id, "warn", err=str(e)[:120])
-    return SourceResult(source_id, err)
-
-def _prewarm_concurrent(cfg: Config, aspects: set[Fmt], log) -> None:
-    """Parallel map phase (parallel-source pipeline): warm each source's slow subprocess artifacts in a
-    bounded ThreadPoolExecutor instead of one-source-at-a-time, so a long video no longer head-of-line
-    blocks the queue. The pool produces ONLY artifacts + pure SourceResults — NO worker touches the
-    ledger (the one-writer rule). The throwaway ledger here is loaded ONLY to snapshot the eligible
-    source ids. The stitch prewarm tail stays serial. The single main transaction in advance() is the
-    reduce (the only writer) and is UNCHANGED — it re-runs the stages in-lock and skips on the warm artifacts."""
-    try:
-        led = Ledger.load(cfg)
-    except Exception as e:
-        log("prewarm", "-", "warn", err=str(e)[:120]); return
-    ids = [s.id for s in led.sources.values() if s.origin_kind != "third_party"]   # M1: third-party assets are INERT
-    if ids:
-        with ThreadPoolExecutor(max_workers=cfg.concurrent_workers) as ex:   # bound = rate-limit guardrail, not correctness
-            futs = [ex.submit(_produce_source, cfg, sid, aspects, log=log) for sid in ids]
-            for fut in as_completed(futs):
-                try: fut.result()                         # each worker already fail-opens; this guards a thread-level crash
-                except Exception as e: log("prewarm", "-", "warn", err=f"worker crash: {type(e).__name__}: {str(e)[:120]}")
-    # M4/M6 structural-hooks stitch prewarm stays SERIAL (independent of the per-source map; warms
-    # operator-APPROVED stitch renders lock-free), mirroring _prewarm_sequential's tail.
-    strategies = _enabled_strategies(cfg)
-    if strategies:
-        try: prewarm_approved_stitches(led, cfg, log, strategies=strategies)   # the mutated coordinator led (matches _prewarm_sequential)
-        except Exception as e: log("prewarm", "-", "warn", err=str(e)[:120])
-
-def _prewarm_sequential(cfg: Config, aspects: set[Fmt], log) -> None:
-    """Phase D: run ONLY the slow subprocess stages (whisper / ffmpeg signals / ffmpeg render) with NO
-    ledger lock held, against a THROWAWAY ledger, so they populate their deterministic on-disk artifacts
-    (transcript JSON, signals sidecar, clip mp4 + render fingerprint). The authoritative transaction in
-    advance() then re-runs the same stages, which SKIP the now-warm subprocess and only flip ledger
-    state under a short lock — keeping the multi-minute transcodes OUT of the lock (the LockBusyError
-    starvation hit live). Writes NO gate requests and saves NO ledger state; only the on-disk artifacts
-    persist. Fail-open per unit: a warm miss/error just means that stage runs inside the lock (today's
-    behavior), never a crash."""
-    try:
-        led = Ledger.load(cfg)
-    except Exception as e:
-        log("prewarm", "-", "warn", err=str(e)[:120]); return
-    for s in list(led.sources.values()):
-        if s.origin_kind == "third_party": continue       # M1: third-party assets are INERT to clip-production
-        try:
-            if s.state is SourceState.catalogued:
-                led = transcribe_source(led, cfg, s.id)   # M1: stage_lock-protected; length-scaled timeout
-            if led.sources[s.id].state is SourceState.transcribed:
-                led = detect_signals(led, cfg, s.id)
-        except Exception as e:                            # fail-open: the commit pass retries in-lock
-            log("prewarm", s.id, "warn", err=str(e)[:120])
-    for m in list(led.moments.values()):
-        if m.state is MomentState.decided:
-            try:
-                led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
-            except Exception as e:
-                log("prewarm", m.id, "warn", err=str(e)[:120])
-    # M4/M6 structural-hooks: warm the heavy render for operator-APPROVED stitches here, lock-free (impact-cut
-    # ffmpeg + intro-tease MoviePy), so the in-lock commit adopts the warm mp4 via the fingerprint-skip —
-    # keeping the transcode OUT of the ledger lock (PRD: "approval gates the render, which runs lock-free").
-    strategies = _enabled_strategies(cfg)
-    if strategies:
-        try: prewarm_approved_stitches(led, cfg, log, strategies=strategies)   # fail-open per unit (mirror the concurrent path); a prewarm/[compose]-ImportError must NOT crash advance()
-        except Exception as e: log("prewarm", "-", "warn", err=str(e)[:120])
+# M3 — _prewarm + _prewarm_sequential + _prewarm_concurrent + _produce_source + the
+# in-pipeline SourceResult dataclass are deleted. Their replacement is fanops.produce.run_all,
+# imported at the top — one entry point, one module owning lock-free side-effect-only artifact
+# warming. The reducer (_stage_source_to_moments etc., below) keeps its existing shape: it
+# re-runs the slow stages in-lock and they short-circuit on the now-warm artifacts (M1 +
+# transcript JSON, M2 + detect sidecar + keyframes cache, render fingerprint). The reducer's
+# in-lock subprocess CALLS still appear, but every one is a microsecond cache-hit by
+# construction — the bad path (a subprocess actually spawning inside the flock) was already
+# closed by M1+M2's stage_lock + on-disk artifact contract.
 
 def _quarantine(coll, eid, error_state, stage, exc, log) -> None:
     """The per-unit failure stamp shared by the source/moment/clip stage loops (FIX F03): flip the entity
@@ -452,10 +347,11 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     # idempotent (content-addressed dedup), so this never double-catalogues.
     with Ledger.transaction(cfg) as led:
         led, _ = ingest_drops(led, cfg)
-    # Phase D: warm the slow subprocess stages with NO lock held (see _prewarm). The main transaction
-    # then re-runs them and they skip on the warm artifacts — so a render no longer starves a concurrent
-    # Studio write / second pass. Lock-free; saves nothing; fail-open.
-    _prewarm(cfg, aspects, log)
+    # M3: lock-free producer pass — warms transcript JSON, signals sidecar, render mp4 +
+    # fingerprint, stitch mp4 for every catalogued/decided unit. The reduce transaction below
+    # re-runs the slow stages and they short-circuit on the warm artifacts (M1 + M2 caches).
+    # Lock-free; saves nothing; fail-open per source.
+    produce.run_all(cfg, aspects, log)
 
     # AUDIT B4: the load-mutate-save COMMIT runs inside ONE ledger transaction — the lock is acquired
     # BEFORE load and the single save happens on clean exit. This closes the lost-update window the

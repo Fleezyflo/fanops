@@ -166,10 +166,11 @@ def test_transaction_count_stays_two(tmp_path, monkeypatch, mocker):
 def test_pool_not_constructed_when_flag_off(tmp_path, monkeypatch, mocker):
     # BYTE-IDENTICAL guard: with the flag OFF, the ThreadPoolExecutor is never constructed. Patch it
     # to raise on construction; flag-off advance() must NOT raise (it takes the sequential path).
+    # M3: the pool now lives in fanops.produce, not fanops.pipeline.
     monkeypatch.delenv("FANOPS_POSTER", raising=False); monkeypatch.setenv("FANOPS_HOOK_EDITOR", "off")
     monkeypatch.delenv("FANOPS_CONCURRENT_SOURCES", raising=False)
     def boom(*a, **k): raise AssertionError("ThreadPoolExecutor constructed on the flag-OFF path")
-    mocker.patch("fanops.pipeline.ThreadPoolExecutor", side_effect=boom)
+    mocker.patch("fanops.produce.ThreadPoolExecutor", side_effect=boom)
     cfg = Config(root=tmp_path); _accts(cfg); _ff(mocker); _seed_n_decided(cfg, 3)
     advance(cfg, base_time="2099-01-01T00:00:00Z")            # must not raise
     assert _final_state(cfg)["n_clips"] == 3
@@ -193,15 +194,17 @@ def test_single_source_on(tmp_path, monkeypatch, mocker):
     assert st["n_clips"] == 1 and st["moments"]["mom_0"] == "clipped"
 
 
-def test_prewarm_concurrent_isolates_a_worker_crash(tmp_path, monkeypatch, mocker):
+def test_producer_isolates_a_worker_crash(tmp_path, monkeypatch, mocker):
     # Defensive: a worker that crashes PAST its own fail-open guard (OOM / thread-level) must NOT
-    # propagate fut.result() up through _prewarm -> advance() and abort the pass before the main
-    # transaction opens. It is logged as a warn and the prewarm returns normally.
-    from fanops.pipeline import _prewarm_concurrent
+    # propagate fut.result() up through produce.run_all -> advance() and abort the pass before
+    # the main transaction opens. It is logged as a warn and the producer returns normally.
+    # M3: _prewarm_concurrent + _produce_source live in fanops.produce now.
+    monkeypatch.setenv("FANOPS_CONCURRENT_SOURCES", "1")        # exercise the pool path
+    from fanops.produce import run_all
     from fanops.log import get_logger
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg); led.add_source(Source(id="s1", source_path="/x.mp4", state=SourceState.catalogued)); led.save()
-    mocker.patch("fanops.pipeline._produce_source", side_effect=RuntimeError("worker SENTINEL-CRASH"))
-    _prewarm_concurrent(cfg, set(), get_logger(cfg))             # must NOT raise
+    mocker.patch("fanops.produce._produce_one", side_effect=RuntimeError("worker SENTINEL-CRASH"))
+    run_all(cfg, set(), get_logger(cfg))                         # must NOT raise
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "SENTINEL-CRASH" in log                              # surfaced as a warn, not propagated
