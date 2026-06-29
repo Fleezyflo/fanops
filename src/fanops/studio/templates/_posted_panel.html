@@ -39,7 +39,7 @@
     {% for r in day_rows %}
     <tr>
       <td>{{ (r.published_at or r.scheduled_time) | localdt or '—' }}</td>
-      <td>{{ r.account }} <span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %}</td>
+      <td>{{ r.account }} <span class="muted">{{ r.platform }}</span>{% if r.batch_id %} <a class="muted batch-tag" href="{{ url_for('posted', batch=r.batch_id, account=active) }}" title="filter Posted to batch {{ r.batch_id }}">«{{ r.batch_title or r.batch_id }}»</a>{% endif %}</td>
       <td class="muted" title="on-screen hook">{% if r.variant_hook %}✦ {{ r.variant_hook }}{% else %}—{% endif %} {{ lineage(r) }}</td>
       <td>{{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }} {{ lineage_delta(r) }}</td>
       <td>{{ metric(r.saves, peaks.saves) }}</td>

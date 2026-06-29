@@ -19,6 +19,7 @@ from fanops import overlay
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
 from fanops.studio.actions_common import ActionResult, _now, _inherit_captions  # noqa: F401
+from fanops.audit import write_audit
 from fanops.studio.actions_run import (run_ingest, run_pull, save_uploads, save_uploads_and_ingest, save_thirdparty_uploads, run_ingest_thirdparty, run_advance, run_prepare)  # noqa: F401
 from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprove_post, approve_with_hook, approve_clip, approve_account, approve_moment, approve_as_is, approve_stitches, dismiss_stitches, release_stitches)  # noqa: F401
 from fanops.studio.actions_casting import cast_add, cast_remove  # noqa: F401
@@ -285,6 +286,8 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
         # the next ledger save (Pydantic re-validates the modified instance on serialization).
         p.public_url = url.strip()
         p.state = PostState.published
+    # R3/D17: audit the SUCCESS — 'I posted by hand' is the most opaque action; the audit gives the operator a breadcrumb.
+    write_audit(cfg, "mark_published", [post_id], reason="studio_mark_published", url=url.strip())
     return ActionResult(ok=True, detail={"post_id": post_id, "url": url})
 
 
@@ -325,6 +328,9 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     # found it no longer queued (e.g. a concurrent daemon pass just claimed it between the guard read and
     # the claim) — tell the operator to retry rather than print a confusing "post is None".
     if state == "published":
+        # R3/D17: audit the SUCCESS — only after publish_post returned 'published'.
+        write_audit(cfg, "publish_now", [post_id], reason="studio_publish_now",
+                    backend=cfg.poster_backend)
         return ActionResult(ok=True, detail={"post_id": post_id, "state": state})
     if state is None:
         return ActionResult(ok=False, error="post was not claimable (it may be publishing already) — refresh and try again")
@@ -550,6 +556,10 @@ def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None, handle: Op
                 p.scheduled_time = sched[p.id]
     except Exception as exc:
         return ActionResult(ok=False, error=f"reschedule failed: {str(exc)[:160]}")
+    # R3/D17: audit which posts moved + the handle scope (None = whole bucket).
+    if due:
+        write_audit(cfg, "reschedule_bucket", [p.id for p in due],
+                    reason="studio_reschedule_bucket", handle=handle, rescheduled=len(due))
     return ActionResult(ok=True, detail={"rescheduled": len(due), "handle": handle})
 
 
@@ -559,6 +569,43 @@ def reschedule_account(cfg: Config, handle: str, *, now: Optional[datetime] = No
     M3 PRD outcome — a 'Reschedule this account' control that respreads exactly one account — has a
     named entry point; the per-account scoping is enforced inside the transaction (no race)."""
     return reschedule_bucket(cfg, now=now, handle=handle)
+
+def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> ActionResult:
+    """R3/D7: the operator's wipe-and-revert flow as a first-class API. For each id move
+    state -> awaiting_approval and clear the post-publish telemetry (scheduled_time,
+    public_url, metrics, published_at). The session's hand-edited 67-post revert becomes
+    one atomic call. Best-effort: known ids are moved; unknown ids surface in the result
+    (operator typo never passes for success). Atomic per id (one transaction holding the
+    flock for the whole batch). The reason field is the operator's intent — pinned in the
+    audit so 'why this batch went back to Review' is in the log."""
+    ids = [str(i) for i in (post_ids or []) if i]
+    moved: list[str] = []
+    unknown: list[str] = []
+    try:
+        with Ledger.transaction(cfg) as led:
+            for pid in ids:
+                if pid not in led.posts:
+                    unknown.append(pid); continue
+                p = led.posts[pid]
+                # R1 invariant: a terminal-with-URL post leaving the URL-required state is fine —
+                # awaiting_approval is not in _POST_TERMINAL_REQUIRES_URL, so the validator stays happy.
+                p.state = PostState.awaiting_approval
+                p.scheduled_time = None
+                p.public_url = ""
+                p.metrics = {}
+                p.published_at = None
+                # Don't touch submission_id / batch_id — keep the lineage so the operator can
+                # see "this post was once part of batch X" in the audit / Posted history.
+                moved.append(pid)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"bulk_send_to_review failed: {str(exc)[:160]}")
+    # R3/D17: audit the bulk revert — the most operator-impactful action in the system.
+    if moved:
+        write_audit(cfg, "bulk_send_to_review", moved, reason=reason,
+                    unknown=unknown, moved=len(moved))
+    return ActionResult(ok=True, detail={"moved": len(moved), "unknown": unknown,
+                                          "post_ids": moved})
+
 
 def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
     """Clear a brand-risk hold from the browser — the UI twin of `fanops unhold`. Reuses the canonical

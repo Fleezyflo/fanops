@@ -13,6 +13,7 @@ from fanops.accounts import Accounts
 from fanops.ids import surface_key
 from fanops.models import ClipState, PostState, Render, RenderState, PLATFORM_MAX_SECONDS
 from fanops.crosspost import account_render_spec, render_account_file
+from fanops.audit import write_audit
 from fanops.log import get_logger
 from fanops.timeutil import iso_z
 from fanops.studio.views import suggest_time
@@ -123,8 +124,14 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                 sugg = sched.get(pid) or (suggest_time(cfg, post, now=now) if post is not None else None)
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
                 approved += 1
+            audited_ids = [i for i in ids_in_batch if i in led.posts]   # snapshot in-lock for the audit
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
+    # R3/D17: audit the SUCCESS — ONE batched entry naming every post promoted (not one per post).
+    # The 5 ghost batch shared batch_id=batch_c59d718170ea; the audit gives the operator that batch back.
+    if approved and audited_ids:
+        write_audit(cfg, "approve", audited_ids, reason="studio_approve_batch",
+                    approved=approved, render_pending=render_pending, now=now_iso)
     return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": render_pending})
 
 def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None) -> ActionResult:
