@@ -295,6 +295,37 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .stage-handoff-line { margin:.2rem 0 0; display:flex; gap:1rem; align-items:baseline; flex-wrap:wrap; }
 .stage-handoff-link { font-weight:600; font-size:var(--t-lg); color:var(--accent-bright); }
 .stage-handoff-link:hover { color:var(--ink); }
+
+/* ── Working-state indicator, htmx-native ──────────────────────────────────────────────────────────
+   htmx adds `.htmx-request` to the element named by hx-indicator while a POST is in flight. We hang
+   four signals off that class so a press to "Make clips" / "Add to queue" / "Fetch link" is never
+   silent: (1) the form gets a thin progress sweep along its top edge, (2) the submit button's label
+   is replaced by data-busy-label via ::after + content-suppression on the original text, (3) the
+   button is dimmed + cursor:wait, (4) other fields in the same form go non-interactive so a second
+   submit can't queue up. hx-disabled-elt="find button[type=submit]" is the parallel safety belt —
+   even without CSS the button can't be re-clicked. */
+.stage-busy { position:relative; }
+.stage-busy::before { content:""; position:absolute; left:0; right:0; top:-1px; height:2px; border-radius:1px;
+  background:linear-gradient(90deg, transparent 0%, var(--accent-bright) 30%, var(--accent-bright) 70%, transparent 100%);
+  background-size:200% 100%; background-position:200% 0; opacity:0; transition:opacity var(--dur) var(--ease); pointer-events:none; }
+.stage-busy.htmx-request::before { opacity:1; animation:stage-busy-sweep 1.1s linear infinite; }
+@keyframes stage-busy-sweep { from { background-position:200% 0; } to { background-position:-100% 0; } }
+.stage-busy.htmx-request button[type=submit] { color:transparent !important; cursor:wait; opacity:.7;
+  position:relative; pointer-events:none; }
+.stage-busy.htmx-request button[type=submit]::after { content:attr(data-busy-label); position:absolute;
+  inset:0; display:flex; align-items:center; justify-content:center; gap:.45rem; color:var(--ink);
+  font:600 var(--t-meta) var(--mono); letter-spacing:.06em; text-transform:uppercase; }
+.stage-busy.htmx-request button[type=submit]:not([data-busy-label])::after { content:"Working…"; }
+.stage-busy.htmx-request button[type=submit]::before { content:""; width:.7rem; height:.7rem; border-radius:50%;
+  position:absolute; left:.85rem; top:50%; margin-top:-.35rem; border:2px solid var(--accent-dim);
+  border-top-color:var(--accent-bright); animation:stage-busy-spin .9s linear infinite; }
+@keyframes stage-busy-spin { to { transform:rotate(360deg); } }
+.stage-busy.htmx-request input, .stage-busy.htmx-request fieldset,
+.stage-busy.htmx-request .check-row { pointer-events:none; opacity:.55; }
+@media (prefers-reduced-motion: reduce) {
+  .stage-busy.htmx-request::before { animation:none; background-position:50% 0; }
+  .stage-busy.htmx-request button[type=submit]::before { animation:none; border-top-color:var(--accent-dim); }
+}
 .run-advanced { border:1px solid var(--line); border-radius:var(--r-md); background:oklch(16% 0.012 280 / .4); margin-top:var(--s-4); }
 .run-advanced > summary { padding:.6rem .85rem; font-size:var(--t-meta); color:var(--muted); cursor:pointer; -webkit-user-select:none; user-select:none; }
 .run-advanced > summary:hover { color:var(--ink); }

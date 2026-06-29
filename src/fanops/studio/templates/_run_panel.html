@@ -43,7 +43,8 @@
     </header>
 
     <form hx-post="{{ url_for('do_run_upload') }}" hx-target="#run-panel" hx-swap="outerHTML"
-          hx-encoding="multipart/form-data" class="stage-form">
+          hx-encoding="multipart/form-data" hx-disabled-elt="find button[type=submit]"
+          hx-indicator="this" class="stage-form stage-busy">
       <label class="field">
         <span class="field-label">Files</span>
         <input type="file" name="files" accept="video/*" multiple aria-label="Choose video files to add" title="Choose video files to add">
@@ -67,16 +68,18 @@
       <label class="check-row no-subs-opt"><input type="checkbox" name="no_subs" value="1"> Skip subtitles <span class="muted">— burn from transcript by default</span></label>
 
       <div class="stage-actions">
-        <button type="submit">Add to queue</button>
+        <button type="submit" data-busy-label="Adding…">Add to queue</button>
         <span class="muted">Add via Finder works too — the next Make press picks it up.</span>
       </div>
     </form>
 
     <details class="stage-altlink">
       <summary>Or add from a link</summary>
-      <form hx-post="{{ url_for('do_run_pull') }}" hx-target="#run-panel" hx-swap="outerHTML" class="stage-form-inline">
+      <form hx-post="{{ url_for('do_run_pull') }}" hx-target="#run-panel" hx-swap="outerHTML"
+            hx-disabled-elt="find button[type=submit]" hx-indicator="this"
+            class="stage-form-inline stage-busy">
         <input name="url" aria-label="Video link to add" placeholder="https://…" size="32">
-        <button type="submit">Fetch link</button>
+        <button type="submit" data-busy-label="Fetching…">Fetch link</button>
       </form>
     </details>
   </section>
@@ -95,12 +98,16 @@
       <span><strong>{{ status.holds }}</strong> on hold</span>
     </div>
 
-    <form class="run-primary" hx-post="{{ url_for('do_run_prepare') }}" hx-target="#run-panel" hx-swap="outerHTML">
+    {# hx-disabled-elt + hx-indicator are htmx-native: the button is disabled and the .stage-busy
+       container is .htmx-request-classed for the lifetime of the POST. No JS, no spinner library —
+       the CSS at the bottom of this file's partner (studio.css .stage-busy) does the rest. #}
+    <form class="run-primary stage-busy" hx-post="{{ url_for('do_run_prepare') }}" hx-target="#run-panel"
+          hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]" hx-indicator="this">
       {% if status.backend != 'dryrun' %}
         <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
           publish to REAL accounts (mode: {{ status.backend }})</label>
       {% endif %}
-      <button type="submit" class="primary">Make clips</button>
+      <button type="submit" class="primary" data-busy-label="Cutting clips…">Make clips</button>
       <span class="muted">Cuts, captions, and routes every queued source end-to-end. Around a minute per source.</span>
     </form>
   </section>
@@ -128,12 +135,13 @@
         <span>Held<strong>{{ status.holds }}</strong></span>
         <span>Awaiting<strong>{{ status.pending_moments + status.pending_captions }}</strong></span>
       </div>
-      <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML">
+      <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML"
+            hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-busy">
         {% if status.backend != 'dryrun' %}
           <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1">
             publish to REAL accounts (mode: {{ status.backend }})</label>
         {% endif %}
-        <button type="submit">Run one pipeline step</button>
+        <button type="submit" data-busy-label="Stepping…">Run one pipeline step</button>
         <span class="muted">For debugging — Make clips runs the full loop.</span>
       </form>
     </div>
