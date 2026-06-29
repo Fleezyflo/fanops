@@ -3,6 +3,15 @@
 {% block title %}Posted{% endblock %}
 {% block body %}
   <h2>Posted</h2>
+  {# M5: global SYSTEM-MODE banner above the table. Distinct from the per-row channel chip — the
+     chip records how each individual row shipped, this banner records the CURRENT system mode.
+     Operator-visible single source of truth: the deployment is in dryrun (nothing reaches the
+     platform) or live (publishing is real). Pins the operator's verbatim 'dry run has to be
+     disabled now' — the banner makes the current state impossible to mistake. #}
+  <div class="mode-banner mode-{{ 'live' if cfg.is_live else 'dryrun' }}" data-testid="posted-mode-banner"
+       role="status" aria-live="polite">
+    {% if cfg.is_live %}<strong>System mode: live</strong> — posts that ship reach the real platforms.{% else %}<strong>System mode: dryrun</strong> — nothing reaches the platforms. Flip live from <a href="{{ url_for('golive_view') }}">Go Live</a>.{% endif %}
+  </div>
   <p class="muted">Everything that has shipped, with its live link and lift. Past posts are history — to run a
     winner again, <strong>Post again</strong> creates a fresh copy that re-enters Review for approval.</p>
   {% include "_posted_panel.html" %}

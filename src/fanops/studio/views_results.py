@@ -202,6 +202,29 @@ class PostedRow:
     sibling_count: Optional[int] = None  # how many shipped rows share this clip_id (the repost/crosspost lineage)
     rank: Optional[int] = None           # competition rank by lift within the lineage (1 = winner; ties share 1)
     delta_vs_best: Optional[float] = None  # lift_score - best-sibling lift (0.0 for the winner; negative otherwise)
+    # M5: the delivery CHANNEL this row actually shipped through — derived from public_url, NEVER
+    # from cfg.is_live (a row stamped published under dryrun must keep its 'dryrun' label even
+    # after the operator flips live). Values: 'live' (https://... real provider permalink, only
+    # reconcile.py writes these) | 'dryrun' (public_url is None OR has the dryrun:// scheme — the
+    # DryRunPoster->publish_post transition never sets public_url). Pins the operator's verbatim
+    # complaint: 'the system says posted when nothing is posted'.
+    posted_via: str = "dryrun"
+
+
+def _classify_channel(public_url: Optional[str]) -> str:
+    """Return the delivery channel for a published row: 'live' for an https/http permalink (only
+    reconcile.py from a real provider writes these), else 'dryrun'. Pure — no I/O, deterministic
+    on the post's on-disk state. NB: an empty public_url IS the dryrun signature today (the
+    DryRunPoster->publish_post transition never sets public_url; only reconcile.py does, and only
+    on a real provider response)."""
+    if not public_url:
+        return "dryrun"
+    p = public_url.strip().lower()
+    if p.startswith("dryrun://"):
+        return "dryrun"
+    if p.startswith(("https://", "http://")):
+        return "live"
+    return "dryrun"   # an unrecognized scheme is NOT a live URL — fail safe to dryrun
 
 
 def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, batch: Optional[str] = None) -> list[PostedRow]:
@@ -228,7 +251,8 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, b
                       saves=p.metrics.get("saves"), shares=p.metrics.get("shares"),
                       retention=p.metrics.get("retention"), reach=p.metrics.get("reach"),
                       batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
-                      variant_hook=p.variant_hook) for p in posts]
+                      variant_hook=p.variant_hook,
+                      posted_via=_classify_channel(p.public_url)) for p in posts]
 
 
 def posted_batch_rollup(rows) -> Optional[dict]:
