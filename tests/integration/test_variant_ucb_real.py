@@ -27,10 +27,10 @@ def _seed_on_disk_ledger(cfg: Config) -> None:
     for i in range(1, 9):
         led.add_post(Post(id=f"L{i}", parent_id="clip_1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}))
+                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}, public_url="dryrun://clip_1"))
     led.add_post(Post(id="N1", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}))
+                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}, public_url="dryrun://N1"))
     led.save()
 
 

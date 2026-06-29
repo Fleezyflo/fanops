@@ -81,7 +81,7 @@ def test_no_zero_result_summary_when_all_batches_match(tmp_path):
     b = create_batch(led, name="Real", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000003Z")
     led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, batch_id=b.id)); led.save()
+                      caption="x", state=PostState.queued, batch_id=b.id, public_url=f"dryrun://p")); led.save()
     html = _client(cfg).get("/").data.decode()
     assert 'data-warn="zero-result-summary"' not in html      # no false alarm when targets match
 
@@ -92,7 +92,7 @@ def test_inline_per_account_post_count(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.published))
+                          caption="x", state=PostState.published, public_url="dryrun://p1"))
     html = _client(cfg).get("/").data.decode()
     assert 'data-acct-count="@a"' in html                     # the count renders INLINE on the account row
     assert 'data-metric="by-account"' not in html             # no orphans -> the fallback table is absent
@@ -103,7 +103,7 @@ def test_orphan_handle_falls_back_to_metrics_table(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c", account="@ghost", account_id="9", platform=Platform.instagram,
-                          caption="x", state=PostState.published))
+                          caption="x", state=PostState.published, public_url="dryrun://p1"))
     html = _client(cfg).get("/").data.decode()
     assert 'data-metric="by-account"' in html and "@ghost" in html   # a non-active handle with history -> fallback
 

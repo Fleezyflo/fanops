@@ -203,6 +203,80 @@ def cmd_doctor(cfg: Config) -> int:
         print(f"  - {n}")
     return 1 if failed else 0
 
+def cmd_resolve(cfg: Config, args) -> int:
+    """AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve a
+    post stuck in needs_reconcile (Blotato status ambiguous / never returns a terminal state), the
+    operator checks the platform by hand and forces the ledger to ground truth:
+    `fanops resolve <post_id> published --url <live-url>` or `... failed`. Tight transaction,
+    local-only mutation (no network).
+
+    R1/D10: resolving to `published` (or any terminal-with-URL state) now REQUIRES --url. Without
+    it, the resolve closes the third door onto the ghost-row class (alongside D1: DryRunPoster,
+    D2: _publish_one, D9: mark_published). Non-terminal targets (failed/error/etc) still resolve
+    URL-less by design — a pre-network failure has nothing to point at. Order of checks: post
+    existence first (so "no such post: <id>" wins over the URL message on a typo)."""
+    from fanops.models import PostState, _POST_TERMINAL_REQUIRES_URL
+    with Ledger.transaction(cfg) as led:
+        if args.post_id not in led.posts:
+            print(f"no such post: {args.post_id}", file=sys.stderr); return 2
+        requires_url = args.status in {s.value for s in _POST_TERMINAL_REQUIRES_URL}
+        if requires_url and not (getattr(args, "url", None) or "").strip():
+            print(f"--url is REQUIRED when resolving to {args.status!r} (R1/D10): the post is moving "
+                  f"to a terminal-success state and needs a permalink. If you don't have one, resolve "
+                  f"to 'failed' instead.", file=sys.stderr)
+            return 2
+        p = led.posts[args.post_id]
+        # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
+        # serialization (terminal-with-URL invariant holds at every persistence point).
+        if getattr(args, "url", None):
+            p.public_url = args.url
+        try:
+            p.state = PostState(args.status)
+        except ValueError:
+            # Unknown status string — back-compat: map "published" -> published, else "failed"
+            p.state = PostState.published if args.status == "published" else PostState.failed
+    print(f"resolved {args.post_id} -> {args.status}"); return 0
+
+
+def cmd_doctor_fix_ghosts(cfg: Config, args) -> int:
+    """R1 migration: heal any pre-existing ghost rows (state=published, public_url='') in a ledger
+    written BEFORE the R1 invariant landed. Reads ledger.json as RAW JSON (bypassing the Pydantic
+    invariant on load — pre-R1 ledgers may already have ghost rows that would now refuse to load),
+    walks the posts, and:
+        - if a sidecar `05_scheduled/<post_id>.json` exists -> the ghost came from DryRunPoster
+          (smoking gun) -> back-fill public_url='dryrun://<post_id>' (M5 _classify_channel labels
+          this as 'dryrun' in the Posted tub — an HONEST row, not a deletion).
+        - else -> origin unknown; park state='needs_reconcile' so the reconciler investigates next
+          pass. Fail-closed: never auto-label as dryrun when the sidecar isn't there.
+    Returns 0 on success, prints a summary. NEVER touches non-ghost posts."""
+    import json
+    led_path = cfg.ledger_path
+    if not led_path.exists():
+        print(f"no ledger at {led_path}"); return 0
+    raw = json.loads(led_path.read_text())
+    posts = raw.get("posts", [])
+    healed_dryrun = 0; parked_unknown = 0; clean = 0
+    for p in posts:
+        if p.get("state") != "published":
+            clean += 1; continue
+        url = (p.get("public_url") or "").strip()
+        if url:
+            clean += 1; continue
+        # Ghost row.
+        post_id = p.get("id", "")
+        sidecar = cfg.scheduled / f"{post_id}.json"
+        if sidecar.exists():
+            p["public_url"] = f"dryrun://{post_id}"
+            healed_dryrun += 1
+        else:
+            p["state"] = "needs_reconcile"
+            p["error_reason"] = "publish_missing_url_pre_r1: ghost row pre-R1 with no dryrun sidecar — investigate"
+            parked_unknown += 1
+    led_path.write_text(json.dumps(raw, indent=2))
+    print(f"doctor-fix-ghosts: healed_dryrun={healed_dryrun} parked_unknown={parked_unknown} clean={clean}")
+    return 0
+
+
 def cmd_cutover(cfg: Config, args) -> int:
     # The live-cutover validation harness (Phase 1). Lazy-import so the rest of the CLI never pays for
     # it and there's no import cycle. Each action prints its result as JSON and returns 0; a refusal/
@@ -391,7 +465,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("amplify-variants")     # variant-gated amplification (v3); inert unless flag on
     sub.add_parser("p4-bias")              # P4(b) cross-account reach dim-bias; inert unless flag on + validated
     p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
-    p_res.add_argument("status", choices=["published", "failed"]); p_res.add_argument("--url", default=None)
+    p_res.add_argument("status", choices=["published", "failed", "analyzed", "retired"]); p_res.add_argument("--url", default=None)
+    sub.add_parser("doctor-fix-ghosts", help="R1 migration: heal pre-R1 ghost rows (state=published, public_url='') by back-filling dryrun:// or parking in needs_reconcile")
     p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
     p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
@@ -620,19 +695,9 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days if args.keep_days is not None else cfg.gc_keep_days)
     if args.cmd == "compose":  return cmd_compose(cfg, args)
     if args.cmd == "resolve":
-        # AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve
-        # a post stuck in needs_reconcile (Blotato status ambiguous / never returns a terminal
-        # state), the operator checks the platform by hand and forces the ledger to ground truth:
-        # `fanops resolve <post_id> published --url <live-url>` or `... failed`. Tight transaction,
-        # local-only mutation (no network).
-        from fanops.models import PostState
-        with Ledger.transaction(cfg) as led:
-            if args.post_id not in led.posts:
-                print(f"no such post: {args.post_id}", file=sys.stderr); return 2
-            p = led.posts[args.post_id]
-            p.state = PostState.published if args.status == "published" else PostState.failed
-            if args.url: p.public_url = args.url
-        print(f"resolved {args.post_id} -> {args.status}"); return 0
+        return cmd_resolve(cfg, args)
+    if args.cmd == "doctor-fix-ghosts":
+        return cmd_doctor_fix_ghosts(cfg, args)
     if args.cmd == "unhold":
         # RUNTIME backlog (f): clear a brand-risk hold WITHOUT a hand-edit of ledger.json. When a
         # clip was parked in `held` (held=True, held_reason set) by the brand-risk gate, the

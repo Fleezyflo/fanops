@@ -325,7 +325,7 @@ def test_advance_reports_run_delta_and_last_post_age(tmp_path, monkeypatch, mock
     led = Ledger.load(cfg)
     led.add_post(Post(id="post_pre", parent_id="clip_x", state=PostState.published,
                       account="@a", account_id="1", platform=Platform.instagram,
-                      caption="seeded", scheduled_time=sched))
+                      caption="seeded", scheduled_time=sched, public_url="dryrun://post_pre"))
     led.save()
 
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
@@ -351,7 +351,7 @@ def test_advance_last_post_age_is_none_when_scheduled_time_absent(tmp_path, monk
     led = Ledger.load(cfg)
     led.add_post(Post(id="post_pre", parent_id="clip_x", state=PostState.published,
                       account="@a", account_id="1", platform=Platform.instagram,
-                      caption="seeded", scheduled_time=None))   # no scheduled_time -> age None
+                      caption="seeded", scheduled_time=None, public_url="dryrun://post_pre"))   # no scheduled_time -> age None
     led.save()
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
     assert s["published"] >= 1
@@ -395,7 +395,7 @@ def test_advance_halts_on_fatal_auth_error_from_crosspost(tmp_path, monkeypatch,
 def _needs_reconcile_post():
     from fanops.models import Post, PostState, Platform
     return Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-               caption="x", state=PostState.needs_reconcile, submission_id="sub_x")
+               caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url=f"dryrun://p")
 
 def test_advance_postiz_now_reconciles_its_parked_posts(tmp_path, monkeypatch, mocker):
     # P2 INVERTS the old M2 behavior: Postiz GAINED a status-reconcile path (PostizStatusClient over the

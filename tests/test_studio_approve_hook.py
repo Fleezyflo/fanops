@@ -36,7 +36,7 @@ def _seed(cfg, *, hook_removed=REMOVED, captions=None, post_state=PostState.awai
                       state=ClipState.queued, meta_captions=(captions or {"@a/instagram": {"caption": "cap"}})))
     led.add_post(Post(id="p_1", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="CAP", state=post_state,
-                      scheduled_time=None))
+                      scheduled_time=None, public_url=f"dryrun://p_1"))
     led.save()
     return led
 

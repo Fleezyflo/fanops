@@ -66,7 +66,7 @@ def _seed_batch_excluded(cfg):
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.awaiting_approval, batch_id="bat_1"))
+                          caption="x", state=PostState.awaiting_approval, batch_id="bat_1", public_url=f"dryrun://p"))
 
 
 def test_card_carries_excluded_names(tmp_path):
@@ -103,7 +103,7 @@ def _seed_persona_cut(cfg):
         led.add_render(Render(id="r1", clip_id="c", account="@long", surface_key="@long/instagram",
                               hook_text="H", path=str(r), state=RenderState.rendered, is_account_cut=True))
         led.add_post(Post(id="p", parent_id="c", account="@long", account_id="1", platform=Platform.instagram,
-                          caption="c", state=PostState.awaiting_approval, render_id="r1", clip_profile="long"))
+                          caption="c", state=PostState.awaiting_approval, render_id="r1", clip_profile="long", public_url=f"dryrun://p"))
 
 
 def test_card_renders_cause_via_macro(tmp_path):
@@ -126,7 +126,7 @@ def _seed_legacy(cfg):
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.awaiting_approval))
+                          caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p"))
 
 
 def test_off_firewall_no_cause_chips(tmp_path, monkeypatch):
@@ -149,7 +149,7 @@ def _seed_pin_only(cfg):
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.awaiting_approval, clip_profile="long"))
+                          caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url=f"dryrun://p"))
 
 
 def test_off_with_pin_shows_cause_additively(tmp_path, monkeypatch):
@@ -175,7 +175,7 @@ def _seed_recent_no_cut(cfg):
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.published, clip_profile="long",
-                          scheduled_time=datetime.now(timezone.utc).isoformat()))   # recent-bucket card: seed relative to REAL now (the /review route uses datetime.now), not the fixed NOW — else it ages out of RECENT_WINDOW_HOURS and the test time-bombs
+                          scheduled_time=datetime.now(timezone.utc).isoformat(), public_url="dryrun://p"))   # recent-bucket card: seed relative to REAL now (the /review route uses datetime.now), not the fixed NOW — else it ages out of RECENT_WINDOW_HOURS and the test time-bombs
 
 
 def test_shared_cut_warn_suppressed_off_the_editable_worklist(tmp_path):
@@ -197,7 +197,7 @@ def _seed_editable_no_cut(cfg):
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.awaiting_approval, clip_profile="long"))
+                          caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url=f"dryrun://p"))
 
 
 def test_shared_cut_warn_still_fires_on_editable_card(tmp_path):

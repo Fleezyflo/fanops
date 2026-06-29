@@ -80,7 +80,7 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     # 4 · SEVERANCE: an analyzed post with high OWN reach does NOT promote its hashtag in the store
     led.add_post(Post(id="post_1", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption=" ".join(tags), hashtags=tags,
-                      state=PostState.analyzed, metrics={"reach": 8000}))
+                      state=PostState.analyzed, metrics={"reach": 8000}, public_url="dryrun://post_1"))
     refresh_store(cfg, get=get)                                # rebuild AFTER the analyzed post exists
     store2 = load_store(cfg)
     assert store2[0] == "#freshwave"                           # the post's 8000 own-reach changed NOTHING

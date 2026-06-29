@@ -32,7 +32,7 @@ def _validate(cfg):
 def _win(pid, hook, lift):
     return Post(id=pid, parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
                 caption="x", state=PostState.analyzed, variant_key=f"vk_{pid}", variant_hook=hook,
-                metrics={"lift_score": lift})
+                metrics={"lift_score": lift}, public_url="dryrun://c1")
 
 
 def test_sustained_winner_amplifies_source_on_disk(tmp_path, monkeypatch):

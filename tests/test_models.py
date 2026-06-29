@@ -123,11 +123,11 @@ def test_moment_hook_request_carries_window_and_frames():
 def test_post_has_optional_variant_fields():
     from fanops.models import Post, Platform, PostState
     p = Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-             caption="x", state=PostState.queued, variant_key="vk1", variant_hook="WATCH THIS")
+             caption="x", state=PostState.queued, variant_key="vk1", variant_hook="WATCH THIS", public_url=f"dryrun://p1")
     assert p.variant_key == "vk1" and p.variant_hook == "WATCH THIS"
     # old ledgers (no variant fields) still load
     p2 = Post(id="p2", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-              caption="x", state=PostState.queued)
+              caption="x", state=PostState.queued, public_url=f"dryrun://p2")
     assert p2.variant_key is None and p2.variant_hook is None
 
 # ---- M1 (structural-hooks): asset origin (native vs third-party) ----

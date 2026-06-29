@@ -27,7 +27,7 @@ def _win_surface(led, account, platform, hook="WIN", *, n=3, win=90.0, lose=10.0
     for i, (h, lift) in enumerate(rows):
         led.add_post(Post(id=f"{pid}{i}", parent_id="clip_1", account=account, account_id="x",
                           platform=platform, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_{pid}{i}", variant_hook=h, metrics={"lift_score": lift}))
+                          variant_key=f"vk_{pid}{i}", variant_hook=h, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
 
 
 def _validate(cfg):
@@ -116,7 +116,7 @@ def test_donor_below_v2_gate_contributes_nothing(tmp_path):
             led.add_post(Post(id=f"{acct}{i}", parent_id="clip_1", account=acct, account_id="x",
                               platform=Platform.instagram, caption="x", state=PostState.analyzed,
                               variant_key=f"vk_{acct}{i}", variant_hook="STYLE",
-                              metrics={"lift_score": 90.0}))
+                              metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
     assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == []
 
 

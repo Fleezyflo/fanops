@@ -63,7 +63,7 @@ def test_cmd_reconcile_uses_a_transaction(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url=f"dryrun://p"))
     led.save()
     # inject a status poll so no real network; report still in-progress (no state change needed)
     mocker.patch("fanops.reconcile._default_get_status", return_value=lambda sid: {"status": "in-progress"})
@@ -114,7 +114,7 @@ def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker)
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url=f"dryrun://p"))
     led.save()
     seen = {}
 
@@ -136,7 +136,7 @@ def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url=f"dryrun://p"))
     led.save()
     mocker.patch("fanops.reconcile._default_get_status",
                  return_value=lambda sid: {"status": "published", "publicUrl": "https://x/p"})
@@ -158,7 +158,7 @@ def test_cmd_reconcile_postiz_date_windows_each_post(tmp_path, monkeypatch, mock
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="postiz_9",
-                      scheduled_time="2099-01-01T00:00:00Z")); led.save()
+                      scheduled_time="2099-01-01T00:00:00Z", public_url=f"dryrun://p")); led.save()
     seen = {}
     class _Resp:
         status_code = 200; text = "{}"

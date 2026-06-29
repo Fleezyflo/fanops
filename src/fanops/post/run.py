@@ -170,8 +170,21 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         _ensure_media(led, cfg, post, backend)
         led = poster.publish(led, post.id)
         if post.state is PostState.submitted:
-            post.state = PostState.published
-            post.published_at = iso_z(datetime.now(timezone.utc))   # TRUE publish time (Posted-archive day-anchor)
+            # R1/D2: gate the submitted -> published promotion on public_url. A backend that returns
+            # 'submitted' without a permalink (a Postiz async-permalink case, a misbehaving stub, or
+            # the pre-R1 DryRunPoster) MUST park in needs_reconcile — reconcile.py back-fills the URL
+            # on the next pass. Without this gate, the post promotes to 'published' with public_url=''
+            # and the Pydantic R1 invariant would refuse the ledger save below; fail-closed BEFORE
+            # construction so the operator sees a clean needs_reconcile row, not a ValidationError 500.
+            if (post.public_url or "").strip():
+                post.state = PostState.published
+                post.published_at = iso_z(datetime.now(timezone.utc))   # TRUE publish time (Posted-archive day-anchor)
+            else:
+                post.state = PostState.needs_reconcile
+                post.error_reason = ("publish_missing_url: backend returned submitted without a permalink — "
+                                     "reconcile will back-fill on next pass (R1/D2 gate)")
+                get_logger(cfg)("publish", post_id, "publish_missing_url",
+                                backend=backend, submission_id=post.submission_id)
     except Exception as exc:
         if _is_fatal_auth_error(exc):
             raise                                      # bad key/401: halt, don't burn the queue (H8)

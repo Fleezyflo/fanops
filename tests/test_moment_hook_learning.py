@@ -15,7 +15,7 @@ from fanops.prompts import moment_hook_prompt
 def _vpost(led, pid, account, hook, lift, platform=Platform.instagram):
     led.add_post(Post(id=pid, parent_id="c1", account=account, account_id="1", platform=platform,
                       caption="x", state=PostState.analyzed, variant_key=f"vk_{pid}", variant_hook=hook,
-                      metrics={"lift_score": lift}))
+                      metrics={"lift_score": lift}, public_url="dryrun://c1"))
 
 def _gated_winner(led, account, hook, platform=Platform.instagram):
     # 3 posts of `hook` (>= variant_min_posts) at high lift + 2 LOSE far below -> best_hooks fires.

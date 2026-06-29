@@ -30,7 +30,7 @@ def _accounts(tmp_path, rows):
 def _queued(led, pid, handle, platform, acct_id="x"):
     led.add_post(Post(id=pid, parent_id="c", account=handle, account_id=acct_id, platform=platform,
                       caption="c", state=PostState.queued, media_urls=["https://x/v.mp4"],
-                      scheduled_time="2000-01-01T00:00:00Z"))   # CULM-4: a due time (no-schedule now parks)
+                      scheduled_time="2000-01-01T00:00:00Z", public_url=f"dryrun://c"))   # CULM-4: a due time (no-schedule now parks)
 
 
 # ---------------------------------------------------------------- effective_provider ----
@@ -142,7 +142,7 @@ def test_publish_post_no_provider_returns_none(tmp_path, monkeypatch, mocker):
 # ---- H1: track/reconcile READ paths route via effective_provider, not `resolve_backend or global` ----
 def _submitted(led, pid, handle, platform, sub, acct_id="x"):
     led.add_post(Post(id=pid, parent_id="c", account=handle, account_id=acct_id, platform=platform,
-                      caption="c", state=PostState.submitted, submission_id=sub))
+                      caption="c", state=PostState.submitted, submission_id=sub, public_url=f"dryrun://c"))
 
 
 def test_metrics_routing_uses_effective_provider_skips_none(tmp_path, monkeypatch, mocker):
@@ -159,9 +159,9 @@ def test_metrics_routing_uses_effective_provider_skips_none(tmp_path, monkeypatc
     mocker.patch.object(track, "_metrics_client_for",
                         side_effect=lambda c, b, ids: (seen.append((b, tuple(ids))), (lambda w="30d": []))[1])
     posts = [Post(id="p1", parent_id="c", account="@tk", account_id="z1", platform=Platform.tiktok,
-                  caption="c", state=PostState.published, submission_id="s1"),
+                  caption="c", state=PostState.published, submission_id="s1", public_url="dryrun://p1"),
              Post(id="p2", parent_id="c", account="@ig", account_id="i1", platform=Platform.instagram,
-                  caption="c", state=PostState.published, submission_id="s2")]
+                  caption="c", state=PostState.published, submission_id="s2", public_url="dryrun://p2")]
     track._default_list_posts(cfg, posts=posts)()
     assert seen == [("zernio", ("s1",))]                  # ONLY the zernio channel; the provider-less IG post skipped
 
@@ -191,7 +191,7 @@ def test_needs_reconcile_post_is_never_republished(tmp_path, monkeypatch, mocker
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c", account="@tk", account_id="z1", platform=Platform.tiktok,
                           caption="c", state=PostState.needs_reconcile, submission_id="s1",
-                          media_urls=["https://x/v.mp4"], scheduled_time="2020-01-01T00:00:00+00:00"))
+                          media_urls=["https://x/v.mp4"], scheduled_time="2020-01-01T00:00:00+00:00", public_url=f"dryrun://p1"))
     gp = mocker.patch("fanops.post.run.get_poster")
     publish_due(cfg)
     gp.assert_not_called()                                   # never re-submitted

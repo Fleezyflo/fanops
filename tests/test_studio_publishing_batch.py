@@ -39,7 +39,7 @@ def _seed(cfg, n, *, state=PostState.queued, batch_id=None, batch_name=None, lif
         led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
         metrics = {LIFT_SCORE: lifts[i]} if (lifts is not None and i < len(lifts) and lifts[i] is not None) else {}
         led.add_post(Post(id=f"p{i}", parent_id=cid, account=account, account_id="0", platform=Platform.instagram,
-                          caption="c", state=state, scheduled_time=FAR, batch_id=batch_id, metrics=metrics))
+                          caption="c", state=state, scheduled_time=FAR, batch_id=batch_id, metrics=metrics, public_url=f"dryrun://0"))
     led.save()
 
 
@@ -49,7 +49,7 @@ def test_schedule_rows_batch_filter_and_label(tmp_path):
     _seed(cfg, 2, batch_id="bx", batch_name="Drop")                      # p0,p1 in bx
     led = Ledger.load(cfg)
     led.add_post(Post(id="p_u", parent_id="clip_0", account="@a0", account_id="0",
-                      platform=Platform.instagram, caption="c", state=PostState.queued, scheduled_time=FAR)); led.save()
+                      platform=Platform.instagram, caption="c", state=PostState.queued, scheduled_time=FAR, public_url=f"dryrun://p_u")); led.save()
     led = Ledger.load(cfg)
     assert len(views.schedule_rows(led, cfg, now=NOW)) == 3              # all rows unfiltered
     bx = views.schedule_rows(led, cfg, now=NOW, batch="bx")

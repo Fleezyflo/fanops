@@ -260,20 +260,31 @@ _POSTABLE = {PostState.queued, PostState.needs_reconcile, PostState.submitting,
              PostState.submitted, PostState.failed, PostState.error}
 
 def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> ActionResult:
-    """Track B: the operator posted this clip by hand — force the post to `published` (+ optional
+    """Track B: the operator posted this clip by hand — force the post to `published` (+ REQUIRED
     live URL). Like `fanops resolve <id> published` but STRICTER (ecc:python-review): resolve is the
     unguarded force-anything escape hatch, whereas this rejects an already-terminal
     (published/analyzed/retired) post so a double-click can't churn terminal state. Tight local
-    transaction, no network."""
+    transaction, no network.
+
+    R1/D9: `url` is now REQUIRED (non-empty after strip). Saying "I posted by hand" MEANS the
+    operator has a permalink they can paste — refusing the action without one closes the third door
+    onto the ghost-row class (alongside D1: DryRunPoster, D2: _publish_one). Without this check the
+    same operator-driven path produced Post(state=published, public_url='') — a row that says
+    SHIPPED but the Posted tub can't render."""
+    if not (url or "").strip():
+        return ActionResult(ok=False, error=(
+            "mark_published requires a non-empty url — you said you posted by hand, paste the "
+            "permalink so the Posted tub has something to render (R1/D9)."))
     with Ledger.transaction(cfg) as led:
         if post_id not in led.posts:
             return ActionResult(ok=False, error=f"no such post: {post_id}")
         p = led.posts[post_id]
         if p.state not in _POSTABLE:
             return ActionResult(ok=False, error=f"post {post_id} is {p.state.value} — only an unpublished post can be marked posted")
+        # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
+        # the next ledger save (Pydantic re-validates the modified instance on serialization).
+        p.public_url = url.strip()
         p.state = PostState.published
-        if url:
-            p.public_url = url
     return ActionResult(ok=True, detail={"post_id": post_id, "url": url})
 
 

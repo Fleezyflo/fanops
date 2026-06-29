@@ -260,13 +260,45 @@ class Post(BaseModel):
                                         # Tuesday") — scheduled_time is INTENT day, not publish day. None until
                                         # published; old/in-flight rows fall back to scheduled_time in the grouper.
 
+    @model_validator(mode="after")
+    def _enforce_published_url_invariant(self) -> "Post":
+        # R1: PostState.published / analyzed / retired is a TERMINAL SUCCESS state. Its meaning is "the
+        # operator has a permalink they can verify" — not just "the backend acknowledged". Bind that meaning
+        # at the type level so no door (DryRunPoster.publish, _publish_one, actions.mark_published,
+        # cli.cmd_resolve, a stray Post(...) constructor) can produce the ghost row Post(state=published,
+        # public_url=""). Five such rows on 2026-06-29 (5 sidecar JSONs at 05_scheduled/post_*.json) made the
+        # operator say "I can't see them" — they SHIPPED to dryrun and the Posted tub had nothing to render.
+        # The dryrun path is honored: a 'dryrun://<post_id>' is a valid permalink (M5 _classify_channel
+        # labels it 'dryrun'); failed/error/etc are NEGATIVE terminals and may legitimately lack a URL (a
+        # pre-network error has nothing to point at), so they're NOT gated here.
+        if self.state in _POST_TERMINAL_REQUIRES_URL:
+            if not (self.public_url or "").strip():
+                raise ValueError(
+                    f"Post(id={self.id!r}, state={self.state.value}) requires a non-empty public_url — "
+                    f"'published'/'analyzed'/'retired' mean the operator has a permalink. A backend that "
+                    f"can't return one MUST park in needs_reconcile until the reconciler back-fills it; "
+                    f"a dryrun poster MUST write 'dryrun://<post_id>' before promoting (R1 invariant)."
+                )
+        return self
+
+
+# R1: the terminal-positive set — states that imply "publish landed; here's a permalink".
+# Defined at module scope so the @model_validator above can reference it cleanly.
+_POST_TERMINAL_REQUIRES_URL = frozenset({PostState.published, PostState.analyzed, PostState.retired})
+
 
 def is_real_submission_id(sid: Optional[str]) -> bool:
     # CULM-3: a REAL backend post id, NOT the birth client idempotency token (crosspost stamps
     # submission_id="fanops_<hash>" so an ambiguous publish stays pollable). Analytics + status are keyed by
     # the REAL id; a fanops_ token 404s. A published/analyzed post must carry a real id before pull_metrics
     # attributes, else learning silently freezes (the post never reaches a non-degraded analyzed shape).
-    return bool(sid) and not sid.startswith("fanops_")
+    # R1/D16: also exclude the dryrun_ prefix — the DryRunPoster stamps submission_id="dryrun_<post_id>"
+    # to emulate a real backend id for the track.py / amplify lifecycle (AUDIT C4), but it's a SYNTHETIC
+    # stand-in, not an id the backend can resolve. track.pull_metrics / reconcile would otherwise poll
+    # Postiz/Zernio for a dryrun_ id and either 404 or smear analytics across the wrong post.
+    if not sid:
+        return False
+    return not (sid.startswith("fanops_") or sid.startswith("dryrun_"))
 
 
 class HookSource(str, Enum):

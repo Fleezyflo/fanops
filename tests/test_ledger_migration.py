@@ -165,9 +165,13 @@ def test_migration_v3_to_v4_backfills_one_legacy_row_for_analyzed_post(tmp_path)
     # A pre-P3 analyzed post carrying metrics but no series gets ONE 'legacy'-tagged row preserving that
     # single data point, and STAYS analyzed. 'legacy' is deliberately not a cadence offset, so it never
     # blocks a real future poll. The lift_score / metrics are carried verbatim into the row.
+    # R1: an analyzed post MUST carry a public_url (terminal-with-URL invariant). v3 ledgers that
+    # DIDN'T (the pre-R1 reality) are handled separately by the R1 migration-on-read which parks them
+    # in needs_reconcile — that's right for production data and is tested by R1's doctor-fix-ghosts.
     cfg = Config(root=tmp_path)
     raw = {"schema_version": 3, "sources": {}, "moments": {}, "clips": {},
-           "posts": {"pa": _v3_post("pa", "analyzed", metrics={"saves": 9, "lift_score": 36.0})},
+           "posts": {"pa": _v3_post("pa", "analyzed", metrics={"saves": 9, "lift_score": 36.0},
+                                    public_url="https://insta/p/legacy")},
            "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
     _write(cfg, raw)
     led = Ledger.load(cfg)

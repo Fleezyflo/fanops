@@ -39,7 +39,7 @@ def _seed_on_disk(cfg: Config) -> None:
         for i, (hook, lift) in enumerate(rows):
             led.add_post(Post(id=f"{acct}{i}", parent_id="clip_1", account=acct, account_id=acct.strip("@"),
                               platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                              variant_key=f"vk_{acct}{i}", variant_hook=hook, metrics={"lift_score": lift}))
+                              variant_key=f"vk_{acct}{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
     # @c: COLD recipient — no analyzed variant posts of its own.
     led.save()
 

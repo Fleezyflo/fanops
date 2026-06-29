@@ -19,8 +19,13 @@ from fanops.reconcile import reconcile_posts
 
 
 def _post(led, pid, state, sub=None):
+    # R1: stamp a synthetic dryrun:// permalink when state is terminal-with-URL so the invariant
+    # holds. Reconcile tests then exercise the reconciler's URL back-fill (real https) on top.
+    from fanops.models import _POST_TERMINAL_REQUIRES_URL
+    url = f"dryrun://{pid}" if state in _POST_TERMINAL_REQUIRES_URL else None
     led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=state, submission_id=sub))
+                      platform=Platform.instagram, caption="x", state=state, submission_id=sub,
+                      public_url=url))
 
 
 def test_reconcile_promotes_published(tmp_path):
@@ -65,7 +70,7 @@ def test_reconcile_no_stuck_breadcrumb_when_recent(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pr", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="s1",
-                      scheduled_time=datetime.now(timezone.utc).isoformat()))
+                      scheduled_time=datetime.now(timezone.utc).isoformat(), public_url=f"dryrun://pr"))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
     assert led.posts["pr"].error_reason is None              # recent -> no premature stuck breadcrumb
 
@@ -135,9 +140,12 @@ def test_reconcile_polls_a_client_token_post(tmp_path):
     assert led.posts["pt"].public_url == "https://ig.com/p/tok"
 
 def test_reconcile_durable_across_save(tmp_path):
+    # R1: a malformed publicUrl ("u") fails safe_public_url AND triggers the published_no_url_parked
+    # branch (R1/D2 fail-closed). Pass a real https URL for the durability assertion.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "p5", PostState.submitting, sub="sub_5")
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "u"})
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published",
+                                                            "publicUrl": "https://insta/p/abc"})
     led.save()
     again = Ledger.load(cfg)
     assert again.posts["p5"].state is PostState.published
@@ -348,9 +356,14 @@ def test_reconcile_published_captures_real_id_over_fanops_token(tmp_path):
 
 def test_reconcile_published_without_real_id_keeps_token_not_none(tmp_path):
     # No real id in the poll body -> never overwrite the (pollable) token with None.
+    # R1: a 'published' status with NO publicUrl now parks in needs_reconcile (the fail-closed
+    # gate keeps the post pollable on the next pass instead of promoting to a ghost row).
+    # Provide a real publicUrl so the original assertion (token preserved across the promotion)
+    # still holds.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "p1", PostState.needs_reconcile, sub="fanops_deadbeef")
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published"})
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published",
+                                                            "publicUrl": "https://insta/p/keep"})
     assert led.posts["p1"].state is PostState.published
     assert led.posts["p1"].submission_id == "fanops_deadbeef"     # NOT overwritten by None
 
@@ -420,7 +433,7 @@ def test_giveup_post_is_not_polled_again(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pg", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
-                      error_reason="GAVE UP: unresolved 80h past schedule on a never-real token — ..."))
+                      error_reason="GAVE UP: unresolved 80h past schedule on a never-real token — ...", public_url=f"dryrun://pg"))
     calls = []
     def get_status(sid):
         calls.append(sid); return {"status": "published"}

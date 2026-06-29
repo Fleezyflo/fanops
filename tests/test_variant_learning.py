@@ -12,7 +12,7 @@ from fanops.variant_learning import best_hooks
 def _post(pid, acct, hook, lift):
     return Post(id=pid, parent_id="c1", account=acct, account_id="1", platform=Platform.instagram,
                 caption="x", state=PostState.analyzed, variant_key=f"vk_{pid}", variant_hook=hook,
-                metrics={"lift_score": lift})
+                metrics={"lift_score": lift}, public_url="dryrun://c1")
 
 
 def _led(cfg, posts):
