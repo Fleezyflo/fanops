@@ -190,16 +190,18 @@ def test_go_live_blocked_active_account_missing_id(tmp_path, monkeypatch):
 
 def test_go_live_needs_confirm(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    # R2: validate() requires integrations[p] AND backends[p] paired — pair them.
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-                          "backends": {"instagram": "postiz"}}])
+                          "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}])
     res = golive.go_live(cfg, confirmed=False)
     assert res.ok is False and "confirm" in res.error.lower()
     assert cfg.is_live is False                           # ready, but not shipped without confirm
 
 def test_go_live_success_writes_fanops_live_dual_write(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    # R2: validate() requires integrations[p] AND backends[p] paired — pair them.
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-                          "backends": {"instagram": "postiz"}}])
+                          "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}])
     res = golive.go_live(cfg, confirmed=True)
     assert res.ok is True and res.detail["live"] is True
     assert os.environ["FANOPS_LIVE"] == "1"                                 # in-process
@@ -414,8 +416,9 @@ def test_post_golive_live_route_blocked_unconfigured(tmp_path, monkeypatch):
 
 def test_post_golive_live_route_success_flips_and_shows_live(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    # R2: validate() requires integrations[p] AND backends[p] paired — pair them.
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-                          "backends": {"instagram": "postiz"}}])
+                          "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}])
     r = _client(cfg).post("/golive/live", data={"confirm": "1"})
     assert r.status_code == 200 and cfg.is_live is True
     assert b"LIVE" in r.data

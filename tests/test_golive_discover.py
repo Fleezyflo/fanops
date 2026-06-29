@@ -292,12 +292,19 @@ def test_set_account_backend_refuses_platform_not_carried(tmp_path, monkeypatch)
 
 
 # ------------------------------------------------------------------ M1: bridge-only live-ready warning ----
-def test_go_live_warns_on_bridge_only_channel(tmp_path, monkeypatch):
-    # M1: a live-ready channel that publishes ONLY via the legacy FANOPS_POSTER bridge (no explicit backends)
-    # goes dark the instant FANOPS_POSTER is unset -> go_live surfaces a warning naming it.
+def test_go_live_refuses_bridge_only_channel(tmp_path, monkeypatch):
+    # R2/D5: a channel with integrations.instagram set but NO backends.instagram is the
+    # cisumwolfhom drift state — the legacy FANOPS_POSTER bridge would silently route it to
+    # dryrun on a 'live' config. M1 used to surface this as a soft warning; R2 promotes it to
+    # a hard go_live refusal (the structural fix: the bad path can no longer be constructed).
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "platforms": ["instagram"], "status": "active",
-                 "integrations": {"instagram": "ig_1"}}])        # no explicit backends -> bridge-only
+                 "integrations": {"instagram": "ig_1"}}])        # no explicit backends -> drift
     res = golive.go_live(cfg, confirmed=True)
-    assert res.ok is True and "@ig" in str(res.detail.get("bridge_only_warning") or "")
+    assert res.ok is False, f"R2 must refuse the bridge-only drift state, got: {res}"
+    assert "@ig" in res.error and "instagram" in res.error and "backend" in res.error.lower()
+    # FANOPS_LIVE itself must NOT have been written (the legacy FANOPS_POSTER=postiz still derives
+    # is_live=True via back-compat, but that's pre-R2 ambient state, not a flip from this call).
+    assert os.environ.get("FANOPS_LIVE") in (None, "", "0"), \
+        f"FANOPS_LIVE was written on a drift-refused go_live: {os.environ.get('FANOPS_LIVE')!r}"
