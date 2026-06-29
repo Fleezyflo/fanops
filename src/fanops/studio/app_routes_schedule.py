@@ -25,7 +25,11 @@ def register_schedule_routes(app, cfg):
         tmpl = "schedule.html" if full else "_schedule_panel.html"
         return render_template(tmpl, rows=page.items, groups=groups, page=page, approved_total=approved_total,
                                active_batch=batch, result=result, tab="schedule",
-                               backend=cfg.poster_backend, **_row_chips(rows_full, "schedule", account))
+                               # R3-followup UI-LIE-FIX: the per-channel truth, NOT the legacy global. On a
+                               # live deployment with per-channel routing cfg.poster_backend reads 'dryrun'
+                               # (the bridge fallback), printing 'dryrun' on a system that's actually live.
+                               backend=views._publish_mode_label(cfg),
+                               **_row_chips(rows_full, "schedule", account))
 
     @app.get("/schedule")
     def schedule():

@@ -146,7 +146,16 @@ def pipeline_status(cfg: Config) -> dict:
         "pending_moments": len(pending(cfg, kind="moments")),
         "pending_moment_hooks": len(pending(cfg, kind="moment_hooks")),
         "pending_captions": len(pending(cfg, kind="captions")),
-        "backend": cfg.poster_backend,
+        # R3-followup: the UI mode label MUST be the per-channel truth, not the legacy global. On a live
+        # deployment with per-channel routing, cfg.poster_backend still reads 'dryrun' (the legacy
+        # FANOPS_POSTER is the fallback bridge, not the per-channel source of truth) — surfacing it
+        # printed 'dryrun' on a system that was actually publishing live, the UI lie that triggered this fix.
+        # _publish_mode_label resolves to the distinct providers actually publishing (e.g. 'postiz, zernio'),
+        # or 'dryrun' when cfg.is_live is False. ONE source for every status surface — no more divergence
+        # between Home (which already used _publish_mode_label) and Make/Schedule/Publish (which used the
+        # legacy global). hx-confirm gates that read `backend != 'dryrun'` still trigger when ANY channel
+        # publishes live, which is the correct behavior (a live publish_now needs a confirm).
+        "backend": _publish_mode_label(cfg),
         "accounts": [a.handle for a in Accounts.load(cfg).active()],   # Account-First: Run-form batch-target options
     }
 

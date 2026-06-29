@@ -352,7 +352,9 @@ def create_app(cfg: Config) -> Flask:
         rows = rows_full if account is None else views.publish_queue(cfg, now=now, account=account)
         page = views.paginate(rows, _offset_arg())
         return render_template("publish.html", rows=page.items, page=page, tab="publish",
-                               backend=cfg.poster_backend, **_row_chips(rows_full, "publish_panel", account))
+                               # R3-followup UI-LIE-FIX: per-channel truth, not the legacy global.
+                               backend=views._publish_mode_label(cfg),
+                               **_row_chips(rows_full, "publish_panel", account))
 
     @app.post("/publish/posted/<post_id>")
     def do_mark_posted(post_id):
