@@ -13,7 +13,7 @@ load is behind _load_model so the JSON-shaping logic is testable without importi
 source as a RETRIABLE error — never a silent empty transcript. The fallback to the legacy whisper
 CLI when faster-whisper is absent is decided in transcribe.py BEFORE this runs."""
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json, os, sys
 from pathlib import Path
 
 
@@ -63,7 +63,13 @@ def transcribe_to_json(audio: str, out_dir: str, model: str, language: str | Non
         out.append(seg)
     js = Path(out_dir) / f"{Path(audio).stem}.json"
     js.parent.mkdir(parents=True, exist_ok=True)
-    js.write_text(json.dumps({"language": info.language, "segments": out}, ensure_ascii=False))
+    # M1: atomic write — write to <name>.json.tmp then os.replace. A reader that opens the JSON
+    # while the producer is mid-write (the race a concurrent transcribe_source caller short-circuits
+    # on AFTER stage_lock release) never sees a truncated file. Defense-in-depth atop stage_lock —
+    # the lock prevents two writers, this prevents a partial write from being read.
+    tmp = js.with_suffix(js.suffix + ".tmp")
+    tmp.write_text(json.dumps({"language": info.language, "segments": out}, ensure_ascii=False))
+    os.replace(str(tmp), str(js))
     return str(js)
 
 
