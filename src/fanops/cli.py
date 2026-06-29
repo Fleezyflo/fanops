@@ -61,7 +61,9 @@ def cmd_status(cfg: Config) -> int:
           # AUDIT C1: parked-for-reconcile posts (may be live) are actionable — surface here
           # so the operator sees them without opening the digest.
           f"needs_reconcile={len(led.posts_in_state(PostState.needs_reconcile))} "
-          f"backend={cfg.poster_backend} "
+          # UI-LIE-FIX: per-channel truth (M3), not the legacy global. `fanops status` is an
+          # operator-facing line; lying here was the same bug as the Studio status banner.
+          f"backend={cfg.effective_publish_mode()} "
           # WS2 (audit xc-3): one awaiting_<kind>= per GATE_KINDS (the single source) so a stuck moment_casting
           # gate is visible on `fanops status` — previously only moments/moment_hooks/captions printed.
           + " ".join(f"awaiting_{k}={len(pending(cfg, kind=k))}" for k in GATE_KINDS))

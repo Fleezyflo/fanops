@@ -166,11 +166,15 @@ class Config:
 
     @property
     def poster_backend(self) -> PosterBackend:
-        # THE poster mode. An UNKNOWN/typo'd value (e.g. FANOPS_POSTER=positz) must NOT present as live:
-        # get_poster falls back to DryRunPoster for any unrecognized backend, so a typo would otherwise
-        # show a LIVE banner while posting NOTHING (W4). Validate against the known set and fall back to
-        # dryrun + warn — the variant_ucb_c validate-or-default posture (never crash an autonomous run
-        # over a bad env). Surrounding whitespace trimmed (a .env value can carry a trailing newline).
+        # The LEGACY global FANOPS_POSTER. UI-LIE-FIX (R3-followup): under per-channel routing (M3), the
+        # truth source for "which backend publishes a channel" is Accounts.effective_provider(handle,
+        # platform) — NOT this global. Callers that mean "the per-channel publish provider" must use the
+        # new effective_publish_mode() / Accounts.effective_provider() API; this property STILL exists
+        # for the legacy bridge fallback (a channel with no explicit provider rides this) and for
+        # back-compat reads where the operator literally cares about FANOPS_POSTER (.env diagnostics).
+        # An UNKNOWN/typo'd value must not present as live: get_poster falls back to DryRunPoster for
+        # any unrecognized backend, so a typo would otherwise show a LIVE banner while posting NOTHING.
+        # Validate against the known set + fall back to dryrun + warn (variant_ucb_c posture).
         v = (os.getenv("FANOPS_POSTER") or "").strip()
         if not v:
             return "dryrun"
@@ -179,6 +183,57 @@ class Config:
                          v, ", ".join(sorted(_VALID_BACKENDS)))
             return "dryrun"
         return v
+
+    def effective_publish_mode(self) -> str:
+        """The per-channel publish-mode label (UI-LIE-FIX root). Single source of truth for every
+        status display, hx-confirm gate, and friendly error: resolves the actual providers publishing
+        across active accounts via Accounts.live_ready_channels (M3), so a live deployment with
+        per-channel routing (IG via postiz + TikTok via zernio + legacy FANOPS_POSTER=dryrun
+        bridge) returns 'postiz, zernio' — not 'dryrun'. Not-live -> 'dryrun'; live + no resolved
+        channel yet -> 'live'. Fail-open: any accounts read error degrades to 'live' (the is_live
+        truth is shown separately by callers).
+
+        This is the canonical replacement for `cfg.poster_backend` at any callsite that means
+        'what's actually publishing'. The legacy global stays for the narrow case of .env
+        diagnostics."""
+        if not self.is_live:
+            return "dryrun"
+        try:
+            # Lazy import: accounts imports config, so import here avoids the cycle.
+            from fanops.accounts import Accounts
+            provs = sorted({p for _, _, p in Accounts.load(self).live_ready_channels()})
+            return ", ".join(provs) if provs else "live"
+        except Exception:
+            return "live"
+
+    def auth_key_name_for(self, backend: str) -> str:
+        """The .env var name for `backend`'s API key — used by the FATAL auth-failure path to tell
+        the operator exactly which key to check. UI-LIE-FIX: callers used to derive this with
+        `cfg.poster_backend == 'postiz'`, which lied on per-channel deployments and only knew about
+        2 backends (postiz vs blotato — zernio didn't exist in the branch). Centralized here so
+        adding a backend doesn't require touching every error message.
+
+        "rest" and "mcp" are the two Blotato transports (both gated by BLOTATO_API_KEY); included
+        so a legacy FANOPS_POSTER=rest / =mcp deployment still gets the right key name in errors."""
+        return {"postiz": "POSTIZ_API_KEY", "zernio": "ZERNIO_API_KEY",
+                "blotato": "BLOTATO_API_KEY", "rest": "BLOTATO_API_KEY", "mcp": "BLOTATO_API_KEY",
+                }.get((backend or "").lower(), "FANOPS_POSTER")
+
+    @staticmethod
+    def auth_key_name_from_error(exc: Exception) -> str:
+        """The STRUCTURAL truth: the auth-error class itself identifies the backend that failed.
+        BlotatoAuthError -> BLOTATO_API_KEY, PostizAuthError -> POSTIZ_API_KEY, etc. This is
+        unambiguous — no per-channel routing lookup, no legacy global, just the exception's class.
+        Used by the FATAL-auth handlers in actions.publish_now / run_advance / run_prepare so the
+        key name is always right, no matter how the publish was routed."""
+        from fanops.errors import BlotatoAuthError, PostizAuthError, ZernioAuthError
+        if isinstance(exc, BlotatoAuthError):
+            return "BLOTATO_API_KEY"
+        if isinstance(exc, PostizAuthError):
+            return "POSTIZ_API_KEY"
+        if isinstance(exc, ZernioAuthError):
+            return "ZERNIO_API_KEY"
+        return "FANOPS_POSTER"
 
     @property
     def is_live(self) -> bool:
