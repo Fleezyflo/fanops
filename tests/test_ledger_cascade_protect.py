@@ -15,7 +15,7 @@ def _seed(tmp_path, post_state):
     led.add_moment(Moment(id="m", parent_id="s", content_token="A", start=0, end=2, reason="a"))
     led.add_clip(Clip(id="c", parent_id="m", path="/c", state=ClipState.rendered))
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=post_state))
+                      platform=Platform.instagram, caption="x", state=post_state, public_url=f"dryrun://p"))
     return led
 
 def test_cascade_preserves_awaiting_approval_post_and_clip(tmp_path):

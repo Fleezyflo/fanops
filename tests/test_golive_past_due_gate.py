@@ -61,7 +61,7 @@ def _seed_clip_and_queued_post(cfg: Config, *, post_id: str, scheduled_iso: str)
     led.add_clip(clip)
     led.add_post(Post(id=post_id, parent_id=clip.id, account="@a", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.queued,
-                      scheduled_time=scheduled_iso, media_urls=["file:///clip_1_9x16.mp4"]))
+                      scheduled_time=scheduled_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url=f"dryrun://1"))
     led.save()
     return post_id
 
@@ -114,7 +114,7 @@ def test_go_live_ignores_unapproved_posts(tmp_path, monkeypatch):
     led.add_post(Post(id="p_unapproved", parent_id=clip.id, account="@a", account_id="1",
                       platform=Platform.instagram, caption="c",
                       state=PostState.awaiting_approval, scheduled_time=yesterday_iso,
-                      media_urls=["file:///clip_1_9x16.mp4"]))
+                      media_urls=["file:///clip_1_9x16.mp4"], public_url=f"dryrun://p_unapproved"))
     led.save()
 
     res = golive.go_live(cfg, confirmed=True, now=FIXED_DT)

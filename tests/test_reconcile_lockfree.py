@@ -16,7 +16,7 @@ def _persist_parked(cfg, pid="p1", cid="c1"):
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
                           platform=Platform.instagram, caption="x", submission_id="blotato_sid_1",
-                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting))
+                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url=f"dryrun://98432"))
 
 
 def test_advance_reconciles_with_polls_outside_the_lock(tmp_path, monkeypatch, mocker):

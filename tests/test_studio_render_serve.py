@@ -40,7 +40,7 @@ def test_media_serves_the_per_account_render(tmp_path):
     # a post pointing at the render — even with media_urls ALSO set to the base, the render wins (priority).
     led.add_post(Post(id="p_r", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.queued, render_id="render_x",
-                      media_urls=[f"file://{base}"]))
+                      media_urls=[f"file://{base}"], public_url=f"dryrun://p_r"))
     led.save()
     r = _client(cfg).get("/media/p_r")
     assert r.status_code == 200 and r.data == render.read_bytes()   # the render file, NOT the base
@@ -49,7 +49,7 @@ def test_media_legacy_post_without_render_id_serves_base(tmp_path):
     cfg = Config(root=tmp_path); base, _ = _seed(cfg)
     led = Ledger.load(cfg)
     led.add_post(Post(id="p_base", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="c", state=PostState.queued))   # render_id None
+                      platform=Platform.instagram, caption="c", state=PostState.queued, public_url=f"dryrun://p_base"))   # render_id None
     led.save()
     r = _client(cfg).get("/media/p_base")
     assert r.status_code == 200 and r.data == base.read_bytes()     # back-compat: shared base
@@ -60,7 +60,7 @@ def test_media_render_id_set_but_entity_missing_falls_through(tmp_path):
     led = Ledger.load(cfg)
     led.add_post(Post(id="p_gone", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.queued,
-                      render_id="render_SWEPT", media_urls=[f"file://{render}"]))
+                      render_id="render_SWEPT", media_urls=[f"file://{render}"], public_url=f"dryrun://p_gone"))
     led.save()
     r = _client(cfg).get("/media/p_gone")
     assert r.status_code == 200 and r.data == render.read_bytes()
@@ -72,6 +72,6 @@ def test_media_missing_render_file_404s(tmp_path):
     render.unlink()                                                 # the render file is gone
     led = Ledger.load(cfg)
     led.add_post(Post(id="p_nofile", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="c", state=PostState.queued, render_id="render_x"))
+                      platform=Platform.instagram, caption="c", state=PostState.queued, render_id="render_x", public_url=f"dryrun://p_nofile"))
     led.save()
     assert _client(cfg).get("/media/p_nofile").status_code == 404

@@ -219,8 +219,22 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
                          if is_real_submission_id(info.get(k))), None)
             new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
+            # R1: a 'published' reconcile that captures NO valid URL (M2 safe_public_url rejected
+            # the malformed one) AND the post had no prior URL is the SAME ghost-row class as
+            # _publish_one's submitted-no-url case. Park in needs_reconcile so the next poll can
+            # back-fill a real https permalink — never promote to published with public_url=None
+            # (the Pydantic R1 invariant would refuse the save below; fail-closed BEFORE construction).
+            captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
+            if not (captured_url or "").strip():
+                led.posts[post.id] = post.model_copy(update={
+                    "state": PostState.needs_reconcile,
+                    "error_reason": ("publish_missing_url_at_reconcile: backend reports published but no valid "
+                                     "https url captured (M2 safe_public_url rejected it); re-polling next pass"),
+                })
+                log("reconcile", post.id, "published_no_url_parked")
+                continue
             upd = {"state": PostState.published,
-                   "public_url": safe_public_url(info.get("publicUrl")) or post.public_url,   # M2: https-only or keep existing
+                   "public_url": captured_url,
                    "error_reason": None}                  # a transient poll-error reason must not survive a successful publish
             if new_sub: upd["submission_id"] = new_sub
             led.posts[post.id] = post.model_copy(update=upd)

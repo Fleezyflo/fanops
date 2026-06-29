@@ -11,7 +11,7 @@ from fanops.p4_dim_bias import dim_bias_candidates, apply_p4_dim_bias
 
 def _dim_post(led, pid, ffk, reach, state=PostState.analyzed):
     led.add_post(Post(id=pid, parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=state, first_frame_kind=ffk, metrics={"reach": reach}))
+                      caption="x", state=state, first_frame_kind=ffk, metrics={"reach": reach}, public_url=f"dryrun://c1"))
 
 def _seed_lineage(led, *, source_id="s1", clip_id="c1", moment_id="m1"):
     led.add_source(Source(id=source_id, source_path="x.mp4", state=SourceState.transcribed,

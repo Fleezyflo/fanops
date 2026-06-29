@@ -10,9 +10,13 @@ from fanops.variant_amplify import update_streaks, amplify_candidates, apply_var
 
 
 def _post(pid, acct, hook, lift, state=PostState.analyzed):
+    # R1: stamp a synthetic dryrun:// permalink so the analyzed-state invariant holds. The
+    # learning math only reads metrics + state + variant_hook; the URL is shape-only here.
+    from fanops.models import _POST_TERMINAL_REQUIRES_URL
+    url = f"dryrun://{pid}" if state in _POST_TERMINAL_REQUIRES_URL else None
     return Post(id=pid, parent_id="c1", account=acct, account_id="1", platform=Platform.instagram,
                 caption="x", state=state, variant_key=f"vk_{pid}", variant_hook=hook,
-                metrics={"lift_score": lift})
+                metrics={"lift_score": lift}, public_url=url)
 
 
 def _led(cfg, posts):

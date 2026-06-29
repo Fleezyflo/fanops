@@ -128,7 +128,7 @@ def test_home_no_zero_result_for_matched_batch(tmp_path):
     led = Ledger.load(cfg)
     b = create_batch(led, name="Real", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000003Z")
     led.add_post(Post(id="p_rb", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, batch_id=b.id)); led.save()
+                      caption="x", state=PostState.queued, batch_id=b.id, public_url=f"dryrun://p_rb")); led.save()
     assert b'data-warn="zero-result"' not in _client(cfg).get("/").data   # matched target -> no false alarm
 
 def test_media_serves_variant_when_present(tmp_path):
@@ -296,10 +296,11 @@ def test_review_empty_state_honest_when_truly_empty(tmp_path):
 
 def test_mark_posted_success_does_not_leak_raw_dict_repr(tmp_path):
     # DEFECT: _result.html dumped result.detail's Python repr when it had no scheduled_time/caption
-    # key — so "Mark posted" with no URL showed the operator `✓ {'post_id': 'p_base', 'url': None}`.
+    # key — so "Mark posted" showed the operator the raw `✓ {'post_id': 'p_base', 'url': '...'}` dict.
     # A success message must be human-readable, never a dict repr.
+    # R1/D9: mark_posted requires a non-empty url now — pass a real https permalink.
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    r = _client(cfg).post("/publish/posted/p_base")            # no url -> detail={'post_id':..,'url':None}
+    r = _client(cfg).post("/publish/posted/p_base", data={"url": "https://www.instagram.com/p/abc/"})
     assert r.status_code == 200
     assert b"post_id" not in r.data                             # no raw Python dict key leaked (Jinja escapes ' -> &#39;)
     assert b"\xe2\x9c\x93" in r.data                            # still shows the ✓ success mark
@@ -328,7 +329,7 @@ def _seed_xacct_route(cfg):
         led.add_clip(c)
         led.add_post(Post(id="p_a", parent_id="clip_1", account="@a", account_id="ig_a",
                           platform=Platform.instagram, caption="on A", state=PostState.published,
-                          scheduled_time="2026-06-01T00:00:00Z"))
+                          scheduled_time="2026-06-01T00:00:00Z", public_url="dryrun://p_a"))
 
 def test_crosspost_route_mints_on_target(tmp_path):
     cfg = Config(root=tmp_path); _seed_xacct_route(cfg)
@@ -364,7 +365,7 @@ def test_review_renders_removed_hook_badge(tmp_path, monkeypatch):
                               reason="r", state=MomentState.clipped, hook_removed="made it and lost everything"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p1"))
     r = _client(cfg).get("/review?view=list")
     assert r.status_code == 200
     assert b"hook removed" in r.data and b"made it and lost everything" in r.data
@@ -381,7 +382,7 @@ def _seed_removed_hook(cfg):
                               reason="r", state=MomentState.clipped, hook_removed="made it and lost everything"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p1"))
 
 
 def test_review_renders_both_hook_choice_buttons(tmp_path, monkeypatch):

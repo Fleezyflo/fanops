@@ -18,7 +18,7 @@ def _persist_queued(cfg, pid="p1", cid="c1", when="2020-01-01T00:00:00Z"):
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
                           platform=Platform.instagram, caption="ship it",
-                          scheduled_time=when, state=PostState.queued))
+                          scheduled_time=when, state=PostState.queued, public_url=f"dryrun://98432"))
 
 
 def test_advance_publishes_with_network_outside_the_lock(tmp_path, monkeypatch, mocker):

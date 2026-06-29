@@ -101,7 +101,7 @@ def _seed_approved(cfg, *, base_fp="basefp", cur_fp="basefp"):
 
 def _base_post(state):
     return Post(id="post_base", parent_id="clip_base", account="@a", account_id="1",
-                platform=Platform.instagram, caption="c", state=state)
+                platform=Platform.instagram, caption="c", state=state, public_url=f"dryrun://post_base")
 
 def _ff(mocker, *, dur=11.6):
     def fake_run(cmd, **kw):

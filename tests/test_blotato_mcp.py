@@ -9,7 +9,7 @@ def test_flat_args(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="98432",
                       platform=Platform.instagram, caption="the one", media_urls=["https://h/v.mp4"],
-                      scheduled_time="2026-06-02T18:00:00Z", state=PostState.queued))
+                      scheduled_time="2026-06-02T18:00:00Z", state=PostState.queued, public_url=f"dryrun://p1"))
     calls = []
     poster = BlotatoMcpPoster(cfg, tool_caller=lambda n, a: calls.append((n, a)) or {"postSubmissionId": "s9"})
     led = poster.publish(led, "p1")
@@ -21,7 +21,7 @@ def test_flat_args(tmp_path):
 def test_raises_without_caller(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p2", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.twitter, caption="x", state=PostState.queued))
+                      platform=Platform.twitter, caption="x", state=PostState.queued, public_url=f"dryrun://p2"))
     with pytest.raises(RuntimeError):
         BlotatoMcpPoster(cfg, tool_caller=None).publish(led, "p2")
 
@@ -31,7 +31,7 @@ def test_mcp_auth_failure_raises_blotato_auth_error(tmp_path):
     # key must halt loudly, never silently burn posts.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p4", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.twitter, caption="x", state=PostState.queued))
+                      platform=Platform.twitter, caption="x", state=PostState.queued, public_url=f"dryrun://p4"))
     def caller(n, a):
         raise RuntimeError("401 Unauthorized: invalid token")
     with pytest.raises(BlotatoAuthError):
@@ -47,7 +47,7 @@ def test_mcp_typed_auth_error_propagates_even_with_nonmatching_message(tmp_path)
     # realistic path, not a corner case. Note "credentials rejected" contains NONE of the substrings.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p7", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.twitter, caption="x", state=PostState.queued))
+                      platform=Platform.twitter, caption="x", state=PostState.queued, public_url=f"dryrun://p7"))
     def caller(n, a):
         raise BlotatoAuthError("credentials rejected")   # typed, but message matches no substring
     with pytest.raises(BlotatoAuthError):
@@ -59,7 +59,7 @@ def test_mcp_non_auth_failure_marks_post_needs_reconcile_not_raise(tmp_path):
     # would abort the run; failed would make it re-queueable -> double-post to a real fan account.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p5", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.twitter, caption="x", state=PostState.queued))
+                      platform=Platform.twitter, caption="x", state=PostState.queued, public_url=f"dryrun://p5"))
     def caller(n, a):
         raise RuntimeError("500 internal error")
     led = BlotatoMcpPoster(cfg, tool_caller=caller).publish(led, "p5")
@@ -71,7 +71,7 @@ def test_mcp_accepts_alias_submission_id(tmp_path):
     # data.id) from the tool result is recognized -> submitted.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p6", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.twitter, caption="x", state=PostState.queued))
+                      platform=Platform.twitter, caption="x", state=PostState.queued, public_url=f"dryrun://p6"))
     poster = BlotatoMcpPoster(cfg, tool_caller=lambda n, a: {"data": {"submissionId": "mcp_alias"}})
     led = poster.publish(led, "p6")
     assert led.posts["p6"].state is PostState.submitted
@@ -83,7 +83,7 @@ def test_mcp_no_submission_id_marks_needs_reconcile(tmp_path):
     # NEVER failed (failed => re-queueable => double-post to a real fan account).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p3", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.twitter, caption="x", state=PostState.queued))
+                      platform=Platform.twitter, caption="x", state=PostState.queued, public_url=f"dryrun://p3"))
     poster = BlotatoMcpPoster(cfg, tool_caller=lambda n, a: {"unexpected": "no id"})
     led = poster.publish(led, "p3")
     assert led.posts["p3"].state is PostState.needs_reconcile

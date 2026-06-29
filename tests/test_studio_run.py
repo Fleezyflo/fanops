@@ -330,7 +330,7 @@ def test_pipeline_status_awaiting_counts_moments_not_posts(tmp_path):
         led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         for i in range(3):                       # 3 awaiting SURFACE posts on ONE clip/moment
             led.add_post(Post(id=f"p{i}", parent_id="c1", account=f"@a{i}", account_id=str(i),
-                              platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+                              platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://c1"))
     assert views.pipeline_status(cfg)["awaiting"] == 1      # ONE moment, not three posts
 
 

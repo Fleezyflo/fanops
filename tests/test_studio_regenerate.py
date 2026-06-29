@@ -23,7 +23,7 @@ def _seed(cfg, caption="OLD", lang="en", state=PostState.queued):
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption=caption, state=state,
-                      scheduled_time=FUTURE))
+                      scheduled_time=FUTURE, public_url=f"dryrun://p_edit"))
     led.save(); return led
 
 def _model(caption="A FRESH TAKE", hashtags=None, surface="@a/instagram"):

@@ -34,7 +34,7 @@ def _seed(cfg, n_clips=1, *, with_posts=True, state=PostState.queued):
         if with_posts:
             led.add_post(Post(id=f"p{i}", parent_id=cid, account="@a0", account_id="0",
                               platform=Platform.instagram, caption="c", state=state,
-                              scheduled_time=FAR))
+                              scheduled_time=FAR, public_url=f"dryrun://0"))
     led.save()
 
 

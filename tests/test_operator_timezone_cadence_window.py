@@ -108,7 +108,7 @@ def _seed_queued_posts(led: Ledger, clip: Clip, *, n: int, base_iso: str) -> lis
         pid = f"p_{k}"
         led.add_post(Post(id=pid, parent_id=clip.id, account="@a", account_id="ia",
                           platform=Platform.instagram, caption="c", state=PostState.queued,
-                          scheduled_time=base_iso, media_urls=["file:///clip_1_9x16.mp4"]))
+                          scheduled_time=base_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url=f"dryrun://ia"))
         ids.append(pid)
     return ids
 

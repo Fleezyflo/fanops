@@ -49,7 +49,7 @@ def _seed_queued(led: Ledger, clip: Clip, *, post_id: str, account: str, account
                  scheduled_iso: str) -> str:
     p = Post(id=post_id, parent_id=clip.id, account=account, account_id=account_id,
              platform=Platform.instagram, caption="c", state=PostState.queued,
-             scheduled_time=scheduled_iso, media_urls=[f"file:///clip_1_9x16.mp4"])
+             scheduled_time=scheduled_iso, media_urls=[f"file:///clip_1_9x16.mp4"], public_url=f"dryrun://sweep")
     led.add_post(p)
     return p.id
 

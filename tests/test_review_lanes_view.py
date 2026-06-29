@@ -30,7 +30,7 @@ def _seed(cfg):
         # @a is cast on m0 (llm); @b has no selection (fans to all)
         led.add_account_selection(AccountSelection(id=account_selection_id("src1", "@a"), source_id="src1",
                                                    account="@a", moment_ids=["m0"], method=SelectionMethod.llm))
-        led.add_post(Post(id="p_a_m0", parent_id="c0", account="@a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval))
+        led.add_post(Post(id="p_a_m0", parent_id="c0", account="@a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url=f"dryrun://p_a_m0"))
 
 def _seed_with_post(cfg):
     # like _seed but @a's m0 post carries clip_profile="long" so its lane row renders the length-band spec chip.

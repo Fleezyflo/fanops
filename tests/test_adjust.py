@@ -20,18 +20,18 @@ def _analyzed_post(led, lift, pid, cid, mid, sid):
                           state=MomentState.clipped))
     led.add_clip(Clip(id=cid, parent_id=mid, path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}))
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://1"))
 
 def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
     led = Ledger.load(Config(root=tmp_path))
     for pid, lift in [("p1", 300), ("p2", 5), ("p3", 250), ("p4", 1)]:
         led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics={"lift_score": lift}))
+                          state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
     # a failed post with no lift_score must NOT be classified (FIX F22)
     led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
-                      metrics={"error": "boom"}))
+                      metrics={"error": "boom"}, public_url=f"dryrun://pf"))
     # winner_pct=0.5 -> top 2 winners; retire_pct=0.5 + floor 20 -> bottom 2 that are <20
     r = classify_outcomes(led, winner_pct=0.5, retire_pct=0.5, lift_floor=20.0)
     assert set(r["winners"]) == {"p1", "p3"}
@@ -44,7 +44,7 @@ def test_classify_floor_protects_good_clips_from_retirement(tmp_path):
     for pid, lift in [("hi", 500), ("mid", 100), ("ok", 60)]:   # all >= floor 20
         led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics={"lift_score": lift}))
+                          state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
     r = classify_outcomes(led, winner_pct=0.34, retire_pct=0.34, lift_floor=20.0)
     assert "hi" in r["winners"]
     assert r["losers"] == []                        # 'ok' is bottom but lift 60 >= 20 -> spared
@@ -107,7 +107,7 @@ def test_amplify_respects_per_source_budget(tmp_path):
                           reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, metrics={"lift_score": 400.0}))
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": 400.0}, public_url="dryrun://p1"))
     led = amplify(led, cfg, ["p1"], max_amplify_per_source=3)
     # at the cap, the source is neither re-requested nor state-flipped
     assert led.sources["s1"].state is SourceState.moments_decided
@@ -124,7 +124,7 @@ def test_amplify_preserves_winners_published_lineage(tmp_path):
                           reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.published, submission_id="SUB123", metrics={"lift_score":400.0}))
+                      caption="x", state=PostState.published, submission_id="SUB123", metrics={"lift_score":400.0}, public_url="dryrun://p1"))
     led = amplify(led, cfg, ["p1"])
     rid = latest_request_id(cfg, "moments", "s1")
     response_path(cfg, "moments", "s1").write_text(MomentDecision(
@@ -171,7 +171,7 @@ def test_classify_winner_never_also_a_loser(tmp_path):
     for pid, lift in [("top", 300), ("mid", 5), ("low", 1)]:   # mid is below floor 20
         led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics={"lift_score": lift}))
+                          state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
     r = classify_outcomes(led, winner_pct=0.67, retire_pct=0.67, lift_floor=20.0)
     assert "mid" in r["winners"]                       # rank 2 of 3 -> in the top 67%
     assert "mid" not in r["losers"]                    # ...so it must NOT also be retired
@@ -181,7 +181,7 @@ def test_classify_winner_never_also_a_loser(tmp_path):
 # ======================= P4(a): account-aware (per-surface) WINNER ranking =======================
 def _ap(led, pid, lift, account="@a", platform=Platform.instagram):
     led.add_post(Post(id=pid, parent_id="c", account=account, account_id="1", platform=platform,
-                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}))
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
 
 def test_per_surface_lets_a_small_accounts_best_win(tmp_path):
     # A1: @big (4 posts) would crowd @small (2 posts) out of the GLOBAL top winner_pct. per_surface=True

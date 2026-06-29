@@ -22,7 +22,7 @@ def test_counts_holds_failures(tmp_path):
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c", state=ClipState.held, held=True, held_reason="begging"))
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
-                      error_reason="blotato 422"))
+                      error_reason="blotato 422", public_url=f"dryrun://p1"))
     md = render_digest(led, cfg)
     assert "# FAN OPS Ledger Digest" in md
     assert "Sources" in md and "transcribed" in md
@@ -64,7 +64,7 @@ def test_empty_ledger_digest_has_no_sections(tmp_path):
 def test_none_reason_renders_fallback(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.failed))  # error_reason None
+                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url=f"dryrun://pf"))  # error_reason None
     md = render_digest(led, cfg)
     assert "Failures" in md and "(no reason given)" in md and "None" not in md.split("Failures")[1]
 
@@ -72,10 +72,10 @@ def test_published_unmeasured_surfaced(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     # a published post with NO metrics -> surfaced; a published post WITH metrics -> not
     led.add_post(Post(id="pm", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.published))  # no metrics
+                      platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://pm"))  # no metrics
     led.add_post(Post(id="pok", parent_id="c", account="@a", account_id="1",
                       platform=Platform.tiktok, caption="y", state=PostState.published,
-                      metrics={"saves": 5, "lift_score": 20.0}))
+                      metrics={"saves": 5, "lift_score": 20.0}, public_url="dryrun://pok"))
     md = render_digest(led, cfg)
     assert "Published but unmeasured" in md
     assert "`pm`" in md.split("Published but unmeasured")[1]
@@ -126,10 +126,10 @@ def test_digest_shows_lift_by_variant(tmp_path):
     # order assertion below kills BOTH a reverse-removal AND a constant-key (no-op) sort mutation.
     led.add_post(Post(id="p2", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram,
                       caption="y", state=PostState.analyzed, variant_key="vk_b", variant_hook="HOOK B",
-                      metrics={"lift_score": 30.0}))
+                      metrics={"lift_score": 30.0}, public_url="dryrun://p2"))
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.analyzed, variant_key="vk_a", variant_hook="HOOK A",
-                      metrics={"lift_score": 80.0}))
+                      metrics={"lift_score": 80.0}, public_url="dryrun://p1"))
     out = render_digest(led, cfg)
     assert "Lift by variant" in out
     assert "HOOK A" in out and "80" in out          # the winning variant + its lift surface
@@ -150,7 +150,7 @@ def test_digest_flags_lift_degraded_variant(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.analyzed, variant_key="vk_a", variant_hook="HOOK A",
-                      metrics={"lift_score": 80.0, "lift_degraded": True, "lift_missing_keys": ["retention", "saves"]}))
+                      metrics={"lift_score": 80.0, "lift_degraded": True, "lift_missing_keys": ["retention", "saves"]}, public_url="dryrun://p1"))
     out = render_digest(led, cfg)
     assert "DEGRADED" in out                          # the partial-objective signal is surfaced
     assert "retention" in out and "saves" in out      # names which primary metrics were missing
@@ -180,11 +180,11 @@ def test_digest_variant_shows_gate_state(tmp_path):
     ):
         led.add_post(Post(id=f"a{i}", parent_id="c1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_a{i}", variant_hook=hook, metrics={"lift_score": lift}))
+                          variant_key=f"vk_a{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://c1"))
     # @b/instagram: BELOW GATE — a single analyzed post (too few to trust).
     led.add_post(Post(id="b0", parent_id="c1", account="@b", account_id="2",
                       platform=Platform.instagram, caption="y", state=PostState.analyzed,
-                      variant_key="vk_b0", variant_hook="LONE", metrics={"lift_score": 50.0}))
+                      variant_key="vk_b0", variant_hook="LONE", metrics={"lift_score": 50.0}, public_url="dryrun://b0"))
     out = render_digest(led, cfg)
     section = out.split("Lift by variant")[1]
     assert "learning ACTIVE" in section and "gathering data" in section   # both states render
@@ -206,7 +206,7 @@ def test_digest_variant_gate_state_failopen(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="a0", parent_id="c1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_a0", variant_hook="HOOK A", metrics={"lift_score": 80.0}))
+                      variant_key="vk_a0", variant_hook="HOOK A", metrics={"lift_score": 80.0}, public_url="dryrun://a0"))
     monkeypatch.setattr("fanops.digest.best_hooks",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     out = render_digest(led, cfg)                       # must NOT raise
@@ -220,7 +220,7 @@ def test_needs_reconcile_surfaced(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="prec", parent_id="c", account="@a", account_id="1",
                       platform=Platform.twitter, caption="x", state=PostState.needs_reconcile,
-                      error_reason="blotato 503: ambiguous, may be live"))
+                      error_reason="blotato 503: ambiguous, may be live", public_url=f"dryrun://prec"))
     md = render_digest(led, cfg)
     assert "Needs reconcile" in md
     section = md.split("Needs reconcile")[1]
@@ -236,11 +236,11 @@ def test_digest_shows_variant_amplify_streak(tmp_path, monkeypatch):
     for i in range(8):
         led.add_post(Post(id=str(i), parent_id="c1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"v{i}", variant_hook="WIN", metrics={"lift_score": 90.0}))
+                          variant_key=f"v{i}", variant_hook="WIN", metrics={"lift_score": 90.0}, public_url="dryrun://c1"))
     for i in range(3):
         led.add_post(Post(id=f"l{i}", parent_id="c1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vl{i}", variant_hook="LOSE", metrics={"lift_score": 1.0}))
+                          variant_key=f"vl{i}", variant_hook="LOSE", metrics={"lift_score": 1.0}, public_url="dryrun://c1"))
     led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 2}
     out = render_digest(led, cfg)
     assert "Variant amplification" in out
@@ -268,10 +268,10 @@ def test_digest_variant_ucb_shows_pick(tmp_path, monkeypatch):
     for i in range(1, 9):
         led.add_post(Post(id=f"L{i}", parent_id="c1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}))
+                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}, public_url="dryrun://c1"))
     led.add_post(Post(id="N1", parent_id="c1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}))
+                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}, public_url="dryrun://N1"))
     section = render_digest(led, cfg).split("Lift by variant")[1]
     assert "UCB" in section and "NEW" in section            # the bandit verdict is surfaced
     a_line = [ln for ln in section.splitlines() if "@a/instagram" in ln][0]
@@ -291,7 +291,7 @@ def test_digest_variant_ucb_failopen(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="a0", parent_id="c1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_a0", variant_hook="HOOK A", metrics={"lift_score": 80.0}))
+                      variant_key="vk_a0", variant_hook="HOOK A", metrics={"lift_score": 80.0}, public_url="dryrun://a0"))
     out = render_digest(led, cfg)                          # must NOT raise
     assert "Lift by variant" in out and "HOOK A" in out and "80" in out   # rows survive
     assert "gathering data" in out.split("Lift by variant")[1]            # safe default on error
@@ -309,7 +309,7 @@ def test_digest_variant_ucb_off_keeps_v2_wording(tmp_path, monkeypatch):
     ):
         led.add_post(Post(id=f"a{i}", parent_id="c1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_a{i}", variant_hook=hook, metrics={"lift_score": lift}))
+                          variant_key=f"vk_a{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://c1"))
     section = render_digest(led, cfg).split("Lift by variant")[1]
     assert "learning ACTIVE" in section and "UCB ->" not in section
 
@@ -332,11 +332,11 @@ def test_digest_marks_cold_surface_borrowing(monkeypatch, tmp_path):
         for i, (h, lift) in enumerate(rows):
             led.add_post(Post(id=f"{acct}{i}", parent_id="clip_1", account=acct, account_id="x",
                               platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                              variant_key=f"vk_{acct}{i}", variant_hook=h, metrics={"lift_score": lift}))
+                              variant_key=f"vk_{acct}{i}", variant_hook=h, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
     win("@a", "STYLE"); win("@b", "STYLE")
     led.add_post(Post(id="c0", parent_id="clip_1", account="@c", account_id="x",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_c0", variant_hook="COLD", metrics={"lift_score": 50.0}))
+                      variant_key="vk_c0", variant_hook="COLD", metrics={"lift_score": 50.0}, public_url="dryrun://c0"))
     accts = Accounts(cfg)
     accts.accounts = [Account(handle=h, account_id="x", platforms=[Platform.instagram],
                               status=AccountStatus.active, persona="hype") for h in ("@a", "@b", "@c")]

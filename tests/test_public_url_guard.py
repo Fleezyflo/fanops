@@ -10,6 +10,9 @@ from fanops.reconcile import reconcile_posts
 
 
 def _parked(led, pid="p"):
+    # R1 note: state=needs_reconcile is NON-terminal, so the public_url invariant does NOT apply
+    # here. The test deliberately starts with public_url=None to exercise the backend-URL CAPTURE
+    # path; do not inject a synthetic URL.
     led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="s"))
 
@@ -31,10 +34,14 @@ def test_safe_public_url_accepts_only_well_formed_https():
 
 def test_reconcile_drops_a_non_https_public_url(tmp_path):
     # the audit target: a malformed publicUrl from the backend must NOT be persisted on the post.
+    # R1 (updated contract): when the backend reports 'published' but no VALID url was captured AND
+    # the post had no prior url, the reconcile FAILS CLOSED to needs_reconcile (rather than
+    # promoting to a ghost row). Same fail-closed logic as _publish_one's submitted-no-url gate.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _parked(led)
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "javascript:alert(1)"})
-    assert led.posts["p"].state is PostState.published      # state still records the publish
-    assert led.posts["p"].public_url is None                # but the malformed url was rejected
+    assert led.posts["p"].state is PostState.needs_reconcile  # park, do not promote (R1)
+    assert led.posts["p"].public_url is None                  # malformed url still rejected
+    assert "publish_missing_url_at_reconcile" in (led.posts["p"].error_reason or "")
 
 
 def test_reconcile_keeps_a_valid_https_public_url(tmp_path):

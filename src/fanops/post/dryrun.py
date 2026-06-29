@@ -28,6 +28,15 @@ class DryRunPoster:
         # submission_id — can never reach a dryrun post, so classify/amplify/retire never fire and
         # the learning loop is dead in the default backend (AUDIT C4). The `dryrun_` prefix mirrors
         # dryrun_media_url's honest stand-in and is collision-free vs real Blotato ids.
+        # R1/D16: is_real_submission_id now excludes the dryrun_ prefix so track/reconcile don't
+        # try to poll the backend for a synthetic id.
         post.submission_id = f"dryrun_{post_id}"
+        # R1/D1: stamp a synthetic permalink in the dryrun:// scheme so the next promotion step
+        # (run.py _publish_one: submitted -> published) satisfies the R1 invariant: state=published
+        # MUST carry a non-empty public_url. M5's _classify_channel reads the scheme to label this
+        # row as 'dryrun' in the Posted tub — the operator sees an HONEST row, not a ghost. Without
+        # this line a dryrun publish produced Post(state=published, public_url='') — exactly the 5
+        # ghost rows on 2026-06-29 (5 sidecar JSONs at 05_scheduled/post_*.json).
+        post.public_url = f"dryrun://{post_id}"
         post.state = PostState.submitted
         return led

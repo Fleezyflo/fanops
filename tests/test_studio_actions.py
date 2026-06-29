@@ -294,11 +294,11 @@ def test_approve_moment_approves_all_channels_and_clips_of_one_moment(tmp_path):
         led.add_clip(Clip(id="c1a", parent_id="m1", path="/c1a.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_clip(Clip(id="c1b", parent_id="m1", path="/c1b.mp4", aspect=Fmt.r9x16, state=ClipState.queued))  # 2nd clip, same moment
         led.add_clip(Clip(id="c2", parent_id="m2", path="/c2.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p_a_ig", parent_id="c1a", account="@a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval))
-        led.add_post(Post(id="p_b_ig", parent_id="c1a", account="@b", account_id="2", platform=Platform.instagram, caption="B", state=PostState.awaiting_approval))
-        led.add_post(Post(id="p_b_tt", parent_id="c1b", account="@b", account_id="2", platform=Platform.tiktok, caption="Bt", state=PostState.awaiting_approval))  # 2nd clip of m1
-        led.add_post(Post(id="p_a_done", parent_id="c1a", account="@a", account_id="1", platform=Platform.instagram, caption="X", state=PostState.queued))  # already approved → not re-counted
-        led.add_post(Post(id="p_m2", parent_id="c2", account="@a", account_id="1", platform=Platform.instagram, caption="M2", state=PostState.awaiting_approval))  # other moment
+        led.add_post(Post(id="p_a_ig", parent_id="c1a", account="@a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url=f"dryrun://p_a_ig"))
+        led.add_post(Post(id="p_b_ig", parent_id="c1a", account="@b", account_id="2", platform=Platform.instagram, caption="B", state=PostState.awaiting_approval, public_url=f"dryrun://p_b_ig"))
+        led.add_post(Post(id="p_b_tt", parent_id="c1b", account="@b", account_id="2", platform=Platform.tiktok, caption="Bt", state=PostState.awaiting_approval, public_url=f"dryrun://p_b_tt"))  # 2nd clip of m1
+        led.add_post(Post(id="p_a_done", parent_id="c1a", account="@a", account_id="1", platform=Platform.instagram, caption="X", state=PostState.queued, public_url=f"dryrun://p_a_done"))  # already approved → not re-counted
+        led.add_post(Post(id="p_m2", parent_id="c2", account="@a", account_id="1", platform=Platform.instagram, caption="M2", state=PostState.awaiting_approval, public_url=f"dryrun://p_m2"))  # other moment
     res = approve_moment(cfg, "m1", now=NOW)
     assert res.ok and res.detail["approved"] == 3 and res.detail["moment"] == "m1"
     led = Ledger.load(cfg)
@@ -318,8 +318,8 @@ def test_approve_account_platform_scopes_to_one_channel(tmp_path):
         led.add_source(Source(id="src1", source_path="/s.mp4"))
         led.add_moment(Moment(id="m1", parent_id="src1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p_ig", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval))
-        led.add_post(Post(id="p_tt", parent_id="c1", account="@b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval))
+        led.add_post(Post(id="p_ig", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval, public_url=f"dryrun://p_ig"))
+        led.add_post(Post(id="p_tt", parent_id="c1", account="@b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval, public_url=f"dryrun://p_tt"))
     res = approve_account(cfg, "@b", platform="instagram", source="src1", now=NOW)
     assert res.ok and res.detail["approved"] == 1 and res.detail["platform"] == "instagram"
     led = Ledger.load(cfg)
@@ -338,8 +338,8 @@ def test_approve_account_no_platform_is_byte_identical(tmp_path):
         led.add_source(Source(id="src1", source_path="/s.mp4"))
         led.add_moment(Moment(id="m1", parent_id="src1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p_ig", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval))
-        led.add_post(Post(id="p_tt", parent_id="c1", account="@b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval))
+        led.add_post(Post(id="p_ig", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval, public_url=f"dryrun://p_ig"))
+        led.add_post(Post(id="p_tt", parent_id="c1", account="@b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval, public_url=f"dryrun://p_tt"))
     res = approve_account(cfg, "@b", source="src1", now=NOW)
     assert res.ok and res.detail["approved"] == 2
 
@@ -383,7 +383,7 @@ def test_crosspost_to_account_repost_freely(tmp_path):
         c.meta_captions = {"@b/instagram": {"caption": "x", "hashtags": []}}
         led.add_clip(c)
         led.add_post(Post(id="p_a", parent_id="clip_0", account="@a", account_id="ig_a",
-                          platform=Platform.instagram, caption="on A", state=PostState.published))
+                          platform=Platform.instagram, caption="on A", state=PostState.published, public_url="dryrun://p_a"))
     r = crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
     assert r.ok and r.detail["already_exists"] is False         # the A post does NOT block fanning to B
     assert Ledger.load(cfg).posts["p_a"].state is PostState.published   # A untouched (no supersede)
@@ -451,7 +451,7 @@ def test_crosspost_all_to_account_bulk(tmp_path):
             c.meta_captions = {"@b/instagram": {"caption": f"c{i}", "hashtags": []}}
             led.add_clip(c)
             led.add_post(Post(id=f"p_a{i}", parent_id=f"clip_{i}", account="@a", account_id="ig_a",
-                              platform=Platform.instagram, caption="on A", state=PostState.published))
+                              platform=Platform.instagram, caption="on A", state=PostState.published, public_url="dryrun://ig_a"))
     r = crosspost_all_to_account(cfg, "@a", "@b", "instagram", now=NOW)
     assert r.ok and r.detail["minted"] == 3 and r.detail["already_exists"] == 0
     r2 = crosspost_all_to_account(cfg, "@a", "@b", "instagram", now=NOW)   # idempotent
@@ -486,7 +486,7 @@ def test_crosspost_all_skips_missing_render_files(tmp_path):
         for i in range(2):
             led.add_moment(Moment(id=f"mom_{i}", parent_id="src_1", content_token=f"{i}", start=i, end=i + 5, reason="r", state=MomentState.clipped))
             led.add_clip(Clip(id=f"clip_{i}", parent_id=f"mom_{i}", path=str(cfg.clips / f"gone_{i}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))   # path never written
-            led.add_post(Post(id=f"p_a{i}", parent_id=f"clip_{i}", account="@a", account_id="ig_a", platform=Platform.instagram, caption="A", state=PostState.published))
+            led.add_post(Post(id=f"p_a{i}", parent_id=f"clip_{i}", account="@a", account_id="ig_a", platform=Platform.instagram, caption="A", state=PostState.published, public_url="dryrun://ig_a"))
     r = crosspost_all_to_account(cfg, "@a", "@b", "instagram", now=NOW)
     assert not r.ok and r.detail["minted"] == 0 and r.detail["skipped"] == 2
 

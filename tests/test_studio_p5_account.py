@@ -111,7 +111,7 @@ def test_schedule_grouped_account_order(tmp_path):
 def _published(led, pid, account, *, metrics, when="2026-06-01T00:00:00Z"):
     led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c.mp4", state=ClipState.published)) if "clip_1" not in led.clips else None
     led.add_post(Post(id=pid, parent_id="clip_1", account=account, account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.published, scheduled_time=when, metrics=metrics))
+                      caption="x", state=PostState.published, scheduled_time=when, metrics=metrics, public_url="dryrun://clip_1"))
 
 def test_posted_library_filtered_by_account(tmp_path):
     from fanops.studio.views import posted_library
@@ -146,7 +146,7 @@ def test_posted_row_new_fields_default_none():
 # ---- T4: Publish filter ----
 def _manual(led, pid, account):
     led.add_post(Post(id=pid, parent_id="clip_1", account=account, account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, scheduled_time="2020-01-01T00:00:00Z"))
+                      caption="x", state=PostState.queued, scheduled_time="2020-01-01T00:00:00Z", public_url=f"dryrun://clip_1"))
 
 def test_publish_queue_filtered_by_account(tmp_path):
     from fanops.studio.views import publish_queue
@@ -168,7 +168,7 @@ def _variant(led, pid, account, hook, lift, *, metrics_extra=None, when="2026-06
     m = {LIFT_SCORE: lift}; m.update(metrics_extra or {})
     led.add_post(Post(id=pid, parent_id="clip_1", account=account, account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.analyzed, variant_key=f"vk_{pid}", variant_hook=hook,
-                      scheduled_time=when, metrics=m))
+                      scheduled_time=when, metrics=m, public_url="dryrun://clip_1"))
 
 def test_lift_rows_filtered_by_account(tmp_path):
     from fanops.studio.views import lift_rows
@@ -244,7 +244,7 @@ def _seed_two_accounts_all_surfaces(cfg):
             led.add_post(Post(id=f"var_{tag}", parent_id=f"clip_{tag}", account=acct, account_id="1",
                               platform=Platform.instagram, caption=f"variant {tag}", state=PostState.analyzed,
                               variant_key=f"vk_{tag}", variant_hook=f"HOOK_{tag}",
-                              scheduled_time="2026-06-01T00:00:00Z", metrics={LIFT_SCORE: 50.0, "saves": 3}))
+                              scheduled_time="2026-06-01T00:00:00Z", metrics={LIFT_SCORE: 50.0, "saves": 3}, public_url="dryrun://1"))
 
 @pytest.mark.parametrize("path,present,absent", [
     ("/review?view=list&account=@a", b"await a", b"await b"),
@@ -273,7 +273,7 @@ def test_show_more_link_preserves_account_publish(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     for i in range(30):
         led.add_post(Post(id=f"p{i}", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.queued, scheduled_time="2020-01-01T00:00:00Z"))
+                          caption="x", state=PostState.queued, scheduled_time="2020-01-01T00:00:00Z", public_url=f"dryrun://clip_1"))
     led.save()
     html = _client(cfg).get("/publish?account=@a").data.decode()
     assert "Show more" in html and "account=" in html

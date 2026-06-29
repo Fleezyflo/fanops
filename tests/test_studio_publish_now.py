@@ -20,7 +20,7 @@ def _seed(cfg, *, state=PostState.queued, when=FUTURE, media=None):
                       state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="ship it", state=state,
-                      scheduled_time=when, media_urls=media or []))
+                      scheduled_time=when, media_urls=media or [], public_url=f"dryrun://p1"))
     led.save(); return led
 
 

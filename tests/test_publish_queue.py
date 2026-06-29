@@ -13,7 +13,7 @@ def _seed(cfg, when="2020-01-01T00:00:00Z", state=PostState.queued):
     led = Ledger.load(cfg)
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(cfg.clips / "c1.mp4"), state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="fire caption", state=state, scheduled_time=when))
+                      caption="fire caption", state=state, scheduled_time=when, public_url=f"dryrun://p1"))
     led.save()
 
 
@@ -38,7 +38,7 @@ def test_lists_manually_resolvable_states(tmp_path):
     for st in (PostState.queued, PostState.failed, PostState.error, PostState.needs_reconcile):
         led.add_post(Post(id=f"p_{st.value}", parent_id="c1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=st,
-                          scheduled_time="2020-01-01T00:00:00Z"))
+                          scheduled_time="2020-01-01T00:00:00Z", public_url=f"dryrun://c1"))
     led.save()
     assert {r["post_id"] for r in views.publish_queue(cfg, now=_NOW)} == {
         "p_queued", "p_failed", "p_error", "p_needs_reconcile"}
@@ -66,18 +66,22 @@ def test_mark_published_rejects_already_published(tmp_path):
 
 def test_mark_published_accepts_error_state(tmp_path):
     # ecc:python-review: an `error`-state post (recoverable, like `failed`) must be markable, not stranded.
+    # R1/D9: mark_published now REQUIRES a non-empty url (operator says "I posted by hand" -> they MUST
+    # paste the permalink); passing a real https url here is the canonical happy path.
     cfg = Config(root=tmp_path); _seed(cfg, state=PostState.error)
-    assert actions.mark_published(cfg, "p1").ok
-    assert Ledger.load(cfg).posts["p1"].state is PostState.published
+    assert actions.mark_published(cfg, "p1", url="https://www.instagram.com/p/abc/").ok
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.published
+    assert p.public_url == "https://www.instagram.com/p/abc/"
 
 def test_unscheduled_post_sorts_last(tmp_path):
     # ecc:python-review: a None scheduled_time must sort AFTER a future-dated post, not as most urgent.
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     led.add_post(Post(id="future", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="f", state=PostState.queued, scheduled_time="2099-01-01T00:00:00Z"))
+                      caption="f", state=PostState.queued, scheduled_time="2099-01-01T00:00:00Z", public_url=f"dryrun://future"))
     led.add_post(Post(id="none", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="n", state=PostState.queued, scheduled_time=None))
+                      caption="n", state=PostState.queued, scheduled_time=None, public_url=f"dryrun://none"))
     led.save()
     ids = [r["post_id"] for r in views.publish_queue(cfg, now=_NOW)]
     assert ids.index("future") < ids.index("none")

@@ -259,7 +259,7 @@ def _seed_variant_posts_for_at_a(led):
     ):
         led.add_post(Post(id=f"p{i}", parent_id="clip_1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_p{i}", variant_hook=hook, metrics={"lift_score": lift}))
+                          variant_key=f"vk_p{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
 
 def test_request_captions_injects_learned_hint_when_gate_met(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
@@ -287,7 +287,7 @@ def test_request_captions_below_gate_emits_no_hint(monkeypatch, tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led.add_post(Post(id="p0", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_p0", variant_hook="WIN", metrics={"lift_score": 90.0}))  # only 1
+                      variant_key="vk_p0", variant_hook="WIN", metrics={"lift_score": 90.0}, public_url="dryrun://p0"))  # only 1
     led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "learned_hooks" not in payload
@@ -303,7 +303,7 @@ def test_request_captions_dedups_hint_across_surfaces(monkeypatch, tmp_path):
     ):
         led.add_post(Post(id=f"t{i}", parent_id="clip_1", account="@a", account_id="1",
                           platform=Platform.tiktok, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_t{i}", variant_hook=hook, metrics={"lift_score": lift}))
+                          variant_key=f"vk_t{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
     led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram), ("@a", Platform.tiktok)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert payload["learned_hooks"] == ["WIN"]             # one entry, not ["WIN", "WIN"]
@@ -339,7 +339,7 @@ def _win_surface_for(led, account, platform, hook, *, n=3):
         led.add_post(Post(id=f"{account}_{platform.value}_{i}", parent_id="clip_1", account=account,
                           account_id="x", platform=platform, caption="x", state=PostState.analyzed,
                           variant_key=f"vk_{account}_{i}", variant_hook=h,
-                          metrics={"lift_score": lift}))
+                          metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
 
 def test_request_captions_injects_transferred_prior_for_cold_surface(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
@@ -439,10 +439,10 @@ def _seed_thinlead_for_at_a(led):
     for i in range(1, 9):
         led.add_post(Post(id=f"L{i}", parent_id="clip_1", account="@a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}))
+                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}, public_url="dryrun://clip_1"))
     led.add_post(Post(id="N1", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}))
+                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}, public_url="dryrun://N1"))
 
 def test_request_captions_ucb_picks_challenger_when_flag_on(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")

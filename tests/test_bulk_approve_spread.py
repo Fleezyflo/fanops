@@ -67,7 +67,7 @@ def _born_posts(led: Ledger, clip: Clip, *, n_per_account: int = 3,
             pid = f"p_{handle.strip('@')}_{k}"
             p = Post(id=pid, parent_id=clip.id, account=handle, account_id=account_id,
                      platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
-                     scheduled_time=stale_iso, media_urls=[f"file:///clip_1_9x16.mp4"])
+                     scheduled_time=stale_iso, media_urls=[f"file:///clip_1_9x16.mp4"], public_url=f"dryrun://sweep")
             led.add_post(p)
             ids.append(pid)
     return ids

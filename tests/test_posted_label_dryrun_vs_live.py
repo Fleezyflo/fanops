@@ -51,16 +51,16 @@ def _seed_post(led: Ledger, clip: Clip, *, post_id: str, public_url: str | None)
     return p.id
 
 
-def test_posted_row_with_no_public_url_labels_dryrun(tmp_path, monkeypatch):
-    """RED: a published post without a real public_url is a dryrun-success — the only path that
-    flips to PostState.published without setting public_url is the DryRunPoster->publish_post
-    transition. The PostedRow MUST surface this as posted_via='dryrun' so the operator can see at
-    a glance that no real platform saw the post."""
+def test_posted_row_with_dryrun_url_labels_dryrun(tmp_path, monkeypatch):
+    """RED: a published post with a dryrun:// public_url is a dryrun-success — the DryRunPoster
+    writes this synthetic permalink (R1/D1) so the row CAN'T be a ghost (empty URL is now refused
+    by the R1 invariant). PostedRow MUST surface this as posted_via='dryrun' via the scheme check
+    (M5 _classify_channel) so the operator can see at a glance that no real platform saw the post."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
-    _seed_post(led, clip, post_id="p_dry", public_url=None)        # the dryrun signature
+    _seed_post(led, clip, post_id="p_dry", public_url="dryrun://p_dry")  # the post-R1 dryrun signature
     led.save()
 
     rows = posted_library(Ledger.load(cfg), cfg)
@@ -68,7 +68,7 @@ def test_posted_row_with_no_public_url_labels_dryrun(tmp_path, monkeypatch):
     assert hasattr(rows[0], "posted_via"), (
         "PostedRow has no posted_via field — the operator cannot tell dryrun from live")
     assert rows[0].posted_via == "dryrun", (
-        f"public_url=None should label 'dryrun', got posted_via={rows[0].posted_via!r}")
+        f"dryrun:// URL should label 'dryrun', got posted_via={rows[0].posted_via!r}")
 
 
 def test_posted_row_with_https_public_url_labels_live(tmp_path, monkeypatch):
@@ -113,7 +113,7 @@ def test_posted_template_renders_channel_chip(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
-    _seed_post(led, clip, post_id="p_dry", public_url=None)
+    _seed_post(led, clip, post_id="p_dry", public_url="dryrun://p_dry")        # R1: dryrun:// post-invariant
     _seed_post(led, clip, post_id="p_live", public_url="https://www.instagram.com/p/X/")
     led.save()
 

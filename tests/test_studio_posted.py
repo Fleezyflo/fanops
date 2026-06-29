@@ -28,7 +28,7 @@ def test_posted_library_lists_published_with_url_and_lift(tmp_path):
     # an awaiting post must NOT appear in the Posted library
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p_await", parent_id="clip_1", account="@a", account_id="ig_1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p_await"))
     rows = views.posted_library(Ledger.load(cfg), cfg)
     ids = {r.post_id for r in rows}
     assert "p1" in ids and "p_await" not in ids
@@ -42,7 +42,7 @@ def test_posted_library_newest_first(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="new", parent_id="clip_1", account="@a", account_id="ig_1",
                           platform=Platform.instagram, caption="y", state=PostState.published,
-                          scheduled_time="2026-06-01T00:00:00Z"))
+                          scheduled_time="2026-06-01T00:00:00Z", public_url="dryrun://new"))
     rows = views.posted_library(Ledger.load(cfg), cfg)
     assert [r.post_id for r in rows][:2] == ["new", "old"]
 
@@ -95,7 +95,7 @@ def test_repost_carries_variation_axis(tmp_path):
         led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c/clip_1.mp4", state=ClipState.published))
         led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="ig_1",
                           platform=Platform.instagram, caption="c", state=PostState.published,
-                          scheduled_time="2026-06-01T00:00:00Z", variation_axis="caption_angle"))
+                          scheduled_time="2026-06-01T00:00:00Z", variation_axis="caption_angle", public_url="dryrun://p1"))
     new_id = actions.repost_post(cfg, "p1").detail["post_id"]
     assert Ledger.load(cfg).posts[new_id].variation_axis == "caption_angle"
 
@@ -108,7 +108,7 @@ def test_repost_carries_batch_id(tmp_path):
         led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c/clip_1.mp4", state=ClipState.published))
         led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="ig_1",
                           platform=Platform.instagram, caption="c", state=PostState.published,
-                          scheduled_time="2026-06-01T00:00:00Z", batch_id="batch_x"))
+                          scheduled_time="2026-06-01T00:00:00Z", batch_id="batch_x", public_url="dryrun://p1"))
     new_id = actions.repost_post(cfg, "p1").detail["post_id"]
     assert Ledger.load(cfg).posts[new_id].batch_id == "batch_x"
 
@@ -132,7 +132,7 @@ def test_posted_route_renders_publish_day_header(tmp_path):
         led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c/clip_1.mp4", state=ClipState.published))
         led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="ig_1",
                           platform=Platform.instagram, caption="x", state=PostState.published,
-                          scheduled_time="2026-06-01T00:00:00Z", published_at="2026-06-05T10:00:00Z"))
+                          scheduled_time="2026-06-01T00:00:00Z", published_at="2026-06-05T10:00:00Z", public_url="dryrun://p1"))
     html = _client(cfg).get("/posted").data
     assert b"2026-06-05" in html                                   # the publish-day header, not the schedule day
 
