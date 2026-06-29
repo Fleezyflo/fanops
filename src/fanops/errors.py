@@ -16,6 +16,17 @@ class LockBusyError(Exception):
     so this only ever means genuine contention — never an orphan needing manual `rm`."""
 
 
+class StageBusyError(Exception):
+    """A per-stage producer lock (transcribe / framing / keyframes) is held by another LIVE fanops
+    process for the SAME (stage, source_id) and did not free within the timeout. Distinct from
+    LockBusyError — that's the ledger lock; this is the SLOW-SUBPROCESS lock that closes the
+    'two whisper subprocesses on the same audio' race. Operator-facing, one-line. Self-healing
+    like LockBusyError: orphan lockfiles from a kill -9'd producer are inert (the kernel releases
+    the flock on process death). The point is the bad path becomes unconstructable — a second
+    producer entering the same (stage, key) waits inside the lock, finds the artifact on disk the
+    first producer wrote, and short-circuits, never spawning a duplicate subprocess."""
+
+
 class AuthError(Exception):
     """Base class for a FATAL poster auth/credential failure (bad/missing key, HTTP 401). The
     publish loop halts the WHOLE queue by TYPE on this (every post fails on a bad key — grinding

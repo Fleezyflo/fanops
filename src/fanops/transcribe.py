@@ -14,23 +14,25 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import SourceState
+from fanops.stage_lock import stage_lock
 from fanops.vocals import isolate_vocals
 
-# Hard bound on the whisper run when it runs INSIDE Ledger.transaction (the flock-critical IN-LOCK path):
-# an UNBOUNDED hang there holds the ledger lock against every cron pass, Studio write and recovery verb.
-# 45min covers a long (~26min) source on CPU at the medium model.
+# Hard floor for the whisper subprocess timeout. The slow whisper run no longer holds the LEDGER flock
+# (M1: it runs inside the per-(stage,source) stage_lock instead, which serializes only the SAME source
+# against itself — concurrent_workers parallelism survives, the daemon's flock is uncontended). So the
+# old "tight cap to protect the flock" reason is gone; the only thing the timeout has to do is bound a
+# WEDGED whisper (corrupt audio, model deadlocked) so the producer never hangs forever. 2700s is the
+# floor; longer sources scale up by _PREWARM_TIMEOUT_FACTOR (1.5x realtime) so a 58-min source actually
+# finishes — the wedge that left a long source frozen at `catalogued` is closed by construction.
 _WHISPER_TIMEOUT = 2700.0
-# The OUT-OF-LOCK prewarm (pipeline._prewarm) holds NO lock, so a long source must get a budget that SCALES
-# with its length instead of wedging at the fixed in-lock cap — that fixed cap was the root of "a 58-min
-# source can't finish in 45min -> never transcribes -> source frozen at `catalogued` forever". 1.5x realtime
-# comfortably covers faster-whisper medium (int8) on CPU; a long run out of the lock starves nothing.
 _PREWARM_TIMEOUT_FACTOR = 1.5
 
-def _whisper_timeout(duration_seconds: float | None, *, lock_held: bool) -> float:
-    """The whisper subprocess bound. IN-LOCK -> the tight fixed cap (protect the flock; the prewarm should
-    have warmed the cache so this rarely runs). OUT-OF-LOCK prewarm -> scale to the source length so a long
-    source actually FINISHES and commits its cache, closing the fixed-cap wedge. Never below the in-lock floor."""
-    if lock_held or not duration_seconds:
+def _whisper_timeout(duration_seconds: float | None) -> float:
+    """The whisper subprocess bound. Length-scaled so a long source finishes; floored at the
+    _WHISPER_TIMEOUT baseline. One mode — the lock_held two-mode contract (M1-pre) is gone; whisper now
+    runs inside the per-(stage,source) stage_lock and never inside the ledger flock, so the old
+    "in-lock tight cap" branch is dead by architecture."""
+    if not duration_seconds:
         return _WHISPER_TIMEOUT
     return max(_WHISPER_TIMEOUT, float(duration_seconds) * _PREWARM_TIMEOUT_FACTOR)
 
@@ -127,30 +129,67 @@ def _segment(s: dict) -> dict:
         seg["words"] = [{"word": w["word"], "start": w.get("start"), "end": w.get("end")} for w in words]
     return seg
 
-def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None,
-                      lock_held: bool = True) -> Ledger:
+def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path) -> bool:
+    """Adopt the on-disk whisper JSON into the in-memory Source row. Returns True iff adoption
+    succeeded (the cache existed AND parsed AND had the expected shape). A corrupt/truncated cache
+    returns False so the caller can fall through to a real run that overwrites it.
+
+    Pulled out as a free function (instead of a closure inside transcribe_source) because the
+    stage-lock re-check needs to call exactly the same adoption logic — DRY across the
+    'before-lock fast path' and 'after-lock idempotent re-check'."""
+    try:
+        data = json.loads(cached.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    try:
+        src = led.sources[source_id]
+        src.transcript = [_segment(s) for s in data.get("segments", [])]
+        src.language = data.get("language")
+        src.meta["transcribed"] = True
+        led.set_source_state(source_id, SourceState.transcribed)
+        return True
+    except (KeyError, TypeError, AttributeError):
+        return False
+
+
+def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None) -> Ledger:
     src = led.sources[source_id]
-    if src.meta.get("transcribed") is True:           # FIX: idempotent only when it actually ran
+    if src.meta.get("transcribed") is True:           # idempotent only when it actually ran
         return led
     out_dir = cfg.agent_io / "transcripts"
-    # Phase D (out-of-lock): the whisper JSON is named by the source stem and is DETERMINISTIC per
-    # source. A lock-free pre-warm pass runs whisper to this path BEFORE the ledger transaction; if that
-    # artifact is already present + parseable, adopt it and SKIP the multi-minute subprocess (and vocal
-    # isolation) entirely — this is what keeps whisper OUT of the lock. The stem is the SOURCE stem in
-    # both engines (isolation moves vocals to "{source_stem}.mp3"), so it's stable. A corrupt/truncated
-    # cache is NOT adopted: parse failure falls through to a real run (which overwrites it).
+    # M1 fast path: the whisper JSON is named by the source stem and is DETERMINISTIC per source.
+    # If a previous producer already wrote it, adopt and short-circuit — no lock acquisition needed
+    # for this happy path. A corrupt/truncated cache returns False here so we fall into the locked
+    # produce path which will overwrite it. The stem is the SOURCE stem in both engines (isolation
+    # moves vocals to "{source_stem}.mp3"), so the lookup is stable.
     cached = out_dir / f"{Path(src.source_path).stem}.json"
-    if cached.exists():
-        try:
-            data = json.loads(cached.read_text())
-            src.transcript = [_segment(s) for s in data.get("segments", [])]
-            src.language = data.get("language")
-            src.meta["transcribed"] = True
-            led.set_source_state(source_id, SourceState.transcribed)
-            return led
-        except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
-            pass                                       # corrupt cache -> fall through to a real run
+    if cached.exists() and _adopt_cached_transcript(led, source_id, cached):
+        return led
     out_dir.mkdir(parents=True, exist_ok=True)
+    # M1 produce critical section: per-(stage,source) lock — only ONE producer for this source at a
+    # time. A second producer for the SAME source blocks here, the first finishes and atomically
+    # writes JSON, the second enters, _adopt_cached_transcript succeeds, returns. The "two whisper
+    # subprocesses on one audio" race is now unconstructable by design. Concurrent sources do NOT
+    # serialize (the lock is keyed on source_id).
+    with stage_lock(cfg, stage="transcribe", key=source_id):
+        # Re-check INSIDE the lock — this is the short-circuit that closes the race. The first
+        # producer wrote the JSON; the second producer reaches this line and adopts. Crucially the
+        # subprocess.run below NEVER executes in the second producer.
+        if cached.exists() and _adopt_cached_transcript(led, source_id, cached):
+            return led
+        return _produce_transcript(led, cfg, source_id, src, out_dir, model)
+
+
+def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: Path,
+                        model: str | None) -> Ledger:
+    """The slow side of transcribe_source — runs vocal isolation + the whisper subprocess + parses
+    the JSON. Called ONLY from inside the stage_lock critical section in transcribe_source, so a
+    concurrent caller for the same source never executes this. Extracted as a helper to keep
+    transcribe_source's lock structure (acquire / re-check / produce / return) legible.
+
+    Side-effects (write JSON, mutate `src`) match the prior in-function body byte-for-byte; the
+    only contract change is that callers no longer pass lock_held= and the timeout is the single
+    length-scaled cap — both deliberate consequences of M1's architecture collapse."""
     # Vocal isolation (the music-transcription fix): strip the beat with Demucs so Whisper reads the
     # LYRICS, not the instrumental. FAIL-OPEN — isolate_vocals returns the RAW path if demucs is
     # absent/fails, so this never blocks transcription. The isolated mp3 is moved next to the whisper
@@ -179,7 +218,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         cmd = fw_cmd(audio, str(out_dir), model or cfg.asr_model_for(src.duration), cfg.asr_language)
     else:
         cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model or cfg.whisper_model_for(src.duration)))
-    timeout_s = _whisper_timeout(src.duration, lock_held=lock_held)
+    timeout_s = _whisper_timeout(src.duration)
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout_s)
     except (FileNotFoundError, OSError) as e:
@@ -191,9 +230,9 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         src.error_reason = f"toolchain missing: {cmd[0]} ({type(e).__name__})"
         return led
     except subprocess.TimeoutExpired:
-        # whisper HUNG (corrupt audio, model wedged) and was killed at the bound — the lock-held
-        # window stays finite. Same graceful shape as the branches above/below; `transcribed`
-        # stays unset so a recovered source re-runs.
+        # whisper HUNG (corrupt audio, model wedged) and was killed at the timeout. Same graceful
+        # shape as the branches above/below; `transcribed` stays unset so a recovered source
+        # re-runs on the next pass. The stage_lock in the caller releases on this return.
         src.state = SourceState.error
         src.error_reason = f"whisper timed out after {timeout_s:.0f}s"
         return led
