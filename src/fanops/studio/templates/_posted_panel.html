@@ -46,7 +46,15 @@
       <td>{{ metric(r.shares, peaks.shares) }}</td>
       <td>{{ metric(r.retention, peaks.retention) }}</td>
       <td>{{ metric(r.reach, peaks.reach) }}</td>
-      <td>{% if r.public_url %}<a class="live-link" href="{{ r.public_url }}" target="_blank" rel="noopener" title="Open the live {{ r.platform }} post in a new tab">View on {{ r.platform }} ↗</a>{% else %}<span class="muted" title="The live link fills in automatically once the post goes live and the next insights pull runs.">pending ⟳</span>{% endif %}</td>
+      <td>
+        {# M5: per-row CHANNEL chip — derived from public_url, NEVER from cfg.is_live (so a row
+           shipped under dryrun keeps its 'dryrun' label even after the operator flips live). The
+           operator's verbatim complaint 'says posted when nothing is posted' is fixed by making
+           this chip visible: a dryrun row reads 'dryrun' (no real platform saw the post). #}
+        <span class="channel-chip channel-{{ r.posted_via }}" data-testid="posted-channel-chip"
+              title="{% if r.posted_via == 'live' %}This row shipped to a real platform.{% else %}This row was a dryrun — nothing reached the platform.{% endif %}">{{ r.posted_via }}</span>
+        {% if r.posted_via == 'live' and r.public_url %}<a class="live-link" href="{{ r.public_url }}" target="_blank" rel="noopener" title="Open the live {{ r.platform }} post in a new tab">View on {{ r.platform }} ↗</a>{% elif r.posted_via == 'live' %}<span class="muted" title="The live link fills in automatically once the next insights pull runs.">pending ⟳</span>{% else %}<span class="muted" title="No live link — this row was a dryrun.">no link</span>{% endif %}
+      </td>
       <td>
         <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
           <button type="submit">Post again</button>

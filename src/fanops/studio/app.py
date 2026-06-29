@@ -252,11 +252,15 @@ def create_app(cfg: Config) -> Flask:
         # plumbing, and url_for(..., source=active_source|default(none), ...) drops each one where it's off ->
         # byte-identical everywhere it isn't set. active_source/active_state/active_view/ultra all None/False
         # by default (a non-Review surface / a partial swap with no request args) -> url_for drops them.
+        # M5: inject `cfg` globally so templates can read cfg.is_live for the Posted-tab system-mode banner
+        # (and any future banner that surfaces system state). Single source of truth — never recomputed
+        # per surface, never out of sync with the running deployment's live/dryrun state.
         return {"nav_account": _account_arg(), "compact": _compact_arg(),
                 "active_source": _source_arg(), "active_state": _state_arg(),
                 "active_view": _view_arg(), "ultra": _ultra_arg(),
                 "creative_variation": cfg.creative_variation,
-                "cast_state": {"casting": cfg.account_casting, "profile": cfg.clip_profile}}
+                "cast_state": {"casting": cfg.account_casting, "profile": cfg.clip_profile},
+                "cfg": cfg}
 
     @app.context_processor
     def _inject_spine():

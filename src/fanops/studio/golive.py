@@ -28,6 +28,7 @@ from fanops.accounts import (Accounts, write_integration, add_account as _accoun
                              set_persona as _accounts_set_persona,
                              set_backend as _accounts_set_backend, ensure_channel as _accounts_ensure_channel,
                              load_accounts_safe)
+from fanops.log import get_logger
 from fanops.autopilot import set_env_var
 from fanops.errors import CutoverError, PostizAuthError, ZernioAuthError
 from fanops.models import Platform
@@ -475,15 +476,19 @@ def set_persona(cfg: Config, handle: str, persona: str) -> ActionResult:
     return ActionResult(ok=True, detail={"handle": handle})
 
 
-def go_live(cfg: Config, confirmed: bool = False) -> ActionResult:
+def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = None) -> ActionResult:
     """Flip the GLOBAL switch to LIVE (FANOPS_LIVE=1) — the operator's yes/no, NOT a backend pick: each
     channel publishes via its own provider (M3). The ONLY setter of FANOPS_LIVE=1. Gated, in order:
     (1) accounts.json valid (malformed/empty-id accounts -> clean error, not 500), (2) ≥1 ACTIVE channel
     has a provider whose creds are present (explicit accounts.json provider, else the legacy FANOPS_POSTER
     bridge) — flipping live with zero publishable channels would post nothing, so it's refused with a
-    fix-it message, (3) an explicit confirm (the final human gate). Any failing gate leaves the system on
-    dryrun. On success the switch is dual-written so it takes effect immediately AND survives a restart.
-    Does NOT write FANOPS_POSTER — the per-channel provider is the source of truth."""
+    fix-it message, (3) M6 past-due backlog gate: NO queued post may have a scheduled_time <= `now` —
+    otherwise the daemon's first live tick would machine-gun the backlog (PRD risk pinned), (4) an
+    explicit confirm (the final human gate). Any failing gate leaves the system on dryrun, ATOMICALLY
+    (.env + os.environ both unchanged). On success the switch is dual-written so it takes effect
+    immediately AND survives a restart. Does NOT write FANOPS_POSTER — the per-channel provider is the
+    source of truth. `now` is INJECTED (default: utc now) so tests can drive the past-due gate
+    deterministically; mirrors actions._now / approve_posts."""
     try:
         accounts = Accounts.load(cfg)
         problems = accounts.validate()                   # malformed/empty-id accounts -> clean error, not 500
@@ -495,6 +500,41 @@ def go_live(cfg: Config, confirmed: bool = False) -> ActionResult:
     if not ready:
         return ActionResult(ok=False, error="not ready — no active channel has a provider with creds. Connect "
                             "a provider (Postiz/Zernio) and route at least one channel to it, then try again.")
+    # M6: PAST-DUE BACKLOG GATE. The daemon's publish_due iterates only PostState.queued posts whose
+    # scheduled_time <= now. If we flip live with even ONE such post, the very next daemon tick fires
+    # it — and a backlog fires every one in immediate succession (the PRD risk 'machine-gun publish').
+    # REFUSE the flip until the operator respreads. Makes the bad path unconstructable: the daemon
+    # cannot read FANOPS_LIVE=1 and find a past-due queued post at the same time.
+    from datetime import datetime as _dt, timezone as _tz
+    from fanops.ledger import Ledger as _Ledger
+    from fanops.models import PostState as _PS
+    from fanops.timeutil import parse_iso as _parse_iso
+    _now = now if now is not None else _dt.now(_tz.utc)
+    try:
+        _led = _Ledger.load(cfg)
+    except Exception as _exc:
+        # A torn ledger is the doctor's problem, not the live gate's — but it MUST be visible (R2
+        # root: never silent fail-open). Log and refuse so the operator sees both signals.
+        get_logger(cfg)("go_live", "-", "past_due_gate_load_failed", err=str(_exc)[:160])
+        return ActionResult(ok=False, error=f"not ready — ledger unreadable: {str(_exc)[:160]}. Run `fanops doctor` first.")
+    _past_due = 0
+    for _p in _led.posts.values():
+        if _p.state is not _PS.queued or not _p.scheduled_time:
+            continue
+        try:
+            _dt_p = _parse_iso(_p.scheduled_time)
+        except (ValueError, TypeError):
+            _past_due += 1                # unparseable -> treat as stale (safe: flip blocked, operator inspects)
+            continue
+        if _dt_p.tzinfo is None:
+            _dt_p = _dt_p.replace(tzinfo=_tz.utc)
+        if _dt_p <= _now:
+            _past_due += 1
+    if _past_due:
+        return ActionResult(ok=False, error=(
+            f"not ready — {_past_due} queued post(s) are past-due. Respread the bucket first "
+            f"(Schedule → Reschedule all) so the live daemon doesn't machine-gun the backlog, "
+            f"then try again."))
     if not confirmed:
         return ActionResult(ok=False, error="GO LIVE publishes to REAL accounts — tick the confirm box, "
                             "then click again.")

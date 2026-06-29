@@ -202,7 +202,12 @@ def test_posted_link_is_a_labeled_affordance_not_a_raw_url(tmp_path):
     assert ">https://insta/p_live<" not in html          # the raw URL is NO LONGER the visible link text
 
 
-def test_posted_link_shows_honest_pending_when_url_absent(tmp_path):
+def test_posted_link_dryrun_row_labels_no_link_not_pending(tmp_path):
+    """M5 — a published post WITHOUT a public_url is the dryrun signature (DryRunPoster->publish_post
+    never sets public_url; only reconcile.py does, and only on a real provider response). The OLD
+    contract conflated this with 'pending — link fills in later' and was the operator's verbatim
+    'says posted when nothing is posted' bug. The NEW contract: dryrun rows label 'dryrun' (chip) +
+    'no link' (the link cell), live-rows-without-URL still read 'pending ⟳'."""
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="clip_np", parent_id="m1", path="/c/clip_np.mp4", state=ClipState.published))
@@ -210,5 +215,6 @@ def test_posted_link_shows_honest_pending_when_url_absent(tmp_path):
                           platform=Platform.instagram, caption="fire", state=PostState.published,
                           scheduled_time="2026-06-01T00:00:00Z", public_url=None, metrics={LIFT_SCORE: 0.5}))
     html = _client(cfg).get("/posted").data.decode()
-    assert "pending" in html.lower()                     # honest 'the link will fill', not a bare dead '—'
-    assert "once the post goes live" in html.lower()     # explains the loop closes it automatically
+    assert 'data-testid="posted-channel-chip"' in html       # M5: channel chip present
+    assert ">dryrun<" in html                                # labels as dryrun (no real platform saw it)
+    assert "no link" in html                                 # the honest dryrun placeholder, NOT 'pending'

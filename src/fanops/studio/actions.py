@@ -498,24 +498,56 @@ def crosspost_all_to_account(cfg: Config, source_account: str, target_account: s
     return ActionResult(ok=True, detail={"minted": len(minted), "already_exists": len(existed),
                                          "skipped": len(skipped), "target": f"{target_account}/{platform}"})
 
-def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None) -> ActionResult:
+def _seconds_away(scheduled_time: Optional[str], now: datetime, *, window_s: int = 60) -> bool:
+    """M3: a tight protect-window for reschedule — TRUE only when the post fires in the next
+    `window_s` seconds (default 60). PAST-DUE posts are NOT protected (the operator's complaint:
+    'Reschedule all silently reschedules nothing' is exactly the bug where past-due was treated
+    as imminent). Distinct from `_imminent` (5 min, used for the EDIT-DISABLED UI guard — a
+    different concern; editing a 4-min-out post races the publisher, but RESPREADING it doesn't)."""
+    if not scheduled_time:
+        return False                                # missing time -> respread, never protect
+    try:
+        dt = parse_iso(scheduled_time)
+    except (ValueError, TypeError):
+        return False                                # unparseable -> respread, never protect
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return now <= dt <= now + timedelta(seconds=window_s)
+
+
+def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None, handle: Optional[str] = None) -> ActionResult:
     """Routine re-spread of the APPROVED bucket: re-stagger every queued (approved) post onto a fresh
-    cadence starting from `now`, reusing crosspost's proven deterministic stagger (surface_time). Skips
-    imminent posts (about to fire — don't disturb them) and never touches awaiting/published/etc. One
-    transaction, idempotent-by-`now`, never a 500. The Schedule-tab 'reschedule all' control."""
-    from fanops.crosspost import surface_time
-    now = _now(now); date_str = now.date().isoformat()
+    cadence starting from `now`, reusing the M4 batch-aware spread engine (suggest_times_for_batch) so
+    Approve and Reschedule share ONE cadence story — a single source of truth, no drift. Past-due posts
+    ARE respread (M3 fix: today's broad `_imminent` 5-min gate silently no-op'd the bucket the operator
+    cares about); only TRULY about-to-fire posts (seconds away) are protected, via `_seconds_away`.
+    Never touches awaiting/published/etc. One transaction, idempotent-by-`now`, never a 500. The
+    Schedule-tab 'reschedule all' control. An optional `handle` scopes the respread to ONE account
+    (the per-account M3 control); None = the whole bucket."""
+    from fanops.studio.views_common import suggest_times_for_batch
+    now = _now(now)
     due: list = []
     try:
         with Ledger.transaction(cfg) as led:
-            due = [p for p in led.posts.values() if p.state is PostState.queued and not _imminent(p.scheduled_time, now)]
+            due = [p for p in led.posts.values()
+                   if p.state is PostState.queued
+                   and not _seconds_away(p.scheduled_time, now)
+                   and (handle is None or p.account == handle)]
             due.sort(key=lambda p: (p.scheduled_time or "", p.account, p.platform.value, p.id))  # stable order in
-            for i, p in enumerate(due):
-                p.scheduled_time = surface_time(now, p.account, p.platform.value, date_str, i,
-                                                clip_id=p.parent_id, lead_minutes=cfg.publish_lead_minutes)
+            sched = suggest_times_for_batch(cfg, due, now=now)
+            for p in due:
+                p.scheduled_time = sched[p.id]
     except Exception as exc:
         return ActionResult(ok=False, error=f"reschedule failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"rescheduled": len(due)})
+    return ActionResult(ok=True, detail={"rescheduled": len(due), "handle": handle})
+
+
+def reschedule_account(cfg: Config, handle: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """M3 per-account respread: re-stagger one account's queued posts on a fresh cadence (past-due
+    included), leaving every other account untouched. Thin wrapper over `reschedule_bucket` so the
+    M3 PRD outcome — a 'Reschedule this account' control that respreads exactly one account — has a
+    named entry point; the per-account scoping is enforced inside the transaction (no race)."""
+    return reschedule_bucket(cfg, now=now, handle=handle)
 
 def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
     """Clear a brand-risk hold from the browser — the UI twin of `fanops unhold`. Reuses the canonical
