@@ -733,6 +733,49 @@ class Config:
         return max(1, mb) * 1024 * 1024
 
     @property
+    def operator_tz(self) -> str:
+        """M1: the explicit operator timezone string (IANA name, e.g. 'America/New_York') used by
+        the timeutil web-boundary helpers to render every scheduled time. DEFAULT 'UTC' — never
+        falls through to the server's silent astimezone() default (the M1 root: a server in PST
+        rendered every time in PST without labelling it, so the operator's clock was wrong). The
+        operator sets this on the Go Live tab. Set via FANOPS_OPERATOR_TZ. Pure read, no I/O."""
+        v = (os.getenv("FANOPS_OPERATOR_TZ") or "").strip()
+        return v if v else "UTC"
+
+    @property
+    def realistic_cadence(self) -> bool:
+        """M2: when ON, the per-account spread engine widens the default cadence to a 2-3h
+        jittered band (PRD: 'leaning jittered 2-3h for a human feel'). DEFAULT OFF preserves the
+        M4 30-min floor — byte-identical to today's behaviour. Mirrors concurrent_sources's
+        explicit-on-words pattern. Set via FANOPS_REALISTIC_CADENCE."""
+        v = (os.getenv("FANOPS_REALISTIC_CADENCE") or "").strip().lower()
+        return v in {"1", "true", "yes", "on"}
+
+    def account_window(self, handle: str) -> "tuple[int, int] | None":
+        """M7 seam: the per-account daily posting window (open_hour, close_hour) in operator-local
+        hours. Returns None when the account is unknown OR has no daily_window field — None means
+        'fully open 24h' per the PRD's default-open contract. The cadence engine reads this to
+        avoid laying a post at 03:00 when the account only posts 09:00–23:00. Populated by the
+        operator today (a future analytics surface fills it from per-account posting-time
+        insights — PRD M7). Reads accounts.json directly so it survives a reload without a
+        Config rebuild; fail-open on parse error (no posting window known -> 24h open, never 500)."""
+        try:
+            import json
+            data = json.loads(self.accounts_path.read_text())
+            for a in data.get("accounts", []):
+                if a.get("handle") == handle:
+                    win = a.get("daily_window")
+                    if isinstance(win, (list, tuple)) and len(win) == 2:
+                        try:
+                            return (int(win[0]), int(win[1]))
+                        except (ValueError, TypeError):
+                            return None
+                    return None
+            return None
+        except (OSError, ValueError):
+            return None
+
+    @property
     def publish_lead_minutes(self) -> int:
         # The editorial window (spec §4): a CONSTANT offset added to every post's deterministic
         # scheduled_time at CROSSPOST time, so a freshly-queued post sits in `queued` for ~lead
