@@ -96,7 +96,12 @@ def suggest_time(cfg: Config, post, *, now: datetime) -> str:
     survives broken lineage. Pure, lock-free, no ledger write. Local import keeps views->crosspost acyclic
     (mirrors reschedule_bucket). Anti-degenerate: a raw value <= now (seed%50==0 && jitter==0 with lead 0)
     gets the smallest deterministic +1s nudge so the suggestion is never == now (which would re-open the
-    publish-now hole) — NOT a cadence rule, just 'never equal now'."""
+    publish-now hole) — NOT a cadence rule, just 'never equal now'.
+
+    NB: a BULK approve must NOT call this once per post — N stale posts collide on iso_z(now+1s) and the
+    short-circuit branch produces a single identical minute for every post that hits it (the M4 bug:
+    'the system schedules EVERYTHING on the same date and time'). The batch path is
+    `suggest_times_for_batch` below — it owns the per-account spread invariant by construction."""
     from fanops.crosspost import surface_time
     from fanops.timeutil import iso_z
     raw = surface_time(now, post.account, post.platform.value, now.date().isoformat(), 0,
@@ -104,6 +109,66 @@ def suggest_time(cfg: Config, post, *, now: datetime) -> str:
     if parse_iso(raw) <= now:
         return iso_z(now + timedelta(seconds=1))
     return raw
+
+
+# M4: per-account approve-batch spread. The cadence floor is wider than the crosspost-mint stagger
+# (which is per-(clip,surface) anti-collision, not a believable post cadence) — 30 min is the
+# operator-visible "never machine-gun" floor a bulk-approve must respect by construction. A future
+# milestone (M2 in the realistic-per-account-scheduling PRD) widens this to 2-3h jittered for the
+# Reschedule path; the floor here is the SAFE LOWER BOUND that prevents the M4 collide regardless.
+_BULK_APPROVE_MIN_GAP_MIN = 30
+_BULK_APPROVE_JITTER_MAX_MIN = 7   # < _STEP so the per-account schedule stays strictly monotonic
+
+
+def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, str]:
+    """M4 — ONE batch-aware spread for N posts. Returns {post_id: ISO-Z}, strictly-future,
+    pairwise-distinct across the whole batch, and obeying a per-account minimum gap.
+
+    Why not call `suggest_time` per post: that produces an identical iso_z(now+1s) for every post
+    whose `surface_time(...index=0)` falls <= now, AND for posts on the same (account, platform,
+    clip_id) the SHA1 seed collapses to the same minute. Both make a bulk Approve land every post
+    on the same wall-clock minute — the operator's verbatim 'schedules EVERYTHING on the same
+    date and time'. The batch path owns the spread CONTRACT instead of reusing the single-post
+    helper, so the bad path is unconstructable.
+
+    Algorithm: group posts by account; within each group seed an account-local RNG from the
+    account + date so two operators on the same day produce the same suggestion (no surprise),
+    walk each post at `now + i*STEP + jitter` with STEP = _BULK_APPROVE_MIN_GAP_MIN, jitter
+    bounded < STEP (monotonic-by-index, mirrors crosspost.surface_time's H1/H2 monotonicity
+    proof). Inter-account anchors stagger by a small per-account hash offset so two accounts
+    don't open the batch on the same minute either.
+
+    Pure (no I/O, no ledger write). Pinned by tests/test_bulk_approve_spread.py."""
+    import hashlib, random
+    from fanops.timeutil import iso_z
+    # Stable account order (deterministic across processes, no Python hash() salt).
+    by_account: dict[str, list] = {}
+    for p in posts:
+        by_account.setdefault(p.account, []).append(p)
+    accounts_sorted = sorted(by_account)
+    date_str = now.date().isoformat()
+    out: dict[str, str] = {}
+    for ai, handle in enumerate(accounts_sorted):
+        rng = random.Random(int(hashlib.sha1(f"{handle}|{date_str}".encode()).hexdigest()[:8], 16))
+        # Per-account anchor offset: a small minute offset (< STEP) keyed on the account so two
+        # accounts don't both open at minute 0. Bounded so the first slot stays near `now`.
+        anchor_offset = rng.randint(0, _BULK_APPROVE_MIN_GAP_MIN - 1)
+        # Deterministic order WITHIN the account (post id) so the same selection produces the same
+        # times across runs / processes. The walk is CUMULATIVE — each slot is the previous slot
+        # PLUS step PLUS jitter — so every consecutive gap is `STEP + jitter_i >= STEP` by
+        # construction. A non-cumulative `i*STEP + jitter_i` formulation lets gaps dip to
+        # `STEP - (JITTER_MAX - 1)` (the original M4 GREEN attempt failed exactly this way), which
+        # would re-open the floor as a probabilistic property guarded by tests rather than an
+        # invariant. The cumulative form makes the bad path unconstructable.
+        cursor_min = anchor_offset + cfg.publish_lead_minutes
+        for p in sorted(by_account[handle], key=lambda q: q.id):
+            t = now + timedelta(minutes=cursor_min)
+            if t <= now:                       # belt-and-braces (lead_minutes < 0 hand-edit)
+                t = now + timedelta(seconds=1)
+            out[p.id] = iso_z(t)
+            jitter = rng.randint(0, _BULK_APPROVE_JITTER_MAX_MIN - 1)
+            cursor_min += _BULK_APPROVE_MIN_GAP_MIN + jitter   # forward-only walk: gap >= STEP
+    return out
 
 
 def _batch_title(led: Ledger, bid: Optional[str]) -> Optional[str]:
