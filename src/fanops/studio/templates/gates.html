@@ -11,34 +11,32 @@
   {% set captions = rows | selectattr('kind','equalto','captions') | list %}
   {% set total = rows|length %}
   <div class="gates-progress meta" aria-live="polite"><strong>{{ total }}</strong> decision{{ 's' if total != 1 else '' }} waiting
-  
-  {% if moment_casting %}
-    <h3>Casting ({{ moment_casting | length }})</h3>
-    <p class="muted">Per-account moment selection — run <strong>Prepare</strong> in Make (LLM responder) or answer via CLI. Clips wait until this lands.</p>
-    {% for g in moment_casting %}
-      <div class="card gate-card" id="gate-cast-{{ g.key }}">
-        <strong>source {{ g.key }}</strong>
-        <span class="muted">{{ (g.moments or [])|length }} moments · {{ (g.personas or [])|length }} personas</span>
-        <p class="muted">Pending casting decision — crosspost is paused for this source.</p>
-      </div>
-    {% endfor %}
-  {% endif %}
-
-  {% if moment_hooks %} · {{ moment_hooks|length }} hook{% endif %}
+    {% if moment_hooks %} · {{ moment_hooks|length }} hook{% endif %}
     {% if moment_casting %} · {{ moment_casting|length }} casting{% endif %}
     {% if captions %} · {{ captions|length }} caption{% endif %}
     {% if moments %} · {{ moments|length }} moment{% endif %}
   </div>
 
-
   {% if moment_casting %}
     <h3>Casting ({{ moment_casting | length }})</h3>
-    <p class="muted">Per-account moment selection — run <strong>Prepare</strong> in Make (LLM responder) or answer via CLI. Clips wait until this lands.</p>
+    <p class="muted">Pick which moments each account gets — then run <strong>Prepare</strong> in Make.</p>
     {% for g in moment_casting %}
       <div class="card gate-card" id="gate-cast-{{ g.key }}">
         <strong>source {{ g.key }}</strong>
-        <span class="muted">{{ (g.moments or [])|length }} moments · {{ (g.personas or [])|length }} personas</span>
-        <p class="muted">Pending casting decision — crosspost is paused for this source.</p>
+        <form hx-post="{{ url_for('do_answer_gate', kind='moment_casting', key=g.key) }}"
+              hx-target="#result-cast-{{ g.key }}" hx-swap="innerHTML">
+          {% for p in g.personas %}
+          <fieldset class="cast-persona">
+            <legend>{{ p.handle }}</legend>
+            {% for m in g.moments %}
+            <label class="cast-pick"><input type="checkbox" name="cast__{{ p.handle }}__{{ m.moment_id }}" value="1">
+              {{ '%.0f'|format(m.start or 0) }}–{{ '%.0f'|format(m.end or 0) }}s · {{ (m.hook or m.reason or m.moment_id)[:48] }}</label>
+            {% endfor %}
+          </fieldset>
+          {% endfor %}
+          <button type="submit">Answer casting</button>
+        </form>
+        <div id="result-cast-{{ g.key }}"></div>
       </div>
     {% endfor %}
   {% endif %}

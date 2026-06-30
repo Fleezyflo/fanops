@@ -24,6 +24,7 @@ from fanops.errors import ZernioAuthError, redact
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.text import safe_public_url
+from fanops.post.compress import maybe_shrink_for_cap
 
 _log = logging.getLogger("fanops.post.zernio")
 _MAX_RETRIES = 4
@@ -129,8 +130,9 @@ def zernio_upload_media(cfg: Config, path: Path, *, account_id: str | None = Non
     only when no key is set, mirroring the prior contract). 401 -> typed ZernioAuthError; non-2xx -> RuntimeError."""
     if not account_id:
         raise RuntimeError("Zernio upload requires account_id (per-account token mint)")
-    size = path.stat().st_size
     cap = cfg.zernio_max_upload_bytes
+    path = maybe_shrink_for_cap(cfg, path, cap, label="zernio")
+    size = path.stat().st_size
     if size > cap:
         raise RuntimeError(f"zernio oversize: {size} bytes > {cap} — re-render short")
     headers = {"Authorization": f"Bearer {_key(cfg)}"}

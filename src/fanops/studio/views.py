@@ -548,7 +548,7 @@ def review_nav_params(cfg: Config, account: str | None = None) -> dict:
 def account_work_counts(cfg: Config) -> dict[str, dict]:
     """Per-handle work queue counts for Home rows and the account session bar."""
     from collections import defaultdict
-    out: dict[str, dict] = defaultdict(lambda: {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0})
+    out: dict[str, dict] = defaultdict(lambda: {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0, "review_batch": None})
     try:
         led = Ledger.load(cfg)
         for p in led.posts.values():
@@ -564,6 +564,9 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
                 out[h]["failed"] += 1
     except Exception:
         pass
+    for h in out:
+        if out[h]["awaiting"]:
+            out[h]["review_batch"] = review_nav_params(cfg, h).get("batch")
     return dict(out)
 
 

@@ -112,6 +112,19 @@ def _parse_gate_form(kind: str, form) -> dict:
         hbp = {k[len("persona_hook__"):]: v.strip() for k in form
                if k.startswith("persona_hook__") and (v := (form.get(k) or "")).strip()}
         return {"hook": hook or None, "hooks_by_persona": hbp}
+    if kind == "moment_casting":
+        selections: dict[str, list[str]] = {}
+        for k in form:
+            if not k.startswith("cast__"):
+                continue
+            parts = k.split("__", 2)
+            if len(parts) != 3:
+                continue
+            _, handle, mid = parts
+            if form.get(k):
+                selections.setdefault(handle, []).append(mid)
+        return {"selections": selections}
+
     return {}
 
 

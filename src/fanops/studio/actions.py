@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ledger import Ledger
-from fanops.models import CaptionSet, ClipState, MomentDecision, MomentHookDecision, Post, PostState
+from fanops.models import CaptionSet, ClipState, MomentCastingDecision, MomentDecision, MomentHookDecision, Post, PostState
 from fanops.ids import child_id, surface_key, _hash
 from fanops import overlay
 from fanops.timeutil import parse_iso, iso_z
@@ -25,7 +25,7 @@ from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprov
 from fanops.studio.actions_casting import cast_add, cast_remove  # noqa: F401
 
 SNOOZE_DAYS = 365
-_GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
+_GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "moment_casting": MomentCastingDecision, "captions": CaptionSet}
 
 def _normalize_z(new_time: str) -> str:
     """Parse an ISO time, COERCE naive -> UTC (iso_z would otherwise treat naive as LOCAL time),
@@ -343,6 +343,10 @@ def preflight_publish_media(cfg: Config, post) -> str | None:
     size = Path(path).stat().st_size
     backend = cfg.effective_publish_mode()
     if post.platform is Platform.tiktok and backend == "zernio" and size > cfg.zernio_max_upload_bytes:
+        from fanops.post.compress import maybe_shrink_for_cap
+        shrunk = maybe_shrink_for_cap(cfg, Path(path), cfg.zernio_max_upload_bytes, label="preflight")
+        if shrunk.stat().st_size <= cfg.zernio_max_upload_bytes:
+            return None
         return f"oversize: {size} bytes > {cfg.zernio_max_upload_bytes} — re-render shorter"
     return None
 

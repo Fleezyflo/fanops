@@ -50,7 +50,9 @@ def upload_media(cfg: Config, path: Path, **kw) -> str:
     key = cfg.blotato_api_key
     if not key:
         raise BlotatoAuthError("BLOTATO_API_KEY missing — cannot upload media.")
-    size = Path(path).stat().st_size
+    from fanops.post.compress import maybe_shrink_for_cap
+    path = maybe_shrink_for_cap(cfg, Path(path), _MAX_UPLOAD_BYTES, label="blotato")
+    size = path.stat().st_size
     if size > _MAX_UPLOAD_BYTES:
         # Plain RuntimeError (NOT BlotatoAuthError): this is a bad input, not an auth halt —
         # fail THIS upload loudly before any network, don't halt the whole queue by type.

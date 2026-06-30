@@ -106,3 +106,37 @@ def test_zero_post_clips_surfaces_orphans(tmp_path):
     led.add_clip(Clip(id="orph", parent_id="m1", path=str(cdir / "orph.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.save()
     assert len(views.zero_post_clips(cfg)) == 1
+
+
+def test_answer_casting_gate_from_studio(tmp_path):
+    from fanops.agentstep import write_request, latest_request_id
+    from fanops.models import MomentCastingDecision
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moment_casting", key="src1", payload={
+        "source_id": "src1", "moments": [{"moment_id": "m1", "start": 0, "end": 7, "reason": "r"}],
+        "personas": [{"handle": "@a", "persona": "p"}]})
+    rid = latest_request_id(cfg, "moment_casting", "src1")
+    class F:
+        def get(self, k): return None
+        def __iter__(self):
+            return iter(["cast__@a__m1"])
+        def getlist(self, k): return []
+    class Form(dict):
+        def get(self, k, default=None):
+            return super().get(k, default)
+    f = Form({"cast__@a__m1": "1"})
+    from fanops.studio.app import _parse_gate_form
+    data = _parse_gate_form("moment_casting", f)
+    assert data["selections"]["@a"] == ["m1"]
+    res = actions.answer_gate(cfg, "moment_casting", "src1", {**data, "request_id": rid})
+    assert res.ok
+
+def test_account_work_counts_includes_review_batch(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="p1", parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram, caption="c", state=PostState.awaiting_approval))
+    led.save()
+    with Ledger.transaction(cfg) as led:
+        for p in led.posts.values(): p.batch_id = "b1"
+    wc = views.account_work_counts(cfg)
+    assert wc["@a"].get("review_batch") == "b1"
