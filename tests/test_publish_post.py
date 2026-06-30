@@ -108,7 +108,7 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
     led.save()
     calls = {"n": 0}
     def up(cfg, backend=None):
-        def _u(c, pth): calls["n"] += 1; return "https://cdn/v.mp4"
+        def _u(c, pth, **kw): calls["n"] += 1; return "https://cdn/v.mp4"
         return _u
     monkeypatch.setattr("fanops.post.get_media_uploader", up)        # ensure_render_media (media.py) path
     monkeypatch.setattr("fanops.post.run.get_media_uploader", up)    # the legacy run.py direct-upload path

@@ -345,7 +345,23 @@ _ZERNIO_STATE_MAP = {"published": "published", "posted": "published", "live": "p
                      "failed": "failed", "error": "failed", "errored": "failed", "rejected": "failed",
                      "cancelled": "failed", "canceled": "failed"}
 
+def _zernio_platform_rows(body) -> list[dict]:
+    """Per-platform publish rows from the live GET /posts/{id} shape (verified 2026-06-30): status + platformPostUrl
+    live under post.platforms[], NOT at the top level — missing this stranded every TikTok reconcile as published-with-no-url."""
+    if not isinstance(body, dict): return []
+    out: list[dict] = []
+    for node in (body, body.get("post"), body.get("data"), body.get("result")):
+        if not isinstance(node, dict): continue
+        plats = node.get("platforms")
+        if isinstance(plats, list):
+            out.extend(p for p in plats if isinstance(p, dict))
+    return out
+
 def _extract_zernio_state(body) -> str:
+    for p in _zernio_platform_rows(body):
+        for k in ("status", "state", "postStatus", "publishStatus"):
+            v = p.get(k)
+            if isinstance(v, str) and v: return v
     if not isinstance(body, dict): return ""
     for k in ("status", "state", "postStatus", "publishStatus"):
         v = body.get(k)
@@ -358,8 +374,12 @@ def _extract_zernio_state(body) -> str:
     return ""
 
 def _extract_zernio_permalink(body) -> Optional[str]:
+    for p in _zernio_platform_rows(body):
+        for k in ("platformPostUrl", "permalink", "postUrl", "publicUrl", "url", "link", "shareUrl", "share_url", "releaseURL"):
+            v = p.get(k)
+            if isinstance(v, str) and v.startswith("http"): return v
     if not isinstance(body, dict): return None
-    for k in ("permalink", "postUrl", "publicUrl", "url", "link", "shareUrl", "share_url", "releaseURL"):
+    for k in ("permalink", "postUrl", "publicUrl", "url", "link", "shareUrl", "share_url", "releaseURL", "platformPostUrl"):
         v = body.get(k)
         if isinstance(v, str) and v: return v
     for wrap in ("post", "data", "result"):

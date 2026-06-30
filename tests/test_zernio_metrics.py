@@ -136,6 +136,14 @@ def test_status_permalink_from_nested_and_aliases(tmp_path, monkeypatch, mocker)
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
     assert ZernioStatusClient(cfg).get_status("zid") == {"status": "published", "publicUrl": "https://www.tiktok.com/@x/video/1"}
 
+def test_status_permalink_from_platforms_array(tmp_path, monkeypatch, mocker):
+    # Live Zernio shape (2026-06-30): status + platformPostUrl under post.platforms[0].
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    url = "https://www.tiktok.com/@hrmnyco/video/7656936928327027969"
+    body = {"post": {"platforms": [{"status": "published", "platformPostUrl": url}]}}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
+    assert ZernioStatusClient(cfg).get_status("zid") == {"status": "published", "publicUrl": url}
+
 def test_status_401_raises_autherror(tmp_path, monkeypatch, mocker):
     _zenv(monkeypatch); cfg = Config(root=tmp_path)
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(401, {"k": "sk_secret"}))

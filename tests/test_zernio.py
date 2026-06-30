@@ -64,11 +64,12 @@ def test_payload_shape():
     assert p["content"] == "fire" and p["publishNow"] is True
     plat = p["platforms"][0]
     assert plat["platform"] == "tiktok" and plat["accountId"] == "acc_abc"
-    assert p["media"] == ["https://media.zernio.com/x.mp4"]
+    assert p["mediaItems"] == [{"type": "video", "url": "https://media.zernio.com/x.mp4"}]
+    assert plat["platformSpecificData"]["tiktokSettings"]["content_preview_confirmed"] is True
 
 def test_payload_omits_media_when_none():
     p = build_zernio_payload(account_id="acc_abc", platform="tiktok", content="c", media_urls=[], scheduled_time=None)
-    assert "media" not in p and p["platforms"][0]["accountId"] == "acc_abc"
+    assert "mediaItems" not in p and p["platforms"][0]["accountId"] == "acc_abc"
 
 
 # ---- factory wiring ----
