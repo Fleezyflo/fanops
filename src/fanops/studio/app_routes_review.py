@@ -252,6 +252,11 @@ def register_review_routes(app, cfg):
                                    result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
         return render_template("_surface_edit.html", s=s, regen_note=result.detail, backend=cfg.poster_backend)
 
+    @app.post("/restore-persona-hook/<post_id>")
+    def do_restore_persona_hook(post_id):
+        result = actions.restore_persona_hook(cfg, post_id)
+        return _review_panel(result=result)
+
     @app.post("/reburn-hook/<post_id>")
     def do_reburn_hook(post_id):
         # Face 4: re-burn the operator's edited on-screen HOOK for ONE surface (ffmpeg only, no LLM), then

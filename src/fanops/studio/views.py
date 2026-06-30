@@ -481,6 +481,43 @@ def review_handoff(cfg: Config) -> dict:
     return out
 
 
+def zero_post_clips(cfg: Config) -> list[dict]:
+    """Captioned/queued clips with no Post born — the silent crosspost drop surfaced for Home."""
+    from fanops.models import ClipState
+    try:
+        led = Ledger.load(cfg)
+        out = []
+        for clip in led.clips.values():
+            if clip.state not in (ClipState.queued, ClipState.captioned):
+                continue
+            if any(p.parent_id == clip.id for p in led.posts.values()):
+                continue
+            mom = led.moments.get(clip.parent_id)
+            out.append({"clip_id": clip.id, "moment_id": clip.parent_id,
+                        "window": f"{int(mom.start)}–{int(mom.end)}" if mom else "—"})
+        return out[:5]
+    except Exception:
+        return []
+
+
+def metrics_stale_hint(cfg: Config) -> bool:
+    """True when live trackable posts exist but most lack analyzed metrics."""
+    if not cfg.is_live:
+        return False
+    try:
+        from fanops.studio.views_results import _classify_channel
+        led = Ledger.load(cfg)
+        live = [p for p in led.posts.values()
+                if p.state in (PostState.published, PostState.analyzed)
+                and _classify_channel(getattr(p, "public_url", None)) == "live"]
+        if len(live) < 2:
+            return False
+        thin = sum(1 for p in live if (p.metrics or {}).get("lift_score") is None)
+        return thin >= max(1, len(live) // 2)
+    except Exception:
+        return False
+
+
 def review_nav_params(cfg: Config, account: str | None = None) -> dict:
     """Review focus entry — account + dominant batch for handoff links."""
     out: dict = {"view": "account", "focus": 1}

@@ -67,3 +67,42 @@ def test_spine_next_links_focus_review(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg)
     html = _client(cfg).get("/run").data.decode()
     assert "focus=1" in html and "view=account" in html
+
+
+def test_restore_persona_hook_reburns(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
+    led = Ledger.load(cfg)
+    led.moments["m1"] = led.moments["m1"].model_copy(update={"hooks_by_persona_removed": {"@a": "STRIPPED"}})
+    led.save()
+    res = actions.restore_persona_hook(cfg, "p0")
+    assert res.ok
+    led2 = Ledger.load(cfg)
+    assert led2.posts["p0"].variant_hook == "STRIPPED"
+    assert "@a" not in (led2.moments["m1"].hooks_by_persona_removed or {})
+
+def test_retry_rate_limit_staggers_schedule(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
+    led = Ledger.load(cfg)
+    for i, pid in enumerate(["p0", "p1"]):
+        if pid not in led.posts:
+            led.add_post(Post(id=pid, parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram,
+                              caption="c", state=PostState.failed, error_reason="postiz 429"))
+        else:
+            led.posts[pid].state = PostState.failed; led.posts[pid].error_reason = "postiz 429"
+    led.save()
+    res = actions.retry_rate_limited_failures(cfg)
+    assert res.ok and res.detail["retried"] == 2
+    times = [Ledger.load(cfg).posts[pid].scheduled_time for pid in ("p0", "p1")]
+    assert times[0] and times[1] and times[0] != times[1]
+
+def test_zero_post_clips_surfaces_orphans(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg)
+    cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+    (cdir / "orph.mp4").write_bytes(b"V")
+    led.add_clip(Clip(id="orph", parent_id="m1", path=str(cdir / "orph.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
+    led.save()
+    assert len(views.zero_post_clips(cfg)) == 1

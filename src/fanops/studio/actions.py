@@ -832,7 +832,39 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                                           "post_ids": moved})
 
 
-def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate_limit") -> ActionResult:
+def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """Restore a guard-stripped per-account hook onto this surface and re-burn preview media."""
+    if not cfg.creative_variation:
+        return ActionResult(ok=False, error="per-account hook restore needs FANOPS_CREATIVE_VARIATION")
+    led = Ledger.load(cfg)
+    p = led.posts.get(post_id)
+    if p is None:
+        return ActionResult(ok=False, error=f"no such post: {post_id}")
+    clip = led.clips.get(p.parent_id)
+    mom = led.moments.get(clip.parent_id) if clip is not None else None
+    if mom is None:
+        return ActionResult(ok=False, error="no moment for post")
+    removed = (mom.hooks_by_persona_removed or {}).get(p.account)
+    if not removed:
+        return ActionResult(ok=False, error="no stripped hook to restore for this account")
+    try:
+        with Ledger.transaction(cfg) as led2:
+            m = led2.moments.get(mom.id)
+            if m is None:
+                return ActionResult(ok=False, error="moment gone")
+            hbp = dict(m.hooks_by_persona or {})
+            hbp[p.account] = removed
+            hbr = {k: v for k, v in (m.hooks_by_persona_removed or {}).items() if k != p.account}
+            led2.moments[mom.id] = m.model_copy(update={"hooks_by_persona": hbp, "hooks_by_persona_removed": hbr})
+            post = led2.posts.get(post_id)
+            if post is not None:
+                post.variant_hook = removed
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"restore hook failed: {str(exc)[:160]}")
+    return reburn_hook(cfg, post_id, removed, now=now)
+
+
+def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate_limit", stagger_min: int = 2) -> ActionResult:
     """Queue all failed posts whose error_reason is a rate-limit (429) for daemon retry."""
     from fanops.studio.views_results import classify_failure
     ids = [pid for pid, p in Ledger.load(cfg).posts.items()
@@ -840,21 +872,23 @@ def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate
     if not ids:
         return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
     retried: list[str] = []
+    now = _now(None)
     try:
         with Ledger.transaction(cfg) as led:
-            for pid in ids:
+            for i, pid in enumerate(ids):
                 p = led.posts.get(pid)
                 if p is None or p.state not in (PostState.failed, PostState.error):
                     continue
                 p.state = PostState.queued
                 p.submission_id = None
                 p.error_reason = None
+                p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
                 retried.append(pid)
     except Exception as exc:
         return ActionResult(ok=False, error=f"retry_rate_limited failed: {str(exc)[:160]}")
     if retried:
         write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
-    return ActionResult(ok=True, detail={"retried": len(retried), "post_ids": retried, "outcome": "retried_rate_limit"})
+    return ActionResult(ok=True, detail={"retried": len(retried), "post_ids": retried, "outcome": "retried_rate_limit", "stagger_min": stagger_min})
 
 
 def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str = "") -> ActionResult:

@@ -58,6 +58,13 @@
       <span class="ops-hint muted">processing blocked</span>
     </a>
   </section>
+  {% if metrics_stale and cfg.is_live %}<p class="warn metrics-stale-hint">Live posts need metrics — <strong>Pull metrics</strong> above closes the learning loop.</p>{% endif %}
+  {% if zero_post_clips %}
+  <section class="alerts-lane zero-post-alert"><h3>Clips with no posts</h3>
+    <p class="warn">{{ zero_post_clips|length }} clip(s) finished processing but birthed zero posts (casting/selection denied every surface).</p>
+    <ul>{% for z in zero_post_clips %}<li class="warn muted">{{ z.window }}s · {{ z.clip_id }}</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
   {% set zero_batches = batches | selectattr('is_zero_result') | list %}
   {% if zero_batches %}
   <section class="alerts-lane"><h3>Alerts</h3>

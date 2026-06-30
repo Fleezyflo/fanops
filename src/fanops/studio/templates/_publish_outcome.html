@@ -16,12 +16,14 @@
       {% elif result.detail.outcome == 'suggestions_accepted' %}Updated {{ result.detail.rescheduled }} slot{{ 's' if result.detail.rescheduled != 1 else '' }} on {{ result.detail.handle }}.
       {% elif result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post{{ 's' if result.detail.rescheduled != 1 else '' }}.
       {% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time | localdt }}.
+      {% elif result.detail.outcome == 'retried_rate_limit' %}Re-queued {{ result.detail.retried }} rate-limited post{{ 's' if result.detail.retried != 1 else '' }} — staggered 2 min apart.
       {% else %}Done.{% endif %}
     {% elif result.detail.render_pending %}Hook burn failed for {{ result.detail.render_pending }} — retry approve or check ffmpeg.
     {% elif result.detail.approved is defined %}Approved {{ result.detail.approved }} — on schedule.
     {% elif result.detail.rejected is defined %}Rejected {{ result.detail.rejected }}.
     {% elif result.detail.state is defined and result.detail.state == 'published' %}Published.
-    {% else %}Done.{% endif %}
+    {% elif result.detail.outcome == 'retried_rate_limit' %}Re-queued {{ result.detail.retried }} rate-limited post{{ 's' if result.detail.retried != 1 else '' }} — staggered 2 min apart.
+      {% else %}Done.{% endif %}
   {% else %}{{ result.error | operator_error }}{% endif %}
 </div>
 {% endif %}

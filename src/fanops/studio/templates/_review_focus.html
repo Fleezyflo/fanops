@@ -14,6 +14,9 @@
     {% if focus_item.variant_hook %}
     <p class="focus-hook-banner">✦ {{ focus_item.variant_hook }}</p>
     {% if focus_item.hook_preburn %}<p class="hook-preburn muted">Preview shows the burned hook (final burn locks on approve).</p>{% endif %}
+    {% elif focus_item.persona_hook_removed and creative_variation %}
+    <p class="warn focus-hook-removed">Hook stripped for this account: <strong>{{ focus_item.persona_hook_removed }}</strong>
+      <button type="button" class="button" hx-post="{{ url_for('do_restore_persona_hook', post_id=focus_item.post_id, view='account', account=active, focus=1, fi=focus_idx, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=pivot_page.offset if pivot_page else none) }}" hx-target="#review-body" hx-swap="outerHTML">Use this hook</button></p>
     {% elif focus_item.editable %}<p class="warn">No on-screen hook on this clip — answer hook decisions in <a href="{{ url_for('gates') }}">Blocked</a>.</p>{% endif %}
     <div class="focus-meta">
       <p><span class="muted">{{ focus_item.platform }}</span></p>
