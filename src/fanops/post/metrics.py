@@ -230,7 +230,7 @@ class PostizStatusClient:
 
 
 # ---- Zernio metrics + status (Slice 5) — the FREE TikTok backend's read clients. Zernio reads PER-POST
-# analytics (GET /analytics/posts/{id}, like Postiz) AND has a true single-post status lookup
+# analytics (GET /analytics?postId= — docs 2026-06, NOT legacy /analytics/posts/{id}) AND has a true single-post status lookup
 # (GET /posts/{id}, like Blotato). Both response SHAPES are INTEGRATION CHECKPOINTS: the maps below accept
 # the documented aliases + common nestings (locked offline here), the operator verifies live at first
 # publish. The ZERNIO_API_KEY rides the Bearer header and is NEVER logged/echoed (401 body withheld). ----
@@ -285,6 +285,19 @@ def _map_zernio_analytics(body) -> dict:
         return out
     return {}
 
+def _zernio_analytics_payload(body) -> object:
+    # Live GET /analytics?postId= shape: top-level analytics{} OR platformAnalytics[].analytics{} (prefer first row with data).
+    if not isinstance(body, dict): return body
+    pa = body.get("platformAnalytics")
+    if isinstance(pa, list):
+        for row in pa:
+            if not isinstance(row, dict): continue
+            ana = row.get("analytics")
+            if isinstance(ana, dict) and ana: return ana
+    ana = body.get("analytics")
+    if isinstance(ana, dict) and ana: return ana
+    return body
+
 def _zernio_raw_labels(body) -> list:
     # inert diagnostic parity with PostizMetricsClient's _raw_labels: the raw key/label names PRESENT at the
     # metric level (descend ONE wrapper only when the top dict carries no mapped key). Mirrors Postiz, which
@@ -310,14 +323,17 @@ class ZernioMetricsClient:
         self.submission_ids = submission_ids
 
     def _fetch_one(self, submission_id: str) -> tuple[dict, list]:
-        url = f"{self.base}/analytics/posts/{quote(str(submission_id), safe='')}"   # encode the id (no path metachar can alter the target)
-        resp = requests.get(url, headers={"Authorization": f"Bearer {self.key}"}, timeout=30)
+        url = f"{self.base}/analytics"
+        resp = requests.get(url, headers={"Authorization": f"Bearer {self.key}"}, params={"postId": str(submission_id)}, timeout=30)
         if resp.status_code == 401:
             raise ZernioAuthError("Zernio 401 on analytics — check ZERNIO_API_KEY (response body withheld)")
+        if resp.status_code == 202:
+            raise RuntimeError("zernio analytics 202: sync pending")
         if resp.status_code >= 300:
             raise RuntimeError(f"zernio analytics {resp.status_code}: {_safe(self.cfg, resp.text)}")
         body = _json_or_raise(resp, "zernio analytics", self.cfg)
-        return _map_zernio_analytics(body), _zernio_raw_labels(body)
+        payload = _zernio_analytics_payload(body)
+        return _map_zernio_analytics(payload), _zernio_raw_labels(payload)
 
     def list_posts(self, window: str = "30d") -> list[dict]:
         if not self.submission_ids: return []

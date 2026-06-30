@@ -75,7 +75,7 @@ def test_metrics_client_fetches_per_post_rows(tmp_path, monkeypatch, mocker):
     spy = mocker.patch("fanops.post.metrics.requests.get",
                        return_value=_R(200, {"likes": 3, "saves": 30}))
     rows = ZernioMetricsClient(cfg, submission_ids=["zid"]).list_posts("30d")
-    assert "analytics/posts/zid" in spy.call_args[0][0]                # per-post analytics endpoint
+    assert spy.call_args[0][0].endswith("/analytics") and spy.call_args[1]["params"]["postId"] == "zid"                # per-post analytics endpoint
     assert rows == [{"postSubmissionId": "zid", "metrics": {"likes": 3.0, "saves": 30.0}, "_raw_labels": ["likes", "saves"]}]
 
 def test_metrics_client_no_ids_no_network(tmp_path, monkeypatch, mocker):
@@ -97,7 +97,8 @@ def test_metrics_client_per_post_failure_is_skipped_not_emitted_as_empty(tmp_pat
     # the post with. Still isolated: one bad id never aborts the pass or loses the others.
     _zenv(monkeypatch); cfg = Config(root=tmp_path)
     def by_id(url, **kw):
-        return _R(503, "down") if url.endswith("/bad") else _R(200, {"saves": 2})
+        sid = (kw.get("params") or {}).get("postId", "")
+        return _R(503, "down") if sid == "bad" else _R(200, {"saves": 2})
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_id)
     rows = ZernioMetricsClient(cfg, submission_ids=["bad", "ok"]).list_posts("30d")
     assert [r["postSubmissionId"] for r in rows] == ["ok"]             # bad SKIPPED, no empty row, no raise
@@ -169,6 +170,34 @@ def test_default_get_status_global_zernio_binds_zernio_client(tmp_path, monkeypa
     poll = _default_get_status(cfg)
     assert poll.__self__.__class__ is ZernioStatusClient                  # global=zernio -> Zernio status client (bound)
 
+
+
+
+def test_metrics_client_uses_analytics_query_postid(tmp_path, monkeypatch, mocker):
+    # Live Zernio contract (docs.zernio.com 2026-06): GET /v1/analytics?postId= — NOT /analytics/posts/{id}.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    spy = mocker.patch("fanops.post.metrics.requests.get",
+                       return_value=_R(200, {"analytics": {"likes": 5, "saves": 2}}))
+    rows = ZernioMetricsClient(cfg, submission_ids=["zid123"]).list_posts("30d")
+    assert rows[0]["metrics"] == {"likes": 5.0, "saves": 2.0}
+    url = spy.call_args[0][0]
+    assert url.endswith("/analytics")
+    assert spy.call_args[1]["params"]["postId"] == "zid123"
+    assert "/analytics/posts/" not in url
+
+
+def test_metrics_client_platform_analytics_shape(tmp_path, monkeypatch, mocker):
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    body = {"platformAnalytics": [{"platform": "tiktok", "analytics": {"likes": 9, "views": 1000, "saves": 3}}]}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
+    rows = ZernioMetricsClient(cfg, submission_ids=["zid"]).list_posts("30d")
+    assert rows[0]["metrics"] == {"likes": 9.0, "views": 1000.0, "saves": 3.0}
+
+
+def test_metrics_client_202_sync_pending_skipped(tmp_path, monkeypatch, mocker):
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(202, {"message": "sync pending"}))
+    assert ZernioMetricsClient(cfg, submission_ids=["zid"]).list_posts("30d") == []
 
 # ---------------------------------------------------------------- per-post (mixed) dispatch ----
 def _mixed_ledger(cfg):
