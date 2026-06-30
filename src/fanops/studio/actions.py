@@ -827,6 +827,57 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                                           "post_ids": moved})
 
 
+def revert_phantom_published(cfg: Config, post_ids: list[str] | None = None, *, reason: str,
+                             dry_run: bool = False) -> ActionResult:
+    """Revert reconcile-only phantom publishes (state=published, published_at empty, no metrics).
+
+    Unlike bulk_send_to_review, this CAN touch published rows — the operator's recovery path when
+    reconcile promoted rows the backend never truly shipped. Clears submission_id so the next
+    reconcile pass cannot re-promote the same phantom."""
+    from fanops.studio.views_results import is_phantom_published
+    led = Ledger.load(cfg)
+    if post_ids:
+        targets = [str(i) for i in post_ids if i]
+    else:
+        targets = [pid for pid, p in led.posts.items() if is_phantom_published(p, cfg=cfg)]
+    reverted: list[str] = []; skipped: list[str] = []; unknown: list[str] = []
+    evidence: dict[str, str] = {}
+    for pid in targets:
+        if pid not in led.posts:
+            unknown.append(pid); continue
+        p = led.posts[pid]
+        if not is_phantom_published(p, cfg=cfg):
+            skipped.append(pid); continue
+        sidecar = (cfg.scheduled / f"{pid}.json").exists()
+        url = (p.public_url or "")[:60]
+        evidence[pid] = "dryrun_sidecar+live_url" if sidecar and url.startswith("http") else "no_published_at"
+        reverted.append(pid)
+    if dry_run:
+        return ActionResult(ok=True, detail={"dry_run": True, "would_revert": len(reverted),
+                                              "skipped": len(skipped), "unknown": unknown,
+                                              "post_ids": reverted, "evidence": evidence})
+    try:
+        with Ledger.transaction(cfg) as led2:
+            for pid in reverted:
+                p = led2.posts.get(pid)
+                if p is None or not is_phantom_published(p, cfg=cfg):
+                    continue
+                p.state = PostState.awaiting_approval
+                p.scheduled_time = None
+                p.public_url = ""
+                p.metrics = {}
+                p.published_at = None
+                p.submission_id = None
+                p.error_reason = None
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"revert_phantom_published failed: {str(exc)[:160]}")
+    if reverted:
+        write_audit(cfg, "revert_phantom_published", reverted, reason=reason,
+                    reverted=len(reverted), skipped=len(skipped), evidence=evidence)
+    return ActionResult(ok=True, detail={"reverted": len(reverted), "skipped": len(skipped),
+                                          "unknown": unknown, "post_ids": reverted, "evidence": evidence})
+
+
 def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> ActionResult:
     """Restore a guard-stripped per-account hook onto this surface and re-burn preview media."""
     if not cfg.creative_variation:

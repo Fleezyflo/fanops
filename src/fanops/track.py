@@ -35,6 +35,34 @@ _W = {"saves": 4.0, "shares": 4.0, "retention": 3.0, "reach": 0.001, "likes": 0.
 _HIGH_WEIGHT = 1.0
 ListPosts = Callable[[str], list[dict]]
 
+def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None) -> bool:
+    """True when a live analyzed row proves the metric field-shape for learning unfreeze. Broader than
+    `not lift_degraded`: Postiz never delivers `retention`, so a Postiz-shaped row stays lift_degraded
+    yet proves the shape once `reach` + a primary engagement key (saves|shares) reconcile — mirroring
+    learn_doctor's reach gate, not an all-_W verdict. Still fails closed on present-but-null primaries
+    (D1) and on reach-only noise (likes+reach with no saves/shares). A full primary set (Blotato-shaped)
+    always proves."""
+    if LIFT_SCORE not in metrics:
+        return False
+    w = _W if weights is None else weights
+    raw = {k: v for k, v in metrics.items()
+           if k not in (LIFT_SCORE, "lift_degraded", "lift_missing_keys")}
+    for k, wt in w.items():
+        if not (isinstance(wt, (int, float)) and not isinstance(wt, bool) and wt >= _HIGH_WEIGHT):
+            continue
+        if k in raw and (raw[k] is None or not isinstance(raw[k], (int, float)) or isinstance(raw[k], bool)):
+            return False                                    # D1: explicit null/non-numeric in the live row
+    if not _missing_high_weight(metrics, weights):
+        return True                                         # full primary set (e.g. Blotato)
+    has_reach = isinstance(metrics.get("reach"), (int, float)) and not isinstance(metrics.get("reach"), bool)
+    has_eng = any(isinstance(metrics.get(k), (int, float)) and not isinstance(metrics.get(k), bool)
+                 for k in ("saves", "shares"))
+    if has_reach and has_eng:
+        return True                                         # Postiz-shaped proof
+    if isinstance(metrics.get("saves"), (int, float)) and not isinstance(metrics.get("saves"), bool):
+        return True                                         # Zernio-shaped: saves lands without reach
+    return False
+
 def _missing_high_weight(metrics: dict, weights: Optional[dict]) -> list[str]:
     """The ACTIVE high-weight keys absent from this row (sorted). Judged against the ACTIVE weight map
     (a tuning override REPLACES _W), so 'degraded' tracks whatever objective is configured. NEVER
@@ -185,7 +213,8 @@ def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = 
 def _auto_validate_metrics_shape(led: Ledger, cfg: Config) -> None:
     """De-gated learning (the operator's `fanops cutover metrics` step is removed): the FIRST real,
     non-degraded analyzed metric pulled from a LIVE backend PROVES the metric field-shape against _W —
-    exactly what the manual cutover reconciled by hand. Auto-stamp cutover.json `metrics_confirmed` so
+    exactly what the manual cutover reconciled by hand. Postiz-shaped rows stay lift_degraded (retention
+    is absent) yet still prove the shape once reach + saves|shares reconcile. Auto-stamp cutover.json `metrics_confirmed` so
     `learning_validated` unfreezes with NO operator probe. dryrun never reaches a real analytics row, so it
     never falsely unfreezes; a DEGRADED row (a primary weighted key absent) is the unproven/mis-keyed case
     the gate exists for and never stamps. Idempotent (skips once confirmed); the manual cutover still works."""
@@ -195,8 +224,9 @@ def _auto_validate_metrics_shape(led: Ledger, cfg: Config) -> None:
     from fanops.validation_gate import learning_validated
     if learning_validated(cfg):
         return                                                   # already proven -> not frozen, nothing to explain
+    weights = cfg.tuning().get("lift_weights")
     analyzed = [p for p in led.posts.values() if p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
-    proven = next((p for p in analyzed if not p.metrics.get("lift_degraded")), None)
+    proven = next((p for p in analyzed if _shape_proves_learning(p.metrics, weights=weights)), None)
     if proven is None:                                           # XC-4: name WHY learning stays frozen, per branch
         if not analyzed:
             log("learning", "auto_validate", "frozen_no_analyzed_metric")    # no analyzed row yet (waiting on a pull)

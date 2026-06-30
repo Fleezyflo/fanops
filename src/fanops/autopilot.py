@@ -48,6 +48,26 @@ def set_env_var(env_path: Path, key: str, value: str) -> None:
     os.replace(tmp, env_path)                            # atomic: never a half-written .env (mirrors the atomic accounts.json write)
 
 
+def unset_env_var(env_path: Path, key: str) -> None:
+    """Remove `KEY=...` from a .env file, preserving every other line. No-op when the file or key
+    is absent. Atomic write (temp + os.replace), mirroring set_env_var."""
+    if not env_path.exists():
+        return
+    lines = env_path.read_text().splitlines()
+    out: list[str] = []
+    for ln in lines:
+        stripped = ln.lstrip()
+        raw_key = ln.split("=", 1)[0].strip()
+        had_export = raw_key.startswith("export ")
+        bare_key = raw_key[len("export "):].strip() if had_export else raw_key
+        if stripped and not stripped.startswith("#") and bare_key == key:
+            continue
+        out.append(ln)
+    tmp = env_path.with_name(env_path.name + ".tmp")
+    tmp.write_text("\n".join(out) + ("\n" if out else ""))
+    os.replace(tmp, env_path)
+
+
 def autopilot(cfg: Config, *, interval: int, install_daemon: bool = True) -> dict:
     """Make FanOps autonomous: persist the llm responder, optionally install the daemon, and return a
     readiness dict {responder, backend, checks, notes, daemon, daemon_note}. Off-darwin (or with

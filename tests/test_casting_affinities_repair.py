@@ -30,6 +30,45 @@ def _seed_accounts(cfg):
     ]}))
 
 
+def test_repair_upgrades_fan_all_default_when_persona_now_linked(tmp_path):
+    """TikTok parity: fan_all_default from a pre-link cast upgrades to persona-donor picks on repair."""
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "perca.late", "account_id": "ig1", "platforms": ["instagram"], "status": "active",
+         "persona": "ig zine", "persona_id": "underground-zine", "integrations": {"instagram": "ig1"}},
+        {"handle": "hrmny-blog", "account_id": "tk1", "platforms": ["tiktok"], "status": "active",
+         "persona": "", "persona_id": "underground-zine", "integrations": {"tiktok": "tk1"}},
+    ]}))
+    cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.personas_path.write_text(json.dumps({"personas": [
+        {"id": "underground-zine", "name": "Z", "voice": "blunt zine voice",
+         "content_focus": ["punchlines"], "energy": "high", "hook_angle": "curiosity"},
+    ]}))
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.decided, affinities=["perca.late"]))
+    led.add_moment(Moment(id="mom_2", parent_id="src_1", content_token="7-14", start=7, end=14, reason="r2",
+                          state=MomentState.decided, affinities=["perca.late"]))
+    from fanops.models import AccountSelection, SelectionMethod, account_selection_id
+    led.add_account_selection(AccountSelection(
+        id=account_selection_id("src_1", "perca.late"), source_id="src_1", account="perca.late",
+        moment_ids=["mom_1", "mom_2"], method=SelectionMethod.llm))
+    led.add_account_selection(AccountSelection(
+        id=account_selection_id("src_1", "hrmny-blog"), source_id="src_1", account="hrmny-blog",
+        moment_ids=[], method=SelectionMethod.fan_all_default))
+    led.save()
+    led = repair_casting_selections(Ledger.load(cfg), cfg, Accounts.load(cfg), "src_1")
+    sel = led.account_selection_for("src_1", "hrmny-blog")
+    assert sel is not None and sel.method is SelectionMethod.migrated
+    assert sel.moment_ids == ["mom_1", "mom_2"]
+    assert "hrmny-blog" in led.moments["mom_1"].affinities
+    assert account_selection_admits(cfg, led, led.moments["mom_1"], "hrmny-blog") is True
+    assert account_selection_admits(cfg, led, led.moments["mom_2"], "hrmny-blog") is True
+
+
+
 def test_repair_fan_all_default_for_personaless_when_only_affinities_exist(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     led = Ledger.load(cfg)

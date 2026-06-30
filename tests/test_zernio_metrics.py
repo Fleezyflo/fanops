@@ -14,7 +14,7 @@ from fanops.models import Post, PostState, Platform
 from fanops.timeutil import iso_z
 from fanops.accounts import add_account, set_backend
 from fanops.post.metrics import (ZernioMetricsClient, ZernioStatusClient,
-                                  _map_zernio_analytics, _ZERNIO_STATE_MAP)
+                                  _map_zernio_analytics, _zernio_analytics_payload, _ZERNIO_STATE_MAP)
 from fanops.track import _default_list_posts, pull_metrics
 from fanops.reconcile import _default_get_status, reconcile_posts
 
@@ -192,6 +192,32 @@ def test_metrics_client_platform_analytics_shape(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
     rows = ZernioMetricsClient(cfg, submission_ids=["zid"]).list_posts("30d")
     assert rows[0]["metrics"] == {"likes": 9.0, "views": 1000.0, "saves": 3.0}
+
+def test_zernio_analytics_payload_flat_platform_row():
+    # Live TikTok (2026-07): lift keys sit flat on platformAnalytics[] — no analytics{} wrapper.
+    body = {"platformAnalytics": [{"platform": "tiktok", "likes": 100, "views": 9000, "shares": 4,
+                                   "comments": 7, "status": "published"}]}
+    assert _map_zernio_analytics(_zernio_analytics_payload(body)) == {"likes": 100.0, "views": 9000.0,
+                                                                        "shares": 4.0, "comments": 7.0}
+
+def test_zernio_analytics_payload_platform_metrics_key():
+    body = {"platformAnalytics": [{"platform": "tiktok", "metrics": {"likes": 5, "views": 100}}]}
+    assert _map_zernio_analytics(_zernio_analytics_payload(body)) == {"likes": 5.0, "views": 100.0}
+
+def test_zernio_analytics_payload_prefers_platform_over_top_level_zeros():
+    # Top-level analytics{} can be platform-agnostic zeros while the TikTok row carries the real signal.
+    body = {"analytics": {"impressions": 0, "likes": 0, "views": 0},
+            "platformAnalytics": [{"platform": "tiktok", "diggCount": 100, "playCount": 9000, "shareCount": 4}]}
+    assert _map_zernio_analytics(_zernio_analytics_payload(body)) == {"likes": 100.0, "views": 9000.0, "shares": 4.0}
+
+def test_metrics_client_flat_platform_analytics_row(tmp_path, monkeypatch, mocker):
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    body = {"analytics": {"likes": 0, "views": 0},
+            "platformAnalytics": [{"platform": "tiktok", "likes": 42, "views": 8000, "shares": 3}]}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
+    rows = ZernioMetricsClient(cfg, submission_ids=["zid"]).list_posts("30d")
+    assert rows == [{"postSubmissionId": "zid", "metrics": {"likes": 42.0, "views": 8000.0, "shares": 3.0},
+                     "_raw_labels": ["platform", "likes", "views", "shares"]}]
 
 
 def test_metrics_client_202_sync_pending_skipped(tmp_path, monkeypatch, mocker):

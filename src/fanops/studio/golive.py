@@ -19,6 +19,7 @@ THREE load-bearing invariants:
 from __future__ import annotations
 import os
 import re
+from pathlib import Path
 from typing import NamedTuple, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
@@ -31,7 +32,7 @@ from fanops.accounts import (Accounts, write_integration, add_account as _accoun
                              set_backend as _accounts_set_backend, ensure_channel as _accounts_ensure_channel,
                              load_accounts_safe)
 from fanops.log import get_logger
-from fanops.autopilot import set_env_var
+from fanops.autopilot import set_env_var, unset_env_var
 from fanops.errors import CutoverError, PostizAuthError, ZernioAuthError
 from fanops.models import Platform
 from fanops.post import postiz, zernio
@@ -52,6 +53,30 @@ def _dual_write(cfg: Config, key: str, value: str) -> Optional[str]:
     except (OSError, ValueError) as exc:
         return f"could not write {key} to .env: {str(exc)[:140]}"
     os.environ[key] = value
+    return None
+
+
+def _dual_unset(cfg: Config, key: str) -> Optional[str]:
+    """Remove KEY from .env (durable) AND os.environ (this process). Returns None on success."""
+    try:
+        unset_env_var(cfg.root / ".env", key)
+    except OSError as exc:
+        return f"could not unset {key} from .env: {str(exc)[:140]}"
+    os.environ.pop(key, None)
+    return None
+
+
+def _dotenv_assignment(env_path: Path, key: str) -> Optional[str]:
+    """Read KEY's value from a .env file (ignores comments). None when absent."""
+    if not env_path.exists():
+        return None
+    for ln in env_path.read_text().splitlines():
+        stripped = ln.lstrip()
+        raw_key = ln.split("=", 1)[0].strip()
+        had_export = raw_key.startswith("export ")
+        bare_key = raw_key[len("export "):].strip() if had_export else raw_key
+        if stripped and not stripped.startswith("#") and bare_key == key:
+            return ln.split("=", 1)[1].strip() if "=" in ln else ""
     return None
 
 
@@ -535,6 +560,15 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     if (err := _dual_write(cfg, "FANOPS_RESPONDER", "llm")):
         return ActionResult(ok=False, error=err)
     os.environ["FANOPS_RESPONDER"] = "llm"
+    # M3c: scrape stale FANOPS_POSTER=dryrun — .env.example seeds it; pre-M3b go_dryrun wrote it;
+    # M3b go_live never updated it. Config.load_dotenv(override=True) reloads the line on every
+    # Studio restart / daemon tick, so operators see LIVE=1 + POSTER=dryrun and think the flip
+    # reverted. Per-channel backends are the publish truth; an explicit dryrun global is misleading.
+    _poster_disk = (_dotenv_assignment(cfg.root / ".env", "FANOPS_POSTER") or "").strip().lower()
+    _poster_live = (os.getenv("FANOPS_POSTER") or "").strip().lower()
+    if _poster_disk == "dryrun" or _poster_live == "dryrun":
+        if (err := _dual_unset(cfg, "FANOPS_POSTER")):
+            return ActionResult(ok=False, error=err)
     # M1: a live-ready channel that resolves ONLY via the legacy FANOPS_POSTER bridge (no explicit
     # `backends`) goes dark the instant FANOPS_POSTER is unset — name them so the operator can pin the
     # provider explicitly (route the channel in the Go-Live tab; that persists `backends[platform]`).

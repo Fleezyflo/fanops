@@ -425,10 +425,16 @@ class AccountSelection(BaseModel):
         copied = super().model_copy(update=update, deep=deep)
         return type(self).model_validate(copied.model_dump())
 
+def normalize_account_handle(handle: str) -> str:
+    """Canonical account handle for selection keys — strip whitespace and a leading '@' so '@a' and 'a' are
+    one-per-(source, account) (accounts.json uses bare handles; tests/LLM responses may carry '@')."""
+    return (handle or "").strip().lstrip("@")
+
+
 def account_selection_id(source_id: str, account: str) -> str:
     """Content-addressed one-per-(source, account) id — a re-cast for the same pair overwrites the prior
     selection (latest wins). Deterministic across processes (ids.child_id)."""
-    return child_id("acctsel", source_id, account)
+    return child_id("acctsel", source_id, normalize_account_handle(account))
 
 
 # ---- M3 (structural-hooks): the stitch_plan entity — the operator-approval spine ----

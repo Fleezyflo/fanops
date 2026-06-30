@@ -36,7 +36,7 @@ from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.models import PostState, is_real_submission_id
 from fanops.text import safe_public_url
-from fanops.timeutil import parse_iso
+from fanops.timeutil import parse_iso, iso_z
 from datetime import datetime, timezone, timedelta
 
 _STUCK_AFTER = timedelta(hours=6)   # H4: a still-parked post older than this past its schedule gets a breadcrumb
@@ -290,6 +290,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             upd = {"state": PostState.published,
                    "public_url": captured_url,
                    "error_reason": None}                  # a transient poll-error reason must not survive a successful publish
+            if not (post.published_at or "").strip():
+                upd["published_at"] = iso_z(now)         # mirror _publish_one: reconcile-only promote must carry a ship stamp
             if new_sub: upd["submission_id"] = new_sub
             led.posts[post.id] = post.model_copy(update=upd)
             if new_sub is None:                           # published but still no real id -> attribution can't bind

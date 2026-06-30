@@ -11,12 +11,24 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import PostState, SelectionMethod, MomentState
+from fanops.models import PostState, SelectionMethod, MomentState, normalize_account_handle
 from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
 from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, _imminent, suggest_time
 from fanops.studio.actions_common import RENDER_PENDING_REASON
+
+
+def _handle_display_map(acct_by_handle: dict) -> dict[str, str]:
+    return {normalize_account_handle(k): k for k in acct_by_handle}
+
+
+def _display_handle(handle: str, by_norm: dict[str, str]) -> str:
+    return by_norm.get(normalize_account_handle(handle), handle)
+
+
+def _display_handles(handles: list[str], by_norm: dict[str, str]) -> list[str]:
+    return sorted({_display_handle(h, by_norm) for h in handles})
 
 
 @dataclass
@@ -250,7 +262,8 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
     accts = acct_by_handle or {}
     mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed (clip -> moment)
-    _affs = led.cast_handles_for(mom.parent_id, mom.id) if mom is not None else []   # MOM-3: DERIVED from durable AccountSelection, not the stored tag
+    _by_norm = _handle_display_map(accts)
+    _affs = _display_handles(led.cast_handles_for(mom.parent_id, mom.id), _by_norm) if mom is not None else []   # MOM-3: DERIVED from durable AccountSelection, not the stored tag
     surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account), affinities=_affs)
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     src_key = mom.parent_id if mom is not None else None   # Phase 4: stable source id (clip -> moment.parent_id); the ?source= key
@@ -380,7 +393,7 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
             key = f"{p.account}{_CH}{p.platform.value}"
             by_channel.setdefault(key, []).append(p); channels[key] = (p.account, p.platform.value)
         cells: dict = {}
-        _aff = led.cast_handles_for(source_id, m.id)   # MOM-3: DERIVED from the durable AccountSelection (operator overrides included), not the legacy Moment.affinities tag
+        _aff = _display_handles(led.cast_handles_for(source_id, m.id), _handle_display_map(acct_by_handle))   # MOM-3: DERIVED from the durable AccountSelection (operator overrides included), not the legacy Moment.affinities tag
         for key, plist in by_channel.items():
             lead = _pick_lead(plist)
             sp = _surface(lead, persona=None, now=now, cfg=cfg, led=led, acct=acct_by_handle.get(lead.account), affinities=_aff)
@@ -456,7 +469,8 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
     personas = _personas(accounts)
     # lane universe: active-first (in accounts.json order), then any has-selection / has-post handle, alpha.
     active_order = [a.handle for a in accounts.accounts]
-    extra = {s.account for s in led.selections_of_source(source_id)} | {p.account for p in led.posts.values() if p.parent_id in clip_ids}
+    _by_norm = _handle_display_map(acct_by_handle)
+    extra = {_display_handle(s.account, _by_norm) for s in led.selections_of_source(source_id)} | {_display_handle(p.account, _by_norm) for p in led.posts.values() if p.parent_id in clip_ids}
     handles = active_order + sorted(h for h in extra if h not in set(active_order))
     # first-clip per moment owns the MASTER preview (clip -> source player), matching the cards/matrix.
     preview_by_moment = {mid: f"/clips/{cs[0].id}" for mid, cs in clips_by_moment.items() if cs}
@@ -476,7 +490,7 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
             mposts = [p for c in clips_by_moment.get(m.id, []) for p in posts_by_clip.get(c.id, [])
                       if p.account == handle and _state_matches(p, state)]
             sp = _surface(_pick_lead(mposts), persona=persona, now=now, cfg=cfg, led=led, acct=acct,
-                          affinities=led.cast_handles_for(source_id, m.id)) if mposts else None   # MOM-3: derived view, not the stored tag
+                          affinities=_display_handles(led.cast_handles_for(source_id, m.id), _by_norm)) if mposts else None   # MOM-3: derived view, not the stored tag
             rows.append(LaneRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
                                 hook=m.hook, is_cast=m.id in cast_ids,
                                 preview_url=preview_by_moment.get(m.id, ""), post=sp))
