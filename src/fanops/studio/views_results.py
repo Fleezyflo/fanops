@@ -82,7 +82,7 @@ class LiftView:
 # `queued` is currently dead but allowed so a future staged-render path can't trip a false warn — never `retired`).
 _SHIPPABLE_RENDER = (RenderState.rendered, RenderState.queued, RenderState.published, RenderState.analyzed)
 
-def publish_readiness(led: Ledger, post) -> tuple[bool, str]:
+def publish_readiness(led: Ledger, post, cfg: Config | None = None) -> tuple[bool, str]:
     """S5: ADVISORY (ready, reason) for a single post, from already-loaded objects — NEVER a ledger write, NEVER
     a publish gate. A post with a render ships that render: it must exist, be shippable, its file must be on disk,
     and its BURNED hook must match the hook the operator sees (else 'drift'). A post with no render ships the
@@ -97,13 +97,30 @@ def publish_readiness(led: Ledger, post) -> tuple[bool, str]:
             if not (r.path and Path(r.path).exists()): return (False, "render file missing from disk")
             if (r.hook_text or "") != (post.variant_hook or ""):
                 return (False, "hook drift — the burned hook differs from the one shown")
-            return (True, "ready — its own cut")
-        from fanops.crosspost import _REUSABLE_CLIP_STATES        # the EXACT states crosspost will reuse a clip from
-        clip = led.clips.get(post.parent_id) if post.parent_id else None
-        if clip is None: return (False, "source clip missing")
-        if clip.state not in _REUSABLE_CLIP_STATES: return (False, f"clip not shippable ({clip.state.value})")
-        if not (clip.path and Path(clip.path).exists()): return (False, "clip file missing from disk")
-        return (True, "ready — shared clip")
+            ready, reason = True, "ready — its own cut"
+        else:
+            from fanops.crosspost import _REUSABLE_CLIP_STATES
+            clip = led.clips.get(post.parent_id) if post.parent_id else None
+            if clip is None: return (False, "source clip missing")
+            if clip.state not in _REUSABLE_CLIP_STATES: return (False, f"clip not shippable ({clip.state.value})")
+            if not (clip.path and Path(clip.path).exists()): return (False, "clip file missing from disk")
+            ready, reason = True, "ready — shared clip"
+        if cfg is not None and ready:
+            from fanops.post.compress import publish_backend_for_post, upload_cap_bytes, media_path_for_post
+            backend = publish_backend_for_post(cfg, post)
+            cap = upload_cap_bytes(cfg, post, backend)
+            if cap is not None:
+                mp = media_path_for_post(led, post)
+                if mp is not None:
+                    try:
+                        sz = mp.stat().st_size
+                    except OSError:
+                        sz = 0
+                    if sz > cap:
+                        mb = max(1, sz // (1024 * 1024))
+                        cap_mb = max(1, cap // (1024 * 1024))
+                        return (False, f"too large ({mb} MB > {cap_mb} MB cap) — auto-shrink on ship")
+        return (ready, reason)
     except Exception:
         return (False, "unverified")
 
@@ -160,7 +177,7 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
             caption=p.caption, variant_hook=p.variant_hook)
         if editable:
-            row.ready, row.ready_reason = publish_readiness(led, p)
+            row.ready, row.ready_reason = publish_readiness(led, p, cfg)
             row.why_suggested = explain_suggested_time(cfg, row)
         rows.append(row)
 
@@ -391,7 +408,7 @@ class PostedRow:
 
 
 _FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "poll_error", "unknown")
-_RETRYABLE_FAILURES = frozenset({"rate_limit", "bad_payload", "unknown"})
+_RETRYABLE_FAILURES = frozenset({"rate_limit", "oversize", "bad_payload", "unknown"})
 
 
 _FAILURE_LABELS = {"rate_limit": "Rate limited", "oversize": "Too large", "bad_payload": "Bad upload",

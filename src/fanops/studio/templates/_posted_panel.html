@@ -67,7 +67,7 @@
         </div>
         {% elif r.posted_via == 'failed' %}
         <div class="posted-row-actions">
-          {% if r.failure_kind != 'oversize' %}<button type="submit" form="recover-one-{{ r.post_id }}" name="recover_action" value="retry">Retry</button>{% endif %}
+          <button type="submit" form="recover-one-{{ r.post_id }}" name="recover_action" value="retry">Retry</button>
           <button type="submit" form="recover-one-{{ r.post_id }}" name="recover_action" value="review">Review</button>
           <button type="submit" form="recover-one-{{ r.post_id }}" name="recover_action" value="discard">Discard</button>
         </div>

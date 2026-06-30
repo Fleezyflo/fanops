@@ -605,6 +605,7 @@ def home_status(cfg: Config) -> HomeStatus:
                   "live_today": live_today,
                   "live_trackable": live_trackable,
                   "failed": failed, "failed_rate_limit": fb.get("rate_limit", 0),
+                  "failed_oversize": fb.get("oversize", 0),
                   "posted": st.get(PostState.published, 0) + st.get(PostState.analyzed, 0)}
         by_account = dict(Counter(p.account for p in led.posts.values()))
     except Exception as exc:                          # the first page an operator sees must never 500

@@ -22,6 +22,7 @@
       <button type="submit">Pull metrics</button></form> <span id="home-loop-result"></span>
     {% else %}<span class="muted">Go live to pull metrics and close the learning loop.</span>{% endif %}
     {% if cfg.is_live and status.counts.inflight %}<form class="inline" hx-post="{{ url_for('do_home_reconcile') }}" hx-target="#home-loop-result" hx-swap="innerHTML"><button type="submit">Check for links</button></form>{% endif %}
+    {% if status.counts.failed_oversize %}<form class="inline" hx-post="{{ url_for('do_home_retry_oversize') }}" hx-target="#home-loop-result" hx-swap="innerHTML"><button type="submit">Retry too-large ({{ status.counts.failed_oversize }})</button></form>{% endif %}
     {% if status.counts.failed_rate_limit %}<form class="inline" hx-post="{{ url_for('do_home_retry_rate_limit') }}" hx-target="#home-loop-result" hx-swap="innerHTML"><button type="submit">Retry rate-limited ({{ status.counts.failed_rate_limit }})</button></form>{% endif %}
     · <a href="{{ url_for('posted', delivery='live') }}">Results</a>
   </section>

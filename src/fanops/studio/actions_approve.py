@@ -95,6 +95,8 @@ def _adopt_render(led: Ledger, cfg: Config, post, plan, accts: Accounts) -> None
         return                                                       # leave media EMPTY -> spine's no-media guard skips approval
     post.render_id = rid
     post.media_urls = [f"file://{r.path}"]
+    from fanops.post.compress import apply_shrink_to_post
+    apply_shrink_to_post(cfg, led, post)
     if post.error_reason == RENDER_PENDING_REASON:                   # #4: a prior warm-miss is now resolved -> clear the marker
         post.error_reason = None
     if r.is_account_cut:                                             # a real cut stamps ITS OWN length profile (P4 dim)

@@ -326,29 +326,19 @@ def accept_suggested_account(cfg: Config, handle: str, *, now: Optional[datetime
     return ActionResult(ok=True, detail={"rescheduled": moved, "outcome": "suggestions_accepted", "handle": handle})
 
 
-def preflight_publish_media(cfg: Config, post) -> str | None:
-    """Return an error string when local media exceeds backend caps (fail BEFORE network)."""
-    from pathlib import Path
-    from fanops.models import Platform
-    path = None
-    if post.render_id:
-        r = Ledger.load(cfg).renders.get(post.render_id)
-        path = r.path if r else None
-    elif post.media_urls and post.media_urls[0].startswith("file://"):
-        path = post.media_urls[0][7:]
-    elif post.media_urls and not post.media_urls[0].startswith("http"):
-        path = post.media_urls[0]
-    if not path or not Path(path).exists():
+def preflight_publish_media(cfg: Config, post, led=None) -> str | None:
+    """Return an error string when local media exceeds backend caps (fail BEFORE network). Shrinks when possible."""
+    from fanops.post.compress import apply_shrink_to_post, media_path_for_post, publish_backend_for_post, upload_cap_bytes
+    led = led if led is not None else Ledger.load(cfg)
+    backend = publish_backend_for_post(cfg, post)
+    cap = upload_cap_bytes(cfg, post, backend)
+    if cap is None:
         return None
-    size = Path(path).stat().st_size
-    backend = cfg.effective_publish_mode()
-    if post.platform is Platform.tiktok and backend == "zernio" and size > cfg.zernio_max_upload_bytes:
-        from fanops.post.compress import maybe_shrink_for_cap
-        shrunk = maybe_shrink_for_cap(cfg, Path(path), cfg.zernio_max_upload_bytes, label="preflight")
-        if shrunk.stat().st_size <= cfg.zernio_max_upload_bytes:
-            return None
-        return f"oversize: {size} bytes > {cfg.zernio_max_upload_bytes} — re-render shorter"
-    return None
+    if apply_shrink_to_post(cfg, led, post, backend=backend):
+        return None
+    path = media_path_for_post(led, post)
+    size = path.stat().st_size if path else 0
+    return f"oversize: {size} bytes > {cap} — re-render shorter"
 
 
 def reconcile_inflight(cfg: Config) -> ActionResult:
@@ -386,7 +376,7 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
         return ActionResult(ok=False, error=f"post {post_id} is {st.value} — only a queued post can be published")
     if (err := _studio_publish_guard(cfg, post)):
         return ActionResult(ok=False, error=err)
-    if (pf := preflight_publish_media(cfg, post)):
+    if (pf := preflight_publish_media(cfg, post, led=led)):
         try:
             with Ledger.transaction(cfg) as led:
                 p = led.posts.get(post_id)
@@ -894,9 +884,42 @@ def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate
     return ActionResult(ok=True, detail={"retried": len(retried), "post_ids": retried, "outcome": "retried_rate_limit", "stagger_min": stagger_min})
 
 
+
+def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize", stagger_min: int = 2) -> ActionResult:
+    """Re-shrink and re-queue failed oversize (413) posts for daemon publish."""
+    from fanops.post.compress import apply_shrink_to_post
+    from fanops.studio.views_results import classify_failure
+    ids = [pid for pid, p in Ledger.load(cfg).posts.items()
+           if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "oversize"]
+    if not ids:
+        return ActionResult(ok=True, detail={"retried": 0, "post_ids": [], "skipped": 0, "outcome": "retried_oversize"})
+    retried: list[str] = []; skipped: list[str] = []
+    now = _now(None)
+    try:
+        with Ledger.transaction(cfg) as led:
+            for i, pid in enumerate(ids):
+                p = led.posts.get(pid)
+                if p is None or p.state not in (PostState.failed, PostState.error):
+                    continue
+                if not apply_shrink_to_post(cfg, led, p):
+                    skipped.append(pid); continue
+                p.state = PostState.queued
+                p.submission_id = None
+                p.error_reason = None
+                p.media_urls = [u for u in (p.media_urls or []) if not (u.startswith("http"))]
+                p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
+                retried.append(pid)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"retry_oversize failed: {str(exc)[:160]}")
+    if retried:
+        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
+    return ActionResult(ok=True, detail={"retried": len(retried), "skipped": len(skipped), "post_ids": retried,
+                                          "outcome": "retried_oversize", "stagger_min": stagger_min})
+
+
 def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str = "") -> ActionResult:
     """S1 recovery cockpit: retry (failed→queued, retryable buckets only), review (→awaiting_approval),
-    or discard (failed→rejected). Atomic per batch; unknown ids reported; oversize never retried."""
+    or discard (failed→rejected). Atomic per batch; unknown ids reported; oversize retried after auto-shrink."""
     from fanops.studio.views_results import classify_failure, _RETRYABLE_FAILURES
     ids = [str(i) for i in (post_ids or []) if i]
     if not ids:
@@ -916,6 +939,12 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
                 if action == "retry":
                     if classify_failure(p) not in _RETRYABLE_FAILURES:
                         skipped.append(pid); continue
+                    if classify_failure(p) == "oversize":
+                        from fanops.post.compress import apply_shrink_to_post, upload_cap_bytes, publish_backend_for_post
+                        backend = publish_backend_for_post(cfg, p)
+                        if upload_cap_bytes(cfg, p, backend) is None or not apply_shrink_to_post(cfg, led, p, backend=backend):
+                            skipped.append(pid); continue
+                        p.media_urls = [u for u in (p.media_urls or []) if not u.startswith("http")]
                     p.state = PostState.queued
                     p.submission_id = None
                     p.error_reason = None

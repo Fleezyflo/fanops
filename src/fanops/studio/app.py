@@ -376,6 +376,10 @@ def create_app(cfg: Config) -> Flask:
     def do_home_retry_rate_limit():
         return render_template("_publish_outcome.html", result=actions.retry_rate_limited_failures(cfg), cfg=cfg)
 
+    @app.post("/home/retry-oversize")
+    def do_home_retry_oversize():
+        return render_template("_publish_outcome.html", result=actions.retry_oversize_failures(cfg), cfg=cfg)
+
     @app.get("/home/daemon-health")
     def home_daemon_health():
         # WS-D1 Phase 2: the launchd PIPELINE-DRIVER liveness banner, htmx-loaded on Home (mirrors

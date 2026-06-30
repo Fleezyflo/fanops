@@ -551,7 +551,7 @@ def test_recover_posts_retry_requeues_retryable(tmp_path):
     led = Ledger.load(cfg)
     led.add_post(_fail_post("ok", "postiz 429"))
     led.posts["ok"].submission_id = "old_sub"
-    led.add_post(_fail_post("big", "zernio 413"))
+    big = _fail_post("big", "zernio 413"); big.platform = Platform.tiktok; led.add_post(big)
     led.save()
     res = recover_posts(cfg, ["ok", "big"], action="retry", reason="studio_retry")
     assert res.ok

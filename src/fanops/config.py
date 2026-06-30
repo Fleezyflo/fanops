@@ -854,11 +854,11 @@ class Config:
     @property
     def zernio_max_upload_bytes(self) -> int:
         # Zernio rejects large TikTok uploads with 413 — preflight BEFORE the two-step upload so the
-        # operator gets a fast oversize bucket (Sprint 2). DEFAULT 50 MB (live-discovered headroom).
+        # operator gets a fast oversize bucket (Sprint 2). DEFAULT 4 MB (live-discovered Zernio 413 ceiling).
         try:
-            mb = int(os.getenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "50"))
+            mb = int(os.getenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4"))
         except ValueError:
-            mb = 50
+            mb = 4
         return max(1, mb) * 1024 * 1024
 
     @property
