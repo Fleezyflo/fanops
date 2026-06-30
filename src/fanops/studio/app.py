@@ -288,7 +288,7 @@ def create_app(cfg: Config) -> Flask:
         # M5: inject `cfg` globally so templates can read cfg.is_live for the Posted-tab system-mode banner
         # (and any future banner that surfaces system state). Single source of truth — never recomputed
         # per surface, never out of sync with the running deployment's live/dryrun state.
-        return {"nav_account": _account_arg(), "compact": _compact_arg(),
+        return {"nav_account": _account_arg(), "review_nav": views.review_nav_params(cfg, _account_arg()), "compact": _compact_arg(),
                 "active_source": _source_arg(), "active_state": _state_arg(),
                 "active_view": _view_arg(), "ultra": _ultra_arg(),
                 "creative_variation": cfg.creative_variation,
@@ -333,16 +333,35 @@ def create_app(cfg: Config) -> Flask:
             return {}
         st = views.home_status(cfg)
         strip = views.build_system_strip(cfg)
+        np: dict = {}
+        if st.counts.get("awaiting", 0) > 0:
+            np = views.review_nav_params(cfg, _account_arg())
+        elif st.counts.get("failed", 0) > 0:
+            np = {"delivery": "failed"}
+        elif st.counts.get("inflight", 0) > 0:
+            np = {"delivery": "inflight"}
         return {"spine": views.build_spine(counts=st.counts, has_accounts=bool(st.accounts), here=here,
                                             inflight=st.counts.get("inflight", 0),
-                                            blocked_gates=strip.get("blocked_gates", 0))}
+                                            blocked_gates=strip.get("blocked_gates", 0), next_params=np)}
 
     @app.get("/")
     def index():
         # Face 2: a real read-only status home (accounts + connection + headline counts + batch entry + per-
         # account post counts), NOT a redirect. nav_account is injected globally (Face 4 spine); no chip context
         # here (Home renders no per-surface chip row — the chip universe is a per-tab concern).
-        return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), work_by_account=views.account_work_counts(cfg), tab="home")
+        return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), work_by_account=views.account_work_counts(cfg), review_handoff=views.review_handoff(cfg), tab="home")
+
+    @app.post("/home/pull-metrics")
+    def do_home_pull_metrics():
+        return render_template("_publish_outcome.html", result=actions.pull_metrics_studio(cfg), cfg=cfg)
+
+    @app.post("/home/reconcile")
+    def do_home_reconcile():
+        return render_template("_publish_outcome.html", result=actions.reconcile_inflight(cfg), cfg=cfg)
+
+    @app.post("/home/retry-rate-limit")
+    def do_home_retry_rate_limit():
+        return render_template("_publish_outcome.html", result=actions.retry_rate_limited_failures(cfg), cfg=cfg)
 
     @app.get("/home/daemon-health")
     def home_daemon_health():
@@ -448,6 +467,14 @@ def create_app(cfg: Config) -> Flask:
     @app.get("/media/<post_id>")
     def media(post_id):
         path = _bounded(cfg, _media_path_for_post(Ledger.load(cfg), post_id))
+        if not path or not os.path.exists(path):
+            abort(404)
+        return send_file(path)
+
+    @app.get("/media-preview/<post_id>")
+    def media_preview(post_id):
+        from fanops.studio.preview_media import preview_media_path
+        path = _bounded(cfg, preview_media_path(cfg, Ledger.load(cfg), post_id))
         if not path or not os.path.exists(path):
             abort(404)
         return send_file(path)

@@ -28,7 +28,7 @@ def _client(cfg):
 # every full-page surface (route → label fragment in the rail). The whole point: NONE is hidden.
 FULL_PAGES = ["/", "/run", "/review", "/publish", "/lift", "/posted", "/candidates", "/library",
               "/stitches", "/schedule", "/gates", "/personas", "/golive/connect"]
-RAIL_GROUPS = [b"Overview", b"Workflow", b"Insights", b"Tools", b"Setup"]
+RAIL_GROUPS = [b"Overview", b"Workflow", b"Tools", b"Setup"]
 
 def test_rail_landmark_present(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
@@ -96,7 +96,7 @@ def test_tools_group_holds_the_operational_surfaces(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
     tools = html[html.index('id="rg-tools"'):html.index('id="rg-setup"')]   # the Tools group's slice (it precedes Setup)
-    for path in ("/candidates", "/library", "/stitches"):
+    for path in ("/lift", "/candidates", "/library", "/stitches"):
         assert f'href="{path}"' in tools, f"{path} not under Tools"
 
 def test_setup_group_is_only_personas_and_accounts(tmp_path):
@@ -111,5 +111,5 @@ def test_setup_group_is_only_personas_and_accounts(tmp_path):
 def test_workflow_group_holds_decisions(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
-    wf = html[html.index('id="rg-workflow"'):html.index('id="rg-insights"')]
+    wf = html[html.index('id="rg-workflow"'):html.index('id="rg-tools"')]
     assert 'href="/gates"' in wf

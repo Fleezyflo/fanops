@@ -1,12 +1,11 @@
-{# _daemon_health.html — WS-D1 Phase 2: the launchd PIPELINE-DRIVER liveness banner (htmx-loaded on Home).
-   Loud when the driver is not `alive` so a dead/stale driver can't rot exit-127 unseen (the 2-week failure).
-   `daemon` is daemon.status()'s verdict dict, or None (non-darwin / launchctl absent) -> render nothing. #}
-{% if daemon and daemon.verdict != "alive" %}
-<div class="banner warn" data-daemon-warn="{{ daemon.verdict }}" role="alert">
-  ⚠ Pipeline driver {{ daemon.verdict }} — nothing processes hands-off until it's fixed
-  (a dropped video won't become clips/posts on its own).
-  Fix: <code>fanops daemon status</code> → <code>fanops daemon install</code>.
-</div>
+{# Pipeline driver liveness — loud when broken, quiet OK when running. #}
+{% if daemon %}
+{% if daemon.verdict == "alive" %}
+<p class="meta daemon-ok">Pipeline driver running{% if daemon.heartbeat_age_s is not none %} · last tick {{ daemon.heartbeat_age_s|int }}s ago{% endif %} — <a href="{{ url_for('run_panel') }}">Make tab</a></p>
 {% else %}
-<div data-daemon-ok hidden></div>
+<div class="banner warn" data-daemon-warn="{{ daemon.verdict }}" role="alert">
+  Pipeline driver {{ daemon.verdict }} — hands-off processing is off until fixed.
+  <a href="{{ url_for('run_panel') }}">Open Make</a> or run <code>fanops daemon install</code>.
+</div>
+{% endif %}
 {% endif %}

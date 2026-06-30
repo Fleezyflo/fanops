@@ -28,7 +28,7 @@ def register_schedule_routes(app, cfg):
         inflight_watch = views.inflight_watch(led, cfg, account=account, now=now)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
         return render_template(tmpl, rows=page.items, lanes=lanes, schedule_groups=schedule_groups, groups=None, page=page, approved_total=approved_total,
-                               active_batch=batch, due_plan=due_plan, cockpit=cockpit, inflight_watch=inflight_watch, result=result, tab="schedule",
+                               active_batch=batch, due_plan=due_plan, cockpit=cockpit, inflight_watch=inflight_watch, auto_ship=views.schedule_auto_ship(cfg), result=result, tab="schedule",
                                # R3-followup UI-LIE-FIX: the per-channel truth, NOT the legacy global. On a
                                # live deployment with per-channel routing cfg.poster_backend reads 'dryrun'
                                # (the bridge fallback), printing 'dryrun' on a system that's actually live.
@@ -138,6 +138,12 @@ def register_schedule_routes(app, cfg):
     def do_repost_post(post_id):
         # 'Post again': spawn a fresh awaiting_approval repost from a shipped post; re-render the library.
         return _posted_panel(actions.repost_post(cfg, post_id))
+
+    @app.post("/posts/resolve/<post_id>")
+    def do_resolve_post(post_id):
+        return _posted_panel(actions.resolve_post(
+            cfg, post_id, request.form.get("status", "failed"),
+            url=(request.form.get("url") or "").strip() or None))
 
     @app.post("/posts/recover")
     def do_recover_posts():

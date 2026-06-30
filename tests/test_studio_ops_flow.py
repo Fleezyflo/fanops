@@ -46,7 +46,8 @@ def test_review_grid_escape_with_focus_off(tmp_path):
 def test_approve_shows_schedule_outcome(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
     html = _client(cfg).post("/posts/approve?account=@a&view=account&focus=1", data={"ids": "p1"}).data.decode()
-    assert ("scheduled" in html.lower() or "approved_scheduled" in html) and "/schedule" in html
+    assert "next clip" in html.lower() or "approved" in html.lower()
+    assert "/schedule" not in html or "next clip" in html.lower()
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued
 
 def test_publish_now_blocked_when_not_live(tmp_path, monkeypatch):

@@ -13,10 +13,10 @@
   <p class="cockpit-next meta">Next slot <strong>{{ cockpit.next_time | localdt }}</strong>{% if cockpit.next_times|length > 1 %} · then {{ cockpit.next_times[1] | localdt }}{% endif %}</p>
   {% endif %}
   <div class="cockpit-actions">
-    {% if cfg.is_live and due_plan and due_plan.due %}
+    {% if cfg.is_live and due_plan and due_plan.due and not auto_ship %}
     <form class="inline publish-due" hx-post="{{ url_for('do_schedule_publish_due', account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
       <label class="confirm"><input type="checkbox" name="confirm" value="1"> I confirm {{ due_plan.due }} post{{ 's' if due_plan.due != 1 else '' }} go live</label>
-      <button type="submit" class="primary">Publish due ({{ due_plan.due }})</button>
+      <button type="submit" class="primary">Publish due ({{ due_plan.due }})</button>{% if due_plan.est_minutes %}<span class="muted">~{{ due_plan.est_minutes }} min at {{ due_plan.rate_per_min }}/min</span>{% endif %}
     </form>
     {% endif %}
     {% if cockpit.off_suggestion %}

@@ -4,15 +4,19 @@
   <div class="focus-toolbar meta"><strong>{{ active }}</strong> <span class="muted">{{ focus_idx + 1 }} / {{ focus_queue|length }}</span>
     <span class="muted-hint">A approve · R reject · arrows navigate</span>
     <a class="button ghost" href="{{ url_for('review', view='account', account=active, focus=0, grid=1, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), offset=pivot_page.offset if pivot_page else none) }}">Grid</a>
-    <a class="button ghost" href="{{ url_for('schedule', account=active) }}">Schedule</a>
+    <a class="button ghost" href="{{ url_for('posted', account=active, delivery='live') }}">Results</a>
   </div>
   {% if focus_item %}
   <article class="focus-card" id="focus-{{ focus_item.post_id }}">
     <div class="focus-player clip-frame">
       <video controls preload="metadata"{% if focus_item.thumb_url %} poster="{{ focus_item.thumb_url }}"{% endif %} src="{{ focus_item.media_url }}" aria-label="preview {{ focus_item.account }} {{ focus_item.platform }}"></video>
     </div>
+    {% if focus_item.variant_hook %}
+    <p class="focus-hook-banner">✦ {{ focus_item.variant_hook }}</p>
+    {% if focus_item.hook_preburn %}<p class="hook-preburn muted">Preview shows the burned hook (final burn locks on approve).</p>{% endif %}
+    {% elif focus_item.editable %}<p class="warn">No on-screen hook on this clip — answer hook decisions in <a href="{{ url_for('gates') }}">Blocked</a>.</p>{% endif %}
     <div class="focus-meta">
-      <p><span class="muted">{{ focus_item.platform }}</span>{% if focus_item.variant_hook %} · ✦ {{ focus_item.variant_hook }}{% endif %}</p>
+      <p><span class="muted">{{ focus_item.platform }}</span></p>
       {% if focus_item.caption %}<p class="focus-caption">{{ focus_item.caption }}</p>{% endif %}
     </div>
     <div class="focus-actions">
@@ -27,6 +31,6 @@
     </div>
   </article>
   {% else %}
-  <div class="empty">Nothing left to review for {{ active }} in this view. <a href="{{ url_for('schedule', account=active) }}">Check schedule →</a></div>
+    <div class="empty">Done for {{ active }} — nothing left to review. <a href="{{ url_for('index') }}">Pick next account →</a></div>
   {% endif %}
 </div>

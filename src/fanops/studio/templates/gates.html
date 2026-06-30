@@ -7,13 +7,41 @@
   <p class="muted">Answer these so the pipeline can continue — each {{ term('moment') }} gate unblocks Make. — then run <strong>Prepare</strong> in Make.</p>
   {% set moments = rows | selectattr('kind','equalto','moments') | list %}
   {% set moment_hooks = rows | selectattr('kind','equalto','moment_hooks') | list %}
+  {% set moment_casting = rows | selectattr('kind','equalto','moment_casting') | list %}
   {% set captions = rows | selectattr('kind','equalto','captions') | list %}
   {% set total = rows|length %}
   <div class="gates-progress meta" aria-live="polite"><strong>{{ total }}</strong> decision{{ 's' if total != 1 else '' }} waiting
-    {% if moment_hooks %} · {{ moment_hooks|length }} hook{% endif %}
+  
+  {% if moment_casting %}
+    <h3>Casting ({{ moment_casting | length }})</h3>
+    <p class="muted">Per-account moment selection — run <strong>Prepare</strong> in Make (LLM responder) or answer via CLI. Clips wait until this lands.</p>
+    {% for g in moment_casting %}
+      <div class="card gate-card" id="gate-cast-{{ g.key }}">
+        <strong>source {{ g.key }}</strong>
+        <span class="muted">{{ (g.moments or [])|length }} moments · {{ (g.personas or [])|length }} personas</span>
+        <p class="muted">Pending casting decision — crosspost is paused for this source.</p>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% if moment_hooks %} · {{ moment_hooks|length }} hook{% endif %}
+    {% if moment_casting %} · {{ moment_casting|length }} casting{% endif %}
     {% if captions %} · {{ captions|length }} caption{% endif %}
     {% if moments %} · {{ moments|length }} moment{% endif %}
   </div>
+
+
+  {% if moment_casting %}
+    <h3>Casting ({{ moment_casting | length }})</h3>
+    <p class="muted">Per-account moment selection — run <strong>Prepare</strong> in Make (LLM responder) or answer via CLI. Clips wait until this lands.</p>
+    {% for g in moment_casting %}
+      <div class="card gate-card" id="gate-cast-{{ g.key }}">
+        <strong>source {{ g.key }}</strong>
+        <span class="muted">{{ (g.moments or [])|length }} moments · {{ (g.personas or [])|length }} personas</span>
+        <p class="muted">Pending casting decision — crosspost is paused for this source.</p>
+      </div>
+    {% endfor %}
+  {% endif %}
 
   {% if moment_hooks %}
     <h3>Hooks ({{ moment_hooks | length }})</h3>

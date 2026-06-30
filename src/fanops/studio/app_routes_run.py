@@ -10,11 +10,19 @@ from fanops.studio import actions, views
 
 
 def register_run_routes(app, cfg):
+
+    def _run_handoff(result=None):
+        h = views.review_handoff(cfg)
+        bid = ((result or {}).detail or {}).get("batch_id") if result and result.ok else None
+        if bid:
+            h = {**h, "batch": bid}
+        return h
     @app.get("/run")
     def run_panel():
         # The pipeline DRIVER: ingest/pull/advance from the browser so the operator never needs the
         # terminal. Read-only status; the actions below go through the same lock-safe paths as the CLI.
-        return render_template("run.html", status=views.pipeline_status(cfg), tab="run")
+        return render_template("run.html", status=views.pipeline_status(cfg),
+                               review_handoff=_run_handoff(), tab="run")
 
     @app.get("/run/status")
     def run_status():
@@ -25,7 +33,8 @@ def register_run_routes(app, cfg):
     def _run_panel(result):
         # Re-render the panel partial with FRESH status after an action (htmx swaps #run-panel), so the
         # counts update in place — drop files, click ingest, watch sources tick up, no page reload.
-        return render_template("_run_panel.html", status=views.pipeline_status(cfg), result=result, tab="run")
+        return render_template("_run_panel.html", status=views.pipeline_status(cfg), result=result,
+                                   review_handoff=_run_handoff(result), tab="run")
 
     @app.post("/run/ingest")
     def do_run_ingest():
@@ -55,6 +64,10 @@ def register_run_routes(app, cfg):
         # confirm derived from the checkbox the template shows ONLY on a live backend (Track C guard).
         return _run_panel(actions.run_advance(cfg, request.form.get("base_time") or None,
                                               confirmed=bool(request.form.get("confirm"))))
+
+    @app.post("/run/pull-metrics")
+    def do_pull_metrics():
+        return _run_panel(actions.pull_metrics_studio(cfg))
 
     @app.post("/run/prepare")
     def do_run_prepare():

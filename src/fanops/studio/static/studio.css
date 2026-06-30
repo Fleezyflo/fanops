@@ -875,3 +875,14 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .session-stat--warn a:hover { text-decoration:underline; }
 .publish-guard, .schedule-guard { margin:0 0 var(--s-3); padding:.5rem .65rem; border-radius:var(--r-md); background:color-mix(in oklch, var(--warn) 12%, var(--surface-1)); border:1px solid color-mix(in oklch, var(--warn) 35%, var(--line)); }
 .review-focus .focus-toolbar .muted-hint { font-size:var(--t-meta); color:var(--muted); }
+
+.home-loop { margin:0 0 var(--s-3); display:flex; flex-wrap:wrap; gap:.5rem .75rem; align-items:center; }
+.daemon-ok { color:var(--state-live); }
+.posted-row-actions .inflight-resolve input[name=url] { max-width:14rem; }
+
+.run-handoff { margin:0 0 var(--s-3); }
+.schedule-auto { color:var(--state-live); margin:0 0 var(--s-2); }
+
+.home-start-here { margin:0 0 var(--s-3); }
+.focus-hook-banner { font-size:var(--t-lead); font-weight:600; margin:0 0 var(--s-2); padding:.5rem .65rem; background:var(--surface-2); border-radius:var(--r-md); border-left:3px solid var(--accent); }
+.hook-preburn { font-size:var(--t-meta); margin:0 0 var(--s-2); }

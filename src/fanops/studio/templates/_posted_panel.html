@@ -32,13 +32,13 @@
       <div class="posted-accent" aria-hidden="true"></div>
       {% if active_delivery == 'failed' %}<label class="posted-check"><input type="checkbox" name="ids" value="{{ r.post_id }}"></label>{% endif %}
       <div class="posted-main">
-        <div class="posted-head">{{ (r.published_at or r.scheduled_time) | localdt or '—' }} · <strong>{{ r.account }}</strong> {{ r.platform }} {{ state_badge(r.posted_via, testid='posted-channel-chip') }}{% if r.failure_kind %} <span class="chip fail-kind">{{ r.failure_kind | failure_label }}</span>{% endif %}</div>
+        <div class="posted-head">{{ (r.published_at or r.scheduled_time) | localdt or '—' }} · <strong>{{ r.account }}</strong> {{ r.platform }} {{ state_badge(r.posted_via, testid='posted-channel-chip') }}{% if r.batch_id %} <a class="muted batch-chip" href="{{ url_for('posted', batch=r.batch_id, account=active) }}">{{ r.batch_id }}</a>{% endif %}{% if r.failure_kind %} <span class="chip fail-kind">{{ r.failure_kind | failure_label }}</span>{% endif %}</div>
         <p class="clamp-1">{% if r.variant_hook %}✦ {{ r.variant_hook }} · {% endif %}{{ r.caption or '—' }}</p>
         <div class="posted-primary">
           {% if r.posted_via == 'failed' %}<span class="err">{{ (r.error_reason or 'failed') | operator_error(kind=r.failure_kind) }}</span>
           {% else %}<span>Lift {{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }} {{ lineage_delta(r) }}</span>{% endif %}
           {% if r.posted_via == 'live' and r.public_url %}<a class="live-link" href="{{ r.public_url }}" target="_blank" rel="noopener">View on {{ r.platform }} ↗</a>
-          {% elif r.posted_via == 'inflight' %}<span class="muted">Waiting for link</span>
+          {% elif r.posted_via == 'inflight' %}<span class="muted">Waiting for link</span>{% if r.error_reason %} · <span class="err">{{ r.error_reason | operator_error }}</span>{% endif %}
           {% elif r.posted_via == 'dryrun' %}<span class="muted">no link</span>{% elif r.posted_via not in ('failed',) %}<span class="muted">no live link</span>{% endif %}
         </div>
         {% if r.posted_via not in ('failed',) %}
@@ -53,6 +53,18 @@
           <input name="platform" placeholder="platform" size="10">
           <button type="submit">Crosspost</button>
         </form>
+        {% elif r.posted_via == 'inflight' %}
+        <div class="posted-row-actions">
+          <form class="inline inflight-resolve" hx-post="{{ url_for('do_resolve_post', post_id=r.post_id, account=active, batch=active_batch|default(none), delivery=active_delivery|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
+            <input name="url" placeholder="paste live URL" size="28">
+            <input type="hidden" name="status" value="published">
+            <button type="submit">Mark live</button>
+          </form>
+          <form class="inline" hx-post="{{ url_for('do_resolve_post', post_id=r.post_id, account=active, batch=active_batch|default(none), delivery=active_delivery|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
+            <input type="hidden" name="status" value="failed">
+            <button type="submit">Mark failed</button>
+          </form>
+        </div>
         {% elif r.posted_via == 'failed' %}
         <div class="posted-row-actions">
           {% if r.failure_kind != 'oversize' %}<button type="submit" form="recover-one-{{ r.post_id }}" name="recover_action" value="retry">Retry</button>{% endif %}

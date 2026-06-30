@@ -173,6 +173,7 @@ class Moment(BaseModel):
                                                 # was stripped (old ledgers load fine).
     signal_score: float = 0.0
     hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own frame-grounded on-screen hook (the moment author writes these); {} -> every surface uses `hook` (old ledgers load fine)
+    hooks_by_persona_removed: dict[str, str] = Field(default_factory=dict)   # per-account hooks stripped by guards (mirror hook_removed); {} on old ledgers
     hook_strategy: Optional[str] = None         # M2 router: text | clean_final | clean_awaiting_strategy:<key>
                                                 # | stitch:<format>. Observe-only annotation; None = unrouted
                                                 # (router off / old ledgers load). One writer: router.route_moments.

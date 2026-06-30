@@ -3,5 +3,5 @@
   <span>Clips ready<strong>{{ status.clips }}</strong></span>
   <span>Published<strong>{{ status.published }}</strong></span>
   <span>Mode<strong>{{ status.backend }}</strong></span>
-  {% if status.pending_moments + status.pending_moment_hooks + status.pending_captions %}<span class="warn">Gates<strong>{{ status.pending_moments + status.pending_moment_hooks + status.pending_captions }}</strong> <a href="{{ url_for('gates') }}">answer</a></span>{% endif %}
+  {% if status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_moment_casting', 0) + status.get('pending_captions', 0) %}<span class="warn">Gates<strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_moment_casting', 0) + status.get('pending_captions', 0) }}</strong> <a href="{{ url_for('gates') }}">answer</a></span>{% endif %}
 </div>

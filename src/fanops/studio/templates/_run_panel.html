@@ -28,6 +28,9 @@
   {% include "_run_next.html" %}
   <div id="run-status-slot" hx-get="{{ url_for('run_status') }}" hx-trigger="load, every 5s" hx-swap="innerHTML">{% include "_run_status.html" %}</div>
 
+  {% if result and result.ok and review_handoff and review_handoff.awaiting %}
+    <p class="run-handoff"><a class="button primary" href="{{ url_for('review', account=review_handoff.account, view='account', focus=1, batch=review_handoff.batch|default(none)) }}">Review {{ review_handoff.awaiting }} for {{ review_handoff.account }} →</a></p>
+  {% endif %}
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
       {% if result.ok %}Done{% if result.detail %} — {% if result.detail.saved is defined %}{{ result.detail.saved|length }} added, {{ result.detail.skipped|length }} skipped{% else %}{{ result.detail }}{% endif %}{% endif %}{% if result.detail and result.detail.batch %} · batch '{{ result.detail.batch }}'{% endif %}
@@ -95,7 +98,7 @@
 
     <div class="queue-meter">
       <span><strong>{{ status.sources }}</strong> source{{ '' if status.sources == 1 else 's' }} queued</span>
-      <span><strong>{{ status.pending_moments + status.pending_captions }}</strong> awaiting decisions</span>
+      <span><strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_moment_casting', 0) + status.get('pending_captions', 0) }}</strong> awaiting decisions</span>
       <span><strong>{{ status.holds }}</strong> on hold</span>
     </div>
 
@@ -118,12 +121,30 @@
     <header class="stage-card-head">
       <span class="stage-card-num">03</span>
       <h3>Review</h3>
-      <span class="stage-card-hint">Approve clips per account, then schedule.</span>
+      <span class="stage-card-hint">Watch each clip, approve — shipping is automatic on schedule.</span>
     </header>
     <p class="stage-handoff-line">
-      <a href="{{ url_for('review') }}" class="stage-handoff-link">Open Review →</a>
+      {% if review_handoff and review_handoff.awaiting %}<a href="{{ url_for('review', account=review_handoff.account, view='account', focus=1, batch=review_handoff.batch|default(none)) }}" class="stage-handoff-link">Review {{ review_handoff.account }} ({{ review_handoff.awaiting }}) →</a>{% else %}<a href="{{ url_for('review') }}" class="stage-handoff-link">Open Review →</a>{% endif %}
       <span class="muted">{{ status.posts }} post{{ '' if status.posts == 1 else 's' }} in the ledger.</span>
     </p>
+  </section>
+
+
+  <section class="stage-card stage-card-handoff">
+    <header class="stage-card-head">
+      <span class="stage-card-num">04</span>
+      <h3>Learn</h3>
+      <span class="stage-card-hint">Pull analytics after posts ship.</span>
+    </header>
+    {% if cfg.is_live %}
+    <form class="inline stage-busy" hx-post="{{ url_for('do_pull_metrics') }}" hx-target="#run-panel" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]" hx-indicator="this">
+      <button type="submit" data-busy-label="Pulling…">Pull metrics</button>
+      <span class="muted">Updates lift scores for live posts. The daemon does this automatically if installed.</span>
+    </form>
+    {% else %}
+    <p class="muted">Turn on <a href="{{ url_for('golive_connect') }}">Go Live</a> to pull real analytics.</p>
+    {% endif %}
+    <p class="stage-handoff-line"><a href="{{ url_for('posted', delivery='live') }}" class="stage-handoff-link">See results →</a></p>
   </section>
 
   <details class="run-advanced">
@@ -134,7 +155,7 @@
         <span>3rd-party<strong>{{ status.third_party }}</strong></span>
         <span>Posts<strong>{{ status.posts }}</strong></span>
         <span>Held<strong>{{ status.holds }}</strong></span>
-        <span>Awaiting<strong>{{ status.pending_moments + status.pending_captions }}</strong></span>
+        <span>Awaiting<strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_moment_casting', 0) + status.get('pending_captions', 0) }}</strong></span>
       </div>
       <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML"
             hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-busy">

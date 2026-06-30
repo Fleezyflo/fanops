@@ -300,8 +300,11 @@ def _studio_publish_guard(cfg: Config, post=None) -> Optional[str]:
         from fanops.accounts import Accounts
         from fanops.post.run import _post_provider
         accts = Accounts.load(cfg)
-        if _post_provider(cfg, accts, post) == "dryrun":
+        prov = _post_provider(cfg, accts, post)
+        if prov == "dryrun":
             return (f"{post.account} on {post.platform.value} routes to dryrun — map the channel in Go Live → Accounts.")
+        if prov is None:
+            return (f"{post.account} on {post.platform.value} is not mapped — connect the channel in Go Live.")
     return None
 
 
@@ -321,6 +324,27 @@ def accept_suggested_account(cfg: Config, handle: str, *, now: Optional[datetime
     except Exception as exc:
         return ActionResult(ok=False, error=f"accept suggestions failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"rescheduled": moved, "outcome": "suggestions_accepted", "handle": handle})
+
+
+def preflight_publish_media(cfg: Config, post) -> str | None:
+    """Return an error string when local media exceeds backend caps (fail BEFORE network)."""
+    from pathlib import Path
+    from fanops.models import Platform
+    path = None
+    if post.render_id:
+        r = Ledger.load(cfg).renders.get(post.render_id)
+        path = r.path if r else None
+    elif post.media_urls and post.media_urls[0].startswith("file://"):
+        path = post.media_urls[0][7:]
+    elif post.media_urls and not post.media_urls[0].startswith("http"):
+        path = post.media_urls[0]
+    if not path or not Path(path).exists():
+        return None
+    size = Path(path).stat().st_size
+    backend = cfg.effective_publish_mode()
+    if post.platform is Platform.tiktok and backend == "zernio" and size > cfg.zernio_max_upload_bytes:
+        return f"oversize: {size} bytes > {cfg.zernio_max_upload_bytes} — re-render shorter"
+    return None
 
 
 def reconcile_inflight(cfg: Config) -> ActionResult:
@@ -358,6 +382,16 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
         return ActionResult(ok=False, error=f"post {post_id} is {st.value} — only a queued post can be published")
     if (err := _studio_publish_guard(cfg, post)):
         return ActionResult(ok=False, error=err)
+    if (pf := preflight_publish_media(cfg, post)):
+        try:
+            with Ledger.transaction(cfg) as led:
+                p = led.posts.get(post_id)
+                if p is not None:
+                    p.state = PostState.failed
+                    p.error_reason = pf
+        except Exception:
+            pass
+        return ActionResult(ok=False, error=pf)
     try:
         # network runs OUTSIDE the ledger lock (per-post claim->network->finalize) — the Studio no longer
         # holds the flock across the publish round-trip, so a concurrent daemon pass isn't starved.
@@ -684,6 +718,82 @@ def publish_due_bucket(cfg: Config, *, handle: Optional[str] = None, batch: Opti
     write_audit(cfg, "publish_due_bucket", [], reason="studio_publish_due_bucket", handle=handle, batch=batch, **summary)
     return ActionResult(ok=True, detail={**summary, "plan": plan.__dict__})
 
+
+_REVIEW_REVERT_BLOCKED = frozenset({
+    PostState.published, PostState.analyzed, PostState.needs_reconcile,
+    PostState.submitting, PostState.submitted,
+})
+
+
+def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] = None) -> ActionResult:
+    """Studio twin of cmd_resolve — operator forces ground truth on stuck inflight posts."""
+    from fanops.models import _POST_TERMINAL_REQUIRES_URL
+    if post_id not in (Ledger.load(cfg).posts):
+        return ActionResult(ok=False, error=f"no such post: {post_id}")
+    try:
+        st = PostState(status)
+    except ValueError:
+        st = PostState.published if status == "published" else PostState.failed
+    if st in _POST_TERMINAL_REQUIRES_URL and not (url or "").strip():
+        return ActionResult(ok=False, error="Paste the live permalink to mark this post published.")
+    try:
+        with Ledger.transaction(cfg) as led:
+            if post_id not in led.posts:
+                return ActionResult(ok=False, error=f"no such post: {post_id}")
+            p = led.posts[post_id]
+            if (url or "").strip():
+                p.public_url = url.strip()
+            p.state = st
+            if st is PostState.failed:
+                p.error_reason = p.error_reason or "marked failed by operator"
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"resolve failed: {str(exc)[:160]}")
+    write_audit(cfg, "resolve_post", [post_id], reason="studio_resolve", status=st.value, url=(url or "").strip())
+    outcome = "live_shipped" if st is PostState.published else "failed"
+    return ActionResult(ok=True, detail={"post_id": post_id, "outcome": outcome, "state": st.value,
+                                          "public_url": (url or "").strip() or None})
+
+
+def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
+    """Pull analytics for live posts — closes the Posted→Learn loop from Studio."""
+    if not cfg.is_live:
+        return ActionResult(ok=False, error="Publishing is off — turn on Go Live before pulling metrics.")
+    from fanops.models import LIFT_SCORE
+    from fanops.track import pull_metrics, _default_list_posts
+    from fanops.digest import write_digest
+    try:
+        led0 = Ledger.load(cfg)
+        pollable = [p for p in led0.posts.values()
+                    if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
+        if not pollable:
+            return ActionResult(ok=True, detail={"outcome": "metrics_pulled", "analyzed": 0, "series_rows": 0,
+                                                    "degraded": 0, "pollable": 0})
+        rows = list(_default_list_posts(cfg, posts=pollable)(window))
+    except (RuntimeError, AuthError) as exc:
+        return ActionResult(ok=False, error=str(exc)[:160])
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"metrics pull failed: {str(exc)[:160]}")
+    try:
+        with Ledger.transaction(cfg) as led:
+            before = {pid: len(p.metrics_series) for pid, p in led.posts.items()}
+            led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
+            analyzed = len(led.posts_in_state(PostState.analyzed))
+            added = deg = 0
+            for pid, p in led.posts.items():
+                new_rows = p.metrics_series[before.get(pid, 0):]
+                added += len(new_rows)
+                deg += sum(1 for r in new_rows if r.get("lift_degraded"))
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"metrics apply failed: {str(exc)[:160]}")
+    try:
+        write_digest(Ledger.load(cfg), cfg)
+    except Exception:
+        pass
+    write_audit(cfg, "pull_metrics", [], reason="studio_pull_metrics", analyzed=analyzed, series_rows=added)
+    return ActionResult(ok=True, detail={"outcome": "metrics_pulled", "analyzed": analyzed,
+                                          "series_rows": added, "degraded": deg, "pollable": len(pollable)})
+
+
 def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> ActionResult:
     """R3/D7: the operator's wipe-and-revert flow as a first-class API. For each id move
     state -> awaiting_approval and clear the post-publish telemetry (scheduled_time,
@@ -694,6 +804,7 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
     audit so 'why this batch went back to Review' is in the log."""
     ids = [str(i) for i in (post_ids or []) if i]
     moved: list[str] = []
+    skipped: list[str] = []
     unknown: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
@@ -701,8 +812,8 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                 if pid not in led.posts:
                     unknown.append(pid); continue
                 p = led.posts[pid]
-                # R1 invariant: a terminal-with-URL post leaving the URL-required state is fine —
-                # awaiting_approval is not in _POST_TERMINAL_REQUIRES_URL, so the validator stays happy.
+                if p.state in _REVIEW_REVERT_BLOCKED:
+                    skipped.append(pid); continue
                 p.state = PostState.awaiting_approval
                 p.scheduled_time = None
                 p.public_url = ""
@@ -717,8 +828,33 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
     if moved:
         write_audit(cfg, "bulk_send_to_review", moved, reason=reason,
                     unknown=unknown, moved=len(moved))
-    return ActionResult(ok=True, detail={"moved": len(moved), "unknown": unknown,
+    return ActionResult(ok=True, detail={"moved": len(moved), "skipped": len(skipped), "unknown": unknown,
                                           "post_ids": moved})
+
+
+def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate_limit") -> ActionResult:
+    """Queue all failed posts whose error_reason is a rate-limit (429) for daemon retry."""
+    from fanops.studio.views_results import classify_failure
+    ids = [pid for pid, p in Ledger.load(cfg).posts.items()
+           if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "rate_limit"]
+    if not ids:
+        return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
+    retried: list[str] = []
+    try:
+        with Ledger.transaction(cfg) as led:
+            for pid in ids:
+                p = led.posts.get(pid)
+                if p is None or p.state not in (PostState.failed, PostState.error):
+                    continue
+                p.state = PostState.queued
+                p.submission_id = None
+                p.error_reason = None
+                retried.append(pid)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"retry_rate_limited failed: {str(exc)[:160]}")
+    if retried:
+        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
+    return ActionResult(ok=True, detail={"retried": len(retried), "post_ids": retried, "outcome": "retried_rate_limit"})
 
 
 def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str = "") -> ActionResult:

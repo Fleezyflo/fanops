@@ -329,11 +329,17 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
                 get_logger(cfg)("source", source_id, "hook_persona_unknown_handle",
                                 moment=m.id, handles=",".join(sorted(unknown)))
             raw_hbp = {hh: ph for hh, ph in raw_hbp.items() if hh in valid}
-        hbp = {hh: s for hh, ph in raw_hbp.items()
-               if (s := sanitize_generated_text(ph)) and not narration_signature(s)
-               and not has_artist_reference(s, cfg.artist_name) and not brand_risk_flag(s, cfg)}
+        hbp: dict[str, str] = {}
+        hbp_removed: dict[str, str] = {}
+        for hh, ph in raw_hbp.items():
+            s = sanitize_generated_text(ph) if ph else ""
+            if s and not narration_signature(s) and not has_artist_reference(s, cfg.artist_name) and not brand_risk_flag(s, cfg):
+                hbp[hh] = s
+            elif (ph or "").strip():
+                hbp_removed[hh] = s or (ph or "").strip()
+                get_logger(cfg)("source", source_id, "hook_persona_stripped", moment=m.id, account=hh)
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
-                                                 "hooks_by_persona": hbp,
+                                                 "hooks_by_persona": hbp, "hooks_by_persona_removed": hbp_removed,
                                                  "hook_frames_unread": bool(getattr(dec, "hook_frames_unread", False)),  # AGENT-9
                                                  "state": MomentState.decided})
     led.set_source_state(source_id, SourceState.moments_decided)   # every pick's hook landed atomically

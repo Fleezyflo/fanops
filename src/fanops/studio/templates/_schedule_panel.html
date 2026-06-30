@@ -3,12 +3,13 @@
 <div id="schedule-body" aria-live="polite"{% if lanes.inflight|length %} hx-get="{{ url_for('schedule', account=active, batch=active_batch|default(none), offset=page.offset if page else none) }}" hx-trigger="every 30s" hx-select="#schedule-body" hx-swap="outerHTML"{% endif %}>
   {% include "_account_filter.html" %}
   {% include "_publish_outcome.html" %}
+  {% if auto_ship %}<p class="schedule-auto meta">Daemon ships on schedule — times below are when posts go live.</p>{% endif %}
   {% if not cfg.is_live %}<p class="schedule-guard warn">Publishing is off — <a href="{{ url_for('golive_connect') }}">Go Live</a> to ship approved posts.</p>{% endif %}
   {% include "_schedule_cockpit.html" %}
-  {% if cfg.is_live and due_plan and due_plan.due and not cockpit %}
+  {% if cfg.is_live and due_plan and due_plan.due and not cockpit and not auto_ship %}
     <form class="publish-due" hx-post="{{ url_for('do_schedule_publish_due', account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
       <label class="confirm"><input type="checkbox" name="confirm" value="1"> I confirm {{ due_plan.due }} post{{ 's' if due_plan.due != 1 else '' }} go live</label>
-      <button type="submit" class="primary">Publish due ({{ due_plan.due }})</button>
+      <button type="submit" class="primary">Publish due ({{ due_plan.due }})</button>{% if due_plan.est_minutes %}<span class="muted">~{{ due_plan.est_minutes }} min</span>{% endif %}
     </form>
   {% endif %}
   {% if approved_total %}
@@ -65,7 +66,7 @@
               </form>
               {% endif %}
               {% if r.ready %}<span class="chip ok schedule-ready">ready</span>{% elif r.ready is not none %}<span class="chip warn schedule-ready">fix clip</span>{% endif %}
-              {% if cfg.is_live %}
+              {% if cfg.is_live and not auto_ship %}
               <form hx-post="{{ url_for('do_schedule_publish', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
                 <label class="confirm"><input type="checkbox" name="confirm" value="1"> live</label>
                 <button type="submit" class="primary"{% if r.ready is false %} disabled title="Clip not ready to ship"{% endif %}>Publish</button>

@@ -2,7 +2,7 @@
 (lock-free) and assembles these dataclasses; templates render them. Mutations live in actions.py."""
 from __future__ import annotations
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -145,6 +145,7 @@ def pipeline_status(cfg: Config) -> dict:
         "holds": sum(1 for c in led.clips.values() if c.held),
         "pending_moments": len(pending(cfg, kind="moments")),
         "pending_moment_hooks": len(pending(cfg, kind="moment_hooks")),
+        "pending_moment_casting": len(pending(cfg, kind="moment_casting")),
         "pending_captions": len(pending(cfg, kind="captions")),
         # R3-followup: the UI mode label MUST be the per-channel truth, not the legacy global. On a live
         # deployment with per-channel routing, cfg.poster_backend still reads 'dryrun' (the legacy
@@ -171,7 +172,7 @@ def run_next_step(status: dict) -> dict:
         try: return int(s.get(k, 0) or 0)
         except (TypeError, ValueError): return 0
     footage = _n("sources") + _n("third_party")
-    gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_captions")
+    gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_moment_casting") + _n("pending_captions")
     awaiting = _n("awaiting")               # ACTIONABLE clips awaiting review (moments) — the SAME unit Home/Review
                                             # show, so the Make banner agrees with them (was raw posts: "57" vs "17").
     if footage == 0:
@@ -410,7 +411,7 @@ def build_system_strip(cfg: Config) -> dict:
     try:
         ps = pipeline_status(cfg)
         blocked = (ps.get("pending_moments", 0) + ps.get("pending_moment_hooks", 0)
-                   + ps.get("pending_captions", 0))
+                   + ps.get("pending_moment_casting", 0) + ps.get("pending_captions", 0))
     except Exception:
         blocked = 0
     failed = 0
@@ -447,6 +448,65 @@ def _queued_has_future_schedule(p, now: datetime) -> bool:
         return parse_iso(p.scheduled_time) > now
     except (ValueError, TypeError):
         return False
+
+def schedule_auto_ship(cfg: Config) -> bool:
+    """Live + daemon alive — Schedule is read-only; posts ship on the clock."""
+    if not cfg.is_live:
+        return False
+    dh = daemon_health(cfg)
+    return bool(dh and dh.get("verdict") == "alive")
+
+
+def review_handoff(cfg: Config) -> dict:
+    """Account with the most awaiting posts — Make → Review entry."""
+    wc = account_work_counts(cfg)
+    best_h, best_n = None, 0
+    for h, c in wc.items():
+        n = int(c.get("awaiting") or 0)
+        if n > best_n:
+            best_h, best_n = h, n
+    if not best_h or not best_n:
+        return {}
+    out = {"account": best_h, "awaiting": best_n}
+    try:
+        led = Ledger.load(cfg)
+        by_batch: dict[str, int] = {}
+        for p in led.posts.values():
+            if p.state is PostState.awaiting_approval and p.account == best_h and p.batch_id:
+                by_batch[p.batch_id] = by_batch.get(p.batch_id, 0) + 1
+        if by_batch:
+            out["batch"] = max(by_batch, key=by_batch.get)
+    except Exception:
+        pass
+    return out
+
+
+def review_nav_params(cfg: Config, account: str | None = None) -> dict:
+    """Review focus entry — account + dominant batch for handoff links."""
+    out: dict = {"view": "account", "focus": 1}
+    h = account
+    batch = None
+    if not h:
+        handoff = review_handoff(cfg)
+        h = handoff.get("account")
+        batch = handoff.get("batch")
+    if h:
+        out["account"] = h
+        if batch is None:
+            try:
+                led = Ledger.load(cfg)
+                by_batch: dict[str, int] = {}
+                for p in led.posts.values():
+                    if p.state is PostState.awaiting_approval and p.account == h and p.batch_id:
+                        by_batch[p.batch_id] = by_batch.get(p.batch_id, 0) + 1
+                if by_batch:
+                    batch = max(by_batch, key=by_batch.get)
+            except Exception:
+                pass
+    if batch:
+        out["batch"] = batch
+    return out
+
 
 def account_work_counts(cfg: Config) -> dict[str, dict]:
     """Per-handle work queue counts for Home rows and the account session bar."""
@@ -493,6 +553,8 @@ def home_status(cfg: Config) -> HomeStatus:
                              if p.state in (PostState.published, PostState.analyzed)
                              and _classify_channel(getattr(p, "public_url", None)) == "live")
         failed = st.get(PostState.failed, 0)
+        from fanops.studio.views_results import failure_rollup
+        fb = failure_rollup(led)["buckets"]
         counts = {"sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),
                   "batches": len(getattr(led, "batches", {})),
                   "awaiting": awaiting_moment_count(led),
@@ -502,7 +564,7 @@ def home_status(cfg: Config) -> HomeStatus:
                   "due_soon": due_soon,
                   "live_today": live_today,
                   "live_trackable": live_trackable,
-                  "failed": failed,
+                  "failed": failed, "failed_rate_limit": fb.get("rate_limit", 0),
                   "posted": st.get(PostState.published, 0) + st.get(PostState.analyzed, 0)}
         by_account = dict(Counter(p.account for p in led.posts.values()))
     except Exception as exc:                          # the first page an operator sees must never 500
@@ -567,6 +629,7 @@ class WorkflowSpine:                    # the whole through-line: the ordered pa
     here: Optional[str]                # the current stage key (from the active tab), else None
     inflight: int = 0                  # needs_reconcile + submitting (Schedule severity)
     blocked_gates: int = 0             # pending agent gates (Make severity dot)
+    next_params: dict = field(default_factory=dict)  # extra url_for kwargs for the next CTA
 
 
 _SPINE_ORDER = (("make", "Make", "run_panel"), ("review", "Review", "review"),
@@ -574,7 +637,7 @@ _SPINE_ORDER = (("make", "Make", "run_panel"), ("review", "Review", "review"),
 
 
 def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
-                inflight: int = 0, blocked_gates: int = 0) -> WorkflowSpine:
+                inflight: int = 0, blocked_gates: int = 0, next_params: Optional[dict] = None) -> WorkflowSpine:
     """Pure: turn the Home counts into the Make→Review→Schedule→Posted stepper. Stage badges carry
     severity when blocked (Make), awaiting>20 (Review), or inflight>0 (Schedule)."""
     src = int(counts.get("sources", 0)); awaiting = int(counts.get("awaiting", 0))
@@ -601,7 +664,7 @@ def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
     elif live_trackable > 0:           n = ("You're all caught up", None)
     else:                              n = ("Run a pass in Make", "run_panel")
     return WorkflowSpine(stages=stages, next_label=n[0], next_endpoint=n[1], here=here,
-                         inflight=inflight, blocked_gates=blocked_gates)
+                         inflight=inflight, blocked_gates=blocked_gates, next_params=next_params or {})
 
 
 def golive_status(cfg: Config) -> GoLiveStatus:
@@ -648,7 +711,7 @@ def gate_rows(cfg: Config) -> list[dict]:
     A torn/unreadable request file is skipped (fail-open) rather than 500-ing the tab."""
     from fanops.agentstep import pending, request_path
     rows: list[dict] = []
-    for kind in ("moments", "moment_hooks", "captions"):
+    for kind in ("moments", "moment_hooks", "moment_casting", "captions"):
         for key in pending(cfg, kind=kind):
             try:
                 payload = json.loads(request_path(cfg, kind, key).read_text())
