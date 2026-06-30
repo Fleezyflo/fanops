@@ -327,6 +327,27 @@ def cmd_bulk_send_to_review(cfg: Config, args) -> int:
     return 0
 
 
+def cmd_revert_phantom_published(cfg: Config, args) -> int:
+    """Revert reconcile-only phantom publishes (published + no published_at + no metrics)."""
+    from fanops.studio.actions import revert_phantom_published
+    ids = list(args.post_ids) if args.post_ids else None
+    res = revert_phantom_published(cfg, ids, reason=args.reason, dry_run=args.dry_run)
+    if not res.ok:
+        print(res.error, file=sys.stderr); return 2
+    d = res.detail or {}
+    if d.get("dry_run"):
+        print(f"dry-run: would revert {d.get('would_revert', 0)} phantom publishes")
+    else:
+        print(f"reverted {d.get('reverted', 0)} phantom publishes -> awaiting_approval")
+    skipped = d.get("skipped") or 0
+    if skipped:
+        print(f"skipped (not phantom): {skipped}")
+    unknown = d.get("unknown") or []
+    if unknown:
+        print(f"unknown ids: {', '.join(unknown)}")
+    return 0
+
+
 def cmd_doctor_fix_ghosts(cfg: Config, args) -> int:
     """R1 migration: heal any pre-existing ghost rows (state=published, public_url='') in a ledger
     written BEFORE the R1 invariant landed. Reads ledger.json as RAW JSON (bypassing the Pydantic
@@ -580,6 +601,10 @@ def main(argv: list[str] | None = None) -> int:
     p_bsr = sub.add_parser("bulk-send-to-review", help="(R3) revert posts to awaiting_approval; clears scheduled_time/public_url/metrics/published_at")
     p_bsr.add_argument("post_ids", nargs="+")
     p_bsr.add_argument("--reason", required=True, help="operator intent recorded in the audit (e.g. bad_batch_revert)")
+    p_ppp = sub.add_parser("purge-phantom-publishes", help="revert reconcile-only phantom publishes (published, no published_at, no metrics)")
+    p_ppp.add_argument("post_ids", nargs="*", help="optional ids; omit to auto-detect all phantoms")
+    p_ppp.add_argument("--reason", required=True, help="operator intent recorded in the audit")
+    p_ppp.add_argument("--dry-run", action="store_true", help="report what would revert without writing")
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
     p_studio.add_argument("--port", type=int, default=8787)
@@ -806,6 +831,8 @@ def _dispatch(cfg: Config, args) -> int:
         return cmd_audit(cfg, args)
     if args.cmd == "bulk-send-to-review":
         return cmd_bulk_send_to_review(cfg, args)
+    if args.cmd == "purge-phantom-publishes":
+        return cmd_revert_phantom_published(cfg, args)
     if args.cmd == "unhold":
         # RUNTIME backlog (f): clear a brand-risk hold WITHOUT a hand-edit of ledger.json. When a
         # clip was parked in `held` (held=True, held_reason set) by the brand-risk gate, the

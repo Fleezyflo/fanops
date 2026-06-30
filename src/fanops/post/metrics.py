@@ -285,17 +285,27 @@ def _map_zernio_analytics(body) -> dict:
         return out
     return {}
 
+def _zernio_platform_metric_payload(row: dict) -> object | None:
+    # Live TikTok rows often carry lift keys FLAT on platformAnalytics[] (no analytics{} wrapper) or under
+    # metrics/stats instead of analytics — both missed the pre-2026-07 extractor and starved every zernio post.
+    for key in ("analytics", "metrics", "stats"):
+        inner = row.get(key)
+        if isinstance(inner, dict) and inner: return inner
+    return row if _map_zernio_analytics(row) else None
+
 def _zernio_analytics_payload(body) -> object:
-    # Live GET /analytics?postId= shape: top-level analytics{} OR platformAnalytics[].analytics{} (prefer first row with data).
+    # Live GET /analytics?postId= shape: platformAnalytics[] FIRST (TikTok truth), else top-level analytics{}
+    # when it maps to lift keys. A top-level analytics{} of platform-agnostic zeros (impressions/reach) must
+    # NOT win over a platform row that carries the real likes/views — the 0/29 TikTok metrics gap.
     if not isinstance(body, dict): return body
     pa = body.get("platformAnalytics")
     if isinstance(pa, list):
         for row in pa:
             if not isinstance(row, dict): continue
-            ana = row.get("analytics")
-            if isinstance(ana, dict) and ana: return ana
+            payload = _zernio_platform_metric_payload(row)
+            if payload is not None: return payload
     ana = body.get("analytics")
-    if isinstance(ana, dict) and ana: return ana
+    if isinstance(ana, dict) and ana and _map_zernio_analytics(ana): return ana
     return body
 
 def _zernio_raw_labels(body) -> list:

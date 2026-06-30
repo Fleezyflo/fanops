@@ -10,8 +10,8 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post, Render, SelectionFact, AccountSelection,
-                           account_selection_id, StitchPlan, StitchState, Batch,
-                           SourceState, MomentState, ClipState, PostState)
+                           SelectionMethod, account_selection_id, normalize_account_handle,
+                           StitchPlan, StitchState, Batch, SourceState, MomentState, ClipState, PostState)
 
 
 _DEFAULT_LOCK_TIMEOUT = 30.0
@@ -76,16 +76,56 @@ def _migrate_v4_metrics_series(raw: dict) -> dict:
     return out
 
 
+_ACCTSEL_METHOD_RANK = {SelectionMethod.operator: 5, SelectionMethod.llm: 4, SelectionMethod.migrated: 3,
+                        SelectionMethod.heuristic: 2, SelectionMethod.fan_all_default: 1, SelectionMethod.pending: 0}
+
+
+def _pick_account_selection(rows: list[dict]) -> dict:
+    """Choose the surviving row for a duplicate (source_id, account) group — prefer chosen methods over
+    fan_all_default, then more moment_ids, then newer created_at."""
+    def _key(s: dict):
+        method = SelectionMethod(s.get("method") or SelectionMethod.fan_all_default.value)
+        return (_ACCTSEL_METHOD_RANK.get(method, 0), len(s.get("moment_ids") or []), s.get("created_at") or "")
+    return max(rows, key=_key)
+
+
+def _dedupe_account_selections(raw: dict) -> dict:
+    """Collapse @-alias duplicates to one canonical row per (source_id, account). Idempotent."""
+    out = dict(raw)
+    selections = dict(out.get("account_selections") or {})
+    if not selections: return out
+    groups: dict[tuple[str, str], list[tuple[str, dict]]] = {}
+    for sid, s in selections.items():
+        if not isinstance(s, dict): continue
+        src_id = s.get("source_id")
+        acct = normalize_account_handle(s.get("account") or "")
+        if not src_id or not acct: continue
+        norm = dict(s)
+        norm["account"] = acct
+        norm["id"] = account_selection_id(src_id, acct)
+        groups.setdefault((src_id, acct), []).append((sid, norm))
+    deduped: dict[str, dict] = {}
+    for (_src, _acct), rows in groups.items():
+        winner = _pick_account_selection([r for _, r in rows])
+        deduped[winner["id"]] = winner
+    out["account_selections"] = deduped
+    return out
+
+
+def prune_orphan_account_selections(led: "Ledger") -> int:
+    """Drop AccountSelections whose source_id is absent from sources (stale re-ingest lineage). Returns count dropped."""
+    live = set(led.sources.keys())
+    dropped = 0
+    for sid in list(led.account_selections.keys()):
+        sel = led.account_selections[sid]
+        if sel.source_id not in live:
+            del led.account_selections[sid]
+            dropped += 1
+    return dropped
+
+
 def _migrate_v8_account_selections(raw: dict) -> dict:
-    """v8->v9 (RF1): lift the legacy, non-durable Moment.affinities into durable AccountSelection rows. For
-    every moment with NON-EMPTY affinities, group (source_id, account) -> [moment_id] and write one
-    AccountSelection per pair. DECIDED DEFAULT: an empty-affinities moment mints NO record (the gate falls
-    back to affinity_admits -> the legacy fan-to-all is preserved byte-for-byte). PROVENANCE: label `llm` ONLY
-    when a durable SelectionFact corroborates that (source, account) — never fabricate a 'chosen' badge from
-    the non-durable affinities; otherwise `migrated`. Pure on the RAW dict (runs before unit construction);
-    NEVER raises on a torn row (mirrors _migrate_v4_metrics_series); idempotent (an already-present
-    account_selection id is kept, never overwritten)."""
-    from fanops.ids import child_id                  # local: pure, cycle-safe
+    """v8->v9 (RF1): lift the legacy, non-durable Moment.affinities into durable AccountSelection rows."""
     out = dict(raw)
     selections = dict(out.get("account_selections") or {})       # idempotent: keep any already-migrated rows
     facts = out.get("selection_facts") or {}
@@ -100,14 +140,15 @@ def _migrate_v8_account_selections(raw: dict) -> dict:
         for handle in affs:
             groups.setdefault((sid, handle), []).append(mid)
     for (sid, handle), mids in groups.items():
-        asid = child_id("acctsel", sid, handle)
+        acct = normalize_account_handle(handle)
+        asid = account_selection_id(sid, acct)
         if asid in selections: continue                          # idempotent: never overwrite an existing row
         method = "llm" if (sid, handle) in llm_pairs else "migrated"
-        selections[asid] = {"id": asid, "source_id": sid, "account": handle,
+        selections[asid] = {"id": asid, "source_id": sid, "account": acct,
                             "moment_ids": sorted(mids), "method": method,
                             "batch_id": None, "created_at": None}
     out["account_selections"] = selections
-    return out
+    return _dedupe_account_selections(out)
 
 
 SCHEMA_VERSION = 9
@@ -270,6 +311,7 @@ class Ledger:
                     raise _NewerSchema(on_disk)
                 if on_disk < SCHEMA_VERSION:
                     raw = _migrate(raw, on_disk)
+                raw = _dedupe_account_selections(raw)
                 led.sources = {k: Source(**v) for k, v in raw.get("sources", {}).items()}
                 led.moments = {k: Moment(**v) for k, v in raw.get("moments", {}).items()}
                 led.clips = {k: Clip(**v) for k, v in raw.get("clips", {}).items()}
@@ -381,7 +423,15 @@ class Ledger:
     def get_render(self, rid: str): return self.renders.get(rid)
     def add_selection_fact(self, f: SelectionFact) -> None: self.selection_facts[f.id] = f   # M4: OVERWRITE — a re-cast updates the why (latest selection wins; NOT render's content-dedup)
     def get_selection_fact(self, fid: str): return self.selection_facts.get(fid)
-    def add_account_selection(self, s: AccountSelection) -> None: self.account_selections[s.id] = s   # RF1: OVERWRITE — one-per-(source, account); a re-cast replaces (latest wins)
+    def add_account_selection(self, s: AccountSelection) -> None:
+        acct = normalize_account_handle(s.account)
+        canon_id = account_selection_id(s.source_id, acct)
+        if acct != s.account or s.id != canon_id:
+            s = s.model_copy(update={"id": canon_id, "account": acct})
+        for stale_id, stale in list(self.account_selections.items()):
+            if stale_id != canon_id and stale.source_id == s.source_id and normalize_account_handle(stale.account) == acct:
+                del self.account_selections[stale_id]              # @-alias / legacy duplicate id
+        self.account_selections[canon_id] = s                      # RF1: OVERWRITE — one-per-(source, account)
     def account_selection_for(self, source_id: str, account: str):
         return self.account_selections.get(account_selection_id(source_id, account))
     def selections_of_source(self, source_id: str) -> list[AccountSelection]:

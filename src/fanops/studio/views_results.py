@@ -523,6 +523,26 @@ def _classify_channel(public_url: Optional[str]) -> str:
     return "dryrun"   # an unrecognized scheme is NOT a live URL — fail safe to dryrun
 
 
+def is_phantom_published(post, *, cfg: Config | None = None) -> bool:
+    """A published row with no published_at stamp — promoted ONLY by reconcile, never by _publish_one.
+
+    _publish_one ALWAYS stamps published_at on a confirmed publish (run.py finalize). Reconcile
+    historically promoted submitted/needs_reconcile rows to published without that stamp, producing
+    rows with provider URLs the operator cannot verify and metrics can never bind to."""
+    if post.state is not PostState.published:
+        return False
+    if (getattr(post, "published_at", None) or "").strip():
+        return False
+    metrics = getattr(post, "metrics", None) or {}
+    if metrics and any(v is not None for v in metrics.values()):
+        return False
+    if cfg is not None:
+        sidecar = cfg.scheduled / f"{post.id}.json"
+        if sidecar.exists() and (getattr(post, "public_url", None) or "").startswith(("http://", "https://")):
+            return True   # dryrun sidecar + live-looking URL = reconcile-laundered phantom
+    return True
+
+
 def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, batch: Optional[str] = None,
                    delivery: Optional[str] = None, failure_kind: Optional[str] = None) -> list[PostedRow]:
     """The Posted library: shipped + in-flight + failed rows, filterable by delivery class (live /

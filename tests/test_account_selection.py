@@ -7,7 +7,7 @@ import json
 import pytest
 from pydantic import ValidationError
 from fanops.config import Config
-from fanops.ledger import Ledger, SCHEMA_VERSION
+from fanops.ledger import Ledger, SCHEMA_VERSION, prune_orphan_account_selections
 from fanops.models import (AccountSelection, SelectionMethod, account_selection_id,
                            Post, PostState, Platform)
 
@@ -29,8 +29,35 @@ def test_account_selection_id_is_content_addressed():
     a = account_selection_id("src_abc", "@handle")
     b = account_selection_id("src_abc", "@handle")
     c = account_selection_id("src_abc", "@other")
-    assert a == b and a != c
+    d = account_selection_id("src_abc", "handle")              # @-agnostic: bare == prefixed
+    assert a == b == d and a != c
     assert a.startswith("acctsel_")
+
+
+def test_load_dedupes_at_alias_and_orphan_selections(tmp_path):
+    cfg = Config(root=tmp_path)
+    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    canon = account_selection_id("src_a", "a")
+    alias = account_selection_id("src_a", "@a")
+    raw = {"schema_version": 9, "sources": {"src_a": {"id": "src_a", "source_path": "/x.mp4", "language": "en"}},
+           "moments": {}, "clips": {}, "posts": {},
+           "account_selections": {
+               alias: {"id": alias, "source_id": "src_a", "account": "@a",
+                       "moment_ids": [], "method": "fan_all_default"},
+               canon: {"id": canon, "source_id": "src_a", "account": "a",
+                       "moment_ids": ["m1"], "method": "llm"},
+               account_selection_id("src_gone", "ghost"): {
+                   "id": account_selection_id("src_gone", "ghost"), "source_id": "src_gone", "account": "ghost",
+                   "moment_ids": ["m9"], "method": "llm"},
+           }}
+    cfg.ledger_path.write_text(json.dumps(raw))
+    led = Ledger.load(cfg)
+    assert len(led.selections_of_source("src_a")) == 1
+    assert led.account_selection_for("src_a", "@a").moment_ids == ["m1"]
+    assert led.account_selection_for("src_a", "a").moment_ids == ["m1"]
+    assert any(s.source_id == "src_gone" for s in led.account_selections.values())
+    assert prune_orphan_account_selections(led) == 1
+    assert not any(s.source_id == "src_gone" for s in led.account_selections.values())
 
 
 # ---- sum-type invariant: `method` is the discriminator; empty-list is NEVER ambiguous ----

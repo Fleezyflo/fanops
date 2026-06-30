@@ -136,8 +136,8 @@ def test_selection_only_account_gets_a_lane(tmp_path):
         led.add_account_selection(AccountSelection(id=account_selection_id("src1", "@ghost"), source_id="src1",
                                                    account="@ghost", moment_ids=["m3"], method=SelectionMethod.operator))
     view = _lanes(cfg)
-    assert "@ghost" in {ln.account for ln in view.lanes}         # union includes has-selection accounts
-    ghost = _lane(view, "@ghost")
+    assert "ghost" in {ln.account for ln in view.lanes}         # union includes has-selection accounts
+    ghost = _lane(view, "ghost")
     assert next(r for r in ghost.rows if r.moment_id == "m3").is_cast is True
 
 

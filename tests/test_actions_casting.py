@@ -50,11 +50,11 @@ def test_cast_handles_for_derives_from_account_selection_not_stored_tag(tmp_path
     cfg = Config(root=tmp_path); _seed(cfg)
     actions.cast_add(cfg, "s", "@a", "m0"); actions.cast_add(cfg, "s", "@b", "m0")
     led = Ledger.load(cfg)
-    assert led.cast_handles_for("s", "m0") == ["@a", "@b"]      # derived view sees the operator override
+    assert led.cast_handles_for("s", "m0") == ["a", "b"]      # derived view sees the operator override
     assert led.moments["m0"].affinities == []                  # the stored tag is NOT the source of truth
     assert led.cast_handles_for("s", "m1") == []               # m1 cast to nobody
     actions.cast_remove(cfg, "s", "@a", "m0")
-    assert Ledger.load(cfg).cast_handles_for("s", "m0") == ["@b"]   # @a's last pick removed -> record dropped -> not cast
+    assert Ledger.load(cfg).cast_handles_for("s", "m0") == ["b"]   # @a's last pick removed -> record dropped -> not cast
 
 
 def test_cast_remove_drops_record_when_last_moment_removed(tmp_path):
