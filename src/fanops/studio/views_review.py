@@ -61,6 +61,8 @@ class SurfacePost:
                                            # (content|corpus|region|graph-reach|discovery|genre-floor). {} when absent
                                            # (legacy entry / no caption yet) -> the chip row simply doesn't render.
     thumb_url: Optional[str] = None        # lazy preview poster for the account-pivot row (/clip-thumb/{clip_id})
+    ready: Optional[bool] = None           # publish_readiness advisory (editable surfaces only)
+    ready_reason: Optional[str] = None   # WHY not ready (oversize cap, hook drift, …)
 
 
 @dataclass
@@ -219,6 +221,10 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     _phr = ((_mom.hooks_by_persona_removed or {}).get(post.account) if _mom is not None else None)
     tag_sources = (_clip.meta_captions.get(f"{post.account}/{post.platform.value}", {}).get("tag_sources", {})
                    if _clip is not None else {})
+    ready, ready_reason = (None, None)
+    if editable:
+        from fanops.studio.views_results import publish_readiness
+        ready, ready_reason = publish_readiness(led, post, cfg)
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=post.caption, hashtags=list(post.hashtags or []),
@@ -236,7 +242,8 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
         # legacy Render with no hook_source field never raises.
         hook_source=(getattr(getattr(r, "hook_source", None), "value", None) if r else None),
         length_cause=length_cause, framing_cause=framing_cause, cast_cause=cast_cause,
-        tag_sources=tag_sources, thumb_url=f"/clip-thumb/{post.parent_id}")
+        tag_sources=tag_sources, thumb_url=f"/clip-thumb/{post.parent_id}",
+        ready=ready, ready_reason=ready_reason)
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
           active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:

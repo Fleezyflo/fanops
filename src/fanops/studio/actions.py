@@ -386,6 +386,8 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
         except Exception:
             pass
         return ActionResult(ok=False, error=pf)
+    from fanops.post.compress import persist_post_shrink
+    persist_post_shrink(cfg, led, post_id)
     try:
         # network runs OUTSIDE the ledger lock (per-post claim->network->finalize) — the Studio no longer
         # holds the flock across the publish round-trip, so a concurrent daemon pass isn't starved.

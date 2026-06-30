@@ -174,6 +174,9 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
     not the global — so a TikTok-via-Zernio variant uploads to Zernio even if the global is Postiz."""
     aid = (account_id or post.account_id or "").strip() or None
     _materialize_variant_media(led, cfg, post, Accounts.load(cfg))
+    from fanops.post.compress import apply_shrink_to_post, upload_cap_bytes
+    if upload_cap_bytes(cfg, post, backend) is not None:
+        apply_shrink_to_post(cfg, led, post, backend=backend)
     if (post.variant_hook or "").strip() and not post.render_id:
         raise RuntimeError("variant hook could not be burned — refusing to ship the hookless base clip")
     if not post.media_urls:
@@ -270,6 +273,7 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
     clip_media = clip.media_url if clip is not None else None   # carry the F44 upload cache forward
     render = led.get_render(post.render_id) if post.render_id else None
     render_media = render.media_url if render is not None else None   # CULM-2: persist the once-per-render upload
+    render_path = render.path if render is not None else None         # shrink may update render.path pre-upload
     final_state = net["state"]
     # ---- FINALIZE ----
     with Ledger.transaction(cfg) as led:
@@ -285,6 +289,10 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         r = led.get_render(p.render_id) if p.render_id else None
         if r is not None and render_media and not r.media_url:
             r.media_url = render_media                 # CULM-2: persist the once-per-render upload (FIX-F44 parity)
+        if p.render_id and render_path:
+            r2 = led.get_render(p.render_id)
+            if r2 is not None and r2.path != render_path:
+                led.renders[p.render_id] = r2.model_copy(update={"path": render_path})
     # content-lifecycle Phase 3: fail-open day-bucketed record, OUTSIDE the finalize txn so an archive
     # write can NEVER roll back the just-committed publish. The network-phase `post` carries every field
     # the archive reads (loaded from disk) PLUS the network mutations. Fires only on a confirmed publish.

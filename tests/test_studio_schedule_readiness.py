@@ -172,3 +172,47 @@ def test_cv_off_row_is_ready_not_warn(tmp_path, monkeypatch):
     rows = views.schedule_rows(led, cfg, now=NOW)
     row = next(r for r in rows if r.post_id == "p")
     assert row.ready is True                                     # a shared clip is the expected OFF artifact
+
+
+def test_not_ready_when_oversize_zernio_tiktok(tmp_path, monkeypatch):
+    from fanops.accounts import add_account, set_backend
+    monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4")
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    big = cfg.clips / "big.mp4"
+    big.write_bytes(b"Z" * (5 * 1024 * 1024))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s", source_path="/v.mp4"))
+        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="c", parent_id="m", path=str(big), aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
+                          caption="x", state=PostState.awaiting_approval))
+    led = Ledger.load(cfg)
+    ready, reason = views.publish_readiness(led, led.posts["p"], cfg)
+    assert ready is False and "too large" in reason.lower()
+
+
+def test_review_surface_carries_oversize_readiness(tmp_path, monkeypatch):
+    from fanops.accounts import Accounts, add_account, set_backend
+    from fanops.studio.views_review import _surface
+    monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4")
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    big = cfg.clips / "big.mp4"
+    big.write_bytes(b"Z" * (5 * 1024 * 1024))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s", source_path="/v.mp4"))
+        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="c", parent_id="m", path=str(big), aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
+                          caption="x", state=PostState.awaiting_approval))
+    led = Ledger.load(cfg)
+    accts = Accounts.load(cfg)
+    post = led.posts["p"]
+    acct = next(a for a in accts.accounts if a.handle == "@tt")
+    surf = _surface(post, persona=None, now=NOW, cfg=cfg, led=led, acct=acct, affinities=[])
+    assert surf.ready is False and surf.ready_reason and "too large" in surf.ready_reason.lower()

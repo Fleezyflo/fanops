@@ -34,6 +34,13 @@ TELLS = [
     (r"\b(a |the )?simpler approach\b", "half-measure framing (lesser route)"),
     (r"\bquick and dirty\b", "half-measure framing"),
     (r"\bfor now,? (I'?ll|we'?ll|let'?s) (just )?", "deferral / partial-execution framing"),
+    # operator handoff: narrating the user's job instead of executing (FanOps session tells)
+    (r"\boperator[- ]gated\b", "operator handoff instead of executing"),
+    (r"\b(you can|you could) (click|run|use)\b", "operator handoff (you click…)"),
+    (r"\bwhen you'?re ready\b", "deferral to the operator"),
+    (r"\b(say the word|let me know if you want)\b", "permission-asking / punt"),
+    (r"\b(optional|if you want me to)\b.{0,30}\b(later|push|merge|publish)\b", "optional handoff instead of doing"),
+    (r"\b(ship|publish).{0,20}\b(backlog|queue)\b", "shipping backlog unprompted"),
 ]
 _COMPILED = [(re.compile(p, re.IGNORECASE), why) for p, why in TELLS]
 

@@ -58,6 +58,7 @@
         <div class="surface-head">
           {% if card.bucket == 'editable' %}<label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}"{% if card.batch_id %} data-batch="{{ card.batch_id }}"{% endif %} aria-label="select {{ s.account }} {{ s.platform }} for approval"></label>{% endif %}
           <span class="surface-name">{{ s.account }} <span class="muted">{{ s.platform }}</span></span>
+          {% if s.ready %}<span class="chip ok schedule-ready" title="{{ s.ready_reason or 'ready' }}">ready</span>{% elif s.ready is not none %}<span class="chip warn schedule-ready" title="{{ s.ready_reason }}">fix clip</span>{% endif %}
           {% if s.imminent %}<span class="badge {{ 'shipped' if s.state != 'queued' else '' }}">{{ 'shipped' if s.state != 'queued' else 'shipping now' }}</span>{% endif %}
           {# P5: per-surface reject — drop just THIS account's post (one id via hx-vals), without ticking the
              batch checkbox set. Same route as the bulk reject; the swap re-renders the scoped worklist. #}
