@@ -6,6 +6,7 @@ steps), so usability for a brand-new operator is capped here by reality, not cod
 'what's left' legible instead of buried in the source."""
 from __future__ import annotations
 import logging
+import os
 import shutil
 from fanops.config import Config
 from fanops.accounts import Accounts
@@ -27,7 +28,7 @@ def doctor_report(cfg: Config) -> dict:
     checks.append(_check("yt-dlp on PATH (only for `fanops pull <url>`)", shutil.which("yt-dlp") is not None,
                          "pip install yt-dlp"))
     # 2. autonomous responder needs the claude CLI ONLY when FANOPS_RESPONDER=llm (mirrors preflight)
-    if cfg.responder_mode == "llm":
+    if (os.getenv("FANOPS_RESPONDER") or "").strip().lower() == "llm":
         checks.append(_check("claude on PATH (FANOPS_RESPONDER=llm)", shutil.which("claude") is not None,
                              "install Claude Code + run `claude login` (uses your subscription, no API key)"))
     # 2b. brand brief present + non-empty. context.md is injected verbatim into every moment +

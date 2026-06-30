@@ -216,6 +216,8 @@ def repair_casting_selections(led, cfg, accounts, source_id: str):
             id=account_selection_id(source_id, h), source_id=source_id, account=h,
             moment_ids=sorted(set(mids)), method=SelectionMethod.migrated, batch_id=bid, created_at=now))
     candidates = {a.handle for a in accounts.active() if casting_directive(a)}
+    if not candidates:
+        return led   # legacy affinities-only tags (no persona/casting brief) — migrate picks, never fan_all_default
     for a in accounts.active():
         if a.handle in per_account or a.handle in candidates:
             continue

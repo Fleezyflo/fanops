@@ -70,7 +70,7 @@ def test_reconcile_no_stuck_breadcrumb_when_recent(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pr", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="s1",
-                      scheduled_time=datetime.now(timezone.utc).isoformat(), public_url=f"dryrun://pr"))
+                      scheduled_time=datetime.now(timezone.utc).isoformat(), public_url="dryrun://pr"))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
     assert led.posts["pr"].error_reason is None              # recent -> no premature stuck breadcrumb
 
@@ -433,7 +433,7 @@ def test_giveup_post_is_not_polled_again(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pg", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
-                      error_reason="GAVE UP: unresolved 80h past schedule on a never-real token — ...", public_url=f"dryrun://pg"))
+                      error_reason="GAVE UP: unresolved 80h past schedule on a never-real token — ...", public_url="dryrun://pg"))
     calls = []
     def get_status(sid):
         calls.append(sid); return {"status": "published"}

@@ -762,7 +762,6 @@ def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
     """Pull analytics for live posts — closes the Posted→Learn loop from Studio."""
     if not cfg.is_live:
         return ActionResult(ok=False, error="Publishing is off — turn on Go Live before pulling metrics.")
-    from fanops.models import LIFT_SCORE
     from fanops.track import pull_metrics, _default_list_posts
     from fanops.digest import write_digest
     try:

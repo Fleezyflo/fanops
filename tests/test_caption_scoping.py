@@ -39,7 +39,6 @@ def _fake_ffmpeg(mocker):
 
 def test_caption_request_stale_when_surface_set_drifts(tmp_path):
     from fanops.models import Platform
-    from fanops.caption import caption_request_stale
     from fanops.agentstep import write_request
     cfg = Config(root=tmp_path)
     want_tt = [("b", Platform.tiktok)]

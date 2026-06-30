@@ -13,7 +13,7 @@ def _analyzed(pid, *, first_frame_kind=None, reach=0.0, saves=0.0, platform=Plat
               clip_profile=None, state=PostState.analyzed):
     return Post(id=pid, parent_id="c1", account="@a", account_id="1", platform=platform,
                 caption="x", state=state, first_frame_kind=first_frame_kind, clip_profile=clip_profile,
-                metrics={"reach": reach, "saves": saves, "lift_score": saves * 4.0 + reach * 0.001}, public_url=f"dryrun://c1")
+                metrics={"reach": reach, "saves": saves, "lift_score": saves * 4.0 + reach * 0.001}, public_url="dryrun://c1")
 
 def test_aggregate_by_dim_groups_reach_per_value(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

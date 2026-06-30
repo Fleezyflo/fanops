@@ -395,7 +395,7 @@ def test_advance_halts_on_fatal_auth_error_from_crosspost(tmp_path, monkeypatch,
 def _needs_reconcile_post():
     from fanops.models import Post, PostState, Platform
     return Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-               caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url=f"dryrun://p")
+               caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p")
 
 def test_advance_postiz_now_reconciles_its_parked_posts(tmp_path, monkeypatch, mocker):
     # P2 INVERTS the old M2 behavior: Postiz GAINED a status-reconcile path (PostizStatusClient over the

@@ -110,7 +110,6 @@ def test_zero_post_clips_surfaces_orphans(tmp_path):
 
 def test_answer_casting_gate_from_studio(tmp_path):
     from fanops.agentstep import write_request, latest_request_id
-    from fanops.models import MomentCastingDecision
     cfg = Config(root=tmp_path)
     write_request(cfg, kind="moment_casting", key="src1", payload={
         "source_id": "src1", "moments": [{"moment_id": "m1", "start": 0, "end": 7, "reason": "r"}],

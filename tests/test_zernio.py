@@ -29,7 +29,7 @@ def _cfg(tmp_path, monkeypatch):
 def _post(pid="p1", acct_id="acc_abc"):
     return Post(id=pid, parent_id="c1", account="@tk", account_id=acct_id, platform=Platform.tiktok,
                 caption="fire", state=PostState.submitting,
-                media_urls=["https://media.zernio.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z", public_url=f"dryrun://c1")
+                media_urls=["https://media.zernio.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://c1")
 
 def _led(cfg, post):
     led = Ledger.load(cfg); led.add_post(post); return led

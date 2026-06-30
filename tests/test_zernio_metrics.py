@@ -245,10 +245,10 @@ def test_default_get_status_mixed_routes_each_sid(tmp_path, monkeypatch, mocker)
     add_account(cfg, "@tt", [Platform.tiktok], status="active"); set_backend(cfg, "@tt", "tiktok", "zernio")
     led = Ledger.load(cfg)
     led.add_post(Post(id="tt", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
-                      caption="x", state=PostState.needs_reconcile, submission_id="zsid", public_url=f"dryrun://tt"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="zsid", public_url="dryrun://tt"))
     led.add_post(Post(id="ig", parent_id="c", account="@ig", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="psid",
-                      scheduled_time="2099-01-01T00:00:00Z", public_url=f"dryrun://ig"))
+                      scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://ig"))
     tt_url = "https://www.tiktok.com/@mark/video/7"
     def by_url(url, **kw):
         if "zernio" in url: return _R(200, {"status": "published", "permalink": tt_url})

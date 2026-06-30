@@ -15,7 +15,7 @@ _FUTURE = "2099-01-01T00:00:00Z"
 
 def _post(pid="p1", state=PostState.awaiting_approval, when=_PAST):
     return Post(id=pid, parent_id="c1", account="@a", account_id="1",
-                platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url=f"dryrun://c1")
+                platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="dryrun://c1")
 
 
 # ---- Task 1: enum members ----

@@ -14,7 +14,7 @@ from fanops.learn_doctor import field_shape_report, cmd_learn_doctor, load_verdi
 def _led_with_shipped(tmp_path, *, sub="s_A", state=PostState.published):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=state, submission_id=sub, public_url=f"dryrun://p1"))
+                      platform=Platform.instagram, caption="x", state=state, submission_id=sub, public_url="dryrun://p1"))
     return cfg, led
 
 

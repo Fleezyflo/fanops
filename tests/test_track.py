@@ -114,7 +114,7 @@ def test_pull_matches_by_submission_id_and_skips_failed(tmp_path):
     led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published, submission_id="s_A", public_url="dryrun://p1"))
     led.add_post(Post(id="p2", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.tiktok, caption="y", state=PostState.failed, submission_id=None, public_url=f"dryrun://p2"))
+                      platform=Platform.tiktok, caption="y", state=PostState.failed, submission_id=None, public_url="dryrun://p2"))
     rows = [{"postSubmissionId": "s_A", "metrics": {"saves": 30, "shares": 25, "retention": 0.8}}]
     led = pull_metrics(led, cfg, list_posts=lambda w: rows)
     assert led.posts["p1"].metrics["saves"] == 30 and led.posts["p1"].state is PostState.analyzed
@@ -127,7 +127,7 @@ def test_record_metrics_guards_non_published(tmp_path):
     # A failed post must NOT be advanced to analyzed by a direct record_metrics call.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url=f"dryrun://pf"))
+                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url="dryrun://pf"))
     led = record_metrics(led, "pf", {"saves": 99})
     assert led.posts["pf"].state is PostState.failed          # unchanged
     assert "lift_score" not in led.posts["pf"].metrics        # not recorded
@@ -331,7 +331,7 @@ def test_record_duplicate_offset_does_not_duplicate_row_but_updates_latest(tmp_p
 def test_record_failed_post_is_absolute_noop_no_row(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url=f"dryrun://pf"))
+                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url="dryrun://pf"))
     led = record_metrics(led, "pf", {"saves": 99}, offset="4h", captured_at="t0")
     assert led.posts["pf"].state is PostState.failed
     assert led.posts["pf"].metrics_series == [] and "lift_score" not in led.posts["pf"].metrics

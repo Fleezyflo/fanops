@@ -28,7 +28,7 @@ def register_review_routes(app, cfg):
         compact = False if session_full else _compact_arg()
         ultra = False if session_full else _ultra_arg()
         focus = _focus_arg()
-        if account and view == "account" and not focus:
+        if account and view == "account" and not focus and not ultra:
             _fo = (request.args.get("focus") or "").strip().lower()
             _grid = (request.args.get("grid") or "").strip() == "1"
             if _fo not in ("0", "false", "no", "off") and not _grid:

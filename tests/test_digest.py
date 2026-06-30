@@ -22,7 +22,7 @@ def test_counts_holds_failures(tmp_path):
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c", state=ClipState.held, held=True, held_reason="begging"))
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
-                      error_reason="blotato 422", public_url=f"dryrun://p1"))
+                      error_reason="blotato 422", public_url="dryrun://p1"))
     md = render_digest(led, cfg)
     assert "# FAN OPS Ledger Digest" in md
     assert "Sources" in md and "transcribed" in md
@@ -64,7 +64,7 @@ def test_empty_ledger_digest_has_no_sections(tmp_path):
 def test_none_reason_renders_fallback(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url=f"dryrun://pf"))  # error_reason None
+                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url="dryrun://pf"))  # error_reason None
     md = render_digest(led, cfg)
     assert "Failures" in md and "(no reason given)" in md and "None" not in md.split("Failures")[1]
 
@@ -220,7 +220,7 @@ def test_needs_reconcile_surfaced(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="prec", parent_id="c", account="@a", account_id="1",
                       platform=Platform.twitter, caption="x", state=PostState.needs_reconcile,
-                      error_reason="blotato 503: ambiguous, may be live", public_url=f"dryrun://prec"))
+                      error_reason="blotato 503: ambiguous, may be live", public_url="dryrun://prec"))
     md = render_digest(led, cfg)
     assert "Needs reconcile" in md
     section = md.split("Needs reconcile")[1]

@@ -182,7 +182,7 @@ def test_lift_empty_no_analyzed_posts(tmp_path):
                           "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url=f"dryrun://p1"))
+                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://p1"))
     view = lift_rows(led, cfg, Accounts.load(cfg))
     assert view.variant_rows == []
     assert "No results yet" in view.variant_empty_reason
@@ -195,7 +195,7 @@ def test_lift_empty_state_names_postiz(tmp_path, monkeypatch):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url=f"dryrun://p1"))
+                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://p1"))
     reason = lift_rows(led, cfg, Accounts.load(cfg)).variant_empty_reason
     assert "postiz" in reason.lower() and "POSTIZ_API_KEY" in reason   # no key value rendered, just the env var name
 
@@ -383,7 +383,7 @@ def test_review_card_surfaces_removed_hook(tmp_path):
     led = Ledger.load(cfg); _lineage(led)
     led.moments["mom_1"].hook_removed = "made it and lost everything"   # what the guard stripped
     led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p_edit"))
+                      platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://p_edit"))
     ed = [c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
           if c.bucket == "editable" and c.clip_id == "clip_1"][0]
     assert ed.hook_removed == "made it and lost everything"
@@ -392,7 +392,7 @@ def test_review_card_surfaces_removed_hook(tmp_path):
 # ---- P1: suggest_time helper + suggested_time on read-models (per-account operator scheduling) ----
 def _post(account="@a", platform=Platform.instagram, parent_id="clip_1"):
     return Post(id="p", parent_id=parent_id, account=account, account_id="1", platform=platform,
-                caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p")
+                caption="x", state=PostState.awaiting_approval, public_url="dryrun://p")
 
 def test_suggest_time_is_deterministic_and_future(tmp_path):
     from fanops.studio.views import suggest_time
@@ -487,9 +487,9 @@ def _seed_home(cfg):
     led = Ledger.load(cfg); _lineage(led)
     led.add_source(Source(id="src_tp", source_path="/v/tp.mp4", language="en", origin_kind="third_party"))
     led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p1"))
+                      caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
     led.add_post(Post(id="p2", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://p2"))
+                      caption="x", state=PostState.queued, public_url="dryrun://p2"))
     led.add_post(Post(id="p3", parent_id="clip_1", account="@b", account_id="2", platform=Platform.instagram,
                       caption="x", state=PostState.published, public_url="dryrun://p3"))
     led.save(); return led
@@ -531,7 +531,7 @@ def test_home_awaiting_counts_moments_not_posts(tmp_path):
     led = Ledger.load(cfg); _lineage(led)
     for i, h in enumerate(["@a", "@b", "@c"]):            # 3 awaiting SURFACE posts, ONE moment (clip_1)
         led.add_post(Post(id=f"pa{i}", parent_id="clip_1", account=h, account_id=str(i + 1),
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://clip_1"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://clip_1"))
     led.save()
     st = home_status(cfg)
     assert st.counts["awaiting"] == 1                     # ONE moment, not three posts
@@ -545,9 +545,9 @@ def test_home_awaiting_matches_review_worklist(tmp_path):
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.add_post(Post(id="pa", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://pa"))
+                      caption="x", state=PostState.awaiting_approval, public_url="dryrun://pa"))
     led.add_post(Post(id="pb", parent_id="clip_1", account="@b", account_id="2", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://pb"))
+                      caption="x", state=PostState.awaiting_approval, public_url="dryrun://pb"))
     led.save()
     now = datetime.now(timezone.utc)
     review_awaiting = _rc(_rb(led, Accounts.load(cfg), cfg, now=now))["awaiting"]
@@ -583,7 +583,7 @@ def test_home_batches_counts_posts_born(tmp_path):
     led = Ledger.load(cfg); _lineage(led)
     b = create_batch(led, name="Launch", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000001Z")
     led.add_post(Post(id="pb", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, batch_id=b.id, public_url=f"dryrun://pb")); led.save()
+                      caption="x", state=PostState.awaiting_approval, batch_id=b.id, public_url="dryrun://pb")); led.save()
     hb = home_batches(cfg)
     assert len(hb) == 1 and hb[0].posts_born == 1 and hb[0].is_zero_result is False
 
@@ -652,8 +652,6 @@ from fanops.models import PostState as PS
 
 
 def test_classify_post_delivery_states(tmp_path):
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
     p_await = Post(id="pa", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
                    caption="x", state=PS.awaiting_approval)
     p_q = Post(id="pq", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,

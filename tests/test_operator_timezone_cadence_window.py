@@ -22,7 +22,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, Post, PostState, ClipState, MomentState, Fmt,
                            Platform)
-from fanops.timeutil import iso_z, parse_iso, to_local_display, to_local_input, local_input_to_utc_z
+from fanops.timeutil import iso_z, parse_iso, to_local_display, local_input_to_utc_z
 
 FIXED_DT = datetime(2026, 6, 29, 12, 0, 0, tzinfo=timezone.utc)
 FIXED_ISO = iso_z(FIXED_DT)
@@ -108,7 +108,7 @@ def _seed_queued_posts(led: Ledger, clip: Clip, *, n: int, base_iso: str) -> lis
         pid = f"p_{k}"
         led.add_post(Post(id=pid, parent_id=clip.id, account="@a", account_id="ia",
                           platform=Platform.instagram, caption="c", state=PostState.queued,
-                          scheduled_time=base_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url=f"dryrun://ia"))
+                          scheduled_time=base_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://ia"))
         ids.append(pid)
     return ids
 

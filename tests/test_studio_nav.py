@@ -18,7 +18,7 @@ def _seed(cfg):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p_base", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram, caption="BASE", state=PostState.awaiting_approval, public_url=f"dryrun://p_base"))
+    led.add_post(Post(id="p_base", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram, caption="BASE", state=PostState.awaiting_approval, public_url="dryrun://p_base"))
     led.save()
 
 def _client(cfg):

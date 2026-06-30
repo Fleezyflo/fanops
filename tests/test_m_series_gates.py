@@ -5,7 +5,6 @@
 # bucket as a silent landmine the next `publish_due` would fire on.
 import json
 from datetime import datetime, timezone, timedelta
-import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Clip, ClipState, Source, Moment, MomentState, Fmt
@@ -106,7 +105,6 @@ def test_golive_past_due_gate_uses_shared_helper(tmp_path, monkeypatch):
     """C1: the M6 go_live past-due gate (golive.py:520-532) reads is_past_due. If a refactor swaps the
     helper to a stub returning False, the gate must rely on the helper — so go_live no longer flags
     posts as past-due. This is the consolidation contract: there is ONE definition of past-due."""
-    from fanops.studio import golive
     from fanops import timeutil
     cfg = Config(root=tmp_path)
     _seed_one(cfg, pid="late", when=_z(_NOW - timedelta(hours=2)))               # past-due today

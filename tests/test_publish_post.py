@@ -14,7 +14,7 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2999-01-01T00:00:00Z"):
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
                       platform=Platform.instagram, caption="ship it",
-                      scheduled_time=when, state=PostState.queued, public_url=f"dryrun://98432"))
+                      scheduled_time=when, state=PostState.queued, public_url="dryrun://98432"))
     led.save()
 
 
@@ -104,7 +104,7 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
     led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(vf), state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="98", platform=Platform.instagram,
                       caption="x", state=PostState.queued, scheduled_time="2000-01-01T00:00:00Z",
-                      render_id=rid, media_urls=[f"file://{vf}"], public_url=f"dryrun://p1"))
+                      render_id=rid, media_urls=[f"file://{vf}"], public_url="dryrun://p1"))
     led.save()
     calls = {"n": 0}
     def up(cfg, backend=None):

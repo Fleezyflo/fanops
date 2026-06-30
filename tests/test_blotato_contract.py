@@ -51,7 +51,7 @@ def _led_with_post(cfg):
     led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="98432",
                       platform=Platform.tiktok, caption="ship it",
                       media_urls=["https://cdn.example/v.mp4"], scheduled_time="2099-01-01T00:00:00Z",
-                      state=PostState.submitting, public_url=f"dryrun://p1"))
+                      state=PostState.submitting, public_url="dryrun://p1"))
     return led
 
 

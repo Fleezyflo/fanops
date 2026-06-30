@@ -32,14 +32,14 @@ def _seed(cfg):
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", state=ClipState.queued))
     led.add_clip(Clip(id="c2", parent_id="m2", path="/c2.mp4", state=ClipState.queued))
     # m1: @a IG and @b IG both have posts — @b is NOT in affinities, yet a post EXISTS → cell must be cast.
-    led.add_post(Post(id="p_m1_a", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, render_id="r_a", public_url=f"dryrun://p_m1_a"))
-    led.add_post(Post(id="p_m1_b", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram, caption="B", state=PostState.awaiting_approval, public_url=f"dryrun://p_m1_b"))
+    led.add_post(Post(id="p_m1_a", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, render_id="r_a", public_url="dryrun://p_m1_a"))
+    led.add_post(Post(id="p_m1_b", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram, caption="B", state=PostState.awaiting_approval, public_url="dryrun://p_m1_b"))
     # m2: @a IG ORIGINAL + a REPOST (later created_at, epoch-suffixed) on the SAME channel → multiplicity 2, lead=repost.
-    led.add_post(Post(id="p_m2_a", parent_id="c2", account="@a", account_id="1", platform=Platform.instagram, caption="A2", state=PostState.awaiting_approval, created_at=_z(NOW), public_url=f"dryrun://p_m2_a"))
+    led.add_post(Post(id="p_m2_a", parent_id="c2", account="@a", account_id="1", platform=Platform.instagram, caption="A2", state=PostState.awaiting_approval, created_at=_z(NOW), public_url="dryrun://p_m2_a"))
     led.add_post(Post(id="p_m2_a_repost_999", parent_id="c2", account="@a", account_id="1", platform=Platform.instagram, caption="A2r", state=PostState.awaiting_approval, created_at=_z(NOW + timedelta(hours=1))))
     # m2: @b on BOTH platforms → two separate channel columns; the IG one has render_id=None (cell still renders).
-    led.add_post(Post(id="p_m2_b_ig", parent_id="c2", account="@b", account_id="2", platform=Platform.instagram, caption="Big", state=PostState.awaiting_approval, render_id=None, public_url=f"dryrun://p_m2_b_ig"))
-    led.add_post(Post(id="p_m2_b_tt", parent_id="c2", account="@b", account_id="2", platform=Platform.tiktok, caption="Btt", state=PostState.awaiting_approval, public_url=f"dryrun://p_m2_b_tt"))
+    led.add_post(Post(id="p_m2_b_ig", parent_id="c2", account="@b", account_id="2", platform=Platform.instagram, caption="Big", state=PostState.awaiting_approval, render_id=None, public_url="dryrun://p_m2_b_ig"))
+    led.add_post(Post(id="p_m2_b_tt", parent_id="c2", account="@b", account_id="2", platform=Platform.tiktok, caption="Btt", state=PostState.awaiting_approval, public_url="dryrun://p_m2_b_tt"))
     led.save()
 
 def _matrix(cfg):
