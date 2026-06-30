@@ -49,7 +49,7 @@ def _seed_queued(led: Ledger, clip: Clip, *, post_id: str, account: str, account
                  scheduled_iso: str) -> str:
     p = Post(id=post_id, parent_id=clip.id, account=account, account_id=account_id,
              platform=Platform.instagram, caption="c", state=PostState.queued,
-             scheduled_time=scheduled_iso, media_urls=[f"file:///clip_1_9x16.mp4"], public_url=f"dryrun://sweep")
+             scheduled_time=scheduled_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://sweep")
     led.add_post(p)
     return p.id
 
@@ -138,8 +138,8 @@ def test_reschedule_respreads_anything_more_than_one_minute_out(tmp_path, monkey
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
     two_min_away = iso_z(FIXED_DT + timedelta(minutes=2))
-    pid = _seed_queued(led, clip, post_id="p_2min", account="@a", account_id="ia",
-                       scheduled_iso=two_min_away)
+    _seed_queued(led, clip, post_id="p_2min", account="@a", account_id="ia",
+                 scheduled_iso=two_min_away)
     led.save()
 
     res = reschedule_bucket(cfg, now=FIXED_DT)

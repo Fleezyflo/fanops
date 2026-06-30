@@ -13,8 +13,6 @@ seven different angles (one per defect D1, D2, D3, D8, D9, D10, D16). Once these
 bad path is structurally unconstructable, not guarded — which is what `fix-root-not-symptom`
 means."""
 from __future__ import annotations
-from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -262,7 +260,7 @@ def test_publish_one_parks_post_without_url_in_needs_reconcile(tmp_path, monkeyp
     # _ensure_media's media-upload path also needs to be a no-op for the test
     monkeypatch.setattr(_run_mod, "_ensure_media", lambda *a, **kw: None, raising=False)
 
-    final_state = _publish_one(cfg, "post_g", backend="dryrun")
+    _publish_one(cfg, "post_g", backend="dryrun")
     # The post MUST NOT end in published — it has no permalink
     led_after = Ledger.load(cfg)
     p = led_after.posts["post_g"]

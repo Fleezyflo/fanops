@@ -32,23 +32,36 @@ def _warm_renders(cfg: Config, snap: Ledger, ids: Sequence[str], accts: Accounts
     once. Per-post fail-open — a render error is LOGGED and just omits the plan; the in-lock adopt then leaves
     the post un-materialized (M1: never ffmpeg under the flock) and the spine skips approving it with a
     render_unavailable_skip_approve breadcrumb, so the NEXT warm pass (a re-click) retries the burn off-lock."""
-    plans, by_rid = {}, {}
+    plans, by_rid, jobs = {}, {}, []
     for pid in ids:
         post = snap.posts.get(pid)
         if post is None or not post.variant_hook: continue
         clip = snap.clips.get(post.parent_id)
         if clip is None: continue
-        try:
-            acct = _acct_for(accts, post.account)
-            rid, *_ = account_render_spec(cfg, clip=clip, hook=post.variant_hook, acct=acct)
-            if snap.get_render(rid) is not None: continue            # entity already exists -> in-lock reuses it
-            if rid in by_rid: plans[pid] = by_rid[rid]; continue      # identical hook already warmed this batch
-            mom = snap.moments.get(clip.parent_id)
-            src = snap.sources.get(mom.parent_id) if mom is not None else None
-            plan = render_account_file(snap, cfg, post=post, acct=acct, target_clip=clip, src=src)
-            by_rid[rid] = plan; plans[pid] = plan
-        except Exception as e:                                       # fail-open + M1: in-lock leaves it un-materialized,
-            get_logger(cfg)("approve", pid, "warm_render_failed", err=str(e)[:120]); continue   # spine skips, next pass retries
+        acct = _acct_for(accts, post.account)
+        rid, *_ = account_render_spec(cfg, clip=clip, hook=post.variant_hook, acct=acct)
+        if snap.get_render(rid) is not None: continue
+        if rid in by_rid:
+            plans[pid] = by_rid[rid]; continue
+        jobs.append((pid, post, clip, acct, rid))
+    if not jobs:
+        return plans
+    def _one(job):
+        pid, post, clip, acct, rid = job
+        mom = snap.moments.get(clip.parent_id)
+        src = snap.sources.get(mom.parent_id) if mom is not None else None
+        return pid, rid, render_account_file(snap, cfg, post=post, acct=acct, target_clip=clip, src=src)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    workers = min(4, len(jobs))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_one, j): j[0] for j in jobs}
+        for fut in as_completed(futs):
+            pid = futs[fut]
+            try:
+                _pid, rid, plan = fut.result()
+                by_rid[rid] = plan; plans[_pid] = plan
+            except Exception as e:
+                get_logger(cfg)("approve", pid, "warm_render_failed", err=str(e)[:120])
     return plans
 
 def _adopt_render(led: Ledger, cfg: Config, post, plan, accts: Accounts) -> None:
@@ -132,14 +145,30 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
     if approved and audited_ids:
         write_audit(cfg, "approve", audited_ids, reason="studio_approve_batch",
                     approved=approved, render_pending=render_pending, now=now_iso)
-    return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": render_pending})
+    sched_detail: dict = {}
+    if approved and audited_ids:
+        try:
+            led2 = Ledger.load(cfg)
+            times = sorted(t for i in audited_ids if (p := led2.posts.get(i)) and p.scheduled_time for t in [led2.posts[i].scheduled_time])
+            accts = list({led2.posts[i].account for i in audited_ids if i in led2.posts})
+            sched_detail = {"outcome": "approved_scheduled", "next_time": times[0] if times else None,
+                            "last_time": times[-1] if times else None,
+                            "schedule_account": accts[0] if len(accts) == 1 else None}
+        except Exception:
+            sched_detail = {"outcome": "approved_scheduled"}
+    return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": render_pending, **sched_detail})
 
-def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None) -> ActionResult:
+BULK_APPROVE_CONFIRM_AT = 15
+
+def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None, confirmed: bool = False) -> ActionResult:
     """Post-approval gate (multi-select, the Review-tab batch): awaiting_approval -> queued for each selected
     post in ONE transaction, idempotent (a non-awaiting post is a no-op). Slice 2: each approved per-account
     surface's on-screen hook is BURNED here (the render is warmed off the flock, then adopted) so ONLY approved
     posts ever render. One `now` stamp for the whole batch (consistent stale-schedule bump). Never a 500."""
     sel = [i for i in (ids or []) if i]
+    if len(sel) > BULK_APPROVE_CONFIRM_AT and not confirmed:
+        return ActionResult(ok=False, error=(f"Approving {len(sel)} posts queues them for the daemon — "
+                            "approved ≠ live. Tick batch confirm, then approve again."))
     return _approve_ids_with_render(cfg, resolve_ids=lambda led: sel, now=now, detail={})
 
 def reject_posts(cfg: Config, ids: Sequence[str]) -> ActionResult:
@@ -254,6 +283,13 @@ def _approve_matching(cfg: Config, pred=None, *, pred_for=None, now: Optional[da
         p = pred_for(led) if pred_for is not None else pred
         return [post.id for post in led.posts.values() if post.state is PostState.awaiting_approval and p(post)]
     return _approve_ids_with_render(cfg, resolve_ids=_resolve, now=now, detail=detail or {})
+
+def approve_batch(cfg: Config, batch_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """Approve every awaiting_approval post in ONE ingest batch — all accounts, one click."""
+    bid = (batch_id or "").strip()
+    if not bid:
+        return ActionResult(ok=True, detail={"batch": None, "approved": 0})
+    return _approve_matching(cfg, lambda p: p.batch_id == bid, now=now, detail={"batch": bid})
 
 def approve_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
     """M3b 'all accounts of this moment': one-click approve EVERY awaiting_approval surface of ONE clip, so

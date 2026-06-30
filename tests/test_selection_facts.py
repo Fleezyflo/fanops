@@ -56,9 +56,9 @@ def test_posts_of_account(tmp_path):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p_a", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p_a"))
+                          caption="x", state=PostState.awaiting_approval, public_url="dryrun://p_a"))
         led.add_post(Post(id="p_b", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram,
-                          caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p_b"))
+                          caption="x", state=PostState.awaiting_approval, public_url="dryrun://p_b"))
     led = Ledger.load(cfg)
     assert {p.id for p in led.posts_of_account("@a")} == {"p_a"}
 

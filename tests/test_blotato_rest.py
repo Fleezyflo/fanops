@@ -13,7 +13,7 @@ def test_success_sets_submission_id(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="98432",
                       platform=Platform.twitter, caption="hi",
-                      scheduled_time="2026-06-01T18:00:00Z", state=PostState.queued, public_url=f"dryrun://p1"))
+                      scheduled_time="2026-06-01T18:00:00Z", state=PostState.queued, public_url="dryrun://p1"))
     pm = mocker.patch("fanops.post.blotato_rest.requests.post",
                       return_value=_R(200, {"postSubmissionId": "s_1"}))
     led = BlotatoRestPoster(cfg).publish(led, "p1")
@@ -25,7 +25,7 @@ def test_4xx_marks_failed_not_analyzed(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p2", parent_id="c", account="@a", account_id="1", platform=Platform.tiktok,
-                      caption="x", media_urls=["https://h/v.mp4"], state=PostState.queued, public_url=f"dryrun://p2"))
+                      caption="x", media_urls=["https://h/v.mp4"], state=PostState.queued, public_url="dryrun://p2"))
     mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(422, {"e": "bad"}))
     led = BlotatoRestPoster(cfg).publish(led, "p2")
     assert led.posts["p2"].state is PostState.failed       # FIX F22: failed, not analyzed
@@ -37,7 +37,7 @@ def test_5xx_error_reason_redacts_the_api_key(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("BLOTATO_API_KEY", "SECRET-BLOTATO-KEY")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p5", parent_id="c", account="@a", account_id="1", platform=Platform.tiktok,
-                      caption="x", media_urls=["https://h/v.mp4"], state=PostState.queued, public_url=f"dryrun://p5"))
+                      caption="x", media_urls=["https://h/v.mp4"], state=PostState.queued, public_url="dryrun://p5"))
     mocker.patch("fanops.post.blotato_rest.requests.post",
                  return_value=_R(500, {"error": "rejected header blotato-api-key=SECRET-BLOTATO-KEY"}))
     led = BlotatoRestPoster(cfg).publish(led, "p5")
@@ -51,7 +51,7 @@ def test_401_raises_loudly(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("BLOTATO_API_KEY", "badkey")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p3", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://p3"))
+                      caption="x", state=PostState.queued, public_url="dryrun://p3"))
     mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(401, {"e": "unauthorized"}))
     with pytest.raises(BlotatoAuthError):
         BlotatoRestPoster(cfg).publish(led, "p3")          # bad key must halt, not silently fail
@@ -63,7 +63,7 @@ def test_401_message_redacts_response_body(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("BLOTATO_API_KEY", "badkey")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p3r", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://p3r"))
+                      caption="x", state=PostState.queued, public_url="dryrun://p3r"))
     mocker.patch("fanops.post.blotato_rest.requests.post",
                  return_value=_R(401, {"e": "denied for key SENTINEL-KEY-ECHO"}))
     with pytest.raises(BlotatoAuthError) as ei:
@@ -75,7 +75,7 @@ def test_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p4", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://p4"))
+                      caption="x", state=PostState.queued, public_url="dryrun://p4"))
     seq = [_R(429, {"e": "rate"}), _R(200, {"postSubmissionId": "s9"})]
     mocker.patch("fanops.post.blotato_rest.requests.post", side_effect=seq)
     mocker.patch("fanops.post.blotato_rest.time.sleep")    # no real backoff in tests
@@ -109,7 +109,7 @@ def test_2xx_without_recognizable_id_is_needs_reconcile_not_failed(tmp_path, mon
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pn", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, submission_id="fanops_tok", public_url=f"dryrun://pn"))
+                      caption="x", state=PostState.queued, submission_id="fanops_tok", public_url="dryrun://pn"))
     mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(200, {}))
     led = BlotatoRestPoster(cfg).publish(led, "pn")
     assert led.posts["pn"].state is PostState.needs_reconcile   # parked, NEVER failed
@@ -122,7 +122,7 @@ def test_2xx_with_alias_id_marks_submitted(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pa", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, submission_id="fanops_tok", public_url=f"dryrun://pa"))
+                      caption="x", state=PostState.queued, submission_id="fanops_tok", public_url="dryrun://pa"))
     mocker.patch("fanops.post.blotato_rest.requests.post",
                  return_value=_R(201, {"data": {"submissionId": "real_alias"}}))
     led = BlotatoRestPoster(cfg).publish(led, "pa")
@@ -138,7 +138,7 @@ def test_5xx_is_ambiguous_marks_needs_reconcile_no_repost(tmp_path, monkeypatch,
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p5", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://p5"))
+                      caption="x", state=PostState.queued, public_url="dryrun://p5"))
     pm = mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(503, {"e": "down"}))
     slept = mocker.patch("fanops.post.blotato_rest.time.sleep")
     led = BlotatoRestPoster(cfg).publish(led, "p5")
@@ -156,7 +156,7 @@ def test_network_timeout_marks_needs_reconcile_no_repost(tmp_path, monkeypatch, 
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pt", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://pt"))
+                      caption="x", state=PostState.queued, public_url="dryrun://pt"))
     pm = mocker.patch("fanops.post.blotato_rest.requests.post",
                       side_effect=requests.exceptions.ConnectionError("conn reset"))
     led = BlotatoRestPoster(cfg).publish(led, "pt")
@@ -173,7 +173,7 @@ def test_5xx_with_submission_id_in_body_captures_it_for_reconcile(tmp_path, monk
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p5b", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://p5b"))
+                      caption="x", state=PostState.queued, public_url="dryrun://p5b"))
     pm = mocker.patch("fanops.post.blotato_rest.requests.post",
                       return_value=_R(503, {"postSubmissionId": "sub_amb", "error": "upstream"}))
     led = BlotatoRestPoster(cfg).publish(led, "p5b")
@@ -191,7 +191,7 @@ def test_5xx_body_id_captured_via_alias_or_nested(tmp_path, monkeypatch, mocker)
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p5d", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, submission_id="fanops_tok", public_url=f"dryrun://p5d"))
+                      caption="x", state=PostState.queued, submission_id="fanops_tok", public_url="dryrun://p5d"))
     mocker.patch("fanops.post.blotato_rest.requests.post",
                  return_value=_R(503, {"data": {"submissionId": "sub_nested"}, "error": "upstream"}))
     led = BlotatoRestPoster(cfg).publish(led, "p5d")
@@ -206,7 +206,7 @@ def test_5xx_body_id_overwrites_preexisting_client_token(tmp_path, monkeypatch, 
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p5c", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, submission_id="fanops_clienttoken", public_url=f"dryrun://p5c"))
+                      caption="x", state=PostState.queued, submission_id="fanops_clienttoken", public_url="dryrun://p5c"))
     pm = mocker.patch("fanops.post.blotato_rest.requests.post",
                       return_value=_R(503, {"postSubmissionId": "sub_real", "error": "upstream"}))
     led = BlotatoRestPoster(cfg).publish(led, "p5c")
@@ -221,7 +221,7 @@ def test_429_backoff_is_jittered(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pj", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://pj"))
+                      caption="x", state=PostState.queued, public_url="dryrun://pj"))
     mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(429, {"e": "rate"}))
     sleeps = []
     mocker.patch("fanops.post.blotato_rest.time.sleep", side_effect=lambda s: sleeps.append(s))
@@ -238,7 +238,7 @@ def test_retry_exhaustion_marks_failed(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="px", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://px"))
+                      caption="x", state=PostState.queued, public_url="dryrun://px"))
     pm = mocker.patch("fanops.post.blotato_rest.requests.post", return_value=_R(429, {"e": "rate"}))
     mocker.patch("fanops.post.blotato_rest.time.sleep")
     led = BlotatoRestPoster(cfg).publish(led, "px")

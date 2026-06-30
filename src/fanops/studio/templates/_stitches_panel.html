@@ -1,36 +1,29 @@
-{# src/fanops/studio/templates/_stitches_panel.html — M3 operator-approval surface (htmx-swapped in place) #}
 <div id="stitches-panel">
   <h2>Stitch suggestions</h2>
-  <p class="muted">Structural-hook ideas the system proposes (impact-cut, intro-tease, …). <strong>Nothing
-    posts until you approve it.</strong> Tick the ones you want, then approve — or dismiss the rest.</p>
-
+  <p class="muted">Structural edits the system proposes. <strong>Nothing posts until you approve.</strong></p>
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }} suggestion(s){% elif result.detail.dismissed is defined %}Dismissed {{ result.detail.dismissed }} suggestion(s){% else %}Released {{ result.detail.released }} draft(s){% endif %}{% else %}{{ result.error }}{% endif %}
+      {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }}{% elif result.detail.dismissed is defined %}Dismissed {{ result.detail.dismissed }}{% else %}Released {{ result.detail.released }}{% endif %}{% else %}{{ result.error }}{% endif %}
     </div>
   {% endif %}
-
-  <form hx-post="{{ url_for('do_approve_stitches') }}" hx-target="#stitches-panel" hx-swap="outerHTML">
-    <ul class="stitch-list">
-      {% for p in plans %}<li><label><input type="checkbox" name="ids" value="{{ p.id }}">
-        <strong>{{ p.strategy_key }}</strong>{% if p.rationale %} <span class="rationale">— {{ p.rationale }}</span>{% endif %}
-        <span class="muted">· clip {{ p.clip_id }} · {{ p.id }}</span></label></li>{% endfor %}
-      {% if not plans %}<li class="empty">no suggestions awaiting approval</li>{% endif %}
-    </ul>
-    <button type="submit">Approve selected</button>
-    <button type="submit" hx-post="{{ url_for('do_dismiss_stitches') }}" hx-target="#stitches-panel" hx-swap="outerHTML">Dismiss selected</button>
-  </form>
-
-  <h2>Rendered drafts — release to publish</h2>
-  <p class="muted">Approved stitches the system has rendered. They are <strong>unpostable</strong> until you
-    release them — review each, then release. A released draft inherits the base clip's caption and becomes
-    eligible to publish.</p>
+  <ul class="stitch-list" id="stitch-picks">
+    {% for p in plans %}<li class="stitch-row"><label><input type="checkbox" name="ids" value="{{ p.id }}" form="stitch-approve">
+      <strong>{{ p.strategy_key }}</strong>{% if p.rationale %} <span class="rationale">{{ p.rationale }}</span>{% endif %}
+      <span class="muted">· {{ p.clip_id }}</span></label></li>{% endfor %}
+    {% if not plans %}<li class="empty">No suggestions awaiting approval</li>{% endif %}
+  </ul>
+  <div class="stitch-actions">
+    <form id="stitch-approve" hx-post="{{ url_for('do_approve_stitches') }}" hx-target="#stitches-panel" hx-swap="outerHTML"></form>
+    <button type="submit" form="stitch-approve" class="primary">Approve selected</button>
+    <button type="button" hx-post="{{ url_for('do_dismiss_stitches') }}" hx-include="#stitch-picks input[name='ids']" hx-target="#stitches-panel" hx-swap="outerHTML">Dismiss selected</button>
+  </div>
+  <h3>Rendered drafts</h3>
   <form hx-post="{{ url_for('do_release_stitches') }}" hx-target="#stitches-panel" hx-swap="outerHTML">
     <ul class="stitch-list">
-      {% for d in drafts %}<li><label><input type="checkbox" name="ids" value="{{ d.id }}">
-        <strong>{{ d.id }}</strong> <span class="muted">· {{ d.aspect }} · moment {{ d.parent_id }}</span></label></li>{% endfor %}
-      {% if not drafts %}<li class="empty">no rendered drafts awaiting release</li>{% endif %}
+      {% for d in drafts %}<li class="stitch-row"><label><input type="checkbox" name="ids" value="{{ d.id }}">
+        <strong>{{ d.id }}</strong> <span class="muted">· {{ d.aspect }}</span></label></li>{% endfor %}
+      {% if not drafts %}<li class="empty">No drafts awaiting release</li>{% endif %}
     </ul>
-    <button type="submit">Release selected</button>
+    <button type="submit" class="primary">Release selected</button>
   </form>
 </div>

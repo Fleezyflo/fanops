@@ -31,7 +31,18 @@ def _is_local(url: str) -> bool:
 
 def _backend_is_postiz(cfg) -> bool:
     b = getattr(cfg, "poster_backend", "")
-    return getattr(b, "value", b) == "postiz"
+    if getattr(b, "value", b) == "postiz":
+        return True
+    # C1/M3: go_live writes FANOPS_LIVE but NOT FANOPS_POSTER — poster_backend stays dryrun while
+    # IG channels publish via per-channel postiz. Autostart must track ACTUAL publish providers, not
+    # the legacy global (mirrors cfg.effective_publish_mode / is_live_backend).
+    if not getattr(cfg, "is_live", False):
+        return False
+    try:
+        from fanops.accounts import Accounts
+        return any(p == "postiz" for _, _, p in Accounts.load(cfg).live_ready_channels())
+    except Exception:
+        return False
 
 
 def _should_autostart(cfg) -> bool:

@@ -9,9 +9,7 @@
   {% if not pivot %}
     <div class="empty">No work for {{ active }}{% if active_source %} in this source{% endif %}{% if active_state %} ({{ active_state }}){% endif %} — <a href="{{ url_for('review', view='account', account=active, compact=compact_param) }}">clear the filters</a>.</div>
   {% else %}
-  <div class="pivot-bulk approve-bar meta">
-    <button type="button" class="primary" hx-post="{{ url_for('do_approve_posts', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=pivot_page.offset) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Approve selected</button>
-    <button type="button" hx-post="{{ url_for('do_reject_posts', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=pivot_page.offset) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
+  <div class="pivot-bulk meta">
     <button type="button" class="primary approve-account" hx-post="{{ url_for('do_approve_account', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=pivot_page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all {{ active }}{% if active_source %} (this source){% endif %}{% if active_batch %} (this batch){% endif %}</button>
   </div>
   {% for day, rows in pivot | group_review_by_account_surface %}
@@ -19,8 +17,8 @@
   <ul class="pivot-rows{{ ' ultra' if ultra else '' }}">
     {% for s in rows %}
     <li class="pivot-row" id="pivot-{{ s.post_id }}">
+      {% if not ultra %}<div class="pivot-preview clip-frame thumb"><video controls preload="none"{% if s.thumb_url %} poster="{{ s.thumb_url }}"{% endif %} src="{{ s.media_url }}" aria-label="preview {{ s.account }} {{ s.platform }}"></video></div>{% endif %}
       {% if s.editable %}<label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}" aria-label="select {{ s.account }} {{ s.platform }} for approval"></label>{% endif %}
-      <span class="pivot-id muted">{{ s.post_id }}</span>
       <span class="pivot-plat muted">{{ s.platform }}</span>
       {% if s.length_label %}<span class="chip ro" title="clip length band">{{ s.length_label }}</span>{% endif %}
       {% if s.is_account_cut %}<span class="chip ro cut" title="a real per-account cut at this account's own length and framing">✂ cut</span>{% elif creative_variation %}<span class="chip ro warn shared-cut" title="this surface fell back to a SHARED cut — not a real per-account clip">⚠ shared-cut</span>{% endif %}

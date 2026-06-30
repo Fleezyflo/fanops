@@ -117,6 +117,21 @@ def brand_risk_flag(caption: str, cfg: Config | None = None) -> str | None:
 def _surface_str(account: str, platform: Platform) -> str:
     return f"{account}/{platform.value}"                  # the documented lookup contract
 
+def caption_request_stale(cfg: Config, clip_id: str, want_surfaces: list[tuple[str, Platform]]) -> bool:
+    """True when the on-disk caption gate must be (re)opened: no request yet, or the requested surface
+    set no longer matches what casting would ask for now (e.g. IG surfaces added after a TikTok-only
+    request). A current request awaiting an answer is NOT stale — the responder still needs to land."""
+    want = {_surface_str(a, p) for a, p in want_surfaces}
+    if not want:
+        return False
+    if not request_path(cfg, "captions", clip_id).exists():
+        return True
+    try:
+        got, *_ = _request_surfaces(cfg, clip_id)
+    except Exception:
+        return True
+    return got != want
+
 def _lang_base(tag: str | None) -> str | None:
     """Normalise an IETF-ish language tag to its base subtag for comparison (AUDIT H5 hardening).
     A Phase-C skeptic proved the naive exact-string compare HELD legitimate same-language captions

@@ -50,6 +50,36 @@ def iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def is_past_due(scheduled_time, now: datetime) -> bool:
+    """Single 'past-due' truth. Strict: equal is NOT past-due. None / unparseable / tz-naive
+    → False (never raise; bad input never auto-triggers a past-due action). For 'would fire on
+    the next tick' (the publish_due / go_live gate semantics, `<=`), use is_due_or_past."""
+    if not scheduled_time:
+        return False
+    try:
+        dt = parse_iso(scheduled_time)
+    except (ValueError, TypeError):
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt < now
+
+
+def is_due_or_past(scheduled_time, now: datetime) -> bool:
+    """'Ready to fire on the next publish_due tick' — past OR exactly now. Mirrors publish_due's
+    `<=` gate. Unparseable -> True (treat-as-stale — the safe direction for the go_live readiness
+    check: a torn time blocks the flip, never silently passes)."""
+    if not scheduled_time:
+        return False
+    try:
+        dt = parse_iso(scheduled_time)
+    except (ValueError, TypeError):
+        return True
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt <= now
+
+
 # --- local-time RENDERING (storage stays canonical UTC; these localize at the Studio's web boundary) ---
 def _aware_utc(ts) -> "datetime | None":
     """Parse a stored timestamp into an aware UTC datetime, or None on absent/garbage. A stored NAIVE time

@@ -10,7 +10,7 @@ from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState
 from fanops.studio import actions, views
-from fanops.studio.app import _account_arg, _batch_arg, _offset_arg, _row_chips, _time_arg, _with_active
+from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _offset_arg, _row_chips, _time_arg, _with_active
 
 
 def register_schedule_routes(app, cfg):
@@ -21,10 +21,14 @@ def register_schedule_routes(app, cfg):
                 if (account or batch) else rows_full)
         approved_total = sum(1 for r in rows if r.editable)              # Face 5: full scoped count (pre-slice, page-safe banner)
         page = views.paginate(rows, _offset_arg())
-        groups = views.group_schedule_by_account(page.items)            # regroup the SLICE (header re-emits across a page)
+        lanes = views.schedule_lanes(page.items)
+        schedule_groups = views.group_schedule_by_account(page.items)
+        due_plan = views.due_publish_plan(cfg, handle=account or None, batch=batch, now=now)
+        cockpit = views.schedule_cockpit(led, cfg, account, now=now) if account else None
+        inflight_watch = views.inflight_watch(led, cfg, account=account, now=now)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
-        return render_template(tmpl, rows=page.items, groups=groups, page=page, approved_total=approved_total,
-                               active_batch=batch, result=result, tab="schedule",
+        return render_template(tmpl, rows=page.items, lanes=lanes, schedule_groups=schedule_groups, groups=None, page=page, approved_total=approved_total,
+                               active_batch=batch, due_plan=due_plan, cockpit=cockpit, inflight_watch=inflight_watch, auto_ship=views.schedule_auto_ship(cfg), result=result, tab="schedule",
                                # R3-followup UI-LIE-FIX: the per-channel truth, NOT the legacy global. On a
                                # live deployment with per-channel routing cfg.poster_backend reads 'dryrun'
                                # (the bridge fallback), printing 'dryrun' on a system that's actually live.
@@ -35,10 +39,18 @@ def register_schedule_routes(app, cfg):
     def schedule():
         return _schedule_panel(full=True)
 
+    @app.post("/schedule/shift/<handle>")
+    def do_schedule_shift(handle):
+        try:
+            hours = float(request.form.get("hours", 0))
+        except (TypeError, ValueError):
+            hours = 0.0
+        return _schedule_panel(actions.shift_account_schedule(cfg, handle, hours))
+
     @app.post("/schedule/respread")
     def do_reschedule_bucket():
         # routine re-spread of the approved bucket onto a fresh cadence from now.
-        return _schedule_panel(actions.reschedule_bucket(cfg))
+        return _schedule_panel(actions.reschedule_bucket(cfg, handle=_account_arg() or None))
 
     @app.post("/schedule/unapprove/<post_id>")
     def do_schedule_unapprove(post_id):
@@ -65,6 +77,25 @@ def register_schedule_routes(app, cfg):
         # into a per-row span and left the shipped post stale in the bucket until a manual refresh.
         return _schedule_panel(actions.publish_now(cfg, post_id, confirmed=bool(request.form.get("confirm"))))
 
+    @app.post("/schedule/reconcile")
+    def do_schedule_reconcile():
+        result = actions.reconcile_inflight(cfg)
+        tgt = (request.headers.get("HX-Target") or "")
+        if request.headers.get("HX-Request") and "reconcile-strip" in tgt:
+            led = Ledger.load(cfg); acct = _account_arg()
+            return render_template("_reconcile_strip.html", inflight_watch=views.inflight_watch(led, cfg, account=acct),
+                                   nav_account=acct, result=result, tab="schedule")
+        return _schedule_panel(result)
+
+    @app.post("/schedule/accept-suggested/<handle>")
+    def do_schedule_accept_suggested(handle):
+        return _schedule_panel(actions.accept_suggested_account(cfg, views.resolve_account_handle(handle, cfg)))
+
+    @app.post("/schedule/publish-due")
+    def do_schedule_publish_due():
+        return _schedule_panel(actions.publish_due_bucket(cfg, handle=_account_arg() or None, batch=_batch_arg(),
+                                                    confirmed=bool(request.form.get("confirm"))))
+
     @app.get("/lift")
     def lift():
         led = Ledger.load(cfg); accts = Accounts.load(cfg); account = _account_arg()
@@ -81,9 +112,11 @@ def register_schedule_routes(app, cfg):
 
     def _posted_panel(result=None, *, full=False):
         led = Ledger.load(cfg); account = _account_arg(); batch = _batch_arg()
-        rows_full = views.posted_library(led, cfg)                                    # universe for chips (account-only)
-        rows = (views.posted_library(led, cfg, account=account, batch=batch)
-                if (account or batch) else rows_full)
+        delivery = _delivery_arg(); failure = _failure_arg()
+        rows_full = views.posted_library(led, cfg, delivery=delivery if delivery else None)
+        rows = views.posted_library(led, cfg, account=account, batch=batch,
+                                    delivery=delivery if delivery else None, failure_kind=failure)
+        failure_rollup = views.failure_rollup(led) if (delivery == "failed") else None
         rollup = views.posted_batch_rollup(rows) if batch else None     # Face 5: full scoped (pre-slice) per-batch summary
         views.lineage_stats(rows)                         # S6: rank repost/crosspost siblings within the filtered set
         page = views.paginate(rows, _offset_arg())
@@ -94,7 +127,8 @@ def register_schedule_routes(app, cfg):
         accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
         return render_template("posted.html" if full else "_posted_panel.html", rows=page.items, groups=groups,
                                page=page, rollup=rollup, peaks=peaks, active_batch=batch, accounts=accounts,
-                               result=result, tab="posted", **_row_chips(rows_full, "posted", account))
+                               result=result, tab="posted", active_delivery=delivery, active_failure=failure,
+                               failure_rollup=failure_rollup, **_row_chips(rows_full, "posted", account))
 
     @app.get("/posted")
     def posted():
@@ -104,6 +138,18 @@ def register_schedule_routes(app, cfg):
     def do_repost_post(post_id):
         # 'Post again': spawn a fresh awaiting_approval repost from a shipped post; re-render the library.
         return _posted_panel(actions.repost_post(cfg, post_id))
+
+    @app.post("/posts/resolve/<post_id>")
+    def do_resolve_post(post_id):
+        return _posted_panel(actions.resolve_post(
+            cfg, post_id, request.form.get("status", "failed"),
+            url=(request.form.get("url") or "").strip() or None))
+
+    @app.post("/posts/recover")
+    def do_recover_posts():
+        return _posted_panel(actions.recover_posts(
+            cfg, request.form.getlist("ids"), action=request.form.get("recover_action", ""),
+            reason=(request.form.get("reason") or "studio_recover")[:200]))
 
     @app.post("/posts/crosspost/<clip_id>")
     def do_crosspost_to_account(clip_id):

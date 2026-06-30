@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ledger import Ledger
-from fanops.models import CaptionSet, ClipState, MomentDecision, MomentHookDecision, Post, PostState
+from fanops.models import CaptionSet, ClipState, MomentCastingDecision, MomentDecision, MomentHookDecision, Post, PostState
 from fanops.ids import child_id, surface_key, _hash
 from fanops import overlay
 from fanops.timeutil import parse_iso, iso_z
@@ -21,11 +21,11 @@ from fanops.studio.views import _imminent
 from fanops.studio.actions_common import ActionResult, _now, _inherit_captions  # noqa: F401
 from fanops.audit import write_audit
 from fanops.studio.actions_run import (run_ingest, run_pull, save_uploads, save_uploads_and_ingest, save_thirdparty_uploads, run_ingest_thirdparty, run_advance, run_prepare)  # noqa: F401
-from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprove_post, approve_with_hook, approve_clip, approve_account, approve_moment, approve_as_is, approve_stitches, dismiss_stitches, release_stitches)  # noqa: F401
+from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprove_post, approve_with_hook, approve_clip, approve_batch, approve_account, approve_moment, approve_as_is, approve_stitches, dismiss_stitches, release_stitches)  # noqa: F401
 from fanops.studio.actions_casting import cast_add, cast_remove  # noqa: F401
 
 SNOOZE_DAYS = 365
-_GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
+_GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "moment_casting": MomentCastingDecision, "captions": CaptionSet}
 
 def _normalize_z(new_time: str) -> str:
     """Parse an ISO time, COERCE naive -> UTC (iso_z would otherwise treat naive as LOCAL time),
@@ -291,6 +291,77 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
     return ActionResult(ok=True, detail={"post_id": post_id, "url": url})
 
 
+
+def _studio_publish_guard(cfg: Config, post=None) -> Optional[str]:
+    """Studio publish actions must not silently dryrun when the operator expects live."""
+    if not cfg.is_live:
+        return "Not live — flip Go Live before publishing. Nothing reaches social in dryrun."
+    if post is not None:
+        from fanops.accounts import Accounts
+        from fanops.post.run import _post_provider
+        accts = Accounts.load(cfg)
+        prov = _post_provider(cfg, accts, post)
+        if prov == "dryrun":
+            return (f"{post.account} on {post.platform.value} routes to dryrun — map the channel in Go Live → Accounts.")
+        if prov is None:
+            return (f"{post.account} on {post.platform.value} is not mapped — connect the channel in Go Live.")
+    return None
+
+
+def accept_suggested_account(cfg: Config, handle: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """Apply batch spread suggestions to every queued post on one account."""
+    from fanops.studio.views_common import suggest_times_for_batch
+    now = _now(now); moved = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            posts = [p for p in led.posts.values() if p.state is PostState.queued and p.account == handle]
+            sched = suggest_times_for_batch(cfg, posts, now=now)
+            for pid, t in sched.items():
+                p = led.posts[pid]
+                if p.scheduled_time != t:
+                    p.scheduled_time = t
+                    moved += 1
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"accept suggestions failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"rescheduled": moved, "outcome": "suggestions_accepted", "handle": handle})
+
+
+def preflight_publish_media(cfg: Config, post) -> str | None:
+    """Return an error string when local media exceeds backend caps (fail BEFORE network)."""
+    from pathlib import Path
+    from fanops.models import Platform
+    path = None
+    if post.render_id:
+        r = Ledger.load(cfg).renders.get(post.render_id)
+        path = r.path if r else None
+    elif post.media_urls and post.media_urls[0].startswith("file://"):
+        path = post.media_urls[0][7:]
+    elif post.media_urls and not post.media_urls[0].startswith("http"):
+        path = post.media_urls[0]
+    if not path or not Path(path).exists():
+        return None
+    size = Path(path).stat().st_size
+    backend = cfg.effective_publish_mode()
+    if post.platform is Platform.tiktok and backend == "zernio" and size > cfg.zernio_max_upload_bytes:
+        from fanops.post.compress import maybe_shrink_for_cap
+        shrunk = maybe_shrink_for_cap(cfg, Path(path), cfg.zernio_max_upload_bytes, label="preflight")
+        if shrunk.stat().st_size <= cfg.zernio_max_upload_bytes:
+            return None
+        return f"oversize: {size} bytes > {cfg.zernio_max_upload_bytes} — re-render shorter"
+    return None
+
+
+def reconcile_inflight(cfg: Config) -> ActionResult:
+    """Poll backends for permalinks on in-flight posts (Studio reconcile strip)."""
+    if not cfg.is_live:
+        return ActionResult(ok=False, error="Publishing is off — turn on Go Live before checking for links.")
+    from fanops.reconcile import reconcile_due
+    try:
+        summary = reconcile_due(cfg)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"reconcile failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"outcome": "reconciled", **summary})
+
 def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionResult:
     """Ship ONE reviewed post IMMEDIATELY from the Studio (milestone 5: publish in the UI) via the
     SAME poster path the pipeline uses (post.run.publish_post) — a real post on a live backend, a
@@ -309,9 +380,22 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     led = Ledger.load(cfg)
     if post_id not in led.posts:
         return ActionResult(ok=False, error=f"no such post: {post_id}")
-    st = led.posts[post_id].state
+    post = led.posts[post_id]
+    st = post.state
     if st is not PostState.queued:
         return ActionResult(ok=False, error=f"post {post_id} is {st.value} — only a queued post can be published")
+    if (err := _studio_publish_guard(cfg, post)):
+        return ActionResult(ok=False, error=err)
+    if (pf := preflight_publish_media(cfg, post)):
+        try:
+            with Ledger.transaction(cfg) as led:
+                p = led.posts.get(post_id)
+                if p is not None:
+                    p.state = PostState.failed
+                    p.error_reason = pf
+        except Exception:
+            pass
+        return ActionResult(ok=False, error=pf)
     try:
         # network runs OUTSIDE the ledger lock (per-post claim->network->finalize) — the Studio no longer
         # holds the flock across the publish round-trip, so a concurrent daemon pass isn't starved.
@@ -331,12 +415,20 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     # so any other terminal state means the post did NOT fully ship. A None return means the CLAIM gate
     # found it no longer queued (e.g. a concurrent daemon pass just claimed it between the guard read and
     # the claim) — tell the operator to retry rather than print a confusing "post is None".
-    if state == "published":
-        # R3/D17: audit the SUCCESS — only after publish_post returned 'published'.
-        # UI-LIE-FIX: audit the per-channel truth, not the legacy global.
+    if state in ("published", "needs_reconcile", "submitted"):
+        pub = Ledger.load(cfg).posts.get(post_id)
+        if cfg.is_live and pub is not None and str(pub.public_url or "").startswith("dryrun://"):
+            return ActionResult(ok=False, error=("LIVE publish ran dryrun — post NOT on social. "
+                                "Restart Studio (or Go Live) so FANOPS_LIVE=1 is active, then retry."))
+        from fanops.studio.views_results import classify_post_delivery
+        delivery = classify_post_delivery(pub) if pub else "dryrun"
+        outcome = {"live": "live_shipped", "inflight": "inflight_submitted", "dryrun": "dryrun_local"}.get(delivery, "live_shipped")
         write_audit(cfg, "publish_now", [post_id], reason="studio_publish_now",
                     backend=cfg.effective_publish_mode())
-        return ActionResult(ok=True, detail={"post_id": post_id, "state": state})
+        return ActionResult(ok=True, detail={"post_id": post_id, "state": state, "outcome": outcome,
+                                             "submission_id": getattr(pub, "submission_id", None),
+                                             "public_url": getattr(pub, "public_url", None),
+                                             "backend": cfg.effective_publish_mode()})
     if state is None:
         return ActionResult(ok=False, error="post was not claimable (it may be publishing already) — refresh and try again")
     return ActionResult(ok=False, error=f"publish did not complete (post is {state}) — see the run log")
@@ -568,12 +660,142 @@ def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None, handle: Op
     return ActionResult(ok=True, detail={"rescheduled": len(due), "handle": handle})
 
 
+def shift_account_schedule(cfg: Config, handle: str, hours: float, *, now: Optional[datetime] = None) -> ActionResult:
+    """Nudge every queued post for one account by a fixed offset — preserves relative spacing."""
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=True, detail={"shifted": 0, "handle": None, "hours": hours})
+    now = _now(now)
+    delta = timedelta(hours=hours)
+    moved = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            for p in led.posts.values():
+                if p.state is not PostState.queued or p.account != handle:
+                    continue
+                if _seconds_away(p.scheduled_time, now) or not p.scheduled_time:
+                    continue
+                try:
+                    dt = parse_iso(p.scheduled_time)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    p.scheduled_time = iso_z(dt + delta)
+                    moved += 1
+                except (ValueError, TypeError):
+                    continue
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"shift failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"shifted": moved, "handle": handle, "hours": hours})
+
 def reschedule_account(cfg: Config, handle: str, *, now: Optional[datetime] = None) -> ActionResult:
     """M3 per-account respread: re-stagger one account's queued posts on a fresh cadence (past-due
     included), leaving every other account untouched. Thin wrapper over `reschedule_bucket` so the
     M3 PRD outcome — a 'Reschedule this account' control that respreads exactly one account — has a
     named entry point; the per-account scoping is enforced inside the transaction (no race)."""
     return reschedule_bucket(cfg, now=now, handle=handle)
+
+
+def publish_due_bucket(cfg: Config, *, handle: Optional[str] = None, batch: Optional[str] = None,
+                       confirmed: bool = True, now: Optional[datetime] = None) -> ActionResult:
+    """Publish every DUE queued post in scope (Schedule 'Publish all due'). LIVE requires confirm + shows rate."""
+    from fanops.errors import AuthError
+    from fanops.post.run import publish_due
+    from fanops.studio.views_results import due_publish_plan
+    from fanops.timeutil import iso_z
+    plan = due_publish_plan(cfg, handle=handle, batch=batch, now=_now(now))
+    if plan.due == 0:
+        return ActionResult(ok=True, detail={"due": 0, "published": 0, "plan": plan.__dict__})
+    if (err := _studio_publish_guard(cfg)):
+        return ActionResult(ok=False, error=err)
+    if cfg.is_live and not confirmed:
+        tail = f", est. {plan.est_minutes} min" if plan.est_minutes and plan.postiz_due else ""
+        rate = f"~{plan.rate_per_min}/min Postiz cap" if plan.rate_per_min else "live backends"
+        return ActionResult(ok=False, error=(f"LIVE: Publish all due ships {plan.due} post(s) ({rate}{tail}) — "
+                            "tick the confirm box, then click again."))
+    try:
+        summary = publish_due(cfg, now=iso_z(_now(now)), account=handle, batch_id=batch)
+    except AuthError as exc:
+        key = Config.auth_key_name_from_error(exc)
+        return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"publish due failed: {str(exc)[:160]}")
+    write_audit(cfg, "publish_due_bucket", [], reason="studio_publish_due_bucket", handle=handle, batch=batch, **summary)
+    return ActionResult(ok=True, detail={**summary, "plan": plan.__dict__})
+
+
+_REVIEW_REVERT_BLOCKED = frozenset({
+    PostState.published, PostState.analyzed, PostState.needs_reconcile,
+    PostState.submitting, PostState.submitted,
+})
+
+
+def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] = None) -> ActionResult:
+    """Studio twin of cmd_resolve — operator forces ground truth on stuck inflight posts."""
+    from fanops.models import _POST_TERMINAL_REQUIRES_URL
+    if post_id not in (Ledger.load(cfg).posts):
+        return ActionResult(ok=False, error=f"no such post: {post_id}")
+    try:
+        st = PostState(status)
+    except ValueError:
+        st = PostState.published if status == "published" else PostState.failed
+    if st in _POST_TERMINAL_REQUIRES_URL and not (url or "").strip():
+        return ActionResult(ok=False, error="Paste the live permalink to mark this post published.")
+    try:
+        with Ledger.transaction(cfg) as led:
+            if post_id not in led.posts:
+                return ActionResult(ok=False, error=f"no such post: {post_id}")
+            p = led.posts[post_id]
+            if (url or "").strip():
+                p.public_url = url.strip()
+            p.state = st
+            if st is PostState.failed:
+                p.error_reason = p.error_reason or "marked failed by operator"
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"resolve failed: {str(exc)[:160]}")
+    write_audit(cfg, "resolve_post", [post_id], reason="studio_resolve", status=st.value, url=(url or "").strip())
+    outcome = "live_shipped" if st is PostState.published else "failed"
+    return ActionResult(ok=True, detail={"post_id": post_id, "outcome": outcome, "state": st.value,
+                                          "public_url": (url or "").strip() or None})
+
+
+def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
+    """Pull analytics for live posts — closes the Posted→Learn loop from Studio."""
+    if not cfg.is_live:
+        return ActionResult(ok=False, error="Publishing is off — turn on Go Live before pulling metrics.")
+    from fanops.track import pull_metrics, _default_list_posts
+    from fanops.digest import write_digest
+    try:
+        led0 = Ledger.load(cfg)
+        pollable = [p for p in led0.posts.values()
+                    if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
+        if not pollable:
+            return ActionResult(ok=True, detail={"outcome": "metrics_pulled", "analyzed": 0, "series_rows": 0,
+                                                    "degraded": 0, "pollable": 0})
+        rows = list(_default_list_posts(cfg, posts=pollable)(window))
+    except (RuntimeError, AuthError) as exc:
+        return ActionResult(ok=False, error=str(exc)[:160])
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"metrics pull failed: {str(exc)[:160]}")
+    try:
+        with Ledger.transaction(cfg) as led:
+            before = {pid: len(p.metrics_series) for pid, p in led.posts.items()}
+            led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
+            analyzed = len(led.posts_in_state(PostState.analyzed))
+            added = deg = 0
+            for pid, p in led.posts.items():
+                new_rows = p.metrics_series[before.get(pid, 0):]
+                added += len(new_rows)
+                deg += sum(1 for r in new_rows if r.get("lift_degraded"))
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"metrics apply failed: {str(exc)[:160]}")
+    try:
+        write_digest(Ledger.load(cfg), cfg)
+    except Exception:
+        pass
+    write_audit(cfg, "pull_metrics", [], reason="studio_pull_metrics", analyzed=analyzed, series_rows=added)
+    return ActionResult(ok=True, detail={"outcome": "metrics_pulled", "analyzed": analyzed,
+                                          "series_rows": added, "degraded": deg, "pollable": len(pollable)})
+
 
 def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> ActionResult:
     """R3/D7: the operator's wipe-and-revert flow as a first-class API. For each id move
@@ -585,6 +807,7 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
     audit so 'why this batch went back to Review' is in the log."""
     ids = [str(i) for i in (post_ids or []) if i]
     moved: list[str] = []
+    skipped: list[str] = []
     unknown: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
@@ -592,8 +815,8 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                 if pid not in led.posts:
                     unknown.append(pid); continue
                 p = led.posts[pid]
-                # R1 invariant: a terminal-with-URL post leaving the URL-required state is fine —
-                # awaiting_approval is not in _POST_TERMINAL_REQUIRES_URL, so the validator stays happy.
+                if p.state in _REVIEW_REVERT_BLOCKED:
+                    skipped.append(pid); continue
                 p.state = PostState.awaiting_approval
                 p.scheduled_time = None
                 p.public_url = ""
@@ -608,8 +831,109 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
     if moved:
         write_audit(cfg, "bulk_send_to_review", moved, reason=reason,
                     unknown=unknown, moved=len(moved))
-    return ActionResult(ok=True, detail={"moved": len(moved), "unknown": unknown,
+    return ActionResult(ok=True, detail={"moved": len(moved), "skipped": len(skipped), "unknown": unknown,
                                           "post_ids": moved})
+
+
+def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """Restore a guard-stripped per-account hook onto this surface and re-burn preview media."""
+    if not cfg.creative_variation:
+        return ActionResult(ok=False, error="per-account hook restore needs FANOPS_CREATIVE_VARIATION")
+    led = Ledger.load(cfg)
+    p = led.posts.get(post_id)
+    if p is None:
+        return ActionResult(ok=False, error=f"no such post: {post_id}")
+    clip = led.clips.get(p.parent_id)
+    mom = led.moments.get(clip.parent_id) if clip is not None else None
+    if mom is None:
+        return ActionResult(ok=False, error="no moment for post")
+    removed = (mom.hooks_by_persona_removed or {}).get(p.account)
+    if not removed:
+        return ActionResult(ok=False, error="no stripped hook to restore for this account")
+    try:
+        with Ledger.transaction(cfg) as led2:
+            m = led2.moments.get(mom.id)
+            if m is None:
+                return ActionResult(ok=False, error="moment gone")
+            hbp = dict(m.hooks_by_persona or {})
+            hbp[p.account] = removed
+            hbr = {k: v for k, v in (m.hooks_by_persona_removed or {}).items() if k != p.account}
+            led2.moments[mom.id] = m.model_copy(update={"hooks_by_persona": hbp, "hooks_by_persona_removed": hbr})
+            post = led2.posts.get(post_id)
+            if post is not None:
+                post.variant_hook = removed
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"restore hook failed: {str(exc)[:160]}")
+    return reburn_hook(cfg, post_id, removed, now=now)
+
+
+def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate_limit", stagger_min: int = 2) -> ActionResult:
+    """Queue all failed posts whose error_reason is a rate-limit (429) for daemon retry."""
+    from fanops.studio.views_results import classify_failure
+    ids = [pid for pid, p in Ledger.load(cfg).posts.items()
+           if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "rate_limit"]
+    if not ids:
+        return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
+    retried: list[str] = []
+    now = _now(None)
+    try:
+        with Ledger.transaction(cfg) as led:
+            for i, pid in enumerate(ids):
+                p = led.posts.get(pid)
+                if p is None or p.state not in (PostState.failed, PostState.error):
+                    continue
+                p.state = PostState.queued
+                p.submission_id = None
+                p.error_reason = None
+                p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
+                retried.append(pid)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"retry_rate_limited failed: {str(exc)[:160]}")
+    if retried:
+        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
+    return ActionResult(ok=True, detail={"retried": len(retried), "post_ids": retried, "outcome": "retried_rate_limit", "stagger_min": stagger_min})
+
+
+def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str = "") -> ActionResult:
+    """S1 recovery cockpit: retry (failed→queued, retryable buckets only), review (→awaiting_approval),
+    or discard (failed→rejected). Atomic per batch; unknown ids reported; oversize never retried."""
+    from fanops.studio.views_results import classify_failure, _RETRYABLE_FAILURES
+    ids = [str(i) for i in (post_ids or []) if i]
+    if not ids:
+        return ActionResult(ok=True, detail={"retried": 0, "discarded": 0, "reviewed": 0, "skipped": 0, "unknown": []})
+    action = (action or "").strip().lower()
+    if action == "review":
+        return bulk_send_to_review(cfg, ids, reason=reason or "studio_recover_review")
+    retried: list[str] = []; discarded: list[str] = []; skipped: list[str] = []; unknown: list[str] = []
+    try:
+        with Ledger.transaction(cfg) as led:
+            for pid in ids:
+                if pid not in led.posts:
+                    unknown.append(pid); continue
+                p = led.posts[pid]
+                if p.state not in (PostState.failed, PostState.error):
+                    skipped.append(pid); continue
+                if action == "retry":
+                    if classify_failure(p) not in _RETRYABLE_FAILURES:
+                        skipped.append(pid); continue
+                    p.state = PostState.queued
+                    p.submission_id = None
+                    p.error_reason = None
+                    retried.append(pid)
+                elif action == "discard":
+                    p.state = PostState.rejected
+                    discarded.append(pid)
+                else:
+                    return ActionResult(ok=False, error=f"unknown recover action: {action}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"recover_posts failed: {str(exc)[:160]}")
+    if retried or discarded:
+        write_audit(cfg, "recover_posts", retried or discarded, reason=reason,
+                    recover_action=action, retried=len(retried), discarded=len(discarded),
+                    skipped=len(skipped), unknown=unknown)
+    detail = {"retried": len(retried), "discarded": len(discarded), "reviewed": 0,
+              "skipped": len(skipped), "unknown": unknown, "post_ids": retried or discarded}
+    return ActionResult(ok=True, detail=detail)
 
 
 def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:

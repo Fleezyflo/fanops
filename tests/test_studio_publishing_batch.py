@@ -39,7 +39,7 @@ def _seed(cfg, n, *, state=PostState.queued, batch_id=None, batch_name=None, lif
         led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
         metrics = {LIFT_SCORE: lifts[i]} if (lifts is not None and i < len(lifts) and lifts[i] is not None) else {}
         led.add_post(Post(id=f"p{i}", parent_id=cid, account=account, account_id="0", platform=Platform.instagram,
-                          caption="c", state=state, scheduled_time=FAR, batch_id=batch_id, metrics=metrics, public_url=f"dryrun://0"))
+                          caption="c", state=state, scheduled_time=FAR, batch_id=batch_id, metrics=metrics, public_url="dryrun://0"))
     led.save()
 
 
@@ -49,7 +49,7 @@ def test_schedule_rows_batch_filter_and_label(tmp_path):
     _seed(cfg, 2, batch_id="bx", batch_name="Drop")                      # p0,p1 in bx
     led = Ledger.load(cfg)
     led.add_post(Post(id="p_u", parent_id="clip_0", account="@a0", account_id="0",
-                      platform=Platform.instagram, caption="c", state=PostState.queued, scheduled_time=FAR, public_url=f"dryrun://p_u")); led.save()
+                      platform=Platform.instagram, caption="c", state=PostState.queued, scheduled_time=FAR, public_url="dryrun://p_u")); led.save()
     led = Ledger.load(cfg)
     assert len(views.schedule_rows(led, cfg, now=NOW)) == 3              # all rows unfiltered
     bx = views.schedule_rows(led, cfg, now=NOW, batch="bx")
@@ -129,11 +129,12 @@ def test_publishing_unbatched_is_byte_identical(tmp_path):
 
 
 # ---- D2: action URLs must PRESERVE the ?batch= scope, not only pagination (scope-bleed fix) ----
-def test_schedule_action_urls_carry_batch(tmp_path):
+def test_schedule_action_urls_carry_batch(tmp_path, monkeypatch):
     # D2: filter Schedule to a batch, then act on a row (move/clear/publish/send-back/respread) — the htmx
     # re-render must stay WITHIN the batch. Before the fix only the show-more link carried ?batch=; the
     # action forms dropped it, bouncing the operator back to all-accounts on every edit. Same scope-bleed
     # class RF6/Batch-1 closed for Review's ?account=.
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     cfg = Config(root=tmp_path); _accounts(cfg)
     _seed(cfg, 1, batch_id="bx", batch_name="Drop")                      # p0 queued + editable in bx
     html = _client(cfg).get("/schedule?batch=bx").data.decode()

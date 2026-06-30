@@ -9,7 +9,7 @@ from flask import render_template, request
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.studio import actions, views
-from fanops.studio.app import _account_arg, _batch_arg, _card_chips, _offset_arg, _source_arg, _state_arg, _time_arg, _view_arg
+from fanops.studio.app import _account_arg, _batch_arg, _card_chips, _compact_arg, _focus_arg, _focus_idx_arg, _offset_arg, _source_arg, _state_arg, _time_arg, _ultra_arg, _view_arg
 
 
 def register_review_routes(app, cfg):
@@ -22,6 +22,18 @@ def register_review_routes(app, cfg):
         led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
         account = _account_arg(); batch = _batch_arg(); source = _source_arg(); state = _state_arg()
         view = _view_arg()
+        if account and view is None:
+            view = "account"
+        session_full = bool(account) and "compact" not in request.args
+        compact = False if session_full else _compact_arg()
+        ultra = False if session_full else _ultra_arg()
+        focus = _focus_arg()
+        if account and view == "account" and not focus and not ultra:
+            _fo = (request.args.get("focus") or "").strip().lower()
+            _grid = (request.args.get("grid") or "").strip() == "1"
+            if _fo not in ("0", "false", "no", "off") and not _grid:
+                focus = True
+        focus_idx = _focus_idx_arg()
         cards_full = views.review_buckets(led, accounts, cfg, now=now)               # universe for chips
         scoped = bool(account or batch or source or state)
         cards = (views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch,
@@ -31,8 +43,13 @@ def register_review_routes(app, cfg):
         sources = views.source_universe(cards_full)      # Phase 4 source-filter chip universe (key, basename)
         # Phase 4 account-first pivot: only meaningful WITH an account; view=account but no account falls back to
         # the moment view (account_pivot_rows returns [] -> the body renders the cards path, never a 500).
-        pivot_rows = (views.account_pivot_rows(led, accounts, cfg, now=now, account=account, batch=batch,
-                                               source=source, state=state) if (view == "account" and account) else None)
+        pivot_rows_full = (views.account_pivot_rows(led, accounts, cfg, now=now, account=account, batch=batch,
+                                                    source=source, state=state) if (view == "account" and account) else None)
+        pivot_rows = pivot_rows_full
+        focus_queue = [r for r in (pivot_rows_full or []) if getattr(r, "editable", False)] if focus else []
+        if focus_idx >= len(focus_queue) and focus_queue:
+            focus_idx = len(focus_queue) - 1
+        focus_item = focus_queue[focus_idx] if focus and focus_queue else None
         pivot = views.paginate(pivot_rows, _offset_arg()) if pivot_rows is not None else None
         page = views.paginate(cards, _offset_arg())
         # Slice 2: the moment×account MATRIX is the DEFAULT awaiting view (view absent/'matrix'); ?view=list is the
@@ -53,7 +70,12 @@ def register_review_routes(app, cfg):
         # view=='lanes' AND a source is focused; else None (default behaviour byte-identical, like matrix).
         lanes = (views.account_lanes(led, accounts, cfg, source_id=focused, now=now, state=(state or "awaiting"))
                  if (view == "lanes" and focused) else None)
-        ctx = dict(cards=page.items, page=page, tab="review", backend=cfg.poster_backend, counts=counts,
+        acct_cards = views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch,
+                                              source=source, state=state)
+        awaiting_by_account = views.review_awaiting_by_account(acct_cards)
+        if view == "account" and account and pivot_rows is not None:
+            awaiting_by_account = {account: len([r for r in pivot_rows if r.editable])}
+        ctx = dict(cards=page.items, page=page, tab="review", compact=compact, ultra=ultra, focus=focus, focus_idx=focus_idx, focus_queue=focus_queue, focus_item=focus_item, active_view=view, awaiting_by_account=awaiting_by_account, backend=cfg.poster_backend, counts=counts,
                    awaiting_total=counts["awaiting"], active_batch=batch, progress=progress, sources=sources,
                    pivot=(pivot.items if pivot is not None else None), pivot_page=pivot, result=result,
                    matrix=matrix, lanes=lanes, source_choices=choices, focused_source=focused,
@@ -92,7 +114,8 @@ def register_review_routes(app, cfg):
     @app.post("/posts/approve")
     def do_approve_posts():
         # the human gate (multi-select): awaiting_approval -> queued; approved posts leave Review for the Schedule.
-        return _review_panel(actions.approve_posts(cfg, request.form.getlist("ids")))
+        return _review_panel(actions.approve_posts(cfg, request.form.getlist("ids"),
+                                               confirmed=bool(request.form.get("batch_confirm"))))
 
     @app.post("/posts/reject")
     def do_reject_posts():
@@ -115,6 +138,10 @@ def register_review_routes(app, cfg):
         # removed-hook choice (slice 2): ship the clip CLEAN — approve every awaiting post without restoring
         # the hook. One click per card; mirrors do_approve_with_hook's panel re-render.
         return _review_panel(actions.approve_as_is(cfg, clip_id))
+
+    @app.post("/posts/approve-batch/<batch_id>")
+    def do_approve_batch(batch_id):
+        return _review_panel(actions.approve_batch(cfg, batch_id))
 
     @app.post("/posts/approve-clip/<clip_id>")
     def do_approve_clip(clip_id):
@@ -224,6 +251,11 @@ def register_review_routes(app, cfg):
             return render_template("_result.html",
                                    result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
         return render_template("_surface_edit.html", s=s, regen_note=result.detail, backend=cfg.poster_backend)
+
+    @app.post("/restore-persona-hook/<post_id>")
+    def do_restore_persona_hook(post_id):
+        result = actions.restore_persona_hook(cfg, post_id)
+        return _review_panel(result=result)
 
     @app.post("/reburn-hook/<post_id>")
     def do_reburn_hook(post_id):

@@ -105,12 +105,20 @@ def _seed_queued_post(cfg: Config, post_id: str = "p1", *,
     return post_id
 
 
-def test_publish_now_writes_audit_entry(tmp_path, monkeypatch):
+def test_publish_now_writes_audit_entry(tmp_path, monkeypatch, mocker):
     """R3/D17: a successful publish_now MUST leave an audit breadcrumb naming the
     post id. The 5 ghost-publishes had no such trace."""
-    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
     cfg = Config(root=tmp_path)
     _seed_queued_post(cfg, "p1")
+    def _fake_publish(_cfg, pid):
+        led = Ledger.load(_cfg)
+        led.posts[pid].state = PostState.published
+        led.posts[pid].public_url = "https://www.instagram.com/p/audit/"
+        led.save()
+        return "published"
+    mocker.patch("fanops.post.run.publish_post", side_effect=_fake_publish)
     from fanops.studio.actions import publish_now
     res = publish_now(cfg, "p1", confirmed=True)
     assert res.ok, f"publish_now failed: {res}"
@@ -205,17 +213,14 @@ def test_bulk_send_to_review_moves_posts(tmp_path):
     from fanops.studio.actions import bulk_send_to_review
     res = bulk_send_to_review(cfg, ["p1", "p2"], reason="bad_batch_revert")
     assert res.ok, f"bulk_send_to_review failed: {res}"
-    assert res.detail["moved"] == 2
+    assert res.detail["moved"] == 1 and res.detail["skipped"] == 1
 
     led = Ledger.load(cfg)
-    for pid in ("p1", "p2"):
-        p = led.posts[pid]
-        assert p.state is PostState.awaiting_approval, (
-            f"{pid} state did not revert: {p.state}")
-        assert not (p.scheduled_time or ""), (
-            f"{pid} scheduled_time not cleared: {p.scheduled_time!r}")
-        assert not (p.public_url or ""), (
-            f"{pid} public_url not cleared: {p.public_url!r}")
+    assert led.posts["p1"].state is PostState.published, "published posts must not bulk-revert"
+    p2 = led.posts["p2"]
+    assert p2.state is PostState.awaiting_approval
+    assert not (p2.scheduled_time or "")
+    assert not (p2.public_url or "")
 
 
 def test_bulk_send_to_review_rejects_unknown_id(tmp_path):
@@ -236,8 +241,7 @@ def test_bulk_send_to_review_writes_audit_entry(tmp_path):
     action in the system (it undoes a publish-or-schedule batch). The reason field
     is the operator's intent ('bad_batch_revert' / 'config_drift_repair' / etc)."""
     cfg = Config(root=tmp_path)
-    _seed_queued_post(cfg, "p1", state=PostState.published,
-                     public_url="https://x/p/old")
+    _seed_queued_post(cfg, "p1", state=PostState.queued, public_url="dryrun://p1")
     _seed_queued_post(cfg, "p2", state=PostState.queued, public_url="dryrun://p2")
     from fanops.studio.actions import bulk_send_to_review
     bulk_send_to_review(cfg, ["p1", "p2"], reason="bad_batch_revert")
@@ -272,8 +276,7 @@ def test_cli_bulk_send_to_review(tmp_path, monkeypatch, capsys):
     the CLI parity for the future Studio button."""
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)
-    _seed_queued_post(cfg, "p1", state=PostState.published,
-                     public_url="https://x/p/old")
+    _seed_queued_post(cfg, "p1", state=PostState.queued, public_url="dryrun://p1")
     from fanops.cli import main
     rc = main(["bulk-send-to-review", "p1", "--reason", "test_revert"])
     assert rc == 0

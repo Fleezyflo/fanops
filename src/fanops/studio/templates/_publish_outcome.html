@@ -1,0 +1,29 @@
+{# Typed publish result banner — operator copy only; no post ids or backend names. #}
+{% if result %}
+<div class="publish-outcome outcome-{{ result.detail.outcome if result.detail and result.detail.outcome is defined else ('ok' if result.ok else 'failed') }} result {{ 'ok' if result.ok else 'err' }}" role="status">
+  {% if result.ok %}
+    {% if result.detail.hook %}Approved {{ result.detail.approved }} with hook restored — now in Schedule.
+    {% elif result.detail.outcome == 'approved_scheduled' %}Approved {{ result.detail.approved }}{% if result.detail.render_pending %} — hook burn failed for {{ result.detail.render_pending }}{% elif focus %} — next clip{% elif result.detail.next_time %} — ships {{ result.detail.next_time | localdt }}{% else %} — on schedule{% endif %}.
+    {% elif result.detail.outcome is defined %}
+      {% if result.detail.outcome == 'live_shipped' %}Shipped live.{% if result.detail.public_url %} <a href="{{ result.detail.public_url }}" target="_blank" rel="noopener">View post ↗</a>{% endif %}
+      {% elif result.detail.outcome == 'inflight_submitted' %}Submitted — waiting for link.
+      {% elif result.detail.outcome == 'dryrun_local' %}Nothing published — turn on Go Live first.
+      {% elif result.detail.state is defined and result.detail.state == 'published' %}Published.
+      {% elif result.detail.published is defined and result.detail.due is defined %}Published {{ result.detail.published }} of {{ result.detail.due }} due.
+      {% elif result.detail.outcome == 'failed' and result.detail.state is defined %}Marked failed.
+      {% elif result.detail.outcome == 'reconciled' %}{% if result.detail.reconciled is defined %}{{ result.detail.reconciled }} new link{{ 's' if result.detail.reconciled != 1 else '' }} found{% else %}Checked for new links{% endif %}.
+      {% elif result.detail.outcome == 'metrics_pulled' %}Pulled metrics — {{ result.detail.analyzed }} analyzed{% if result.detail.series_rows %}, {{ result.detail.series_rows }} new row{{ 's' if result.detail.series_rows != 1 else '' }}{% endif %}. <a href="{{ url_for('posted', delivery='live') }}">See results →</a>
+      {% elif result.detail.outcome == 'suggestions_accepted' %}Updated {{ result.detail.rescheduled }} slot{{ 's' if result.detail.rescheduled != 1 else '' }} on {{ result.detail.handle }}.
+      {% elif result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post{{ 's' if result.detail.rescheduled != 1 else '' }}.
+      {% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time | localdt }}.
+      {% elif result.detail.outcome == 'retried_rate_limit' %}Re-queued {{ result.detail.retried }} rate-limited post{{ 's' if result.detail.retried != 1 else '' }} — staggered 2 min apart.
+      {% else %}Done.{% endif %}
+    {% elif result.detail.render_pending %}Hook burn failed for {{ result.detail.render_pending }} — retry approve or check ffmpeg.
+    {% elif result.detail.approved is defined %}Approved {{ result.detail.approved }} — on schedule.
+    {% elif result.detail.rejected is defined %}Rejected {{ result.detail.rejected }}.
+    {% elif result.detail.state is defined and result.detail.state == 'published' %}Published.
+    {% elif result.detail.outcome == 'retried_rate_limit' %}Re-queued {{ result.detail.retried }} rate-limited post{{ 's' if result.detail.retried != 1 else '' }} — staggered 2 min apart.
+      {% else %}Done.{% endif %}
+  {% else %}{{ result.error | operator_error }}{% endif %}
+</div>
+{% endif %}

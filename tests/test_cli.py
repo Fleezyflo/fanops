@@ -111,7 +111,7 @@ def test_status_surfaces_needs_reconcile(tmp_path, monkeypatch, capsys):
     from fanops.models import Post, Platform, PostState
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="prec", parent_id="c", account="@a", account_id="1",
-                      platform=Platform.twitter, caption="x", state=PostState.needs_reconcile, public_url=f"dryrun://prec"))
+                      platform=Platform.twitter, caption="x", state=PostState.needs_reconcile, public_url="dryrun://prec"))
     led.save()
     rc = main(["status"])
     out = capsys.readouterr().out
@@ -178,7 +178,7 @@ def test_reconcile_command_skips_without_key(tmp_path, monkeypatch, capsys):
     from fanops.models import Post, Platform, PostState
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url=f"dryrun://p"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
     led.save()
     rc = main(["reconcile"])
     assert rc == 0 and "reconcile skipped" in capsys.readouterr().out
@@ -196,7 +196,7 @@ def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, moc
     from fanops.models import Post, Platform, PostState
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url=f"dryrun://p"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
     led.save()
     # cmd_reconcile now delegates to reconcile.reconcile_due, which binds the poller via
     # _default_get_status there — patch the seam at its definition site (exercises the REAL
@@ -541,7 +541,7 @@ def test_resolve_promotes_a_needs_reconcile_post(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url=f"dryrun://p1"))
+                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url="dryrun://p1"))
     from fanops.cli import main
     assert main(["resolve", "p1", "published", "--url", "https://x/p"]) == 0
     led = Ledger.load(cfg)
@@ -589,7 +589,7 @@ def test_resolve_can_fail_a_post_and_unknown_id_exits_2(tmp_path, monkeypatch, c
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url=f"dryrun://p1"))
+                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url="dryrun://p1"))
     from fanops.cli import main
     # the `failed` branch (the committed test only exercised `published` -> a mis-map slipped through)
     assert main(["resolve", "p1", "failed"]) == 0
@@ -638,7 +638,7 @@ def test_retry_metrics_published_vs_not_vs_unknown(tmp_path, monkeypatch, capsys
         led.add_post(Post(id="pub", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.published, submission_id="s", public_url="dryrun://pub"))
         led.add_post(Post(id="que", parent_id="c2", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="y", state=PostState.queued, public_url=f"dryrun://que"))
+                          caption="y", state=PostState.queued, public_url="dryrun://que"))
     from fanops.cli import main
     # published -> exit 0, and the post STAYS published so the next `track` re-pulls (no state flip)
     assert main(["retry-metrics", "pub"]) == 0

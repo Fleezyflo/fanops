@@ -60,7 +60,7 @@ def test_reconcile_moments_upserts_and_deletes_cascade(tmp_path):
     # a REJECTED post (a deletable state — NOT a protected awaiting/queued/retired worklist) so the
     # cascade still deletes A's lineage; protected-state survival is covered in test_ledger_cascade_protect.
     led.add_post(Post(id="p_a", parent_id="c_a", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.rejected, public_url=f"dryrun://p_a"))
+                      platform=Platform.instagram, caption="x", state=PostState.rejected, public_url="dryrun://p_a"))
     # new decision keeps B, drops A, adds C
     keep = {"m_b": Moment(id="m_b", parent_id="s", content_token="B", start=3, end=5, reason="b2"),
             "m_c": Moment(id="m_c", parent_id="s", content_token="C", start=6, end=8, reason="c")}
@@ -124,7 +124,7 @@ def test_cascade_preserves_needs_reconcile_post(tmp_path):
     led.add_moment(Moment(id="m_r", parent_id="s", content_token="R", start=0, end=2, reason="r"))
     led.add_clip(Clip(id="c_r", parent_id="m_r", path="/c", state=ClipState.queued))
     led.add_post(Post(id="p_r", parent_id="c_r", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.needs_reconcile, public_url=f"dryrun://p_r"))
+                      platform=Platform.instagram, caption="x", state=PostState.needs_reconcile, public_url="dryrun://p_r"))
     led._delete_moment_cascade("m_r")
     assert "p_r" in led.posts, "a possibly-live needs_reconcile post must survive the cascade"
     assert led.moments["m_r"].state is MomentState.retired   # moment suppressed, not erased
@@ -275,7 +275,7 @@ def test_rebuild_discovered_has_created_at(tmp_path):
 def _awaiting(led, pid="p", sched=None):
     from fanops.models import Post, PostState, Platform
     led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, scheduled_time=sched, public_url=f"dryrun://c"))
+                      caption="x", state=PostState.awaiting_approval, scheduled_time=sched, public_url="dryrun://c"))
     return pid
 
 def test_approve_post_none_time_uses_suggestion_not_now(tmp_path):

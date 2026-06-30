@@ -18,7 +18,7 @@ def _seed(cfg):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p_base", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram, caption="BASE", state=PostState.awaiting_approval, public_url=f"dryrun://p_base"))
+    led.add_post(Post(id="p_base", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram, caption="BASE", state=PostState.awaiting_approval, public_url="dryrun://p_base"))
     led.save()
 
 def _client(cfg):
@@ -27,8 +27,8 @@ def _client(cfg):
 
 # every full-page surface (route → label fragment in the rail). The whole point: NONE is hidden.
 FULL_PAGES = ["/", "/run", "/review", "/publish", "/lift", "/posted", "/candidates", "/library",
-              "/stitches", "/schedule", "/gates", "/personas", "/golive"]
-RAIL_GROUPS = [b"Overview", b"Workflow", b"Insights", b"Tools", b"Setup"]
+              "/stitches", "/schedule", "/gates", "/personas", "/golive/connect"]
+RAIL_GROUPS = [b"Overview", b"Workflow", b"Tools", b"Setup"]
 
 def test_rail_landmark_present(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
@@ -66,7 +66,7 @@ def test_inactive_link_has_no_aria_current(tmp_path):
 def test_account_spine_threads_rail(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/review?account=@a").data
-    assert b"/personas?account=@a" in html and b"Filtering" in html  # the @a filter rides every rail link (@ is RFC-legal in a query, left unencoded)
+    assert b"/personas?account=@a" in html and b"account-session-bar" in html and b"@a" in html  # the @a filter rides every rail link (@ is RFC-legal in a query, left unencoded)
 
 def test_full_pages_carry_rail(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
@@ -96,13 +96,20 @@ def test_tools_group_holds_the_operational_surfaces(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
     tools = html[html.index('id="rg-tools"'):html.index('id="rg-setup"')]   # the Tools group's slice (it precedes Setup)
-    for path in ("/candidates", "/library", "/stitches", "/gates"):
+    for path in ("/lift", "/candidates", "/library", "/stitches"):
         assert f'href="{path}"' in tools, f"{path} not under Tools"
 
 def test_setup_group_is_only_personas_and_accounts(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
-    setup = html[html.index('id="rg-setup"'):]                              # Setup is the last group → rest of the rail
-    assert 'href="/personas"' in setup and 'href="/golive"' in setup
+    rail_end = html.index('</nav>', html.index('id="rg-setup"'))
+    setup = html[html.index('id="rg-setup"'):rail_end]
+    assert 'href="/personas"' in setup and 'href="/golive/connect"' in setup
     for path in ("/candidates", "/library", "/stitches", "/gates"):
         assert f'href="{path}"' not in setup, f"{path} should have left Setup for Tools"
+
+def test_workflow_group_holds_decisions(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    html = _client(cfg).get("/").data.decode()
+    wf = html[html.index('id="rg-workflow"'):html.index('id="rg-tools"')]
+    assert 'href="/gates"' in wf

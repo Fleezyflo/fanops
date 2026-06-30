@@ -45,6 +45,8 @@ _STUCK_AFTER = timedelta(hours=6)   # H4: a still-parked post older than this pa
 # publish_due never re-drives a non-`queued` post). Escalate it to needs_reconcile so the digest's reconcile
 # column owns it instead of a perpetual in-flight-submit. 6h covers any real slow submit; 24h is unambiguous.
 _SUBMITTING_ESCALATE_AFTER = timedelta(hours=24)
+# Sprint 4: submitting with no submission_id cannot be polled — heal to queued after grace.
+_SUBMITTING_HEAL_AFTER = timedelta(minutes=15)
 # XC-2: a needs_reconcile post still only-poll-erroring this long past its schedule on a never-real token can
 # never auto-resolve (a fanops_ token 404s forever). Stamp an explicit GIVE-UP terminal marker (verify by hand)
 # rather than re-polling an id that cannot resolve. 72h = three days, well past any backend's settle window.
@@ -140,6 +142,26 @@ def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
     return poll
 
 
+def heal_stranded_submitting(cfg: Config, *, now: Optional[datetime] = None) -> int:
+    """Crash-stranded `submitting` posts with no submission_id -> `queued` after a grace window.
+    Nothing was pollable; publish_due never re-drives submitting. Returns count healed."""
+    now = now or datetime.now(timezone.utc)
+    healed = 0
+    with Ledger.transaction(cfg) as led:
+        for p in list(led.posts.values()):
+            if p.state is not PostState.submitting:
+                continue
+            if (p.submission_id or "").strip():
+                continue
+            age = _parked_age(p, now)
+            if age is None or age < _SUBMITTING_HEAL_AFTER:
+                continue
+            led.posts[p.id] = p.model_copy(update={"state": PostState.queued, "error_reason": None})
+            healed += 1
+            get_logger(cfg)("reconcile", p.id, "healed: submitting->queued", reason="no_submission_id")
+    return healed
+
+
 def reconcile_due(cfg: Config) -> dict[str, int]:
     """Reconcile stranded posts with the per-post status POLLS (network) OUTSIDE the ledger flock —
     only the apply runs inside a tight transaction (mirrors cmd_reconcile; M1, same fix as publish #89).
@@ -151,13 +173,15 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     Empty/not-stranded -> no transaction. Caller gates on backend/key. Returns the resolved counts.
     `_default_get_status` may raise (no key) — the caller decides whether that's 'skip clean'."""
     snapshot = Ledger.load(cfg)
+    healed = heal_stranded_submitting(cfg)
     poll = _default_get_status(cfg, snapshot)            # built FIRST so the not-configured raise (no key
                                                          # -> caller skips clean) is independent of whether
                                                          # anything is stranded; cheap (no network on build)
     reconcilable = [p for p in snapshot.posts.values() if p.state in _RECONCILABLE and p.submission_id]
     if not reconcilable:
         return {"needs_reconcile": len(snapshot.posts_in_state(PostState.needs_reconcile)),
-                "published": len(snapshot.posts_in_state(PostState.published))}
+                "published": len(snapshot.posts_in_state(PostState.published)),
+                "healed_submitting": healed}
     from fanops.postiz_lifecycle import ensure_up        # reconcilable>0: bring the local Postiz stack up to poll
     ensure_up(cfg)
     results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
@@ -175,7 +199,8 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     with Ledger.transaction(cfg) as led:
         led = reconcile_posts(led, cfg, get_status=cached)
         return {"needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
-                "published": len(led.posts_in_state(PostState.published))}
+                "published": len(led.posts_in_state(PostState.published)),
+                "healed_submitting": healed}
 
 
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None,

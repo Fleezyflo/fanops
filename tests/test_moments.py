@@ -147,7 +147,7 @@ def test_amplify_style_reingest_reconciles_not_noop(tmp_path):
     led.add_clip(Clip(id="c_a", parent_id=a.id, path="/c"))
     # a REJECTED post (deletable) so A's lineage still cascade-deletes
     led.add_post(Post(id="p_a", parent_id="c_a", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.rejected, public_url=f"dryrun://p_a"))
+                      platform=Platform.instagram, caption="x", state=PostState.rejected, public_url="dryrun://p_a"))
     # now a fresh request + a NEW decision dropping A, keeping B (updated), adding C
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",

@@ -25,7 +25,7 @@ def test_dryrun_published_post_reaches_analyzed(tmp_path, monkeypatch):
     # ffmpeg/upload — it exercises exactly the publish->state path under test.
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="42",
                       platform=Platform.instagram, caption="hello", media_urls=["https://h/v.mp4"],
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url=f"dryrun://p1"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://p1"))
     led.save()                                                  # persist for the self-loading publish_due
 
     # publish in dryrun (past schedule => due now): queued -> submitting -> submitted -> published

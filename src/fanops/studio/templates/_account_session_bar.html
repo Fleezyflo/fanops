@@ -1,0 +1,15 @@
+{# Account-scoped session — shows when ?account= is set on any workflow surface. #}
+{% if account_session %}
+<nav class="account-session-bar" aria-label="Account session">
+  <span class="session-label"><strong>{{ account_session.handle }}</strong></span>
+  {% if account_session.awaiting %}<span class="session-stat">{{ account_session.awaiting }} to review</span>{% endif %}
+  {% if account_session.scheduled %}<span class="session-stat">{{ account_session.scheduled }} scheduled</span>{% endif %}
+  {% if account_session.inflight %}<span class="session-stat session-stat--warn"><a href="{{ url_for('posted', delivery='inflight', account=account_session.handle) }}">{{ account_session.inflight }} waiting for link</a></span>{% endif %}
+  {% if account_session.failed %}<span class="session-stat session-stat--danger"><a href="{{ url_for('posted', account=account_session.handle, delivery='failed') }}">{{ account_session.failed }} failed</a></span>{% endif %}
+  <span class="session-actions">
+    {% if account_session.awaiting %}<a class="button primary" href="{{ url_for('review', account=account_session.handle, view='account', focus=1, batch=review_nav.batch|default(none)) }}">Review</a>{% endif %}
+    {% if account_session.scheduled %}<a class="button" href="{{ url_for('schedule', account=account_session.handle) }}">Schedule</a>{% endif %}
+    <a class="ghost session-clear" href="{{ url_for(request.endpoint) if request.endpoint else url_for('index') }}">Clear filter</a>
+  </span>
+</nav>
+{% endif %}

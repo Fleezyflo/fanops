@@ -29,28 +29,26 @@
           <ul role="list" aria-labelledby="rg-overview"><li>{{ rail_link('index','home','Home') }}</li></ul></li>
         <li class="rail-group"><p class="rail-group-label" id="rg-workflow">Workflow</p>
           <ul role="list" aria-labelledby="rg-workflow">
-            <li>{{ rail_link('run_panel','run','Make') }}</li>
+            <li>{{ rail_link('run_panel','run','Add & run') }}</li>
+            <li>{{ rail_link('gates','gates','Blocked') }}</li>
             <li>{{ rail_link('review','review','Review') }}</li>
             <li>{{ rail_link('schedule','schedule','Schedule') }}</li>
-            <li>{{ rail_link('posted','posted','Posted') }}</li>
-            <li>{{ rail_link('publish_panel','publish','Publish by hand') }}</li>
+            <li>{{ rail_link('posted','posted','Results') }}</li>
+            <li>{{ rail_link('publish_panel','publish','Manual publish') }}</li>
           </ul></li>
-        <li class="rail-group"><p class="rail-group-label" id="rg-insights">Insights</p>
-          <ul role="list" aria-labelledby="rg-insights"><li>{{ rail_link('lift','lift','Results') }}</li></ul></li>
         <li class="rail-group"><p class="rail-group-label" id="rg-tools">Tools</p>
           <ul role="list" aria-labelledby="rg-tools">
-            <li>{{ rail_link('candidates','footage','Footage intake') }}</li>
-            <li>{{ rail_link('library','library','Asset library') }}</li>
-            <li>{{ rail_link('stitches','stitches','Stitch approvals') }}</li>
-            <li>{{ rail_link('gates','gates','Processing decisions') }}</li>
+            <li>{{ rail_link('lift','lift','Lift') }}</li>
+            <li>{{ rail_link('library','library','Library') }}</li>
+            <li>{{ rail_link('candidates','footage','Footage') }}</li>
+            <li>{{ rail_link('stitches','stitches','Stitches') }}</li>
           </ul></li>
         <li class="rail-group"><p class="rail-group-label" id="rg-setup">Setup</p>
           <ul role="list" aria-labelledby="rg-setup">
             <li>{{ rail_link('personas_view','personas','Personas') }}</li>
-            <li>{{ rail_link('golive_view','golive','Accounts & Go Live') }}</li>
+            <li>{{ rail_link('golive_connect','golive','Go Live') }}</li>
           </ul></li>
       </ul>
-      {% if nav_account %}<div class="active-account" role="status">Filtering <strong>{{ nav_account }}</strong> — <a href="{{ request.path }}">show all accounts</a></div>{% endif %}
     </nav>
     <div class="workspace">
       {# one <h1> per page from the title block (visually hidden) so the visible section headings nest under
@@ -58,7 +56,13 @@
       <main id="main">
         <a class="skip-nav vh skip-to-nav" href="#rail-nav">Jump to navigation</a>
         <h1 class="vh">{{ self.title() }}</h1>
-        <div id="main-content" tabindex="-1">{% if spine %}{% include "_spine.html" %}{% endif %}{% block body %}{% endblock %}</div>
+        <div id="main-content" tabindex="-1">
+          {% include "_system_strip.html" %}
+          {% include "_account_session_bar.html" %}
+          {% include "_reconcile_strip.html" %}
+          {% if spine %}{% include "_spine.html" %}{% endif %}
+          {% block body %}{% endblock %}
+        </div>
       </main>
     </div>
   </div>

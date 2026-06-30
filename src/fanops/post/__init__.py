@@ -11,13 +11,18 @@ class Poster(Protocol):
     def publish(self, led: Ledger, post_id: str) -> Ledger: ...
 
 def get_poster(cfg: Config, backend: str | None = None) -> "Poster":
-    # `backend` defaults to the global cfg.poster_backend (back-compat: existing callers pass nothing ->
-    # byte-identical). An explicit per-account backend (Zernio slice 2) lets one publish_due run send IG
-    # through Postiz and TikTok through Zernio at once. M1: resolved through the provider registry; an
-    # UNKNOWN backend still falls back to DryRunPoster (the exact old behavior — note the uploader's
-    # unknown-fallback is Blotato, a deliberate asymmetry preserved below).
+    # ROOT FIX: a LIVE system asking for the dryrun poster is the bug that wrote 7 fake-published rows.
+    # Refuse the bad construction. Live + backend='dryrun' (or fall-through to the legacy global which IS
+    # 'dryrun') now RAISES — the publisher catches it and parks the post in needs_reconcile, the operator
+    # sees the breadcrumb, no row is stamped published with a 'dryrun://' URL.
+    resolved = backend or cfg.poster_backend
+    if cfg.is_live and (resolved or "").lower() == "dryrun":
+        raise RuntimeError(
+            f"get_poster: refused to construct DryRunPoster on a LIVE system "
+            f"(cfg.is_live=True, backend={resolved!r}). A per-channel provider must resolve to "
+            f"postiz/zernio/etc., NOT dryrun. Fix the account's backends mapping in accounts.json.")
     from fanops.post.providers import get_provider
-    provider = get_provider(cfg, backend or cfg.poster_backend)
+    provider = get_provider(cfg, resolved)
     if provider is not None:
         return provider.make_poster(cfg)
     from fanops.post.dryrun import DryRunPoster

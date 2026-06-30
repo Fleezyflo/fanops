@@ -1,0 +1,36 @@
+{# Schedule row action menu — one <details> replaces stacked forms. #}
+{% macro schedule_actions(r, active, active_batch, backend) %}
+<details class="row-actions">
+  <summary>Actions</summary>
+  <div class="row-actions-menu">
+    {% if r.lane == 'inflight' %}
+      <p class="meta">Waiting for permalink from the platform.</p>
+      {% if r.error_reason %}<p class="meta err">{{ r.error_reason | operator_error }}</p>{% endif %}
+      <a href="{{ url_for('posted', delivery='inflight', account=r.account) }}">View in Posted</a>
+    {% elif r.editable %}
+      {% if cfg.is_live %}
+      <form hx-post="{{ url_for('do_schedule_publish', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <label class="confirm"><input type="checkbox" name="confirm" value="1"> I confirm this goes live</label>
+        <button type="submit" class="primary">Publish now</button>
+      </form>
+      {% endif %}
+      <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <input type="datetime-local" name="new_time" value="{{ r.scheduled_time | localinput }}" aria-label="New time">
+        <button type="submit">Move</button>
+      </form>
+      {% if r.suggested_time %}
+      <form hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <input type="hidden" name="new_time" value="{{ r.suggested_time }}">
+        <button type="submit">Use suggested ({{ r.suggested_time | localdt }})</button>
+      </form>
+      {% endif %}
+      <form hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <button type="submit">Clear time</button>
+      </form>
+      <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+        <button type="submit">Send back to Review</button>
+      </form>
+    {% endif %}
+  </div>
+</details>
+{% endmacro %}

@@ -131,7 +131,7 @@ def build_postiz_payload(*, integration_id: str, platform: str, content: str,
                        "settings": settings}]}
 
 
-def postiz_upload_media(cfg: Config, path: Path) -> str:
+def postiz_upload_media(cfg: Config, path: Path, **kw) -> str:
     """Upload a local file to Postiz (multipart POST /public/v1/upload) -> "id|path": the upload's
     media id AND its public URL, joined (this Postiz version's image[] requires BOTH). 401 -> typed
     PostizAuthError (halt)."""
@@ -221,9 +221,16 @@ class PostizPoster:
     def publish(self, led: Ledger, post_id: str) -> Ledger:
         post = led.posts[post_id]
         title = self._youtube_title(post) if post.platform is Platform.youtube else None
+        # Postiz requires `date` to be a valid ISO 8601 string. A publish_now-claimed post (or any
+        # untimed approval) carries scheduled_time=None; pass `now` so Postiz schedules it ~immediately
+        # (per build_postiz_payload's comment, a past/now date posts ~now). Without this, Postiz 400s
+        # with "date should not be null or undefined".
+        from datetime import datetime, timezone
+        from fanops.timeutil import iso_z
+        sched = post.scheduled_time or iso_z(datetime.now(timezone.utc))
         payload = build_postiz_payload(integration_id=post.account_id, platform=post.platform.value,
                                        content=post.caption, media_urls=post.media_urls,
-                                       scheduled_time=post.scheduled_time,
+                                       scheduled_time=sched,
                                        title=title, hashtags=post.hashtags)
         delay, last = 1.0, None
         for _ in range(_MAX_RETRIES):

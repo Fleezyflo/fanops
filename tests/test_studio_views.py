@@ -182,7 +182,7 @@ def test_lift_empty_no_analyzed_posts(tmp_path):
                           "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url=f"dryrun://p1"))
+                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://p1"))
     view = lift_rows(led, cfg, Accounts.load(cfg))
     assert view.variant_rows == []
     assert "No results yet" in view.variant_empty_reason
@@ -195,7 +195,7 @@ def test_lift_empty_state_names_postiz(tmp_path, monkeypatch):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url=f"dryrun://p1"))
+                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://p1"))
     reason = lift_rows(led, cfg, Accounts.load(cfg)).variant_empty_reason
     assert "postiz" in reason.lower() and "POSTIZ_API_KEY" in reason   # no key value rendered, just the env var name
 
@@ -383,7 +383,7 @@ def test_review_card_surfaces_removed_hook(tmp_path):
     led = Ledger.load(cfg); _lineage(led)
     led.moments["mom_1"].hook_removed = "made it and lost everything"   # what the guard stripped
     led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p_edit"))
+                      platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://p_edit"))
     ed = [c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
           if c.bucket == "editable" and c.clip_id == "clip_1"][0]
     assert ed.hook_removed == "made it and lost everything"
@@ -392,7 +392,7 @@ def test_review_card_surfaces_removed_hook(tmp_path):
 # ---- P1: suggest_time helper + suggested_time on read-models (per-account operator scheduling) ----
 def _post(account="@a", platform=Platform.instagram, parent_id="clip_1"):
     return Post(id="p", parent_id=parent_id, account=account, account_id="1", platform=platform,
-                caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p")
+                caption="x", state=PostState.awaiting_approval, public_url="dryrun://p")
 
 def test_suggest_time_is_deterministic_and_future(tmp_path):
     from fanops.studio.views import suggest_time
@@ -460,6 +460,23 @@ def test_suggested_time_with_broken_clip_lineage_still_renders(tmp_path):
     assert s.suggested_time is not None and parse_iso(s.suggested_time) > NOW
 
 
+# ---- Sprint 0: ops truth (home failed/live_trackable + spine recovery CTA) ----
+from fanops.studio.views import build_spine
+
+def _spine_counts(**kw):
+    base = {"sources": 0, "batches": 0, "awaiting": 0, "scheduled": 0, "posted": 0, "failed": 0, "live_trackable": 0}
+    base.update(kw); return base
+
+def test_build_spine_failed_blocks_caught_up():
+    spine = build_spine(counts=_spine_counts(sources=2, posted=3, live_trackable=2, failed=9), has_accounts=True, here=None)
+    assert spine.next_endpoint == "posted"
+    assert "9" in spine.next_label and "failed" in spine.next_label.lower()
+
+def test_build_spine_caught_up_only_when_live_trackable_and_clean():
+    spine = build_spine(counts=_spine_counts(sources=2, live_trackable=4, failed=0), has_accounts=True, here=None)
+    assert spine.next_endpoint is None
+    assert "caught up" in spine.next_label.lower()
+
 # ---- Face 2: home_status / golive_accounts / home_batches (status home + batch entry + per-account metrics) ----
 from fanops.studio.views import home_status, golive_accounts, home_batches, golive_status
 from fanops.batches import create_batch
@@ -470,9 +487,9 @@ def _seed_home(cfg):
     led = Ledger.load(cfg); _lineage(led)
     led.add_source(Source(id="src_tp", source_path="/v/tp.mp4", language="en", origin_kind="third_party"))
     led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p1"))
+                      caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
     led.add_post(Post(id="p2", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, public_url=f"dryrun://p2"))
+                      caption="x", state=PostState.queued, public_url="dryrun://p2"))
     led.add_post(Post(id="p3", parent_id="clip_1", account="@b", account_id="2", platform=Platform.instagram,
                       caption="x", state=PostState.published, public_url="dryrun://p3"))
     led.save(); return led
@@ -483,6 +500,25 @@ def test_home_status_counts(tmp_path):
     assert st.counts["sources"] == 1                                  # native only (the third_party src excluded)
     assert st.counts["awaiting"] == 1 and st.counts["scheduled"] == 1 and st.counts["posted"] == 1
     assert st.mode == "dryrun" and st.is_live is False
+
+def test_home_status_failed_and_live_trackable(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="plive", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="live", state=PostState.published, public_url="https://www.instagram.com/reel/abc/"))
+    led.add_post(Post(id="pdry", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="dry", state=PostState.published, public_url="dryrun://pdry"))
+    led.add_post(Post(id="pfail", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="fail", state=PostState.failed, error_reason="postiz 429"))
+    led.add_post(Post(id="pinfl", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="wait", state=PostState.needs_reconcile, submission_id="cmqzabc"))
+    led.save()
+    c = home_status(cfg).counts
+    assert c["failed"] == 1
+    assert c["live_trackable"] == 1
+    assert c["inflight"] == 1
+    assert c["posted"] == 2
 
 def test_home_awaiting_counts_moments_not_posts(tmp_path):
     # Root fix: Home 'Awaiting' is the MOMENT count (size of the Review approve-worklist), NOT the raw
@@ -495,7 +531,7 @@ def test_home_awaiting_counts_moments_not_posts(tmp_path):
     led = Ledger.load(cfg); _lineage(led)
     for i, h in enumerate(["@a", "@b", "@c"]):            # 3 awaiting SURFACE posts, ONE moment (clip_1)
         led.add_post(Post(id=f"pa{i}", parent_id="clip_1", account=h, account_id=str(i + 1),
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://clip_1"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://clip_1"))
     led.save()
     st = home_status(cfg)
     assert st.counts["awaiting"] == 1                     # ONE moment, not three posts
@@ -509,9 +545,9 @@ def test_home_awaiting_matches_review_worklist(tmp_path):
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.add_post(Post(id="pa", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://pa"))
+                      caption="x", state=PostState.awaiting_approval, public_url="dryrun://pa"))
     led.add_post(Post(id="pb", parent_id="clip_1", account="@b", account_id="2", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://pb"))
+                      caption="x", state=PostState.awaiting_approval, public_url="dryrun://pb"))
     led.save()
     now = datetime.now(timezone.utc)
     review_awaiting = _rc(_rb(led, Accounts.load(cfg), cfg, now=now))["awaiting"]
@@ -533,7 +569,8 @@ def test_home_status_fail_open(tmp_path, monkeypatch):
     def _boom(c): raise RuntimeError("torn")
     monkeypatch.setattr(Ledger, "load", _boom)
     st = home_status(cfg)
-    assert st.counts == {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0, "posted": 0}
+    assert st.counts == {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0,
+                         "inflight": 0, "due_soon": 0, "live_today": 0, "live_trackable": 0, "failed": 0, "posted": 0}
     assert st.by_account == {}                                        # zeroed shell, never a 500
 
 def test_golive_accounts_parity_with_golive_status(tmp_path):
@@ -546,7 +583,7 @@ def test_home_batches_counts_posts_born(tmp_path):
     led = Ledger.load(cfg); _lineage(led)
     b = create_batch(led, name="Launch", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000001Z")
     led.add_post(Post(id="pb", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, batch_id=b.id, public_url=f"dryrun://pb")); led.save()
+                      caption="x", state=PostState.awaiting_approval, batch_id=b.id, public_url="dryrun://pb")); led.save()
     hb = home_batches(cfg)
     assert len(hb) == 1 and hb[0].posts_born == 1 and hb[0].is_zero_result is False
 
@@ -607,3 +644,122 @@ def test_review_surface_length_label_absent_when_no_profile(tmp_path):
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
     sp = [s for c in cards for s in c.surfaces if s.post_id == "p_x"][0]
     assert sp.length_label is None and sp.is_account_cut is False
+
+
+# ---- Production redesign: classify_post_delivery + schedule inflight lane ----
+from fanops.studio.views_results import classify_post_delivery, schedule_lanes
+from fanops.models import PostState as PS
+
+
+def test_classify_post_delivery_states(tmp_path):
+    p_await = Post(id="pa", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                   caption="x", state=PS.awaiting_approval)
+    p_q = Post(id="pq", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+               caption="x", state=PS.queued)
+    p_inf = Post(id="pi", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                 caption="x", state=PS.needs_reconcile, submission_id="cmqz_real_123")
+    p_live = Post(id="pl", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                  caption="x", state=PS.published, public_url="https://instagram.com/reel/abc/")
+    p_dry = Post(id="pd", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                 caption="x", state=PS.published, public_url="dryrun://pd")
+    assert classify_post_delivery(p_await) == "awaiting"
+    assert classify_post_delivery(p_q) == "queued"
+    assert classify_post_delivery(p_inf) == "inflight"
+    assert classify_post_delivery(p_live) == "live"
+    assert classify_post_delivery(p_dry) == "dryrun"
+
+
+def test_schedule_rows_inflight_lane(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="p_inf", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="inf", state=PS.needs_reconcile,
+                      submission_id="cmqz_abc", scheduled_time=_z(NOW + timedelta(hours=1))))
+    led.add_post(Post(id="p_q", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="q", state=PS.queued,
+                      scheduled_time=_z(NOW + timedelta(hours=2))))
+    rows = schedule_rows(led, cfg, now=NOW)
+    lanes = schedule_lanes(rows)
+    assert len(lanes.inflight) == 1 and lanes.inflight[0].post_id == "p_inf"
+    assert lanes.inflight[0].lane == "inflight"
+    assert len(lanes.upcoming) == 1
+
+
+def test_posted_library_delivery_filter(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="pl", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="live", state=PS.published, public_url="https://instagram.com/x/"))
+    led.add_post(Post(id="pd", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="dry", state=PS.published, public_url="dryrun://pd"))
+    from fanops.studio.views_results import posted_library
+    assert len(posted_library(led, cfg, delivery="live")) == 1
+    assert posted_library(led, cfg, delivery="live")[0].post_id == "pl"
+    assert len(posted_library(led, cfg, delivery="dryrun")) == 1
+
+
+# ---- Sprint 1: failure classification + recovery cockpit ----
+from fanops.studio.views_results import classify_failure, failure_rollup
+
+
+def _fail_post(pid, reason):
+    return Post(id=pid, parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                caption="x", state=PS.failed, error_reason=reason)
+
+
+def test_classify_failure_buckets():
+    assert classify_failure(_fail_post("r1", "postiz 429 too many requests")) == "rate_limit"
+    assert classify_failure(_fail_post("r2", "zernio upload 413 entity too large")) == "oversize"
+    assert classify_failure(_fail_post("r3", "postiz 400 bad media url")) == "bad_payload"
+    assert classify_failure(_fail_post("r4", "reconcile poll error: connection refused")) == "poll_error"
+    assert classify_failure(_fail_post("r5", "something weird")) == "unknown"
+
+
+def test_failure_rollup_counts_failed_posts(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(_fail_post("f429", "postiz 429"))
+    led.add_post(_fail_post("f413", "zernio 413"))
+    led.add_post(_fail_post("f400", "postiz 400"))
+    led.save()
+    roll = failure_rollup(led)
+    assert roll["total"] == 3
+    assert roll["buckets"]["rate_limit"] == 1
+    assert roll["buckets"]["oversize"] == 1
+    assert roll["buckets"]["bad_payload"] == 1
+
+
+def test_posted_library_stamps_failure_kind(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(_fail_post("fx", "postiz 429"))
+    from fanops.studio.views_results import posted_library
+    row = posted_library(led, cfg, delivery="failed")[0]
+    assert row.failure_kind == "rate_limit"
+
+
+def test_posted_library_failure_kind_filter(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(_fail_post("a", "postiz 429"))
+    led.add_post(_fail_post("b", "zernio 413"))
+    from fanops.studio.views_results import posted_library
+    assert len(posted_library(led, cfg, delivery="failed", failure_kind="rate_limit")) == 1
+    assert posted_library(led, cfg, delivery="failed", failure_kind="rate_limit")[0].post_id == "a"
+
+
+def test_delivery_audit_counts_buckets(tmp_path):
+    from fanops.studio.views_results import delivery_audit
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="pl", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="live", state=PS.published, public_url="https://instagram.com/x/"))
+    led.add_post(Post(id="pf", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="fail", state=PS.failed, error_reason="postiz 429"))
+    led.add_post(Post(id="pi", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="wait", state=PS.needs_reconcile, submission_id="cmqzabc"))
+    aud = delivery_audit(led)
+    assert aud["live_trackable"] == 1 and aud["inflight"] == 1
+    assert aud["buckets"]["rate_limit"] == 1 and aud["failed"] == 1

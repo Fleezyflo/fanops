@@ -1,22 +1,19 @@
-{# src/fanops/studio/templates/candidates.html — Track C: approve discover footage in the browser #}
 {% extends "base.html" %}
 {% block title %}Footage{% endblock %}
 {% block body %}
   <h2>Footage intake</h2>
-  <p class="muted">Approve the footage you want to keep. Approved videos move into the pipeline on the
-    next ingest.</p>
-  <div class="clip-grid">
-  {% for r in rows %}
-    <div class="card clip-card" id="cand-{{ r.eid }}">
-      <div class="clip-frame thumb"><img src="{{ url_for('review_thumb', eid=r.eid) }}" alt="Footage {{ loop.index }}" loading="lazy"></div>
-      <div class="clip-body">
-        <form hx-post="{{ url_for('do_approve_candidate', eid=r.eid) }}"
-              hx-target="#cand-{{ r.eid }}" hx-swap="afterend">
-          <button type="submit" class="primary" aria-label="Approve footage {{ loop.index }}">Approve</button>
-        </form>
-      </div>
-    </div>
-  {% endfor %}
-  </div>
-  {% if not rows %}<div class="empty">No footage awaiting review.</div>{% endif %}
+  <p class="muted">Approve discovered footage to move it into the pipeline on next ingest.</p>
+  {% if rows %}
+  <ul class="footage-scan-list">
+    {% for r in rows %}
+    <li class="footage-row" id="cand-{{ r.eid }}">
+      <img class="sched-thumb" loading="lazy" src="{{ url_for('review_thumb', eid=r.eid) }}" alt="Footage {{ loop.index }}">
+      <span class="muted">candidate {{ loop.index }}</span>
+      <form hx-post="{{ url_for('do_approve_candidate', eid=r.eid) }}" hx-target="#cand-{{ r.eid }}" hx-swap="outerHTML">
+        <button type="submit" class="primary">Approve</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<div class="empty">No footage awaiting review.</div>{% endif %}
 {% endblock %}

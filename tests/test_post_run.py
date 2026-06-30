@@ -13,7 +13,7 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z"):
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
                       platform=Platform.instagram, caption="ship it",
-                      scheduled_time=when, state=PostState.queued, public_url=f"dryrun://98432"))
+                      scheduled_time=when, state=PostState.queued, public_url="dryrun://98432"))
     led.save()                                          # persist so the self-loading publish_due sees it
 
 
@@ -133,7 +133,7 @@ def test_publish_uploads_clip_media_once_across_posts_live(tmp_path, monkeypatch
     _queued(led, cfg, pid="p1", cid="shared", when="2020-01-01T00:00:00Z")
     _queued(led, cfg, pid="p2", cid="shared", when="2020-01-01T00:00:00Z")  # same clip, 2nd post
     uploads = []
-    def fake_upload(cfg_, path):
+    def fake_upload(cfg_, path, **kw):
         uploads.append(str(path)); return "https://cdn.blotato.test/shared.mp4"
     mocker.patch("fanops.post.media.upload_media", side_effect=fake_upload)
     import fanops.post.run as run
@@ -185,10 +185,10 @@ def test_publish_failure_redacts_api_key_from_error_reason(tmp_path, monkeypatch
     led.add_clip(Clip(id="c_k", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pk", parent_id="c_k", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x",
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url=f"dryrun://pk"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pk"))
     led.save()
     import fanops.post.run as run
-    def boom(led_, cfg_, clip_id):
+    def boom(led_, cfg_, clip_id, backend=None, **kw):
         raise RuntimeError("Blotato presign 503: token=SUPERSECRETKEY rejected")
     mocker.patch.object(run, "ensure_clip_media", side_effect=boom)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
@@ -204,7 +204,7 @@ def test_publish_no_schedule_parks_not_publishes(tmp_path, monkeypatch):
     f = cfg.clips / "c_ns.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c_ns", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pns", parent_id="c_ns", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url=f"dryrun://pns"))  # no scheduled_time
+                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://pns"))  # no scheduled_time
     led.save()
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     assert Ledger.load(cfg).posts["pns"].state is PostState.queued   # CULM-4: parked, never auto-published
@@ -224,7 +224,7 @@ def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch
     led.add_clip(Clip(id="c_a", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pa", parent_id="c_a", account="@a", account_id="OLD_STALE_ID",   # frozen-at-crosspost id
                       platform=Platform.instagram, caption="x",
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url=f"dryrun://pa"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pa"))
     led.save()
     import fanops.post.run as run
     seen = {}
@@ -247,7 +247,7 @@ def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker)
     led.add_clip(Clip(id="c_sub", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="psub", parent_id="c_sub", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x",
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url=f"dryrun://psub"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url="dryrun://psub"))
     led.save()
     import fanops.post.run as run
     spy = mocker.spy(run, "ensure_clip_media")
@@ -264,11 +264,11 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url=f"dryrun://1"))
+                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
     led.save()
     import fanops.post.run as run
     # c_a upload raises a NON-auth error; c_b uploads fine; poster.publish succeeds (submitted)
-    def fake_ensure(led_, cfg_, clip_id):
+    def fake_ensure(led_, cfg_, clip_id, backend=None, **kw):
         if clip_id == "c_a":
             raise RuntimeError("Blotato presign failed (503): server down")
         return "https://cdn/ok.mp4"
@@ -297,7 +297,7 @@ def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocke
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url=f"dryrun://1"))
+                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
     led.save()
     import fanops.post.run as run
     mocker.patch.object(run, "ensure_clip_media", return_value="https://cdn/ok.mp4")
@@ -329,7 +329,7 @@ def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
     led.add_clip(Clip(id="c_auth", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pauth", parent_id="c_auth", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x",
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url=f"dryrun://pauth"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pauth"))
     led.save()
     import fanops.post.run as run
     mocker.patch.object(run, "ensure_clip_media", return_value="https://cdn/ok.mp4")
@@ -355,10 +355,10 @@ def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeyp
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url=f"dryrun://1"))
+                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
     led.save()
     import fanops.post.run as run
-    def fake_ensure(led_, cfg_, clip_id):
+    def fake_ensure(led_, cfg_, clip_id, backend=None, **kw):
         if clip_id == "c_bad":
             raise RuntimeError("Blotato 503: upstream request 401abc timed out")  # 401 in text, NOT auth
         return "https://cdn/ok.mp4"
@@ -386,7 +386,7 @@ def test_publish_due_no_deadlock_self_manages_its_lock(tmp_path, monkeypatch):
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
-                      scheduled_time="2020-01-01T00:00:00Z", public_url=f"dryrun://p1"))
+                      scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://p1"))
     led.save()
     publish_due(cfg, now="2020-01-02T00:00:00Z")
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
@@ -403,7 +403,7 @@ def test_publish_due_malformed_scheduled_time_is_per_post_failure_not_escape(tmp
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="bad", parent_id="c1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
-                      scheduled_time="2026-06-01 09:00", public_url=f"dryrun://bad"))   # naive: no 'T', no tz -> _parse trips
+                      scheduled_time="2026-06-01 09:00", public_url="dryrun://bad"))   # naive: no 'T', no tz -> _parse trips
     led.save()
     publish_due(cfg, now="2026-06-02T00:00:00Z")            # must NOT raise
     led = Ledger.load(cfg)
@@ -420,7 +420,7 @@ def test_publish_due_garbage_scheduled_time_does_not_escape(tmp_path, monkeypatc
     led.add_clip(Clip(id="c2", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="garbage", parent_id="c2", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
-                      scheduled_time="not-a-timestamp", public_url=f"dryrun://garbage"))
+                      scheduled_time="not-a-timestamp", public_url="dryrun://garbage"))
     led.save()
     publish_due(cfg, now="2026-06-02T00:00:00Z")   # must NOT raise
     assert Ledger.load(cfg).posts["garbage"].state is PostState.failed
@@ -433,16 +433,17 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     # parent's BASE render and would lose the burned hook). The https result is persisted so a retry
     # never re-uploads.
     monkeypatch.setenv("FANOPS_POSTER", "rest")
+    monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     vfile = cfg.clips / "clip_1_vhash.mp4"; vfile.parent.mkdir(parents=True, exist_ok=True); vfile.write_bytes(b"V")
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(cfg.clips / "clip_1.mp4"), state=ClipState.queued))
     led.add_post(Post(id="pv", parent_id="clip_1", account="@a", account_id="98432",
                       platform=Platform.instagram, caption="x", scheduled_time="2020-01-01T00:00:00Z",
-                      state=PostState.queued, media_urls=[f"file://{vfile}"], public_url=f"dryrun://pv"))
+                      state=PostState.queued, media_urls=[f"file://{vfile}"], public_url="dryrun://pv"))
     led.save()
     uploaded = []
-    def fake_upload(cfg_, path):
+    def fake_upload(cfg_, path, **kw):
         uploaded.append(str(path)); return "https://cdn.blotato.test/v.mp4"
     # run.py routes the variant file:// upload through get_media_uploader(cfg) -> (for rest)
     # media.upload_media (lazy import), so patch it at its definition site.
@@ -476,3 +477,50 @@ def test_archive_published_is_owner_only_with_no_world_readable_window(tmp_path)
     assert ap.exists()
     assert stat.S_IMODE(ap.stat().st_mode) == 0o600                  # owner-only file, created 0600 (no chmod window)
     assert stat.S_IMODE(ap.parent.stat().st_mode) == 0o700          # owner-only day dir (not world-listable)
+
+
+
+# ---- Sprint 2: Postiz publish throttle (per integration) ----
+def test_publish_throttle_wait_spaces_postiz_calls(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4")
+    from fanops.post.run import _publish_throttle_wait, reset_publish_throttle
+    reset_publish_throttle()
+    cfg = Config(root=tmp_path)
+    _mono = iter([100.0, 100.0, 100.5, 115.5, 115.5])
+    def _next_mono():
+        try: return next(_mono)
+        except StopIteration: return 115.5
+    mocker.patch("fanops.post.run.time.monotonic", side_effect=_next_mono)
+    sleeps = []
+    mocker.patch("fanops.post.run.time.sleep", side_effect=lambda s: sleeps.append(s))
+    _publish_throttle_wait(cfg, "postiz", "ig_1")
+    _publish_throttle_wait(cfg, "postiz", "ig_1")
+    assert len(sleeps) == 1 and sleeps[0] >= 14.0
+    reset_publish_throttle()
+
+
+def test_publish_due_calls_postiz_throttle(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk_test")
+    from fanops.post.run import publish_due, reset_publish_throttle
+    reset_publish_throttle()
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    for pid in ("p1", "p2"):
+        _queued(led, cfg, pid=pid, cid=f"c_{pid}", when="2020-01-01T00:00:00Z")
+        led.posts[pid].media_urls = ["https://cdn.test/clip.mp4"]
+    led.save()
+    class FakePoster:
+        def publish(self, led_, post_id):
+            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id].public_url = "https://instagram.com/x/"
+            return led_
+    mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    throttle = mocker.patch("fanops.post.run._publish_throttle_wait")
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    assert throttle.call_count == 2
+    assert all(c.args[1] == "postiz" for c in throttle.call_args_list)
+    reset_publish_throttle()

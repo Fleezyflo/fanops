@@ -28,7 +28,7 @@ def test_posted_library_lists_published_with_url_and_lift(tmp_path):
     # an awaiting post must NOT appear in the Posted library
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p_await", parent_id="clip_1", account="@a", account_id="ig_1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://p_await"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://p_await"))
     rows = views.posted_library(Ledger.load(cfg), cfg)
     ids = {r.post_id for r in rows}
     assert "p1" in ids and "p_await" not in ids

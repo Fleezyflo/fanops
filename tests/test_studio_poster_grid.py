@@ -34,7 +34,7 @@ def _seed(cfg, n_clips=1, *, with_posts=True, state=PostState.queued):
         if with_posts:
             led.add_post(Post(id=f"p{i}", parent_id=cid, account="@a0", account_id="0",
                               platform=Platform.instagram, caption="c", state=state,
-                              scheduled_time=FAR, public_url=f"dryrun://0"))
+                              scheduled_time=FAR, public_url="dryrun://0"))
     led.save()
 
 
@@ -63,14 +63,13 @@ def test_review_videos_all_have_nonempty_poster(tmp_path, monkeypatch):
     assert all("/clip-thumb/" in p for p in posters)
 
 
-def test_publish_videos_all_have_nonempty_poster(tmp_path, monkeypatch):
+def test_publish_scan_list_uses_lazy_thumbs_not_video_grid(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n_clips=3)
     html = _client(cfg).get("/publish").data.decode()
-    vids, posters = _videos(html), _posters(html)
-    assert vids, "expected video elements on /publish"
-    assert len(posters) == len(vids)
-    assert all(p.strip() and "/clip-thumb/" in p for p in posters)
+    assert _videos(html) == [], "publish uses scan-list thumbs, not per-card <video>"
+    assert html.count("/clip-thumb/") >= 3
+    assert 'loading="lazy"' in html
 
 
 # ---- (2) cap / paginate ----
@@ -90,8 +89,8 @@ def test_publish_grid_capped_with_visible_count(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _accounts(cfg)
     _seed(cfg, n_clips=views.GRID_PAGE_SIZE + 4)
     html = _client(cfg).get("/publish").data.decode()
-    cards = html.count('class="card clip-card"')
-    assert cards <= views.GRID_PAGE_SIZE
+    rows = html.count('class="publish-row"')
+    assert rows <= views.GRID_PAGE_SIZE
     assert str(views.GRID_PAGE_SIZE + 4) in html
     assert "show more" in html.lower()
 
@@ -112,8 +111,8 @@ def test_publish_show_more_offset_returns_remainder(tmp_path, monkeypatch):
     total = views.GRID_PAGE_SIZE + 3
     _seed(cfg, n_clips=total)
     html = _client(cfg).get(f"/publish?offset={views.GRID_PAGE_SIZE}").data.decode()
-    cards = html.count('class="card clip-card"')
-    assert cards == total - views.GRID_PAGE_SIZE
+    rows = html.count('class="publish-row"')
+    assert rows == total - views.GRID_PAGE_SIZE
 
 
 def test_review_oversize_and_garbage_offset_never_500(tmp_path, monkeypatch):
@@ -129,12 +128,18 @@ def test_review_oversize_and_garbage_offset_never_500(tmp_path, monkeypatch):
 
 # ---- (3) publish-now button on /publish ----
 def test_publish_renders_publish_now_button_wired(tmp_path, monkeypatch):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n_clips=1)
     html = _client(cfg).get("/publish").data.decode()
     assert "Publish now" in html
-    assert "/publish/now/p0" in html                   # hx-post wired to do_publish_now for the post
-    assert "Mark posted" in html                        # the existing manual path stays
+    assert "/publish/now/p0" in html
+    assert "Mark posted" in html
+
+def test_publish_hides_publish_now_when_dryrun(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_LIVE", raising=False); monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n_clips=1)
+    html = _client(cfg).get("/publish").data.decode()
+    assert "Publish now" not in html and "publish-guard" in html and "Mark posted" in html
 
 
 def test_publish_now_button_dryrun_has_no_confirm_checkbox(tmp_path, monkeypatch):

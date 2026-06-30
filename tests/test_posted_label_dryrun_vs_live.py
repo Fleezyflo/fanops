@@ -45,7 +45,7 @@ def _seed_clip(led: Ledger) -> Clip:
 def _seed_post(led: Ledger, clip: Clip, *, post_id: str, public_url: str | None) -> str:
     p = Post(id=post_id, parent_id=clip.id, account="@a", account_id="ia",
              platform=Platform.instagram, caption="c", state=PostState.published,
-             scheduled_time=FIXED_ISO, media_urls=[f"file:///clip_1_9x16.mp4"],
+             scheduled_time=FIXED_ISO, media_urls=["file:///clip_1_9x16.mp4"],
              public_url=public_url, published_at=FIXED_ISO)
     led.add_post(p)
     return p.id

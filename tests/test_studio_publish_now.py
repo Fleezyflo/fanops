@@ -20,16 +20,17 @@ def _seed(cfg, *, state=PostState.queued, when=FUTURE, media=None):
                       state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
                       platform=Platform.instagram, caption="ship it", state=state,
-                      scheduled_time=when, media_urls=media or [], public_url=f"dryrun://p1"))
+                      scheduled_time=when, media_urls=media or [], public_url="dryrun://p1"))
     led.save(); return led
 
 
-def test_publish_now_dryrun_publishes_despite_future_schedule(tmp_path, monkeypatch):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)                      # dryrun
-    cfg = Config(root=tmp_path); _seed(cfg)                                 # scheduled for 2099
+def test_publish_now_dryrun_blocked_in_studio(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path); _seed(cfg)
     res = actions.publish_now(cfg, "p1")
-    assert res.ok is True and res.detail["state"] == "published"
-    assert Ledger.load(cfg).posts["p1"].state is PostState.published
+    assert not res.ok and "not live" in res.error.lower()
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
 
 def test_publish_now_unknown_post(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
@@ -53,9 +54,9 @@ def test_publish_now_live_requires_confirm(tmp_path, monkeypatch):
 def test_publish_now_surfaces_fatal_auth(tmp_path, monkeypatch):
     from fanops.errors import BlotatoAuthError
     import fanops.post.run as run
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); _seed(cfg, media=["file://x.mp4"])         # pre-stamped -> skips ensure_clip_media
-    monkeypatch.setattr(run, "get_media_uploader", lambda cfg, backend=None: (lambda c, p: "https://x/u.mp4"))
+    monkeypatch.setattr(run, "get_media_uploader", lambda cfg, backend=None: (lambda c, p, **kw: "https://x/u.mp4"))
     class Boom:
         def publish(self, led, post_id): raise BlotatoAuthError("401 unauthorized")
     monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: Boom())
@@ -64,28 +65,23 @@ def test_publish_now_surfaces_fatal_auth(tmp_path, monkeypatch):
 
 
 # ---- Flask wiring ----
-def test_publish_now_route(tmp_path, monkeypatch):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+def test_publish_now_route_blocks_dryrun(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path); _seed(cfg)
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/publish/now/p1")
-    assert r.status_code == 200
-    assert Ledger.load(cfg).posts["p1"].state is PostState.published
+    assert r.status_code == 200 and b"publishing is off" in r.data.lower()
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
 
-def test_schedule_publish_re_renders_bucket_without_shipped_post(tmp_path, monkeypatch):
-    # Phase 1 bug fix: publishing from the SCHEDULE bucket re-renders the panel so the shipped post drops
-    # out of the actionable bucket (distinct from /publish/now which returns a one-off result fragment).
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)                       # dryrun
+def test_schedule_publish_blocks_when_not_live(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
     from fanops.studio.app import create_app
-    cfg = Config(root=tmp_path); _seed(cfg)                                  # p1 queued, scheduled 2099
+    cfg = Config(root=tmp_path); _seed(cfg)
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/schedule/publish/p1")
-    assert r.status_code == 200
-    body = r.data.decode()
-    assert Ledger.load(cfg).posts["p1"].state is PostState.published        # shipped
-    assert "/schedule/publish/p1" not in body                               # no publish form for the now-shipped post
-    assert "Published" in body                                              # the panel banner reports the ship
+    assert r.status_code == 200 and "publishing is off" in r.data.decode().lower()
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
 
 def test_crosspost_all_rejects_source_equals_target(tmp_path, monkeypatch):
     # Phase 1 footgun fix: bulk backfill is CROSS-account; picking the same account for source + target

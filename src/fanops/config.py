@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
@@ -92,7 +93,7 @@ _ASR_SHORT_SOURCE_SECONDS = 300.0
 class Config:
     def __init__(self, root: Path | str | None = None):
         self.root = Path(root) if root else Path.cwd()
-        load_dotenv(self.root / ".env")
+        load_dotenv(self.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
         self.base = self.root / "MohFlow-FanOps"
         for attr, name in _STAGE.items():
             setattr(self, attr, self.base / name)
@@ -362,7 +363,13 @@ class Config:
 
     @property
     def responder_mode(self) -> str:
-        return os.getenv("FANOPS_RESPONDER") or "manual"
+        # Default hands-off when the Claude Code CLI is on PATH (mirrors kick_prepare/daemon); explicit
+        # FANOPS_RESPONDER=manual opts out. Without `claude`, fall back to manual so gates stay pending
+        # until a human/cron writes responses (never a silent no-op that looks like a healthy idle pass).
+        v = (os.getenv("FANOPS_RESPONDER") or "").strip().lower()
+        if v:
+            return v
+        return "llm" if shutil.which("claude") else "manual"
 
     def llm_model_for(self, kind: str) -> str:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
@@ -843,6 +850,26 @@ class Config:
         except ValueError:
             return 0
         return v if v >= 0 else 0
+
+    @property
+    def zernio_max_upload_bytes(self) -> int:
+        # Zernio rejects large TikTok uploads with 413 — preflight BEFORE the two-step upload so the
+        # operator gets a fast oversize bucket (Sprint 2). DEFAULT 50 MB (live-discovered headroom).
+        try:
+            mb = int(os.getenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "50"))
+        except ValueError:
+            mb = 50
+        return max(1, mb) * 1024 * 1024
+
+    @property
+    def postiz_publish_per_min(self) -> int:
+        # Postiz rate-limits bursts (429). Cap publishes per integration per minute (DEFAULT 4).
+        # 0 disables the throttle (explicit opt-out).
+        try:
+            v = int(os.getenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4"))
+        except ValueError:
+            return 4
+        return v if v >= 0 else 4
 
     @property
     def concurrent_sources(self) -> bool:

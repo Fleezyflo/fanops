@@ -75,7 +75,7 @@ def test_metrics_client_fetches_per_post_rows(tmp_path, monkeypatch, mocker):
     spy = mocker.patch("fanops.post.metrics.requests.get",
                        return_value=_R(200, {"likes": 3, "saves": 30}))
     rows = ZernioMetricsClient(cfg, submission_ids=["zid"]).list_posts("30d")
-    assert "analytics/posts/zid" in spy.call_args[0][0]                # per-post analytics endpoint
+    assert spy.call_args[0][0].endswith("/analytics") and spy.call_args[1]["params"]["postId"] == "zid"                # per-post analytics endpoint
     assert rows == [{"postSubmissionId": "zid", "metrics": {"likes": 3.0, "saves": 30.0}, "_raw_labels": ["likes", "saves"]}]
 
 def test_metrics_client_no_ids_no_network(tmp_path, monkeypatch, mocker):
@@ -97,7 +97,8 @@ def test_metrics_client_per_post_failure_is_skipped_not_emitted_as_empty(tmp_pat
     # the post with. Still isolated: one bad id never aborts the pass or loses the others.
     _zenv(monkeypatch); cfg = Config(root=tmp_path)
     def by_id(url, **kw):
-        return _R(503, "down") if url.endswith("/bad") else _R(200, {"saves": 2})
+        sid = (kw.get("params") or {}).get("postId", "")
+        return _R(503, "down") if sid == "bad" else _R(200, {"saves": 2})
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_id)
     rows = ZernioMetricsClient(cfg, submission_ids=["bad", "ok"]).list_posts("30d")
     assert [r["postSubmissionId"] for r in rows] == ["ok"]             # bad SKIPPED, no empty row, no raise
@@ -136,6 +137,14 @@ def test_status_permalink_from_nested_and_aliases(tmp_path, monkeypatch, mocker)
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
     assert ZernioStatusClient(cfg).get_status("zid") == {"status": "published", "publicUrl": "https://www.tiktok.com/@x/video/1"}
 
+def test_status_permalink_from_platforms_array(tmp_path, monkeypatch, mocker):
+    # Live Zernio shape (2026-06-30): status + platformPostUrl under post.platforms[0].
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    url = "https://www.tiktok.com/@hrmnyco/video/7656936928327027969"
+    body = {"post": {"platforms": [{"status": "published", "platformPostUrl": url}]}}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
+    assert ZernioStatusClient(cfg).get_status("zid") == {"status": "published", "publicUrl": url}
+
 def test_status_401_raises_autherror(tmp_path, monkeypatch, mocker):
     _zenv(monkeypatch); cfg = Config(root=tmp_path)
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(401, {"k": "sk_secret"}))
@@ -161,6 +170,34 @@ def test_default_get_status_global_zernio_binds_zernio_client(tmp_path, monkeypa
     poll = _default_get_status(cfg)
     assert poll.__self__.__class__ is ZernioStatusClient                  # global=zernio -> Zernio status client (bound)
 
+
+
+
+def test_metrics_client_uses_analytics_query_postid(tmp_path, monkeypatch, mocker):
+    # Live Zernio contract (docs.zernio.com 2026-06): GET /v1/analytics?postId= — NOT /analytics/posts/{id}.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    spy = mocker.patch("fanops.post.metrics.requests.get",
+                       return_value=_R(200, {"analytics": {"likes": 5, "saves": 2}}))
+    rows = ZernioMetricsClient(cfg, submission_ids=["zid123"]).list_posts("30d")
+    assert rows[0]["metrics"] == {"likes": 5.0, "saves": 2.0}
+    url = spy.call_args[0][0]
+    assert url.endswith("/analytics")
+    assert spy.call_args[1]["params"]["postId"] == "zid123"
+    assert "/analytics/posts/" not in url
+
+
+def test_metrics_client_platform_analytics_shape(tmp_path, monkeypatch, mocker):
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    body = {"platformAnalytics": [{"platform": "tiktok", "analytics": {"likes": 9, "views": 1000, "saves": 3}}]}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
+    rows = ZernioMetricsClient(cfg, submission_ids=["zid"]).list_posts("30d")
+    assert rows[0]["metrics"] == {"likes": 9.0, "views": 1000.0, "saves": 3.0}
+
+
+def test_metrics_client_202_sync_pending_skipped(tmp_path, monkeypatch, mocker):
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(202, {"message": "sync pending"}))
+    assert ZernioMetricsClient(cfg, submission_ids=["zid"]).list_posts("30d") == []
 
 # ---------------------------------------------------------------- per-post (mixed) dispatch ----
 def _mixed_ledger(cfg):
@@ -208,10 +245,10 @@ def test_default_get_status_mixed_routes_each_sid(tmp_path, monkeypatch, mocker)
     add_account(cfg, "@tt", [Platform.tiktok], status="active"); set_backend(cfg, "@tt", "tiktok", "zernio")
     led = Ledger.load(cfg)
     led.add_post(Post(id="tt", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
-                      caption="x", state=PostState.needs_reconcile, submission_id="zsid", public_url=f"dryrun://tt"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="zsid", public_url="dryrun://tt"))
     led.add_post(Post(id="ig", parent_id="c", account="@ig", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="psid",
-                      scheduled_time="2099-01-01T00:00:00Z", public_url=f"dryrun://ig"))
+                      scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://ig"))
     tt_url = "https://www.tiktok.com/@mark/video/7"
     def by_url(url, **kw):
         if "zernio" in url: return _R(200, {"status": "published", "permalink": tt_url})

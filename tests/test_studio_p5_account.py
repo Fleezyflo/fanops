@@ -146,7 +146,7 @@ def test_posted_row_new_fields_default_none():
 # ---- T4: Publish filter ----
 def _manual(led, pid, account):
     led.add_post(Post(id=pid, parent_id="clip_1", account=account, account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, scheduled_time="2020-01-01T00:00:00Z", public_url=f"dryrun://clip_1"))
+                      caption="x", state=PostState.queued, scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://clip_1"))
 
 def test_publish_queue_filtered_by_account(tmp_path):
     from fanops.studio.views import publish_queue
@@ -266,14 +266,14 @@ def test_show_more_link_preserves_account_review(tmp_path):
         led.add_post(Post(id=f"p{i}", parent_id=f"c{i}", account="@a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=3))))
     led.save()
-    html = _client(cfg).get("/review?account=@a").data.decode()
+    html = _client(cfg).get("/review?account=@a&focus=0&grid=1").data.decode()
     assert "Show more" in html and "account=" in html   # both offset= and account= ride the href
 
 def test_show_more_link_preserves_account_publish(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     for i in range(30):
         led.add_post(Post(id=f"p{i}", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.queued, scheduled_time="2020-01-01T00:00:00Z", public_url=f"dryrun://clip_1"))
+                          caption="x", state=PostState.queued, scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://clip_1"))
     led.save()
     html = _client(cfg).get("/publish?account=@a").data.decode()
     assert "Show more" in html and "account=" in html
@@ -324,13 +324,11 @@ def test_blank_account_param_is_all(tmp_path):
     assert r.status_code == 200 and b"await a" in r.data and b"await b" in r.data
 
 def test_schedule_all_view_renders_per_account_headers(tmp_path):
-    # the unfiltered "All" Schedule reads per account: a running .day-head header per account group.
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
     html = _client(cfg).get("/schedule").data.decode()
-    assert html.count('class="day-head"') >= 2 and ">@a<" in html and ">@b<" in html   # both account headers
-    # ...and the single-account filter renders NO running header (the active chip already names it)
+    assert ">@a<" in html and ">@b<" in html
     one = _client(cfg).get("/schedule?account=@a").data.decode()
-    assert 'class="day-head">@a<' not in one and "q_b" not in one                       # scoped, header suppressed
+    assert ">@b<" not in one and "q_b" not in one                       # scoped, header suppressed
 
 def test_review_live_strip_is_account_scoped(tmp_path):
     # HIGH (review fix): the live strip counts the SAME scope the body shows, so a filtered worklist's

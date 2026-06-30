@@ -12,8 +12,6 @@ from fanops.studio.app import _ALL_PLATFORMS, _LEVER_EFFECTS
 def register_golive_routes(app, cfg):
     @app.get("/golive")
     def golive_view():
-        # Milestone 5 (operator-gated): turn FanOps from dryrun into real Postiz publishing entirely in
-        # the browser — add accounts, map each channel to its integration, see readiness, flip dryrun<->live.
         return render_template("golive.html", status=views.golive_status(cfg), result=None,
                                all_platforms=_ALL_PLATFORMS, effects=_LEVER_EFFECTS, tab="golive")
 
@@ -133,11 +131,26 @@ def register_golive_routes(app, cfg):
 
     @app.get("/golive/health")
     def do_golive_health():
-        # Issue 1: live dependency verdicts (Docker / Postiz / Zernio), loaded on-demand via htmx so the
-        # network/subprocess probes run ONLY when the tab is viewed — never in the golive_status read-model
-        # (which the whole test suite calls). A down dependency is visible here, not buried in a later error.
         from fanops.health import system_health
-        return render_template("_golive_health.html", health=system_health(cfg))
+        health = system_health(cfg)
+        if request.args.get("compact"):
+            return render_template("_health_pills.html", health=health)
+        return render_template("_golive_health.html", health=health)
+
+    @app.get("/golive/connect")
+    def golive_connect():
+        return render_template("golive_page.html", status=views.golive_status(cfg), result=None,
+                               step="connect", all_platforms=_ALL_PLATFORMS, effects=_LEVER_EFFECTS, tab="golive")
+
+    @app.get("/golive/accounts")
+    def golive_accounts_page():
+        return render_template("golive_page.html", status=views.golive_status(cfg), result=None,
+                               step="accounts", all_platforms=_ALL_PLATFORMS, effects=_LEVER_EFFECTS, tab="golive")
+
+    @app.get("/golive/live")
+    def golive_live_page():
+        return render_template("golive_page.html", status=views.golive_status(cfg), result=None,
+                               step="live", all_platforms=_ALL_PLATFORMS, effects=_LEVER_EFFECTS, tab="golive")
 
     @app.post("/golive/map")
     def do_golive_map():

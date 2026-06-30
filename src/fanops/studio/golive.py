@@ -19,7 +19,9 @@ THREE load-bearing invariants:
 from __future__ import annotations
 import os
 import re
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Optional, TYPE_CHECKING
+if TYPE_CHECKING:
+    from datetime import datetime
 
 from fanops import cutover
 from fanops.config import Config, _LIVE_BACKENDS
@@ -508,7 +510,7 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     from datetime import datetime as _dt, timezone as _tz
     from fanops.ledger import Ledger as _Ledger
     from fanops.models import PostState as _PS
-    from fanops.timeutil import parse_iso as _parse_iso
+    from fanops.timeutil import is_due_or_past
     _now = now if now is not None else _dt.now(_tz.utc)
     try:
         _led = _Ledger.load(cfg)
@@ -517,19 +519,8 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
         # root: never silent fail-open). Log and refuse so the operator sees both signals.
         get_logger(cfg)("go_live", "-", "past_due_gate_load_failed", err=str(_exc)[:160])
         return ActionResult(ok=False, error=f"not ready — ledger unreadable: {str(_exc)[:160]}. Run `fanops doctor` first.")
-    _past_due = 0
-    for _p in _led.posts.values():
-        if _p.state is not _PS.queued or not _p.scheduled_time:
-            continue
-        try:
-            _dt_p = _parse_iso(_p.scheduled_time)
-        except (ValueError, TypeError):
-            _past_due += 1                # unparseable -> treat as stale (safe: flip blocked, operator inspects)
-            continue
-        if _dt_p.tzinfo is None:
-            _dt_p = _dt_p.replace(tzinfo=_tz.utc)
-        if _dt_p <= _now:
-            _past_due += 1
+    _past_due = sum(1 for _p in _led.posts.values()
+                    if _p.state is _PS.queued and is_due_or_past(_p.scheduled_time, _now))
     if _past_due:
         return ActionResult(ok=False, error=(
             f"not ready — {_past_due} queued post(s) are past-due. Respread the bucket first "
@@ -541,6 +532,9 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     err = _dual_write(cfg, "FANOPS_LIVE", "1")
     if err:
         return ActionResult(ok=False, error=err)
+    if (err := _dual_write(cfg, "FANOPS_RESPONDER", "llm")):
+        return ActionResult(ok=False, error=err)
+    os.environ["FANOPS_RESPONDER"] = "llm"
     # M1: a live-ready channel that resolves ONLY via the legacy FANOPS_POSTER bridge (no explicit
     # `backends`) goes dark the instant FANOPS_POSTER is unset — name them so the operator can pin the
     # provider explicitly (route the channel in the Go-Live tab; that persists `backends[platform]`).

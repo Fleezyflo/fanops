@@ -17,8 +17,8 @@ from fanops.timeutil import parse_iso
 # still lives in its home submodule (views_common/_review/_results); this is just the public views surface.
 # F401-silenced because each name is re-exported, not referenced within this file.
 from fanops.studio.views_common import (IMMINENT_THRESHOLD_MINUTES, GRID_PAGE_SIZE, paginate, TERM_DEFS, term_def, accounts_in, _imminent, suggest_time)  # noqa: F401
-from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch, awaiting_moment_count)  # noqa: F401
-from fanops.studio.views_results import (ScheduleRow, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows)  # noqa: F401
+from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch, awaiting_moment_count, review_awaiting_by_account)  # noqa: F401
+from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, schedule_lanes, due_publish_plan, DuePublishPlan, schedule_cockpit, ScheduleCockpit, inflight_watch, InflightWatchRow, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows, classify_post_delivery, failure_rollup, operator_error, failure_label)  # noqa: F401
 
 
 @dataclass
@@ -145,6 +145,7 @@ def pipeline_status(cfg: Config) -> dict:
         "holds": sum(1 for c in led.clips.values() if c.held),
         "pending_moments": len(pending(cfg, kind="moments")),
         "pending_moment_hooks": len(pending(cfg, kind="moment_hooks")),
+        "pending_moment_casting": len(pending(cfg, kind="moment_casting")),
         "pending_captions": len(pending(cfg, kind="captions")),
         # R3-followup: the UI mode label MUST be the per-channel truth, not the legacy global. On a live
         # deployment with per-channel routing, cfg.poster_backend still reads 'dryrun' (the legacy
@@ -171,7 +172,7 @@ def run_next_step(status: dict) -> dict:
         try: return int(s.get(k, 0) or 0)
         except (TypeError, ValueError): return 0
     footage = _n("sources") + _n("third_party")
-    gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_captions")
+    gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_moment_casting") + _n("pending_captions")
     awaiting = _n("awaiting")               # ACTIONABLE clips awaiting review (moments) — the SAME unit Home/Review
                                             # show, so the Make banner agrees with them (was raw posts: "57" vs "17").
     if footage == 0:
@@ -377,6 +378,198 @@ def _publish_mode_label(cfg: Config) -> str:
     return cfg.effective_publish_mode()
 
 
+def _post_is_due(p, now: datetime) -> bool:
+    if p.state is not PostState.queued:
+        return False
+    if not p.scheduled_time:
+        return True
+    try:
+        return parse_iso(p.scheduled_time) <= now
+    except Exception:
+        return False
+
+
+def _post_live_today(p, now: datetime) -> bool:
+    from fanops.studio.views_results import _classify_channel
+    from datetime import timedelta
+    if _classify_channel(p.public_url) != "live":
+        return False
+    t = p.published_at or p.scheduled_time
+    if not t:
+        return False
+    try:
+        dt = parse_iso(t)
+        if dt.tzinfo is None:
+            return False
+        return dt >= now - timedelta(hours=24)
+    except Exception:
+        return False
+
+
+def build_system_strip(cfg: Config) -> dict:
+    """Global system strip read-model: LIVE/DRYRUN mode + blocked gate count + failed-post alert. Health dots lazy-load via htmx."""
+    try:
+        ps = pipeline_status(cfg)
+        blocked = (ps.get("pending_moments", 0) + ps.get("pending_moment_hooks", 0)
+                   + ps.get("pending_moment_casting", 0) + ps.get("pending_captions", 0))
+    except Exception:
+        blocked = 0
+    failed = 0
+    try:
+        failed = sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.failed)
+    except Exception:
+        failed = 0
+    return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked, "failed": failed}
+
+
+
+
+def resolve_account_handle(raw: str, cfg: Config) -> str:
+    """Map ?account= to the canonical ledger/accounts handle (@-agnostic)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return raw
+    bare = raw.lstrip("@")
+    try:
+        for a in Accounts.load(cfg).active():
+            h, hb = a.handle, a.handle.lstrip("@")
+            if raw == h or raw == hb or bare == hb:
+                return h
+    except Exception:
+        pass
+    return raw  # unknown handle — preserve operator input for empty-state copy
+
+
+def _queued_has_future_schedule(p, now: datetime) -> bool:
+    """True when a queued post has a strictly-future scheduled_time (not timeless / past-due)."""
+    if not p.scheduled_time:
+        return False
+    try:
+        return parse_iso(p.scheduled_time) > now
+    except (ValueError, TypeError):
+        return False
+
+def schedule_auto_ship(cfg: Config) -> bool:
+    """Live + daemon alive — Schedule is read-only; posts ship on the clock."""
+    if not cfg.is_live:
+        return False
+    dh = daemon_health(cfg)
+    return bool(dh and dh.get("verdict") == "alive")
+
+
+def review_handoff(cfg: Config) -> dict:
+    """Account with the most awaiting posts — Make → Review entry."""
+    wc = account_work_counts(cfg)
+    best_h, best_n = None, 0
+    for h, c in wc.items():
+        n = int(c.get("awaiting") or 0)
+        if n > best_n:
+            best_h, best_n = h, n
+    if not best_h or not best_n:
+        return {}
+    out = {"account": best_h, "awaiting": best_n}
+    try:
+        led = Ledger.load(cfg)
+        by_batch: dict[str, int] = {}
+        for p in led.posts.values():
+            if p.state is PostState.awaiting_approval and p.account == best_h and p.batch_id:
+                by_batch[p.batch_id] = by_batch.get(p.batch_id, 0) + 1
+        if by_batch:
+            out["batch"] = max(by_batch, key=by_batch.get)
+    except Exception:
+        pass
+    return out
+
+
+def zero_post_clips(cfg: Config) -> list[dict]:
+    """Captioned/queued clips with no Post born — the silent crosspost drop surfaced for Home."""
+    from fanops.models import ClipState
+    try:
+        led = Ledger.load(cfg)
+        out = []
+        for clip in led.clips.values():
+            if clip.state not in (ClipState.queued, ClipState.captioned):
+                continue
+            if any(p.parent_id == clip.id for p in led.posts.values()):
+                continue
+            mom = led.moments.get(clip.parent_id)
+            out.append({"clip_id": clip.id, "moment_id": clip.parent_id,
+                        "window": f"{int(mom.start)}–{int(mom.end)}" if mom else "—"})
+        return out[:5]
+    except Exception:
+        return []
+
+
+def metrics_stale_hint(cfg: Config) -> bool:
+    """True when live trackable posts exist but most lack analyzed metrics."""
+    if not cfg.is_live:
+        return False
+    try:
+        from fanops.studio.views_results import _classify_channel
+        led = Ledger.load(cfg)
+        live = [p for p in led.posts.values()
+                if p.state in (PostState.published, PostState.analyzed)
+                and _classify_channel(getattr(p, "public_url", None)) == "live"]
+        if len(live) < 2:
+            return False
+        thin = sum(1 for p in live if (p.metrics or {}).get("lift_score") is None)
+        return thin >= max(1, len(live) // 2)
+    except Exception:
+        return False
+
+
+def review_nav_params(cfg: Config, account: str | None = None) -> dict:
+    """Review focus entry — account + dominant batch for handoff links."""
+    out: dict = {"view": "account", "focus": 1}
+    h = account
+    batch = None
+    if not h:
+        handoff = review_handoff(cfg)
+        h = handoff.get("account")
+        batch = handoff.get("batch")
+    if h:
+        out["account"] = h
+        if batch is None:
+            try:
+                led = Ledger.load(cfg)
+                by_batch: dict[str, int] = {}
+                for p in led.posts.values():
+                    if p.state is PostState.awaiting_approval and p.account == h and p.batch_id:
+                        by_batch[p.batch_id] = by_batch.get(p.batch_id, 0) + 1
+                if by_batch:
+                    batch = max(by_batch, key=by_batch.get)
+            except Exception:
+                pass
+    if batch:
+        out["batch"] = batch
+    return out
+
+
+def account_work_counts(cfg: Config) -> dict[str, dict]:
+    """Per-handle work queue counts for Home rows and the account session bar."""
+    from collections import defaultdict
+    out: dict[str, dict] = defaultdict(lambda: {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0, "review_batch": None})
+    try:
+        led = Ledger.load(cfg)
+        for p in led.posts.values():
+            h = p.account
+            if p.state is PostState.awaiting_approval:
+                out[h]["awaiting"] += 1
+            elif p.state is PostState.queued:
+                if _queued_has_future_schedule(p, datetime.now(timezone.utc)):
+                    out[h]["scheduled"] += 1
+            elif p.state in (PostState.needs_reconcile, PostState.submitting, PostState.submitted):
+                out[h]["inflight"] += 1
+            elif p.state in (PostState.failed, PostState.error):
+                out[h]["failed"] += 1
+    except Exception:
+        pass
+    for h in out:
+        if out[h]["awaiting"]:
+            out[h]["review_batch"] = review_nav_params(cfg, h).get("batch")
+    return dict(out)
+
+
 def home_status(cfg: Config) -> HomeStatus:
     """Lock-free, fail-open read-model for GET / (the status home): connection state per account (via the
     shared golive_accounts helper — NEVER golive_status, which also runs doctor_report on every load) +
@@ -388,17 +581,37 @@ def home_status(cfg: Config) -> HomeStatus:
         from collections import Counter
         led = Ledger.load(cfg)
         st = Counter(p.state for p in led.posts.values())
+        inflight = (st.get(PostState.needs_reconcile, 0) + st.get(PostState.submitting, 0)
+                    + st.get(PostState.submitted, 0))
+        due_soon = sum(1 for p in led.posts.values()
+                       if p.state is PostState.queued and _post_is_due(p, datetime.now(timezone.utc)))
+        live_today = sum(1 for p in led.posts.values()
+                         if p.state in (PostState.published, PostState.analyzed)
+                         and _post_live_today(p, datetime.now(timezone.utc)))
+        from fanops.studio.views_results import _classify_channel
+        live_trackable = sum(1 for p in led.posts.values()
+                             if p.state in (PostState.published, PostState.analyzed)
+                             and _classify_channel(getattr(p, "public_url", None)) == "live")
+        failed = st.get(PostState.failed, 0)
+        from fanops.studio.views_results import failure_rollup
+        fb = failure_rollup(led)["buckets"]
         counts = {"sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),
                   "batches": len(getattr(led, "batches", {})),
-                  "awaiting": awaiting_moment_count(led),    # MOMENTS (== Review worklist), not raw surface posts
-                  "awaiting_posts": st.get(PostState.awaiting_approval, 0),  # raw surface count for the tooltip
+                  "awaiting": awaiting_moment_count(led),
+                  "awaiting_posts": st.get(PostState.awaiting_approval, 0),
                   "scheduled": st.get(PostState.queued, 0),
+                  "inflight": inflight,
+                  "due_soon": due_soon,
+                  "live_today": live_today,
+                  "live_trackable": live_trackable,
+                  "failed": failed, "failed_rate_limit": fb.get("rate_limit", 0),
                   "posted": st.get(PostState.published, 0) + st.get(PostState.analyzed, 0)}
         by_account = dict(Counter(p.account for p in led.posts.values()))
     except Exception as exc:                          # the first page an operator sees must never 500
         from fanops.log import get_logger
         get_logger(cfg)("home", "-", "error", err=str(exc)[:160])
-        counts = {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0, "posted": 0}
+        counts = {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0,
+                  "inflight": 0, "due_soon": 0, "live_today": 0, "live_trackable": 0, "failed": 0, "posted": 0}
         by_account = {}
     return HomeStatus(mode=mode, is_live=cfg.is_live, counts=counts, accounts=accounts, by_account=by_account)
 
@@ -445,6 +658,7 @@ class SpineStage:                      # Slice 1: one node of the workflow stepp
     endpoint: str                      # the rail endpoint this stage links to
     count: int                         # the stage's headline number (sources/awaiting/scheduled/posted)
     state: str                         # 'active' (you-are-here) | 'done' | 'todo'
+    severity: Optional[str] = None     # warn | info | danger — stage badge emphasis
 
 
 @dataclass
@@ -453,31 +667,44 @@ class WorkflowSpine:                    # the whole through-line: the ordered pa
     next_label: Optional[str]          # the one next-action sentence ("Review 4 clips")
     next_endpoint: Optional[str]       # where it points; None == "caught up", no CTA
     here: Optional[str]                # the current stage key (from the active tab), else None
+    inflight: int = 0                  # needs_reconcile + submitting (Schedule severity)
+    blocked_gates: int = 0             # pending agent gates (Make severity dot)
+    next_params: dict = field(default_factory=dict)  # extra url_for kwargs for the next CTA
 
 
 _SPINE_ORDER = (("make", "Make", "run_panel"), ("review", "Review", "review"),
                 ("schedule", "Schedule", "schedule"), ("posted", "Posted", "posted"))
 
 
-def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str]) -> WorkflowSpine:
-    """Pure: turn the Home counts into the Make→Review→Schedule→Posted stepper. A stage is 'active' when it is
-    the current tab (`here`), else 'done' once there is output downstream of it, else 'todo'. The next-action
-    ladder is strict precondition→pending order: connect an account, then add footage, then clear the awaiting
-    worklist, then schedule the approved bucket, else caught-up (no CTA). No ledger, no I/O — trivially tested."""
+def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
+                inflight: int = 0, blocked_gates: int = 0, next_params: Optional[dict] = None) -> WorkflowSpine:
+    """Pure: turn the Home counts into the Make→Review→Schedule→Posted stepper. Stage badges carry
+    severity when blocked (Make), awaiting>20 (Review), or inflight>0 (Schedule)."""
     src = int(counts.get("sources", 0)); awaiting = int(counts.get("awaiting", 0))
     queued = int(counts.get("scheduled", 0)); posted = int(counts.get("posted", 0))
-    done = {"make": src > 0, "review": awaiting == 0 and (queued > 0 or posted > 0), "schedule": posted > 0, "posted": posted > 0}
-    nums = {"make": src, "review": awaiting, "schedule": queued, "posted": posted}
+    failed = int(counts.get("failed", 0)); live_trackable = int(counts.get("live_trackable", 0))
+    inflight = int(inflight); blocked_gates = int(blocked_gates)
+    done = {"make": src > 0, "review": awaiting == 0 and (queued > 0 or posted > 0), "schedule": posted > 0, "posted": live_trackable > 0}
+    sched_count = queued + inflight
+    nums = {"make": src, "review": awaiting, "schedule": sched_count, "posted": live_trackable}
+    sev = {"make": "danger" if blocked_gates else None,
+           "review": "warn" if awaiting > 20 else None,
+           "schedule": "info" if inflight else None,
+           "posted": "danger" if failed else None}
     stages = [SpineStage(key=k, label=lbl, endpoint=ep, count=nums[k],
-                         state=("active" if k == here else ("done" if done[k] else "todo")))
+                         state=("active" if k == here else ("done" if done[k] else "todo")),
+                         severity=sev[k])
               for k, lbl, ep in _SPINE_ORDER]
     if not has_accounts:               n = ("Connect an account to begin", "golive_view")
     elif src == 0:                     n = ("Add footage to get started", "run_panel")
+    elif blocked_gates:                n = (f"Answer {blocked_gates} processing decision{'s' if blocked_gates != 1 else ''}", "gates")
     elif awaiting > 0:                 n = (f"Review {awaiting} clip{'s' if awaiting != 1 else ''}", "review")
-    elif queued > 0:                   n = (f"Schedule {queued} post{'s' if queued != 1 else ''}", "schedule")
-    elif posted > 0:                   n = ("You're all caught up", None)
+    elif queued > 0 or inflight:       n = (f"Schedule {queued} post{'s' if queued != 1 else ''}" + (f" · {inflight} in flight" if inflight else ""), "schedule")
+    elif failed > 0:                   n = (f"{failed} post{'s' if failed != 1 else ''} failed — open recovery", "posted")
+    elif live_trackable > 0:           n = ("You're all caught up", None)
     else:                              n = ("Run a pass in Make", "run_panel")
-    return WorkflowSpine(stages=stages, next_label=n[0], next_endpoint=n[1], here=here)
+    return WorkflowSpine(stages=stages, next_label=n[0], next_endpoint=n[1], here=here,
+                         inflight=inflight, blocked_gates=blocked_gates, next_params=next_params or {})
 
 
 def golive_status(cfg: Config) -> GoLiveStatus:
@@ -524,7 +751,7 @@ def gate_rows(cfg: Config) -> list[dict]:
     A torn/unreadable request file is skipped (fail-open) rather than 500-ing the tab."""
     from fanops.agentstep import pending, request_path
     rows: list[dict] = []
-    for kind in ("moments", "moment_hooks", "captions"):
+    for kind in ("moments", "moment_hooks", "moment_casting", "captions"):
         for key in pending(cfg, kind=kind):
             try:
                 payload = json.loads(request_path(cfg, kind, key).read_text())

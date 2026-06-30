@@ -6,5 +6,5 @@
   {% set _st = (result.detail or {}).get('scheduled_time') %}
   <span class="ok">✓ {{ (_st | localdt) if _st else ((result.detail or {}).get('caption') or 'saved') }}</span>
 {% else %}
-  <span class="err">✗ {{ result.error }}</span>
+  <span class="err">✗ {{ result.error | operator_error }}</span>
 {% endif %}

@@ -20,6 +20,13 @@ from fanops.timeutil import iso_z
 # "lift_weights" (audit b): when present that map REPLACES this default wholesale (the map IS the
 # full key set — a metric absent from it contributes 0), so tuning the optimization target is a
 # config edit, not a deploy. Absent override -> these defaults stand.
+
+def _metrics_trackable(cfg: Config, sid: Optional[str]) -> bool:
+    # C4 dryrun money loop: dryrun_ ids bind injected metrics when not live; live/reconcile still skip them (R1/D16).
+    if not sid: return False
+    if is_real_submission_id(sid): return True
+    return not cfg.is_live and sid.startswith("dryrun_")
+
 _W = {"saves": 4.0, "shares": 4.0, "retention": 3.0, "reach": 0.001, "likes": 0.05}
 # T4 (honest lift): a weight at/above this is a PRIMARY signal (saves/shares/retention). When a primary
 # key is ABSENT from a metrics row — e.g. Postiz cannot deliver saves/retention — the lift_score is a
@@ -159,7 +166,7 @@ def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = 
     by_sub = {}
     for p in led.posts.values():
         if not (p.submission_id and p.state in pollable): continue
-        if not is_real_submission_id(p.submission_id):
+        if not _metrics_trackable(cfg, p.submission_id):
             log("track", p.id, "skip_unreal_submission_id", sub=p.submission_id)   # CULM-3: fanops_ token -> can't attribute
             continue
         by_sub[p.submission_id] = p

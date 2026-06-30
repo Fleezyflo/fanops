@@ -21,7 +21,7 @@ from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
                                   approved_disabled_count)
 from fanops.intro_match import request_intro_match, ingest_intro_match
 from fanops.clip import render_aspects_for
-from fanops.caption import request_captions, ingest_captions
+from fanops.caption import request_captions, ingest_captions, caption_request_stale
 from fanops.crosspost import crosspost_clips
 from fanops.post.run import publish_due
 from fanops.reconcile import reconcile_due
@@ -197,6 +197,33 @@ def _stage_structural_hooks(led: Ledger, cfg: Config, log) -> Ledger:
     if n:
         log("structural_hooks", "-", "warn",
             err=f"{n} approved plans for disabled formats (feature OFF) — will render when re-enabled")
+    return led
+
+
+def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
+    """Re-open caption gates whose on-disk request is missing/stale OR whose clip is missing captions
+    for casting-admitted surfaces (a TikTok-only ingest that already advanced to queued/captioned).
+    Runs BEFORE ingest so incomplete caption coverage never silently blocks IG crosspost."""
+    for c in list(led.clips.values()):
+        if c.state not in (ClipState.captions_requested, ClipState.captioned, ClipState.queued):
+            continue
+        m = led.moments.get(c.parent_id)
+        if m is None or m.state not in (MomentState.decided, MomentState.clipped):
+            continue
+        want = scoped_caption_surfaces(cfg, led, m, accts.surfaces())
+        need = {f"{a}/{p.value}" for a, p in want}
+        have = set(c.meta_captions or {})
+        if not need:
+            continue
+        if c.state is ClipState.captions_requested and not caption_request_stale(cfg, c.id, want):
+            continue
+        if c.state in (ClipState.captioned, ClipState.queued) and need <= have:
+            continue
+        try:
+            led = request_captions(led, cfg, c.id, want, accounts=accts)
+            log("captions", c.id, "request_refreshed", surfaces=len(want), missing=len(need - have))
+        except Exception as e:
+            log("captions", c.id, "refresh_failed", err=str(e)[:120])
     return led
 
 
@@ -392,6 +419,7 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
         led = _stage_casting(led, cfg, accts, log)
         led = _stage_render_and_caption(led, cfg, accts, aspects, log)
         led = _stage_structural_hooks(led, cfg, log)
+        led = _stage_refresh_caption_requests(led, cfg, accts, log)
         led = _stage_ingest_captions(led, cfg, log)
         led = _stage_crosspost(led, cfg, accts, base_time, log)
     _reconcile_safe(cfg, log)                            # stranded-post reconcile, out of lock (AUDIT H4)

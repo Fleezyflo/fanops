@@ -98,7 +98,7 @@ def test_post_side_populated_from_lead_post(tmp_path):
                                                    account="@a", moment_ids=["m0"], method=SelectionMethod.llm))
         led.add_clip(Clip(id="c0", parent_id="m0", path="/c0.mp4", state=ClipState.queued))
         led.add_post(Post(id="p_a_m0", parent_id="c0", account="@a", account_id="1",
-                          platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url=f"dryrun://p_a_m0"))
+                          platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="dryrun://p_a_m0"))
     lane = _lane(_lanes(cfg), "@a")
     row = next(r for r in lane.rows if r.moment_id == "m0")
     assert row.post is not None and row.post.state == "awaiting_approval" and row.post.account == "@a"

@@ -238,7 +238,7 @@ def test_run_prepare_cap_hit_in_llm_mode_surfaces_incomplete(tmp_path, monkeypat
 def test_run_prepare_manual_mode_leaves_gates_ok(tmp_path, monkeypatch):
     # In MANUAL mode the responder writes nothing, so gates remaining after the loop is EXPECTED
     # (they wait in the Gates tab) — still ok=True, not a failure.
-    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)       # manual
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")             # explicit manual
     cfg = Config(root=tmp_path)
     monkeypatch.setattr("fanops.pipeline.advance",
                         lambda c, *, base_time: {"sources": 1, "awaiting": {"moments": 1, "captions": 0}})
@@ -330,7 +330,7 @@ def test_pipeline_status_awaiting_counts_moments_not_posts(tmp_path):
         led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         for i in range(3):                       # 3 awaiting SURFACE posts on ONE clip/moment
             led.add_post(Post(id=f"p{i}", parent_id="c1", account=f"@a{i}", account_id=str(i),
-                              platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url=f"dryrun://c1"))
+                              platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://c1"))
     assert views.pipeline_status(cfg)["awaiting"] == 1      # ONE moment, not three posts
 
 

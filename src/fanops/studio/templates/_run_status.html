@@ -1,9 +1,7 @@
-{# src/fanops/studio/templates/_run_status.html — the Make tab's self-polling status counts. Swaps ONLY
-   itself every 5s so a background `fanops run`'s progress (clips ready / published) climbs live without
-   touching the upload / add-link forms in the panel. The whole panel re-render (form POSTs) re-includes
-   this fragment, which re-arms its own timer (htmx tears down the replaced node — no double timer). #}
-<div id="run-status" class="status" hx-get="{{ url_for('run_status') }}" hx-trigger="every 5s" hx-swap="outerHTML">
+{# Make tab status counts — self-polls when fetched directly or from the panel slot. #}
+<div id="run-status" class="status status-sub" hx-get="{{ url_for('run_status') }}" hx-trigger="every 5s" hx-swap="outerHTML">
   <span>Clips ready<strong>{{ status.clips }}</strong></span>
   <span>Published<strong>{{ status.published }}</strong></span>
   <span>Mode<strong>{{ status.backend }}</strong></span>
+  {% if status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_moment_casting', 0) + status.get('pending_captions', 0) %}<span class="warn">Gates<strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_moment_casting', 0) + status.get('pending_captions', 0) }}</strong> <a href="{{ url_for('gates') }}">answer</a></span>{% endif %}
 </div>

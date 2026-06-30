@@ -31,7 +31,7 @@ def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
     # a failed post with no lift_score must NOT be classified (FIX F22)
     led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
-                      metrics={"error": "boom"}, public_url=f"dryrun://pf"))
+                      metrics={"error": "boom"}, public_url="dryrun://pf"))
     # winner_pct=0.5 -> top 2 winners; retire_pct=0.5 + floor 20 -> bottom 2 that are <20
     r = classify_outcomes(led, winner_pct=0.5, retire_pct=0.5, lift_floor=20.0)
     assert set(r["winners"]) == {"p1", "p3"}

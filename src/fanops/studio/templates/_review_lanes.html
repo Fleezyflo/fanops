@@ -37,7 +37,7 @@
           <span class="lane-state uncast muted" aria-label="not cast">☐ uncast</span>
           <button type="button" class="button lane-cast-add" hx-post="{{ url_for('do_cast_add', moment_id=row.moment_id, source=lv.source_id, cast_account=lane.account, view='lanes', state=active_state|default(none), offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Cast {{ lane.account }} on the {{ row.window }} second moment">+ cast</button>
         {% endif %}
-        {% if row.post %}<span class="lane-post chip state-{{ row.post.state }}" title="this account already has a post for this moment">post: {{ row.post.state }}</span>
+        {% if row.post %}<span class="lane-post chip state-{{ row.post.state }}" title="this account already has a post for this moment">{% if row.post.state == 'awaiting_approval' %}in review{% elif row.post.state == 'queued' %}scheduled{% elif row.post.state in ('needs_reconcile', 'submitting', 'submitted') %}waiting for link{% elif row.post.state in ('published', 'analyzed') %}posted{% else %}in pipeline{% endif %}</span>
           {# RF6 #1: per-account spec chips (length/framing/cut/cast), reused from the cards via provenance_chips
              (a Jinja global). Scoped to awaiting surfaces (mirrors _card.html's bucket guard) so a non-default
              ?state=approved lane never emits a spurious shared-cut WARN on a read-only post. #}

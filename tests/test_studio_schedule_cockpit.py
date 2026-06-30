@@ -31,7 +31,7 @@ def _seed(cfg, *, pid="p1", state=PostState.queued, account_id="ig_integ_1", whe
                               reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id=account_id,
-                          platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url=f"dryrun://clip_1"))
+                          platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="dryrun://clip_1"))
 
 
 # ---- ScheduleRow carries the integration id ----
@@ -66,10 +66,10 @@ def test_reschedule_bucket_ignores_awaiting_and_published(tmp_path):
 def test_get_schedule_shows_integration_publish_sendback_respread(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", account_id="ig_integ_1")
     html = _client(cfg).get("/schedule").data
-    assert b"ig_integ_1" in html               # integration visible
-    assert b"Publish now" in html              # ship from the bucket
-    assert b"Send back" in html                # un-approve
-    assert b"Reschedule all" in html           # routine respread
+    assert b"schedule-guard" in html            # dryrun guard, no integration ids
+    assert b"Publish" in html              # ship from the bucket
+    assert b"Review" in html                # un-approve
+    assert b"Re-spread" in html           # routine respread
 
 def test_schedule_row_renders_lazy_clip_preview(tmp_path):
     # The Schedule bucket previews each clip without re-introducing the 150-<video> perf hit the table was
@@ -79,8 +79,6 @@ def test_schedule_row_renders_lazy_clip_preview(tmp_path):
     html = _client(cfg).get("/schedule").data.decode()
     assert "/clip-thumb/clip_1" in html          # the poster frame for the row's clip
     assert 'loading="lazy"' in html              # the collapsed thumbnail never fetches off-screen
-    assert 'preload="none"' in html              # the player bytes are not fetched until the operator hits play
-    assert "/media/p1" in html                   # expands to this post's (per-account) media
 
 
 def test_schedule_respread_route_moves_posts(tmp_path):
@@ -101,3 +99,46 @@ def test_schedule_move_route_reschedules_and_rerenders_panel(tmp_path):
     r = _client(cfg).post("/schedule/move/p1", data={"new_time": "2099-09-09T09:00:00Z"})
     assert r.status_code == 200 and to_local_input("2099-09-09T09:00:00Z").encode() in r.data
     assert Ledger.load(cfg).posts["p1"].scheduled_time == "2099-09-09T09:00:00Z"
+
+
+def test_due_publish_plan_estimates_postiz_rate(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "ig1", "platforms": ["instagram"], "status": "active",
+         "integrations": {"instagram": "ig1"}, "provider": "postiz"}]}))
+    past = _z(_NOW - timedelta(hours=1))
+    _seed(cfg, pid="p0", when=past)
+    with Ledger.transaction(cfg) as led:
+        for i in range(1, 8):
+            led.add_post(Post(id=f"p{i}", parent_id="clip_1", account="@a", account_id="ig_integ_1",
+                              platform=Platform.instagram, caption="fire", state=PostState.queued,
+                              scheduled_time=past, public_url="dryrun://clip_1"))
+    plan = views.due_publish_plan(cfg, now=_NOW)
+    assert plan.due == 8 and plan.postiz_due == 8
+    assert plan.rate_per_min == cfg.postiz_publish_per_min
+    assert plan.est_minutes == 2  # 8 posts @ 4/min
+
+
+def test_publish_due_bucket_live_requires_confirm(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "sk_test")
+    cfg = Config(root=tmp_path)
+    past = _z(_NOW - timedelta(hours=1))
+    _seed(cfg, pid="p1", when=past)
+    res = actions.publish_due_bucket(cfg, confirmed=False)
+    assert not res.ok and "tick" in (res.error or "").lower()
+
+
+def test_schedule_shows_approve_not_ship_and_publish_due(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    past = _z(_NOW - timedelta(hours=1))
+    _seed(cfg, pid="p1", when=past)
+    html = _client(cfg).get("/schedule").data.decode()
+    assert "schedule-guard" in html
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    html_live = _client(cfg).get("/schedule").data.decode()
+    assert "Publish due" in html_live

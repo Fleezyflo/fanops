@@ -4,6 +4,7 @@
    bool); autoescape stays on (no |safe). Each form swaps the whole panel (outerHTML) so the mode
    banner + checks update after every action. #}
 <div id="golive-panel" aria-live="polite">
+  {% set gs = step|default(none) %}
   {% if status.is_live %}
     <div class="banner live">● LIVE ({{ status.mode }}) — reviewed posts publish to REAL accounts</div>
   {% else %}
@@ -26,6 +27,7 @@
     </div>
   {% endif %}
 
+  {% if gs is none or gs == 'connect' %}
   <details class="golive-step disclosure-step" {% if not (status.key_set or status.zernio_key_set) %}open{% endif %}>
     <summary class="step-summary">1 · Connect Postiz
       {%- if status.key_set %} <span class="step-done">✓ Postiz</span>{% endif %}
@@ -57,6 +59,8 @@
     </div>
   </details>
 
+  {% endif %}
+  {% if gs is none or gs == 'accounts' %}
   <details class="golive-step disclosure-step" {% if not status.accounts %}open{% endif %}>
     <summary class="step-summary">2 · Add an account
       {%- if status.accounts %} <span class="step-done">✓ {{ status.accounts|length }} active</span>{% endif %}</summary>
@@ -74,6 +78,8 @@
     </form>
   </details>
 
+  {% endif %}
+  {% if gs is none or gs == 'live' %}
   <section class="golive-step">
     <h3>3 · Map channels &amp; tune accounts</h3>
     <p class="muted">One-click: <strong>Discover</strong> lists every channel your connected schedulers
@@ -168,7 +174,7 @@
         {% endfor %}{% endfor %}
       </details>
       <div class="account-manage">
-        <p class="muted">Set each account's tag lean (persona differentiation), or demote/remove it. Demote stops
+        <p class="muted">Link each account to a persona (voice + hashtags), or demote/remove it. Demote stops
           publishing but keeps the row + history; remove clears a placeholder.</p>
         {% for a in status.accounts %}
         <div class="account-row meta">
@@ -226,7 +232,7 @@
       </div>
       <div class="account-hooks routing-casting">
         <p class="muted"><strong>Routing / casting</strong> — how moments are distributed across accounts, plus clip length.
-          Default: casting OFF (every account gets every moment).</p>
+          Default: casting ON (each account gets its own selected moments).</p>
         <form hx-post="{{ url_for('do_golive_casting') }}" hx-target="#golive-panel" hx-swap="outerHTML">
           {% if status.account_casting %}
             <span class="ok">● Casting ON — each account gets its OWN LLM-selected moments</span>
@@ -342,4 +348,5 @@
       </div>
     </div>
   </details>
+  {% endif %}
 </div>
