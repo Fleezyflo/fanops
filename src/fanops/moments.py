@@ -20,7 +20,8 @@ from fanops.clip import fit_window
 from fanops.log import get_logger
 from fanops.control import load_guidance
 from fanops.moment_hook_learning import proven_hook_styles
-from fanops.personas import hook_directive
+from fanops.personas import hook_author_slot
+from fanops.accounts import AccountStatus
 import os
 
 # M1b PASS 1: how many SOURCE stills the PICK author gets — a whole-source survey (a picking aid: judge
@@ -238,9 +239,10 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     ingest_moment_hooks promotes it once every pick's hook has landed."""
     src = led.sources[source_id]
     # Per-account voices reach the frame-seeing hook author so IT writes each handle's on-screen hook
-    # (the root fix). Only accounts WITH a persona ride along; none -> [] -> no per-persona prompt block.
-    personas = ([{"handle": a.handle, "persona": instr}        # the HOOK directive (hook_angle + voice; no levers -> bare voice)
-                 for a in accounts.accounts if (instr := hook_directive(a))]
+    # (the root fix). EVERY active account rides along — hook_author_slot fail-opens to a handle floor so
+    # empty-inline personas (common on TikTok rows) still get hooks_by_persona instead of shared_fallback.
+    personas = ([{"handle": a.handle, "persona": hook_author_slot(a)}
+                 for a in accounts.accounts if a.status is AccountStatus.active]
                 if accounts is not None else [])
     # P4(c): cross-surface union of gated winning hook STYLES (the SAME signal caption uses). [] when the
     # flag is off / accounts is None / on any scorer error (fail-open).

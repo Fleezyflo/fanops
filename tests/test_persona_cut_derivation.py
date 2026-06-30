@@ -92,3 +92,12 @@ def test_compose_breakdown_cut_source_three_way(tmp_path):
     assert compose_breakdown(cfg, _p(content_focus=["storytelling"]))["cut"]["source"] == "derived"
     assert compose_breakdown(cfg, _p(voice="v"))["cut"]["source"] == "global"
     assert "28-45s" in compose_breakdown(cfg, _p(content_focus=["storytelling"]))["cut"]["band"]   # the derived long band shows
+
+def test_voice_match_hydrates_without_persona_id(tmp_path):
+    cfg = Config(root=tmp_path)
+    voice = "music-blogger curator who champions craft."
+    _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": voice}])
+    add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling"], energy="low")
+    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    assert acc.persona_id is None and acc.clip_profile == "long" and acc.framing == "top"   # voice match, no persisted link
+

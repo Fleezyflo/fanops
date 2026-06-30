@@ -93,12 +93,12 @@ def test_request_moment_hooks_threads_active_personas(tmp_path):
     assert {p["handle"] for p in req["personas"]} == {"markmakmouly", "perca.late"}
     assert {p["persona"] for p in req["personas"]} == {"champions craft", "underground raw"}
 
-def test_request_moment_hooks_no_personas_when_account_has_none(tmp_path):
+def test_request_moment_hooks_floor_slot_when_account_has_no_persona(tmp_path):
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg)
     led = request_moment_hooks(led, cfg, "src_1", accounts=_accts(cfg, [("a", None)]))
     req = json.loads(request_path(cfg, "moment_hooks", "src_1.10.00-28.00").read_text())
-    assert req["personas"] == []                           # no persona -> empty -> byte-identical prompt
+    assert len(req["personas"]) == 1 and req["personas"][0]["handle"] == "a"   # floor slot, not omitted
 
 def test_request_moment_hooks_no_personas_without_accounts(tmp_path):
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
@@ -124,3 +124,9 @@ def test_ingest_moment_hooks_sanitizes_persona_hooks(tmp_path):
     m = led.moments_of("src_1")[0]
     assert m.hooks_by_persona["markmakmouly"] == "watch the craft, closely"   # em-dash sanitized
     assert "perca.late" not in m.hooks_by_persona                             # blank dropped
+
+from fanops.personas import hook_author_slot
+
+def test_hook_author_slot_floor():
+    a = Account(handle="tiktokfan", account_id="1", platforms=[Platform.tiktok], status=AccountStatus.active, persona=None)
+    assert "tiktokfan" in hook_author_slot(a)

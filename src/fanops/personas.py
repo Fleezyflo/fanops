@@ -92,11 +92,11 @@ def _slug(s: str) -> str:
 # the foundation back from this partially-initialized module, which already holds those names, so there is no
 # cycle. discover_corpus is bound here as an attribute, which is what tests patch + fanops_hashtags reads.
 from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; after foundation by design)
-    derive_cut_spec, resolved_cut_spec, casting_directive, hook_directive, caption_directive,
+    derive_cut_spec, resolved_cut_spec, casting_directive, hook_directive, hook_author_slot, caption_directive,
     compose_persona_instruction, lever_catalog, compose_breakdown, produces_summary, persona_facts, manifest,
     _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _ENERGY_FRAMING)
 from fanops.persona_store import (   # noqa: E402,F401
     add_persona, update_persona, add_corpus_tag, remove_corpus_tag,
-    delete_persona, migrate_from_accounts)
+    delete_persona, migrate_from_accounts, link_personas_by_voice)
 from fanops.persona_research import research_corpus, discover_corpus   # noqa: E402,F401
 from fanops.persona_levers import LEVER_REGISTRY, build_catalog as _registry_build_catalog   # noqa: E402,F401  (facade re-export of the M1 registry)

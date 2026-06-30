@@ -195,6 +195,16 @@ class Accounts:
             if a.handle in seen:
                 problems.append(f"duplicate handle {a.handle} (handles must be unique)")
             seen.add(a.handle)
+        if self.cfg.creative_variation and any((a.persona_id or a.persona or getattr(a, "tag_lean", None)) for a in self.active()):
+            from fanops.bands import band_for
+            g_band = band_for(self.cfg.clip_profile); g_frame = self.cfg.aware_reframe
+            for a in self.active():
+                if not ((a.persona_id or "").strip() or (a.persona or "").strip()):
+                    problems.append(f"{a.handle}: no persona linked — per-account hooks/cuts need a persona")
+                    continue
+                prof = self.cfg.resolve_clip_profile(a); tb = self.cfg.resolve_top_bias(a)
+                if band_for(prof) == g_band and tb == g_frame:
+                    problems.append(f"{a.handle}: cut spec matches global ({prof}) — will shared-cut without a length/framing diff")
         return problems
 
     def surfaces(self) -> list[Surface]:
@@ -204,23 +214,36 @@ class Accounts:
                 for a in self.active() for p in a.platforms]
 
 
+def _persona_for_account(acc: Account, reg) -> "object | None":
+    """Resolve the Persona record for `acc`: explicit persona_id first, else an exact inline-voice match to a
+    first-class Persona (so brief-seeded inline strings hydrate cut/levers WITHOUT a persisted link). Pure read."""
+    pid = (acc.persona_id or "").strip()
+    if pid:
+        per = reg.get(pid)
+        if per is not None:
+            return per
+    voice = (acc.persona or "").strip()
+    if voice:
+        return next((p for p in reg.all() if (getattr(p, "voice", None) or "").strip() == voice), None)
+    return None
+
+
 def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
     """A1: override each LINKED account's persona voice, corpus, levers (content_focus/energy/hook_angle), cut spec (clip_profile/framing), and per-dimension directives IN MEMORY from its Persona (the source of truth
     once linked), so every consumer reading a.persona sees the persona's value and an operator edit takes
     effect on the next load — with ZERO consumer rewiring. FAIL-OPEN: no personas.json, a dangling persona_id,
     or any error leaves the account's inline values exactly as today (byte-identical when unlinked). The
-    personas import is lazy (personas imports accounts in migrate -> avoid a cycle)."""
-    if not any(acc.persona_id for acc in accts.accounts):
-        return                                       # no links -> no work, no personas.json read at all
+    personas import is lazy (personas imports accounts in migrate -> avoid a cycle). Voice-match: an unlinked
+    account whose inline persona equals a Persona.voice still hydrates (derived cut spec + levers) in memory."""
     try:
         from fanops.personas import Personas, resolved_cut_spec
         reg = Personas.load(cfg)
     except Exception:
         return                                       # corrupt/absent personas.json -> inline values stand
     for acc in accts.accounts:
-        per = reg.get(acc.persona_id)
+        per = _persona_for_account(acc, reg)
         if per is None:
-            continue                                 # dangling id -> inline values stand
+            continue                                 # no link + no voice match -> inline values stand
         if per.voice:
             acc.persona = per.voice                  # the persona owns the voice (empty voice -> keep inline)
         acc.hashtag_corpus = list(per.hashtag_corpus)   # B1: the persona owns the curated corpus (the caption path reads it; M3 — the sole hashtag differentiator)

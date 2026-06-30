@@ -90,6 +90,20 @@ def hook_directive(p) -> str:
     return _join(_base_voice(p), " ".join(parts).strip())
 
 
+def hook_author_slot(p) -> str:
+    """The per-account hook-authoring brief for moment_hooks — ALWAYS non-empty for an active account so the
+    frame-seeing author writes hooks_by_persona for EVERY handle (not only accounts whose levers compile a
+    hook_directive). Falls back: hook_directive -> inline persona voice -> tag_lean hint -> handle floor."""
+    instr = hook_directive(p)
+    if instr: return instr
+    voice = _base_voice(p)
+    if voice: return voice
+    lean = (getattr(p, "tag_lean", None) or "").strip()
+    if lean: return f"Independent fan account — {lean} lean. Write a short, scroll-stopping on-screen hook in that voice."
+    handle = (getattr(p, "handle", None) or "").strip()
+    return f"Independent fan account ({handle or 'unknown'}). Write a short, distinct on-screen hook."
+
+
 def caption_directive(p) -> str:
     """The CAPTION angle for this account — injected into the caption prompt's per-surface slot. It is the bare
     voice (the curated corpus drives the hashtags deterministically elsewhere, so the caption directive is
