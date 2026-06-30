@@ -367,6 +367,9 @@ def _build_summary(cfg: Config, before: set) -> RunSummary:
 def advance(cfg: Config, *, base_time: str) -> RunSummary:
     accts = Accounts.load(cfg)
     log = get_logger(cfg)
+    for p in accts.validate():
+        if "persona" in p or "shared-cut" in p:
+            log("accounts", "-", "differentiation_warn", err=p[:160])
     aspects = _aspects_for(accts)
 
     # Phase D: ingest in a SHORT transaction FIRST so a brand-new drop is catalogued and VISIBLE to the

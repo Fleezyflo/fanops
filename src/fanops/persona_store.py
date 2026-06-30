@@ -180,6 +180,26 @@ def delete_persona(cfg: Config, pid: str) -> str:
     return pid
 
 
+
+def link_personas_by_voice(cfg: Config) -> list[str]:
+    """Link accounts whose inline persona voice EXACTLY matches a first-class Persona record (idempotent).
+    Skips accounts that already carry persona_id. Returns the handles linked. Does NOT create personas."""
+    from fanops.accounts import Accounts, link_persona
+    reg = Personas.load(cfg)
+    linked: list[str] = []
+    for a in Accounts.load(cfg).accounts:
+        if (a.persona_id or "").strip():
+            continue
+        voice = (a.persona or "").strip()
+        if not voice:
+            continue
+        per = next((p for p in reg.all() if (p.voice or "").strip() == voice), None)
+        if per is None:
+            continue
+        link_persona(cfg, a.handle, per.id)
+        linked.append(a.handle)
+    return linked
+
 def migrate_from_accounts(cfg: Config) -> dict:
     """Lift each account's inline persona string into a first-class Persona and LINK it (set persona_id),
     so the brief-seeded personas become editable + connectable. IDEMPOTENT: an account already linked is
@@ -187,6 +207,7 @@ def migrate_from_accounts(cfg: Config) -> dict:
     skipped (nothing to lift). Two SEQUENTIAL transactions (create personas, then link accounts) — never
     a nested lock. Returns {created:[ids], linked:[handles]}."""
     from fanops.accounts import Accounts, link_persona
+    voice_linked = link_personas_by_voice(cfg)                 # match brief-seeded inline voices to existing Personas
     accts = Accounts.load(cfg)
     existing = {p.id for p in Personas.load(cfg).all()}
     created: list[str] = []; linked: list[str] = []
@@ -204,4 +225,4 @@ def migrate_from_accounts(cfg: Config) -> dict:
             existing.add(pid); created.append(pid)
         link_persona(cfg, a.handle, pid)
         linked.append(a.handle)
-    return {"created": created, "linked": linked}
+    return {"created": created, "linked": linked, "voice_linked": voice_linked}
