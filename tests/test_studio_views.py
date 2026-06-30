@@ -750,3 +750,18 @@ def test_posted_library_failure_kind_filter(tmp_path):
     from fanops.studio.views_results import posted_library
     assert len(posted_library(led, cfg, delivery="failed", failure_kind="rate_limit")) == 1
     assert posted_library(led, cfg, delivery="failed", failure_kind="rate_limit")[0].post_id == "a"
+
+
+def test_delivery_audit_counts_buckets(tmp_path):
+    from fanops.studio.views_results import delivery_audit
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="pl", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="live", state=PS.published, public_url="https://instagram.com/x/"))
+    led.add_post(Post(id="pf", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="fail", state=PS.failed, error_reason="postiz 429"))
+    led.add_post(Post(id="pi", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="wait", state=PS.needs_reconcile, submission_id="cmqzabc"))
+    aud = delivery_audit(led)
+    assert aud["live_trackable"] == 1 and aud["inflight"] == 1
+    assert aud["buckets"]["rate_limit"] == 1 and aud["failed"] == 1

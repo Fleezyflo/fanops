@@ -69,6 +69,17 @@ def cmd_status(cfg: Config) -> int:
           + " ".join(f"awaiting_{k}={len(pending(cfg, kind=k))}" for k in GATE_KINDS))
     return 0
 
+def cmd_recover_audit(cfg: Config) -> int:
+    """Read-only delivery bucket table (Sprint 3) — no ledger mutations."""
+    from fanops.studio.views_results import delivery_audit
+    aud = delivery_audit(Ledger.load(cfg))
+    print(f"live_trackable={aud['live_trackable']} inflight={aud['inflight']} "
+          f"queued={aud['queued']} failed={aud['failed']}")
+    for kind, n in aud["buckets"].items():
+        if n:
+            print(f"  {kind}: {n}")
+    return 0
+
 def cmd_track(cfg: Config, window: str) -> int:
     # Phase-B-followup: close the lost-update window for `track` too (B4 was scoped to advance).
     # The metrics FETCH (up to ~30s network) runs OUTSIDE the ledger lock; only the apply
@@ -534,6 +545,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status"); sub.add_parser("ingest"); sub.add_parser("digest"); sub.add_parser("respond")
     sub.add_parser("reconcile")
+    p_rec = sub.add_parser("recover", help="delivery recovery read-models")
+    rec_sub = p_rec.add_subparsers(dest="recover_cmd", required=True)
+    rec_sub.add_parser("audit", help="read-only live/inflight/failed bucket table")
     p_adv = sub.add_parser("advance"); p_adv.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     p_pull = sub.add_parser("pull"); p_pull.add_argument("url", type=_http_url)
     p_trk = sub.add_parser("track"); p_trk.add_argument("--window", default="30d")
@@ -724,6 +738,9 @@ def _heartbeat(cfg: Config, s: dict) -> None:
 
 def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "status":   return cmd_status(cfg)
+    if args.cmd == "recover":
+        if args.recover_cmd == "audit": return cmd_recover_audit(cfg)
+        return 2
     if args.cmd == "ingest":
         # Phase-B-followup: catalogue under a transaction (B4). ffprobe runs inside the lock here,
         # but it is LOCAL + fast (tens of ms/file) — unlike the network commands, there is no slow

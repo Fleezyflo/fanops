@@ -296,6 +296,19 @@ def failure_rollup(led: Ledger) -> dict:
     return {"total": sum(buckets.values()), "buckets": buckets}
 
 
+def delivery_audit(led: Ledger) -> dict:
+    """Read-only ops snapshot: live trackable, inflight, queued, failed bucket counts."""
+    inflight = sum(1 for p in led.posts.values()
+                   if p.state in (PostState.needs_reconcile, PostState.submitting, PostState.submitted))
+    live = sum(1 for p in led.posts.values()
+               if p.state in (PostState.published, PostState.analyzed)
+               and _classify_channel(getattr(p, "public_url", None)) == "live")
+    queued = len(led.posts_in_state(PostState.queued))
+    roll = failure_rollup(led)
+    return {"live_trackable": live, "inflight": inflight, "queued": queued,
+            "failed": roll["total"], "buckets": roll["buckets"]}
+
+
 def classify_post_delivery(post) -> str:
     """Unified delivery label for Schedule, Posted, Home, spine: live | inflight | dryrun | failed |
     queued | awaiting. Maps 1:1 to ledger + backend reality — never 'published' when nothing shipped."""

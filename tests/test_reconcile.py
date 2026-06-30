@@ -475,3 +475,30 @@ def test_breadcrumb_dedup_logged_once_not_every_pass(tmp_path, mocker):
     assert len(first) == 1
     assert len(second) == len(first)                        # no additional "left:" line on the second pass
     assert led.posts["pk"].error_reason and "stuck" in led.posts["pk"].error_reason.lower()
+
+
+# ---- Sprint 4: heal crash-stranded submitting (no submission_id) ----
+def test_heal_stranded_submitting_no_sid_back_to_queued(tmp_path):
+    from datetime import datetime, timezone, timedelta
+    from fanops.reconcile import heal_stranded_submitting
+    from fanops.timeutil import iso_z
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    old = iso_z(datetime.now(timezone.utc) - timedelta(hours=2))
+    led.add_post(Post(id="stuck", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.submitting, scheduled_time=old, submission_id=None))
+    led.save()
+    assert heal_stranded_submitting(cfg) == 1
+    assert Ledger.load(cfg).posts["stuck"].state is PostState.queued
+
+
+def test_heal_submitting_with_real_sid_unchanged(tmp_path):
+    from datetime import datetime, timezone, timedelta
+    from fanops.reconcile import heal_stranded_submitting
+    from fanops.timeutil import iso_z
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    old = iso_z(datetime.now(timezone.utc) - timedelta(hours=2))
+    led.add_post(Post(id="real", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.submitting, scheduled_time=old, submission_id="cmqz_real_abc"))
+    led.save()
+    assert heal_stranded_submitting(cfg) == 0
+    assert Ledger.load(cfg).posts["real"].state is PostState.submitting
