@@ -10,7 +10,7 @@
       <a href="{{ url_for(s.endpoint, account=nav_account) }}"{% if s.state == 'active' %} aria-current="step"{% endif %}>
         <span class="spine-num" aria-hidden="true">{{ loop.index }}</span>
         <span class="spine-label">{{ s.label }}</span>
-        {% if s.count %}<span class="spine-count" aria-hidden="true">{{ s.count }}</span><span class="vh">{{ s.count }} items</span>{% endif %}
+        {% if s.count %}<span class="spine-count{% if s.severity %} spine-sev-{{ s.severity }}{% endif %}" aria-hidden="true">{{ s.count }}</span><span class="vh">{{ s.count }} items</span>{% endif %}
       </a>
     </li>
     {% endfor %}

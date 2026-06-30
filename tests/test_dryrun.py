@@ -7,6 +7,7 @@ from fanops.post.dryrun import DryRunPoster
 
 def test_factory_defaults_dryrun(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)            # don't inherit a leaked live flag from a prior test
     assert isinstance(get_poster(Config(root=tmp_path)), DryRunPoster)
 
 def test_dryrun_writes_payload_with_media(tmp_path):

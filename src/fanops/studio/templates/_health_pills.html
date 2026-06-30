@@ -1,0 +1,1 @@
+{% for d in health %}<span class="health-pill {{ 'ok' if d.ok else 'err' }}" title="{{ d.detail }}">{{ d.name }}</span>{% endfor %}

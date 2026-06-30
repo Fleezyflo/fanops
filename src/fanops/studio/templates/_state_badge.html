@@ -1,0 +1,4 @@
+{# Unified state/delivery chip: queued | due | inflight | live | dryrun | failed | awaiting #}
+{% macro state_badge(kind, title=none) -%}
+<span class="state-badge state-{{ kind }}"{% if title %} title="{{ title }}"{% endif %}>{{ kind }}</span>
+{%- endmacro %}

@@ -55,7 +55,7 @@ def test_publish_now_surfaces_fatal_auth(tmp_path, monkeypatch):
     import fanops.post.run as run
     monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); _seed(cfg, media=["file://x.mp4"])         # pre-stamped -> skips ensure_clip_media
-    monkeypatch.setattr(run, "get_media_uploader", lambda cfg, backend=None: (lambda c, p: "https://x/u.mp4"))
+    monkeypatch.setattr(run, "get_media_uploader", lambda cfg, backend=None: (lambda c, p, **kw: "https://x/u.mp4"))
     class Boom:
         def publish(self, led, post_id): raise BlotatoAuthError("401 unauthorized")
     monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: Boom())
@@ -85,7 +85,7 @@ def test_schedule_publish_re_renders_bucket_without_shipped_post(tmp_path, monke
     body = r.data.decode()
     assert Ledger.load(cfg).posts["p1"].state is PostState.published        # shipped
     assert "/schedule/publish/p1" not in body                               # no publish form for the now-shipped post
-    assert "Published" in body                                              # the panel banner reports the ship
+    assert "Dryrun only" in body                                            # honest dryrun outcome banner
 
 def test_crosspost_all_rejects_source_equals_target(tmp_path, monkeypatch):
     # Phase 1 footgun fix: bulk backfill is CROSS-account; picking the same account for source + target

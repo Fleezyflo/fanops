@@ -26,6 +26,7 @@
 
   {# The next-step banner stays — same projection, but now it sits BELOW the rail as a one-line nudge. #}
   {% include "_run_next.html" %}
+  <div id="run-status-slot" hx-get="{{ url_for('run_status') }}" hx-trigger="load, every 20s" hx-swap="innerHTML">{% include "_run_status.html" %}</div>
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">

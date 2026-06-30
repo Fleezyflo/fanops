@@ -117,8 +117,8 @@ def test_golive_past_due_gate_uses_shared_helper(tmp_path, monkeypatch):
     # `golive` imports the same symbol — verified by an attribute lookup against the module.
     import fanops.studio.golive as gl_mod
     src = pathlib.Path(gl_mod.__file__).read_text()
-    assert "is_past_due" in src, (
-        "golive.py must use the shared is_past_due helper, not an open-coded "
+    assert ("is_past_due" in src) or ("is_due_or_past" in src), (
+        "golive.py must use a shared timeutil helper, not an open-coded "
         "parse_iso(scheduled_time) <= now")
 
 

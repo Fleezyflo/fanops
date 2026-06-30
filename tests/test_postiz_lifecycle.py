@@ -21,6 +21,23 @@ def test_backend_is_postiz_accepts_str_and_enum():
     assert not pl._backend_is_postiz(_cfg(types.SimpleNamespace(value="zernio")))
 
 
+def test_backend_is_postiz_true_for_per_channel_routing(tmp_path, monkeypatch):
+    # go_live path: FANOPS_LIVE=1 + FANOPS_POSTER=dryrun + accounts.backends[ig]=postiz
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    monkeypatch.setenv("POSTIZ_API_KEY", "test-key")
+    from fanops.config import Config
+    from fanops.accounts import Accounts
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text('{"accounts":[{"handle":"@a","platforms":["instagram"],"status":"active",'
+                                 '"integrations":{"instagram":"ig1"},"backends":{"instagram":"postiz"}}]}')
+    assert cfg.poster_backend == "dryrun"
+    assert cfg.is_live is True
+    assert Accounts.load(cfg).live_ready_channels() == [("@a", "instagram", "postiz")]
+    assert pl._backend_is_postiz(cfg) is True
+
+
 def test_should_autostart_false_under_pytest():
     # the suite always runs under pytest -> ensure_up must short-circuit (never touch docker)
     assert pl._should_autostart(_cfg("postiz")) is False
