@@ -188,7 +188,7 @@ def test_publish_failure_redacts_api_key_from_error_reason(tmp_path, monkeypatch
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url=f"dryrun://pk"))
     led.save()
     import fanops.post.run as run
-    def boom(led_, cfg_, clip_id):
+    def boom(led_, cfg_, clip_id, backend=None, **kw):
         raise RuntimeError("Blotato presign 503: token=SUPERSECRETKEY rejected")
     mocker.patch.object(run, "ensure_clip_media", side_effect=boom)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
@@ -268,7 +268,7 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
     led.save()
     import fanops.post.run as run
     # c_a upload raises a NON-auth error; c_b uploads fine; poster.publish succeeds (submitted)
-    def fake_ensure(led_, cfg_, clip_id):
+    def fake_ensure(led_, cfg_, clip_id, backend=None, **kw):
         if clip_id == "c_a":
             raise RuntimeError("Blotato presign failed (503): server down")
         return "https://cdn/ok.mp4"
@@ -358,7 +358,7 @@ def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeyp
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url=f"dryrun://1"))
     led.save()
     import fanops.post.run as run
-    def fake_ensure(led_, cfg_, clip_id):
+    def fake_ensure(led_, cfg_, clip_id, backend=None, **kw):
         if clip_id == "c_bad":
             raise RuntimeError("Blotato 503: upstream request 401abc timed out")  # 401 in text, NOT auth
         return "https://cdn/ok.mp4"
@@ -433,6 +433,7 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     # parent's BASE render and would lose the burned hook). The https result is persisted so a retry
     # never re-uploads.
     monkeypatch.setenv("FANOPS_POSTER", "rest")
+    monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     vfile = cfg.clips / "clip_1_vhash.mp4"; vfile.parent.mkdir(parents=True, exist_ok=True); vfile.write_bytes(b"V")

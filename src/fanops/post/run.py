@@ -15,7 +15,7 @@ from fanops.errors import AuthError, redact
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, is_real_submission_id
 from fanops.post import get_poster, get_media_uploader
-from fanops.post.media import ensure_clip_media
+from fanops.post.media import ensure_clip_media, _uploader_kwargs
 from fanops.timeutil import parse_iso as _parse, iso_z
 from fanops.log import get_logger
 
