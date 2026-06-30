@@ -64,21 +64,39 @@ def _extract_zernio_id(body) -> str | None:
     return None
 
 
+def _tiktok_settings() -> dict:
+    # Zernio docs (2026-06-29): TikTok posts REQUIRE platformSpecificData.tiktokSettings with these
+    # booleans + privacy_level — omitting them yields 400 "require media content" even when media is present.
+    return {"privacy_level": "PUBLIC_TO_EVERYONE", "allow_comment": True, "allow_duet": True,
+            "allow_stitch": True, "content_preview_confirmed": True, "express_consent_given": True}
+
+
+def _zernio_media_url(u: str) -> str:
+    # Postiz upload cache stores "id|https://…"; Zernio needs the bare hosted URL only.
+    if "|" in u:
+        _, rest = u.split("|", 1)
+        if rest.startswith("http"):
+            return rest
+    return u
+
 def build_zernio_payload(*, account_id: str, platform: str, content: str,
                          media_urls: list[str], scheduled_time: str | None) -> dict:
     # publishNow:true — FanOps owns the schedule (publish_due fired this post because it's due), so we do
     # NOT pass scheduledFor/timezone (kept in the signature for parity / future use). platforms[] targets
-    # ONE Zernio account (a FanOps Post is one surface). media[] references already-uploaded URLs (the
-    # file->URL upload is slice 3); the field name is an INTEGRATION CHECKPOINT — omitted when empty.
-    # H5: Zernio carries NO client/server idempotency key on publishNow, so a re-POST would DOUBLE-publish.
-    # The never-re-POST invariant rests ENTIRELY on the queued-only publish filter (run.py publish_due
-    # iterates PostState.queued + the under-lock claim re-checks `queued`) — a submitting/submitted/
-    # needs_reconcile post is structurally never re-submitted. See test_needs_reconcile_post_is_never_republished.
-    payload: dict = {"content": content, "publishNow": True,
-                     "platforms": [{"platform": platform, "accountId": account_id}]}
-    media = [u for u in (media_urls or []) if u]
+    # ONE Zernio account (a FanOps Post is one surface). mediaItems[] (NOT the old `media` key — verified
+    # live 2026-06-29) references already-uploaded URLs from zernio_upload_media. TikTok surfaces also
+    # need platformSpecificData.tiktokSettings (privacy + consent flags). H5: Zernio carries NO client/
+    # server idempotency key on publishNow, so a re-POST would DOUBLE-publish. The never-re-POST invariant
+    # rests ENTIRELY on the queued-only publish filter (run.py publish_due iterates PostState.queued + the
+    # under-lock claim re-checks `queued`) — a submitting/submitted/needs_reconcile post is structurally
+    # never re-submitted. See test_needs_reconcile_post_is_never_republished.
+    plat = {"platform": platform, "accountId": account_id}
+    if platform == "tiktok":
+        plat["platformSpecificData"] = {"tiktokSettings": _tiktok_settings()}
+    payload: dict = {"content": content, "publishNow": True, "platforms": [plat]}
+    media = [_zernio_media_url(u) for u in (media_urls or []) if u]
     if media:
-        payload["media"] = media
+        payload["mediaItems"] = [{"type": "video", "url": u} for u in media]
     return payload
 
 
@@ -100,24 +118,51 @@ def _extract_zernio_media_url(body) -> str | None:
     return None
 
 
-def zernio_upload_media(cfg: Config, path: Path) -> str:
-    """Upload a local file to Zernio (multipart POST /media/upload) and return its hosted URL, to reference
-    in build_zernio_payload's media[]. Mirrors postiz_upload_media's safety: 401 -> typed ZernioAuthError
-    (halt); any other non-2xx -> RuntimeError with the response BODY WITHHELD (a misconfigured proxy can
-    echo the Bearer header into an error page; it reaches error_reason via the publish-failure catch).
-    The endpoint path + response URL key are INTEGRATION CHECKPOINTS — locked by SHAPE in tests, verified
-    live by the operator at first publish."""
+def zernio_upload_media(cfg: Config, path: Path, *, account_id: str | None = None) -> str:
+    """Upload a local file to Zernio. Two-step contract DISCOVERED LIVE 2026-06-29:
+      1) POST /media/upload-token with JSON {"accountId": <id>} -> {"token": <single-use>, "uploadUrl": ...}
+      2) POST /media/upload?token=<token> with multipart field name **`files`** (plural) ->
+         {"success": true, "files": [{"url": <hosted>}]}
+    The earlier single-step /media/upload with Bearer alone returned 400 "Upload token is required" —
+    that's the door this fix closes. Token is single-use + per-account + ~60s lifetime.
+    account_id is REQUIRED for the live path; tests / dryrun callers may omit it (returns a sentinel
+    only when no key is set, mirroring the prior contract). 401 -> typed ZernioAuthError; non-2xx -> RuntimeError."""
+    if not account_id:
+        raise RuntimeError("Zernio upload requires account_id (per-account token mint)")
+    size = path.stat().st_size
+    cap = cfg.zernio_max_upload_bytes
+    if size > cap:
+        raise RuntimeError(f"zernio oversize: {size} bytes > {cap} — re-render short")
     headers = {"Authorization": f"Bearer {_key(cfg)}"}
+    # Step 1 — mint per-account upload token
+    r = requests.post(f"{_base(cfg)}/media/upload-token", headers={**headers, "Content-Type": "application/json"},
+                      json={"accountId": account_id}, timeout=30)
+    if r.status_code == 401:
+        raise ZernioAuthError("Zernio 401 on upload-token mint — check ZERNIO_API_KEY (response body withheld)")
+    if r.status_code >= 300:
+        raise RuntimeError(f"Zernio upload-token mint failed ({r.status_code}) — body withheld")
+    try:
+        token = r.json().get("token")
+    except Exception:
+        token = None
+    if not token:
+        raise RuntimeError("Zernio upload-token 2xx but no token in body (body withheld)")
+    # Step 2 — upload bytes to /media/upload?token=<token>, multipart field 'files'
     with open(path, "rb") as fh:
         resp = requests.post(f"{_base(cfg)}/media/upload", headers=headers,
-                             files={"file": (Path(path).name, fh)}, timeout=120)
+                             params={"token": token},
+                             files={"files": (Path(path).name, fh, "video/mp4")}, timeout=120)
     if resp.status_code == 401:
         raise ZernioAuthError("Zernio 401 on media upload — check ZERNIO_API_KEY (response body withheld)")
     if resp.status_code >= 300:
         raise RuntimeError(f"Zernio upload failed ({resp.status_code}) — body withheld")
-    url = None
+    # Response: {"success": true, "files": [{"url": "..."}]} — extract the first file's url.
     try:
-        url = _extract_zernio_media_url(resp.json())
+        body = resp.json()
+        files = (body or {}).get("files") or []
+        url = files[0].get("url") if files and isinstance(files[0], dict) else None
+        if not url:
+            url = _extract_zernio_media_url(body)                 # back-compat: old shape extractor
     except Exception:
         url = None
     if not url:

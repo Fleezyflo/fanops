@@ -133,7 +133,7 @@ def test_publish_uploads_clip_media_once_across_posts_live(tmp_path, monkeypatch
     _queued(led, cfg, pid="p1", cid="shared", when="2020-01-01T00:00:00Z")
     _queued(led, cfg, pid="p2", cid="shared", when="2020-01-01T00:00:00Z")  # same clip, 2nd post
     uploads = []
-    def fake_upload(cfg_, path):
+    def fake_upload(cfg_, path, **kw):
         uploads.append(str(path)); return "https://cdn.blotato.test/shared.mp4"
     mocker.patch("fanops.post.media.upload_media", side_effect=fake_upload)
     import fanops.post.run as run
@@ -442,7 +442,7 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
                       state=PostState.queued, media_urls=[f"file://{vfile}"], public_url=f"dryrun://pv"))
     led.save()
     uploaded = []
-    def fake_upload(cfg_, path):
+    def fake_upload(cfg_, path, **kw):
         uploaded.append(str(path)); return "https://cdn.blotato.test/v.mp4"
     # run.py routes the variant file:// upload through get_media_uploader(cfg) -> (for rest)
     # media.upload_media (lazy import), so patch it at its definition site.
@@ -476,3 +476,50 @@ def test_archive_published_is_owner_only_with_no_world_readable_window(tmp_path)
     assert ap.exists()
     assert stat.S_IMODE(ap.stat().st_mode) == 0o600                  # owner-only file, created 0600 (no chmod window)
     assert stat.S_IMODE(ap.parent.stat().st_mode) == 0o700          # owner-only day dir (not world-listable)
+
+
+
+# ---- Sprint 2: Postiz publish throttle (per integration) ----
+def test_publish_throttle_wait_spaces_postiz_calls(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4")
+    from fanops.post.run import _publish_throttle_wait, reset_publish_throttle
+    reset_publish_throttle()
+    cfg = Config(root=tmp_path)
+    _mono = iter([100.0, 100.0, 100.5, 115.5, 115.5])
+    def _next_mono():
+        try: return next(_mono)
+        except StopIteration: return 115.5
+    mocker.patch("fanops.post.run.time.monotonic", side_effect=_next_mono)
+    sleeps = []
+    mocker.patch("fanops.post.run.time.sleep", side_effect=lambda s: sleeps.append(s))
+    _publish_throttle_wait(cfg, "postiz", "ig_1")
+    _publish_throttle_wait(cfg, "postiz", "ig_1")
+    assert len(sleeps) == 1 and sleeps[0] >= 14.0
+    reset_publish_throttle()
+
+
+def test_publish_due_calls_postiz_throttle(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk_test")
+    from fanops.post.run import publish_due, reset_publish_throttle
+    reset_publish_throttle()
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    for pid in ("p1", "p2"):
+        _queued(led, cfg, pid=pid, cid=f"c_{pid}", when="2020-01-01T00:00:00Z")
+        led.posts[pid].media_urls = ["https://cdn.test/clip.mp4"]
+    led.save()
+    class FakePoster:
+        def publish(self, led_, post_id):
+            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id].public_url = "https://instagram.com/x/"
+            return led_
+    mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    throttle = mocker.patch("fanops.post.run._publish_throttle_wait")
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    assert throttle.call_count == 2
+    assert all(c.args[1] == "postiz" for c in throttle.call_args_list)
+    reset_publish_throttle()

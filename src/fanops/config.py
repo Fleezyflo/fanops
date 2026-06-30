@@ -92,7 +92,7 @@ _ASR_SHORT_SOURCE_SECONDS = 300.0
 class Config:
     def __init__(self, root: Path | str | None = None):
         self.root = Path(root) if root else Path.cwd()
-        load_dotenv(self.root / ".env")
+        load_dotenv(self.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
         self.base = self.root / "MohFlow-FanOps"
         for attr, name in _STAGE.items():
             setattr(self, attr, self.base / name)
@@ -843,6 +843,26 @@ class Config:
         except ValueError:
             return 0
         return v if v >= 0 else 0
+
+    @property
+    def zernio_max_upload_bytes(self) -> int:
+        # Zernio rejects large TikTok uploads with 413 — preflight BEFORE the two-step upload so the
+        # operator gets a fast oversize bucket (Sprint 2). DEFAULT 50 MB (live-discovered headroom).
+        try:
+            mb = int(os.getenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "50"))
+        except ValueError:
+            mb = 50
+        return max(1, mb) * 1024 * 1024
+
+    @property
+    def postiz_publish_per_min(self) -> int:
+        # Postiz rate-limits bursts (429). Cap publishes per integration per minute (DEFAULT 4).
+        # 0 disables the throttle (explicit opt-out).
+        try:
+            v = int(os.getenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4"))
+        except ValueError:
+            return 4
+        return v if v >= 0 else 4
 
     @property
     def concurrent_sources(self) -> bool:

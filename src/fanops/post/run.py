@@ -6,6 +6,7 @@ resume (FIX F11). Media is ensured ONCE PER CLIP (FIX F44). Failed submit -> Pos
 from __future__ import annotations
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
@@ -78,6 +79,36 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
 # Go-Live remap to a DIFFERENT channel is not churn-clobbered by an identical value.
 _NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at", "account_id")
 
+# Sprint 2: per-(backend, integration) publish throttle — in-process only (daemon is single-process).
+_publish_throttle_last: dict[tuple[str, str], float] = {}
+
+
+def reset_publish_throttle() -> None:
+    """Test-only: clear the in-process publish throttle state."""
+    _publish_throttle_last.clear()
+
+
+def _publish_throttle_key(provider: str, account_id: str | None) -> tuple[str, str]:
+    return (provider, (account_id or "").strip() or "_")
+
+
+def _publish_throttle_wait(cfg: Config, provider: str, account_id: str | None) -> None:
+    """Sleep if the last publish on this (provider, integration) was too recent. Postiz-only when live."""
+    if provider != "postiz" or not cfg.is_live:
+        return
+    per_min = cfg.postiz_publish_per_min
+    if per_min <= 0:
+        return
+    min_gap = 60.0 / per_min
+    key = _publish_throttle_key(provider, account_id)
+    now = time.monotonic()
+    last = _publish_throttle_last.get(key)
+    if last is not None:
+        wait = min_gap - (now - last)
+        if wait > 0:
+            time.sleep(wait)
+    _publish_throttle_last[key] = time.monotonic()
+
 
 def _post_provider(cfg: Config, accounts: Accounts, post: Post) -> str | None:
     """The provider to publish THIS post (M3 — provider is per-channel, live is global). `dryrun` when the
@@ -102,12 +133,13 @@ def _resolve_publish_account_id(accounts: Accounts, post: Post) -> str | None:
         return None
 
 
-def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str) -> None:
+def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account_id: str | None = None) -> None:
     """Resolve post.media_urls to network-fetchable URLs (FIX F44 cache on the Clip). In-memory only;
     runs in the LOCK-FREE network phase. `backend` is the POST's resolved backend (per-account routing),
     not the global — so a TikTok-via-Zernio variant uploads to Zernio even if the global is Postiz."""
+    aid = (account_id or post.account_id or "").strip() or None
     if not post.media_urls:
-        post.media_urls = [ensure_clip_media(led, cfg, post.parent_id)]
+        post.media_urls = [ensure_clip_media(led, cfg, post.parent_id, backend, account_id=aid)]
     elif backend != "dryrun":
         # AUDIT (stage-6 HIGH): a variant post is BORN with media_urls=["file://<variant render>"]
         # (crosspost.py stamps the per-account hook-burned file). Pre-stamped media used to skip the
@@ -118,9 +150,11 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str) -> None:
         new = []
         for u in post.media_urls:
             if u.startswith("file://") and post.render_id:
-                new.append(ensure_render_media(led, cfg, post.render_id, u.removeprefix("file://"), backend))   # CULM-2: once per render
+                new.append(ensure_render_media(led, cfg, post.render_id, u.removeprefix("file://"), backend,
+                                               account_id=aid))   # CULM-2: once per render; Zernio needs the id to mint
             elif u.startswith("file://"):
-                new.append(get_media_uploader(cfg, backend)(cfg, Path(u.removeprefix("file://"))))               # no render home -> direct
+                new.append(get_media_uploader(cfg, backend)(cfg, Path(u.removeprefix("file://")),
+                                                            **_uploader_kwargs(backend, aid)))
             else:
                 new.append(u)
         post.media_urls = new
@@ -167,7 +201,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         return None
     poster = get_poster(cfg, backend)                  # per-account backend (slice 2), default = global
     try:
-        _ensure_media(led, cfg, post, backend)
+        _publish_throttle_wait(cfg, backend, post.account_id)
+        _ensure_media(led, cfg, post, backend, account_id=post.account_id)
         led = poster.publish(led, post.id)
         if post.state is PostState.submitted:
             # R1/D2: gate the submitted -> published promotion on public_url. A backend that returns

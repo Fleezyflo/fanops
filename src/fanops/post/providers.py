@@ -27,7 +27,7 @@ def _zernio_uploader(cfg: Config): from fanops.post.zernio import zernio_upload_
 def _blotato_uploader(cfg: Config): from fanops.post.media import upload_media; return upload_media
 def _dryrun_uploader(cfg: Config):
     from fanops.post.media import dryrun_media_url
-    return lambda c, p: dryrun_media_url(p)                 # file:// — no network (byte-identical to the old lambda)
+    return lambda c, p, **_kw: dryrun_media_url(p)          # file:// — **kw absorbs account_id from ensure_*
 
 
 @dataclass(frozen=True)
