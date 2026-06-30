@@ -583,6 +583,32 @@ def reschedule_account(cfg: Config, handle: str, *, now: Optional[datetime] = No
     named entry point; the per-account scoping is enforced inside the transaction (no race)."""
     return reschedule_bucket(cfg, now=now, handle=handle)
 
+
+def publish_due_bucket(cfg: Config, *, handle: Optional[str] = None, batch: Optional[str] = None,
+                       confirmed: bool = True, now: Optional[datetime] = None) -> ActionResult:
+    """Publish every DUE queued post in scope (Schedule 'Publish all due'). LIVE requires confirm + shows rate."""
+    from fanops.errors import AuthError
+    from fanops.post.run import publish_due
+    from fanops.studio.views_results import due_publish_plan
+    from fanops.timeutil import iso_z
+    plan = due_publish_plan(cfg, handle=handle, batch=batch, now=_now(now))
+    if plan.due == 0:
+        return ActionResult(ok=True, detail={"due": 0, "published": 0, "plan": plan.__dict__})
+    if cfg.is_live and not confirmed:
+        tail = f", est. {plan.est_minutes} min" if plan.est_minutes and plan.postiz_due else ""
+        rate = f"~{plan.rate_per_min}/min Postiz cap" if plan.rate_per_min else "live backends"
+        return ActionResult(ok=False, error=(f"LIVE: Publish all due ships {plan.due} post(s) ({rate}{tail}) — "
+                            "tick the confirm box, then click again."))
+    try:
+        summary = publish_due(cfg, now=iso_z(_now(now)), account=handle, batch_id=batch)
+    except AuthError as exc:
+        key = Config.auth_key_name_from_error(exc)
+        return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"publish due failed: {str(exc)[:160]}")
+    write_audit(cfg, "publish_due_bucket", [], reason="studio_publish_due_bucket", handle=handle, batch=batch, **summary)
+    return ActionResult(ok=True, detail={**summary, "plan": plan.__dict__})
+
 def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> ActionResult:
     """R3/D7: the operator's wipe-and-revert flow as a first-class API. For each id move
     state -> awaiting_approval and clear the post-publish telemetry (scheduled_time,

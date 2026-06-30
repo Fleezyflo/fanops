@@ -60,9 +60,10 @@
     {% if group %}
       <h3>{{ label }} ({{ group|length }})</h3>
       {% if key == 'editable' %}
-        <div class="approve-bar meta">Tick the posts you want live, then approve — they move to the Schedule. Reject discards.
+        <div class="approve-bar meta">Approve queues posts to Schedule — <strong>approved ≠ live</strong>. Reject discards.
+          <label class="confirm"><input type="checkbox" name="batch_confirm" value="1"> batch confirm (required when approving 15+)</label>
           <button type="button" class="primary" hx-post="{{ url_for('do_approve_posts', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Approve selected</button>
-          <button type="button" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
+          <button type="button" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-include="#review-body input[name='ids'], #review-body input[name='batch_confirm']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
           {# M3b 'this account across the whole video': clear a persona's whole run at once. Only under an active
              account filter (the target IS the filter); scoped to the active batch + source when set. #}
           {% if active %}<button type="button" class="primary approve-account" hx-post="{{ url_for('do_approve_account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all {{ active }}{% if active_source %} (this source){% endif %}</button>{% endif %}

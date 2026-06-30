@@ -1,0 +1,18 @@
+{# Typed publish result banner — maps ActionResult detail to honest operator copy. #}
+{% if result %}
+<div class="publish-outcome outcome-{{ result.detail.outcome if result.detail and result.detail.outcome is defined else ('ok' if result.ok else 'failed') }} result {{ 'ok' if result.ok else 'err' }}" role="status">
+  {% if result.ok %}
+    {% if result.detail.outcome is defined %}
+      {% if result.detail.outcome == 'live_shipped' %}Shipped live — {{ result.detail.post_id }}{% if result.detail.public_url %} · <a href="{{ result.detail.public_url }}" target="_blank" rel="noopener">view ↗</a>{% endif %}
+      {% elif result.detail.outcome == 'inflight_submitted' %}Submitted to {{ result.detail.backend or 'backend' }} — waiting for permalink ({{ result.detail.submission_id or result.detail.post_id }})
+      {% elif result.detail.outcome == 'dryrun_local' %}Dryrun only — nothing reached the platform ({{ result.detail.post_id }})
+      {% elif result.detail.state is defined and result.detail.state == 'published' %}Published — {{ result.detail.post_id }}
+      {% elif result.detail.published is defined and result.detail.due is defined %}Published {{ result.detail.published }} of {{ result.detail.due }} due post(s).
+      {% elif result.detail.rescheduled is defined %}Rescheduled {{ result.detail.rescheduled }} post(s).
+      {% elif result.detail.scheduled_time is defined %}Moved to {{ result.detail.scheduled_time | localdt }}.
+      {% else %}Done.{% endif %}
+    {% elif result.detail.state is defined and result.detail.state == 'published' %}Published — {{ result.detail.post_id }}.
+    {% else %}Done.{% endif %}
+  {% else %}{{ result.error }}{% endif %}
+</div>
+{% endif %}

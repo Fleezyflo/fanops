@@ -134,12 +134,17 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                     approved=approved, render_pending=render_pending, now=now_iso)
     return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": render_pending})
 
-def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None) -> ActionResult:
+BULK_APPROVE_CONFIRM_AT = 15
+
+def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None, confirmed: bool = False) -> ActionResult:
     """Post-approval gate (multi-select, the Review-tab batch): awaiting_approval -> queued for each selected
     post in ONE transaction, idempotent (a non-awaiting post is a no-op). Slice 2: each approved per-account
     surface's on-screen hook is BURNED here (the render is warmed off the flock, then adopted) so ONLY approved
     posts ever render. One `now` stamp for the whole batch (consistent stale-schedule bump). Never a 500."""
     sel = [i for i in (ids or []) if i]
+    if len(sel) > BULK_APPROVE_CONFIRM_AT and not confirmed:
+        return ActionResult(ok=False, error=(f"Approving {len(sel)} posts queues them for the daemon — "
+                            "approved ≠ live. Tick batch confirm, then approve again."))
     return _approve_ids_with_render(cfg, resolve_ids=lambda led: sel, now=now, detail={})
 
 def reject_posts(cfg: Config, ids: Sequence[str]) -> ActionResult:

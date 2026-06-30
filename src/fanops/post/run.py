@@ -275,7 +275,7 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
         return False
 
 
-def publish_due(cfg: Config, *, now: str | None = None) -> dict:
+def publish_due(cfg: Config, *, now: str | None = None, account: str | None = None, batch_id: str | None = None) -> dict:
     """Publish every DUE queued post, each via _publish_one (network OUTSIDE the ledger lock). Only
     'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
     job — auto-resubmitting could double-post a live post, FIX F11). A FATAL AuthError propagates
@@ -284,6 +284,10 @@ def publish_due(cfg: Config, *, now: str | None = None) -> dict:
     accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
     led = Ledger.load(cfg)                             # lock-free snapshot of the due queue
     due = [post for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
+    if account:
+        due = [p for p in due if p.account == account]
+    if batch_id:
+        due = [p for p in due if p.batch_id == batch_id]
     if due:                                            # on-demand: start the local Postiz stack ONLY when there is work
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)

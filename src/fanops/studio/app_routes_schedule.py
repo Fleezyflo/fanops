@@ -22,9 +22,10 @@ def register_schedule_routes(app, cfg):
         approved_total = sum(1 for r in rows if r.editable)              # Face 5: full scoped count (pre-slice, page-safe banner)
         page = views.paginate(rows, _offset_arg())
         lanes = views.schedule_lanes(page.items)
+        due_plan = views.due_publish_plan(cfg, handle=account or None, batch=batch, now=now)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
         return render_template(tmpl, rows=page.items, lanes=lanes, groups=None, page=page, approved_total=approved_total,
-                               active_batch=batch, result=result, tab="schedule",
+                               active_batch=batch, due_plan=due_plan, result=result, tab="schedule",
                                # R3-followup UI-LIE-FIX: the per-channel truth, NOT the legacy global. On a
                                # live deployment with per-channel routing cfg.poster_backend reads 'dryrun'
                                # (the bridge fallback), printing 'dryrun' on a system that's actually live.
@@ -64,6 +65,11 @@ def register_schedule_routes(app, cfg):
         # actionable list. Distinct from /publish/now (Publish tab), which returns a one-off result fragment
         # into a per-row span and left the shipped post stale in the bucket until a manual refresh.
         return _schedule_panel(actions.publish_now(cfg, post_id, confirmed=bool(request.form.get("confirm"))))
+
+    @app.post("/schedule/publish-due")
+    def do_schedule_publish_due():
+        return _schedule_panel(actions.publish_due_bucket(cfg, handle=_account_arg() or None, batch=_batch_arg(),
+                                                    confirmed=bool(request.form.get("confirm"))))
 
     @app.get("/lift")
     def lift():

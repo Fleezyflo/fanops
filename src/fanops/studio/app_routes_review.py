@@ -62,6 +62,17 @@ def register_review_routes(app, cfg):
 
     @app.get("/review")
     def review():
+        from flask import redirect, url_for
+        from fanops.models import PostState
+        if not request.args.get("view") and not request.args.get("compact") and not _account_arg():
+            try:
+                led = Ledger.load(cfg)
+                awaiting_posts = sum(1 for p in led.posts.values() if p.state is PostState.awaiting_approval)
+                if awaiting_posts > 20:
+                    return redirect(url_for("review", view="account", compact=1, account=_account_arg(),
+                                            batch=_batch_arg(), source=_source_arg(), state=_state_arg()))
+            except Exception:
+                pass
         ctx = _review_context()
         return render_template("review.html", shown=ctx["counts"]["awaiting"], **ctx)
 
@@ -92,7 +103,8 @@ def register_review_routes(app, cfg):
     @app.post("/posts/approve")
     def do_approve_posts():
         # the human gate (multi-select): awaiting_approval -> queued; approved posts leave Review for the Schedule.
-        return _review_panel(actions.approve_posts(cfg, request.form.getlist("ids")))
+        return _review_panel(actions.approve_posts(cfg, request.form.getlist("ids"),
+                                               confirmed=bool(request.form.get("batch_confirm"))))
 
     @app.post("/posts/reject")
     def do_reject_posts():

@@ -18,7 +18,7 @@ from fanops.timeutil import parse_iso
 # F401-silenced because each name is re-exported, not referenced within this file.
 from fanops.studio.views_common import (IMMINENT_THRESHOLD_MINUTES, GRID_PAGE_SIZE, paginate, TERM_DEFS, term_def, accounts_in, _imminent, suggest_time)  # noqa: F401
 from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch, awaiting_moment_count)  # noqa: F401
-from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, schedule_lanes, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows, classify_post_delivery, failure_rollup)  # noqa: F401
+from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, schedule_lanes, due_publish_plan, DuePublishPlan, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows, classify_post_delivery, failure_rollup)  # noqa: F401
 
 
 @dataclass

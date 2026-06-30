@@ -201,6 +201,40 @@ def _schedule_lane(p, now: datetime) -> str:
 
 
 @dataclass
+class DuePublishPlan:
+    due: int = 0
+    postiz_due: int = 0
+    rate_per_min: int = 0
+    est_minutes: int = 0
+
+
+def due_publish_plan(cfg: Config, *, handle: Optional[str] = None, batch: Optional[str] = None,
+                     now: Optional[datetime] = None) -> DuePublishPlan:
+    """How many queued posts are due NOW in scope, and a Postiz throttle ETA (Sprint 6 guard)."""
+    import math
+    from fanops.post.run import _due_or_fail, _post_provider
+    now = now or datetime.now(timezone.utc)
+    led = Ledger.load(cfg)
+    accounts = Accounts.load(cfg)
+    due = postiz = 0
+    for p in led.posts.values():
+        if p.state is not PostState.queued:
+            continue
+        if handle and p.account != handle:
+            continue
+        if batch and p.batch_id != batch:
+            continue
+        if not _due_or_fail(cfg, p, now):
+            continue
+        due += 1
+        if _post_provider(cfg, accounts, p) == "postiz":
+            postiz += 1
+    rate = cfg.postiz_publish_per_min if cfg.is_live else 0
+    est = math.ceil(postiz / rate) if rate > 0 and postiz else (1 if due else 0)
+    return DuePublishPlan(due=due, postiz_due=postiz, rate_per_min=rate, est_minutes=est)
+
+
+@dataclass
 class ScheduleLanes:
     due: list[ScheduleRow]
     upcoming: list[ScheduleRow]

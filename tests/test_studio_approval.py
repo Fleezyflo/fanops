@@ -417,3 +417,17 @@ def test_review_shows_hook_choice_when_creative_variation_off(tmp_path, monkeypa
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
     assert b"Approve with hook" in html and b"hook removed" in html
+
+
+def test_approve_posts_large_batch_requires_confirm(tmp_path):
+    from fanops.studio.actions_approve import BULK_APPROVE_CONFIRM_AT
+    cfg = Config(root=tmp_path)
+    ids = [f"p{i}" for i in range(BULK_APPROVE_CONFIRM_AT + 1)]
+    with Ledger.transaction(cfg) as led:
+        for i, pid in enumerate(ids):
+            led.add_post(Post(id=pid, parent_id="c1", account="@a", account_id="x",
+                              platform=Platform.instagram, caption="c", state=PostState.awaiting_approval))
+    res = actions.approve_posts(cfg, ids, confirmed=False)
+    assert not res.ok and "approved" in (res.error or "").lower()
+    res2 = actions.approve_posts(cfg, ids, confirmed=True)
+    assert res2.ok and res2.detail["approved"] == len(ids)
