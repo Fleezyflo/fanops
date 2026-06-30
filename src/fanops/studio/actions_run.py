@@ -31,14 +31,16 @@ def kick_prepare(cfg: Config) -> bool:
     remains the GUARANTEED driver. Debounced by a short-TTL lockfile so repeated ingests don't stack concurrent
     runs; the ledger flock + content-addressed caches make any overlap merely wasteful, never corrupting.
     Uses the daemon's own spawn helpers (the codebase-blessed `fanops run` invocation). Returns True iff it
-    spawned. FANOPS_RESPONDER defaults to llm (hands-off gate answering) but honors an explicit operator mode."""
+    spawned. DECOUPLED: the kick injects NO responder default — the spawned `fanops run` resolves it via
+    .env / Config.responder_mode (the single source of truth), the same path the daemon uses. No hidden
+    third default that silently spends LLM; an operator's explicit FANOPS_RESPONDER still rides os.environ."""
     from fanops.daemon import _fanops_bin, _daemon_path
     from fanops.log import get_logger
     lock = cfg.control / ".run-kick"
     try:
         if lock.exists() and (time.time() - lock.stat().st_mtime) < _KICK_TTL_S:
             return False                                   # a recent kick is still plausibly running
-        env = {**os.environ, "PATH": _daemon_path()}; env.setdefault("FANOPS_RESPONDER", "llm")
+        env = {**os.environ, "PATH": _daemon_path()}       # responder resolved by the run itself, not forced here
         subprocess.Popen([_fanops_bin(), "run", "--base-time", iso_z(_now(None))],
                          cwd=str(cfg.root), env=env, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)   # detached: survives the request, OS-reaped

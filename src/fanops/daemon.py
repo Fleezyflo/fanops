@@ -53,7 +53,15 @@ def _daemon_path() -> str:
             seen.add(p); out.append(p)
     return ":".join(out)
 
-def render_wrapper(cfg: Config, *, responder: str, interval: int) -> str:
+def resolve_responder(cfg: Config) -> str:
+    """The responder a hands-off `fanops run` fire WILL use — `Config.responder_mode` is the SINGLE
+    source of truth (.env `FANOPS_RESPONDER`, else 'llm' when `claude` is on PATH, else 'manual'). The
+    daemon wrapper is responder-AGNOSTIC: SCHEDULING (the launchd agent) and the AI SWITCH (.env) are
+    decoupled, so installing the driver never silently turns the LLM on — this just reports what the run
+    resolves at fire time, which the CLI/Studio then DISCLOSE."""
+    return cfg.responder_mode
+
+def render_wrapper(cfg: Config, *, interval: int) -> str:
     """The `#!/bin/bash` script launchd execs. One-shot: `exec fanops run` with a FRESH now as
     --base-time each fire (the default base-time is a fixed past date — a daemon must advance it).
 
@@ -61,7 +69,11 @@ def render_wrapper(cfg: Config, *, responder: str, interval: int) -> str:
     `fanops run` -> advance -> reconciles parked posts (Blotato or Postiz) AND publishes every `queued`
     post whose operator-set scheduled_time is now due (publish_due's due-gate). No Python-side scheduler
     exists or is added — a due post fires unattended ONLY if the operator ran `fanops daemon install`;
-    otherwise the supported paths are a manual `fanops run` / Studio Publish-now. dryrun publishes nothing."""
+    otherwise the supported paths are a manual `fanops run` / Studio Publish-now. dryrun publishes nothing.
+
+    DECOUPLED from the AI switch: the wrapper bakes NO FANOPS_RESPONDER. The fire-time `fanops run`
+    resolves the responder via `Config.responder_mode` (.env is loaded override=True at Config init), so
+    the operator sets the AI on/off ONCE (in .env) and scheduling merely honors it — never welds them."""
     # shlex.quote every interpolated path/value: a workspace path with a space/quote/$ would otherwise
     # break out of the double-quotes (or let bash expand `$x`), silently running `fanops run` from the
     # WRONG cwd and defeating the daemon's #1 invariant. The `$(date ...)` substitution is left literal
@@ -71,7 +83,6 @@ def render_wrapper(cfg: Config, *, responder: str, interval: int) -> str:
         "set -euo pipefail\n"
         f"# launchd reruns this wrapper every {interval}s (StartInterval); each run is one-shot.\n"
         f"export PATH={shlex.quote(_daemon_path())}\n"
-        f"export FANOPS_RESPONDER={shlex.quote(responder)}\n"
         f"cd {shlex.quote(str(cfg.root))}\n"
         f'exec {shlex.quote(_fanops_bin())} run --base-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)"\n'
     )
@@ -147,22 +158,35 @@ def _require_darwin() -> None:
 
 # ── side-effecting verbs ─────────────────────────────────────────────────────────────────────
 
-def install(cfg: Config, *, interval: int, responder: str) -> dict:
+def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
     """Write the wrapper (chmod 0755) + plist, then load via launchctl. Idempotent: bootout any
-    prior copy first (ignore its rc), then bootstrap; fall back to `load -w` on older macOS."""
+    prior copy first (ignore its rc), then bootstrap; fall back to `load -w` on older macOS.
+
+    `responder` is the AI-switch CHOICE, decoupled from this scheduling install:
+      - 'inherit' (default): touch NOTHING — the fire-time run resolves the ambient responder. Installing
+        the driver never silently turns the LLM on.
+      - 'llm'/'manual': PERSIST it to .env (the durable single source of truth) so every future fire honors it.
+    Returns the RESOLVED responder + `discloses_llm` so the caller can DISCLOSE the recurring-LLM cost."""
     _require_darwin()
     cfg.reports.mkdir(parents=True, exist_ok=True)
     cfg.control.mkdir(parents=True, exist_ok=True)
+    if responder in ("llm", "manual"):
+        from fanops.autopilot import set_env_var          # lazy: avoids a daemon<->autopilot import cycle at load
+        set_env_var(cfg.root / ".env", "FANOPS_RESPONDER", responder)   # durable; Config loads it override=True at fire time
+        resolved = responder
+    else:
+        resolved = resolve_responder(cfg)                 # 'inherit' -> what the run resolves ambiently, persist nothing
     wp, pp = wrapper_path(cfg), plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
-    wp.write_text(render_wrapper(cfg, responder=responder, interval=interval)); wp.chmod(0o755)
+    wp.write_text(render_wrapper(cfg, interval=interval)); wp.chmod(0o755)
     pp.write_text(render_plist(cfg, interval=interval))
     uid = os.getuid()
     _launchctl("bootout", f"gui/{uid}/{LABEL}")          # idempotent reinstall; not-loaded -> rc!=0, ignored
     r = _launchctl("bootstrap", f"gui/{uid}", str(pp))   # modern (macOS 11+)
     if r.returncode != 0:
         r = _launchctl("load", "-w", str(pp))            # fallback for older / edge-case macOS
-    return {"plist": str(pp), "wrapper": str(wp), "interval": interval, "loaded": r.returncode == 0}
+    return {"plist": str(pp), "wrapper": str(wp), "interval": interval, "loaded": r.returncode == 0,
+            "responder": resolved, "discloses_llm": resolved == "llm"}
 
 def status(cfg: Config, *, interval: int = 600) -> dict:
     """Read-only liveness: is the agent loaded (launchctl list) AND actually firing (heartbeat fresh)?
