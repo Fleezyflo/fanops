@@ -18,7 +18,7 @@ from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 from fanops.timeutil import parse_iso as _parse, iso_z
-from fanops.casting import account_selection_admits, casting_gate_pending, casting_gate_failed_to_open   # RF1 durable-selection gate + P1 casting-pending wait + xc-2 failed-gate defer
+from fanops.casting import account_selection_admits, casting_gate_pending, casting_gate_failed_to_open, repair_casting_selections   # RF1 durable-selection gate + P1 casting-pending wait + xc-2 failed-gate defer
 from fanops.log import get_logger
 
 # Staggering constants. _STEP_MIN is the fixed per-index spacing; _JITTER_MAX is the bounded
@@ -264,6 +264,7 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
     base = _parse(base_time)
     date_str = base.date().isoformat()
     surfaces = accounts.surfaces()
+    repaired_sources: set[str] = set()
     for clip in _seed_clips(led):   # captioned + not held + not retired
         # AUDIT (g): the clip's PLAYABLE duration is its MOMENT window (end - start). Clip has no
         # .duration field; the seed clip is rendered from [start,end] of the source, so the window
@@ -275,6 +276,9 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         # moment->source lineage (m.parent_id == source id). A non-empty target_accounts HARD-bounds
         # which surfaces a post is born for (the casting-OFF enforcement path); empty/missing => no skip.
         src = led.sources.get(m.parent_id) if m is not None else None
+        if src is not None and cfg.account_casting and src.id not in repaired_sources:
+            led = repair_casting_selections(led, cfg, accounts, src.id)
+            repaired_sources.add(src.id)
         # P1 casting-pending wait + xc-2: defer when the casting answer hasn't landed (gate open, unanswered) OR
         # when the gate SHOULD have opened but didn't (request_moment_casting I/O failure) — both mean "fan out
         # NEXT pass," never silently fan-to-all this pass (mirror: a clip waits for its caption gate).

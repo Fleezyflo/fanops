@@ -188,6 +188,46 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
         return led
 
 
+
+def repair_casting_selections(led, cfg, accounts, source_id: str):
+    """Backfill durable AccountSelections when a cast source only has legacy Moment.affinities tags (RF1 drift).
+    Without this, account_selection_admits falls back to affinity_admits and persona-less TikTok surfaces are
+    silently DENIED even though IG casting ran. Replays ingest_moment_casting's WS1 fan_all_default for
+    never-candidate accounts. Idempotent: skips sources that already have durable selections."""
+    if not cfg.account_casting:
+        return led
+    if led.selections_of_source(source_id):
+        return led
+    moms = [m for m in led.moments.values() if m.parent_id == source_id]
+    per_account: dict[str, list[str]] = {}
+    for m in moms:
+        for h in m.affinities or []:
+            per_account.setdefault(h, []).append(m.id)
+    if not per_account:
+        return led
+    src = led.sources.get(source_id)
+    bid = getattr(src, "batch_id", None) if src else None
+    now = iso_z(datetime.now(timezone.utc))
+    active = {a.handle for a in accounts.active()}
+    for h, mids in per_account.items():
+        if h not in active or led.account_selection_for(source_id, h) is not None:
+            continue
+        led.add_account_selection(AccountSelection(
+            id=account_selection_id(source_id, h), source_id=source_id, account=h,
+            moment_ids=sorted(set(mids)), method=SelectionMethod.migrated, batch_id=bid, created_at=now))
+    candidates = {a.handle for a in accounts.active() if casting_directive(a)}
+    for a in accounts.active():
+        if a.handle in per_account or a.handle in candidates:
+            continue
+        if led.account_selection_for(source_id, a.handle) is not None:
+            continue
+        led.add_account_selection(AccountSelection(
+            id=account_selection_id(source_id, a.handle), source_id=source_id, account=a.handle,
+            moment_ids=[], method=SelectionMethod.fan_all_default, batch_id=bid, created_at=now))
+        with contextlib.suppress(Exception):
+            get_logger(cfg)("casting", source_id, "repair_fan_all_default", account=a.handle)
+    return led
+
 def casting_gate_pending(cfg, source_id, led=None) -> bool:
     """P1: True iff casting is ON and this source's moment_casting gate is OPEN but UNANSWERED — the crosspost
     fan-out must WAIT (else a post is minted fan-to-all BEFORE affinities land, and posts never un-mint). A
