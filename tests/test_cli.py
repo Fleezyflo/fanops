@@ -181,7 +181,10 @@ def test_reconcile_command_skips_without_key(tmp_path, monkeypatch, capsys):
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
     led.save()
     rc = main(["reconcile"])
-    assert rc == 0 and "reconcile skipped" in capsys.readouterr().out
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert Ledger.load(cfg).posts["p"].state is PostState.needs_reconcile  # no provider -> not polled
+    assert "reconciled" in out
 
 
 def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, mocker):
@@ -194,6 +197,8 @@ def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, moc
     from fanops.config import Config
     from fanops.ledger import Ledger
     from fanops.models import Post, Platform, PostState
+    monkeypatch.setenv("FANOPS_POSTER", "rest")
+    monkeypatch.setenv("BLOTATO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))

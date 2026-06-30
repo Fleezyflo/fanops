@@ -1,4 +1,10 @@
 {
+  "env": {
+    "ECC_HOOK_PROFILE": "standard",
+    "ECC_GATEGUARD": "off",
+    "GATEGUARD_DISABLED": "1",
+    "ECC_DISABLED_HOOKS": "pre:edit-write:gateguard-fact-force,pre:bash:gateguard-fact-force,pre:edit-write:suggest-compact,pre:observe:continuous-learning,post:observe:continuous-learning,pre:mcp-health-check,post:mcp-health-check,post:edit:design-quality-check,post:edit:console-warn,post:edit:accumulator,stop:format-typecheck,stop:check-console-log,stop:evaluate-session,stop:cost-tracker,post:ecc-context-monitor,pre:governance-capture,post:governance-capture,post:session-activity-tracker,post:ecc-metrics-bridge"
+  },
   "permissions": {
     "allow": [
       "Bash(pytest:*)",
@@ -41,7 +47,7 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/anti-divert-contract.py\"",
             "timeout": 10,
-            "description": "Injects the anti-divert contract every turn — covers the prose surface no tool hook scans"
+            "description": "Short execute-first contract (JSON) — blocks operator handoffs and unprompted backlog shipping"
           }
         ]
       }

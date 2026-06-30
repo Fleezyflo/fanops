@@ -533,7 +533,7 @@ def test_publish_now_live_dryrun_url_rejected(tmp_path, monkeypatch, mocker):
                     public_url="dryrun://p_edit")
     led_guard = Ledger.load(cfg)
     led_after = Ledger.load(cfg); led_after.posts["p_edit"] = dry_post
-    mocker.patch("fanops.ledger.Ledger.load", side_effect=[led_guard, led_after])
+    mocker.patch("fanops.ledger.Ledger.load", side_effect=[led_guard, led_after, led_after])
     res = publish_now(cfg, "p_edit", confirmed=True)
     assert res.ok is False
     assert "dryrun" in (res.error or "").lower()
@@ -587,3 +587,37 @@ def test_recover_posts_review_clears_publish_fields(tmp_path):
     q = Ledger.load(cfg).posts["back"]
     assert q.state is PostState.awaiting_approval
     assert q.public_url == "" and q.scheduled_time is None
+
+
+def test_retry_oversize_failures_requeues_when_shrink_ok(tmp_path, monkeypatch, mocker):
+    from fanops.studio.actions import retry_oversize_failures
+    from fanops.accounts import add_account, set_backend
+    monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4")
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
+    led = Ledger.load(cfg)
+    vid = tmp_path / "big.mp4"
+    vid.write_bytes(b"Z" * 100)
+    led.add_post(Post(id="big", parent_id="clip_1", account="@tt", account_id="z1", platform=Platform.tiktok,
+                      caption="x", state=PostState.failed, error_reason="zernio upload 413 entity too large",
+                      media_urls=[f"file://{vid}"]))
+    led.save()
+    mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=True)
+    res = retry_oversize_failures(cfg)
+    assert res.ok and res.detail["retried"] == 1
+    p = Ledger.load(cfg).posts["big"]
+    assert p.state is PostState.queued and p.error_reason is None and p.submission_id is None
+
+
+def test_retry_oversize_skips_when_shrink_fails(tmp_path, monkeypatch, mocker):
+    from fanops.studio.actions import retry_oversize_failures
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(_fail_post("big", "zernio 413"))
+    led.posts["big"].platform = Platform.tiktok
+    led.save()
+    mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=False)
+    res = retry_oversize_failures(cfg)
+    assert res.ok and res.detail["retried"] == 0 and res.detail["skipped"] == 1
+    assert Ledger.load(cfg).posts["big"].state is PostState.failed

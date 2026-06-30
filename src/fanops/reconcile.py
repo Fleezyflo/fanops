@@ -85,6 +85,7 @@ def _is_giveup(post) -> bool:
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.
 _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reconcile)
 GetStatus = Callable[[str], dict]
+_LIVE_STATUS_BACKENDS = frozenset({"postiz", "zernio", "rest", "mcp"})
 
 
 def _status_client_for(cfg: Config, backend: str, led: Optional[Ledger]) -> GetStatus:
@@ -125,6 +126,17 @@ def _reconcilable_routing(cfg: Config, led: Optional[Ledger]) -> dict[str, str]:
             and (prov := accounts.effective_provider(p.account, p.platform))}
 
 
+def _poll_backend_for_sid(cfg: Config, routing: dict[str, str], sid: str) -> str:
+    """Resolve which status client owns this submission — never dryrun -> Blotato."""
+    b = routing.get(sid)
+    if b in _LIVE_STATUS_BACKENDS:
+        return b
+    g = cfg.poster_backend
+    if g in _LIVE_STATUS_BACKENDS:
+        return g
+    raise RuntimeError("reconcile: no live status backend (global dryrun / channel has no provider)")
+
+
 def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
     # Per-post backend routing (zernio). When the reconcilable posts in `led` resolve to MORE THAN ONE
     # backend (an account override + the global), route each submission to its own backend's status client
@@ -133,11 +145,19 @@ def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
     # the blotato bound-method check + the 30+ existing reconcile tests are byte-identical.
     routing = _reconcilable_routing(cfg, led)
     backends = set(routing.values())
+    if not backends:
+        g = cfg.poster_backend
+        if g in _LIVE_STATUS_BACKENDS:
+            backends = {g}
+        else:
+            def poll(sid: str) -> dict:
+                raise RuntimeError("reconcile: no live status backend (global dryrun / channel has no provider)")
+            return poll
     if len(backends) <= 1:
-        return _status_client_for(cfg, next(iter(backends)) if backends else cfg.poster_backend, led)
+        return _status_client_for(cfg, next(iter(backends)), led)
     pollers = {b: _status_client_for(cfg, b, led) for b in backends}
     def poll(sid: str) -> dict:
-        backend = routing.get(sid, cfg.poster_backend)
+        backend = _poll_backend_for_sid(cfg, routing, sid)
         return (pollers.get(backend) or _status_client_for(cfg, backend, led))(sid)
     return poll
 
@@ -174,14 +194,23 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     `_default_get_status` may raise (no key) — the caller decides whether that's 'skip clean'."""
     snapshot = Ledger.load(cfg)
     healed = heal_stranded_submitting(cfg)
-    poll = _default_get_status(cfg, snapshot)            # built FIRST so the not-configured raise (no key
-                                                         # -> caller skips clean) is independent of whether
-                                                         # anything is stranded; cheap (no network on build)
-    reconcilable = [p for p in snapshot.posts.values() if p.state in _RECONCILABLE and p.submission_id]
+    routing = _reconcilable_routing(cfg, snapshot)
+    log = get_logger(cfg)
+    reconcilable = []
+    for p in snapshot.posts.values():
+        if p.state not in _RECONCILABLE or not p.submission_id:
+            continue
+        try:
+            _poll_backend_for_sid(cfg, routing, p.submission_id)
+        except RuntimeError:
+            log("reconcile", p.id, "skipped: no live provider")
+            continue
+        reconcilable.append(p)
     if not reconcilable:
         return {"needs_reconcile": len(snapshot.posts_in_state(PostState.needs_reconcile)),
                 "published": len(snapshot.posts_in_state(PostState.published)),
                 "healed_submitting": healed}
+    poll = _default_get_status(cfg, snapshot)            # only built when work exists; never dryrun -> Blotato
     from fanops.postiz_lifecycle import ensure_up        # reconcilable>0: bring the local Postiz stack up to poll
     ensure_up(cfg)
     results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
