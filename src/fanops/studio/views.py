@@ -18,7 +18,7 @@ from fanops.timeutil import parse_iso
 # F401-silenced because each name is re-exported, not referenced within this file.
 from fanops.studio.views_common import (IMMINENT_THRESHOLD_MINUTES, GRID_PAGE_SIZE, paginate, TERM_DEFS, term_def, accounts_in, _imminent, suggest_time)  # noqa: F401
 from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch, awaiting_moment_count)  # noqa: F401
-from fanops.studio.views_results import (ScheduleRow, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows)  # noqa: F401
+from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, schedule_lanes, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows, classify_post_delivery, failure_rollup)  # noqa: F401
 
 
 @dataclass
@@ -377,6 +377,50 @@ def _publish_mode_label(cfg: Config) -> str:
     return cfg.effective_publish_mode()
 
 
+def _post_is_due(p, now: datetime) -> bool:
+    if p.state is not PostState.queued:
+        return False
+    if not p.scheduled_time:
+        return True
+    try:
+        return parse_iso(p.scheduled_time) <= now
+    except Exception:
+        return False
+
+
+def _post_live_today(p, now: datetime) -> bool:
+    from fanops.studio.views_results import _classify_channel
+    from datetime import timedelta
+    if _classify_channel(p.public_url) != "live":
+        return False
+    t = p.published_at or p.scheduled_time
+    if not t:
+        return False
+    try:
+        dt = parse_iso(t)
+        if dt.tzinfo is None:
+            return False
+        return dt >= now - timedelta(hours=24)
+    except Exception:
+        return False
+
+
+def build_system_strip(cfg: Config) -> dict:
+    """Global system strip read-model: LIVE/DRYRUN mode + blocked gate count + failed-post alert. Health dots lazy-load via htmx."""
+    try:
+        ps = pipeline_status(cfg)
+        blocked = (ps.get("pending_moments", 0) + ps.get("pending_moment_hooks", 0)
+                   + ps.get("pending_captions", 0))
+    except Exception:
+        blocked = 0
+    failed = 0
+    try:
+        failed = sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.failed)
+    except Exception:
+        failed = 0
+    return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked, "failed": failed}
+
+
 def home_status(cfg: Config) -> HomeStatus:
     """Lock-free, fail-open read-model for GET / (the status home): connection state per account (via the
     shared golive_accounts helper — NEVER golive_status, which also runs doctor_report on every load) +
@@ -388,17 +432,35 @@ def home_status(cfg: Config) -> HomeStatus:
         from collections import Counter
         led = Ledger.load(cfg)
         st = Counter(p.state for p in led.posts.values())
+        inflight = (st.get(PostState.needs_reconcile, 0) + st.get(PostState.submitting, 0)
+                    + st.get(PostState.submitted, 0))
+        due_soon = sum(1 for p in led.posts.values()
+                       if p.state is PostState.queued and _post_is_due(p, datetime.now(timezone.utc)))
+        live_today = sum(1 for p in led.posts.values()
+                         if p.state in (PostState.published, PostState.analyzed)
+                         and _post_live_today(p, datetime.now(timezone.utc)))
+        from fanops.studio.views_results import _classify_channel
+        live_trackable = sum(1 for p in led.posts.values()
+                             if p.state in (PostState.published, PostState.analyzed)
+                             and _classify_channel(getattr(p, "public_url", None)) == "live")
+        failed = st.get(PostState.failed, 0)
         counts = {"sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),
                   "batches": len(getattr(led, "batches", {})),
-                  "awaiting": awaiting_moment_count(led),    # MOMENTS (== Review worklist), not raw surface posts
-                  "awaiting_posts": st.get(PostState.awaiting_approval, 0),  # raw surface count for the tooltip
+                  "awaiting": awaiting_moment_count(led),
+                  "awaiting_posts": st.get(PostState.awaiting_approval, 0),
                   "scheduled": st.get(PostState.queued, 0),
+                  "inflight": inflight,
+                  "due_soon": due_soon,
+                  "live_today": live_today,
+                  "live_trackable": live_trackable,
+                  "failed": failed,
                   "posted": st.get(PostState.published, 0) + st.get(PostState.analyzed, 0)}
         by_account = dict(Counter(p.account for p in led.posts.values()))
     except Exception as exc:                          # the first page an operator sees must never 500
         from fanops.log import get_logger
         get_logger(cfg)("home", "-", "error", err=str(exc)[:160])
-        counts = {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0, "posted": 0}
+        counts = {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0,
+                  "inflight": 0, "due_soon": 0, "live_today": 0, "live_trackable": 0, "failed": 0, "posted": 0}
         by_account = {}
     return HomeStatus(mode=mode, is_live=cfg.is_live, counts=counts, accounts=accounts, by_account=by_account)
 
@@ -445,6 +507,7 @@ class SpineStage:                      # Slice 1: one node of the workflow stepp
     endpoint: str                      # the rail endpoint this stage links to
     count: int                         # the stage's headline number (sources/awaiting/scheduled/posted)
     state: str                         # 'active' (you-are-here) | 'done' | 'todo'
+    severity: Optional[str] = None     # warn | info | danger — stage badge emphasis
 
 
 @dataclass
@@ -453,31 +516,43 @@ class WorkflowSpine:                    # the whole through-line: the ordered pa
     next_label: Optional[str]          # the one next-action sentence ("Review 4 clips")
     next_endpoint: Optional[str]       # where it points; None == "caught up", no CTA
     here: Optional[str]                # the current stage key (from the active tab), else None
+    inflight: int = 0                  # needs_reconcile + submitting (Schedule severity)
+    blocked_gates: int = 0             # pending agent gates (Make severity dot)
 
 
 _SPINE_ORDER = (("make", "Make", "run_panel"), ("review", "Review", "review"),
                 ("schedule", "Schedule", "schedule"), ("posted", "Posted", "posted"))
 
 
-def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str]) -> WorkflowSpine:
-    """Pure: turn the Home counts into the Make→Review→Schedule→Posted stepper. A stage is 'active' when it is
-    the current tab (`here`), else 'done' once there is output downstream of it, else 'todo'. The next-action
-    ladder is strict precondition→pending order: connect an account, then add footage, then clear the awaiting
-    worklist, then schedule the approved bucket, else caught-up (no CTA). No ledger, no I/O — trivially tested."""
+def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
+                inflight: int = 0, blocked_gates: int = 0) -> WorkflowSpine:
+    """Pure: turn the Home counts into the Make→Review→Schedule→Posted stepper. Stage badges carry
+    severity when blocked (Make), awaiting>20 (Review), or inflight>0 (Schedule)."""
     src = int(counts.get("sources", 0)); awaiting = int(counts.get("awaiting", 0))
     queued = int(counts.get("scheduled", 0)); posted = int(counts.get("posted", 0))
-    done = {"make": src > 0, "review": awaiting == 0 and (queued > 0 or posted > 0), "schedule": posted > 0, "posted": posted > 0}
-    nums = {"make": src, "review": awaiting, "schedule": queued, "posted": posted}
+    failed = int(counts.get("failed", 0)); live_trackable = int(counts.get("live_trackable", 0))
+    inflight = int(inflight); blocked_gates = int(blocked_gates)
+    done = {"make": src > 0, "review": awaiting == 0 and (queued > 0 or posted > 0), "schedule": posted > 0, "posted": live_trackable > 0}
+    sched_count = queued + inflight
+    nums = {"make": src, "review": awaiting, "schedule": sched_count, "posted": live_trackable}
+    sev = {"make": "danger" if blocked_gates else None,
+           "review": "warn" if awaiting > 20 else None,
+           "schedule": "info" if inflight else None,
+           "posted": "danger" if failed else None}
     stages = [SpineStage(key=k, label=lbl, endpoint=ep, count=nums[k],
-                         state=("active" if k == here else ("done" if done[k] else "todo")))
+                         state=("active" if k == here else ("done" if done[k] else "todo")),
+                         severity=sev[k])
               for k, lbl, ep in _SPINE_ORDER]
     if not has_accounts:               n = ("Connect an account to begin", "golive_view")
     elif src == 0:                     n = ("Add footage to get started", "run_panel")
+    elif blocked_gates:                n = (f"Answer {blocked_gates} processing decision{'s' if blocked_gates != 1 else ''}", "gates")
     elif awaiting > 0:                 n = (f"Review {awaiting} clip{'s' if awaiting != 1 else ''}", "review")
-    elif queued > 0:                   n = (f"Schedule {queued} post{'s' if queued != 1 else ''}", "schedule")
-    elif posted > 0:                   n = ("You're all caught up", None)
+    elif queued > 0 or inflight:       n = (f"Schedule {queued} post{'s' if queued != 1 else ''}" + (f" · {inflight} in flight" if inflight else ""), "schedule")
+    elif failed > 0:                   n = (f"{failed} post{'s' if failed != 1 else ''} failed — open recovery", "posted")
+    elif live_trackable > 0:           n = ("You're all caught up", None)
     else:                              n = ("Run a pass in Make", "run_panel")
-    return WorkflowSpine(stages=stages, next_label=n[0], next_endpoint=n[1], here=here)
+    return WorkflowSpine(stages=stages, next_label=n[0], next_endpoint=n[1], here=here,
+                         inflight=inflight, blocked_gates=blocked_gates)
 
 
 def golive_status(cfg: Config) -> GoLiveStatus:

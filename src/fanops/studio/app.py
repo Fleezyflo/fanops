@@ -144,6 +144,15 @@ def _batch_arg():
     v = (request.args.get("batch") or "").strip()
     return v or None
 
+
+def _delivery_arg():
+    v = (request.args.get("delivery") or "").strip().lower()
+    return v or None
+
+def _failure_arg():
+    v = (request.args.get("failure") or "").strip().lower()
+    return v or None
+
 def _compact_arg() -> bool:
     # M3c: the dense, video-less Review list mode from ?compact=. Read from request.args so it rides the
     # action/pagination URLs (templates carry compact=1) AND the htmx POST URL — so a mutation re-render
@@ -263,6 +272,10 @@ def create_app(cfg: Config) -> Flask:
                 "cfg": cfg}
 
     @app.context_processor
+    def _inject_system_strip():
+        return {"system_strip": views.build_system_strip(cfg)}
+
+    @app.context_processor
     def _inject_spine():
         # Slice 1: the workflow stepper (Make→Review→Schedule→Posted + one next-action CTA). Injected ONLY on the
         # workflow surfaces (Home + Make/Review/Schedule/Posted); every other endpoint returns {} so `spine` is
@@ -276,7 +289,10 @@ def create_app(cfg: Config) -> Flask:
         if here is _SPINE_SKIP:
             return {}
         st = views.home_status(cfg)
-        return {"spine": views.build_spine(counts=st.counts, has_accounts=bool(st.accounts), here=here)}
+        strip = views.build_system_strip(cfg)
+        return {"spine": views.build_spine(counts=st.counts, has_accounts=bool(st.accounts), here=here,
+                                            inflight=st.counts.get("inflight", 0),
+                                            blocked_gates=strip.get("blocked_gates", 0))}
 
     @app.get("/")
     def index():

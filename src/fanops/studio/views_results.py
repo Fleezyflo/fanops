@@ -28,6 +28,11 @@ class ScheduleRow:
     editable: bool
     integration_id: str = ""        # the Postiz channel this post will hit (post.account_id) — surfaced so
                                     # the operator sees WHICH integration each approved post publishes to.
+    lane: str = ""                  # due | upcoming | inflight | recent — Schedule three-lane bucket
+    delivery: str = ""              # classify_post_delivery — unified state-honesty label for badges
+    submission_id: Optional[str] = None  # inflight: backend id the reconciler polls
+    backend: str = ""               # per-channel effective provider (not the legacy global)
+    error_reason: Optional[str] = None   # inflight/failed: last reconcile or publish error (truncated in UI)
     suggested_time: Optional[str] = None   # P1: ONE deterministic strictly-future suggestion (surface_time
                                            # index=0), set ONLY for editable rows; read-only past rows carry None.
     batch_id: Optional[str] = None         # Face 5: denormalized Post.batch_id (None == ungrouped)
@@ -114,14 +119,16 @@ def explain_suggested_time(cfg: Config, row) -> str:
 
 def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
                   account: Optional[str] = None, batch: Optional[str] = None) -> list[ScheduleRow]:
-    """Queued posts (the editable timeline) plus recent published/analyzed posts (read-only past),
-    sorted chronologically by scheduled_time. Rows with no/naive/unparseable time sort last. P5: an optional
-    `account` filters AFTER the time-sort (the None default stays byte-identical); the per-account display
-    GROUPING is a separate pure step (group_schedule_by_account) so the read-model order never changes."""
+    """Approved-bucket rows in three lanes (due / upcoming / in-flight) plus optional recent shipped.
+    In-flight (needs_reconcile, submitting, submitted) is NOW visible — the operator no longer has to
+    open Posted or the CLI to see reconciling posts. P5: optional account/batch filters after sort."""
     recent_cutoff = now - timedelta(hours=RECENT_WINDOW_HOURS)
+    accts = Accounts.load(cfg)
     rows: list[ScheduleRow] = []
     for p in led.posts.values():
         if p.state is PostState.queued:
+            include = True
+        elif p.state in (PostState.needs_reconcile, PostState.submitting, PostState.submitted):
             include = True
         elif p.state in (PostState.published, PostState.analyzed):
             include = True
@@ -137,36 +144,80 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             continue
         imm = _imminent(p.scheduled_time, now)
         state = p.state.value
-        editable = (state == PostState.queued.value and not imm)
+        lane = _schedule_lane(p, now)
+        editable = (p.state is PostState.queued and lane != "inflight" and not imm)
+        try:
+            backend = accts.effective_provider(p.account, p.platform) or cfg.poster_backend or "dryrun"
+        except Exception:
+            backend = cfg.poster_backend or "dryrun"
         row = ScheduleRow(
             post_id=p.id, scheduled_time=p.scheduled_time, account=p.account,
             platform=p.platform.value, clip_id=p.parent_id, state=state, imminent=imm,
-            editable=editable, integration_id=p.account_id,
-            suggested_time=suggest_time(cfg, p, now=now) if editable else None,   # P1: only editable rows
-            batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),       # Face 5: batch legibility
-            caption=p.caption,                                                    # P5: caption column
-            variant_hook=p.variant_hook)                                          # Render: per-account hook column
-        if editable:                                                              # S5: advisory readiness + why (editable only)
+            editable=editable, integration_id=p.account_id, lane=lane,
+            delivery=classify_post_delivery(p), submission_id=p.submission_id,
+            backend=backend, error_reason=(p.error_reason or "")[:120] or None,
+            suggested_time=suggest_time(cfg, p, now=now) if editable else None,
+            batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
+            caption=p.caption, variant_hook=p.variant_hook)
+        if editable:
             row.ready, row.ready_reason = publish_readiness(led, p)
             row.why_suggested = explain_suggested_time(cfg, row)
         rows.append(row)
 
     def _key(r: ScheduleRow):
+        if r.lane == "inflight":
+            return (0, r.post_id)
         if not r.scheduled_time:
-            return (1, "")
+            return (2, "")
         try:
             dt = parse_iso(r.scheduled_time)
             if dt.tzinfo is None:
-                return (1, r.scheduled_time)
-            return (0, dt.isoformat())
+                return (2, r.scheduled_time)
+            return (1, dt.isoformat())
         except (ValueError, TypeError):
-            return (1, r.scheduled_time)
+            return (2, r.scheduled_time)
     rows.sort(key=_key)
-    if account is not None:        # P5: per-account filter, applied after the canonical time-sort
+    if account is not None:
         rows = [r for r in rows if r.account == account]
-    if batch is not None:          # Face 5: per-batch filter (follow a batch through to publish)
+    if batch is not None:
         rows = [r for r in rows if r.batch_id == batch]
     return rows
+
+
+def _schedule_lane(p, now: datetime) -> str:
+    """Bucket one post into due | upcoming | inflight | recent for the Schedule panel."""
+    if p.state in (PostState.needs_reconcile, PostState.submitting, PostState.submitted):
+        return "inflight"
+    if p.state in (PostState.published, PostState.analyzed):
+        return "recent"
+    if p.state is PostState.queued:
+        if not p.scheduled_time:
+            return "due"
+        try:
+            return "due" if parse_iso(p.scheduled_time) <= now else "upcoming"
+        except (ValueError, TypeError):
+            return "due"
+    return "upcoming"
+
+
+@dataclass
+class ScheduleLanes:
+    due: list[ScheduleRow]
+    upcoming: list[ScheduleRow]
+    inflight: list[ScheduleRow]
+
+
+def schedule_lanes(rows: list[ScheduleRow]) -> ScheduleLanes:
+    """Split already-built ScheduleRows into the three operator-facing lanes (recent rows excluded)."""
+    due, upcoming, inflight = [], [], []
+    for r in rows:
+        if r.lane == "inflight":
+            inflight.append(r)
+        elif r.lane == "due":
+            due.append(r)
+        elif r.lane == "upcoming":
+            upcoming.append(r)
+    return ScheduleLanes(due=due, upcoming=upcoming, inflight=inflight)
 
 
 def group_schedule_by_account(rows: list) -> list:
@@ -209,6 +260,57 @@ class PostedRow:
     # DryRunPoster->publish_post transition never sets public_url). Pins the operator's verbatim
     # complaint: 'the system says posted when nothing is posted'.
     posted_via: str = "dryrun"
+    submission_id: Optional[str] = None   # inflight rows: backend id awaiting permalink
+    error_reason: Optional[str] = None      # inflight/failed: last reconcile error (truncated in UI)
+    raw_state: Optional[str] = None         # ledger PostState.value for detail rows
+    failure_kind: Optional[str] = None      # failed rows: rate_limit | oversize | bad_payload | poll_error | unknown
+
+
+_FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "poll_error", "unknown")
+_RETRYABLE_FAILURES = frozenset({"rate_limit", "bad_payload", "unknown"})
+
+
+def classify_failure(post) -> str:
+    """Bucket a failed/error post's error_reason for the Posted recovery cockpit."""
+    er = (getattr(post, "error_reason", None) or "").lower()
+    if not er:
+        return "unknown"
+    if "429" in er or "rate limit" in er or "too many requests" in er:
+        return "rate_limit"
+    if "413" in er or "oversize" in er or "too large" in er or "entity too large" in er:
+        return "oversize"
+    if "poll error" in er or "reconcile poll" in er:
+        return "poll_error"
+    if "400" in er or "bad request" in er or "bad media" in er or "invalid" in er:
+        return "bad_payload"
+    return "unknown"
+
+
+def failure_rollup(led: Ledger) -> dict:
+    """Read-only counts of failed/error posts by classify_failure bucket."""
+    buckets = {k: 0 for k in _FAILURE_KINDS}
+    for p in led.posts.values():
+        if p.state not in (PostState.failed, PostState.error):
+            continue
+        buckets[classify_failure(p)] += 1
+    return {"total": sum(buckets.values()), "buckets": buckets}
+
+
+def classify_post_delivery(post) -> str:
+    """Unified delivery label for Schedule, Posted, Home, spine: live | inflight | dryrun | failed |
+    queued | awaiting. Maps 1:1 to ledger + backend reality — never 'published' when nothing shipped."""
+    st = post.state if isinstance(post.state, PostState) else PostState(post.state)
+    if st is PostState.awaiting_approval:
+        return "awaiting"
+    if st in (PostState.failed, PostState.error):
+        return "failed"
+    if st in (PostState.needs_reconcile, PostState.submitting, PostState.submitted):
+        return "inflight"
+    if st is PostState.queued:
+        return "queued"
+    if st in (PostState.published, PostState.analyzed, PostState.retired):
+        return "live" if _classify_channel(getattr(post, "public_url", None)) == "live" else "dryrun"
+    return "queued"
 
 
 def _classify_channel(public_url: Optional[str]) -> str:
@@ -227,17 +329,32 @@ def _classify_channel(public_url: Optional[str]) -> str:
     return "dryrun"   # an unrecognized scheme is NOT a live URL — fail safe to dryrun
 
 
-def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, batch: Optional[str] = None) -> list[PostedRow]:
-    """The Posted library (post-approval-lifecycle): ALL-time shipped posts (published/analyzed), newest
-    first, with the live URL + lift score. NOT a dead archive — each row also offers 'Post again' (a fresh
-    awaiting_approval repost of the same clip). Unscheduled/naive/unparseable times sort last. Lock-free read.
-    P5: an optional `account` filters the posts BEFORE rows/day-grouping are built (so the count + day buckets
-    reflect the filtered set); each row carries the raw saves/shares/retention/reach breakdown from p.metrics."""
-    posts = [p for p in led.posts.values() if p.state in (PostState.published, PostState.analyzed)]
+def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, batch: Optional[str] = None,
+                   delivery: Optional[str] = None, failure_kind: Optional[str] = None) -> list[PostedRow]:
+    """The Posted library: shipped + in-flight + failed rows, filterable by delivery class (live /
+    inflight / dryrun / failed). Default (delivery=None) shows terminal shipped rows only — inflight and
+    failed are opt-in via the tab filters. Lock-free read."""
+    if delivery == "inflight":
+        posts = [p for p in led.posts.values()
+                 if p.state in (PostState.needs_reconcile, PostState.submitting, PostState.submitted)]
+    elif delivery == "failed":
+        posts = [p for p in led.posts.values() if p.state in (PostState.failed, PostState.error)]
+    elif delivery in ("live", "dryrun"):
+        posts = [p for p in led.posts.values()
+                 if p.state in (PostState.published, PostState.analyzed)
+                 and classify_post_delivery(p) == delivery]
+    elif delivery == "all":
+        posts = [p for p in led.posts.values()
+                 if p.state in (PostState.published, PostState.analyzed, PostState.needs_reconcile,
+                                PostState.submitting, PostState.submitted, PostState.failed, PostState.error)]
+    else:
+        posts = [p for p in led.posts.values() if p.state in (PostState.published, PostState.analyzed)]
     if account is not None:
         posts = [p for p in posts if p.account == account]
     if batch is not None:          # Face 5: per-batch filter
         posts = [p for p in posts if p.batch_id == batch]
+    if failure_kind:
+        posts = [p for p in posts if classify_failure(p) == failure_kind]
     def _key(p):
         if not p.scheduled_time: return (0, "")
         try:
@@ -252,7 +369,9 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, b
                       retention=p.metrics.get("retention"), reach=p.metrics.get("reach"),
                       batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
                       variant_hook=p.variant_hook,
-                      posted_via=_classify_channel(p.public_url)) for p in posts]
+                      posted_via=classify_post_delivery(p), submission_id=p.submission_id,
+                      error_reason=(p.error_reason or "")[:120] or None, raw_state=p.state.value,
+                      failure_kind=classify_failure(p) if p.state in (PostState.failed, PostState.error) else None) for p in posts]
 
 
 def posted_batch_rollup(rows) -> Optional[dict]:

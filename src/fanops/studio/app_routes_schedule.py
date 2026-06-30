@@ -10,7 +10,7 @@ from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState
 from fanops.studio import actions, views
-from fanops.studio.app import _account_arg, _batch_arg, _offset_arg, _row_chips, _time_arg, _with_active
+from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _offset_arg, _row_chips, _time_arg, _with_active
 
 
 def register_schedule_routes(app, cfg):
@@ -21,9 +21,9 @@ def register_schedule_routes(app, cfg):
                 if (account or batch) else rows_full)
         approved_total = sum(1 for r in rows if r.editable)              # Face 5: full scoped count (pre-slice, page-safe banner)
         page = views.paginate(rows, _offset_arg())
-        groups = views.group_schedule_by_account(page.items)            # regroup the SLICE (header re-emits across a page)
+        lanes = views.schedule_lanes(page.items)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
-        return render_template(tmpl, rows=page.items, groups=groups, page=page, approved_total=approved_total,
+        return render_template(tmpl, rows=page.items, lanes=lanes, groups=None, page=page, approved_total=approved_total,
                                active_batch=batch, result=result, tab="schedule",
                                # R3-followup UI-LIE-FIX: the per-channel truth, NOT the legacy global. On a
                                # live deployment with per-channel routing cfg.poster_backend reads 'dryrun'
@@ -81,9 +81,11 @@ def register_schedule_routes(app, cfg):
 
     def _posted_panel(result=None, *, full=False):
         led = Ledger.load(cfg); account = _account_arg(); batch = _batch_arg()
-        rows_full = views.posted_library(led, cfg)                                    # universe for chips (account-only)
-        rows = (views.posted_library(led, cfg, account=account, batch=batch)
-                if (account or batch) else rows_full)
+        delivery = _delivery_arg(); failure = _failure_arg()
+        rows_full = views.posted_library(led, cfg, delivery=delivery if delivery else None)
+        rows = views.posted_library(led, cfg, account=account, batch=batch,
+                                    delivery=delivery if delivery else None, failure_kind=failure)
+        failure_rollup = views.failure_rollup(led) if (delivery == "failed") else None
         rollup = views.posted_batch_rollup(rows) if batch else None     # Face 5: full scoped (pre-slice) per-batch summary
         views.lineage_stats(rows)                         # S6: rank repost/crosspost siblings within the filtered set
         page = views.paginate(rows, _offset_arg())
@@ -94,7 +96,8 @@ def register_schedule_routes(app, cfg):
         accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
         return render_template("posted.html" if full else "_posted_panel.html", rows=page.items, groups=groups,
                                page=page, rollup=rollup, peaks=peaks, active_batch=batch, accounts=accounts,
-                               result=result, tab="posted", **_row_chips(rows_full, "posted", account))
+                               result=result, tab="posted", active_delivery=delivery, active_failure=failure,
+                               failure_rollup=failure_rollup, **_row_chips(rows_full, "posted", account))
 
     @app.get("/posted")
     def posted():
@@ -104,6 +107,12 @@ def register_schedule_routes(app, cfg):
     def do_repost_post(post_id):
         # 'Post again': spawn a fresh awaiting_approval repost from a shipped post; re-render the library.
         return _posted_panel(actions.repost_post(cfg, post_id))
+
+    @app.post("/posts/recover")
+    def do_recover_posts():
+        return _posted_panel(actions.recover_posts(
+            cfg, request.form.getlist("ids"), action=request.form.get("recover_action", ""),
+            reason=(request.form.get("reason") or "studio_recover")[:200]))
 
     @app.post("/posts/crosspost/<clip_id>")
     def do_crosspost_to_account(clip_id):

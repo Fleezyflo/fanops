@@ -1,91 +1,54 @@
-{# src/fanops/studio/templates/home.html — Face 2: the read-only status home (GET /). Accounts + connection
-   state, headline counts, a navigable batch list with a prominent zero-result warning, and each active
-   account's post count INLINE on its row (#home-metrics is now only the orphan fallback for inactive handles).
-   The workflow spine (the bar above) is the SOLE next-action; this page never restates it. Read-only: no
-   form, no mutation, no API key (the read-model carries none). #}
 {% extends "base.html" %}
 {% from "_term.html" import term %}
 {% block title %}Home{% endblock %}
 {% block body %}
   <h2>Home</h2>
-  {% if status.is_live %}<div class="banner live">● LIVE ({{ status.mode }}) — reviewed posts publish to REAL accounts</div>
-  {% else %}<div class="banner dryrun">● DRYRUN ({{ status.mode }}) — writes payloads, posts nothing</div>{% endif %}
-
-  {# WS-D1 Phase 2: lazy-load the launchd pipeline-driver health (mirrors /golive/health) so a dead/stale
-     driver surfaces HERE instead of silently halting the pipeline. Empty partial when alive / non-mac. #}
-  <div hx-get="{{ url_for('home_daemon_health') }}" hx-trigger="load" hx-swap="outerHTML"></div>
-
-  {# S10: ONE next-action. The workflow spine (the bar above) is the SOLE "do this next" CTA. This panel is
-     pure ORIENTATION — shown ONLY at the true zero-state (no accounts AND no footage), carrying NO competing
-     done/next/todo ladder. The moment the operator has either accounts or footage the spine alone guides
-     them, so this hides (no double-message). #}
-  {% if not status.accounts and not status.counts.sources %}
-  <section class="home-onboarding" aria-labelledby="get-started-h">
-    <h3 id="get-started-h">Get started</h3>
-    <p class="muted">How FanOps works — three steps from zero to your first per-account clips. The
-      <strong>Next</strong> button in the workflow bar above always points to your current step.</p>
-    <ol class="setup-steps teaching">
-      <li class="step"><a href="{{ url_for('golive_view') }}">Connect an account</a>
-        <span class="muted">— link a handle + platform in Go Live.</span></li>
-      <li class="step"><a href="{{ url_for('run_panel') }}">Make clips from a video</a>
-        <span class="muted">— upload footage in Make; it cuts clips + writes captions per account.</span></li>
-      <li class="step"><a href="{{ url_for('review') }}">Review &amp; approve</a>
-        <span class="muted">— each account's clips land in the Review matrix; nothing ships until you approve.</span></li>
-    </ol>
-    <p class="meta">Tip: give each account a <a href="{{ url_for('personas_view') }}">persona</a> so its clip length, on-screen hook, and caption differ.</p>
+  <section class="ops-board" aria-label="Operations">
+    <a class="ops-tile" href="{{ url_for('review') }}">
+      <span class="ops-label">Awaiting review</span>
+      <span class="ops-value">{{ status.counts.awaiting_posts }}</span>
+      <span class="ops-hint muted">posts · {{ status.counts.awaiting }} moments</span>
+    </a>
+    <a class="ops-tile" href="{{ url_for('schedule') }}">
+      <span class="ops-label">Approved</span>
+      <span class="ops-value">{{ status.counts.scheduled }}</span>
+      <span class="ops-hint muted">{{ status.counts.due_soon }} due now</span>
+    </a>
+    <a class="ops-tile" href="{{ url_for('posted', delivery='inflight') }}">
+      <span class="ops-label">In flight</span>
+      <span class="ops-value">{{ status.counts.inflight }}</span>
+      <span class="ops-hint muted">awaiting permalink</span>
+    </a>
+    <a class="ops-tile" href="{{ url_for('posted', delivery='live') }}">
+      <span class="ops-label">Live</span>
+      <span class="ops-value">{{ status.counts.live_trackable }}</span>
+      <span class="ops-hint muted">trackable · https URL</span>
+    </a>
+    <a class="ops-tile{{ ' ops-tile--danger' if status.counts.failed else '' }}" href="{{ url_for('posted', delivery='failed') }}">
+      <span class="ops-label">Failed</span>
+      <span class="ops-value">{{ status.counts.failed }}</span>
+      <span class="ops-hint muted">needs recovery</span>
+    </a>
+    <a class="ops-tile{{ ' ops-tile--warn' if system_strip.blocked_gates else '' }}" href="{{ url_for('gates') }}">
+      <span class="ops-label">Gates</span>
+      <span class="ops-value">{{ system_strip.blocked_gates }}</span>
+      <span class="ops-hint muted">processing blocked</span>
+    </a>
   </section>
+  {% set zero_batches = batches | selectattr('is_zero_result') | list %}
+  {% if zero_batches %}
+  <section class="alerts-lane"><h3>Alerts</h3><ul>
+    {% for b in zero_batches[:3] %}<li class="warn"><a href="{{ url_for('review', batch=b.id) }}">«{{ b.name }}» — 0 posts</a></li>{% endfor %}
+  </ul></section>
   {% endif %}
-
-  <div class="count-strip meta">
-    <span>Native sources <strong>{{ status.counts.sources }}</strong></span> ·
-    <span data-count="batches">Batches <a href="{{ url_for('review') }}"><strong>{{ status.counts.batches if status.counts.batches is not none else '—' }}</strong></a></span> ·
-    <span>Awaiting <a href="{{ url_for('review') }}"><strong title="{{ status.counts.awaiting_posts }} post(s) across {{ status.counts.awaiting }} moment(s) awaiting review">{{ status.counts.awaiting }}</strong></a></span> ·
-    <span>Scheduled <strong>{{ status.counts.scheduled }}</strong></span> ·
-    <span>Posted <strong>{{ status.counts.posted }}</strong></span>
-  </div>
-
-  {% if batches %}
-  <section class="home-batches">
-    <h3>Batches{{ term('batch') }}</h3>
-    {# S10: a zero-result batch (targets matched no active account → 0 posts) was a faint inline glyph; promote
-       it to a list-level warning so the silent-fail outcome can't be missed. The per-row badge stays. #}
-    {% set zero_n = batches | selectattr('is_zero_result') | list | length %}
-    {% if zero_n %}<p class="warn batch-zero-summary" data-warn="zero-result-summary">⚠ {{ zero_n }} batch{{ 'es' if zero_n != 1 else '' }} reached no active account — their targets matched nothing, so they shipped 0 posts. Fix the target handles or activate the account, then re-run.</p>{% endif %}
-    <ul data-list="batches">
-      {% for b in batches %}
-      <li><a href="{{ url_for('review', batch=b.id) }}">{{ b.name }}</a> <span class="muted">· {{ b.posts_born }} posts</span>{% if b.is_zero_result %} <span class="badge warn zero-result-badge" data-warn="zero-result">⚠ 0 — no matching account</span>{% endif %}</li>
-      {% endfor %}
-    </ul>
+  <section class="home-accounts"><h3>Accounts</h3>
+  {% if status.accounts %}<table class="home-acct-table"><tr><th>Handle</th><th>Channels</th><th>Posts</th></tr>
+  {% for a in status.accounts %}<tr><td><strong>{{ a.handle }}</strong></td>
+  <td class="muted">{% for ch in a.channels %}{{ ch.platform }}{% if ch.backend %} ({{ ch.backend }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+  <td>{{ status.by_account.get(a.handle, 0) }}</td></tr>{% endfor %}</table>
+  {% else %}<p class="muted"><a href="{{ url_for('golive_connect') }}">Connect accounts</a></p>{% endif %}
   </section>
-  {% endif %}
-
-  {# S10: each active account's post count renders INLINE on its row, so the number sits with the account it
-     belongs to instead of in a disconnected table. #}
-  {% set active_handles = status.accounts | map(attribute='handle') | list %}
-  <section class="home-accounts">
-    <h3>Accounts</h3>
-    {% if status.accounts %}
-    <p class="muted">Each channel maps to a Postiz integration{{ term('integration') }} it publishes through.</p>
-    <ul>
-      {% for a in status.accounts %}
-      <li><strong>{{ a.handle }}</strong> <span class="muted acct-post-count" data-acct-count="{{ a.handle }}">· {{ status.by_account.get(a.handle, 0) }} posts</span>{% for ch in a.channels %} <span class="muted">{{ ch.platform }}: {% if ch.integration_id %}connected ({{ ch.integration_id }}){% else %}not connected — map it{% endif %}</span>{% endfor %}</li>
-      {% endfor %}
-    </ul>
-    {% else %}<p class="muted">No active accounts yet.</p>{% endif %}
-  </section>
-
-  {# S10: #home-metrics is now the ORPHAN fallback only — handles that carry post history but are not an active
-     account (retired/removed). Active accounts show their count inline above, so this lists only the leftovers. #}
-  <section id="home-metrics" data-slot="metrics">
-    {% set ns = namespace(any=false) %}
-    {% for handle, n in status.by_account|dictsort %}{% if handle not in active_handles %}{% set ns.any = true %}{% endif %}{% endfor %}
-    {% if ns.any %}
-    <h3>Posts from inactive accounts</h3>
-    <table data-metric="by-account">
-      {% for handle, n in status.by_account|dictsort %}{% if handle not in active_handles %}<tr><td><strong>{{ handle }}</strong></td><td class="muted">· {{ n }} posts</td></tr>{% endif %}{% endfor %}
-    </table>
-    {% endif %}
-  </section>
-
-  <p class="home-cta"><a class="button" href="{{ url_for('golive_view') }}">Connect accounts (Go Live)</a></p>
+  {% if batches %}<details class="home-batches"{% if batches|length <= 5 %} open{% endif %}><summary>Batches ({{ batches|length }})</summary><ul>
+  {% for b in batches %}<li><a href="{{ url_for('review', batch=b.id) }}">{{ b.name }}</a> · {{ b.posts_born }} posts</li>{% endfor %}
+  </ul></details>{% endif %}
 {% endblock %}

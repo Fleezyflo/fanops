@@ -1,0 +1,11 @@
+{# Global system strip — LIVE/DRYRUN mode, effective backends, lazy health dots, blocked-gates alert. #}
+<div class="system-strip" role="status" aria-label="System status">
+  <div class="strip-mode">
+    {% if system_strip.is_live %}<span class="strip-live">● LIVE</span><span class="muted">· {{ system_strip.mode }}</span>
+    {% else %}<span class="strip-dryrun">● DRYRUN</span><span class="muted">· local only</span>{% endif %}
+  </div>
+  <div class="strip-deps" hx-get="{{ url_for('do_golive_health', compact=1) }}" hx-trigger="load" hx-swap="innerHTML"><span class="muted">deps…</span></div>
+  {% if system_strip.blocked_gates %}<a class="strip-alert danger" href="{{ url_for('gates') }}">{{ system_strip.blocked_gates }} gate{{ 's' if system_strip.blocked_gates != 1 else '' }} blocked</a>{% endif %}
+  {% if system_strip.failed %}<a class="strip-alert danger" href="{{ url_for('posted', delivery='failed') }}">{{ system_strip.failed }} failed</a>{% endif %}
+  <div class="strip-daemon" hx-get="{{ url_for('home_daemon_health') }}" hx-trigger="load" hx-swap="innerHTML"></div>
+</div>

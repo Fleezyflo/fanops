@@ -515,3 +515,69 @@ def test_crosspost_warms_target_aspect_before_opening_the_lock(tmp_path, monkeyp
     monkeypatch.setattr(Ledger, "transaction", spy_txn)
     r = A.crosspost_to_account(cfg, "clip_0", "@b", "instagram", now=NOW)
     assert r.ok and order[:2] == ["warm", "txn"], order        # warm ran lock-free BEFORE the transaction
+
+
+def test_publish_now_live_dryrun_url_rejected(tmp_path, monkeypatch, mocker):
+    from fanops.studio.actions import publish_now
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path); _seed(cfg)
+    mocker.patch("fanops.post.run.publish_post", return_value="published")
+    dry_post = Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
+                    platform=Platform.instagram, caption="OLD", state=PostState.published,
+                    public_url="dryrun://p_edit")
+    led_guard = Ledger.load(cfg)
+    led_after = Ledger.load(cfg); led_after.posts["p_edit"] = dry_post
+    mocker.patch("fanops.ledger.Ledger.load", side_effect=[led_guard, led_after])
+    res = publish_now(cfg, "p_edit", confirmed=True)
+    assert res.ok is False
+    assert "dryrun" in (res.error or "").lower()
+
+
+# ---- Sprint 1: recover_posts (failed-tab bulk recovery) ----
+def _fail_post(pid, reason):
+    return Post(id=pid, parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                caption="x", state=PostState.failed, error_reason=reason)
+
+
+def test_recover_posts_retry_requeues_retryable(tmp_path):
+    from fanops.studio.actions import recover_posts
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(_fail_post("ok", "postiz 429"))
+    led.posts["ok"].submission_id = "old_sub"
+    led.add_post(_fail_post("big", "zernio 413"))
+    led.save()
+    res = recover_posts(cfg, ["ok", "big"], action="retry", reason="studio_retry")
+    assert res.ok
+    led2 = Ledger.load(cfg)
+    assert led2.posts["ok"].state is PostState.queued
+    assert led2.posts["ok"].submission_id is None and led2.posts["ok"].error_reason is None
+    assert led2.posts["big"].state is PostState.failed
+    assert res.detail["retried"] == 1 and res.detail["skipped"] == 1
+
+
+def test_recover_posts_discard_terminal(tmp_path):
+    from fanops.studio.actions import recover_posts
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(_fail_post("gone", "zernio 413"))
+    led.save()
+    res = recover_posts(cfg, ["gone"], action="discard", reason="oversize discard")
+    assert res.ok
+    assert Ledger.load(cfg).posts["gone"].state is PostState.rejected
+
+
+def test_recover_posts_review_clears_publish_fields(tmp_path):
+    from fanops.studio.actions import recover_posts
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    p = _fail_post("back", "postiz 429")
+    p.public_url = "https://example.com/x"
+    p.scheduled_time = _z(NOW + timedelta(hours=1))
+    led.add_post(p)
+    led.save()
+    res = recover_posts(cfg, ["back"], action="review", reason="oversize re-render")
+    assert res.ok
+    q = Ledger.load(cfg).posts["back"]
+    assert q.state is PostState.awaiting_approval
+    assert q.public_url == "" and q.scheduled_time is None

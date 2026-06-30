@@ -10,8 +10,9 @@ from fanops.config import Config
 from fanops.studio import views
 
 
-def _counts(sources=0, awaiting=0, scheduled=0, posted=0, batches=0):
-    return {"sources": sources, "batches": batches, "awaiting": awaiting, "scheduled": scheduled, "posted": posted}
+def _counts(sources=0, awaiting=0, scheduled=0, posted=0, batches=0, failed=0, live_trackable=0):
+    return {"sources": sources, "batches": batches, "awaiting": awaiting, "scheduled": scheduled,
+            "posted": posted, "failed": failed, "live_trackable": live_trackable}
 
 
 def _client(cfg, handles=("@a",)):
@@ -54,9 +55,33 @@ def test_spine_next_action_is_schedule_when_queued_and_none_awaiting():
 
 
 def test_spine_caught_up_has_no_cta_when_only_posted():
-    spine = views.build_spine(counts=_counts(sources=2, posted=5), has_accounts=True, here=None)
+    spine = views.build_spine(counts=_counts(sources=2, posted=5, live_trackable=5), has_accounts=True, here=None)
     assert spine.next_endpoint is None                   # nothing pending → no nagging CTA
     assert "caught up" in spine.next_label.lower()
+
+
+def test_spine_not_caught_up_when_failed_even_if_posted():
+    spine = views.build_spine(counts=_counts(sources=2, posted=5, live_trackable=5, failed=12),
+                              has_accounts=True, here=None)
+    assert spine.next_endpoint == "posted"
+    assert "12" in spine.next_label
+    assert "failed" in spine.next_label.lower()
+    assert "caught up" not in spine.next_label.lower()
+
+
+def test_spine_not_caught_up_when_inflight_and_no_queue():
+    spine = views.build_spine(counts=_counts(sources=2, posted=3, live_trackable=3), has_accounts=True,
+                              here=None, inflight=7)
+    assert spine.next_endpoint == "schedule"
+    assert "caught up" not in (spine.next_label or "").lower()
+
+
+def test_spine_posted_stage_warns_when_failed():
+    spine = views.build_spine(counts=_counts(sources=2, posted=2, live_trackable=2, failed=5),
+                              has_accounts=True, here=None)
+    by = {s.key: s for s in spine.stages}
+    assert by["posted"].severity == "danger"
+    assert by["posted"].count == 2                     # live_trackable, not failed+live conflation
 
 
 def test_spine_marks_current_stage_active_and_upstream_done():
@@ -78,7 +103,7 @@ def test_spine_review_not_done_while_awaiting():
 
 
 def test_spine_stage_counts_track_the_pending_work():
-    spine = views.build_spine(counts=_counts(sources=2, awaiting=4, scheduled=1, posted=7), has_accounts=True, here=None)
+    spine = views.build_spine(counts=_counts(sources=2, awaiting=4, scheduled=1, posted=7, live_trackable=7), has_accounts=True, here=None)
     by = {s.key: s for s in spine.stages}
     assert (by["make"].count, by["review"].count, by["schedule"].count, by["posted"].count) == (2, 4, 1, 7)
 

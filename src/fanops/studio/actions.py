@@ -331,12 +331,20 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     # so any other terminal state means the post did NOT fully ship. A None return means the CLAIM gate
     # found it no longer queued (e.g. a concurrent daemon pass just claimed it between the guard read and
     # the claim) — tell the operator to retry rather than print a confusing "post is None".
-    if state == "published":
-        # R3/D17: audit the SUCCESS — only after publish_post returned 'published'.
-        # UI-LIE-FIX: audit the per-channel truth, not the legacy global.
+    if state in ("published", "needs_reconcile", "submitted"):
+        pub = Ledger.load(cfg).posts.get(post_id)
+        if cfg.is_live and pub is not None and str(pub.public_url or "").startswith("dryrun://"):
+            return ActionResult(ok=False, error=("LIVE publish ran dryrun — post NOT on social. "
+                                "Restart Studio (or Go Live) so FANOPS_LIVE=1 is active, then retry."))
+        from fanops.studio.views_results import classify_post_delivery
+        delivery = classify_post_delivery(pub) if pub else "dryrun"
+        outcome = {"live": "live_shipped", "inflight": "inflight_submitted", "dryrun": "dryrun_local"}.get(delivery, "live_shipped")
         write_audit(cfg, "publish_now", [post_id], reason="studio_publish_now",
                     backend=cfg.effective_publish_mode())
-        return ActionResult(ok=True, detail={"post_id": post_id, "state": state})
+        return ActionResult(ok=True, detail={"post_id": post_id, "state": state, "outcome": outcome,
+                                             "submission_id": getattr(pub, "submission_id", None),
+                                             "public_url": getattr(pub, "public_url", None),
+                                             "backend": cfg.effective_publish_mode()})
     if state is None:
         return ActionResult(ok=False, error="post was not claimable (it may be publishing already) — refresh and try again")
     return ActionResult(ok=False, error=f"publish did not complete (post is {state}) — see the run log")
@@ -610,6 +618,48 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                     unknown=unknown, moved=len(moved))
     return ActionResult(ok=True, detail={"moved": len(moved), "unknown": unknown,
                                           "post_ids": moved})
+
+
+def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str = "") -> ActionResult:
+    """S1 recovery cockpit: retry (failed→queued, retryable buckets only), review (→awaiting_approval),
+    or discard (failed→rejected). Atomic per batch; unknown ids reported; oversize never retried."""
+    from fanops.studio.views_results import classify_failure, _RETRYABLE_FAILURES
+    ids = [str(i) for i in (post_ids or []) if i]
+    if not ids:
+        return ActionResult(ok=True, detail={"retried": 0, "discarded": 0, "reviewed": 0, "skipped": 0, "unknown": []})
+    action = (action or "").strip().lower()
+    if action == "review":
+        return bulk_send_to_review(cfg, ids, reason=reason or "studio_recover_review")
+    retried: list[str] = []; discarded: list[str] = []; skipped: list[str] = []; unknown: list[str] = []
+    try:
+        with Ledger.transaction(cfg) as led:
+            for pid in ids:
+                if pid not in led.posts:
+                    unknown.append(pid); continue
+                p = led.posts[pid]
+                if p.state not in (PostState.failed, PostState.error):
+                    skipped.append(pid); continue
+                if action == "retry":
+                    if classify_failure(p) not in _RETRYABLE_FAILURES:
+                        skipped.append(pid); continue
+                    p.state = PostState.queued
+                    p.submission_id = None
+                    p.error_reason = None
+                    retried.append(pid)
+                elif action == "discard":
+                    p.state = PostState.rejected
+                    discarded.append(pid)
+                else:
+                    return ActionResult(ok=False, error=f"unknown recover action: {action}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"recover_posts failed: {str(exc)[:160]}")
+    if retried or discarded:
+        write_audit(cfg, "recover_posts", retried or discarded, reason=reason,
+                    recover_action=action, retried=len(retried), discarded=len(discarded),
+                    skipped=len(skipped), unknown=unknown)
+    detail = {"retried": len(retried), "discarded": len(discarded), "reviewed": 0,
+              "skipped": len(skipped), "unknown": unknown, "post_ids": retried or discarded}
+    return ActionResult(ok=True, detail=detail)
 
 
 def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
