@@ -532,6 +532,9 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     err = _dual_write(cfg, "FANOPS_LIVE", "1")
     if err:
         return ActionResult(ok=False, error=err)
+    if (err := _dual_write(cfg, "FANOPS_RESPONDER", "llm")):
+        return ActionResult(ok=False, error=err)
+    os.environ["FANOPS_RESPONDER"] = "llm"
     # M1: a live-ready channel that resolves ONLY via the legacy FANOPS_POSTER bridge (no explicit
     # `backends`) goes dark the instant FANOPS_POSTER is unset — name them so the operator can pin the
     # provider explicitly (route the channel in the Go-Live tab; that persists `backends[platform]`).

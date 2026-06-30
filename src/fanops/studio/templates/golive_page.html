@@ -3,8 +3,8 @@
 {% block body %}
 <nav class="golive-wizard-nav" aria-label="Go Live steps">
   <a href="{{ url_for('golive_connect') }}" class="button{{ ' active' if step == 'connect' else '' }}">1 · Connect</a>
-  <a href="{{ url_for('golive_accounts') }}" class="button{{ ' active' if step == 'accounts' else '' }}">2 · Accounts</a>
-  <a href="{{ url_for('golive_live') }}" class="button{{ ' active' if step == 'live' else '' }}">3 · Go Live</a>
+  <a href="{{ url_for('golive_accounts_page') }}" class="button{{ ' active' if step == 'accounts' else '' }}">2 · Accounts</a>
+  <a href="{{ url_for('golive_live_page') }}" class="button{{ ' active' if step == 'live' else '' }}">3 · Go Live</a>
 </nav>
 {% include "_golive_panel.html" %}
 {% endblock %}

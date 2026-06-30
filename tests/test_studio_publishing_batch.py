@@ -129,11 +129,12 @@ def test_publishing_unbatched_is_byte_identical(tmp_path):
 
 
 # ---- D2: action URLs must PRESERVE the ?batch= scope, not only pagination (scope-bleed fix) ----
-def test_schedule_action_urls_carry_batch(tmp_path):
+def test_schedule_action_urls_carry_batch(tmp_path, monkeypatch):
     # D2: filter Schedule to a batch, then act on a row (move/clear/publish/send-back/respread) — the htmx
     # re-render must stay WITHIN the batch. Before the fix only the show-more link carried ?batch=; the
     # action forms dropped it, bouncing the operator back to all-accounts on every edit. Same scope-bleed
     # class RF6/Batch-1 closed for Review's ?account=.
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     cfg = Config(root=tmp_path); _accounts(cfg)
     _seed(cfg, 1, batch_id="bx", batch_name="Drop")                      # p0 queued + editable in bx
     html = _client(cfg).get("/schedule?batch=bx").data.decode()

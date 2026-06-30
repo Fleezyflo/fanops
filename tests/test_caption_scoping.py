@@ -10,7 +10,7 @@ from fanops.models import (Source, Moment, Clip, ClipState, MomentState, Fmt,
                            CaptionSet, CaptionItem)
 from fanops.accounts import Accounts
 from fanops.casting import affinity_admits, scoped_caption_surfaces
-from fanops.caption import request_captions, ingest_captions
+from fanops.caption import request_captions, ingest_captions, caption_request_stale
 from fanops.crosspost import crosspost_clips
 from fanops.agentstep import latest_request_id, response_path, request_path
 
@@ -35,6 +35,20 @@ def _fake_ffmpeg(mocker):
         class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+
+
+def test_caption_request_stale_when_surface_set_drifts(tmp_path):
+    from fanops.models import Platform
+    from fanops.caption import caption_request_stale
+    from fanops.agentstep import write_request
+    cfg = Config(root=tmp_path)
+    want_tt = [("b", Platform.tiktok)]
+    assert caption_request_stale(cfg, "clip_x", want_tt) is True
+    write_request(cfg, kind="captions", key="clip_x", payload={"clip_id": "clip_x", "surfaces": [
+        {"surface": "b/tiktok", "platform": "tiktok"}]})
+    assert caption_request_stale(cfg, "clip_x", want_tt) is False
+    want_both = [("a", Platform.instagram), ("b", Platform.tiktok)]
+    assert caption_request_stale(cfg, "clip_x", want_both) is True
 
 
 # ---- Task 1: affinity_admits — the shared gate (provably == the negation of the crosspost gate) ----

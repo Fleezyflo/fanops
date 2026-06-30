@@ -224,6 +224,10 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
                                        # recomputes the SAME content-addressed render id + cut decision (H1).
     existing = led.posts.get(pid)
     if existing is not None:
+        if existing.state in (PostState.rejected, PostState.failed):
+            led.posts.pop(pid, None)
+            existing = None
+    if existing is not None:
         # M2 (audit): a re-crosspost reaches an EXISTING post — pid is content-addressed on (clip,
         # surface), NOT the per-account hook, so add_post's first-write-wins would keep a STALE hook
         # after a re-decision (the operator would review/approve the old hook). Rewrite the variant

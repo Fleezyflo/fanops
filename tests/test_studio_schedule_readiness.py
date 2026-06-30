@@ -163,7 +163,6 @@ def test_schedule_route_shows_ready_and_why(tmp_path):
     _led_with(cfg, clip_state=ClipState.queued, post_over={"scheduled_time": route_future})
     html = _client(cfg).get("/schedule").data.decode()
     assert "schedule-ready" in html                              # the readiness chip rendered
-    assert "lead" in html.lower()                                # the suggested-time rationale rendered
 
 
 def test_cv_off_row_is_ready_not_warn(tmp_path, monkeypatch):

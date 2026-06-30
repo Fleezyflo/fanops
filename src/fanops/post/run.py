@@ -122,6 +122,41 @@ def _post_provider(cfg: Config, accounts: Accounts, post: Post) -> str | None:
     return accounts.effective_provider(post.account, post.platform)
 
 
+
+def _materialize_variant_media(led: Ledger, cfg: Config, post: Post, accts: Accounts) -> None:
+    """Publish-time safety net: a queued post with variant_hook but no burned file (approve warm-miss,
+    legacy row, or media_urls cleared) MUST NOT ship the hookless base clip. Burns off-lock via the SAME
+    render_account_file path approval uses, then points post at the content-addressed render."""
+    if not (post.variant_hook or "").strip():
+        return
+    if post.render_id and post.media_urls:
+        return
+    from fanops.crosspost import render_account_file
+    from fanops.models import Render, RenderState
+    from fanops.ids import surface_key
+    clip = led.clips.get(post.parent_id)
+    if clip is None:
+        return
+    acct = next((a for a in accts.accounts if a.handle == post.account), None)
+    mom = led.moments.get(clip.parent_id)
+    src = led.sources.get(mom.parent_id) if mom is not None else None
+    try:
+        plan = render_account_file(led, cfg, post=post, acct=acct, target_clip=clip, src=src, caller="publish")
+    except Exception as exc:
+        get_logger(cfg)("publish", post.id, "variant_materialize_failed", err=str(exc)[:120])
+        return
+    if led.get_render(plan.render_id) is None:
+        led.add_render(Render(id=plan.render_id, clip_id=clip.id, account=post.account,
+                              surface_key=surface_key(post.account, post.platform.value),
+                              hook_text=post.variant_hook, path=plan.vpath, state=RenderState.rendered,
+                              batch_id=plan.batch_id, source_id=plan.source_id, is_account_cut=plan.produced,
+                              hook_source=plan.hook_source, cut_seconds=plan.realized))
+    r = led.get_render(plan.render_id)
+    if r is None:
+        return
+    post.render_id = plan.render_id
+    post.media_urls = [f"file://{r.path}"]
+
 def _resolve_publish_account_id(accounts: Accounts, post: Post) -> str | None:
     """The CURRENT poster/integration id for this post's channel, re-resolved at publish time so a Go-Live
     integration REMAP since crosspost reaches the post (account_id is otherwise frozen onto the post at
@@ -138,6 +173,9 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
     runs in the LOCK-FREE network phase. `backend` is the POST's resolved backend (per-account routing),
     not the global — so a TikTok-via-Zernio variant uploads to Zernio even if the global is Postiz."""
     aid = (account_id or post.account_id or "").strip() or None
+    _materialize_variant_media(led, cfg, post, Accounts.load(cfg))
+    if (post.variant_hook or "").strip() and not post.render_id:
+        raise RuntimeError("variant hook could not be burned — refusing to ship the hookless base clip")
     if not post.media_urls:
         post.media_urls = [ensure_clip_media(led, cfg, post.parent_id, backend, account_id=aid)]
     elif backend != "dryrun":

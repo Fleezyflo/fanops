@@ -17,8 +17,8 @@ from fanops.timeutil import parse_iso
 # still lives in its home submodule (views_common/_review/_results); this is just the public views surface.
 # F401-silenced because each name is re-exported, not referenced within this file.
 from fanops.studio.views_common import (IMMINENT_THRESHOLD_MINUTES, GRID_PAGE_SIZE, paginate, TERM_DEFS, term_def, accounts_in, _imminent, suggest_time)  # noqa: F401
-from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch, awaiting_moment_count)  # noqa: F401
-from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, schedule_lanes, due_publish_plan, DuePublishPlan, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows, classify_post_delivery, failure_rollup)  # noqa: F401
+from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch, awaiting_moment_count, review_awaiting_by_account)  # noqa: F401
+from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, schedule_lanes, due_publish_plan, DuePublishPlan, schedule_cockpit, ScheduleCockpit, inflight_watch, InflightWatchRow, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows, classify_post_delivery, failure_rollup, operator_error, failure_label)  # noqa: F401
 
 
 @dataclass
@@ -419,6 +419,55 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception:
         failed = 0
     return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked, "failed": failed}
+
+
+
+
+def resolve_account_handle(raw: str, cfg: Config) -> str:
+    """Map ?account= to the canonical ledger/accounts handle (@-agnostic)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return raw
+    bare = raw.lstrip("@")
+    try:
+        for a in Accounts.load(cfg).active():
+            h, hb = a.handle, a.handle.lstrip("@")
+            if raw == h or raw == hb or bare == hb:
+                return h
+    except Exception:
+        pass
+    return raw  # unknown handle — preserve operator input for empty-state copy
+
+
+def _queued_has_future_schedule(p, now: datetime) -> bool:
+    """True when a queued post has a strictly-future scheduled_time (not timeless / past-due)."""
+    if not p.scheduled_time:
+        return False
+    try:
+        return parse_iso(p.scheduled_time) > now
+    except (ValueError, TypeError):
+        return False
+
+def account_work_counts(cfg: Config) -> dict[str, dict]:
+    """Per-handle work queue counts for Home rows and the account session bar."""
+    from collections import defaultdict
+    out: dict[str, dict] = defaultdict(lambda: {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0})
+    try:
+        led = Ledger.load(cfg)
+        for p in led.posts.values():
+            h = p.account
+            if p.state is PostState.awaiting_approval:
+                out[h]["awaiting"] += 1
+            elif p.state is PostState.queued:
+                if _queued_has_future_schedule(p, datetime.now(timezone.utc)):
+                    out[h]["scheduled"] += 1
+            elif p.state in (PostState.needs_reconcile, PostState.submitting, PostState.submitted):
+                out[h]["inflight"] += 1
+            elif p.state in (PostState.failed, PostState.error):
+                out[h]["failed"] += 1
+    except Exception:
+        pass
+    return dict(out)
 
 
 def home_status(cfg: Config) -> HomeStatus:

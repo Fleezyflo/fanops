@@ -66,10 +66,10 @@ def test_reschedule_bucket_ignores_awaiting_and_published(tmp_path):
 def test_get_schedule_shows_integration_publish_sendback_respread(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", account_id="ig_integ_1")
     html = _client(cfg).get("/schedule").data
-    assert b"ig_integ_1" in html               # integration visible
-    assert b"Publish now" in html              # ship from the bucket
-    assert b"Send back" in html                # un-approve
-    assert b"Reschedule all" in html           # routine respread
+    assert b"schedule-guard" in html            # dryrun guard, no integration ids
+    assert b"Publish" in html              # ship from the bucket
+    assert b"Review" in html                # un-approve
+    assert b"Re-spread" in html           # routine respread
 
 def test_schedule_row_renders_lazy_clip_preview(tmp_path):
     # The Schedule bucket previews each clip without re-introducing the 150-<video> perf hit the table was
@@ -138,5 +138,7 @@ def test_schedule_shows_approve_not_ship_and_publish_due(tmp_path, monkeypatch):
     past = _z(_NOW - timedelta(hours=1))
     _seed(cfg, pid="p1", when=past)
     html = _client(cfg).get("/schedule").data.decode()
-    assert "Approved ≠ live" in html
-    assert "Publish all due" in html
+    assert "schedule-guard" in html
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    html_live = _client(cfg).get("/schedule").data.decode()
+    assert "Publish due" in html_live

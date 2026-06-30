@@ -13,6 +13,7 @@
      keeps the active account (or prompts to pick one). Mirrors the compact toggle's GET-link pattern. #}
   {# Slice 2: three-way View toggle — Matrix (default moment×account grid) · Moments (legacy cards, ?view=list) ·
      By account (the pivot). active_view in (none,'matrix') => Matrix is active. GET links; ride the URL. #}
+  <details class="review-advanced"><summary>View &amp; density</summary>
   <div class="meta view-toggle pivot-toggle">View:
     {% if active_view == 'matrix' %}<span class="button active" aria-current="page">Matrix</span>{% else %}<a class="button" href="{{ url_for('review', view='matrix', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Matrix</a>{% endif %}
     {% if active_view in (none, 'list') %}<span class="button active" aria-current="page">Moments</span>{% else %}<a class="button" href="{{ url_for('review', view='list', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Moments</a>{% endif %}{{ term('moment') }}
@@ -23,6 +24,7 @@
     {% if active_view == 'lanes' %}<span class="button active" aria-current="page">Lanes</span>{% else %}<a class="button" href="{{ url_for('review', view='lanes', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Lanes</a>{% endif %}
   </div>
   {% include "_account_filter.html" %}
+  {% include "_review_account_actions.html" %}
   {% include "_source_filter.html" %}
   {# Phase 4: the state filter — narrow to ONE state (awaiting/approved/held/prepared). GET links; ride the URL. #}
   {% set states = [('', 'All'), ('awaiting', 'Awaiting'), ('approved', 'Approved'), ('held', 'Held'), ('prepared', 'Prepared')] %}
@@ -35,17 +37,16 @@
   {# M3c/Phase 4: flip between full / compact / ultra-compact. A GET link (mirrors the account/batch filter
      pattern); the compact param rides the action/pagination URLs so it persists. #}
   <div class="meta view-toggle">{% if compact %}<a class="button" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none)) }}">Full view</a>{% else %}<a class="button" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=1) }}">Compact view</a>{% endif %}{% if not ultra %} <a class="button" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact='ultra') }}">Ultra-compact</a>{% else %} <span class="button active" aria-current="page">Ultra-compact</span>{% endif %}</div>
+  </details>
   {% if progress %}<div class="meta review-progress" aria-label="progress">{% if active %}{{ active }} — {% endif %}{{ progress.awaiting }} awaiting · {{ progress.approved }} approved · {{ progress.held }} held · {{ progress.prepared }} prepared</div>{% endif %}
-  {% if result %}
-    <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}{% if result.detail.approved is defined %}Approved {{ result.detail.approved }} post(s){% if result.detail.hook %} with the hook restored{% endif %} — now in the Schedule.{% elif result.detail.rejected is defined %}Rejected {{ result.detail.rejected }} post(s).{% else %}Sent back to Review.{% endif %}{% else %}{{ result.error }}{% endif %}
-    </div>
-  {% endif %}
+  {% include "_publish_outcome.html" %}
   {% if lanes %}
     {# RF6 account-first LANES: one section per account, every decided moment with explicit cast/uncast +
        the +cast/−uncast override buttons. A TOP-LEVEL branch (like the pivot) so it shows even when zero
        awaiting cards exist — a targeted account with no posts still gets a lane. Reads AccountSelection. #}
     {% include "_review_lanes.html" %}
+  {% elif focus and active and pivot is not none %}
+    {% include "_review_focus.html" %}
   {% elif active_view == 'account' and active and pivot is not none %}
     {# Phase 4 account-first PIVOT: @x's entire run as a flat, day-grouped, scannable list. #}
     {% include "_account_pivot.html" %}
@@ -60,14 +61,7 @@
     {% if group %}
       <h3>{{ label }} ({{ group|length }})</h3>
       {% if key == 'editable' %}
-        <div class="approve-bar meta">Approve queues posts to Schedule — <strong>approved ≠ live</strong>. Reject discards.
-          <label class="confirm"><input type="checkbox" name="batch_confirm" value="1"> batch confirm (required when approving 15+)</label>
-          <button type="button" class="primary" hx-post="{{ url_for('do_approve_posts', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Approve selected</button>
-          <button type="button" hx-post="{{ url_for('do_reject_posts', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-include="#review-body input[name='ids'], #review-body input[name='batch_confirm']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
-          {# M3b 'this account across the whole video': clear a persona's whole run at once. Only under an active
-             account filter (the target IS the filter); scoped to the active batch + source when set. #}
-          {% if active %}<button type="button" class="primary approve-account" hx-post="{{ url_for('do_approve_account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all {{ active }}{% if active_source %} (this source){% endif %}</button>{% endif %}
-        </div>
+        <p class="meta review-hint">Use the action bar at the bottom — tick surfaces, or approve by moment / account / batch.</p>
       {% endif %}
       {% if key == 'editable' and matrix %}
         {# Slice 2: the moment×account MATRIX is the default awaiting view (per focused source). It REPLACES the
@@ -81,6 +75,10 @@
         {% for batch_id, batch_title, bcards in group | group_review_by_batch %}
         <details class="batch" open>
           <summary>{{ batch_title }} ({{ bcards|length }}){% if batch_id and bcards[0].batch_targets %} <span class="muted batch-targets">→ {{ bcards[0].batch_targets|join(', ') }}</span>{% endif %}{% if batch_id and bcards[0].batch_state %} <span class="muted">· {{ bcards[0].batch_state }}</span>{% endif %}{% if batch_id %} <span class="muted">· {{ bcards[0].batch_created or '—' }}</span>{% endif %}</summary>
+          {% if batch_id and key == 'editable' %}<div class="batch-actions meta">
+            <button type="button" class="ghost" data-review-action="select-batch" data-batch-id="{{ batch_id }}">Select batch</button>
+            <button type="button" class="primary" hx-post="{{ url_for('do_approve_batch', batch_id=batch_id, account=active, source=active_source|default(none), view=active_view|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve batch</button>
+          </div>{% endif %}
           {% if batch_id %}<div class="batch-meta meta">{% if bcards[0].batch_excluded %}<span class="batch-excluded" title="this batch's target excludes {{ bcards[0].batch_excluded_names|join(', ') }} — they get no post">{{ bcards[0].batch_excluded }} account(s) excluded by batch target{% if bcards[0].batch_excluded_names %}: {{ bcards[0].batch_excluded_names|join(', ') }}{% endif %}</span>{% if active_batch|default(none) != batch_id %} · {% endif %}{% endif %}{% if active_batch|default(none) != batch_id %}<a href="{{ url_for('review', batch=batch_id, account=active, source=active_source|default(none), state=active_state|default(none), view=active_view|default(none), compact=compact_param) }}">open just this batch</a>{% endif %}</div>{% endif %}
           {% set ns = namespace(day=None) %}
           <div class="clip-grid{{ ' compact' if compact else '' }}">
@@ -111,4 +109,5 @@
   {% endif %}
   {% if not cards %}{% if active %}<div class="empty">No work for {{ active }} — <a href="{{ url_for('review', compact=compact_param) }}">clear the filter</a> to see all accounts.</div>{% else %}<div class="empty">No footage yet — add videos in the Make tab to begin.</div>{% endif %}{% endif %}
   {% endif %}
+  {% include '_review_actions.html' %}
 </div>

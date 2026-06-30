@@ -58,6 +58,7 @@ class SurfacePost:
     tag_sources: dict = field(default_factory=dict)   # per-tag provenance {tag: source} from the clip's meta_captions
                                            # (content|corpus|region|graph-reach|discovery|genre-floor). {} when absent
                                            # (legacy entry / no caption yet) -> the chip row simply doesn't render.
+    thumb_url: Optional[str] = None        # lazy preview poster for the account-pivot row (/clip-thumb/{clip_id})
 
 
 @dataclass
@@ -229,7 +230,7 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
         # legacy Render with no hook_source field never raises.
         hook_source=(getattr(getattr(r, "hook_source", None), "value", None) if r else None),
         length_cause=length_cause, framing_cause=framing_cause, cast_cause=cast_cause,
-        tag_sources=tag_sources)
+        tag_sources=tag_sources, thumb_url=f"/clip-thumb/{post.parent_id}")
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
           active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:
@@ -574,6 +575,18 @@ def awaiting_moment_count(led: Ledger) -> int:
                 seen.add(p.parent_id)
     return len(seen)
 
+
+def review_awaiting_by_account(cards: list[ReviewCard]) -> dict[str, int]:
+    """Editable awaiting surface count per account — powers the per-account approve strip."""
+    from collections import Counter
+    c = Counter()
+    for card in cards:
+        if card.bucket != "editable":
+            continue
+        for s in card.surfaces:
+            if s.editable:
+                c[s.account] += 1
+    return dict(c)
 
 def review_progress(cards: list[ReviewCard]) -> dict:
     """Phase 4 progress header: per-scope counts (awaiting/approved/held/prepared) over the SAME cards the

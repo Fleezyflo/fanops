@@ -1,0 +1,10 @@
+{# Sticky Review action dock — multi-select approve/reject + select helpers. Included at bottom of review-body and pivot. #}
+{% set compact_param = 'ultra' if ultra else (1 if compact else none) %}
+<div id="review-action-dock" class="approve-bar-sticky review-action-dock" role="toolbar" aria-label="Review actions">
+  <span id="review-sel-count" class="sel-count muted">Tick posts below, then approve or reject</span>
+  <button type="button" class="ghost" data-review-action="select-all">Select page</button>
+  <button type="button" class="ghost" data-review-action="clear">Clear</button>
+  <button type="button" class="primary" hx-post="{{ url_for('do_approve_posts', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=(pivot_page.offset if pivot_page else page.offset)) }}" hx-include="#review-body input[name='ids'], #review-body input[name='batch_confirm']" hx-target="#review-body" hx-swap="outerHTML">Approve selected</button>
+  <button type="button" hx-post="{{ url_for('do_reject_posts', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=(pivot_page.offset if pivot_page else page.offset)) }}" hx-include="#review-body input[name='ids']" hx-target="#review-body" hx-swap="outerHTML">Reject selected</button>
+  <label class="confirm"><input type="checkbox" name="batch_confirm" value="1"> confirm 15+</label>
+</div>

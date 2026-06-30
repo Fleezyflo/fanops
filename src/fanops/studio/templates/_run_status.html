@@ -1,5 +1,5 @@
-{# Make tab status counts — parent panel polls via hx-get run_status. #}
-<div id="run-status" class="status status-sub">
+{# Make tab status counts — self-polls when fetched directly or from the panel slot. #}
+<div id="run-status" class="status status-sub" hx-get="{{ url_for('run_status') }}" hx-trigger="every 5s" hx-swap="outerHTML">
   <span>Clips ready<strong>{{ status.clips }}</strong></span>
   <span>Published<strong>{{ status.published }}</strong></span>
   <span>Mode<strong>{{ status.backend }}</strong></span>

@@ -1,29 +1,32 @@
-{# src/fanops/studio/templates/gates.html — Phase 3a: answer the moment/caption agent gates #}
+{# Processing decisions — pipeline gates that block Make until answered. #}
 {% extends "base.html" %}
 {% from "_term.html" import term %}
-{% block title %}Gates{% endblock %}
+{% block title %}Decisions{% endblock %}
 {% block body %}
   <h2>Processing decisions</h2>
-  <p class="muted">The two calls only judgment can make: which moments{{ term('moment') }} to clip, and what each post's
-    caption is. Answer them here, then Prepare again in the Make tab to apply them.</p>
-
+  <p class="muted">Answer these so the pipeline can continue — each {{ term('moment') }} gate unblocks Make. — then run <strong>Prepare</strong> in Make.</p>
   {% set moments = rows | selectattr('kind','equalto','moments') | list %}
   {% set moment_hooks = rows | selectattr('kind','equalto','moment_hooks') | list %}
   {% set captions = rows | selectattr('kind','equalto','captions') | list %}
+  {% set total = rows|length %}
+  <div class="gates-progress meta" aria-live="polite"><strong>{{ total }}</strong> decision{{ 's' if total != 1 else '' }} waiting
+    {% if moment_hooks %} · {{ moment_hooks|length }} hook{% endif %}
+    {% if captions %} · {{ captions|length }} caption{% endif %}
+    {% if moments %} · {{ moments|length }} moment{% endif %}
+  </div>
 
   {% if moment_hooks %}
     <h3>Hooks ({{ moment_hooks | length }})</h3>
-    <p class="muted">The on-screen hook for ONE already-picked clip — write it for the window shown
-      (frames from this exact clip are attached for the autonomous author). Leave blank to ship clean.</p>
+    <p class="muted">On-screen hook for one clip — blank ships clean.</p>
     {% for g in moment_hooks %}
-      <div class="card">
+      <div class="card gate-card" id="gate-{{ g.key }}">
         <strong>clip {{ '%.1f'|format(g.start or 0.0) }}–{{ '%.1f'|format(g.end or 0.0) }}s</strong>
         <span class="muted">{{ g.key }}{% if g.language %}, {{ g.language }}{% endif %}</span>
         {% if g.reason %}<p class="muted">why: {{ g.reason }}</p>{% endif %}
         {% if g.transcript_excerpt %}<p class="muted">“{{ g.transcript_excerpt }}”</p>{% endif %}
         <form hx-post="{{ url_for('do_answer_gate', kind='moment_hooks', key=g.key) }}"
               hx-target="#result-{{ g.key }}" hx-swap="innerHTML">
-          <input name="hook" placeholder="on-screen retention hook (≤6 words; blank = clean clip)" size="48">
+          <input name="hook" placeholder="on-screen hook (≤6 words; blank = clean)" size="48">
           {% for p in g.personas %}
             <input name="persona_hook__{{ p.handle }}" placeholder="{{ p.handle }} hook (optional)" size="40">
           {% endfor %}
@@ -36,13 +39,10 @@
 
   {% if captions %}
     <h3>Captions ({{ captions | length }})</h3>
-    <p class="muted">A caption per surface{{ term('surface') }} — one account-on-one-platform.</p>
     {% for g in captions %}
-      <div class="card">
+      <div class="card gate-card" id="gate-{{ g.key }}">
         <strong>clip {{ g.key }}</strong>
-        {% if g.transcript_excerpt %}<p class="muted">“{{ g.transcript_excerpt }}”
-          {% if g.language %}<em>({{ g.language }})</em>{% endif %}</p>{% endif %}
-        {% if g.guidance %}<p class="muted">guidance: {{ g.guidance }}</p>{% endif %}
+        {% if g.transcript_excerpt %}<p class="muted">“{{ g.transcript_excerpt }}”{% if g.language %} <em>({{ g.language }})</em>{% endif %}</p>{% endif %}
         <form hx-post="{{ url_for('do_answer_gate', kind='captions', key=g.key) }}"
               hx-target="#result-{{ g.key }}" hx-swap="innerHTML">
           {% for s in g.surfaces %}
@@ -50,7 +50,7 @@
               <legend>{{ s.surface }} <em>({{ s.platform }})</em></legend>
               <textarea name="caption__{{ s.surface }}" rows="2" placeholder="caption" required></textarea>
               <input name="hook__{{ s.surface }}" placeholder="on-screen hook (optional)">
-              <input name="language__{{ s.surface }}" placeholder="lang (e.g. en, ar)" value="{{ g.language or '' }}">
+              <input name="language__{{ s.surface }}" placeholder="lang" value="{{ g.language or '' }}">
             </fieldset>
           {% endfor %}
           <button type="submit">Answer captions</button>
@@ -63,13 +63,12 @@
   {% if moments %}
     <h3>Moments ({{ moments | length }})</h3>
     {% for g in moments %}
-      <div class="card">
+      <div class="card gate-card" id="gate-{{ g.key }}">
         <strong>source {{ g.key }}</strong>
-        <span class="muted">duration {{ '%.1f'|format(g.duration or 0.0) }}s{% if g.language %}, {{ g.language }}{% endif %}</span>
+        <span class="muted">{{ '%.1f'|format(g.duration or 0.0) }}s{% if g.language %}, {{ g.language }}{% endif %}</span>
         {% if g.transcript %}
-          <details open><summary>transcript ({{ g.transcript | length }} segments) — click a line to fill a pick</summary>
+          <details open><summary>transcript — click a line to fill a pick</summary>
             <ol class="transcript">{% for seg in g.transcript %}<li class="seg" tabindex="0" role="button"
-                 aria-label="fill a pick with {{ '%.1f'|format(seg.start or 0.0) }} to {{ '%.1f'|format(seg.end or 0.0) }} seconds"
                  data-start="{{ '%.2f'|format(seg.start or 0.0) }}" data-end="{{ '%.2f'|format(seg.end or 0.0) }}">
               <span class="muted">{{ '%.1f'|format(seg.start or 0.0) }}–{{ '%.1f'|format(seg.end or 0.0) }}</span>
               {{ seg.text or '' }}</li>{% endfor %}</ol>
@@ -77,13 +76,14 @@
         {% endif %}
         <form hx-post="{{ url_for('do_answer_gate', kind='moments', key=g.key) }}"
               hx-target="#result-{{ g.key }}" hx-swap="innerHTML">
-          {% for i in range(5) %}
+          <div class="pick-rows">
             <div class="pick-row">
               <input name="pick_start" placeholder="start s" size="6">
               <input name="pick_end" placeholder="end s" size="6">
-              <input name="pick_reason" placeholder="why this moment is worth posting">
+              <input name="pick_reason" placeholder="why this moment">
             </div>
-          {% endfor %}
+          </div>
+          <button type="button" class="ghost add-pick" data-add-pick>Add another pick</button>
           <button type="submit">Answer moments</button>
         </form>
         <div id="result-{{ g.key }}"></div>
@@ -91,7 +91,6 @@
     {% endfor %}
   {% endif %}
 
-  {% if not rows %}<div class="empty">Nothing waiting on you. Prepare clips in the Make tab to produce decisions.</div>{% endif %}
-
+  {% if not rows %}<div class="empty">Nothing waiting — <a href="{{ url_for('run_panel') }}">Make</a> will create decisions when clips need your input.</div>{% endif %}
   <script src="{{ url_for('static', filename='gates.js') }}" defer></script>
 {% endblock %}

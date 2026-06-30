@@ -1,0 +1,28 @@
+{# Waiting-for-permalink strip — polled until reconcile lands a live URL. #}
+{% if inflight_watch and inflight_watch|length %}
+<aside class="reconcile-strip" id="reconcile-strip" role="status" aria-label="Waiting for permalinks"
+  hx-get="{{ url_for('reconcile_strip_partial', account=nav_account, tab=tab|default('')) }}" hx-trigger="every 45s" hx-select="#reconcile-strip" hx-target="#reconcile-strip" hx-swap="outerHTML">
+  <div class="reconcile-strip-head">
+    <strong>Waiting for link</strong>
+    <span class="muted">{{ inflight_watch|length }} post{{ 's' if inflight_watch|length != 1 else '' }}</span>
+    <form class="inline" hx-post="{{ url_for('do_schedule_reconcile', account=nav_account) }}" hx-target="#reconcile-strip" hx-swap="outerHTML">
+      <button type="submit">Check now</button>
+    </form>
+    <a class="ghost" href="{{ url_for('posted', delivery='inflight', account=nav_account) }}">View all</a>
+  </div>
+  {% if result %}
+  <p class="reconcile-poll-msg {{ 'ok' if result.ok else 'err' }}">{% if result.ok %}Checked — new links appear in Posted.{% else %}{{ result.error | operator_error }}{% endif %}</p>
+  {% endif %}
+  <ul class="reconcile-strip-list">
+    {% for w in inflight_watch[:5] %}
+    <li class="reconcile-strip-row">
+      <span class="reconcile-acct">{{ w.account }}</span>
+      <span class="muted">{{ w.platform }}</span>
+      {% if w.age_minutes %}<span class="reconcile-age" title="since submission">{% if w.age_minutes >= 120 %}stuck {{ (w.age_minutes // 60) }}h{% elif w.age_minutes >= 60 %}{{ (w.age_minutes // 60) }}h{% else %}{{ w.age_minutes }}m{% endif %}</span>{% endif %}
+      {% if w.error_reason %}<span class="err">{{ w.error_reason | operator_error }}</span>{% endif %}
+    </li>
+    {% endfor %}
+    {% if inflight_watch|length > 5 %}<li class="muted">+ {{ inflight_watch|length - 5 }} more</li>{% endif %}
+  </ul>
+</aside>
+{% endif %}

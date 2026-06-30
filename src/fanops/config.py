@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
@@ -362,7 +363,13 @@ class Config:
 
     @property
     def responder_mode(self) -> str:
-        return os.getenv("FANOPS_RESPONDER") or "manual"
+        # Default hands-off when the Claude Code CLI is on PATH (mirrors kick_prepare/daemon); explicit
+        # FANOPS_RESPONDER=manual opts out. Without `claude`, fall back to manual so gates stay pending
+        # until a human/cron writes responses (never a silent no-op that looks like a healthy idle pass).
+        v = (os.getenv("FANOPS_RESPONDER") or "").strip().lower()
+        if v:
+            return v
+        return "llm" if shutil.which("claude") else "manual"
 
     def llm_model_for(self, kind: str) -> str:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).

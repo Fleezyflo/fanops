@@ -1,52 +1,46 @@
-{# src/fanops/studio/templates/publish.html — Track B: post queued clips by hand (free, no service) #}
+{# Recovery & manual publish — queued posts to ship by hand or mark done. #}
 {% extends "base.html" %}
-{% block title %}Publish{% endblock %}
+{% block title %}Recovery{% endblock %}
 {% block body %}
-  <h2>Publish</h2>
-  <p class="muted">Post each clip yourself and mark it done — or
-    <a href="{{ url_for('golive_view') }}">connect Postiz</a> to publish automatically.</p>
+  <h2>Recovery &amp; manual publish</h2>
+  {% if not cfg.is_live %}<p class="publish-guard warn">Publishing is off — use <strong>Mark posted</strong> if you shipped by hand, or <a href="{{ url_for('golive_connect') }}">Go Live</a>.</p>{% endif %}
+  <p class="muted">Queued posts you publish yourself, or posts that need a manual nudge. For auto-publish, use <a href="{{ url_for('schedule') }}">Schedule</a> or <a href="{{ url_for('golive_connect') }}">Go Live</a>.</p>
   {% include "_account_filter.html" %}
-  <div class="clip-grid">
-  {% for r in rows %}
-    <div class="card clip-card" id="pub-{{ r.post_id }}">
-      <div class="clip-frame">
-        {% if r.due %}<span class="badge held-badge">DUE</span>{% endif %}
-        <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=r.clip_id) }}" src="{{ url_for('media', post_id=r.post_id) }}" aria-label="{{ r.account }} {{ r.platform }} clip"></video>
+  {% if rows %}
+  <ul class="publish-scan-list">
+    {% for r in rows %}
+    <li class="publish-row" id="pub-{{ r.post_id }}">
+      {% if r.clip_id %}<img class="sched-thumb" loading="lazy" src="{{ url_for('clip_thumb', clip_id=r.clip_id) }}" alt="">{% endif %}
+      <div class="publish-row-text">
+        <div class="publish-head"><strong>{{ r.account }}</strong> <span class="muted">{{ r.platform }}</span>
+          {% if r.due %}<span class="badge">DUE</span>{% else %}<span class="muted">{{ r.scheduled_time | localdt }}</span>{% endif %}</div>
+        <p class="clamp-1">{{ r.caption or '—' }}</p>
       </div>
-      <div class="clip-body">
-        <div class="clip-title">{{ r.account }} <span class="muted">{{ r.platform }}</span></div>
-        <div class="meta">{% if r.state != 'queued' %}<span class="badge">{{ r.state }}</span> {% endif %}{% if r.due %}due now{% else %}scheduled {{ r.scheduled_time | localdt }}{% endif %}</div>
-        <textarea readonly rows="2" aria-label="Caption to copy">{{ r.caption }}</textarea>
-        <a class="button" href="{{ url_for('media', post_id=r.post_id) }}" download aria-label="Download clip for {{ r.account }} {{ r.platform }}">Download clip</a>
-        <form hx-post="{{ url_for('do_mark_posted', post_id=r.post_id) }}"
-              hx-target="#res-{{ r.post_id }}" hx-swap="innerHTML">
-          <input name="url" aria-label="Live post URL (optional)" placeholder="live post URL (optional)">
-          <button type="submit" class="primary">Mark posted</button>
-        </form>
-        <form hx-post="{{ url_for('do_publish_now', post_id=r.post_id) }}"
-              hx-target="#res-{{ r.post_id }}" hx-swap="innerHTML"
-              {% if backend is defined and backend != 'dryrun' %}hx-confirm="Publish this to the live account now?"{% endif %}>
-          <label class="muted">Ship this one now — skips the schedule</label>
-          {% if backend is defined and backend != 'dryrun' %}
-            <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> publish to the REAL account ({{ backend }})</label>
+      <details class="row-actions">
+        <summary>Actions</summary>
+        <div class="row-actions-menu">
+          <a class="button" href="{{ url_for('media', post_id=r.post_id) }}" download>Download clip</a>
+          <form hx-post="{{ url_for('do_mark_posted', post_id=r.post_id) }}" hx-target="#res-{{ r.post_id }}" hx-swap="innerHTML">
+            <input name="url" placeholder="live URL (optional)">
+            <button type="submit" class="primary">Mark posted</button>
+          </form>
+          {% if cfg.is_live %}
+          <form hx-post="{{ url_for('do_publish_now', post_id=r.post_id) }}" hx-target="#res-{{ r.post_id }}" hx-swap="innerHTML">
+            <label class="confirm"><input type="checkbox" name="confirm" value="1"> I confirm this goes live</label>
+            <button type="submit">Publish now</button>
+          </form>
           {% endif %}
-          <button type="submit">Publish now</button>
-        </form>
-        <div id="res-{{ r.post_id }}"></div>
-      </div>
-    </div>
-  {% endfor %}
-  </div>
+        </div>
+      </details>
+      <div id="res-{{ r.post_id }}"></div>
+    </li>
+    {% endfor %}
+  </ul>
   {% if page and page.total > rows|length %}
-    <div class="grid-more meta">
-      Showing {{ page.offset + 1 }}–{{ page.offset + rows|length }} of {{ page.total }}.
-      {% if page.next_offset is not none %}
-        <a class="button" href="{{ url_for('publish_panel', offset=page.next_offset, account=active) }}">Show more</a>
-      {% endif %}
-      {% if page.offset > 0 %}
-        <a class="button" href="{{ url_for('publish_panel', account=active) }}">Back to start</a>
-      {% endif %}
+    <div class="grid-more meta">Showing {{ page.offset + 1 }}–{{ page.offset + rows|length }} of {{ page.total }}.
+      {% if page.next_offset is not none %}<a class="button" href="{{ url_for('publish_panel', offset=page.next_offset, account=active) }}">Show more</a>{% endif %}
     </div>
   {% endif %}
-  {% if not rows %}{% if active %}<div class="empty">Nothing queued for {{ active }} — <a href="{{ url_for('publish_panel') }}">clear the filter</a> to see all accounts.</div>{% else %}<div class="empty">Nothing queued to post. Prepare clips in the Make tab first.</div>{% endif %}{% endif %}
+  {% elif active %}<div class="empty">Nothing queued for {{ active }}.</div>
+  {% else %}<div class="empty">Nothing queued — approve posts in Review first.</div>{% endif %}
 {% endblock %}

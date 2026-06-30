@@ -1,7 +1,4 @@
-// Progressive enhancement (Track C): activate a transcript line (CLICK or, for keyboard users, Enter/
-  // Space on the focused .seg) to fill the first empty pick row in the SAME card with that segment's
-  // start/end, then focus its reason. No-JS still works by typing. P6: the .seg is tabindex=0 role=button,
-  // so this is reachable without a mouse.
+// Gates: transcript click-to-fill + dynamic moment pick rows.
   function fillFromSeg(seg) {
     var card = seg.closest('.card'); if (!card) return;
     var rows = card.querySelectorAll('.pick-row');
@@ -17,10 +14,17 @@
   }
   document.addEventListener('click', function (e) {
     var seg = e.target.closest('.seg'); if (seg) fillFromSeg(seg);
+    var add = e.target.closest('[data-add-pick]');
+    if (add) {
+      var box = add.closest('form').querySelector('.pick-rows');
+      if (!box) return;
+      var row = box.querySelector('.pick-row');
+      if (row) box.appendChild(row.cloneNode(true));
+    }
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     var seg = e.target.closest('.seg'); if (!seg) return;
-    e.preventDefault();            // Space would otherwise scroll the page
+    e.preventDefault();
     fillFromSeg(seg);
   });

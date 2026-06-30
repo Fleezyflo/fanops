@@ -238,7 +238,7 @@ def test_run_prepare_cap_hit_in_llm_mode_surfaces_incomplete(tmp_path, monkeypat
 def test_run_prepare_manual_mode_leaves_gates_ok(tmp_path, monkeypatch):
     # In MANUAL mode the responder writes nothing, so gates remaining after the loop is EXPECTED
     # (they wait in the Gates tab) — still ok=True, not a failure.
-    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)       # manual
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")             # explicit manual
     cfg = Config(root=tmp_path)
     monkeypatch.setattr("fanops.pipeline.advance",
                         lambda c, *, base_time: {"sources": 1, "awaiting": {"moments": 1, "captions": 0}})

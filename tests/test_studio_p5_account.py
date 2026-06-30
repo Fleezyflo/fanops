@@ -266,7 +266,7 @@ def test_show_more_link_preserves_account_review(tmp_path):
         led.add_post(Post(id=f"p{i}", parent_id=f"c{i}", account="@a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=3))))
     led.save()
-    html = _client(cfg).get("/review?account=@a").data.decode()
+    html = _client(cfg).get("/review?account=@a&focus=0&grid=1").data.decode()
     assert "Show more" in html and "account=" in html   # both offset= and account= ride the href
 
 def test_show_more_link_preserves_account_publish(tmp_path):

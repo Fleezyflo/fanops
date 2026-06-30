@@ -22,10 +22,13 @@ def register_schedule_routes(app, cfg):
         approved_total = sum(1 for r in rows if r.editable)              # Face 5: full scoped count (pre-slice, page-safe banner)
         page = views.paginate(rows, _offset_arg())
         lanes = views.schedule_lanes(page.items)
+        schedule_groups = views.group_schedule_by_account(page.items)
         due_plan = views.due_publish_plan(cfg, handle=account or None, batch=batch, now=now)
+        cockpit = views.schedule_cockpit(led, cfg, account, now=now) if account else None
+        inflight_watch = views.inflight_watch(led, cfg, account=account, now=now)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
-        return render_template(tmpl, rows=page.items, lanes=lanes, groups=None, page=page, approved_total=approved_total,
-                               active_batch=batch, due_plan=due_plan, result=result, tab="schedule",
+        return render_template(tmpl, rows=page.items, lanes=lanes, schedule_groups=schedule_groups, groups=None, page=page, approved_total=approved_total,
+                               active_batch=batch, due_plan=due_plan, cockpit=cockpit, inflight_watch=inflight_watch, result=result, tab="schedule",
                                # R3-followup UI-LIE-FIX: the per-channel truth, NOT the legacy global. On a
                                # live deployment with per-channel routing cfg.poster_backend reads 'dryrun'
                                # (the bridge fallback), printing 'dryrun' on a system that's actually live.
@@ -36,10 +39,18 @@ def register_schedule_routes(app, cfg):
     def schedule():
         return _schedule_panel(full=True)
 
+    @app.post("/schedule/shift/<handle>")
+    def do_schedule_shift(handle):
+        try:
+            hours = float(request.form.get("hours", 0))
+        except (TypeError, ValueError):
+            hours = 0.0
+        return _schedule_panel(actions.shift_account_schedule(cfg, handle, hours))
+
     @app.post("/schedule/respread")
     def do_reschedule_bucket():
         # routine re-spread of the approved bucket onto a fresh cadence from now.
-        return _schedule_panel(actions.reschedule_bucket(cfg))
+        return _schedule_panel(actions.reschedule_bucket(cfg, handle=_account_arg() or None))
 
     @app.post("/schedule/unapprove/<post_id>")
     def do_schedule_unapprove(post_id):
@@ -65,6 +76,20 @@ def register_schedule_routes(app, cfg):
         # actionable list. Distinct from /publish/now (Publish tab), which returns a one-off result fragment
         # into a per-row span and left the shipped post stale in the bucket until a manual refresh.
         return _schedule_panel(actions.publish_now(cfg, post_id, confirmed=bool(request.form.get("confirm"))))
+
+    @app.post("/schedule/reconcile")
+    def do_schedule_reconcile():
+        result = actions.reconcile_inflight(cfg)
+        tgt = (request.headers.get("HX-Target") or "")
+        if request.headers.get("HX-Request") and "reconcile-strip" in tgt:
+            led = Ledger.load(cfg); acct = _account_arg()
+            return render_template("_reconcile_strip.html", inflight_watch=views.inflight_watch(led, cfg, account=acct),
+                                   nav_account=acct, result=result, tab="schedule")
+        return _schedule_panel(result)
+
+    @app.post("/schedule/accept-suggested/<handle>")
+    def do_schedule_accept_suggested(handle):
+        return _schedule_panel(actions.accept_suggested_account(cfg, views.resolve_account_handle(handle, cfg)))
 
     @app.post("/schedule/publish-due")
     def do_schedule_publish_due():

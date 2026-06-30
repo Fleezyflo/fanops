@@ -3,8 +3,8 @@
 {% block title %}Review{% endblock %}
 {% block body %}
   <h2>Review &amp; approve</h2>
-  <p class="muted">Produced posts wait here for your approval. <strong>Nothing publishes until you approve it.</strong>
-    Approve sends a post to the Schedule; reject discards it.</p>
+  <p class="muted">Check the posts you want, then approve — they move to <strong>Schedule</strong> (not live yet). Reject discards.</p>
   {% include "_review_live.html" %}
   {% include "_review_body.html" %}
+  <script src="{{ url_for('static', filename='review.js') }}" defer></script>
 {% endblock %}

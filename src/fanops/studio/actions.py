@@ -21,7 +21,7 @@ from fanops.studio.views import _imminent
 from fanops.studio.actions_common import ActionResult, _now, _inherit_captions  # noqa: F401
 from fanops.audit import write_audit
 from fanops.studio.actions_run import (run_ingest, run_pull, save_uploads, save_uploads_and_ingest, save_thirdparty_uploads, run_ingest_thirdparty, run_advance, run_prepare)  # noqa: F401
-from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprove_post, approve_with_hook, approve_clip, approve_account, approve_moment, approve_as_is, approve_stitches, dismiss_stitches, release_stitches)  # noqa: F401
+from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprove_post, approve_with_hook, approve_clip, approve_batch, approve_account, approve_moment, approve_as_is, approve_stitches, dismiss_stitches, release_stitches)  # noqa: F401
 from fanops.studio.actions_casting import cast_add, cast_remove  # noqa: F401
 
 SNOOZE_DAYS = 365
@@ -291,6 +291,49 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
     return ActionResult(ok=True, detail={"post_id": post_id, "url": url})
 
 
+
+def _studio_publish_guard(cfg: Config, post=None) -> Optional[str]:
+    """Studio publish actions must not silently dryrun when the operator expects live."""
+    if not cfg.is_live:
+        return "Not live — flip Go Live before publishing. Nothing reaches social in dryrun."
+    if post is not None:
+        from fanops.accounts import Accounts
+        from fanops.post.run import _post_provider
+        accts = Accounts.load(cfg)
+        if _post_provider(cfg, accts, post) == "dryrun":
+            return (f"{post.account} on {post.platform.value} routes to dryrun — map the channel in Go Live → Accounts.")
+    return None
+
+
+def accept_suggested_account(cfg: Config, handle: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """Apply batch spread suggestions to every queued post on one account."""
+    from fanops.studio.views_common import suggest_times_for_batch
+    now = _now(now); moved = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            posts = [p for p in led.posts.values() if p.state is PostState.queued and p.account == handle]
+            sched = suggest_times_for_batch(cfg, posts, now=now)
+            for pid, t in sched.items():
+                p = led.posts[pid]
+                if p.scheduled_time != t:
+                    p.scheduled_time = t
+                    moved += 1
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"accept suggestions failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"rescheduled": moved, "outcome": "suggestions_accepted", "handle": handle})
+
+
+def reconcile_inflight(cfg: Config) -> ActionResult:
+    """Poll backends for permalinks on in-flight posts (Studio reconcile strip)."""
+    if not cfg.is_live:
+        return ActionResult(ok=False, error="Publishing is off — turn on Go Live before checking for links.")
+    from fanops.reconcile import reconcile_due
+    try:
+        summary = reconcile_due(cfg)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"reconcile failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"outcome": "reconciled", **summary})
+
 def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionResult:
     """Ship ONE reviewed post IMMEDIATELY from the Studio (milestone 5: publish in the UI) via the
     SAME poster path the pipeline uses (post.run.publish_post) — a real post on a live backend, a
@@ -309,9 +352,12 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     led = Ledger.load(cfg)
     if post_id not in led.posts:
         return ActionResult(ok=False, error=f"no such post: {post_id}")
-    st = led.posts[post_id].state
+    post = led.posts[post_id]
+    st = post.state
     if st is not PostState.queued:
         return ActionResult(ok=False, error=f"post {post_id} is {st.value} — only a queued post can be published")
+    if (err := _studio_publish_guard(cfg, post)):
+        return ActionResult(ok=False, error=err)
     try:
         # network runs OUTSIDE the ledger lock (per-post claim->network->finalize) — the Studio no longer
         # holds the flock across the publish round-trip, so a concurrent daemon pass isn't starved.
@@ -576,6 +622,33 @@ def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None, handle: Op
     return ActionResult(ok=True, detail={"rescheduled": len(due), "handle": handle})
 
 
+def shift_account_schedule(cfg: Config, handle: str, hours: float, *, now: Optional[datetime] = None) -> ActionResult:
+    """Nudge every queued post for one account by a fixed offset — preserves relative spacing."""
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=True, detail={"shifted": 0, "handle": None, "hours": hours})
+    now = _now(now)
+    delta = timedelta(hours=hours)
+    moved = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            for p in led.posts.values():
+                if p.state is not PostState.queued or p.account != handle:
+                    continue
+                if _seconds_away(p.scheduled_time, now) or not p.scheduled_time:
+                    continue
+                try:
+                    dt = parse_iso(p.scheduled_time)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    p.scheduled_time = iso_z(dt + delta)
+                    moved += 1
+                except (ValueError, TypeError):
+                    continue
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"shift failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"shifted": moved, "handle": handle, "hours": hours})
+
 def reschedule_account(cfg: Config, handle: str, *, now: Optional[datetime] = None) -> ActionResult:
     """M3 per-account respread: re-stagger one account's queued posts on a fresh cadence (past-due
     included), leaving every other account untouched. Thin wrapper over `reschedule_bucket` so the
@@ -594,6 +667,8 @@ def publish_due_bucket(cfg: Config, *, handle: Optional[str] = None, batch: Opti
     plan = due_publish_plan(cfg, handle=handle, batch=batch, now=_now(now))
     if plan.due == 0:
         return ActionResult(ok=True, detail={"due": 0, "published": 0, "plan": plan.__dict__})
+    if (err := _studio_publish_guard(cfg)):
+        return ActionResult(ok=False, error=err)
     if cfg.is_live and not confirmed:
         tail = f", est. {plan.est_minutes} min" if plan.est_minutes and plan.postiz_due else ""
         rate = f"~{plan.rate_per_min}/min Postiz cap" if plan.rate_per_min else "live backends"

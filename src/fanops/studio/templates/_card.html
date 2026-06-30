@@ -56,7 +56,7 @@
       {% for s in card.surfaces %}
       <div class="surface surface-col"{% if not compact %} role="group" aria-label="{{ s.account }} {{ s.platform }} review column"{% endif %}>
         <div class="surface-head">
-          {% if card.bucket == 'editable' %}<label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}" aria-label="select {{ s.account }} {{ s.platform }} for approval"></label>{% endif %}
+          {% if card.bucket == 'editable' %}<label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}"{% if card.batch_id %} data-batch="{{ card.batch_id }}"{% endif %} aria-label="select {{ s.account }} {{ s.platform }} for approval"></label>{% endif %}
           <span class="surface-name">{{ s.account }} <span class="muted">{{ s.platform }}</span></span>
           {% if s.imminent %}<span class="badge {{ 'shipped' if s.state != 'queued' else '' }}">{{ 'shipped' if s.state != 'queued' else 'shipping now' }}</span>{% endif %}
           {# P5: per-surface reject — drop just THIS account's post (one id via hx-vals), without ticking the

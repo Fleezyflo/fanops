@@ -11,35 +11,35 @@
   {% if active_delivery == 'failed' and failure_rollup and failure_rollup.total %}
   <nav class="failure-chips" aria-label="Failure bucket filter">
     <a class="button{{ ' active' if not active_failure else '' }}" href="{{ url_for('posted', delivery='failed', account=active, batch=active_batch|default(none)) }}">All failed ({{ failure_rollup.total }})</a>
-    {% for kind, label in [('rate_limit','429 rate limit'),('oversize','413 oversize'),('bad_payload','400 bad payload'),('poll_error','Poll error'),('unknown','Other')] %}
+    {% for kind, label in [('rate_limit','Rate limited'),('oversize','Too large'),('bad_payload','Bad upload'),('poll_error','Link pending'),('unknown','Other')] %}
     {% if failure_rollup.buckets.get(kind) %}<a class="button{{ ' active' if active_failure == kind else '' }}" href="{{ url_for('posted', delivery='failed', failure=kind, account=active, batch=active_batch|default(none)) }}">{{ label }} ({{ failure_rollup.buckets[kind] }})</a>{% endif %}
     {% endfor %}
   </nav>
-  <form class="recover-bar" id="recover-bulk" hx-post="{{ url_for('do_recover_posts', account=active, batch=active_batch|default(none), delivery=active_delivery|default(none), failure=active_failure|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML" hx-include="#posted-body input[name='ids']">
+  <div id="posted-action-dock" class="approve-bar-sticky posted-action-dock"><span id="posted-sel-count" class="sel-count muted">Select failed posts to recover</span><button type="button" class="ghost" data-posted-action="clear">Clear</button><form class="recover-bar inline" id="recover-bulk" hx-post="{{ url_for('do_recover_posts', account=active, batch=active_batch|default(none), delivery=active_delivery|default(none), failure=active_failure|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML" hx-include="#posted-body input[name='ids']">
     <input type="hidden" name="reason" value="posted_failed_recovery">
     <button type="submit" name="recover_action" value="retry">Retry selected</button>
     <button type="submit" name="recover_action" value="review">Send to review</button>
     <button type="submit" name="recover_action" value="discard">Discard</button>
-  </form>
+  </form></div>
   {% endif %}
-  {% if active_batch and rollup %}<div class="batch-rollup meta">Batch: {{ rollup.posted }} posted · mean lift {{ '%.2f'|format(rollup.mean_lift) if rollup.mean_lift is not none else '—' }}</div>{% endif %}
+  {% if active_batch and rollup %}<div class="batch-rollup meta">This batch: {{ rollup.posted }} posted · mean lift {{ '%.2f'|format(rollup.mean_lift) if rollup.mean_lift is not none else '—' }}</div>{% endif %}
   {% if rows %}
   {% for day, day_rows in (groups if groups else [('', rows)]) %}
-  {% if day %}<h3 class="day-head">{{ day }}</h3>{% endif %}
+  <h3 class="day-head">{{ day or 'undated' }}</h3>
   <ul class="posted-scan-list">
     {% for r in day_rows %}
     <li class="posted-row delivery-{{ r.posted_via }}{% if r.failure_kind %} failure-{{ r.failure_kind }}{% endif %}">
       <div class="posted-accent" aria-hidden="true"></div>
       {% if active_delivery == 'failed' %}<label class="posted-check"><input type="checkbox" name="ids" value="{{ r.post_id }}"></label>{% endif %}
       <div class="posted-main">
-        <div class="posted-head">{{ (r.published_at or r.scheduled_time) | localdt or '—' }} · <strong>{{ r.account }}</strong> {{ r.platform }} {{ state_badge(r.posted_via) }}{% if r.failure_kind %} <span class="chip fail-kind">{{ r.failure_kind }}</span>{% endif %}</div>
+        <div class="posted-head">{{ (r.published_at or r.scheduled_time) | localdt or '—' }} · <strong>{{ r.account }}</strong> {{ r.platform }} {{ state_badge(r.posted_via, testid='posted-channel-chip') }}{% if r.failure_kind %} <span class="chip fail-kind">{{ r.failure_kind | failure_label }}</span>{% endif %}</div>
         <p class="clamp-1">{% if r.variant_hook %}✦ {{ r.variant_hook }} · {% endif %}{{ r.caption or '—' }}</p>
         <div class="posted-primary">
-          {% if r.posted_via == 'failed' %}<span class="err">{{ r.error_reason or 'failed' }}</span>
+          {% if r.posted_via == 'failed' %}<span class="err">{{ (r.error_reason or 'failed') | operator_error(kind=r.failure_kind) }}</span>
           {% else %}<span>Lift {{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }} {{ lineage_delta(r) }}</span>{% endif %}
           {% if r.posted_via == 'live' and r.public_url %}<a class="live-link" href="{{ r.public_url }}" target="_blank" rel="noopener">View on {{ r.platform }} ↗</a>
-          {% elif r.posted_via == 'inflight' %}<span class="muted">Waiting for permalink{% if r.submission_id %} · <code>{{ r.submission_id[:24] }}</code>{% endif %}</span>
-          {% elif r.posted_via not in ('failed',) %}<span class="muted">no live link</span>{% endif %}
+          {% elif r.posted_via == 'inflight' %}<span class="muted">Waiting for link</span>
+          {% elif r.posted_via == 'dryrun' %}<span class="muted">no link</span>{% elif r.posted_via not in ('failed',) %}<span class="muted">no live link</span>{% endif %}
         </div>
         {% if r.posted_via not in ('failed',) %}
         <details class="posted-metrics-detail"><summary>Metrics</summary>
@@ -47,7 +47,12 @@
         </details>
         {% endif %}
         {% if r.posted_via in ('live', 'dryrun') %}
-        <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML"><button type="submit">Post again</button></form>
+        <form class="inline" hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML"><button type="submit">Post again</button></form>
+        <form class="inline posted-crosspost-one" hx-post="{{ url_for('do_crosspost_to_account', clip_id=r.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
+          <input name="target_account" placeholder="target @handle" size="14">
+          <input name="platform" placeholder="platform" size="10">
+          <button type="submit">Crosspost</button>
+        </form>
         {% elif r.posted_via == 'failed' %}
         <div class="posted-row-actions">
           {% if r.failure_kind != 'oversize' %}<button type="submit" form="recover-one-{{ r.post_id }}" name="recover_action" value="retry">Retry</button>{% endif %}
@@ -63,6 +68,15 @@
     {% endfor %}
   </ul>
   {% endfor %}
-  {% if page and page.total > page.items|length %}<div class="grid-more meta"><a href="{{ url_for('posted', offset=page.next_offset, account=active, batch=active_batch|default(none), delivery=active_delivery|default(none)) }}">Show more</a></div>{% endif %}
+  {% if page and page.total > page.items|length %}<div class="grid-more meta">Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
+      <a href="{{ url_for('posted', offset=page.next_offset, account=active, batch=active_batch|default(none), delivery=active_delivery|default(none)) }}">Show more</a></div>{% elif page and page.offset > 0 %}<div class="grid-more meta">Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.</div>{% endif %}
   {% else %}<div class="empty">Nothing in this view yet.</div>{% endif %}
+  {% if accounts|length > 1 %}
+  <form class="posted-crosspost-all meta" hx-post="{{ url_for('do_crosspost_all', account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
+    <label>Backfill <input name="source_account" placeholder="from @"></label>
+    <label>→ <input name="target_account" placeholder="to @"></label>
+    <label><input name="platform" placeholder="platform"></label>
+    <button type="submit">Crosspost all clips</button>
+  </form>
+  {% endif %}
 </div>

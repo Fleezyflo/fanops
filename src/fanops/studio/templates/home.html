@@ -3,6 +3,18 @@
 {% block title %}Home{% endblock %}
 {% block body %}
   <h2>Home</h2>
+  {% if not status.accounts and not status.counts.sources %}
+  <section class="home-onboarding" aria-labelledby="get-started-h">
+    <h3 id="get-started-h">Get started</h3>
+    <p class="muted">Three steps: connect accounts → add footage → review clips. The <strong>Next</strong> button in the workflow bar points to your current step.</p>
+    <ol class="setup-steps teaching">
+      <li><a href="{{ url_for('golive_connect') }}">Connect an account</a></li>
+      <li><a href="{{ url_for('run_panel') }}">Add footage &amp; run</a></li>
+      <li><a href="{{ url_for('review') }}">Review &amp; approve</a></li>
+    </ol>
+  </section>
+  {% endif %}
+
   <section class="ops-board" aria-label="Operations">
     <a class="ops-tile" href="{{ url_for('review') }}">
       <span class="ops-label">Awaiting review</span>
@@ -22,7 +34,7 @@
     <a class="ops-tile" href="{{ url_for('posted', delivery='live') }}">
       <span class="ops-label">Live</span>
       <span class="ops-value">{{ status.counts.live_trackable }}</span>
-      <span class="ops-hint muted">trackable · https URL</span>
+      <span class="ops-hint muted">with live links</span>
     </a>
     <a class="ops-tile{{ ' ops-tile--danger' if status.counts.failed else '' }}" href="{{ url_for('posted', delivery='failed') }}">
       <span class="ops-label">Failed</span>
@@ -30,25 +42,51 @@
       <span class="ops-hint muted">needs recovery</span>
     </a>
     <a class="ops-tile{{ ' ops-tile--warn' if system_strip.blocked_gates else '' }}" href="{{ url_for('gates') }}">
-      <span class="ops-label">Gates</span>
+      <span class="ops-label">Blocked</span>
       <span class="ops-value">{{ system_strip.blocked_gates }}</span>
       <span class="ops-hint muted">processing blocked</span>
     </a>
   </section>
   {% set zero_batches = batches | selectattr('is_zero_result') | list %}
   {% if zero_batches %}
-  <section class="alerts-lane"><h3>Alerts</h3><ul>
-    {% for b in zero_batches[:3] %}<li class="warn"><a href="{{ url_for('review', batch=b.id) }}">«{{ b.name }}» — 0 posts</a></li>{% endfor %}
-  </ul></section>
-  {% endif %}
-  <section class="home-accounts"><h3>Accounts</h3>
-  {% if status.accounts %}<table class="home-acct-table"><tr><th>Handle</th><th>Channels</th><th>Posts</th></tr>
-  {% for a in status.accounts %}<tr><td><strong>{{ a.handle }}</strong></td>
-  <td class="muted">{% for ch in a.channels %}{{ ch.platform }}{% if ch.backend %} ({{ ch.backend }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</td>
-  <td>{{ status.by_account.get(a.handle, 0) }}</td></tr>{% endfor %}</table>
-  {% else %}<p class="muted"><a href="{{ url_for('golive_connect') }}">Connect accounts</a></p>{% endif %}
+  <section class="alerts-lane"><h3>Alerts</h3>
+    <p class="warn batch-zero-summary" data-warn="zero-result-summary">⚠ {{ zero_batches|length }} upload run{{ 's' if zero_batches|length != 1 else '' }} reached no active account.</p>
+    <ul>{% for b in zero_batches[:3] %}<li class="warn"><a href="{{ url_for('review', batch=b.id) }}">«{{ b.name }}»</a> <span class="badge warn zero-result-badge" data-warn="zero-result">0 posts</span></li>{% endfor %}</ul>
   </section>
-  {% if batches %}<details class="home-batches"{% if batches|length <= 5 %} open{% endif %}><summary>Batches ({{ batches|length }})</summary><ul>
-  {% for b in batches %}<li><a href="{{ url_for('review', batch=b.id) }}">{{ b.name }}</a> · {{ b.posts_born }} posts</li>{% endfor %}
+  {% endif %}
+  <section class="home-accounts" id="home-metrics" data-slot="metrics">
+    <h3>Accounts</h3>
+    {% if status.accounts %}
+    <ul class="home-acct-launcher">
+    {% for a in status.accounts %}
+      {% set w = work_by_account.get(a.handle, {}) %}
+      <li class="home-acct-row">
+        <div class="home-acct-main">
+          <strong>{{ a.handle }}</strong>
+          <span class="muted home-acct-channels">{% for ch in a.channels %}{{ ch.platform }}{% if not loop.last %} · {% endif %}{% endfor %}</span>
+          <span class="home-acct-stats muted" data-acct-count="{{ a.handle }}">{% if w.get('awaiting') %}<span data-acct-awaiting="{{ a.handle }}">{{ w.get('awaiting') }} to review</span>{% endif %}{% if w.get('scheduled') %}{% if w.get('awaiting') %} · {% endif %}<span data-acct-scheduled="{{ a.handle }}">{{ w.get('scheduled') }} scheduled</span>{% endif %}{% if w.get('inflight') %}{% if w.get('awaiting') or w.get('scheduled') %} · {% endif %}<span data-acct-inflight="{{ a.handle }}" class="warn">{{ w.get('inflight') }} waiting for link</span>{% endif %}{% if w.get('failed') %}{% if w.get('awaiting') or w.get('scheduled') or w.get('inflight') %} · {% endif %}<span data-acct-failed="{{ a.handle }}" class="warn">{{ w.get('failed') }} failed</span>{% endif %}{% if not w.get('awaiting') and not w.get('scheduled') and not w.get('inflight') and not w.get('failed') %}<span class="muted">clear</span>{% endif %}</span>
+        </div>
+        <div class="home-acct-ctas">
+          {% if w.get('awaiting') %}<a class="button primary" href="{{ url_for('review', account=a.handle, view='account') }}">Review ({{ w.get('awaiting') }})</a>
+          {% elif w.get('scheduled') %}<a class="button primary" href="{{ url_for('schedule', account=a.handle) }}">Schedule ({{ w.get('scheduled') }})</a>
+          {% else %}<a class="button" href="{{ url_for('review', account=a.handle, view='account') }}">Open</a>{% endif %}
+          {% if w.get('failed') %}<a class="button ghost" href="{{ url_for('posted', account=a.handle, delivery='failed') }}">Failed</a>{% endif %}
+        </div>
+      </li>
+    {% endfor %}
+    </ul>
+    {% else %}<p class="muted"><a href="{{ url_for('golive_connect') }}">Connect accounts</a></p>{% endif %}
+    {% set active_handles = status.accounts | map(attribute='handle') | list %}
+    {% set ns = namespace(any=false) %}
+    {% for handle, n in status.by_account|dictsort %}{% if handle not in active_handles %}{% set ns.any = true %}{% endif %}{% endfor %}
+    {% if ns.any %}
+    <h4>Posts from inactive accounts</h4>
+    <table data-metric="by-account">
+      {% for handle, n in status.by_account|dictsort %}{% if handle not in active_handles %}<tr><td><strong>{{ handle }}</strong></td><td class="muted"><span data-acct-count="{{ handle }}">{{ n }}</span> posts</td></tr>{% endif %}{% endfor %}
+    </table>
+    {% endif %}
+  </section>
+  {% if batches %}<details class="home-batches"{% if batches|length <= 5 %} open{% endif %}><summary>{{ term('batch') }}es ({{ batches|length }})</summary><ul>
+  {% for b in batches %}<li><a href="{{ url_for('review', batch=b.id) }}">{{ b.name }}</a> · {{ b.posts_born }} posts{% if b.is_zero_result %} <span class="badge warn zero-result-badge" data-warn="zero-result">⚠ 0</span>{% endif %}</li>{% endfor %}
   </ul></details>{% endif %}
 {% endblock %}

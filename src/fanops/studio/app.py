@@ -33,6 +33,7 @@ _LEVER_REF = _CATALOG
 # sentinel — None is a real value here (Home), so it cannot double as "not a workflow page".
 _SPINE_SKIP = object()
 _SPINE_HERE = {"index": None, "run_panel": "make", "review": "review", "schedule": "schedule", "posted": "posted"}
+_INFLIGHT_SURFACES = set(_SPINE_HERE) | {"publish_panel"}
 
 _HERE = Path(__file__).resolve().parent
 
@@ -133,8 +134,18 @@ def _account_arg():
     # P5: the per-account filter from ?account=. A blank/absent param -> None (the unfiltered "All"
     # view); read from request.args, so an htmx POST that carries account= in its action URL re-applies
     # the same scope after a mutation (R1). Never raises; an unknown handle simply matches zero rows.
+    # @-agnostic: operators may type @handle while accounts.json/ledger use bare handles.
     v = (request.args.get("account") or "").strip()
-    return v or None
+    if not v:
+        return None
+    try:
+        from flask import current_app
+        cfg = current_app.config.get("FANOPS_CFG")
+        if cfg:
+            return views.resolve_account_handle(v, cfg)
+    except Exception:
+        pass
+    return v
 
 def _batch_arg():
     # Face 4 follow-up (B2): drill into ONE batch from ?batch=<Batch.id> (content-addressed id, NOT name —
@@ -180,6 +191,15 @@ def _state_arg():
     v = (request.args.get("state") or "").strip().lower()
     return v if v in views._STATE_TO_BUCKET else None
 
+def _focus_arg() -> bool:
+    return (request.args.get("focus") or "").strip().lower() in ("1", "true", "yes", "on")
+
+def _focus_idx_arg() -> int:
+    try:
+        return max(0, int(request.args.get("fi", 0)))
+    except (TypeError, ValueError):
+        return 0
+
 def _view_arg():
     # Slice 2: the Review view mode from ?view=. 'list' -> the legacy moment-first cards; 'account' -> the
     # account-first PIVOT (one account's run as a flat list); 'lanes' (RF6) -> the account-first per-account
@@ -213,6 +233,7 @@ def _card_chips(cards, active):
 
 def create_app(cfg: Config) -> Flask:
     app = Flask(__name__, template_folder=str(_HERE / "templates"), static_folder=str(_HERE / "static"))
+    app.config["FANOPS_CFG"] = cfg
     app.config["MAX_CONTENT_LENGTH"] = cfg.upload_max_bytes    # ING-8: configurable upload ceiling (FANOPS_UPLOAD_MAX_MB); Werkzeug 413s an oversize body before the view runs
     # Stored times are canonical UTC; render them in the operator's local tz. `localdt` -> friendly display,
     # `localinput` -> the naive-local value an <input type=datetime-local> edits. (Inverse: _time_arg below.)
@@ -224,6 +245,7 @@ def create_app(cfg: Config) -> Flask:
     # per-batch <details> sections. Pure read-model helper (views), exposed as a filter so the
     # already-paginated card slice is grouped at render time without threading it through every route.
     app.jinja_env.filters["group_review_by_batch"] = views.group_review_by_batch
+    app.jinja_env.filters["group_schedule_by_account"] = views.group_schedule_by_account
     # Phase 4: the account-first PIVOT grouper — group one account's flat SurfacePost rows by ingest day for a
     # running day header, exposed as a filter so the already-paginated row slice is grouped at render time.
     app.jinja_env.filters["group_review_by_account_surface"] = views.group_review_by_account_surface
@@ -240,6 +262,8 @@ def create_app(cfg: Config) -> Flask:
     # S9: the plain-language glossary lookup. A Jinja GLOBAL (not a context processor) so the _term.html macro —
     # which is imported context-isolated via {% from %} — can resolve term_def() inside itself. Pure, fail-soft.
     app.jinja_env.globals["term_def"] = views.term_def
+    app.jinja_env.filters["operator_error"] = views.operator_error
+    app.jinja_env.filters["failure_label"] = views.failure_label
 
 
     @app.context_processor
@@ -276,6 +300,25 @@ def create_app(cfg: Config) -> Flask:
         return {"system_strip": views.build_system_strip(cfg)}
 
     @app.context_processor
+    def _inject_account_session():
+        acct = _account_arg()
+        if not acct:
+            return {}
+        wc = views.account_work_counts(cfg).get(acct, {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0})
+        return {"account_session": {"handle": acct, **wc}}
+
+    @app.context_processor
+    def _inject_inflight_watch():
+        if request.endpoint not in _INFLIGHT_SURFACES:
+            return {}
+        try:
+            led = Ledger.load(cfg)
+            acct = _account_arg()
+            return {"inflight_watch": views.inflight_watch(led, cfg, account=acct)}
+        except Exception:
+            return {"inflight_watch": []}
+
+    @app.context_processor
     def _inject_spine():
         # Slice 1: the workflow stepper (Make→Review→Schedule→Posted + one next-action CTA). Injected ONLY on the
         # workflow surfaces (Home + Make/Review/Schedule/Posted); every other endpoint returns {} so `spine` is
@@ -299,7 +342,7 @@ def create_app(cfg: Config) -> Flask:
         # Face 2: a real read-only status home (accounts + connection + headline counts + batch entry + per-
         # account post counts), NOT a redirect. nav_account is injected globally (Face 4 spine); no chip context
         # here (Home renders no per-surface chip row — the chip universe is a per-tab concern).
-        return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), tab="home")
+        return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), work_by_account=views.account_work_counts(cfg), tab="home")
 
     @app.get("/home/daemon-health")
     def home_daemon_health():
@@ -384,6 +427,12 @@ def create_app(cfg: Config) -> Flask:
         # checkbox as the Run actions). Ignores the post's future schedule (the operator clicked ship).
         return render_template("_result.html",
                                result=actions.publish_now(cfg, post_id, confirmed=bool(request.form.get("confirm"))))
+
+    @app.get("/reconcile-strip")
+    def reconcile_strip_partial():
+        led = Ledger.load(cfg); acct = _account_arg()
+        return render_template("_reconcile_strip.html", inflight_watch=views.inflight_watch(led, cfg, account=acct),
+                               nav_account=acct, tab=request.args.get("tab", ""))
 
     @app.get("/gates")
     def gates():

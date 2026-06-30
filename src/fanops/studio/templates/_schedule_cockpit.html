@@ -1,0 +1,30 @@
+{# Per-account schedule cockpit — queue summary + batch actions. #}
+{% if cockpit %}
+<section class="schedule-cockpit" aria-label="Schedule for {{ cockpit.handle }}">
+  <header class="cockpit-head">
+    <h3>{{ cockpit.handle }}</h3>
+    <div class="cockpit-stats">
+      {% if cockpit.due %}<span class="cockpit-stat cockpit-stat--due">{{ cockpit.due }} due now</span>{% endif %}
+      {% if cockpit.upcoming %}<span class="cockpit-stat">{{ cockpit.upcoming }} upcoming</span>{% endif %}
+      {% if cockpit.inflight %}<span class="cockpit-stat cockpit-stat--warn"><a href="{{ url_for('posted', delivery='inflight', account=cockpit.handle) }}">{{ cockpit.inflight }} waiting for link</a></span>{% endif %}
+    </div>
+  </header>
+  {% if cockpit.next_time %}
+  <p class="cockpit-next meta">Next slot <strong>{{ cockpit.next_time | localdt }}</strong>{% if cockpit.next_times|length > 1 %} · then {{ cockpit.next_times[1] | localdt }}{% endif %}</p>
+  {% endif %}
+  <div class="cockpit-actions">
+    {% if cfg.is_live and due_plan and due_plan.due %}
+    <form class="inline publish-due" hx-post="{{ url_for('do_schedule_publish_due', account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+      <label class="confirm"><input type="checkbox" name="confirm" value="1"> I confirm {{ due_plan.due }} post{{ 's' if due_plan.due != 1 else '' }} go live</label>
+      <button type="submit" class="primary">Publish due ({{ due_plan.due }})</button>
+    </form>
+    {% endif %}
+    {% if cockpit.off_suggestion %}
+    <form class="inline" hx-post="{{ url_for('do_schedule_accept_suggested', handle=cockpit.handle, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+      <button type="submit">Use suggested times ({{ cockpit.off_suggestion }})</button>
+    </form>
+    {% endif %}
+    <a class="button ghost" href="{{ url_for('review', account=cockpit.handle, view='account') }}">← Review</a>
+  </div>
+</section>
+{% endif %}
