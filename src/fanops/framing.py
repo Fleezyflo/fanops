@@ -53,7 +53,8 @@ def _load_cache(path: Path) -> dict:
     try:
         d = json.loads(path.read_text())
         if d.get("v") != _SIDECAR_V: return {}               # stale detector version -> recompute
-        return d.get("windows") or {}
+        w = d.get("windows")
+        return w if isinstance(w, dict) else {}              # a non-dict "windows" (corrupt) -> recompute; else the caller's `key in cache` raises TypeError (breaks NEVER-raises)
     except (OSError, json.JSONDecodeError, TypeError):
         return {}                                             # corrupt sidecar -> recompute (overwrites)
 
@@ -95,7 +96,8 @@ def _load_detect_cache(path: Path) -> dict:
     try:
         d = json.loads(path.read_text())
         if d.get("v") != _DETECT_V: return {}                 # stale detection shape -> recompute
-        return d.get("windows") or {}
+        w = d.get("windows")
+        return w if isinstance(w, dict) else {}               # a non-dict "windows" (corrupt) -> recompute; else the caller's `key in cache` raises TypeError
     except (OSError, json.JSONDecodeError, TypeError):
         return {}
 
