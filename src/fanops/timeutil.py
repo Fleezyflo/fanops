@@ -50,6 +50,23 @@ def iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def publish_buckets(ts: str, cfg) -> "tuple[int, int] | tuple[None, None]":
+    """Leg 3 (timing): bucket an ISO publish timestamp into the OPERATOR-LOCAL (hour, weekday). The
+    single tz home so the stamp site and the timing_bias actuator can never disagree on which hour a
+    post shipped (a UTC-bucketed 'winning hour' is noise when the audience is one region — plan Task 3
+    tz-correctness). weekday is 0=Mon..6=Sun. Fail-SAFE: an empty/None/unparseable ts -> (None, None)
+    (never raises; a bad stamp simply leaves the dim unranked, exactly like an old None row)."""
+    if not ts:
+        return (None, None)
+    try:
+        dt = parse_iso(ts)
+    except (ValueError, AttributeError):
+        return (None, None)
+    zone = _operator_zone(cfg)
+    loc = dt.astimezone(zone) if zone is not None else dt.astimezone()
+    return (loc.hour, loc.weekday())
+
+
 def is_past_due(scheduled_time, now: datetime) -> bool:
     """Single 'past-due' truth. Strict: equal is NOT past-due. None / unparseable / tz-naive
     → False (never raise; bad input never auto-triggers a past-due action). For 'would fire on

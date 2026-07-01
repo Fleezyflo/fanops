@@ -108,6 +108,7 @@ class Config:
         self.hashtag_budget_lock = self.control / "hashtag_budget.lock"  # serializes record_query's read-modify-write (concurrent Studio calls lost writes -> quota over-spend)
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
         self.insights_blocked_path = self.control / "insights_blocked.json"  # Leg 2: the LOUD fail-closed breadcrumb when Graph media-insights is refused for lack of the instagram_manage_insights scope; doctor + Home read it, a clean pull clears it
+        self.timing_bias_path = self.control / "timing_bias.json"  # Leg 3 (timing): the reach-winning operator-local publish HOUR prior; absent -> no timing bias (byte-identical). apply_timing_bias writes it, surface_time's caller reads it (window-clamped)
         self.learn_doctor_path = self.control / "learn_doctor.json"   # F2 read-only learning field-shape verdict; M4 gates on it
         self.log_path = self.reports / "run.log"
 
@@ -748,6 +749,16 @@ class Config:
         # DEFAULT OFF. VALIDATION-FROZEN (Phase 2): even ON, apply_p4_dim_bias stays INERT until
         # `fanops cutover metrics` confirms the live metrics shape (validation_gate.learning_validated).
         v = (os.getenv("FANOPS_P4_DIM_BIAS") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def timing_bias(self) -> bool:
+        # Leg 3 (timing): with this ON, the reach-winning operator-local publish HOUR (once publish_hour
+        # clears the per-dim P4 unlock) biases the schedule slot toward it (window-clamped to the account's
+        # posting window). A schedule-slot bias, never a publish. KILL SWITCH: DEFAULT OFF. VALIDATION-
+        # FROZEN (Phase 2): even ON, apply_timing_bias stays INERT until learning_validated. No hour
+        # variance in the published set -> no winner -> no-op (a fixed schedule has nothing to learn).
+        v = (os.getenv("FANOPS_TIMING_BIAS") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property

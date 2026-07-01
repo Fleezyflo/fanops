@@ -173,3 +173,57 @@ def _frozen(led):
         "clips": {k: v.model_dump() for k, v in led.clips.items()},
         "posts": {k: v.model_dump() for k, v in led.posts.items()},
     }, sort_keys=True, default=str)
+
+
+def test_surface_time_leans_the_hinted_hour(tmp_path):
+    # surface_time gains an optional hour_hint: when set, the scheduled slot's operator-local HOUR is the
+    # hint (the deterministic minute jitter is preserved). None hint -> byte-identical to today.
+    from fanops.crosspost import surface_time
+    from fanops.timeutil import parse_iso
+    base = parse_iso("2026-06-02T00:00:00Z")
+    plain = surface_time(base, "@a", "instagram", "2026-06-02", 0, clip_id="c1")
+    hinted = surface_time(base, "@a", "instagram", "2026-06-02", 0, clip_id="c1", hour_hint=18)
+    assert parse_iso(plain).hour != 18 or plain == hinted     # (sanity; plain is unconstrained)
+    assert parse_iso(hinted).hour == 18                        # the hint lands the hour
+    # None hint is byte-identical to the no-arg call (fail-safe default).
+    assert surface_time(base, "@a", "instagram", "2026-06-02", 0, clip_id="c1", hour_hint=None) == plain
+
+
+def test_run_fires_timing_bias_when_flag_on_and_live(tmp_path, monkeypatch, mocker):
+    # apply_timing_bias must fire in the AUTONOMOUS run loop when its flag is on + live backend — symmetric
+    # with apply_p4_dim_bias. Network-free (spied); self-guards on the flag + validation-frozen (fail-SAFE).
+    monkeypatch.setenv("FANOPS_TIMING_BIAS", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    import fanops.cli as cli
+    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
+    mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
+    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
+    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
+    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
+    spy = mocker.patch.object(cli, "apply_timing_bias", side_effect=lambda led, cfg: led)
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    from fanops.cli import main
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    assert spy.call_count == 1
+
+
+def test_run_skips_timing_bias_when_flag_off(tmp_path, monkeypatch, mocker):
+    monkeypatch.delenv("FANOPS_TIMING_BIAS", raising=False)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    import fanops.cli as cli
+    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
+    mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
+    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
+    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
+    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
+    spy = mocker.patch.object(cli, "apply_timing_bias", side_effect=lambda led, cfg: led)
+    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps(
+        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    from fanops.cli import main
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    assert spy.call_count == 0

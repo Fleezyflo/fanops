@@ -21,9 +21,10 @@ from fanops.log import get_logger
 from fanops.models import PostState
 from fanops.validation_gate import learning_validated, p4_unlocked
 
-# The creative dims P4 ranks by reach. Stamped at crosspost (first_frame_kind, clip_profile). NOT
-# variation_axis (that is the variant_* loop's territory) — reach attribution here is dim-level.
-_P4_DIMS = ("first_frame_kind", "clip_profile")
+# The creative dims P4 ranks by reach. Stamped at crosspost (first_frame_kind, clip_profile, top_bias). NOT
+# variation_axis (that is the variant_* loop's territory) — reach attribution here is dim-level. Leg 3 added
+# top_bias (framing) — an additive creative choice that rides this EXISTING autonomous amplify, no new wiring.
+_P4_DIMS = ("first_frame_kind", "clip_profile", "top_bias")
 
 
 def dim_bias_candidates(led, cfg) -> list[dict]:
@@ -76,9 +77,15 @@ def apply_p4_dim_bias(led: Ledger, cfg: Config) -> Ledger:
         # the other dim, and the log must name WHICH dim failed (a generic 'error' hides whether 0 or 1
         # amplified). MAX_AMPLIFY_PER_SOURCE is enforced INSIDE amplify, so re-runs stay bounded.
         try:
-            hint = (f"Reach data favors {cand['dim'].replace('_', ' ')} = '{cand['winning_value']}' for "
-                    f"this artist (highest mean reach across accounts). Lean toward that creative choice "
-                    f"where it fits the source — do not force it.")
+            # framing is a bool dim; render it as a natural phrase ("top-anchored"/"centered") instead of
+            # the raw "top bias = 'True'". Other dims keep the generic "<dim> = '<value>'" wording.
+            if cand["dim"] == "top_bias":
+                choice = "top-anchored framing" if cand["winning_value"] == "True" else "centered framing"
+                what = choice
+            else:
+                what = f"{cand['dim'].replace('_', ' ')} = '{cand['winning_value']}'"
+            hint = (f"Reach data favors {what} for this artist (highest mean reach across accounts). "
+                    f"Lean toward that creative choice where it fits the source — do not force it.")
             amplify(led, cfg, [cand["post_id"]], extra_guidance=hint)   # the existing C1-fixed path
         except Exception as e:
             get_logger(cfg)("p4_dim_bias", cand.get("dim", "-"), "error", err=str(e)[:120])
