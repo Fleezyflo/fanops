@@ -155,6 +155,39 @@ def test_is_live_backend_postiz_uses_postiz_key(monkeypatch, tmp_path):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     assert Config(root=tmp_path).is_live_backend is True         # postiz + postiz key → live
 
+def test_responder_mode_unknown_falls_back_to_manual(monkeypatch, tmp_path, caplog):
+    # Contract: responder_mode ∈ {llm, manual}. A typo (FANOPS_RESPONDER=llmm) slipped through verbatim,
+    # and get_responder only matches =="llm" -> the operator THINKS they enabled the AI but silently gets
+    # manual with no signal. Validate + warn + fall back to manual, mirroring poster_backend's guard.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llmm")               # typo of "llm"
+    with caplog.at_level(logging.WARNING):
+        mode = Config(root=tmp_path).responder_mode
+    assert mode == "manual"                                      # unknown never resolves to a bogus mode
+    assert any("FANOPS_RESPONDER" in r.getMessage() for r in caplog.records)
+
+def test_is_live_backend_logs_when_registry_unreadable(monkeypatch, tmp_path, caplog):
+    # high: is_live + no global creds falls through to per-channel readiness; a TORN accounts.json
+    # (load_accounts_safe err) froze the learn/reconcile passes by returning False with NO signal — the
+    # operator saw learning frozen and no reason. Keep the fail-safe False, but log WHY.
+    monkeypatch.setenv("FANOPS_LIVE", "1")                       # operator intends live
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)          # dryrun global -> no backend creds -> fall through
+    monkeypatch.setattr("fanops.accounts.load_accounts_safe", lambda cfg: (None, "corrupt accounts.json"))
+    with caplog.at_level(logging.WARNING):
+        live = Config(root=tmp_path).is_live_backend
+    assert live is False                                        # still fail-safe (not provably live)
+    assert any("account" in r.getMessage().lower() for r in caplog.records)
+
+def test_effective_publish_mode_logs_on_accounts_error(monkeypatch, tmp_path, caplog):
+    # The publish-mode LABEL fail-opens to 'live' when accounts can't be read — silently, so a corrupt
+    # registry showed a confident 'live' with no hint the read failed. Keep the fail-open label, log the lie.
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    def boom(cfg): raise RuntimeError("corrupt")
+    monkeypatch.setattr("fanops.accounts.Accounts.load", boom)
+    with caplog.at_level(logging.WARNING):
+        mode = Config(root=tmp_path).effective_publish_mode()
+    assert mode == "live"                                       # fail-open label preserved
+    assert any("account" in r.getMessage().lower() for r in caplog.records)
+
 def test_burn_subs_defaults_off_and_respects_env(monkeypatch, tmp_path):
     # DEFAULT OFF (opt-in): burn_subs only adds the TRANSCRIPT captions on top of the retention hook;
     # captioning the audio is redundant + transcription-dependent, so it ships only when asked.

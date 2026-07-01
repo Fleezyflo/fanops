@@ -203,7 +203,10 @@ class Config:
             from fanops.accounts import Accounts
             provs = sorted({p for _, _, p in Accounts.load(self).live_ready_channels()})
             return ", ".join(provs) if provs else "live"
-        except Exception:
+        except Exception as e:
+            # Fail-open label (the is_live truth is shown separately) — but log the degradation so a
+            # corrupt registry showing a confident 'live' label is at least traceable, not silent.
+            _log.warning("accounts read failed in effective_publish_mode (%s); degrading label to 'live'", e)
             return "live"
 
     def auth_key_name_for(self, backend: str) -> str:
@@ -347,7 +350,11 @@ class Config:
         from fanops.accounts import load_accounts_safe  # lazy: config<->accounts circular import
         accounts, err = load_accounts_safe(self)
         if err:
-            return False                                # torn registry + no global creds -> not provably live
+            # torn registry + no global creds -> not provably live. This gate freezes the learn/reconcile
+            # passes; returning False SILENTLY left the operator staring at frozen learning with no reason.
+            # Keep the fail-safe False, but log WHY (mirrors track.py's load_accounts_safe warning).
+            _log.warning("accounts registry unreadable (%s); learn/reconcile stays frozen (not provably live)", err)
+            return False
         return bool(accounts.live_ready_channels())
 
     def backend_has_creds(self, backend: str) -> bool:
@@ -368,8 +375,17 @@ class Config:
         # PATH must NEVER auto-enable it: that fired `claude -p` on every run/kick/daemon-tick without intent.
         # Default is 'manual' (gates stay pending until llm is explicitly enabled or a human/cron answers) —
         # this single gate makes EVERY downstream responder path (run/respond/run_prepare/kick/daemon/
-        # intro_match) opt-in by construction, so no per-site guard is needed.
-        return (os.getenv("FANOPS_RESPONDER") or "").strip().lower() or "manual"
+        # intro_match) opt-in by construction, so no per-site guard is needed. An UNKNOWN value (a .env
+        # typo like 'llmm') must NOT slip through: get_responder only matches =='llm', so a typo silently
+        # ran manual while the operator believed the AI was on. Validate + warn + fall back to manual,
+        # mirroring poster_backend's guard above.
+        v = (os.getenv("FANOPS_RESPONDER") or "").strip().lower()
+        if not v:
+            return "manual"
+        if v not in {"llm", "manual"}:
+            _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
+            return "manual"
+        return v
 
     def llm_model_for(self, kind: str) -> str:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
