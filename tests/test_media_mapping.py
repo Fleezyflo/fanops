@@ -78,6 +78,19 @@ def test_resolve_stamps_media_id_on_permalink_match(tmp_path, monkeypatch):
     assert led.posts["p1"].media_id == "M1"
 
 
+def test_resolve_stamps_the_real_product_type(tmp_path, monkeypatch):
+    # The insights request is DERIVED from product_type, so resolve must stamp the media's REAL
+    # media_product_type (from the live media record), not leave the client to guess REELS. A FEED post
+    # must be stamped FEED so the client sends the feed metric set (no reels-only avg-watch -> no 400).
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = _led(cfg, [_post("p1", "https://www.instagram.com/p/AAA/")])
+    page = _Resp(200, {"data": [{"id": "M1", "permalink": "https://www.instagram.com/p/AAA/",
+                                 "media_product_type": "FEED"}]})
+    reconcile.resolve_media_ids(led, cfg, get=_media_get([page]))
+    assert led.posts["p1"].media_id == "M1"
+    assert led.posts["p1"].product_type == "FEED"    # the real type, stamped alongside media_id
+
+
 def test_resolve_normalizes_trailing_slash_and_scheme(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     # post stored WITHOUT trailing slash; media permalink WITH it (+ differing case host) -> still matches
