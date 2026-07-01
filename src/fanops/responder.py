@@ -123,16 +123,20 @@ class LlmResponder:
     def _mark_context_limit(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """AGENT-2: park the wedged gate's source-owner with a VISIBLE degraded_reason so the operator sees WHY
         it stalls (master principle: no silent degradation). Best-effort + a breadcrumb; the gate stays pending
-        (operator can shrink the source / re-request) but is now diagnosable. The captions gate keys on a clip
-        id, not a source, so it has no source-owner (sid=None) — the context_limit breadcrumb above still fires.
+        (operator can shrink the source / re-request) but is now diagnosable. The moment gates key on the source id directly;
+        the captions gate keys on a CLIP id, so its source is resolved clip->moment->source (else it stalls invisibly) — the context_limit breadcrumb above still fires.
         Loads + saves the ledger OUTSIDE the advance() flock (gates live outside the lock), so a fresh load+save
         is safe. Ledger imported lazily to avoid a module cycle (ledger imports widely)."""
         from fanops.ledger import Ledger
-        sid = key.split(".", 1)[0] if kind in ("moments", "moment_hooks", "moment_casting") else None
-        if sid is None: return
         try:
             led = Ledger.load(cfg)
-            src = led.sources.get(sid)
+            if kind in ("moments", "moment_hooks", "moment_casting"):
+                sid = key.split(".", 1)[0]
+            else:                                          # captions gate keys on a CLIP id -> clip.parent=moment, moment.parent=source
+                clip = led.clips.get(key)
+                mom = led.moments.get(clip.parent_id) if clip is not None else None
+                sid = mom.parent_id if mom is not None else None
+            src = led.sources.get(sid) if sid else None
             if src is not None:
                 led.sources[sid] = src.model_copy(update={"degraded_reason": f"agent gate {kind} over context limit: {reason}"})
                 led.save()
