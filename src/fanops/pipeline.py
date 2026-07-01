@@ -291,6 +291,16 @@ def _publish_safe(cfg: Config, log) -> None:
 GATE_KINDS = ("moments", "moment_hooks", "moment_casting", "captions")
 
 
+def pending_gate_count(cfg: Config) -> int:
+    """How many agent gates are awaiting a responder answer RIGHT NOW — the need-aware signal for smart
+    driving: the responder (claude) has work iff this is > 0, so a run/tick with 0 pending spends ZERO
+    claude. Reuses the EXACT predicate the run loop + RunSummary.awaiting use ({pending(kind) for kind in
+    GATE_KINDS}, pipeline.py 'awaiting') — NOT a parallel copy — so "is there AI work?" can never drift
+    from what the loop actually acts on (the council Critic's non-negotiable: a cheaper reimplementation
+    would eventually say 'idle' while a gate silently starves)."""
+    return sum(len(pending(cfg, kind=k)) for k in GATE_KINDS)
+
+
 class AwaitingCounts(TypedDict):
     """The per-kind count of agent gates still awaiting a responder answer (the run loop converges only
     when all are 0). Keys mirror GATE_KINDS / responder._SCHEMA / agentstep.pending kinds."""

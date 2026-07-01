@@ -631,10 +631,16 @@ def daemon_health(cfg: Config) -> Optional[dict]:
     as OPT-IN rather than a fault and (b) DISCLOSE the recurring-LLM cost when hands-off would run llm."""
     try:
         from fanops import daemon
+        from fanops import pipeline
         interval = daemon.installed_interval(cfg) or 600
         rep = daemon.status(cfg, interval=interval)
         responder = daemon.resolve_responder(cfg)
-        return {**rep, "interval": interval, "responder": responder, "discloses_llm": responder == "llm"}
+        try:
+            pending_gates = pipeline.pending_gate_count(cfg)   # need-aware truth: claude runs ONLY to answer these
+        except Exception:
+            pending_gates = None                               # never let a torn agent_io dir 500 the banner
+        return {**rep, "interval": interval, "responder": responder, "discloses_llm": responder == "llm",
+                "pending_gates": pending_gates}
     except Exception:
         return None
 
