@@ -18,6 +18,7 @@ import re
 from datetime import datetime, timedelta, timezone
 import requests
 from fanops.config import Config
+from fanops.errors import MetaInsightsScopeError
 from fanops.log import get_logger
 from fanops.hashtags import _norm
 
@@ -111,6 +112,71 @@ def _next_path(cfg: Config, next_url: str) -> str:
     (and any leading slash) so the verbatim cursor URL is GET as-is, not concatenated onto the base twice."""
     base = cfg.meta_graph_url.rstrip("/") + "/"
     return next_url[len(base):] if next_url.startswith(base) else next_url.lstrip("/")
+
+# Leg 2 (Insight): the media-insights metric list per product type. REELS is the only type with an
+# avg-watch-time metric (LOCKED #3 — asking for it on a feed video 400s), so its list is a superset.
+_INSIGHTS_METRICS_REELS = ["reach", "plays", "saved", "shares", "likes", "comments", "ig_reels_avg_watch_time"]
+_INSIGHTS_METRICS_FEED = ["reach", "saved", "shares", "likes", "comments"]
+# Graph metric name -> our lift/row key. Meta renamed plays/impressions -> views; `saved` is our `saves`.
+# ig_reels_avg_watch_time lands as raw ms (`avg_watch_ms`); retention as a [0,1] fraction is derived
+# downstream (GraphInsightsClient, needs the clip duration) — kept out of here so this stays duration-free.
+_GRAPH_INSIGHTS_MAP = {
+    "reach": "reach", "views": "views", "plays": "views", "impressions": "views",
+    "saved": "saves", "saves": "saves", "shares": "shares",
+    "likes": "likes", "like_count": "likes", "comments": "comments", "comments_count": "comments",
+    "ig_reels_avg_watch_time": "avg_watch_ms",
+}
+
+def _is_scope_error(body) -> bool:
+    """True iff a Graph error body is a PERMISSION/scope refusal (missing instagram_manage_insights) vs a
+    transient failure. Meta signals it as an OAuthException (code 10 / 200) or a 'permission'-worded message.
+    Conservative: only a clear permission signal trips the loud path; anything else stays transient (None)."""
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict):
+        return False
+    if err.get("type") == "OAuthException" or err.get("code") in (10, 200, 803):
+        return True
+    return "permission" in str(err.get("message", "")).lower()
+
+def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=None):
+    """Leg 2 read-half: THE complete performance of one live IG media from Graph media-insights — the SOLE
+    IG analytics source (no Postiz fallback). Branches the requested metric list on `product_type` (reels get
+    avg-watch, feed does not — LOCKED #3). Returns a normalized dict {reach,views,saves,shares,likes,comments
+    [,avg_watch_ms]} on success; None on a TRANSIENT failure (5xx / network / no creds — re-poll next pass);
+    raises MetaInsightsScopeError on a PERMISSION refusal (LOUD, fail-closed — the one external gate). The
+    token rides the access_token param, never a logged string."""
+    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+        return None                                              # no creds -> transient-shaped (keep prior snapshot)
+    metrics = _INSIGHTS_METRICS_REELS if (product_type or "").upper() == "REELS" else _INSIGHTS_METRICS_FEED
+    get = get or requests.get
+    try:
+        resp = get(f"{cfg.meta_graph_url}/{media_id}/insights",
+                   params={"metric": ",".join(metrics), "access_token": cfg.meta_graph_token}, timeout=20)
+    except requests.exceptions.RequestException:
+        return None                                              # transport blip -> transient
+    if getattr(resp, "status_code", None) != 200:
+        try: body = resp.json()
+        except (ValueError, AttributeError): body = None
+        if _is_scope_error(body):
+            raise MetaInsightsScopeError(                        # LOUD: the insights scope is missing (body WITHHELD)
+                "Meta Graph media-insights refused: grant the instagram_manage_insights token scope")
+        return None                                              # non-permission non-200 -> transient
+    try:
+        data = resp.json().get("data")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(data, list):
+        return None
+    out: dict = {}
+    for item in data:
+        if not isinstance(item, dict): continue
+        key = _GRAPH_INSIGHTS_MAP.get(item.get("name"))
+        if key is None: continue                                 # unknown metric name -> dropped (mirrors _map_analytics)
+        vals = item.get("values")
+        v = vals[0].get("value") if isinstance(vals, list) and vals and isinstance(vals[0], dict) else None
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[key] = v
+    return out
 
 def _read_queries(cfg: Config):
     """The recorded search queries, or None if the file is corrupt/unreadable -> the caller treats None

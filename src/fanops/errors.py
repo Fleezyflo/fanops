@@ -77,6 +77,16 @@ class CutoverError(Exception):
     chain) — it only ever means the operator's manual go-live probe needs a different input."""
 
 
+class MetaInsightsScopeError(Exception):
+    """Leg 2 (Insight): the Meta Graph media-insights read was REFUSED for lack of the
+    `instagram_manage_insights` token scope (a permission error, not a transport blip). Deliberately NOT an
+    AuthError — a missing INSIGHTS scope must not halt the PUBLISH queue (publishing uses a different
+    Postiz/Zernio credential entirely). It fails the insights pass CLOSED + LOUD: GraphInsightsClient sets an
+    `insights_blocked` signal (doctor check + Home banner) and every post keeps its PRIOR snapshot — there is
+    no silent degrade and never a wrong number written. Granting the one scope is the single unblock. Body
+    WITHHELD from the message (the access_token can appear in a Graph error echo)."""
+
+
 def redact(text: "str | None", *secrets: "str | None", limit: int = 200) -> str:
     """Scrub secret values (API keys) out of an external response body BEFORE it lands in a ledger
     error_reason / stderr / run.log, THEN truncate. The 401 paths already WITHHOLD the body entirely;
