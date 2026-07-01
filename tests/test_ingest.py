@@ -272,6 +272,22 @@ def test_ingest_same_sha_keeps_origin_and_warns(tmp_path, mocker):
     assert led3.sources[sid].origin_kind == "native"                 # unchanged (no silent flip)
     assert "origin_conflict" in cfg.log_path.read_text()             # the conflict is visible
 
+def test_ingest_same_sha_different_origin_path_warns(tmp_path, mocker):
+    # same bytes catalogued from a "drop", then re-offered from a "url" pull -> dedup KEEPS the first
+    # source_origin (write-once), but the ALTERNATE origin was silently dropped from the audit trail (only
+    # origin_kind / batch conflicts logged). Surface it with an origin_path_conflict breadcrumb so provenance
+    # isn't silently lost (mirrors origin_conflict / batch_conflict).
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"SAME")
+    with Ledger.transaction(cfg) as led:
+        ingest_drops(led, cfg)                                       # origin "drop" (default), persisted
+    staging = tmp_path / "staging"; _put(staging / "dup.mp4", b"SAME")
+    with Ledger.transaction(cfg) as led:
+        ingest_drops(led, cfg, inbox=staging, origin="url")         # SAME bytes, DIFFERENT origin (a url pull)
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "origin_path_conflict" in log                            # the alternate origin is now visible, not silently dropped
+
 
 # ---- WS-I1 Task 1 (ING-1/10/11/copy2): per-pass inbox lifecycle ----
 def test_ingest_drains_inbox_and_does_not_rehash(tmp_path, mocker):

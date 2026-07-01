@@ -171,6 +171,8 @@ def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str, now_iso: 
             get_logger(cfg)("ingest", prior.id, "origin_conflict", want=origin_kind, have=prior.origin_kind)
         if prior is not None and batch_id and prior.batch_id != batch_id:   # re-drop under a different batch
             get_logger(cfg)("ingest", prior.id, "batch_conflict", want=batch_id, have=prior.batch_id)
+        if prior is not None and prior.source_origin != origin:      # same bytes re-encountered from a DIFFERENT origin (drop vs url vs scan) — write-once keeps the first; surface the alternate so provenance isn't silently dropped
+            get_logger(cfg)("ingest", prior.id, "origin_path_conflict", want=origin, have=prior.source_origin)
         return True                                                  # already known → safe to archive the inbox copy
     sid = make_id("src", digest)                  # identity = content, not path
     dest = cfg.sources / f"{sid}{f.suffix.lower()}"
