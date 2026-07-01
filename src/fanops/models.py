@@ -579,6 +579,8 @@ class MomentCastingRequest(BaseModel):
     guidance: str = ""
     learned: dict = Field(default_factory=dict)   # AGENT-4: per-account history hint (handle -> [prior selection reasons]);
                                                   # {} -> none (byte-identical). READ-ONLY history, NOT a live metric (no unfreeze).
+    reach_prior: dict = Field(default_factory=dict)   # Leg 3 Task 4: per-account REACH hint (handle -> {clip_profile: reach_mean});
+                                                  # {} -> none (byte-identical, the OFF/frozen path). READ-ONLY, validation-frozen, bias-only.
 
 class MomentCastingDecision(BaseModel):
     request_id: str

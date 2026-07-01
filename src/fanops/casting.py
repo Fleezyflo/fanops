@@ -23,6 +23,7 @@ from fanops.control import load_guidance
 from fanops.ids import child_id
 from fanops.timeutil import iso_z
 from fanops.log import get_logger
+from fanops.casting_bias import casting_reach_prior   # Leg 3 Task 4: the per-(account, clip_profile) reach hint
 
 
 def _record_fact(led, m, handle, *, method, overlap=None, signal=None, rank=None) -> None:
@@ -90,10 +91,17 @@ def request_moment_casting(led, cfg, source_id, accounts):
                 "start": m.start, "end": m.end,
                 **({"frame": fr} if (fr := _moment_frame(m)) else {})} for m in pool]
     learned = _learned_account_signal(led, [p["handle"] for p in personas])   # deterministic per-account history hint
+    # Leg 3 Task 4: the per-(account, clip_profile) REACH prior — a READ-ONLY lean toward the account proven
+    # to reach on a content type. Gated by the kill switch (default OFF) AND validation-frozen inside
+    # casting_reach_prior (returns {} until the metric shape is proven), so the brief is byte-identical to
+    # today when off/unproven. Bias-ONLY: it never removes an account from `personas` (explore-guard).
+    reach_prior = casting_reach_prior(led, cfg, [p["handle"] for p in personas]) if cfg.casting_bias else {}
     payload = MomentCastingRequest(source_id=source_id, request_id="", moments=moments, personas=personas,
-                                   language=src.language, guidance=load_guidance(cfg), learned=learned).model_dump()
+                                   language=src.language, guidance=load_guidance(cfg), learned=learned,
+                                   reach_prior=reach_prior).model_dump()
     payload.pop("request_id", None)
     if not learned: payload.pop("learned", None)       # {} -> drop the key (byte-identical text-only path)
+    if not reach_prior: payload.pop("reach_prior", None)   # {} -> drop the key (OFF/frozen -> byte-identical)
     frames = [m["frame"] for m in moments if m.get("frame")]   # AGENT-4: top-level list the responder attaches as images
     if frames: payload["frames"] = frames              # only when at least one was extracted -> no-frame call stays text-only
     write_request(cfg, kind="moment_casting", key=source_id, payload=payload)
