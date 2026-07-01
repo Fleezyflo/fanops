@@ -562,6 +562,24 @@ def test_recover_posts_retry_requeues_retryable(tmp_path):
     assert res.detail["retried"] == 1 and res.detail["skipped"] == 1
 
 
+def test_recover_posts_retry_lands_a_schedule_when_timeless(tmp_path):
+    # timeless-queued: recover_posts (retry) set queued but never guaranteed scheduled_time. A recovered post
+    # whose scheduled_time was cleared/corrupt lands in queued but TIMELESS -> _due_or_fail parks it forever
+    # (silent, invisible in the UI). The recovery must land a strictly-future time so it publishes on the lead
+    # cycle instead of never.
+    from fanops.studio.actions import recover_posts
+    from fanops.timeutil import parse_iso
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    p = _fail_post("t", "postiz 429"); p.scheduled_time = None; led.add_post(p)   # a TIMELESS failed post
+    led.save()
+    res = recover_posts(cfg, ["t"], action="retry", reason="studio_retry")
+    assert res.ok
+    p2 = Ledger.load(cfg).posts["t"]
+    assert p2.state is PostState.queued
+    assert p2.scheduled_time                                          # NOT timeless -> the daemon publishes it, never parks it forever
+    assert parse_iso(p2.scheduled_time) is not None                  # ...a valid ISO time the scheduler can act on
+
+
 def test_recover_posts_discard_terminal(tmp_path):
     from fanops.studio.actions import recover_posts
     cfg = Config(root=tmp_path)

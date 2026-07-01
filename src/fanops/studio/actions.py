@@ -1007,6 +1007,8 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
                     p.state = PostState.queued
                     p.submission_id = None
                     p.error_reason = None
+                    if not (p.scheduled_time or "").strip():   # timeless-queued: a recovered post with no schedule (cleared/corrupt) parks FOREVER in _due_or_fail (silent). Land a time so the daemon publishes it, never never.
+                        p.scheduled_time = iso_z(_now(None) + timedelta(minutes=cfg.publish_lead_minutes))
                     retried.append(pid)
                 elif action == "discard":
                     p.state = PostState.rejected
