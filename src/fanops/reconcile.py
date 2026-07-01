@@ -83,6 +83,81 @@ def _is_giveup(post) -> bool:
     identical line (XC-6). The operator clears it via `fanops resolve <id> published|failed --url` by hand."""
     return bool(post.error_reason) and post.error_reason.startswith(_GIVEUP_PREFIX)
 
+
+# ---- Leg 2 (Insight) identify: resolve each live IG post's Graph media_id from its permalink ----------
+
+_MEDIA_ID_UNMATCHED = "media_id_unmatched: no live IG media permalink matched this post's public_url (re-resolving next pass)"
+
+def _norm_permalink(url: Optional[str]) -> Optional[str]:
+    """Canonical key for matching a stored public_url to a Graph media `permalink`: `host_without_www + path`,
+    lowercased, no trailing slash. Both are always-https public IG permalinks, differing only in a leading
+    `www.` or a trailing `/` — normalizing those makes the match exact without guessing. None on a non-https /
+    malformed value (safe_public_url rejects it) so a bad URL never collides with another post's real one."""
+    ok = safe_public_url(url)
+    if ok is None:
+        return None
+    from urllib.parse import urlparse
+    u = urlparse(ok)
+    host = u.netloc.lower()
+    if host.startswith("www."): host = host[4:]
+    path = u.path.rstrip("/")
+    return f"{host}{path}" if host else None
+
+def _pick_media(cands: list[dict], post) -> Optional[dict]:
+    """From ≥1 live media sharing a post's normalized permalink, pick the one whose `timestamp` is nearest the
+    post's `published_at` (a re-share can duplicate a permalink; the nearest ship time is the real match, never
+    first-seen). One candidate -> it. No parseable published_at or no media timestamps -> first (stable)."""
+    if len(cands) == 1:
+        return cands[0]
+    try:
+        pub = parse_iso(post.published_at) if post.published_at else None
+    except Exception:
+        pub = None
+    if pub is None:
+        return cands[0]
+    def _dist(m):
+        try:
+            return abs((parse_iso(m.get("timestamp")) - pub).total_seconds())
+        except Exception:
+            return float("inf")
+    return min(cands, key=_dist)
+
+def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
+    """Stamp each published/analyzed IG post's Graph `media_id` by matching its permalink against the live
+    /{ig_user}/media list. Runs INSIDE the automatic pull path (pull_metrics) so the unattended daemon
+    resolves new posts itself — the sole-source insights read keys on media_id, so an unresolved post is
+    invisible to it. Idempotent (a post already carrying a media_id is skipped) and fail-open (an empty media
+    list resolves nobody, never crashes). An unmatched post is breadcrumbed, NEVER given a fabricated id."""
+    from fanops.models import Platform
+    from fanops import meta_graph
+    log = get_logger(cfg)
+    targets = [p for p in led.posts.values()
+               if p.platform is Platform.instagram and p.media_id is None
+               and p.state in (PostState.published, PostState.analyzed)
+               and _norm_permalink(p.public_url) is not None]
+    if not targets:
+        return led                                               # nothing to resolve -> no network call
+    media = meta_graph.list_user_media(cfg, get=get)
+    if not media:
+        return led                                               # couldn't enumerate (no creds / transport) ->
+        #                                                          stay re-resolvable, DON'T false-breadcrumb "unmatched"
+    by_key: dict[str, list[dict]] = {}
+    for m in media:
+        k = _norm_permalink(m.get("permalink"))
+        if k: by_key.setdefault(k, []).append(m)
+    for p in targets:
+        cands = by_key.get(_norm_permalink(p.public_url))
+        if cands:
+            mid = _pick_media(cands, p).get("id")
+            led.posts[p.id] = p.model_copy(update={"media_id": mid})
+            log("reconcile", p.id, "media_id_resolved", media_id=mid)
+        else:
+            # we DID enumerate live media and this permalink wasn't among them: honest miss -> keep
+            # re-resolvable (media_id stays None) + breadcrumb; never guess an id.
+            led.posts[p.id] = p.model_copy(update={"error_reason": _MEDIA_ID_UNMATCHED})
+            log("reconcile", p.id, "media_id_unmatched")
+    return led
+
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.
 _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reconcile)
 GetStatus = Callable[[str], dict]

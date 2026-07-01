@@ -79,6 +79,39 @@ def trend_score(cfg: Config, tag: str, *, get=None):
                 total += float(v)
     return total
 
+_MEDIA_FIELDS = "id,permalink,media_product_type,timestamp"
+_MEDIA_PAGE_CAP = 50            # defensive: >50 pages of the IG user's OWN media is a pathological/mocked paging loop
+
+def list_user_media(cfg: Config, *, get=None):
+    """Leg 2 identify-half: the live list of THIS IG user's media (id + permalink + product_type + timestamp),
+    walking `paging.next` to completion. READ-ONLY, spends NO hashtag budget (a separate high-limit endpoint).
+    FAIL-OPEN -> [] on any transport/shape failure or absent creds (mirrors trend_score) so an insights pull
+    that can't enumerate media simply resolves no new media_ids rather than crashing the daemon tick."""
+    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+        return []                                                # no creds -> nothing to enumerate (fail-open)
+    out: list[dict] = []
+    params = {"fields": _MEDIA_FIELDS, "limit": 100}
+    path = f"{cfg.meta_ig_user_id}/media"
+    for _ in range(_MEDIA_PAGE_CAP):
+        body = _graph_get(cfg, path, params, get=get)
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, list):
+            break                                                # transport/shape failure -> stop, return what we have ([] first pass)
+        out.extend(m for m in data if isinstance(m, dict) and m.get("id"))
+        nxt = (body.get("paging") or {}).get("next") if isinstance(body.get("paging"), dict) else None
+        if not nxt:
+            break
+        # `next` is a fully-formed absolute URL (host + querystring); pass it as the path with empty params
+        # so _graph_get GETs it verbatim (+ the access_token). Strip the base so we don't double it.
+        path, params = _next_path(cfg, nxt), {}
+    return out
+
+def _next_path(cfg: Config, next_url: str) -> str:
+    """The Graph `paging.next` is an absolute URL; _graph_get prepends `{meta_graph_url}/`. Strip that base
+    (and any leading slash) so the verbatim cursor URL is GET as-is, not concatenated onto the base twice."""
+    base = cfg.meta_graph_url.rstrip("/") + "/"
+    return next_url[len(base):] if next_url.startswith(base) else next_url.lstrip("/")
+
 def _read_queries(cfg: Config):
     """The recorded search queries, or None if the file is corrupt/unreadable -> the caller treats None
     as FAIL-CLOSED (budget unknown == exhausted). Absent file == clean state (nothing spent) -> []."""
