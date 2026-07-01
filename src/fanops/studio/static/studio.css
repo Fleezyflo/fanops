@@ -878,6 +878,7 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 
 .home-loop { margin:0 0 var(--s-3); display:flex; flex-wrap:wrap; gap:.5rem .75rem; align-items:center; }
 .daemon-ok { color:var(--state-live); }
+.daemon-off { border-left:2px solid var(--line); padding-left:.7rem; }   /* OPT-IN, not a fault — neutral accent, never the loud .banner.warn */
 .posted-row-actions .inflight-resolve input[name=url] { max-width:14rem; }
 
 .run-handoff { margin:0 0 var(--s-3); }

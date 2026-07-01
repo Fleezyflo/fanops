@@ -623,10 +623,16 @@ def daemon_health(cfg: Config) -> Optional[dict]:
     launchctl absent, or any error — so Home never 500s and a non-mac dev box shows no false alarm. The
     detection already exists in daemon.status(); this only SURFACES it where the operator looks. Lazy import
     keeps the launchd/subprocess dependency off the core view path; htmx-loaded on-demand (mirrors
-    /golive/health) so it never runs a subprocess on the spine's every-surface home_status read."""
+    /golive/health) so it never runs a subprocess on the spine's every-surface home_status read.
+
+    Enriched with `interval`/`responder`/`discloses_llm` so the banner can (a) frame a NOT-INSTALLED driver
+    as OPT-IN rather than a fault and (b) DISCLOSE the recurring-LLM cost when hands-off would run llm."""
     try:
         from fanops import daemon
-        return daemon.status(cfg, interval=daemon.installed_interval(cfg) or 600)
+        interval = daemon.installed_interval(cfg) or 600
+        rep = daemon.status(cfg, interval=interval)
+        responder = daemon.resolve_responder(cfg)
+        return {**rep, "interval": interval, "responder": responder, "discloses_llm": responder == "llm"}
     except Exception:
         return None
 

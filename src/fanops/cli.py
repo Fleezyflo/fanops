@@ -496,7 +496,9 @@ def cmd_daemon(cfg: Config, args) -> int:
             interval = daemon.parse_interval(args.interval)
             res = daemon.install(cfg, interval=interval, responder=args.responder)
             print(f"daemon installed -> {res['plist']}")
-            print(f"  wrapper {res['wrapper']}  |  interval {interval}s  |  loaded {res['loaded']}  |  responder {args.responder}")
+            print(f"  wrapper {res['wrapper']}  |  interval {interval}s  |  loaded {res['loaded']}  |  responder {res['responder']}")
+            if res["discloses_llm"]:                      # DISCLOSE the recurring-LLM cost — never silently turn the AI on
+                print(f"  ⚠ hands-off runs the AI responder — invokes `claude` ~every {interval}s. Use `--responder manual` for no-LLM scheduling.")
             print("  next: fanops daemon status   |   stop: fanops daemon stop")
             return 0
         if act == "status":
@@ -629,7 +631,10 @@ def main(argv: list[str] | None = None) -> int:
     p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
     dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
     p_dins = dae_sub.add_parser("install", help="install + load the launchd agent (macOS)")
-    p_dins.add_argument("--interval", default="10m"); p_dins.add_argument("--responder", default="llm", choices=["llm", "manual"])
+    p_dins.add_argument("--interval", default="10m")
+    # DECOUPLED AI switch: 'inherit' (default) installs scheduling WITHOUT forcing the LLM on — the run
+    # resolves the ambient responder. 'llm'/'manual' persist an explicit choice to .env (durable).
+    p_dins.add_argument("--responder", default="inherit", choices=["inherit", "llm", "manual"])
     dae_sub.add_parser("status", help="is the agent loaded + actually firing (heartbeat)?")
     p_dstop = dae_sub.add_parser("stop", help="unload the launchd agent"); p_dstop.add_argument("--remove", action="store_true")
     p_dlog = dae_sub.add_parser("logs", help="tail the run log"); p_dlog.add_argument("-n", type=int, default=40)

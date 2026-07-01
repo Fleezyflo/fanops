@@ -56,14 +56,14 @@ def test_render_plist_sets_label_interval_runatload_and_program(tmp_path):
     assert "PATH" in pl["EnvironmentVariables"] and "HOME" in pl["EnvironmentVariables"]
 
 
-def test_render_wrapper_uses_venv_fanops_cd_root_now_base_time_and_responder(tmp_path):
+def test_render_wrapper_uses_venv_fanops_cd_root_now_base_time(tmp_path):
     cfg = Config(root=tmp_path)
-    w = daemon.render_wrapper(cfg, responder="llm", interval=600)
+    w = daemon.render_wrapper(cfg, interval=600)
     assert w.startswith("#!/bin/bash")
     assert daemon._fanops_bin() in w                              # the SAME venv that installed it
     assert f"cd {shlex.quote(str(cfg.root))}" in w               # shell-quoted; not base, not /
     assert '--base-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)"' in w    # a FRESH now each fire, not a frozen past date
-    assert "FANOPS_RESPONDER=llm" in w                           # safe value, shlex leaves it bare
+    assert "FANOPS_RESPONDER" not in w                           # decoupled: .env/Config resolves the responder at fire time
     assert "export PATH=" in w
 
 
@@ -296,7 +296,7 @@ def test_render_wrapper_shell_quotes_paths_with_metacharacters(tmp_path):
     weird = tmp_path / 'a b"c$d'
     weird.mkdir()
     cfg = Config(root=weird)
-    w = daemon.render_wrapper(cfg, responder="llm", interval=600)
+    w = daemon.render_wrapper(cfg, interval=600)
     assert f"cd {shlex.quote(str(weird))}" in w        # the cd target is shell-quoted
     assert f'cd "{weird}"' not in w                     # NOT the naive double-quoted form
 

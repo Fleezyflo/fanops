@@ -167,9 +167,14 @@ fanops daemon stop                      # unload it
 ```
 
 launchd owns the process, so closing the terminal no longer kills the run — the failure mode a plain
-`nohup`/`setsid` can't fix (macOS has no `setsid`). The agent runs **dryrun by default**; pass
-`--responder llm` only with `claude` logged in. macOS-only (launchd) — `install`/`stop` error loudly
-elsewhere instead of silently no-op'ing. `status` reports liveness from the same heartbeat below.
+`nohup`/`setsid` can't fix (macOS has no `setsid`). The agent runs **dryrun by default** (publishes
+nothing). **Scheduling and the AI switch are decoupled**: `install` schedules only — it bakes no
+responder. The fire-time run resolves the responder from `.env` / `FANOPS_RESPONDER` (the single source
+of truth; defaults to `llm` when `claude` is logged in, else `manual`). `--responder` defaults to
+`inherit` (touch nothing) and **discloses** at install when it resolves to `llm` (each tick invokes
+`claude`); pass `--responder manual` for no-LLM scheduling, or `--responder llm` to persist the AI switch
+durably. macOS-only (launchd) — `install`/`stop` error loudly elsewhere instead of silently no-op'ing.
+`status` reports liveness from the same heartbeat below.
 
 **The learning loop now closes inside `run`.** After the respond→advance loop converges,
 `run` runs one `track → adjust` pass (`pull_metrics → classify_outcomes → amplify → retire`)
