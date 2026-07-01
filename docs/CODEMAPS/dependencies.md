@@ -13,28 +13,21 @@
 
 ## Services
 
-- **Blotato REST** (full learning loop: metrics + reconcile + cutover):
-  `POST /media/uploads` presign (https-only PUT enforced) -> binary PUT (size-scaled timeout
-  60s+2s/MB cap 600s, 500MB max) -> `POST /v2/posts` -> `GET /v2/posts/:id` (reconcile poll)
-  -> metrics list. Auth: `blotato-api-key` header from env `BLOTATO_API_KEY`; 401 -> typed
-  BlotatoAuthError halts the queue (response bodies withheld from auth errors).
-  Retry shape: 429 jittered bounded backoff; 5xx/network-after-send -> needs_reconcile (never re-POST).
-
-- **Postiz** (free, self-hosted alternative; no learning loop):
+- **Postiz** (self-hosted; the headline live publish path for IG):
   `GET /public/v1/integrations` (list connected platforms) -> `POST /public/v1/posts` (schedule with integration_id).
   Auth: `x-api-key` header from env `POSTIZ_API_KEY`; failures -> typed PostizAuthError.
-  Schema: account → integration_id stored in `accounts.json` (shared with Blotato model).
+  Schema: account → integration_id stored in `accounts.json`. Publishing feeds the learning loop; IG
+  performance is read separately from the Meta Graph (see Insight / `GraphInsightsClient`, the sole IG metric reader).
 
 - **Zernio** (hosted TikTok poster; no learning loop):
   `ZERNIO_API_URL` (default `https://zernio.com/api/v1`) upload + schedule.
   Auth: `ZERNIO_API_KEY` (WRITE-ONLY — never logged/echoed). TikTok-only; a per-account live backend.
 
-- **Poster backends** (post/__init__.get_poster):
+- **Poster backends** (post/providers.get_poster):
   - `dryrun` (default, offline, file:// media, never publishes)
-  - `postiz` (Postiz self-hosted, no learning loop, operator-gated via Studio Go-Live tab)
-  - `zernio` (hosted TikTok poster, no learning loop)
-  - `rest` (BlotatoRestPoster, learning-loop capable; Blotato being retired)
-  - `mcp` (blotato_mcp wrapper, LEGACY)
+  - `postiz` (Postiz self-hosted, the headline live IG path, operator-gated via Studio Go-Live tab)
+  - `zernio` (hosted TikTok poster)
+  - (`rest`/`mcp` Blotato posters were deleted in the Blotato-removal leg — codemap `insights-culmination.md`)
 
 ## Python deps (pyproject)
 
@@ -49,8 +42,8 @@ Extras:
 ## Env flags (config.py; bools parse "1/true/yes/on")
 
 **Posting backend:**
-- `FANOPS_POSTER` (dryrun|postiz|zernio|rest|mcp); `BLOTATO_API_KEY` for rest/mcp; `POSTIZ_URL` + `POSTIZ_API_KEY` for postiz; `ZERNIO_API_URL` + `ZERNIO_API_KEY` for zernio.
-- `cfg.is_live_backend` = (rest or postiz or zernio) + that backend's required key present.
+- `FANOPS_POSTER` (dryrun|postiz|zernio); `POSTIZ_URL` + `POSTIZ_API_KEY` for postiz; `ZERNIO_API_URL` + `ZERNIO_API_KEY` for zernio.
+- `cfg.is_live_backend` = (postiz or zernio) + that backend's required key present (per-channel readiness aware; dryrun/unknown → never live).
 
 **Pipeline:**
 - `FANOPS_ARTIST_NAME`, `FANOPS_BURN_SUBS` (default OFF), `FANOPS_SUBTITLE_FONT`, `FANOPS_WHISPER_MODEL` (legacy whisper CLI, default turbo),

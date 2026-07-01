@@ -88,7 +88,8 @@ by) + `rationale` (operator-facing WHY) — both optional, ride defaults).
 ## Control files (operator-editable; malformed -> ControlFileError, exit 2)
 
 - **accounts.json:** handle/account_id/platforms/status/persona per account; validate() pre-run.
-  `account_id` is numeric for Blotato or a UUID for Postiz integrations (same field, different schema).
+  `account_id` is a Postiz integration id (or a legacy numeric); the per-platform `integrations` map keys a
+  handle's IG vs TikTok to their own ids (a handle's channels are different integrations).
   Writable atomically via `write_account_id()` (ecc audit: python + security). Guarded by `accounts.lock`.
 
 - **personas.json:** first-class `Persona` records (`models`/`personas.py`) — `voice`/`tag_lean`/`hashtag_corpus`
@@ -100,7 +101,8 @@ by) + `rationale` (operator-facing WHY) — both optional, ride defaults).
 - **context.md:** free-text guidance injected into moment requests.
 
 - **cutover.json** (auto-written by `cutover` probe; not in the ledger): contains probe post state (cutover._probe_id, timestamp, etc.)
-  for Blotato validation before going live — separate from the ledger so a stray probe never pollutes it.
+  for Postiz learning validation before going live — separate from the ledger so a stray probe never pollutes it.
+  (Learning also auto-validates on the first real non-degraded live metric, so this probe is an optional early shortcut.)
 
 ## Cascade-safety invariant (C1)
 

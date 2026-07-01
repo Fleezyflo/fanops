@@ -3,8 +3,8 @@
 
 Single-operator local CLI (`fanops`) that turns long-form source video into scheduled
 cross-posted clips. Pure-Python src layout (`src/fanops/`), one JSON ledger as the only
-state store, external heavy lifting via subprocesses (ffmpeg/whisper/yt-dlp), the
-Blotato REST API, or Postiz (self-hosted). Autonomous learning features are default-OFF, fail-safe.
+state store, external heavy lifting via subprocesses (ffmpeg/whisper/yt-dlp), publishing via
+Postiz (self-hosted) or Zernio (TikTok), IG metrics via the Meta Graph. Autonomous learning features are default-OFF, fail-safe.
 Optional Flask-based Studio web cockpit (imported lazily; core install Flask-free).
 Optional MoviePy produced-clip compositing with template cards + overlays (imported lazily; core install MoviePy-free).
 Asset memory (M1): every Source carries `origin_kind` — native (the artist's own footage the pipeline cuts) vs third_party (outside footage handed in: remembered + held aside, INERT to clip-production until chosen).
@@ -24,7 +24,7 @@ Account-First Studio (all default-safe; an unbatched / casting-OFF run is render
   ──crosspost(schedule per account×platform surface; stamps creative provenance + created_at)──> Post(awaiting_approval)
   ──[operator APPROVES in Studio Review — the human gate; publish iterates ONLY queued, nothing ships unattended]──> Post(queued)
   ──publish_due/publish_now(post/run.py)──> submitting -> submitted -> published (+published_at, +06_published/<day> archive)
-  ──track(pull Blotato metrics)──> analyzed ──adjust──> amplify/retire
+  ──track(pull Graph/Postiz metrics)──> analyzed ──adjust──> amplify/retire
 ```
 
 - Per-unit error quarantine: any stage failure parks THAT unit in `error` + reason; never wedges the pass.
@@ -46,12 +46,12 @@ Account-First Studio (all default-safe; an unbatched / casting-OFF run is render
 | Structural hooks (M2–M6) | router.py (read-only Moment classifier: `STRATEGY_KEYS`, `route_moments`, `awaiting`/`stitched`; M6 reserves intro_tease for clean-no-peak + forward-only reservation guard); models.{StitchPlan(+rank_score/rationale/render_attempts), StitchState, ClipState.stitch_draft, PostState.retired, Moment.{hook_strategy, intro_matches}, IntroMatchItem/Decision} + `stitch_plan_id`; ledger stitch_plan ops (add/approve/dismiss — in-lock idempotent) + the v1→v2 stitch_plans migration step (now part of the v3 hop-chain) + reconcile preserves `clean_awaiting_strategy`; impact_cut.py (deterministic cut-before-peak planner); **intro_match.py (M6 LLM-vision matcher gate — request/ingest/pending agentstep gate; ephemeral per-(moment,candidate-set,version) key; fail-open)**; compose.py (M6 `_compose_fingerprint` + `prepend_intro` compose-PREPEND with continuous looped music bed, fail-open, lock-free); stitch_render.py (`mine_suggestions` ranked/capped/deduped pass over BOTH producers `_impact_cut_candidates`+`_intro_tease_candidates`; `prewarm`/`render_approved_stitches` dispatch by strategy_key + common supersede precheck + per-format `strategies` filter + `approved_disabled_count` kill-switch + `MAX_INTRO_RENDER_ATTEMPTS` retry-cap); clip.render_moment cut-window override + duration-validity; config.{hook_router, impact_cut, intro_tease}; pipeline `_enabled_strategies` gate + matcher wiring; studio stitches tab (strategy-agnostic: approve/dismiss ordered by rank + release drafts); digest surfaces stitch_plan errors |
 | Compositing (optional [compose]) | compose.py (MoviePy produced clip layer w/ template cards, fail-open to base clip) |
 | Agent I/O | agentstep.py (request/response files), llm.py (`claude -p`, 300s cap), responder.py |
-| Schedule/post | crosspost.py (deterministic schedule), tagging.py, post/{run,media,payload,blotato_rest,blotato_mcp,postiz,dryrun,metrics}.py |
+| Schedule/post | crosspost.py (deterministic schedule), tagging.py, post/{run,media,payload,postiz,zernio,dryrun,metrics}.py |
 | Publishing | post/run.py (_submit_one, publish_due, publish_post — the Publish-now engine; `_archive_published` day-bucketed 06_published record, fail-open) |
 | Content lifecycle | born-awaiting_approval gate (crosspost + Ledger.approve_post/reject_post/unapprove); `_PROTECTED_POST_STATES` wipe-guard (ledger reconcile cascade); created_at/published_at stamps (models); day-bucketed Review + Posted (studio/views.{review_buckets day-sort, posted_library, group_posted_by_day}); cross-account onboard (studio/actions.{crosspost_to_account, crosspost_all_to_account}, repost_post); `gc` retention (cli + config.gc_keep_days, sweeps 05_scheduled); v2→v3 created_at migration (ledger._migrate_v3_created_at) |
 | Learn (default OFF) | track.py (writes LIFT_SCORE), adjust.py (classify/amplify/retire), variant_learning.py (best_hooks/ucb_rank), variant_amplify.py, variant_transfer.py, p4_dim_bias.py (P4(b) cross-account reach dim-bias, autonomous via cli.run) |
 | State/infra | ledger.py (flock+atomic JSON), models.py (pydantic units + LIFT_SCORE), accounts.py (+ atomic write_account_id), ids.py (SHA1 content-addressing), timeutil.py (single parse site), log.py (TAB-column run.log), errors.py, digest.py (+public gate_state), validation_gate.py |
-| Autonomous ops | autopilot.py (one-cmd: enable llm responder + launchd daemon), daemon.py (launchd supervisor around `run`), doctor.py (readiness pre-flight checks), cutover.py (Blotato: auth/post/metrics/lift prover) + cutover_postiz.py (Postiz throwaway-probe prover) — both OPTIONAL early shortcuts: learning auto-unfreezes on the first real non-degraded live metric (track._auto_validate_metrics_shape; a row is degraded if a high-weight key is absent or present-but-null), so the cutover probe is no longer required |
+| Autonomous ops | autopilot.py (one-cmd: enable llm responder + launchd daemon), daemon.py (launchd supervisor around `run`), doctor.py (readiness pre-flight checks), cutover.py + cutover_postiz.py (Postiz throwaway-probe learning prover) — both OPTIONAL early shortcuts: learning auto-unfreezes on the first real non-degraded live metric (track._auto_validate_metrics_shape; a row is degraded if a high-weight key is absent or present-but-null), so the cutover probe is no longer required |
 | Studio (optional [studio]) | studio/app.py (Flask factory, lazily imported), studio/views.py (read models), studio/actions.py (one transaction per mutation), studio/golive.py (Postiz connect/config surface) |
 
 ## CLI verbs (cli.py)
@@ -64,7 +64,7 @@ payloads older than FANOPS_GC_KEEP_DAYS [default 30]; refuses keep_days<1; never
 **Recovery:** `resolve` / `unhold` / `retry-source` / `retry-metrics`.
 
 **Autonomous ops:** `autopilot` (enable llm responder + install daemon) · `daemon {install,status,stop}`
-(launchd supervisor) · `doctor` (readiness pre-flight) · `cutover {auth,post,metrics,lift}` (Blotato verify).
+(launchd supervisor) · `doctor` (readiness pre-flight) · `cutover {auth,post,metrics,lift}` (Postiz verify).
 
 **Publishing:** `compose` (optional [compose] extra; MoviePy produced-clip render outside the flock).
 
@@ -124,7 +124,7 @@ The control surface — every input that changes what the engine outputs:
 | `FANOPS_HOOK_ROUTER` | config → pipeline | M2 (default OFF): read-only Moment `hook_strategy` classifier after the critic; renders nothing (observe-only annotation) |
 | `FANOPS_IMPACT_CUT` | config → pipeline | M4 (default OFF): produce + render operator-approved impact-cuts (cut-before-peak); needs the router on to reserve moments |
 | `FANOPS_INTRO_TEASE` | config → router/pipeline | M6 (default OFF): pair a clean clip with a third-party intro asset + compose-PREPEND a "wait for it" tease; needs the router on + `FANOPS_RESPONDER=llm` (the LLM-vision matcher gate) |
-| `FANOPS_POSTER` | config → publish | dryrun (no-op) vs postiz / zernio (TikTok) / blotato (real posts) |
+| `FANOPS_POSTER` | config → publish | dryrun (no-op) vs postiz (IG) / zernio (TikTok) — real posts |
 
 ## Learning-gate seams (the C1-sensitive area)
 
