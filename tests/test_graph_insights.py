@@ -49,6 +49,14 @@ _DEPRECATED = ("plays", "impressions", "clips_replays_count",
                "ig_reels_aggregated_all_plays_count", "video_views")
 
 
+def test_media_metrics_table_is_v21_valid(tmp_path, monkeypatch):
+    # The single sync point with Meta, DEFENDED: no deprecated metric may live in the table (that is what
+    # let `plays` rot), and the Graph URL stays pinned to the version the table is valid for. This FAILS at
+    # CI the day someone re-adds a deprecated metric — surfacing the class at CI, not in production.
+    assert not (set(meta_graph._MEDIA_METRICS) & set(_DEPRECATED)), meta_graph._MEDIA_METRICS
+    assert _cfg(tmp_path, monkeypatch).meta_graph_url.endswith("v21.0")
+
+
 def test_insights_metrics_for_reels_includes_avg_watch():
     m = meta_graph.insights_metrics_for("REELS")
     assert "ig_reels_avg_watch_time" in m                        # REELS-only metric IS in the reels set
