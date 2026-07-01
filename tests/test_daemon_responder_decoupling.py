@@ -131,7 +131,7 @@ def test_kick_prepare_does_not_inject_llm(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     captured = {}
     class _P:
-        def __init__(self, *a, **k): captured["env"] = k.get("env", {})
+        def __init__(self, *a, **k): captured["env"] = k.get("env", {}); self.pid = 424242   # kick reads proc.pid for the liveness-debounce
     monkeypatch.setattr(actions_run.subprocess, "Popen", _P)
     cfg = Config(root=tmp_path); cfg.control.mkdir(parents=True, exist_ok=True)
 
@@ -146,7 +146,7 @@ def test_kick_prepare_honours_explicit_responder(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_RESPONDER", "manual")
     captured = {}
     class _P:
-        def __init__(self, *a, **k): captured["env"] = k.get("env", {})
+        def __init__(self, *a, **k): captured["env"] = k.get("env", {}); self.pid = 424242   # kick reads proc.pid for the liveness-debounce
     monkeypatch.setattr(actions_run.subprocess, "Popen", _P)
     cfg = Config(root=tmp_path); cfg.control.mkdir(parents=True, exist_ok=True)
 
