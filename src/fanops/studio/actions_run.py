@@ -39,12 +39,29 @@ def kick_prepare(cfg: Config) -> bool:
     lock = cfg.control / ".run-kick"
     try:
         if lock.exists() and (time.time() - lock.stat().st_mtime) < _KICK_TTL_S:
-            return False                                   # a recent kick is still plausibly running
+            # kick-prepare-debounce-race: the old fixed-TTL held the lock ~300s even after a run that finished
+            # in ~100s, blocking the next ingest for up to a daemon interval. Debounce ONLY while the spawned
+            # process is actually ALIVE; the TTL is now just the OUTER bound (pid recycling / a crash that never
+            # cleared the lock). The lock stores the prior run's PID (signal 0 probes liveness, sends nothing).
+            try:
+                prior_pid = int((lock.read_text() or "").strip() or 0)
+            except (OSError, ValueError):
+                prior_pid = 0
+            if prior_pid > 0:
+                alive = True
+                try:
+                    os.kill(prior_pid, 0)
+                except ProcessLookupError:
+                    alive = False                          # prior run FINISHED -> release the debounce, kick again NOW
+                except OSError:
+                    alive = True                           # exists but not ours to signal (perms) -> treat as alive
+                if alive:
+                    return False                           # prior kick still running -> debounce
         env = {**os.environ, "PATH": _daemon_path()}       # responder resolved by the run itself, not forced here
-        subprocess.Popen([_fanops_bin(), "run", "--base-time", iso_z(_now(None))],
-                         cwd=str(cfg.root), env=env, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)   # detached: survives the request, OS-reaped
-        lock.parent.mkdir(parents=True, exist_ok=True); lock.write_text(iso_z(_now(None)))   # stamp AFTER a clean spawn
+        proc = subprocess.Popen([_fanops_bin(), "run", "--base-time", iso_z(_now(None))],
+                                cwd=str(cfg.root), env=env, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)   # detached: survives the request, OS-reaped
+        lock.parent.mkdir(parents=True, exist_ok=True); lock.write_text(str(proc.pid))   # stamp the PID so a FINISHED run releases the debounce early
         return True
     except Exception as exc:
         get_logger(cfg)("run", "-", "kick_failed", err=str(exc)[:160]); return False
