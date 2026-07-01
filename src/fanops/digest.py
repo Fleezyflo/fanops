@@ -196,7 +196,7 @@ def _reach_by_dim(led: Ledger, cfg: Config) -> list[str]:
     try:
         from fanops.validation_gate import p4_unlocked
         dlines = []
-        for dim in ("first_frame_kind", "clip_profile"):
+        for dim in ("first_frame_kind", "clip_profile", "top_bias"):   # Leg 3: framing joins the rollup
             if not p4_unlocked(led, cfg, dim): continue
             for value, row in sorted(aggregate_by_dim(led, dim).items(),
                                      key=lambda kv: kv[1]["reach_mean"], reverse=True):
@@ -205,6 +205,50 @@ def _reach_by_dim(led: Ledger, cfg: Config) -> list[str]:
             return ["\n## Reach by creative dim (P3 — what's earning reach)\n" + "\n".join(dlines) + "\n"]
     except Exception:
         logger.warning("P3 reach-by-dim digest section degraded (fail-open)", exc_info=True)
+    return []
+
+
+def _culmination(led: Ledger, cfg: Config) -> list[str]:
+    # Leg 3 (legibility): the loop's EFFECT, not just attribution. For each structural dim (framing +
+    # length + first-frame via p4_dim_bias, timing via timing_bias) render the trusted winner AND whether
+    # it is ACTIVELY biasing generation/schedule. Honest states:
+    #   "<value> -> ACTIVE (biasing)"        a gated winner AND the dim's kill switch is ON
+    #   "<value> -> winner found (bias OFF)" a gated winner but the kill switch is OFF (never claim ACTIVE)
+    #   "gathering data"                     no gated winner (frozen / thin / no clear lead)
+    # READ-ONLY — reuses the actuators' OWN gated winner fns (dim_bias_candidates / timing_bias_winner) so
+    # the digest can never disagree with what the actuator would do. Fail-open: any error -> section absent
+    # (byte-identical to today's digest), like the v3 block. The whole section is omitted when nothing
+    # qualifies, so a fresh/degraded ledger reads exactly as before.
+    try:
+        from fanops.p4_dim_bias import dim_bias_candidates
+        from fanops.timing_bias import timing_bias_winner
+        lines: list[str] = []
+        # framing / length / first-frame: p4_dim_bias's candidates, keyed by dim. Kill switch: cfg.p4_dim_bias.
+        cands = {c["dim"]: c for c in dim_bias_candidates(led, cfg)}
+        _P4_LABELS = {"top_bias": "framing", "clip_profile": "length", "first_frame_kind": "first-frame"}
+        for dim, label in _P4_LABELS.items():
+            cand = cands.get(dim)
+            if cand is None:
+                lines.append(f"- {label}: gathering data")
+                continue
+            val = cand["winning_value"]
+            if dim == "top_bias":                                    # render the bool naturally
+                val = "top-anchored" if val == "True" else "centered"
+            state = "ACTIVE (biasing)" if cfg.p4_dim_bias else "winner found (bias OFF)"
+            lines.append(f"- {label}: {val} -> {state}")
+        # timing: timing_bias's winner (reach-by-hour). Kill switch: cfg.timing_bias.
+        twin = timing_bias_winner(led, cfg)
+        if twin is None:
+            lines.append("- timing: gathering data")
+        else:
+            state = "ACTIVE (biasing)" if cfg.timing_bias else "winner found (bias OFF)"
+            lines.append(f"- timing: hour {twin['publish_hour']} -> {state}")
+        # Only render the section if at least one dim has a real winner (else it is pure "gathering data"
+        # noise on a cold ledger — omit it for byte-identical-to-today behaviour).
+        if cands or twin is not None:
+            return ["\n## Culmination (what the learning loop is biasing)\n" + "\n".join(lines) + "\n"]
+    except Exception:
+        logger.warning("culmination digest section degraded (fail-open)", exc_info=True)
     return []
 
 
@@ -236,6 +280,7 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     out += _variant_lift(led, cfg, accounts)
     out += _variant_amplify(led, cfg)
     out += _reach_by_dim(led, cfg)
+    out += _culmination(led, cfg)
     out += _pending_gates(cfg)
     return "".join(out)
 

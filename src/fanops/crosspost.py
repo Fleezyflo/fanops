@@ -17,7 +17,7 @@ from fanops.models import (Post, PostState, ClipState, MomentState, Fmt, HookSou
 from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut
 from fanops.tagging import decide_tag, ARTIST_HANDLE
-from fanops.timeutil import parse_iso as _parse, iso_z
+from fanops.timeutil import parse_iso as _parse, iso_z, _operator_zone
 from fanops.casting import account_selection_admits, casting_gate_pending, casting_gate_failed_to_open, repair_casting_selections   # RF1 durable-selection gate + P1 casting-pending wait + xc-2 failed-gate defer
 from fanops.log import get_logger
 
@@ -37,7 +37,8 @@ def _seed(account: str, platform: str, date_str: str, clip_id: str = "") -> int:
     return int(h[:8], 16)
 
 def surface_time(base: datetime, account: str, platform: str, date_str: str, index: int,
-                 *, clip_id: str = "", lead_minutes: int = 0) -> str:
+                 *, clip_id: str = "", lead_minutes: int = 0, hour_hint: "int | None" = None,
+                 tz=None) -> str:
     seed = _seed(account, platform, date_str, clip_id)
     rng = random.Random(seed)                        # ONE stable stream per (surface,clip) — NOT
                                                      # reseeded per index (that made the step a
@@ -50,6 +51,15 @@ def surface_time(base: datetime, account: str, platform: str, date_str: str, ind
     # but the dominant term is the FIXED step -> strictly increasing in index.
     jitter = [rng.randint(0, _JITTER_MAX - 1) for _ in range(index + 1)][index]
     t = anchor + timedelta(minutes=index * _STEP_MIN + jitter)
+    # Leg 3 (timing): when a reach-winning hour prior is supplied (already window-clamped by the caller),
+    # pin the slot's HOUR to it while preserving the deterministic minute jitter. hour_hint is OPERATOR-LOCAL
+    # (publish_hour was stamped + ranked in operator_tz — tz-correctness crux), so set the hour in that tz
+    # then normalize back to canonical UTC. `tz` None falls back to UTC (the hint is then a UTC hour). None
+    # hour_hint (the default + no-winner / kill-switch-off path) is byte-identical to today.
+    if hour_hint is not None:
+        zone = tz or timezone.utc
+        loc = t.astimezone(zone).replace(hour=hour_hint)
+        t = loc.astimezone(timezone.utc)
     return iso_z(t)
 
 # Clip states whose file is a usable render target. A denylist (everything-but-retired)
@@ -206,8 +216,18 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
     # clip.id (the captioned seed clip) keys the schedule so two different clips don't
     # collide on the same surface/minute (AUDIT H1/H2). Use the seed clip, not target_clip,
     # so the same content schedules consistently across its per-platform aspect renders.
+    # Leg 3 (timing): consult the reach-winning publish-hour prior for THIS account (window-clamped —
+    # None when timing_bias is off, unproven, or the winning hour is outside the account's window), and
+    # bias the slot toward it in operator-local time. FAIL-OPEN: any error -> no hint (today's schedule).
+    hour_hint = None
+    try:
+        from fanops.timing_bias import timing_bias_hour_for
+        hour_hint = timing_bias_hour_for(led, cfg, surf.account)
+    except Exception:
+        hour_hint = None
     sched = surface_time(base, surf.account, surf.platform.value, date_str, i,
-                         clip_id=clip.id, lead_minutes=cfg.publish_lead_minutes)
+                         clip_id=clip.id, lead_minutes=cfg.publish_lead_minutes,
+                         hour_hint=hour_hint, tz=_operator_zone(cfg))
     if decide_tag(led, account=surf.account, clip_id=clip.id, when=_parse(sched)):
         caption = f"{caption}\n{ARTIST_HANDLE}"
     # Per-account creative variation (FANOPS_CREATIVE_VARIATION, default ON; fail-open). Slice 2 (burn
@@ -268,6 +288,10 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
         # length profile at APPROVAL (actions_approve._adopt_render), when the cut's realized truth is
         # known — so the P4 clip_profile dim is accurate by the time a post is published + learned on.
         clip_profile=cfg.clip_profile, batch_id=src_batch,   # Account-First Studio: denormalized batch (None=ungrouped)
+        # Leg 3 (framing): stamp the PER-ACCOUNT top_bias (NOT the global cfg.aware_reframe) so
+        # aggregate_by_dim can rank framing per account — the global value would mis-attribute a
+        # per-account creative choice. A real per-account CUT keeps the same top_bias (it IS the crop).
+        top_bias=cfg.resolve_top_bias(surf.account),
         variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))   # P2: the axis this variant moved
     return 0
 

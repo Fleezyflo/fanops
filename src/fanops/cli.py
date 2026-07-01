@@ -21,6 +21,7 @@ from fanops.reconcile import reconcile_due
 from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
 from fanops.p4_dim_bias import apply_p4_dim_bias
+from fanops.timing_bias import apply_timing_bias
 from fanops import autopilot, daemon
 from fanops.log import get_logger
 
@@ -982,6 +983,17 @@ def _dispatch(cfg: Config, args) -> int:
                     led = apply_p4_dim_bias(led, cfg)
             except Exception as e:
                 get_logger(cfg)("p4_dim_bias", "-", "error", err=str(e)[:120])
+        # Leg 3 (timing): SYMMETRIC with p4_dim_bias — a SEPARATE, independently gated pass so the unattended
+        # run refreshes the reach-winning publish-HOUR prior (consumed by the next crosspost's surface_time).
+        # Own kill switch (cfg.timing_bias, default OFF) AND the live-backend guard; apply_timing_bias is
+        # bias-only (writes ONE prior file, never retires) AND validation-frozen, so wiring it in is fail-SAFE.
+        # Own try/except — a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
+        if cfg.timing_bias and cfg.is_live_backend:
+            try:
+                with Ledger.transaction(cfg) as led:
+                    led = apply_timing_bias(led, cfg)
+            except Exception as e:
+                get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
         # WS2: constant Graph-reach hashtag store update — refresh at most once per cadence (12h), throttled by
         # the store mtime so the 10-min publish cadence doesn't hammer the 30/7-day Graph budget. NOT gated on
         # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —

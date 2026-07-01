@@ -254,6 +254,13 @@ class Post(BaseModel):
     clip_profile: Optional[str] = None      # song | talk — the per-video-type group ("hook for which video type")
     cut_seconds: Optional[float] = None     # rendered clip length (observational; length not varied)
     variation_axis: Optional[str] = None    # P2 (one writer = crosspost): the cheap-text axis this variant moved
+    # Leg 3 (Culmination) — the two varied-but-previously-unstamped dims, so aggregate_by_dim can rank
+    # them like any P4 dim. All None on old ledgers -> skipped by aggregate_by_dim (back-compat).
+    top_bias: Optional[bool] = None     # framing (one writer = crosspost): the PER-ACCOUNT resolve_top_bias at
+                                        # mint (top vs centered crop) — a per-account creative choice, joins _P4_DIMS.
+    publish_hour: Optional[int] = None  # timing (one writer = run.py/reconcile published transition): the operator-
+                                        # local HOUR of the TRUE publish time (published_at bucketed in operator_tz).
+    publish_dow: Optional[int] = None   # timing: the operator-local weekday (0=Mon..6=Sun) of the true publish time.
     batch_id: Optional[str] = None      # Account-First Studio: DENORMALIZED from the source at crosspost (carried by
                                         # repost_post); the single join key the Studio surfaces group by. None == ungrouped.
     created_at: Optional[str] = None    # content-lifecycle: ISO-8601 UTC BIRTH day (wall-clock), set at crosspost

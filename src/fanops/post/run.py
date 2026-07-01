@@ -16,7 +16,7 @@ from fanops.ledger import Ledger
 from fanops.models import Post, PostState, is_real_submission_id
 from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media, _uploader_kwargs
-from fanops.timeutil import parse_iso as _parse, iso_z
+from fanops.timeutil import parse_iso as _parse, iso_z, publish_buckets as _publish_buckets
 from fanops.log import get_logger
 
 def _now(now: str | None) -> datetime:
@@ -261,6 +261,10 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
             if (post.public_url or "").strip():
                 post.state = PostState.published
                 post.published_at = iso_z(datetime.now(timezone.utc))   # TRUE publish time (Posted-archive day-anchor)
+                # Leg 3 (timing): bucket the true publish time into operator-local (hour, weekday) so
+                # timing_bias can rank reach-by-hour without every reader re-doing tz math. Single tz
+                # home (timeutil.publish_buckets); fail-safe (None,None) leaves the dim unranked.
+                post.publish_hour, post.publish_dow = _publish_buckets(post.published_at, cfg)
             else:
                 post.state = PostState.needs_reconcile
                 post.error_reason = ("publish_missing_url: backend returned submitted without a permalink — "
