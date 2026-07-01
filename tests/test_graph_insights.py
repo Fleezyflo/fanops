@@ -162,10 +162,10 @@ from fanops.models import Post, PostState, Platform
 from fanops.post.metrics import GraphInsightsClient
 
 
-def _ig_post(pid, media_id, *, cut_seconds=None, sub=None):
+def _ig_post(pid, media_id, *, cut_seconds=None, sub=None, product_type="REELS"):
     return Post(id=pid, parent_id="c", account="@a", account_id="acc1", platform=Platform.instagram,
                 caption="x", state=PostState.published, media_id=media_id, cut_seconds=cut_seconds,
-                submission_id=sub or f"real_{pid}",
+                product_type=product_type, submission_id=sub or f"real_{pid}",
                 public_url=f"https://www.instagram.com/reel/{pid}/")   # R1: a published post has a permalink
 
 
@@ -212,6 +212,23 @@ def test_graph_client_skips_post_without_media_id(tmp_path, monkeypatch):
     post = _ig_post("p1", None, cut_seconds=20.0)
     client = GraphInsightsClient(cfg, posts=[post], insights_fn=lambda mid, pt: {"reach": 1})
     assert client.list_posts() == []
+
+
+def test_graph_client_requests_the_posts_real_product_type(tmp_path, monkeypatch):
+    # The client must send the media's REAL product_type (stamped at resolve), NOT a hard-coded REELS —
+    # so media_insights derives the matching metric set (a FEED post gets the feed set, no reels-only
+    # avg-watch -> no 400). It is guaranteed present past the media_id guard (single stamp site), so there
+    # is no skip / fallback: the client simply forwards p.product_type.
+    cfg = _cfg(tmp_path, monkeypatch)
+    seen = []
+    def spy(mid, pt):
+        seen.append((mid, pt))
+        return {"reach": 5}
+    feed = _ig_post("p1", "M1", cut_seconds=20.0, product_type="FEED")
+    reel = _ig_post("p2", "M2", cut_seconds=20.0, product_type="REELS")
+    GraphInsightsClient(cfg, posts=[feed, reel], insights_fn=spy).list_posts()
+    assert ("M1", "FEED") in seen                                # feed post -> feed type, not REELS
+    assert ("M2", "REELS") in seen
 
 
 def test_graph_client_transient_none_skips_that_post(tmp_path, monkeypatch):
