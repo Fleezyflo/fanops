@@ -10,6 +10,22 @@ from fanops.config import Config
 from fanops import pipeline
 
 
+def test_gate_kinds_is_derived_from_responder_schema():
+    # gate-kinds-drift-risk (high): GATE_KINDS (pipeline) and responder._SCHEMA were two hand-kept lists.
+    # A 5th answerable gate added to _SCHEMA but not GATE_KINDS is silently STARVED — pending_gate_count,
+    # the convergence check, and the blocked-note all iterate GATE_KINDS (moment_casting hit this exact bug
+    # once). The root fix makes GATE_KINDS a DERIVATION of _SCHEMA (single source), so a new gate can't drift
+    # out. Prove the mechanism in a fresh interpreter: inject a 5th gate into _SCHEMA BEFORE importing
+    # pipeline; a derived GATE_KINDS picks it up, a hardcoded literal does not.
+    import subprocess, sys
+    code = ("import fanops.responder as r\n"
+            "r._SCHEMA = {**r._SCHEMA, 'zzz_probe_gate': r.CaptionSet}\n"
+            "import fanops.pipeline as p\n"
+            "assert 'zzz_probe_gate' in p.GATE_KINDS, ('drift: GATE_KINDS=' + repr(p.GATE_KINDS))\n"
+            "print('DERIVED_OK')\n")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0 and "DERIVED_OK" in out.stdout, (out.stdout + out.stderr)
+
 def test_pending_gate_count_zero_on_empty(tmp_path):
     # Idle pipeline: no gate requests -> zero pending -> a run has no AI work (fast, no claude).
     assert pipeline.pending_gate_count(Config(root=tmp_path)) == 0
