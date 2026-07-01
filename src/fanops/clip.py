@@ -651,12 +651,13 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                     aspect=aspect, error_reason=f"ffmpeg timed out after {_FFMPEG_TIMEOUT:.0f}s")
         led.clips[cid] = clip
         return led, clip
-    if r.returncode != 0 or not dst.exists():
-        # ffmpeg RAN and failed: record the clip as errored (dangling path would otherwise
-        # masquerade as 'rendered' and blow up later in crosspost/media-upload).
-        # Leave the moment un-clipped so a re-run retries. Mirrors transcribe.py's pattern.
+    if r.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
+        # ffmpeg RAN and failed OR produced a 0-byte output (truncated mux at rc=0): record the clip as
+        # errored (a dangling/empty path would otherwise masquerade as 'rendered' and blow up later in
+        # crosspost/media-upload). The st_size>0 guard mirrors the segment-concat (:447) + warm-skip (:619)
+        # checks. Leave the moment un-clipped so a re-run retries. Mirrors transcribe.py's pattern.
         clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
-                    aspect=aspect, error_reason=f"ffmpeg rc={r.returncode}: {(r.stderr or '')[:200]}")
+                    aspect=aspect, error_reason=f"ffmpeg rc={r.returncode} out={dst.stat().st_size if dst.exists() else 'missing'}B: {(r.stderr or '')[:180]}")
         led.clips[cid] = clip
         return led, clip
     if is_stitch:

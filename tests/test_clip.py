@@ -160,6 +160,27 @@ def test_render_moment_records_error_on_ffmpeg_failure(tmp_path, mocker):
     # moment must NOT advance to clipped on failure (so a re-run retries)
     assert led.moments["mom_1"].state is MomentState.decided
 
+def test_render_moment_records_error_on_empty_output(tmp_path, mocker):
+    # ffmpeg RAN (rc=0) but wrote a 0-BYTE mp4 (truncated/failed mux). The SAME file already requires
+    # st_size > 0 at the segment-concat (:447) and warm-skip (:619) paths; the single-pass success check
+    # must too. An empty clip marked `rendered` advances the moment to `clipped` and blows up later in
+    # crosspost media-upload — fail-safe instead: ClipState.error, moment stays `decided` (retriable).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided))
+    def empty_run(cmd, **kw):
+        if not str(cmd[-1]).startswith("-"):                 # render output path -> write a 0-byte file
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=empty_run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.error
+    assert clip.id in led.clips
+    assert led.moments["mom_1"].state is MomentState.decided   # empty output is NOT a successful clip
+
 def test_render_moment_records_error_when_ffmpeg_absent(tmp_path, mocker):
     # ffmpeg off PATH -> subprocess.run raises FileNotFoundError BEFORE the process starts
     # (check=False suppresses a nonzero RETURNCODE, not a pre-launch FileNotFoundError). This
