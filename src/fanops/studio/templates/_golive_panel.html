@@ -291,6 +291,45 @@
     {% endif %}
   </section>
 
+  <section class="golive-step" id="hands-off">
+    <h3>Hands-off processing</h3>
+    <p class="muted">Two independent switches. <strong>AI responder</strong> decides whether the pipeline writes its own
+      hooks/captions by calling <code>claude</code>. <strong>Pipeline driver</strong> decides whether that runs unattended
+      on a schedule. Claude runs ONLY when the AI responder is ON — never just because it's installed.</p>
+    <div class="account-hooks" id="ai-responder">
+      <p class="muted"><strong>AI responder</strong> — {% if status.responder_mode == 'llm' %}the pipeline answers its own
+        gates by invoking <code>claude</code> on every run.{% else %}off — gates wait for you (hand-write in the Gates/Review tabs).{% endif %}</p>
+      <form hx-post="{{ url_for('do_golive_responder') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        {% if status.responder_mode == 'llm' %}
+          <span class="ok">● ON — pipeline auto-writes via claude</span>
+          <button type="submit" name="on" value="">Turn off (manual — no claude)</button>
+        {% else %}
+          <span class="muted">○ off — no claude calls; gates stay pending</span>
+          <button type="submit" name="on" value="1">Turn on AI (runs claude)</button>
+        {% endif %}
+      </form>
+    </div>
+    <div class="account-hooks" id="daemon-control">
+      {% if status.daemon is none %}
+        <p class="muted"><strong>Pipeline driver</strong> — unavailable here (macOS/launchd only).</p>
+      {% else %}
+        <p class="muted"><strong>Pipeline driver</strong> —
+          {% if status.daemon.verdict == 'alive' %}running · last tick {{ status.daemon.heartbeat_age_s|int }}s ago.
+          {% elif not status.daemon.loaded %}off (optional). Turn it on to auto-ingest, advance &amp; reconcile every {{ ((status.daemon.interval or 600) // 60) }} min.
+          {% else %}installed but not running ({{ status.daemon.verdict }}).{% endif %}
+          {% if status.responder_mode == 'llm' and status.daemon.loaded %} With AI on, each tick invokes <code>claude</code>.{% endif %}</p>
+        <form hx-post="{{ url_for('do_golive_daemon_install') if not status.daemon.loaded else url_for('do_golive_daemon_uninstall') }}"
+              hx-target="#golive-panel" hx-swap="outerHTML">
+          {% if not status.daemon.loaded %}
+            <button type="submit">Turn on hands-off processing</button>
+          {% else %}
+            <button type="submit">Turn off hands-off processing</button>
+          {% endif %}
+        </form>
+      {% endif %}
+    </div>
+  </section>
+
   <details class="golive-step disclosure-step">
     <summary class="step-summary">6 · Validate learning <span class="step-opt">optional</span>
       {%- if status.learning_validated %} <span class="step-done">✓ validated</span>{% endif %}</summary>

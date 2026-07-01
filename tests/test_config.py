@@ -117,15 +117,19 @@ def test_clip_profile_env_trimmed(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_CLIP_PROFILE", "  song\n")   # a .env value can carry surrounding ws
     assert Config(root=tmp_path).clip_profile == "song"
 
-def test_responder_defaults_manual_without_claude(monkeypatch, tmp_path):
+def test_responder_defaults_manual_when_unset(monkeypatch, tmp_path):
+    # NO haphazard claude: with FANOPS_RESPONDER unset, the responder is manual regardless of whether
+    # `claude` is on PATH — presence never auto-enables the LLM (that fired claude on every run/tick).
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
-    monkeypatch.setattr("fanops.config.shutil.which", lambda _: None)
     assert Config(root=tmp_path).responder_mode == "manual"
 
-def test_responder_defaults_llm_when_claude_on_path(monkeypatch, tmp_path):
-    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
-    monkeypatch.setattr("fanops.config.shutil.which", lambda _: "/usr/bin/claude")
-    assert Config(root=tmp_path).responder_mode == "llm"
+def test_responder_manual_explicit(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
+    assert Config(root=tmp_path).responder_mode == "manual"
+
+def test_responder_llm_only_on_explicit_optin(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    assert Config(root=tmp_path).responder_mode == "llm"        # explicit opt-in still works
 
 def test_is_live_backend_requires_backend_and_key(monkeypatch, tmp_path):
     # Stage-6 audit: the "live backend + key" guard gates the learning passes and reconcile at

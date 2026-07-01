@@ -54,6 +54,8 @@ class GoLiveStatus:
     creative_variation: bool = False   # per-account on-screen hooks ON (FANOPS_CREATIVE_VARIATION) — persona diff
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
+    responder_mode: str = "manual"     # THE AI switch (FANOPS_RESPONDER): 'llm' = pipeline answers gates via claude, 'manual' = human/pending
+    daemon: Optional[dict] = None      # launchd pipeline-driver health (verdict/loaded/interval/responder), None off-darwin
     demoted: list = field(default_factory=list)   # Phase 3: planned/demoted accounts (promotable) — golive_accounts lists only active()
     # Phase 6: A/B learning-loop INTENT flags (default OFF). ON sets intent only — the apply paths stay
     # learning_validated-frozen, so a flag here NEVER unfreezes learning (that gate auto-stamps on real metrics).
@@ -746,6 +748,8 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         creative_variation=cfg.creative_variation,     # per-account on-screen hooks toggle state (persona diff)
         account_casting=cfg.account_casting,           # per-account moment casting toggle state (persona diff)
         clip_profile=cfg.clip_profile,                 # clip-length band (talk/song)
+        responder_mode=cfg.responder_mode,             # THE AI switch state (llm/manual) — surfaced for the toggle
+        daemon=daemon_health(cfg),                     # launchd driver health for the Go-Live daemon control (None off-darwin)
         demoted=golive_demoted_accounts(cfg),          # Phase 3: promotable planned accounts
         variant_learning=cfg.variant_learning,         # Phase 6: A/B learning-loop intent flags (default OFF)
         variant_amplify=cfg.variant_amplify, variant_ucb=cfg.variant_ucb, variant_transfer=cfg.variant_transfer)

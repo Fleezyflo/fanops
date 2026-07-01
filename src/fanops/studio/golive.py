@@ -33,7 +33,7 @@ from fanops.accounts import (Accounts, write_integration, add_account as _accoun
                              load_accounts_safe)
 from fanops.log import get_logger
 from fanops.autopilot import set_env_var, unset_env_var
-from fanops.errors import CutoverError, PostizAuthError, ZernioAuthError
+from fanops.errors import CutoverError, PostizAuthError, ToolchainMissingError, ZernioAuthError
 from fanops.models import Platform
 from fanops.post import postiz, zernio
 from fanops.studio.actions import ActionResult
@@ -238,6 +238,46 @@ def set_account_casting(cfg: Config, on: bool) -> ActionResult:
     if err:
         return ActionResult(ok=False, error=err)
     return ActionResult(ok=True, detail={"account_casting": bool(on)})
+
+
+def set_ai_responder(cfg: Config, on: bool) -> ActionResult:
+    """THE single, explicit AI switch (FANOPS_RESPONDER=llm|manual) from the Go-Live tab — the ONLY intended
+    way to turn the LLM responder on/off. ON means the pipeline answers its own moment/caption/hook gates by
+    invoking `claude` (on every run/kick/daemon-tick); OFF (manual) means gates stay pending for a human. This
+    is the NO-haphazard-claude contract made operator-visible: claude fires because THIS toggle is on, never
+    because the binary happens to be on PATH. Dual-written so it takes effect immediately AND persists across
+    restarts/daemon-ticks. Works in dryrun OR live (orthogonal to publishing). Durable-write failure -> clean error."""
+    err = _dual_write(cfg, "FANOPS_RESPONDER", "llm" if on else "manual")
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"responder": "llm" if on else "manual"})
+
+
+def install_daemon(cfg: Config, interval: str = "10m") -> ActionResult:
+    """Install + load the launchd pipeline driver (hands-off processing) from the Go-Live tab — no CLI. The
+    daemon is SCHEDULING only; it inherits the ambient AI switch (set_ai_responder), so installing it never
+    turns the LLM on by itself. Off-darwin / launchctl-absent / bad interval -> clean ActionResult (never a
+    trace). Reports whether the resolved responder means recurring `claude` so the operator sees the cost."""
+    from fanops import daemon
+    try:
+        secs = daemon.parse_interval(interval)
+        res = daemon.install(cfg, interval=secs, responder="inherit")
+    except (RuntimeError, ToolchainMissingError, ValueError) as exc:
+        return ActionResult(ok=False, error=f"daemon install failed: {str(exc)[:160]}")
+    return ActionResult(ok=res.get("loaded", False), detail={"daemon_installed": True, "interval": secs,
+                        "loaded": res.get("loaded", False), "responder": res.get("responder"),
+                        "discloses_llm": res.get("discloses_llm", False)})
+
+
+def uninstall_daemon(cfg: Config) -> ActionResult:
+    """Unload + remove the launchd pipeline driver from the Go-Live tab — no CLI. Off-darwin / launchctl-absent
+    -> clean ActionResult. Confirms the real outcome (daemon.stop reports stopped only if the label is gone)."""
+    from fanops import daemon
+    try:
+        res = daemon.stop(cfg, remove=True)
+    except (RuntimeError, ToolchainMissingError) as exc:
+        return ActionResult(ok=False, error=f"daemon uninstall failed: {str(exc)[:160]}")
+    return ActionResult(ok=res.get("stopped", False), detail={"daemon_removed": True, "stopped": res.get("stopped", False)})
 
 
 def set_clip_profile(cfg: Config, profile: str) -> ActionResult:
@@ -557,9 +597,9 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     err = _dual_write(cfg, "FANOPS_LIVE", "1")
     if err:
         return ActionResult(ok=False, error=err)
-    if (err := _dual_write(cfg, "FANOPS_RESPONDER", "llm")):
-        return ActionResult(ok=False, error=err)
-    os.environ["FANOPS_RESPONDER"] = "llm"
+    # ROOT decouple (NO haphazard claude): going LIVE is the PUBLISH switch — orthogonal to the AI switch.
+    # It must NOT force FANOPS_RESPONDER=llm (that silently spawned `claude` on every tick after a go-live).
+    # The AI responder is enabled EXPLICITLY and separately (Go-Live → AI Responder / set_ai_responder).
     # M3c: scrape stale FANOPS_POSTER=dryrun — .env.example seeds it; pre-M3b go_dryrun wrote it;
     # M3b go_live never updated it. Config.load_dotenv(override=True) reloads the line on every
     # Studio restart / daemon tick, so operators see LIVE=1 + POSTER=dryrun and think the flip

@@ -41,6 +41,28 @@ def test_regenerate_rewrites_queued_post(tmp_path):
     assert Ledger.load(cfg).posts["p_edit"].caption == "PUNCHIER LINE"
     assert res.detail["caption"] == "PUNCHIER LINE"
 
+
+def test_regenerate_refuses_and_never_spawns_claude_in_manual_mode(tmp_path, monkeypatch):
+    # NO haphazard claude: with the AI responder OFF (manual), pressing Regenerate must REFUSE with a
+    # clear message and NEVER reach the default claude_json model — the direct-claude bypass is closed.
+    import fanops.llm as _llm
+    called = {"n": 0}
+    def _boom(*a, **k): called["n"] += 1; raise AssertionError("claude must not be spawned in manual mode")
+    monkeypatch.setattr(_llm, "claude_json", _boom)
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
+    cfg = Config(root=tmp_path); _seed(cfg)
+    res = regenerate_caption(cfg, "p_edit", "punchier", now=NOW)      # model=None -> the real claude path
+    assert res.ok is False and "responder" in (res.error or "").lower()
+    assert called["n"] == 0                                           # guard fired BEFORE any claude call
+
+
+def test_regenerate_still_works_when_llm_enabled(tmp_path, monkeypatch):
+    # Explicit opt-in: with FANOPS_RESPONDER=llm the operator chose AI, so Regenerate proceeds.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _seed(cfg)
+    res = regenerate_caption(cfg, "p_edit", "punchier", model=_model("PUNCHIER LINE"), now=NOW)
+    assert res.ok is True
+
 def test_regenerate_passes_operator_guidance_and_context_to_model(tmp_path):
     # The operator's typed hint AND the clip's transcript excerpt must both reach the model — that is
     # what makes the new take reflect "change this information" rather than a blind re-roll.
@@ -115,6 +137,7 @@ def test_regenerate_malformed_model_output_rejected(tmp_path):
 def test_regenerate_route_swaps_edit_field(tmp_path, monkeypatch):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path); _seed(cfg)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")               # AI explicitly enabled — the route's opt-in gate
     # the route uses the default model (claude_json); patch it at its module so the lazy import binds
     # to the fake — proves the real HTTP path persists and re-renders the edit field with the new text.
     monkeypatch.setattr("fanops.llm.claude_json",

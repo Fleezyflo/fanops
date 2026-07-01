@@ -53,6 +53,23 @@ def register_golive_routes(app, cfg):
         # Phase 2: set the clip-length band (FANOPS_CLIP_PROFILE = talk|song); validated in the setter.
         return _golive_panel(golive.set_clip_profile(cfg, request.form.get("profile", "")))
 
+    @app.post("/golive/responder")
+    def do_golive_responder():
+        # THE explicit AI switch (FANOPS_RESPONDER=llm|manual). Explicit "1"==on (NOT bool(str)). This is the
+        # ONLY intended way to turn the LLM responder on/off — claude fires because this is on, never on PATH alone.
+        return _golive_panel(golive.set_ai_responder(cfg, request.form.get("on") == "1"))
+
+    @app.post("/golive/daemon-install")
+    def do_golive_daemon_install():
+        # Install + load the launchd pipeline driver (hands-off processing) — no CLI. Scheduling only; inherits
+        # the AI switch above, so this never turns the LLM on by itself.
+        return _golive_panel(golive.install_daemon(cfg, request.form.get("interval", "10m")))
+
+    @app.post("/golive/daemon-uninstall")
+    def do_golive_daemon_uninstall():
+        # Unload + remove the launchd pipeline driver — no CLI.
+        return _golive_panel(golive.uninstall_daemon(cfg))
+
     @app.post("/golive/learning")
     def do_golive_learning():
         # Phase 6: toggle the A/B learning master switch (FANOPS_VARIANT_LEARNING) — explicit "1"==on. Intent
