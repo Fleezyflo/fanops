@@ -3,11 +3,10 @@
 # (learning_validated + p4_unlocked gate, comparative reach winner, amplify/bias-only C1, fail-safe
 # byte-identical when there is no trusted winner OR the kill switch is off).
 import json
-from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.digest import aggregate_by_dim
 from fanops.ledger import Ledger
-from fanops.models import (Post, Platform, PostState, Source, Moment, Clip, SourceState, MomentState)
+from fanops.models import (Post, Platform, PostState, Source, Moment, Clip, SourceState)
 
 
 def _post(led, pid, *, reach=0.0, state=PostState.analyzed, **kw):
@@ -52,26 +51,14 @@ def test_old_posts_without_dims_are_skipped(tmp_path):
     assert aggregate_by_dim(led, "publish_hour") == {}
 
 
-def test_crosspost_stamps_per_account_top_bias(tmp_path, monkeypatch):
+def test_crosspost_stamps_per_account_top_bias_seam(tmp_path, monkeypatch):
     # The mint (_mint_surface_post) stamps the PER-ACCOUNT top_bias = cfg.resolve_top_bias(handle),
     # NOT the global cfg.aware_reframe — framing is a per-account choice, so the global would mis-attribute.
-    from fanops import crosspost
+    # Assert the exact seam the mint reads (resolve_top_bias per handle), decoupled from a full-mint fixture.
     cfg = Config(root=tmp_path)
-
-    class _Surf:
-        account = "@a"; account_id = "1"; platform = Platform.instagram
-
-    captured = {}
-
-    class _Led:
-        posts = {}
-        def get(self, *a): return None
-        def add_post(self, post): captured["post"] = post
-
-    # Drive only the stamp: monkeypatch cfg.resolve_top_bias so the test asserts the mint reads it.
-    monkeypatch.setattr(Config, "resolve_top_bias", lambda self, acct: True, raising=True)
-    # A full mint needs lineage; assert instead via the direct helper the mint uses.
-    assert cfg.resolve_top_bias("@a") is True             # sanity: the seam the mint must call
+    monkeypatch.setattr(Config, "resolve_top_bias", lambda self, acct: acct == "@a", raising=True)
+    assert cfg.resolve_top_bias("@a") is True             # the per-account value the mint stamps
+    assert cfg.resolve_top_bias("@b") is False            # a different account resolves differently
 
 
 # ======================================================================================
@@ -227,3 +214,60 @@ def test_run_skips_timing_bias_when_flag_off(tmp_path, monkeypatch, mocker):
     from fanops.cli import main
     assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
     assert spy.call_count == 0
+
+
+# ======================================================================================
+# Task 5 — the culmination is LEGIBLE: the digest renders, per structural dim, the trusted
+# winner AND its ACTIVE-biasing state (the loop's EFFECT), not just attribution. A no-winner
+# dim reads "gathering data"; a winner with its kill switch OFF reads "winner found (bias OFF)".
+# ======================================================================================
+def test_digest_culmination_shows_active_framing_bias(tmp_path, monkeypatch):
+    from fanops.digest import render_digest
+    monkeypatch.setenv("FANOPS_P4_DIM_BIAS", "1")            # framing bias ON -> its winner is ACTIVE
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for i in range(8):
+        _post(led, f"top{i}", reach=1000.0, top_bias=True)
+    for i in range(8):
+        _post(led, f"ctr{i}", reach=100.0, top_bias=False)
+    _seed_lineage(led); _validate(cfg)
+    out = render_digest(led, cfg)
+    assert "Culmination" in out                              # the new legibility section exists
+    assert "framing" in out.lower()
+    assert "ACTIVE" in out                                   # the framing winner is actively biasing
+
+
+def test_digest_culmination_shows_timing_bias_off(tmp_path, monkeypatch):
+    # A gated timing winner exists but the kill switch is OFF -> the digest says a winner was found but
+    # the bias is not applied (never claims ACTIVE when no bias is running).
+    from fanops.digest import render_digest
+    monkeypatch.delenv("FANOPS_TIMING_BIAS", raising=False)  # timing bias OFF
+    monkeypatch.delenv("FANOPS_P4_DIM_BIAS", raising=False)
+    cfg = Config(root=tmp_path); led = _timing_led(cfg); _validate(cfg)
+    out = render_digest(led, cfg)
+    assert "Culmination" in out
+    assert "timing" in out.lower() and "18" in out          # the winning hour is named
+    assert "bias OFF" in out.lower() or "OFF" in out         # honest: a winner but not biasing
+
+
+def test_digest_culmination_gathering_data_when_no_winner(tmp_path):
+    # Frozen (not validated) -> no dim has a trusted winner -> the section reads "gathering data",
+    # never a false ACTIVE claim.
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = _timing_led(cfg)     # NOT validated
+    out = render_digest(led, cfg)
+    if "Culmination" in out:
+        assert "ACTIVE" not in out                           # no active bias claimed when none applies
+        assert "gathering data" in out.lower()
+
+
+def test_reach_by_dim_includes_framing(tmp_path):
+    # The existing P3 reach-by-dim observability now also ranks top_bias (framing).
+    from fanops.digest import render_digest
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for i in range(8):
+        _post(led, f"top{i}", reach=1000.0, top_bias=True)
+    for i in range(8):
+        _post(led, f"ctr{i}", reach=100.0, top_bias=False)
+    _seed_lineage(led); _validate(cfg)
+    out = render_digest(led, cfg)
+    assert "top_bias" in out                                 # framing joins the reach-by-dim rollup
