@@ -409,8 +409,10 @@ class GraphInsightsClient:
     def __init__(self, cfg: Config, *, posts: Optional[list] = None, insights_fn=None):
         self.cfg = cfg
         self.posts = posts or []
-        # each post -> (media_id, duration_s, product_type). FanOps ships 9:16 reels, so REELS is the default
-        # product type (media_insights branches on it — LOCKED #3); a stamped type would override here.
+        # each post -> (media_id, product_type). The insights request is DERIVED from the media's real
+        # product_type (stamped at resolve, meta_graph.insights_metrics_for) — a feed video is never asked
+        # for a reels-only metric. product_type is guaranteed present past the media_id guard below (both
+        # are stamped in the SAME place, reconcile.py), so the client forwards it — no default, no skip.
         self._insights = insights_fn or (lambda media_id, product_type:
                                          __import__("fanops.meta_graph", fromlist=["media_insights"])
                                          .media_insights(cfg, media_id, product_type))
@@ -425,7 +427,7 @@ class GraphInsightsClient:
             if not (media_id and sid):
                 continue                                        # unresolved -> skip (keeps prior snapshot)
             try:
-                raw = self._insights(media_id, "REELS")
+                raw = self._insights(media_id, getattr(p, "product_type", None))
             except MetaInsightsScopeError:
                 # the one external gate: fail CLOSED + LOUD, write NOTHING, stop the pass.
                 self.insights_blocked = True
