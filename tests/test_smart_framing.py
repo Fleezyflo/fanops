@@ -669,3 +669,18 @@ def test_account_cut_off_flag_is_centered(tmp_path, mocker, monkeypatch):
     ok, _ = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="talk",
                                hook="", out_path=str(cfg.clips / "acct.mp4"))
     assert ok and _vf_of(captured["cmd"]) == "crop=ih*1080/1920:ih,scale=1080:1920,setsar=1"   # centered, no offset
+
+
+def test_sidecar_loaders_reject_nondict_windows(tmp_path):
+    # NEVER-raises contract (module docstring): a corrupt sidecar whose "windows" is NOT a dict must yield {}
+    # (recompute), never the raw value. Returning a string/list let the caller's `key in cache` / `cache[key]`
+    # raise TypeError OUTSIDE the load try -> a crash on the safety-critical reframe path. isinstance-guard both.
+    from fanops.framing import _load_cache, _load_detect_cache, _SIDECAR_V, _DETECT_V
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"v": _SIDECAR_V, "windows": "corrupt-not-a-dict"}))
+    assert _load_cache(p) == {}
+    p.write_text(json.dumps({"v": _DETECT_V, "windows": ["also", "wrong"]}))
+    assert _load_detect_cache(p) == {}
+    # a genuinely-shaped sidecar still round-trips (the guard doesn't reject valid dicts)
+    p.write_text(json.dumps({"v": _SIDECAR_V, "windows": {"0.0-6.0": {"focus": [0.5, 0.4]}}}))
+    assert _load_cache(p) == {"0.0-6.0": {"focus": [0.5, 0.4]}}
