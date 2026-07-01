@@ -244,7 +244,7 @@ def _stage_crosspost(led: Ledger, cfg: Config, accts: Accounts, base_time: str, 
     """AUDIT M2: the volatile crosspost stage runs inside the transaction, wrapped so a raise does NOT
     abandon the whole pass's in-memory progress before the exit-save. The ONE exception we deliberately let
     escape is a FATAL AuthError (F52): a bad key fails every post, so halting + rolling back the pass is
-    intended (handled by the CLI run guard). crosspost has no Blotato call today, but if one is ever added
+    intended (handled by the CLI run guard). crosspost has no direct backend call today, but if one is ever added
     a bad key must halt, not be logged-and-continued."""
     try:
         return crosspost_clips(led, cfg, accts, base_time=base_time)

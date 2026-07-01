@@ -61,9 +61,9 @@ def _archive_published(cfg: Config, post: Post) -> None:
 
 def _is_fatal_auth_error(exc: Exception) -> bool:
     """Auth/config errors mean EVERY post will fail — halt the run instead of marking one post
-    failed and grinding through the rest. Matched by the TYPE AuthError (base of BlotatoAuthError +
-    PostizAuthError), NOT by a substring in the message (AUDIT H8): the old `"401" in msg or
-    "BLOTATO_API_KEY" in msg` both UNDER-fired (a reworded auth error slipped past and burned the
+    failed and grinding through the rest. Matched by the TYPE AuthError (base of PostizAuthError +
+    ZernioAuthError), NOT by a substring in the message (AUDIT H8): the old `"401" in msg or
+    "API_KEY" in msg` both UNDER-fired (a reworded auth error slipped past and burned the
     whole queue — the F52 regression) and OVER-fired (a 5xx whose body contained "401" wrongly
     halted). Each backend's poster/media uploader raises an AuthError subclass on a real auth
     failure; everything else is a per-post failure."""
@@ -190,7 +190,7 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
     elif backend != "dryrun":
         # AUDIT (stage-6 HIGH): a variant post is BORN with media_urls=["file://<variant render>"]
         # (crosspost.py stamps the per-account hook-burned file). Pre-stamped media used to skip the
-        # upload and ship the LOCAL path to Blotato, which cannot fetch it — every live variant post
+        # upload and ship the LOCAL path to the hosted backend, which cannot fetch it — every live variant post
         # died. Upload the variant FILE itself, NOT ensure_clip_media (the clip cache holds the
         # parent's BASE render — using it would drop the burned hook). dryrun keeps file:// (offline).
         from fanops.post.media import ensure_render_media
@@ -272,8 +272,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
             raise                                      # bad key/401: halt, don't burn the queue (H8)
         if post.state is not PostState.needs_reconcile:   # C1/#17: don't downgrade an ambiguous-live park
             post.state = PostState.failed
-            post.error_reason = "publish failed: " + redact(str(exc), cfg.blotato_api_key,
-                                                            cfg.postiz_api_key, cfg.zernio_api_key)   # scrub any leaked key
+            post.error_reason = "publish failed: " + redact(str(exc), cfg.postiz_api_key,
+                                                            cfg.zernio_api_key)   # scrub any leaked key
     net = {f: getattr(post, f) for f in _NET_POST_FIELDS}
     clip = led.clips.get(post.parent_id)
     clip_media = clip.media_url if clip is not None else None   # carry the F44 upload cache forward

@@ -1,10 +1,10 @@
-"""Postiz poster backend — the FREE, self-hosted alternative to Blotato (FANOPS_POSTER=postiz).
+"""Postiz poster backend — the FREE, self-hosted poster backend (FANOPS_POSTER=postiz).
 
 FanOps stays the clip+caption engine; a self-hosted Postiz instance (AGPL, github.com/gitroomhq/
-postiz-app) is the distribution layer. Same swappable-poster slot as Blotato: build the post body,
+postiz-app) is the distribution layer. A swappable-poster slot: build the post body,
 POST it, map the response to the ledger's submit/reconcile/fail states with the SAME asymmetric-retry
 safety (a bad key halts by type; a 5xx/timeout after the body was sent parks needs_reconcile, never
-re-POSTs — Postiz, like Blotato, has no idempotency key).
+re-POSTs — Postiz has no idempotency key).
 
 REST contract (docs.postiz.com/public-api): Authorization: {apiKey} header; POST /public/v1/upload
 (multipart) -> {id, path@uploads.postiz.com}; POST /public/v1/posts with

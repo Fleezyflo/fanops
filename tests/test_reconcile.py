@@ -12,7 +12,7 @@ human reconcile (the digest surfaces them). reconcile_posts:
 """
 import pytest
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError
+from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
 from fanops.reconcile import reconcile_posts
@@ -265,15 +265,16 @@ def test_reconcile_logs_every_branch(tmp_path):
 
 
 def test_reconcile_halts_on_fatal_auth_error(tmp_path):
-    # Mirror publish_due (run.py:71-72): a Blotato auth failure means EVERY poll will 401, so
-    # grinding through the whole ledger is pointless — a BlotatoAuthError from get_status propagates
+    # Mirror publish_due (run.py:71-72): a poster auth failure means EVERY poll will 401, so
+    # grinding through the whole ledger is pointless — an AuthError from get_status propagates
     # (halt the pass) rather than being recorded per-post on every parked post. Distinct from a
-    # per-post RuntimeError (a single 404), which is contained.
+    # per-post RuntimeError (a single 404), which is contained. Type-matched on the AuthError BASE
+    # (the halt is backend-agnostic — PostizAuthError stands in now Blotato is gone).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "p", PostState.needs_reconcile, sub="sub_x")
     def get_status(sid):
-        raise BlotatoAuthError("blotato status 401: bad key")
-    with pytest.raises(BlotatoAuthError):
+        raise PostizAuthError("postiz status 401: bad key")
+    with pytest.raises(PostizAuthError):
         reconcile_posts(led, cfg, get_status=get_status)
 
 
@@ -288,15 +289,14 @@ def _postiz_env(monkeypatch):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
 
-def test_default_get_status_dispatches_blotato_for_rest(tmp_path, monkeypatch):
-    # rest/mcp + key ⇒ the Blotato status client (unchanged). Bound-method check is robust.
-    from fanops.reconcile import _default_get_status
-    from fanops.post.metrics import BlotatoStatusClient
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "bk")
-    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
-    cfg = Config(root=tmp_path)
-    poll = _default_get_status(cfg)
-    assert poll.__self__.__class__ is BlotatoStatusClient
+def test_status_client_unknown_backend_fails_closed(tmp_path):
+    # Blotato removed: the else-branch that returned BlotatoStatusClient now RAISES (fail-closed +
+    # legible) — an unknown backend must never silently construct a status poller. A stale
+    # FANOPS_POSTER=rest already degrades to dryrun at cfg (W4), so this raise is reachable only via
+    # a direct unknown backend.
+    from fanops.reconcile import _status_client_for
+    with pytest.raises(ValueError, match="unknown backend"):
+        _status_client_for(Config(root=tmp_path), "rest", None)
 
 def test_default_get_status_postiz_resolves_end_to_end_with_date_window(tmp_path, monkeypatch, mocker):
     # postiz + key: a parked Postiz post resolves end-to-end through the UNCHANGED reconcile_posts via

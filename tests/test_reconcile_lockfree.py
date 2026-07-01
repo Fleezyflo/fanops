@@ -15,15 +15,15 @@ def _persist_parked(cfg, pid="p1", cid="c1"):
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
-                          platform=Platform.instagram, caption="x", submission_id="blotato_sid_1",
+                          platform=Platform.instagram, caption="x", submission_id="zernio_sid_1",
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url="dryrun://98432"))
 
 
 def test_advance_reconciles_with_polls_outside_the_lock(tmp_path, monkeypatch, mocker):
-    # rest backend + key => advance reconciles. The poller acquires the ledger lock; pre-fix (poll
+    # live (zernio) backend + key => advance reconciles. The poller acquires the ledger lock; pre-fix (poll
     # inside the main txn) this LockBusyError'd and the post was parked with a poll-error reason —
     # post-fix it acquires cleanly and the post reconciles to published.
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTER", "zernio"); monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
@@ -40,6 +40,6 @@ def test_advance_reconciles_with_polls_outside_the_lock(tmp_path, monkeypatch, m
     mocker.patch("fanops.reconcile._default_get_status", return_value=lock_probe_status)
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert acquired.get("blotato_sid_1") is True          # the poll ran with the lock free
+    assert acquired.get("zernio_sid_1") is True           # the poll ran with the lock free
     assert led.posts["p1"].state is PostState.published   # and the post reconciled
     assert led.posts["p1"].public_url == "https://insta/p/abc"

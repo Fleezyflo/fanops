@@ -30,24 +30,14 @@ class StageBusyError(Exception):
 class AuthError(Exception):
     """Base class for a FATAL poster auth/credential failure (bad/missing key, HTTP 401). The
     publish loop halts the WHOLE queue by TYPE on this (every post fails on a bad key — grinding
-    through is pointless, FIX F52). Backend-specific subclasses (BlotatoAuthError, PostizAuthError)
+    through is pointless, FIX F52). Backend-specific subclasses (PostizAuthError, ZernioAuthError)
     carry the right operator message; the halt + CLI-exit logic catch the base so a new backend's
     auth failure halts identically without touching every call site."""
 
 
-class BlotatoAuthError(AuthError):
-    """A Blotato authentication/credential failure (bad or missing BLOTATO_API_KEY, HTTP 401).
-    Raised by the posters/media uploader so the publish loop can decide to HALT THE WHOLE QUEUE
-    by exception TYPE — every post will fail on a bad key, so grinding through them is pointless
-    (FIX F52). Type-matched, NOT substring-matched (AUDIT H8): a string match on "401" both
-    under-fired (a reworded auth error slipped through and burned the queue) and over-fired (a
-    5xx body merely containing "401" wrongly halted). If you wire a custom MCP tool_caller,
-    raise THIS on an auth failure so the halt logic recognizes it."""
-
-
 class PostizAuthError(AuthError):
     """A Postiz authentication failure (bad/missing POSTIZ_API_KEY, HTTP 401) from the free
-    self-hosted poster backend. Same fatal semantics as BlotatoAuthError (halt the queue by type),
+    self-hosted poster backend. Same fatal semantics as the AuthError base (halt the queue by type),
     different operator message (check POSTIZ_API_KEY). Body WITHHELD in the message to avoid leaking
     the key into stdout/ledger/run.log."""
 

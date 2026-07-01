@@ -1,6 +1,6 @@
-"""Poster interface + factory. Backends: dryrun (default), postiz (free, self-hosted), zernio (hosted TikTok), rest, mcp (Blotato, being retired).
-get_media_uploader dispatches the file->hosted-URL step per backend so publish_due
-uploads to the right place (Blotato presign vs Postiz upload vs dryrun file://)."""
+"""Poster interface + factory. Backends: dryrun (default), postiz (free, self-hosted IG/YouTube),
+zernio (hosted TikTok). get_media_uploader dispatches the file->hosted-URL step per backend so
+publish_due uploads to the right place (Postiz upload vs Zernio upload vs dryrun file://)."""
 from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, Callable
@@ -31,12 +31,11 @@ def get_poster(cfg: Config, backend: str | None = None) -> "Poster":
 def get_media_uploader(cfg: Config, backend: str | None = None) -> Callable[[Config, Path], str]:
     """Return the (cfg, Path) -> hosted-URL function for `backend` (defaults to the global
     cfg.poster_backend — back-compat). dryrun -> file:// (no network); postiz -> Postiz upload; zernio ->
-    Zernio upload; rest/mcp -> Blotato presign. M1: resolved through the provider registry. An UNKNOWN
-    backend falls back to the Blotato presign uploader (the exact old else-branch — NOT dryrun; this
-    differs from get_poster's dryrun fallback, an asymmetry the registry preserves)."""
+    Zernio upload. Resolved through the provider registry. An UNKNOWN backend falls back to the dryrun
+    uploader (a fail-safe file:// URL, not a crash) — no live account routes to an unknown backend."""
     from fanops.post.providers import get_provider
     provider = get_provider(cfg, backend or cfg.poster_backend)
     if provider is not None:
         return provider.make_uploader(cfg)
-    from fanops.post.media import upload_media
-    return upload_media
+    from fanops.post.providers import _dryrun_uploader
+    return _dryrun_uploader(cfg)

@@ -128,7 +128,8 @@ def test_review_oversize_and_garbage_offset_never_500(tmp_path, monkeypatch):
 
 # ---- (3) publish-now button on /publish ----
 def test_publish_renders_publish_now_button_wired(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n_clips=1)
     html = _client(cfg).get("/publish").data.decode()
     assert "Publish now" in html
@@ -150,7 +151,7 @@ def test_publish_now_button_dryrun_has_no_confirm_checkbox(tmp_path, monkeypatch
 
 
 def test_publish_now_button_live_has_confirm_gate(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n_clips=1)
     html = _client(cfg).get("/publish").data.decode()
     assert 'name="confirm"' in html                      # live backend -> the confirm checkbox gate appears

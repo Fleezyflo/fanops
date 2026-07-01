@@ -441,7 +441,7 @@ def operator_error(msg: str | None, *, kind: str | None = None) -> str:
     if "not live" in er or "dryrun" in er:
         return "Publishing is off until you go live."
     clean = msg.strip()
-    for tag in ("postiz", "zernio", "blotato"):
+    for tag in ("postiz", "zernio"):
         if clean.lower().startswith(tag + " "):
             rest = clean.split(None, 1)[-1] if " " in clean else ""
             if rest[:3].isdigit():
@@ -703,7 +703,7 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None, *,
         any_analyzed = any(p.state is PostState.analyzed for p in posts_view)
         if not any_analyzed:
             variant_empty_reason = ("No results yet — connect Postiz (Go Live) so posts come back "
-                                    "with analytics. (Needs a POSTIZ_API_KEY, or a Blotato backend.)")
+                                    "with analytics. (Needs a POSTIZ_API_KEY.)")
         else:
             variant_empty_reason = ("Creative variation (FANOPS_CREATIVE_VARIATION) was off when "
                                     "these posts were crossposted — no per-variant lift.")

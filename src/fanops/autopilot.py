@@ -10,7 +10,7 @@ hand-answers a caption/moment gate again:
   3. Return a readiness report (reused from `doctor`) so the operator sees what — if anything — is
      left for go-live.
 
-BLOTATO-FREE: dryrun by default (produces fully-scheduled posts, publishes NOTHING). Going live is a
+dryrun by default (produces fully-scheduled posts, publishes NOTHING). Going live is a
 SEPARATE, deliberate step via Postiz (self-hosted) or the manual publish-queue — never assumed here.
 This module enables autonomy of the per-clip WORK; it never publishes and never edits the ledger."""
 from __future__ import annotations

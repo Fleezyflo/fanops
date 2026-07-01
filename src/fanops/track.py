@@ -1,7 +1,7 @@
 """Track stage: pull + record per-post performance. saves/shares/retention = algorithmic
-lift; likes ~ noise. lift_score WHITELISTS keys (FIX F23/F42 — unknown Blotato fields are
+lift; likes ~ noise. lift_score WHITELISTS keys (FIX F23/F42 — unknown fields are
 ignored, never KeyError). pull_metrics binds the metrics reader per-account through _default_list_posts
-(postiz/zernio per-post analytics, else the Blotato bulk list), stays injectable for tests; rows match
+(postiz/zernio per-post analytics), stays injectable for tests; rows match
 published/analyzed posts by submission_id."""
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -40,7 +40,7 @@ def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None) -> 
     `not lift_degraded`: Postiz never delivers `retention`, so a Postiz-shaped row stays lift_degraded
     yet proves the shape once `reach` + a primary engagement key (saves|shares) reconcile — mirroring
     learn_doctor's reach gate, not an all-_W verdict. Still fails closed on present-but-null primaries
-    (D1) and on reach-only noise (likes+reach with no saves/shares). A full primary set (Blotato-shaped)
+    (D1) and on reach-only noise (likes+reach with no saves/shares). A full primary set (Postiz-shaped)
     always proves."""
     if LIFT_SCORE not in metrics:
         return False
@@ -53,7 +53,7 @@ def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None) -> 
         if k in raw and (raw[k] is None or not isinstance(raw[k], (int, float)) or isinstance(raw[k], bool)):
             return False                                    # D1: explicit null/non-numeric in the live row
     if not _missing_high_weight(metrics, weights):
-        return True                                         # full primary set (e.g. Blotato)
+        return True                                         # full primary set (e.g. Postiz)
     has_reach = isinstance(metrics.get("reach"), (int, float)) and not isinstance(metrics.get("reach"), bool)
     has_eng = any(isinstance(metrics.get(k), (int, float)) and not isinstance(metrics.get(k), bool)
                  for k in ("saves", "shares"))
@@ -136,17 +136,17 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     return led
 
 def _metrics_client_for(cfg: Config, backend: str, submission_ids: Optional[list[str]]) -> ListPosts:
-    # One backend's metrics fetcher. postiz/zernio read PER-POST analytics (need the published ids);
-    # rest/mcp reads the Blotato BULK list (ignores ids — UNCHANGED). Lazy imports keep requests/postiz/
-    # zernio off the dryrun/core path.
+    # One backend's metrics fetcher. postiz/zernio read PER-POST analytics (need the published ids).
+    # An unknown backend FAILS CLOSED + legibly (mirrors #251-#263): a stale FANOPS_POSTER already
+    # degrades to dryrun at cfg (W4), so an unrecognized backend reaching here is a real routing bug,
+    # not a silent fallback. Lazy imports keep requests/postiz/zernio off the dryrun/core path.
     if backend == "postiz":
         from fanops.post.metrics import PostizMetricsClient
         return PostizMetricsClient(cfg, submission_ids=submission_ids).list_posts
     if backend == "zernio":
         from fanops.post.metrics import ZernioMetricsClient
         return ZernioMetricsClient(cfg, submission_ids=submission_ids).list_posts
-    from fanops.post.metrics import BlotatoMetricsClient
-    return BlotatoMetricsClient(cfg).list_posts
+    raise ValueError(f"unknown backend {backend!r}: no metrics client (expected postiz/zernio)")
 
 def _default_list_posts(cfg: Config, *, submission_ids: Optional[list[str]] = None,
                         posts: Optional[list] = None) -> ListPosts:
@@ -181,7 +181,7 @@ def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = 
     # now_iso). The fetch id-set + match-set are PUBLISHED OR ANALYZED (P3): an analyzed post stays
     # re-pollable so its series accumulates later cadence offsets. due_offset returns None once a post's
     # series is complete (or the post predates published_at), so a finished/timeline-less post is still
-    # fetched + flipped/updated but records no new row. Inert id-thread for Blotato (it ignores it).
+    # fetched + flipped/updated but records no new row. Inert id-thread for any non-postiz backend (ignored).
     now = now or datetime.now(timezone.utc)
     pollable = (PostState.published, PostState.analyzed)
     fetch = list_posts or _default_list_posts(

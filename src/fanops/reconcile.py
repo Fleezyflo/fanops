@@ -1,33 +1,34 @@
 """Reconcile stage (AUDIT H4). Resolves posts stranded in `submitting` (crash mid-publish, FIX
 F11) or `needs_reconcile` (ambiguous 5xx / network timeout after the body was sent, AUDIT C1) by
-polling Blotato `GET /v2/posts/{postSubmissionId}` — the ONLY lookup the API offers (status enum
-in-progress|failed|published|scheduled + publicUrl/errorMessage, VERIFIED against the live Blotato
-`get_post_status` MCP tool schema 2026-06-02, AUDIT D5). It REQUIRES the submission id.
+polling each backend for the post's terminal status. Zernio offers a real per-post lookup
+(GET /posts/{postSubmissionId} -> status in-progress|failed|published|scheduled + publicUrl); Postiz
+has no per-post endpoint, so it reads the `state` field off the DATE-WINDOWED GET /public/v1/posts.
+Either way the poll REQUIRES the submission id.
 
 Consequence (the honest boundary): AUDIT H1 (Phase D) stamps EVERY crossposted post with a client
 idempotency token (submission_id="fanops_..."), so a post parked after a pure network timeout is no
-longer id-less — it carries a fanops_ token and IS polled. But a fanops_ token is not a real Blotato
+longer id-less — it carries a fanops_ token and IS polled. But a fanops_ token is not a real backend
 postSubmissionId, so that poll 404s; the per-post try/except below CONTAINS that error (leaves the
 post parked, never failed — a poll error is not evidence it failed) so the pass continues. A post with
 genuinely NO submission_id at all (older data) is still SKIPPED for human reconcile (the digest
-surfaces it). A real postSubmissionId from an ambiguous-5xx body (blotato_rest.py) overwrites the
-token, making that post cleanly auto-reconcilable. We never guess a post's fate — a wrong guess either
-drops a live post (untrackable) or re-queues a live one (double-publish), the exact C1/cascade hazards.
+surfaces it). A real postSubmissionId from an ambiguous-5xx body overwrites the token, making that post
+cleanly auto-reconcilable. We never guess a post's fate — a wrong guess either drops a live post
+(untrackable) or re-queues a live one (double-publish), the exact C1/cascade hazards.
 
 Resolution:
   status 'published'        -> PostState.published (+ public_url) so track can later measure it
   status 'failed'           -> PostState.failed (definitely not live -> safe to re-queue)
   'in-progress'/'scheduled' -> leave as-is (not yet resolved; a later pass retries)
 
-Backend-agnostic by design (P2). The poll is dispatched per backend in _default_get_status: Blotato
-(rest/mcp) over GET /v2/posts/{id}; Postiz over the DATE-WINDOWED GET /public/v1/posts `state` field
+Backend-agnostic by design (P2). The poll is dispatched per backend in _default_get_status: Zernio over
+GET /posts/{id} (a bound method); Postiz over the DATE-WINDOWED GET /public/v1/posts `state` field
 (PostizStatusClient). The {status, publicUrl} dict and the state machine here are identical for both — a
 PUBLISHED Postiz row carries its real IG permalink in `releaseURL`, which PostizStatusClient surfaces as
 publicUrl (verified against the running instance 2026-06-21, metrics.py), so reconcile stamps a published
-Postiz post's public_url just like Blotato; `fanops resolve <id> published --url` is the manual fallback for
-a post genuinely absent from its date-window page (status 'unknown' -> left parked, never guessed).
-A FATAL auth failure from EITHER backend (the shared AuthError base) halts the pass; a single poll error
-is contained per-post (parked, never guessed failed). dryrun never reaches here (gated upstream)."""
+Postiz post's public_url; `fanops resolve <id> published --url` is the manual fallback for a post genuinely
+absent from its date-window page (status 'unknown' -> left parked, never guessed). A FATAL auth failure
+from EITHER backend (the shared AuthError base) halts the pass; a single poll error is contained per-post
+(parked, never guessed failed). dryrun never reaches here (gated upstream)."""
 from __future__ import annotations
 from typing import Callable, Optional
 from fanops.config import Config
@@ -70,7 +71,7 @@ def _parked_age(post, now: datetime):
 
 def _is_fake_token(post) -> bool:
     """True iff the post still carries its BIRTH client idempotency token (crosspost.py: `fanops_…`), i.e. a
-    real Blotato/Postiz postSubmissionId never overwrote it. Such a token 404s on every poll forever, so a
+    real backend postSubmissionId never overwrote it. Such a token 404s on every poll forever, so a
     post that ONLY ever poll-errors on it can never auto-resolve — the precondition for escalation. A post
     carrying a real id is left to its normal poll (its status WILL resolve), never escalated."""
     return bool(post.submission_id) and post.submission_id.startswith("fanops_")
@@ -85,15 +86,16 @@ def _is_giveup(post) -> bool:
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.
 _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reconcile)
 GetStatus = Callable[[str], dict]
-_LIVE_STATUS_BACKENDS = frozenset({"postiz", "zernio", "rest", "mcp"})
+_LIVE_STATUS_BACKENDS = frozenset({"postiz", "zernio"})
 
 
 def _status_client_for(cfg: Config, backend: str, led: Optional[Ledger]) -> GetStatus:
-    # One backend's status poller. Blotato (rest/mcp) and Zernio have a TRUE per-post status endpoint
-    # (a bound get_status, no date window). Postiz has NEITHER: its only signal is the `state` field on a
-    # row of the DATE-WINDOWED GET /public/v1/posts, so it wraps PostizStatusClient in a closure that reads
-    # the parked post's own scheduled_time from `led` for the window (a future/old/2099 post is otherwise
-    # PERMANENTLY off the default ~week page). Lazy imports keep deps off the core path.
+    # One backend's status poller. Zernio has a TRUE per-post status endpoint (a bound get_status, no
+    # date window). Postiz has NONE: its only signal is the `state` field on a row of the DATE-WINDOWED
+    # GET /public/v1/posts, so it wraps PostizStatusClient in a closure that reads the parked post's own
+    # scheduled_time from `led` for the window (a future/old/2099 post is otherwise PERMANENTLY off the
+    # default ~week page). An unknown backend FAILS CLOSED + legibly (a stale FANOPS_POSTER already
+    # degrades to dryrun at cfg, W4). Lazy imports keep deps off the core path.
     if backend == "postiz":
         from fanops.post.metrics import PostizStatusClient
         client = PostizStatusClient(cfg)
@@ -104,8 +106,7 @@ def _status_client_for(cfg: Config, backend: str, led: Optional[Ledger]) -> GetS
     if backend == "zernio":
         from fanops.post.metrics import ZernioStatusClient
         return ZernioStatusClient(cfg).get_status
-    from fanops.post.metrics import BlotatoStatusClient
-    return BlotatoStatusClient(cfg).get_status
+    raise ValueError(f"unknown backend {backend!r}: no status client (expected postiz/zernio)")
 
 
 def _reconcilable_routing(cfg: Config, led: Optional[Ledger]) -> dict[str, str]:
@@ -127,7 +128,7 @@ def _reconcilable_routing(cfg: Config, led: Optional[Ledger]) -> dict[str, str]:
 
 
 def _poll_backend_for_sid(cfg: Config, routing: dict[str, str], sid: str) -> str:
-    """Resolve which status client owns this submission — never dryrun -> Blotato."""
+    """Resolve which status client owns this submission — never dryrun (fails closed)."""
     b = routing.get(sid)
     if b in _LIVE_STATUS_BACKENDS:
         return b
@@ -141,8 +142,8 @@ def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
     # Per-post backend routing (zernio). When the reconcilable posts in `led` resolve to MORE THAN ONE
     # backend (an account override + the global), route each submission to its own backend's status client
     # — so IG-via-Postiz and TikTok-via-Zernio reconcile in ONE pass. With one backend (or no led) this is
-    # the UNCHANGED single-backend dispatch (Blotato/Zernio bound method, Postiz date-window closure), so
-    # the blotato bound-method check + the 30+ existing reconcile tests are byte-identical.
+    # the single-backend dispatch (Zernio bound method, Postiz date-window closure), so the Zernio
+    # bound-method check + the existing reconcile tests are byte-identical.
     routing = _reconcilable_routing(cfg, led)
     backends = set(routing.values())
     if not backends:
@@ -210,7 +211,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
         return {"needs_reconcile": len(snapshot.posts_in_state(PostState.needs_reconcile)),
                 "published": len(snapshot.posts_in_state(PostState.published)),
                 "healed_submitting": healed}
-    poll = _default_get_status(cfg, snapshot)            # only built when work exists; never dryrun -> Blotato
+    poll = _default_get_status(cfg, snapshot)            # only built when work exists; never dryrun (fails closed)
     from fanops.postiz_lifecycle import ensure_up        # reconcilable>0: bring the local Postiz stack up to poll
     ensure_up(cfg)
     results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
@@ -218,7 +219,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
         try:
             results[p.submission_id] = poll(p.submission_id) or {}   # network, NO lock held
         except AuthError:
-            raise                                        # bad key (Blotato OR Postiz): every poll fails -> halt
+            raise                                        # bad key (Postiz OR Zernio): every poll fails -> halt
         except Exception as exc:
             results[p.submission_id] = exc               # capture; re-raised in apply -> parked (never guessed failed)
     def cached(sid: str) -> dict:
@@ -246,16 +247,16 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         # Per-post resilience (mirrors publish_due, run.py:70-76): one post's poll error must NOT
         # abort the whole pass. AUDIT H1 made this load-bearing — D1 stamps EVERY post with a CLIENT
         # idempotency token (submission_id = "fanops_..."), so a post parked after a pure network
-        # timeout carries a fanops_ token that is NOT a real Blotato postSubmissionId. Polling it
-        # 404s -> BlotatoStatusClient.get_status raises RuntimeError. Uncaught, that raise escapes
+        # timeout carries a fanops_ token that is NOT a real backend postSubmissionId. Polling it
+        # 404s -> the status client's get_status raises RuntimeError. Uncaught, that raise escapes
         # reconcile_posts and strands every genuinely-published post LATER in iteration order
         # (order-dependent availability bug). Contain it to THIS post instead.
         try:
             info = poll(post.submission_id) or {}
         except AuthError:
-            raise                          # bad key/401 (Blotato OR Postiz): EVERY poll will fail ->
-                                           # halt, don't grind. Widened from BlotatoAuthError to the
-                                           # shared AuthError base (P2) so a Postiz 401 also halts.
+            raise                          # bad key/401 (Postiz OR Zernio): EVERY poll will fail ->
+                                           # halt, don't grind. Type-matched on the shared AuthError
+                                           # base (P2) so any backend's 401 halts.
                                            # the ledger recording a bogus error on every parked post
         except Exception as exc:
             # A single poll failure (e.g. a 404 on a not-yet-real fanops_ token) is NOT evidence the
@@ -268,8 +269,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             continue
         status = (info.get("status") or "").lower()
         if status == "published":
-            # CULM-3: capture the REAL backend id the poll surfaced (Blotato postSubmissionId / Postiz+Zernio
-            # id), preferring it over the birth fanops_ token; never overwrite an already-real id with None.
+            # CULM-3: capture the REAL backend id the poll surfaced (Postiz / Zernio postSubmissionId),
+            # preferring it over the birth fanops_ token; never overwrite an already-real id with None.
             real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
                          if is_real_submission_id(info.get(k))), None)
             new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)

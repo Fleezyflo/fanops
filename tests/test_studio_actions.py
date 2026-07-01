@@ -209,7 +209,7 @@ def test_actions_use_single_transaction(tmp_path, mocker):
 # ---- FIX 2: publish_now must not let a NON-auth exception from publish_post escape as a Flask 500 ----
 def test_publish_now_non_auth_error_yields_ok_false_not_raise(tmp_path, monkeypatch, mocker):
     from fanops.studio.actions import publish_now
-    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); _seed(cfg)
     # publish_post raises a NON-auth error (e.g. media upload RuntimeError / corrupt clip.path)
     mocker.patch("fanops.post.run.publish_post", side_effect=RuntimeError("media upload boom"))

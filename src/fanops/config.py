@@ -52,12 +52,12 @@ _STAGE = {
 }
 
 # The recognized poster backends. An unknown/typo'd FANOPS_POSTER resolves to dryrun (W4) — see
-# poster_backend. dryrun = posts nothing; postiz = free self-hosted; rest/mcp = Blotato (being retired).
-PosterBackend = Literal["dryrun", "postiz", "zernio", "rest", "mcp"]
-_VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio", "rest", "mcp"})
+# poster_backend. dryrun = posts nothing; postiz = free self-hosted (IG/YouTube); zernio = hosted TikTok.
+PosterBackend = Literal["dryrun", "postiz", "zernio"]
+_VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
 # Live (real-posting) backends: a per-account backend override pointing at one of these is a real
 # "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
-_LIVE_BACKENDS = frozenset({"postiz", "zernio", "rest", "mcp"})
+_LIVE_BACKENDS = frozenset({"postiz", "zernio"})
 
 # M2 per-account FRAMING values (Account.framing): the vertical crop bias for the account's render CUT.
 # "top" -> head-safe upper-third crop (reframe_filter top_bias=True), "center" -> default centred crop.
@@ -69,13 +69,11 @@ FRAMING_NAMES = frozenset({"top", "center"})
 # FANOPS_POSTER bridge (accounts.effective_provider): a provider-less channel never falls back to a
 # global that doesn't post its platform (H2 — e.g. a TikTok channel must not bridge to the IG-wired
 # Postiz global, which would publish to the wrong provider/integration or burn the post). The explicit
-# per-channel `backends` override ALWAYS wins first, so this only narrows the back-compat fallback;
-# Blotato (rest/mcp) historically served every platform.
+# per-channel `backends` override ALWAYS wins first, so this only narrows the back-compat fallback
+# (postiz serves IG/YouTube, zernio serves TikTok).
 _BACKEND_PLATFORMS = {
     "postiz": frozenset({"instagram", "youtube"}),
     "zernio": frozenset({"tiktok"}),
-    "rest":   frozenset({"instagram", "tiktok", "youtube", "facebook", "twitter"}),
-    "mcp":    frozenset({"instagram", "tiktok", "youtube", "facebook", "twitter"}),
 }
 
 # Per-gate model tier (llm_model_for): M1b splits the moment gate. `moments` (pass 1) chooses the
@@ -150,11 +148,6 @@ class Config:
         return _sanitize_tuning(raw)                         # warn+drop invalid entries, keep good ones
 
     @property
-    def blotato_api_key(self) -> str | None:
-        v = os.getenv("BLOTATO_API_KEY")
-        return v.strip() if v and v.strip() else None
-
-    @property
     def anthropic_api_key(self) -> str | None:
         # VESTIGIAL (2026-06-04): the autonomous responder now uses the operator's EXISTING `claude`
         # subscription via plain `claude -p` (NOT `--bare`), so it rides the OAuth/keychain login and
@@ -214,25 +207,19 @@ class Config:
         """The .env var name for `backend`'s API key — used by the FATAL auth-failure path to tell
         the operator exactly which key to check. UI-LIE-FIX: callers used to derive this with
         `cfg.poster_backend == 'postiz'`, which lied on per-channel deployments and only knew about
-        2 backends (postiz vs blotato — zernio didn't exist in the branch). Centralized here so
-        adding a backend doesn't require touching every error message.
-
-        "rest" and "mcp" are the two Blotato transports (both gated by BLOTATO_API_KEY); included
-        so a legacy FANOPS_POSTER=rest / =mcp deployment still gets the right key name in errors."""
+        one backend (postiz — zernio didn't exist in the branch). Centralized here so
+        adding a backend doesn't require touching every error message."""
         return {"postiz": "POSTIZ_API_KEY", "zernio": "ZERNIO_API_KEY",
-                "blotato": "BLOTATO_API_KEY", "rest": "BLOTATO_API_KEY", "mcp": "BLOTATO_API_KEY",
                 }.get((backend or "").lower(), "FANOPS_POSTER")
 
     @staticmethod
     def auth_key_name_from_error(exc: Exception) -> str:
         """The STRUCTURAL truth: the auth-error class itself identifies the backend that failed.
-        BlotatoAuthError -> BLOTATO_API_KEY, PostizAuthError -> POSTIZ_API_KEY, etc. This is
+        PostizAuthError -> POSTIZ_API_KEY, ZernioAuthError -> ZERNIO_API_KEY, etc. This is
         unambiguous — no per-channel routing lookup, no legacy global, just the exception's class.
         Used by the FATAL-auth handlers in actions.publish_now / run_advance / run_prepare so the
         key name is always right, no matter how the publish was routed."""
-        from fanops.errors import BlotatoAuthError, PostizAuthError, ZernioAuthError
-        if isinstance(exc, BlotatoAuthError):
-            return "BLOTATO_API_KEY"
+        from fanops.errors import PostizAuthError, ZernioAuthError
         if isinstance(exc, PostizAuthError):
             return "POSTIZ_API_KEY"
         if isinstance(exc, ZernioAuthError):
@@ -258,7 +245,7 @@ class Config:
     @property
     def postiz_url(self) -> str | None:
         # Base URL of a self-hosted (or hosted) Postiz instance, e.g. https://postiz.example.com or
-        # https://api.postiz.com. The free, non-Blotato poster backend (FANOPS_POSTER=postiz) posts
+        # https://api.postiz.com. The free, self-hosted poster backend (FANOPS_POSTER=postiz) posts
         # to {postiz_url}/public/v1/... . Trailing slash trimmed by the poster.
         v = os.getenv("POSTIZ_URL")
         return v.strip() if v and v.strip() else None
@@ -266,8 +253,7 @@ class Config:
     @property
     def postiz_api_key(self) -> str | None:
         # Postiz public API key (Settings > Developers > Public API), sent as the Authorization
-        # header. Distinct from BLOTATO_API_KEY — a Postiz deployment needs neither a Blotato account
-        # nor key. is_live_backend is True for a postiz backend WITH this key (M2): postiz both
+        # header. is_live_backend is True for a postiz backend WITH this key (M2): postiz both
         # PUBLISHES and now feeds the learning loop via its post analytics (PostizMetricsClient).
         v = os.getenv("POSTIZ_API_KEY")
         return v.strip() if v and v.strip() else None
@@ -284,7 +270,7 @@ class Config:
     def zernio_api_key(self) -> str | None:
         # Zernio API key (Settings > API Keys; sk_ + 64 hex), sent as `Authorization: Bearer <key>`.
         # WRITE-ONLY — never logged/echoed (mirrors postiz_api_key). is_live_backend is True for a zernio
-        # backend WITH this key. Distinct from POSTIZ/BLOTATO keys — they coexist (per-account routing
+        # backend WITH this key. Distinct from the POSTIZ key — they coexist (per-account routing
         # can run IG via Postiz AND TikTok via Zernio at once).
         v = os.getenv("ZERNIO_API_KEY")
         return v.strip() if v and v.strip() else None
@@ -335,10 +321,9 @@ class Config:
         # THE "live backend + key" guard, one home (stage-6 audit): it was duplicated verbatim at
         # three call sites (reconcile + both learning passes); drift in any copy would silently
         # enable/disable a pass. Live = a real poster AND a key to talk to it with — backend-aware
-        # (M2): a postiz deployment is live on POSTIZ_API_KEY; a Blotato (rest/mcp) deployment on
-        # BLOTATO_API_KEY; dryrun (or any unrecognized backend) is never live. NB: this gates the
-        # learn/reconcile passes — the Blotato status reconciler (pipeline.py) further restricts itself
-        # to rest/mcp, and the speculative actuators stay frozen by learning_validated until cutover.
+        # (M2): a postiz deployment is live on POSTIZ_API_KEY, a zernio deployment on
+        # ZERNIO_API_KEY; dryrun (or any unrecognized backend) is never live. NB: this gates the
+        # learn/reconcile passes; the speculative actuators stay frozen by learning_validated until cutover.
         # M2: "live" now flows from the is_live switch (FANOPS_LIVE, or the legacy FANOPS_POSTER derivation)
         # AND a backend has its key. Byte-identical when a live GLOBAL poster is configured (legacy path).
         # C1: go_live writes FANOPS_LIVE but NOT FANOPS_POSTER, so poster_backend is dryrun while channels
@@ -362,10 +347,9 @@ class Config:
         # Does THIS backend have the credential to post live? Per-account routing (Zernio slice 2) asks
         # this about a per-post backend that may differ from the global poster_backend, so the live check
         # is one reusable home keyed by backend name (not just self.poster_backend). postiz->POSTIZ_API_KEY,
-        # zernio->ZERNIO_API_KEY, rest/mcp(Blotato)->BLOTATO_API_KEY; dryrun/unknown -> never live.
+        # zernio->ZERNIO_API_KEY; dryrun/unknown -> never live.
         if backend == "postiz": return bool(self.postiz_api_key)
         if backend == "zernio": return bool(self.zernio_api_key)
-        if backend in ("rest", "mcp"): return bool(self.blotato_api_key)
         return False                                    # dryrun / anything unrecognized
 
     @property

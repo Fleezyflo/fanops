@@ -256,8 +256,8 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
         scheduled_time=sched, created_at=iso_z(datetime.now(timezone.utc)),   # wall-clock BIRTH (NOT in the pid)
         media_urls=media_urls,
         # AUDIT H1: stamp a stable, content-addressed CLIENT idempotency token at birth so
-        # an ambiguous publish is ALWAYS pollable (a real Blotato id overwrites it in
-        # blotato_rest). pid is content-addressed -> a re-run computes the identical token.
+        # an ambiguous publish is ALWAYS pollable (a real backend id overwrites it on
+        # publish). pid is content-addressed -> a re-run computes the identical token.
         submission_id=f"fanops_{_hash('idemp', pid)}",
         render_id=render_id, variant_key=variant_key, variant_hook=variant_hook,
         # P1 attribution key (one writer = here): the creative dims P3 groups reach by.

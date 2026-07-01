@@ -17,9 +17,11 @@ def test_dryrun_writes_payload_with_media(tmp_path):
                       scheduled_time="2026-06-02T18:00:00Z", state=PostState.queued, public_url="dryrun://p1"))
     led = DryRunPoster(cfg).publish(led, "p1")
     body = json.loads((cfg.scheduled / "p1.json").read_text())
-    assert body["post"]["content"]["text"] == "hello"
-    assert body["post"]["content"]["mediaUrls"] == ["https://h/v.mp4"]
-    assert body["post"]["accountId"] == "98432"
+    # Backend-neutral would-send preview (no Blotato payload builder): flat fields, not post.content.*
+    assert body["text"] == "hello"
+    assert body["media_urls"] == ["https://h/v.mp4"]
+    assert body["account_id"] == "98432"
+    assert body["platform"] == "instagram"
     assert led.posts["p1"].state is PostState.submitted
 
 

@@ -166,7 +166,7 @@ def test_run_advance_returns_summary(tmp_path):
 def test_run_advance_live_backend_requires_confirm(tmp_path, monkeypatch):
     # Track C: a pass on a LIVE backend publishes to real accounts — the Run button must require an
     # explicit confirm, never fire on a stray click.
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     res = actions.run_advance(Config(root=tmp_path), confirmed=False)
     assert not res.ok and "confirm" in (res.error or "").lower()
 
@@ -185,7 +185,7 @@ def test_run_advance_blocks_on_invalid_accounts(tmp_path):
 
 def test_run_advance_postiz_auth_names_postiz_key(tmp_path, monkeypatch):
     # ecc holistic audit GAP 2: a PostizAuthError on a postiz backend must surface FATAL + POSTIZ_API_KEY,
-    # not degrade to a generic "advance failed" via the BlotatoAuthError-only arm.
+    # not degrade to a generic "advance failed" via the PostizAuthError-only arm.
     from fanops.errors import PostizAuthError
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://x")
     monkeypatch.setenv("POSTIZ_API_KEY", "k")
@@ -195,13 +195,13 @@ def test_run_advance_postiz_auth_names_postiz_key(tmp_path, monkeypatch):
     assert not res.ok and "FATAL" in res.error and "POSTIZ_API_KEY" in res.error
 
 def test_run_advance_surfaces_fatal_auth(tmp_path, monkeypatch):
-    # ecc:python-review HIGH: a fatal BlotatoAuthError (bad key) must surface as FATAL, not be demoted
+    # ecc:python-review HIGH: a fatal PostizAuthError (bad key) must surface as FATAL, not be demoted
     # to a soft "advance failed" by the broad except. advance's own txn already rolled back.
-    from fanops.errors import BlotatoAuthError
-    def boom(c, *, base_time): raise BlotatoAuthError("Blotato 401 unauthorized (body withheld)")
+    from fanops.errors import PostizAuthError
+    def boom(c, *, base_time): raise PostizAuthError("Postiz 401 unauthorized (body withheld)")
     monkeypatch.setattr("fanops.pipeline.advance", boom)
     res = actions.run_advance(Config(root=tmp_path))
-    assert not res.ok and "FATAL" in res.error and "BLOTATO_API_KEY" in res.error
+    assert not res.ok and "FATAL" in res.error and "POSTIZ_API_KEY" in res.error
 
 
 # ---- actions.run_prepare (auto-prepare: answer gates via the responder + advance until stable) ----
@@ -263,19 +263,19 @@ def test_run_prepare_manual_mode_leaves_gates_ok(tmp_path, monkeypatch):
 
 def test_run_prepare_live_backend_requires_confirm(tmp_path, monkeypatch):
     # A prepare pass crossposts/publishes due posts on a live backend -> same confirm guard as advance.
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     res = actions.run_prepare(Config(root=tmp_path), confirmed=False)
     assert not res.ok and "confirm" in (res.error or "").lower()
 
 def test_run_prepare_surfaces_fatal_auth(tmp_path, monkeypatch):
     # A fatal auth failure during a prepare pass surfaces FATAL + the right key, not a soft "failed".
-    from fanops.errors import BlotatoAuthError
+    from fanops.errors import PostizAuthError
     monkeypatch.setattr("fanops.responder.get_responder",
                         lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
-    def boom(c, *, base_time): raise BlotatoAuthError("Blotato 401 (body withheld)")
+    def boom(c, *, base_time): raise PostizAuthError("Postiz 401 (body withheld)")
     monkeypatch.setattr("fanops.pipeline.advance", boom)
     res = actions.run_prepare(Config(root=tmp_path))
-    assert not res.ok and "FATAL" in res.error and "BLOTATO_API_KEY" in res.error
+    assert not res.ok and "FATAL" in res.error and "POSTIZ_API_KEY" in res.error
 
 def test_run_prepare_route(tmp_path, monkeypatch):
     from fanops.studio.app import create_app

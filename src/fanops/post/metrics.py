@@ -1,35 +1,18 @@
 """Real metrics-read client (FIX F05 — v1 had none). list_posts(window) returns rows keyed by
-postSubmissionId with a metrics dict. The postSubmissionId key and the status enum
-(in-progress|published|scheduled|failed, used by BlotatoStatusClient below) were VERIFIED against
-the live Blotato MCP tool schemas 2026-06-02 (AUDIT D5). NOTE the live URL-key split: the published
-URL is `publicUrl` on get_post_status (the single-post lookup) but `postUrl` on list_posts — this
-client reads metrics rows by postSubmissionId and does NOT read a URL, so the split does not bite
-here (a future reader of a list row's URL must use postUrl). Which METRICS fields Blotato exposes
-remains an INTEGRATION CHECKPOINT: if saves/shares/retention are unavailable, redesign lift_score
-(Task 21) on the available fields. This file also houses the Postiz (PostizMetricsClient/PostizStatusClient)
-and Zernio (ZernioMetricsClient/ZernioStatusClient) per-post read clients, each emitting the same
-{postSubmissionId, metrics} / {status, publicUrl} row contracts."""
+postSubmissionId with a metrics dict. This file houses the Postiz (PostizMetricsClient/
+PostizStatusClient) and Zernio (ZernioMetricsClient/ZernioStatusClient) per-post read clients, each
+emitting the same {postSubmissionId, metrics} / {status, publicUrl} row contracts."""
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 import requests
 from fanops.config import Config
-from fanops.errors import BlotatoAuthError, PostizAuthError, ZernioAuthError, redact
-from fanops.post.blotato_base import BASE_URL
+from fanops.errors import PostizAuthError, ZernioAuthError, redact
 from fanops.post.postiz import _base, _key
 from fanops.post.zernio import _base as _zbase, _key as _zkey
 from fanops.timeutil import parse_iso
 from fanops.log import get_logger
-
-# A 401 on a metrics/status read is the SAME fatal auth condition as a 401 on publish — raise the
-# TYPED error so reconcile's halt-on-auth guard fires (else a bad key grinds every parked post) and
-# `track` halts cleanly. Body WITHHELD: the message reaches stdout/ledger/digest, so a 401 body
-# echoing the key would leak it (the df85662 redaction closed media.py/blotato_rest.py but missed
-# these two read clients — audit follow-up).
-def _raise_for_auth(resp) -> None:
-    if resp.status_code == 401:
-        raise BlotatoAuthError("Blotato 401 unauthorized — check BLOTATO_API_KEY (response body withheld)")
 
 def _safe(cfg, text, limit: int = 200) -> str:
     # Scrub EVERY provider key from an external body before it lands in error_reason/stderr/run.log
@@ -37,7 +20,7 @@ def _safe(cfg, text, limit: int = 200) -> str:
     # and a 5xx/proxy/WAF page can reflect the presented key). cfg may be None (legacy callers) -> no-op.
     if cfg is None:
         return (text or "")[:limit]
-    return redact(text, cfg.blotato_api_key, cfg.postiz_api_key, cfg.zernio_api_key, limit=limit)
+    return redact(text, cfg.postiz_api_key, cfg.zernio_api_key, limit=limit)
 
 def _json_or_raise(resp, label: str, cfg=None):
     # ECC fix #4: a 200 with a non-JSON body (HTML error page from a misconfigured proxy) made
@@ -49,48 +32,9 @@ def _json_or_raise(resp, label: str, cfg=None):
     except ValueError:
         raise RuntimeError(f"{label}: non-JSON {resp.status_code} response: {_safe(cfg, resp.text)}")
 
-class BlotatoMetricsClient:
-    def __init__(self, cfg: Config):
-        self.cfg = cfg
-        key = cfg.blotato_api_key
-        if not key:
-            raise RuntimeError("BLOTATO_API_KEY missing — cannot read metrics.")
-        self.headers = {"blotato-api-key": key}
-
-    def list_posts(self, window: str = "30d") -> list[dict]:
-        resp = requests.get(f"{BASE_URL}/posts", headers=self.headers,
-                            params={"window": window}, timeout=30)
-        _raise_for_auth(resp)
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"blotato metrics {resp.status_code}: {_safe(self.cfg, resp.text)}")
-        data = _json_or_raise(resp, "blotato metrics", self.cfg)
-        if isinstance(data, list):
-            return data
-        return data.get("items", [])
-
-
-class BlotatoStatusClient:
-    """Single-post status lookup for the reconcile stage (AUDIT H4): GET /v2/posts/{id} ->
-    {status: in-progress|failed|published|scheduled, publicUrl, errorMessage}. Verified against
-    help.blotato.com. Rate-limited by Blotato to 60 req/min, so reconcile polls only stranded
-    posts that HAVE a submission id, not the whole ledger."""
-    def __init__(self, cfg: Config):
-        self.cfg = cfg
-        key = cfg.blotato_api_key
-        if not key:
-            raise RuntimeError("BLOTATO_API_KEY missing — cannot reconcile posts.")
-        self.headers = {"blotato-api-key": key}
-
-    def get_status(self, submission_id: str) -> dict:
-        resp = requests.get(f"{BASE_URL}/posts/{submission_id}", headers=self.headers, timeout=30)
-        _raise_for_auth(resp)
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"blotato status {resp.status_code}: {_safe(self.cfg, resp.text)}")
-        return _json_or_raise(resp, "blotato status", self.cfg)
-
 
 # ---- Postiz metrics (M2) — the FREE backend's read client. Postiz analytics is PER-POST
-# (GET analytics/post/{id}), not bulk like Blotato, so the client takes the published submission_ids
+# (GET analytics/post/{id}), per-post (not a bulk list), so the client takes the published submission_ids
 # and fetches each. It emits the SAME {postSubmissionId, metrics} row contract pull_metrics consumes,
 # plus an inert _raw_labels list that M3's cutover reconcile reads (so it never re-fetches). ----
 
@@ -231,7 +175,7 @@ class PostizStatusClient:
 
 # ---- Zernio metrics + status (Slice 5) — the FREE TikTok backend's read clients. Zernio reads PER-POST
 # analytics (GET /analytics?postId= — docs 2026-06, NOT legacy /analytics/posts/{id}) AND has a true single-post status lookup
-# (GET /posts/{id}, like Blotato). Both response SHAPES are INTEGRATION CHECKPOINTS: the maps below accept
+# (GET /posts/{id}). Both response SHAPES are INTEGRATION CHECKPOINTS: the maps below accept
 # the documented aliases + common nestings (locked offline here), the operator verifies live at first
 # publish. The ZERNIO_API_KEY rides the Bearer header and is NEVER logged/echoed (401 body withheld). ----
 
@@ -417,7 +361,7 @@ def _extract_zernio_permalink(body) -> Optional[str]:
 
 class ZernioStatusClient:
     """Reconcile READ for the Zernio backend. GET /posts/{id} -> a per-post status + TikTok permalink.
-    Unlike Postiz, Zernio HAS a real single-post lookup, so this mirrors BlotatoStatusClient (a bound
+    Unlike Postiz, Zernio HAS a real single-post lookup, so this is a bound single-post get_status (a bound
     get_status, no date window). Emits the SAME {status, publicUrl} dict reconcile_posts consumes. 401 ->
     ZernioAuthError (halt); 5xx -> RuntimeError (per-post-isolated by reconcile_posts -> parked, never
     failed). An unrecognized state -> {"status":"scheduled"} (parked, never guessed failed)."""

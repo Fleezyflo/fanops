@@ -1,7 +1,7 @@
 """`fanops doctor` (Phase 3b) — a READ-ONLY first-run health screen. Composes the guards that
 already exist (Accounts.validate, the cutover-safety preflight, toolchain presence) into ONE
 operator view: PASS/FAIL per item with the exact next action, plus informational notes. It performs
-NOTHING — it cannot create platform accounts or obtain a Blotato key (the irreducibly-manual setup
+NOTHING — it cannot create platform accounts or obtain a poster API key (the irreducibly-manual setup
 steps), so usability for a brand-new operator is capped here by reality, not code; doctor just makes
 'what's left' legible instead of buried in the source."""
 from __future__ import annotations
@@ -51,15 +51,11 @@ def doctor_report(cfg: Config) -> dict:
     # block below (it was read twice per doctor_report — two cutover.json reads on every call).
     lv = learning_validated(cfg)
     # 4. poster + key consistency (human step 3) — mirrors cli._check_preflight
-    if cfg.poster_backend in {"rest", "mcp"}:
-        checks.append(_check(f"BLOTATO_API_KEY set (FANOPS_POSTER={cfg.poster_backend})",
-                             cfg.blotato_api_key is not None,
-                             "export BLOTATO_API_KEY=... (publishing 401s without it)"))
     if cfg.poster_backend == "postiz":
         checks.append(_check("POSTIZ_URL + POSTIZ_API_KEY set (FANOPS_POSTER=postiz)",
                              cfg.postiz_url is not None and cfg.postiz_api_key is not None,
                              "set POSTIZ_URL (your self-hosted instance) + POSTIZ_API_KEY (Postiz "
-                             "Settings > Developers > Public API) — the free, non-Blotato publisher"))
+                             "Settings > Developers > Public API) — the free, self-hosted publisher"))
         # Postiz-learning readiness (booleans only, never the key): the loop only acts once the key is set,
         # every active channel is mapped, AND cutover confirmed the lift fields. Hint names the FIRST gap.
         ready = cfg.postiz_api_key is not None and not problems and lv   # lv hoisted above (ECC fix #14)
