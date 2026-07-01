@@ -99,14 +99,17 @@ def test_casting_reach_prior_explore_guard_omits_underexposed(tmp_path):
     assert "@new" not in prior                             # under-exposed -> OMITTED (unproven, not starved)
 
 
-def test_casting_reach_prior_needs_two_accounts_of_signal(tmp_path):
-    # signal half: a single proven account (one value) is not enough to rank -> empty (mirrors _MIN_VALUES=2).
+def test_casting_reach_prior_emits_single_proven_account(tmp_path):
+    # ANNOTATE-not-rank: unlike p4/timing (which pick ONE comparative winner across >= 2 values), this hint
+    # annotates each PROVEN cell. A single proven account is a valid lean ("@a reaches on talk") and IS
+    # emitted — the >= 2-values gate does NOT apply. (Contrast the under-exposed guard: a cell BELOW the
+    # per-cell floor is what gets omitted, not a lone proven cell.)
     from fanops.casting_bias import casting_reach_prior
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for i in range(8):
         _post(led, f"a{i}", account="@a", profile="talk", reach=1500.0)
     _validate(cfg)
-    assert casting_reach_prior(led, cfg, ["@a"]) == {}
+    assert casting_reach_prior(led, cfg, ["@a"]) == {"@a": {"talk": 1500.0}}
 
 
 def test_casting_reach_prior_fail_safe(tmp_path, monkeypatch):

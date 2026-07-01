@@ -762,6 +762,18 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def casting_bias(self) -> bool:
+        # Leg 3 (casting, the heaviest): with this ON, the per-(account, clip_profile) reach winner (once the
+        # composite cell clears the min-attributed floor) becomes a READ-ONLY hint in the casting brief so the
+        # selector leans an OTHERWISE-TIE toward the account proven to reach on that content type. BIAS-ONLY —
+        # it can never remove an account from the pool nor starve an under-exposed one (explore-guard: an
+        # unproven cell is OMITTED, not penalized, so every active account keeps getting cast). KILL SWITCH:
+        # DEFAULT OFF. VALIDATION-FROZEN (Phase 2): even ON, casting_reach_prior returns {} until
+        # learning_validated -> the casting brief is byte-identical until the shape is proven.
+        v = (os.getenv("FANOPS_CASTING_BIAS") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def moment_hook_learning(self) -> bool:
         # P4(c): with this ON (and the FANOPS_VARIANT_LEARNING master gate on), request_moments feeds
         # the cross-surface union of gated winning hook STYLES into moment_prompt, so the vision hook
