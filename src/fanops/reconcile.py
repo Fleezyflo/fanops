@@ -148,9 +148,14 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
     for p in targets:
         cands = by_key.get(_norm_permalink(p.public_url))
         if cands:
-            mid = _pick_media(cands, p).get("id")
-            led.posts[p.id] = p.model_copy(update={"media_id": mid})
-            log("reconcile", p.id, "media_id_resolved", media_id=mid)
+            picked = _pick_media(cands, p)
+            mid = picked.get("id")
+            # stamp the media's REAL product_type alongside media_id (same live record) so the insights
+            # request is derived from what the media IS — a feed video is never asked for a reels-only metric.
+            led.posts[p.id] = p.model_copy(update={"media_id": mid,
+                                                   "product_type": picked.get("media_product_type")})
+            log("reconcile", p.id, "media_id_resolved", media_id=mid,
+                product_type=picked.get("media_product_type"))
         else:
             # we DID enumerate live media and this permalink wasn't among them: honest miss -> keep
             # re-resolvable (media_id stays None) + breadcrumb; never guess an id.

@@ -113,15 +113,37 @@ def _next_path(cfg: Config, next_url: str) -> str:
     base = cfg.meta_graph_url.rstrip("/") + "/"
     return next_url[len(base):] if next_url.startswith(base) else next_url.lstrip("/")
 
-# Leg 2 (Insight): the media-insights metric list per product type. REELS is the only type with an
-# avg-watch-time metric (LOCKED #3 — asking for it on a feed video 400s), so its list is a superset.
-_INSIGHTS_METRICS_REELS = ["reach", "plays", "saved", "shares", "likes", "comments", "ig_reels_avg_watch_time"]
-_INSIGHTS_METRICS_FEED = ["reach", "saved", "shares", "likes", "comments"]
-# Graph metric name -> our lift/row key. Meta renamed plays/impressions -> views; `saved` is our `saves`.
-# ig_reels_avg_watch_time lands as raw ms (`avg_watch_ms`); retention as a [0,1] fraction is derived
-# downstream (GraphInsightsClient, needs the clip duration) — kept out of here so this stays duration-free.
+# Leg 2 (Insight): the SINGLE Meta-derived source of which insights metric is valid for which media type.
+# Transcribed ONCE from Meta's official ig-media/insights reference (each metric -> the product types Meta
+# declares it valid on; `media_product_type` is one of AD|FEED|STORY|REELS). This REPLACES the old
+# hand-curated per-type lists — a human-synced list is how `plays` (deprecated 2025-04-21) rotted in and how
+# a feed video got asked for a reels-only metric. A metric invalid for a type simply is NOT in the derived
+# set, so it is UNCONSTRUCTABLE in the request; deprecated names are absent by design, never requestable.
+# Scoped to the metrics FanOps consumes.
+_MEDIA_METRICS: dict[str, frozenset[str]] = {
+    "reach": frozenset({"FEED", "REELS", "STORY"}),
+    "views": frozenset({"FEED", "REELS", "STORY"}),
+    "likes": frozenset({"FEED", "REELS"}),
+    "comments": frozenset({"FEED", "REELS"}),
+    "saved": frozenset({"FEED", "REELS"}),
+    "shares": frozenset({"FEED", "REELS", "STORY"}),
+    "ig_reels_avg_watch_time": frozenset({"REELS"}),             # REELS-only (asking it on FEED 400s)
+}
+
+def insights_metrics_for(product_type: str | None) -> list[str]:
+    """The metrics Meta declares valid for this media's `product_type`, derived from `_MEDIA_METRICS` — the
+    SOLE builder of the insights request `metric=` list. An unknown/None type intersects nothing -> [], so
+    the caller must resolve the real type first (the client skips an unresolved one, never guesses). Order
+    follows the table for a stable request string."""
+    pt = (product_type or "").upper()
+    return [m for m, types in _MEDIA_METRICS.items() if pt in types]
+
+# Graph metric name -> our lift/row key. `saved` is our `saves`; ig_reels_avg_watch_time lands as raw
+# `avg_watch_ms` (retention as a [0,1] fraction is derived downstream in GraphInsightsClient from the clip
+# duration — kept out of here so this stays duration-free). Deprecated names (plays/impressions) are NOT
+# mapped: once the request stops sending them (see _MEDIA_METRICS), Meta never returns them.
 _GRAPH_INSIGHTS_MAP = {
-    "reach": "reach", "views": "views", "plays": "views", "impressions": "views",
+    "reach": "reach", "views": "views",
     "saved": "saves", "saves": "saves", "shares": "shares",
     "likes": "likes", "like_count": "likes", "comments": "comments", "comments_count": "comments",
     "ig_reels_avg_watch_time": "avg_watch_ms",
@@ -140,14 +162,15 @@ def _is_scope_error(body) -> bool:
 
 def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=None):
     """Leg 2 read-half: THE complete performance of one live IG media from Graph media-insights — the SOLE
-    IG analytics source (no Postiz fallback). Branches the requested metric list on `product_type` (reels get
-    avg-watch, feed does not — LOCKED #3). Returns a normalized dict {reach,views,saves,shares,likes,comments
+    IG analytics source (no Postiz fallback). The requested metric list is DERIVED from `product_type` via
+    `insights_metrics_for` (the one Meta table) — reels get avg-watch, feed cannot (Meta: REELS-only), and a
+    deprecated metric is unrequestable. Returns a normalized dict {reach,views,saves,shares,likes,comments
     [,avg_watch_ms]} on success; None on a TRANSIENT failure (5xx / network / no creds — re-poll next pass);
     raises MetaInsightsScopeError on a PERMISSION refusal (LOUD, fail-closed — the one external gate). The
     token rides the access_token param, never a logged string."""
     if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
         return None                                              # no creds -> transient-shaped (keep prior snapshot)
-    metrics = _INSIGHTS_METRICS_REELS if (product_type or "").upper() == "REELS" else _INSIGHTS_METRICS_FEED
+    metrics = insights_metrics_for(product_type)                 # SOLE source: Meta's per-type valid set
     get = get or requests.get
     try:
         resp = get(f"{cfg.meta_graph_url}/{media_id}/insights",
