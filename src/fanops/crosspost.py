@@ -167,10 +167,14 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
                         surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
         return 1   # batch targets a specific account set; this surface isn't in it (no post born)
     if not account_selection_admits(cfg, led, m, surf.account):
-        return 0   # RF1 durable-selection gate (Face 3), shared with caption-scoping so they can't drift:
-                   # a cast source admits an account ONLY its AccountSelection's moments (or all, if its
-                   # method is the LABELLED fan_all_default); a source with no selection falls back to the
-                   # legacy affinities path; flag-OFF IGNORES selections (A2). See casting.account_selection_admits.
+        # RF1 durable-selection gate (Face 3), shared with caption-scoping so they can't drift: a cast source
+        # admits an account ONLY its AccountSelection's moments (or all, if its method is the LABELLED
+        # fan_all_default); a source with no selection falls back to the legacy affinities path; flag-OFF
+        # IGNORES selections (A2). See casting.account_selection_admits. Per-surface breadcrumb so a silent
+        # deny is diagnosable — else 18/20 dropped surfaces read as one generic no_post_born with no reason.
+        get_logger(cfg)("crosspost", clip.id, "skipped_surface",
+                        surface=f"{surf.account}/{surf.platform.value}", why="not_cast")
+        return 0
     # Per-surface duration clamp: if the duration is KNOWN (> 0) AND exceeds this
     # platform's hard cap, SKIP this surface only (conservative — the clip can still post
     # to platforms whose cap it satisfies, and the whole clip isn't wedged). Unknown
@@ -178,10 +182,14 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
     # regardless and we must never silently drop a post over an unprobed length).
     max_secs = PLATFORM_MAX_SECONDS.get(surf.platform)
     if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
+        get_logger(cfg)("crosspost", clip.id, "skipped_surface",
+                        surface=f"{surf.account}/{surf.platform.value}", why=f"over_cap_{clip_dur:.0f}s_gt_{max_secs}s")
         return 0   # over-cap for this surface -> no post here (still posts to others)
     aspect = PLATFORM_ASPECT.get(surf.platform, Fmt.r9x16)
     target_clip = _clip_for_aspect(led, cfg, moment_id, aspect)
     if target_clip.state not in _REUSABLE_CLIP_STATES:
+        get_logger(cfg)("crosspost", clip.id, "skipped_surface",
+                        surface=f"{surf.account}/{surf.platform.value}", why=f"render_{target_clip.state.value}")
         return 0   # on-demand render failed (error/dangling file) -> no post for this surface
     skey = surface_key(surf.account, surf.platform.value)
     pid = child_id("post", target_clip.id, skey)        # stable, content-addressed
