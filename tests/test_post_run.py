@@ -463,6 +463,37 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     assert led.posts["pv"].state is PostState.published
 
 
+def test_materialize_reburns_when_hook_changed_since_render(tmp_path, mocker):
+    # variant-hook-render-race (high): reburn/restore edits post.variant_hook IN PLACE, leaving render_id +
+    # media_urls pointing at the OLD hook's burned file. _materialize_variant_media early-returned on
+    # "render_id and media_urls exist" WITHOUT checking the render's hook matched -> it shipped media burned
+    # with the STALE hook (Render.hook_text disagreeing with post.variant_hook). The reuse must key on hook
+    # consistency: reuse only if the held render was burned for the CURRENT hook, else re-materialize.
+    from types import SimpleNamespace
+    from fanops.models import Source, Moment, MomentState, Render, HookSource
+    from fanops.accounts import Accounts
+    from fanops.ids import surface_key
+    from fanops.post.run import _materialize_variant_media
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.queued))
+    led.add_render(Render(id="rid_A", clip_id="clip_1", account="@a", surface_key=surface_key("@a", "instagram"),
+                          hook_text="OLD HOOK A", path=str(cfg.clips / "rid_A.mp4")))   # burned for the OLD hook
+    post = Post(id="pv", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                caption="x", state=PostState.queued, variant_hook="NEW HOOK B",         # hook CHANGED since the render
+                render_id="rid_A", media_urls=["file:///clips/rid_A.mp4"], public_url="dryrun://pv")
+    led.add_post(post)
+    (cfg.clips).mkdir(parents=True, exist_ok=True); (cfg.clips / "rid_B.mp4").write_bytes(b"B")
+    plan = SimpleNamespace(render_id="rid_B", vpath=str(cfg.clips / "rid_B.mp4"), batch_id=None,
+                           source_id="src_1", produced=True, hook_source=HookSource.per_account, realized=12.0)
+    mocker.patch("fanops.crosspost.render_account_file", return_value=plan)             # re-burn for the CURRENT hook
+    _materialize_variant_media(led, cfg, post, Accounts.load(cfg))
+    assert post.render_id == "rid_B"                            # re-materialized for the NEW hook, not the stale rid_A
+    assert post.media_urls == [f"file://{cfg.clips / 'rid_B.mp4'}"]   # points at the freshly-burned file
+
+
 def test_archive_published_is_owner_only_with_no_world_readable_window(tmp_path):
     # L2 (audit): the published-post archive (operator handle + live permalink + creative) is written 0600
     # ATOMICALLY (no write-then-chmod world-readable window) into a 0700 day-dir (not world-listable).

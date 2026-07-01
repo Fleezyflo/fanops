@@ -130,7 +130,13 @@ def _materialize_variant_media(led: Ledger, cfg: Config, post: Post, accts: Acco
     if not (post.variant_hook or "").strip():
         return
     if post.render_id and post.media_urls:
-        return
+        r = led.get_render(post.render_id)
+        if r is not None and (r.hook_text or "") == (post.variant_hook or ""):
+            return   # the held render was burned for the CURRENT hook -> reuse (fast path)
+        # variant-hook-render-race (high): reburn/restore edits post.variant_hook IN PLACE without clearing
+        # render_id/media_urls, so a stale render_id points at a file burned with the OLD hook. Render.hook_text
+        # is THE source of truth (post.variant_hook is its mirror); when they disagree (or the render is
+        # missing) the burned file is STALE -> fall through and re-materialize, never ship the wrong hook.
     from fanops.crosspost import render_account_file
     from fanops.models import Render, RenderState
     from fanops.ids import surface_key
