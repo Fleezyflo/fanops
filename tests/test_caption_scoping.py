@@ -128,8 +128,11 @@ def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, m
     _fake_ffmpeg(mocker)
     logfn = mocker.patch("fanops.crosspost.get_logger").return_value       # capture the run-log breadcrumbs
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    # @a skipped by the affinity gate (not in [@b]); @b admitted but uncaptioned -> the cap-is-None net skips it.
+    # @a skipped by the selection gate (not in [@b]); @b admitted but uncaptioned -> the cap-is-None net skips it.
     assert led.posts == {}                                                  # safe degradation: no post, no crash
     assert "clip_1" in led.clips                                            # the clip survives intact
     skipped = {c.kwargs.get("surface") for c in logfn.call_args_list if c.args[2:3] == ("skipped_surface",)}
-    assert skipped == {"@b/instagram", "@b/youtube"}                        # the swap is TRACED, never silent
+    # S6 (silent-post-drop breadcrumbs): EVERY skip now traces — @a's selection-deny (why=not_cast) AND @b's
+    # missing-caption skip. Previously the selection-deny was silent, so only @b appeared; now the swap is
+    # FULLY traced, never partially silent.
+    assert skipped == {"@a/instagram", "@a/youtube", "@b/instagram", "@b/youtube"}

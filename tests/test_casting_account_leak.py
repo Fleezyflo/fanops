@@ -119,6 +119,27 @@ def test_zero_post_clip_logs_no_post_born(tmp_path, mocker):
     assert "no_post_born" in log and "clip_1" in log              # the silent drop now leaves a breadcrumb
 
 
+def test_selection_denied_surface_leaves_per_surface_breadcrumb(tmp_path, mocker):
+    # silent-post-drop-no-per-surface-breadcrumb (high): a selection-DENY skip (crosspost.py:169) returned 0
+    # with NO per-surface log — so when many surfaces are silently denied the operator sees only one generic
+    # no_post_born and cannot tell WHICH surfaces dropped or WHY (selection vs cap vs render). Each silent
+    # skip must leave a skipped_surface breadcrumb naming the surface + reason.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [_acct("@a", persona="a devoted fan"), _acct("@b", persona="a blunt critic", aid="2")])
+    led = _src(cfg)
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          transcript_excerpt="x", state=MomentState.clipped, affinities=[]))
+    led.add_clip(_captioned_clip())
+    for h in ("@a", "@b"):   # both cast to a DIFFERENT moment -> mom_1 excluded for both -> every surface DENIED
+        led.add_account_selection(AccountSelection(id=account_selection_id("src_1", h), source_id="src_1",
+            account=h, moment_ids=["mom_other"], method=SelectionMethod.llm))
+    led.save(); led = Ledger.load(cfg); _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "skipped_surface" in log and "not_cast" in log          # each denied surface names itself + the reason
+    assert "@a/instagram" in log or "@b/instagram" in log          # the specific dropped surface is identified
+
+
 # ---- xc-2: a casting gate that FAILED to open must DEFER crosspost, not silently fan-to-all ----
 def test_crosspost_defers_when_casting_gate_failed_to_open(tmp_path, mocker):
     # casting ON, a CANDIDATE account + a clipped moment + captioned clip, but NO gate opened and NO selections
