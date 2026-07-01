@@ -107,6 +107,7 @@ class Config:
         self.hashtag_budget_path = self.control / "hashtag_budget.json"  # M4 Meta Graph 30/7-day search budget counter
         self.hashtag_budget_lock = self.control / "hashtag_budget.lock"  # serializes record_query's read-modify-write (concurrent Studio calls lost writes -> quota over-spend)
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
+        self.insights_blocked_path = self.control / "insights_blocked.json"  # Leg 2: the LOUD fail-closed breadcrumb when Graph media-insights is refused for lack of the instagram_manage_insights scope; doctor + Home read it, a clean pull clears it
         self.learn_doctor_path = self.control / "learn_doctor.json"   # F2 read-only learning field-shape verdict; M4 gates on it
         self.log_path = self.reports / "run.log"
 

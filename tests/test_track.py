@@ -173,7 +173,9 @@ def test_pull_default_binding_requires_key(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
     monkeypatch.delenv("POSTIZ_API_KEY", raising=False)         # URL present, KEY absent -> the key is what's demanded
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    # Leg 2: a YOUTUBE post still routes to PostizMetricsClient (IG now reads Graph), so the Postiz key
+    # is what's demanded here — the contract (a live Postiz channel with no key raises) is unchanged.
+    led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.youtube,
                       caption="x", state=PostState.published, submission_id="s1", public_url="dryrun://p1"))
     import pytest
     with pytest.raises(PostizAuthError, match="POSTIZ_API_KEY"):
@@ -214,7 +216,10 @@ def _postiz_env(monkeypatch):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
 
 def _published(pid, sid):
-    return Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    # Leg 2: IG metrics now come from Meta Graph, so these Postiz-READER plumbing tests use YouTube — the
+    # remaining Postiz-published platform whose metrics still route to PostizMetricsClient (IG-via-Postiz-
+    # analytics is a dead path post-Leg-2). What they verify (id threading, lift compute) is reader-generic.
+    return Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.youtube,
                 caption="x", state=PostState.published, submission_id=sid, public_url="dryrun://c")
 
 def test_default_list_posts_postiz_backend_fetches_per_post(tmp_path, monkeypatch, mocker):
@@ -231,6 +236,37 @@ def test_default_list_posts_postiz_no_ids_yields_empty(tmp_path, monkeypatch, mo
     spy = mocker.patch("fanops.post.metrics.requests.get")
     assert list(_default_list_posts(cfg)("30d")) == []          # positional → submission_ids=None → [] no-op
     spy.assert_not_called()
+
+def test_default_list_posts_routes_ig_to_graph_not_postiz(tmp_path, monkeypatch, mocker):
+    # Leg 2: Meta Graph is the SOLE IG performance source. An IG post's metrics now come from
+    # GraphInsightsClient (media insights), NOT PostizMetricsClient — even though Postiz PUBLISHES it.
+    from fanops.track import _default_list_posts
+    _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
+    igp = Post(id="ig1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+               caption="x", state=PostState.published, submission_id="s_ig", media_id="M1",
+               cut_seconds=20.0, public_url="https://www.instagram.com/reel/AAA/")
+    # media insights injected; Postiz analytics endpoint must NOT be called for an IG post.
+    postiz_spy = mocker.patch("fanops.post.metrics.requests.get")
+    mocker.patch("fanops.meta_graph.media_insights",
+                 return_value={"reach": 1000, "saves": 40, "shares": 12, "avg_watch_ms": 8000})
+    rows = list(_default_list_posts(cfg, posts=[igp])("30d"))
+    assert len(rows) == 1 and rows[0]["postSubmissionId"] == "s_ig"
+    assert abs(rows[0]["metrics"]["retention"] - 0.40) < 1e-9   # Graph-derived, not Postiz
+    postiz_spy.assert_not_called()                              # IG never hits the Postiz analytics reader
+
+def test_default_list_posts_tiktok_still_routes_to_zernio(tmp_path, monkeypatch, mocker):
+    # Non-IG is UNCHANGED: a TikTok post still routes to its zernio metrics reader, never to Graph.
+    from fanops.track import _default_list_posts
+    monkeypatch.setenv("FANOPS_POSTER", "zernio"); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    cfg = Config(root=tmp_path)
+    tk = Post(id="tk1", parent_id="c", account="@a", account_id="1", platform=Platform.tiktok,
+              caption="x", state=PostState.published, submission_id="s_tk", public_url="dryrun://c")
+    graph_spy = mocker.patch("fanops.meta_graph.media_insights")
+    mocker.patch("fanops.post.metrics.ZernioMetricsClient.list_posts",
+                 return_value=[{"postSubmissionId": "s_tk", "metrics": {"reach": 5}}])
+    rows = list(_default_list_posts(cfg, posts=[tk])("30d"))
+    assert rows == [{"postSubmissionId": "s_tk", "metrics": {"reach": 5}}]
+    graph_spy.assert_not_called()                              # TikTok never hits Graph
 
 def test_metrics_client_unknown_backend_fails_closed(tmp_path):
     # Blotato removed: the else-branch that returned BlotatoMetricsClient now RAISES (fail-closed + legible,
@@ -279,11 +315,12 @@ def test_pull_metrics_postiz_computes_lift_score(tmp_path, monkeypatch, mocker):
 
 
 # ============================ P3: multi-interval metrics time-series ============================
-def _pub_at(led, pid="p1", sub="s_A", pub=_PUB, state=PostState.published, **kw):
+def _pub_at(led, pid="p1", sub="s_A", pub=_PUB, state=PostState.published, platform=Platform.instagram, **kw):
     # R1: synthetic dryrun:// URL satisfies the terminal-with-URL invariant. kw can override
-    # if a specific test wants a different URL.
+    # if a specific test wants a different URL. `platform` defaults to IG (most callers inject list_posts
+    # so routing is moot); a caller exercising the DEFAULT reader binding passes youtube (Leg 2: IG->Graph).
     kw.setdefault("public_url", f"dryrun://{pid}")
-    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=platform,
                       caption="x", state=state, submission_id=sub,
                       published_at=(iso_z(pub) if pub else None), **kw))
 
@@ -402,7 +439,7 @@ def test_cmd_track_prints_series_and_degraded_summary(tmp_path, monkeypatch, moc
     from fanops.cli import cmd_track
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
-        _pub_at(led, sub="sid1")                                # published 2026-01-01 -> well past 4h vs real now
+        _pub_at(led, sub="sid1", platform=Platform.youtube)     # Leg 2: YT still uses the Postiz reader; published 2026-01-01 -> well past 4h
     mocker.patch("fanops.post.metrics.requests.get",
                  return_value=_R(200, [{"label": "Shares", "data": [{"total": "7", "date": "d"}]}]))
     cmd_track(cfg, "30d")
@@ -416,7 +453,9 @@ def test_cmd_track_threads_analyzed_post_ids_too(tmp_path, monkeypatch, mocker):
     from fanops.cli import cmd_track
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
-        led.add_post(Post(id="pa", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        # Leg 2: YouTube still routes to the Postiz per-post reader (IG->Graph); the published|analyzed
+        # id-threading contract this pins is reader-generic.
+        led.add_post(Post(id="pa", parent_id="c", account="@a", account_id="1", platform=Platform.youtube,
                           caption="x", state=PostState.analyzed, submission_id="sidA",
                           published_at=iso_z(_PUB), metrics={"saves": 1, "lift_score": 4.0}, public_url="dryrun://pa"))
     spy = mocker.patch("fanops.post.metrics.requests.get",

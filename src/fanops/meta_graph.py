@@ -178,6 +178,40 @@ def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=
             out[key] = v
     return out
 
+# The one-external-gate breadcrumb (Leg 2): a scope refusal during a pull persists here so a SEPARATE
+# doctor/Home read surfaces it (the block happens on a daemon tick; the operator looks later). Written
+# LOUD, cleared automatically the next time insights flow — a self-healing signal, no manual reset.
+def insights_blocked_signal(cfg: Config) -> bool:
+    """True iff the persisted insights-scope-blocked breadcrumb is present + set. Fail-open: any read error
+    -> False, but LOGGED (a torn/absent file must not itself raise a false alarm, yet a real read failure is
+    still surfaced on the log stream, never silently swallowed)."""
+    p = cfg.insights_blocked_path
+    if not p.exists():
+        return False
+    try:
+        d = json.loads(p.read_text())
+        return bool(d.get("blocked")) if isinstance(d, dict) else False
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
+        get_logger(cfg)("graph_insights", "signal", "read_failed", err=str(e)[:120]); return False
+
+def _set_insights_blocked(cfg: Config) -> None:
+    """Persist the LOUD scope-blocked breadcrumb (idempotent). A write error is LOGGED (not silent): the
+    in-pass insights_blocked flag + the scope log line already fired, so a missing breadcrumb degrades the
+    doctor/Home surfacing only, and the failure is visible on the log stream."""
+    try:
+        cfg.insights_blocked_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg.insights_blocked_path.write_text(json.dumps({"blocked": True}))
+    except OSError as e:
+        get_logger(cfg)("graph_insights", "signal", "write_failed", err=str(e)[:120])
+
+def _clear_insights_blocked(cfg: Config) -> None:
+    """Clear the breadcrumb once insights flow again (scope granted) — self-healing + idempotent (absent file
+    is already 'clear'). A clear failure is LOGGED, never silently swallowed."""
+    try:
+        cfg.insights_blocked_path.unlink(missing_ok=True)
+    except OSError as e:
+        get_logger(cfg)("graph_insights", "signal", "clear_failed", err=str(e)[:120])
+
 def _read_queries(cfg: Config):
     """The recorded search queries, or None if the file is corrupt/unreadable -> the caller treats None
     as FAIL-CLOSED (budget unknown == exhausted). Absent file == clean state (nothing spent) -> []."""

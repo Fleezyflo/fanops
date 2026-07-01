@@ -231,7 +231,12 @@ def _mixed_ledger(cfg):
     add_account(cfg, "@tt", [Platform.tiktok], status="active")
     set_backend(cfg, "@tt", "tiktok", "zernio")
     led = Ledger.load(cfg)
-    led.add_post(_published("ig", "psid", account="@ig", platform=Platform.instagram))
+    # Leg 2: IG is measured via Meta Graph (SOLE IG source), so the IG post carries the resolved media_id
+    # + cut_seconds the GraphInsightsClient reads; TikTok stays on Zernio. One pass, two measurement sources.
+    ig = _published("ig", "psid", account="@ig", platform=Platform.instagram)
+    ig = ig.model_copy(update={"media_id": "M_ig", "cut_seconds": 20.0,
+                               "public_url": "https://www.instagram.com/reel/AAA/"})
+    led.add_post(ig)
     led.add_post(_published("tt", "zsid", account="@tt", platform=Platform.tiktok))
     return led
 
@@ -242,23 +247,30 @@ def test_default_list_posts_mixed_routes_each_post_to_its_backend(tmp_path, monk
     cfg = Config(root=tmp_path); led = _mixed_ledger(cfg)
     def by_url(url, **kw):
         if "zernio" in url: return _R(200, {"saves": 40})                  # the TikTok post -> Zernio analytics
-        return _R(200, [{"label": "Likes", "data": [{"total": "9", "date": "d"}]}])   # the IG post -> Postiz analytics
+        return _R(200, [])                                                 # NOTHING else hits requests.get (IG uses Graph)
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
+    mocker.patch("fanops.meta_graph.media_insights",
+                 return_value={"reach": 500, "saves": 9})                  # the IG post -> Meta Graph (sole IG source)
     rows = _default_list_posts(cfg, posts=list(led.posts.values()))("30d")
     by_sub = {r["postSubmissionId"]: r["metrics"] for r in rows}
     assert by_sub["zsid"] == {"saves": 40.0}                               # zernio post measured via Zernio
-    assert by_sub["psid"] == {"likes": 9.0}                                # postiz post measured via Postiz
+    assert by_sub["psid"] == {"reach": 500, "saves": 9}                    # IG post measured via Meta Graph
 
 def test_pull_metrics_mixed_backends_analyzes_both(tmp_path, monkeypatch, mocker):
-    # Headline integration proof: ONE pull_metrics pass measures IG-via-Postiz AND TikTok-via-Zernio.
+    # Headline integration proof (Leg 2): ONE pull_metrics pass measures IG-via-Meta-Graph AND
+    # TikTok-via-Zernio — the two measurement sources concat into one analyzed pass.
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
+    monkeypatch.setenv("META_GRAPH_TOKEN", "mtok"); monkeypatch.setenv("META_IG_USER_ID", "ig-1")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     cfg = Config(root=tmp_path); led = _mixed_ledger(cfg)
     def by_url(url, **kw):
         if "zernio" in url: return _R(200, {"saves": 50})
-        return _R(200, [{"label": "Saves", "data": [{"total": "20", "date": "d"}]}])
+        return _R(200, [])                                                 # IG doesn't hit requests.get (Graph mocked)
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
+    # media_insights is patched (not list_user_media) — the IG post already carries media_id via _mixed_ledger,
+    # so resolve_media_ids is a no-op and the Graph reader lands the row directly.
+    mocker.patch("fanops.meta_graph.media_insights", return_value={"saves": 20})
     led = pull_metrics(led, cfg)
     assert led.posts["tt"].state is PostState.analyzed and led.posts["tt"].metrics["saves"] == 50.0
     assert led.posts["ig"].state is PostState.analyzed and led.posts["ig"].metrics["saves"] == 20.0
