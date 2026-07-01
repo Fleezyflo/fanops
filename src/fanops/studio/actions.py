@@ -400,7 +400,7 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
         state = publish_post(cfg, post_id)
     except AuthError as exc:
         # UI-LIE-FIX: the auth-key name comes from the EXCEPTION CLASS, not a backend guess
-        # (BlotatoAuthError -> BLOTATO_API_KEY, etc). This is unambiguous: the backend that raised
+        # (PostizAuthError -> POSTIZ_API_KEY, etc). This is unambiguous: the backend that raised
         # owns the key. Replaces the old `if cfg.poster_backend == 'postiz'` ternary that lied on
         # per-channel deployments and didn't even know zernio existed.
         key = Config.auth_key_name_from_error(exc)

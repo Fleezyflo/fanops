@@ -52,19 +52,6 @@ def test_doctor_flags_empty_brand_brief(tmp_path):
     assert bc is not None and bc["ok"] is False
 
 
-def test_doctor_flags_missing_blotato_key_when_live(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_POSTER", "rest")
-    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    rep = doctor.doctor_report(Config(root=tmp_path))
-    kc = [c for c in rep["checks"] if "BLOTATO_API_KEY" in c["label"]][0]
-    assert kc["ok"] is False and "BLOTATO_API_KEY" in kc["hint"]
-
-def test_doctor_passes_key_when_set(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    rep = doctor.doctor_report(Config(root=tmp_path))
-    kc = [c for c in rep["checks"] if "BLOTATO_API_KEY" in c["label"]][0]
-    assert kc["ok"] is True
-
 def test_doctor_claude_check_only_when_llm(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     rep = doctor.doctor_report(Config(root=tmp_path))

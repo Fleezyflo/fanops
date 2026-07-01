@@ -56,15 +56,15 @@ def test_publish_post_non_queued_is_noop(tmp_path, monkeypatch):
 def test_publish_post_propagates_fatal_auth(tmp_path, monkeypatch):
     # a bad key must HALT (raise), not silently mark the post failed — same contract as publish_due.
     import fanops.post.run as run
-    from fanops.errors import BlotatoAuthError
+    from fanops.errors import PostizAuthError
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1")
     class BoomPoster:
-        def publish(self, led, post_id): raise BlotatoAuthError("401 unauthorized")
+        def publish(self, led, post_id): raise PostizAuthError("401 unauthorized")
     monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: BoomPoster())
     try:
-        publish_post(cfg, "p1"); assert False, "expected BlotatoAuthError to propagate"
-    except BlotatoAuthError:
+        publish_post(cfg, "p1"); assert False, "expected PostizAuthError to propagate"
+    except PostizAuthError:
         pass
 
 

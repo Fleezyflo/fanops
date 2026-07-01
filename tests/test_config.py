@@ -86,13 +86,13 @@ def test_poster_default_dryrun(monkeypatch, tmp_path):
     assert Config(root=tmp_path).poster_backend == "dryrun"
 
 def test_poster_env_and_key_trimmed(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_POSTER", "rest")
-    monkeypatch.setenv("BLOTATO_API_KEY", "  abc123\n")   # surrounding ws only
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "  abc123\n")    # surrounding ws only
     c = Config(root=tmp_path)
-    assert c.poster_backend == "rest" and c.blotato_api_key == "abc123"
+    assert c.poster_backend == "zernio" and c.zernio_api_key == "abc123"
 
 def test_poster_backend_known_values_pass_through(monkeypatch, tmp_path):
-    for v in ("dryrun", "postiz", "rest", "mcp"):
+    for v in ("dryrun", "postiz", "zernio"):
         monkeypatch.setenv("FANOPS_POSTER", v)
         assert Config(root=tmp_path).poster_backend == v
 
@@ -101,7 +101,7 @@ def test_poster_backend_unknown_falls_back_to_dryrun(monkeypatch, tmp_path):
     # unrecognized value, so a typo would otherwise show a LIVE banner while posting NOTHING.
     monkeypatch.setenv("FANOPS_POSTER", "positz")        # typo of "postiz"
     c = Config(root=tmp_path)
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
     assert c.poster_backend == "dryrun"
     assert c.is_live_backend is False                    # so the banner shows dryrun, never a false LIVE
 
@@ -135,23 +135,20 @@ def test_is_live_backend_requires_backend_and_key(monkeypatch, tmp_path):
     # Stage-6 audit: the "live backend + key" guard gates the learning passes and reconcile at
     # three sites — one property is its single home so the definition of "live" can't drift.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("ZERNIO_API_KEY", "k")
     assert Config(root=tmp_path).is_live_backend is False        # dryrun: never live, key or not
-    monkeypatch.setenv("FANOPS_POSTER", "rest")
-    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.delenv("ZERNIO_API_KEY", raising=False)
     assert Config(root=tmp_path).is_live_backend is False        # live backend but NO key
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("ZERNIO_API_KEY", "k")
     assert Config(root=tmp_path).is_live_backend is True
 
 def test_is_live_backend_postiz_uses_postiz_key(monkeypatch, tmp_path):
-    # M2: a Postiz deployment is live on POSTIZ_API_KEY, NOT on a Blotato key — the redefinition that
-    # unfreezes the learning loop on Postiz. dryrun/rest truth tables stay byte-identical (above).
+    # M2: a Postiz deployment is live on POSTIZ_API_KEY. The redefinition that unfreezes the learning
+    # loop on Postiz. dryrun/zernio truth tables stay byte-identical (above).
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
-    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     assert Config(root=tmp_path).is_live_backend is False        # postiz but NO postiz key
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    assert Config(root=tmp_path).is_live_backend is False        # a Blotato key must NOT make postiz live
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     assert Config(root=tmp_path).is_live_backend is True         # postiz + postiz key → live
 

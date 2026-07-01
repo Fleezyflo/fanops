@@ -107,7 +107,6 @@ def test_auth_key_name_for_returns_per_backend_env_var(tmp_path):
     cfg = Config(root=tmp_path)
     assert cfg.auth_key_name_for("postiz") == "POSTIZ_API_KEY"
     assert cfg.auth_key_name_for("zernio") == "ZERNIO_API_KEY"
-    assert cfg.auth_key_name_for("blotato") == "BLOTATO_API_KEY"
     # Unknown / empty -> fall back to the global name (operator can still figure it out).
     assert cfg.auth_key_name_for("") == "FANOPS_POSTER"
     assert cfg.auth_key_name_for("not-a-backend") == "FANOPS_POSTER"

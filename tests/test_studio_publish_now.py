@@ -45,23 +45,23 @@ def test_publish_now_non_queued_rejected(tmp_path, monkeypatch):
     assert res.ok is False and "only a queued" in res.error.lower()
 
 def test_publish_now_live_requires_confirm(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); _seed(cfg)
     res = actions.publish_now(cfg, "p1", confirmed=False)
     assert res.ok is False and "confirm" in res.error.lower()
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued           # not shipped without confirm
 
 def test_publish_now_surfaces_fatal_auth(tmp_path, monkeypatch):
-    from fanops.errors import BlotatoAuthError
+    from fanops.errors import PostizAuthError
     import fanops.post.run as run
-    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); _seed(cfg, media=["file://x.mp4"])         # pre-stamped -> skips ensure_clip_media
     monkeypatch.setattr(run, "get_media_uploader", lambda cfg, backend=None: (lambda c, p, **kw: "https://x/u.mp4"))
     class Boom:
-        def publish(self, led, post_id): raise BlotatoAuthError("401 unauthorized")
+        def publish(self, led, post_id): raise PostizAuthError("401 unauthorized")
     monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: Boom())
     res = actions.publish_now(cfg, "p1", confirmed=True)
-    assert res.ok is False and "FATAL" in res.error and "BLOTATO_API_KEY" in res.error
+    assert res.ok is False and "FATAL" in res.error and "POSTIZ_API_KEY" in res.error
 
 
 # ---- Flask wiring ----

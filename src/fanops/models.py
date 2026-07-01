@@ -65,7 +65,7 @@ class PostState(str, Enum):
     # from `failed` (a publish attempt that didn't land, re-queueable).
     rejected = "rejected"
     # needs_reconcile: an ambiguous publish failure (5xx / network timeout AFTER the request body
-    # was sent) — the post MAY already be live on the platform. Blotato has no idempotency key
+    # was sent) — the post MAY already be live on the platform. The backend has no idempotency key
     # (AUDIT C1), so it must NOT be blindly re-POSTed (double-publish risk). A human/poll step
     # checks GET /v2/posts/:id before resubmitting. Distinct from `failed` (definitely not posted,
     # safe to re-queue) for exactly that reason.
@@ -206,7 +206,7 @@ class Clip(BaseModel):
     held: bool = False
     held_reason: Optional[str] = None
     tagged_artist: bool = False
-    media_url: Optional[str] = None             # FIX F44 — cached Blotato URL, uploaded once
+    media_url: Optional[str] = None             # FIX F44 — cached hosted URL, uploaded once
     meta_captions: dict = Field(default_factory=dict)   # surface -> {caption, hashtags}
     error_reason: Optional[str] = None
     hook_burn_failed: bool = False              # V2 M1/F9: a hook was WANTED but couldn't burn (ffmpeg
@@ -221,7 +221,7 @@ class Post(BaseModel):
                                                 # the prior `queued` default inverted the human gate — a Post()
                                                 # with no explicit state was publishable on the next publish_due.
     account: str                                # human handle, e.g. "@a"
-    account_id: str                             # Blotato NUMERIC id (FIX F06)
+    account_id: str                             # hosted-backend id (FIX F06)
     platform: Platform
     caption: str
     hashtags: list[str] = Field(default_factory=list)

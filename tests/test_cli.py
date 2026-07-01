@@ -197,8 +197,8 @@ def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, moc
     from fanops.config import Config
     from fanops.ledger import Ledger
     from fanops.models import Post, Platform, PostState
-    monkeypatch.setenv("FANOPS_POSTER", "rest")
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
@@ -232,12 +232,12 @@ def test_run_halts_cleanly_on_advance_error(tmp_path, monkeypatch, mocker):
 
 
 def test_advance_exits_cleanly_on_auth_error(tmp_path, monkeypatch, mocker, capsys):
-    # AUDIT H8: a BlotatoAuthError (bad/missing key) escaping advance is operator-actionable —
+    # AUDIT H8: a PostizAuthError (bad/missing key) escaping advance is operator-actionable —
     # `fanops advance` must print a clean one-line pointer and exit nonzero, not crash-dump.
-    from fanops.errors import BlotatoAuthError
+    from fanops.errors import PostizAuthError
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli
-    mocker.patch.object(cli, "advance", side_effect=BlotatoAuthError("Blotato 401 — check BLOTATO_API_KEY"))
+    mocker.patch.object(cli, "advance", side_effect=PostizAuthError("Postiz 401 — check POSTIZ_API_KEY"))
     # advance gates on _check_accounts first; give it a valid active account so we reach advance().
     from fanops.config import Config
     cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,7 +246,7 @@ def test_advance_exits_cleanly_on_auth_error(tmp_path, monkeypatch, mocker, caps
     rc = cli.main(["advance"])
     assert rc != 0
     err = capsys.readouterr().err
-    assert "Traceback" not in err and "BLOTATO_API_KEY" in err
+    assert "Traceback" not in err and "POSTIZ_API_KEY" in err
 
 
 # --- T1: startup preflight auth-check (the silent-zero-output guard) ------------------------
@@ -287,32 +287,6 @@ def test_preflight_blocks_llm_when_claude_absent_via_advance(tmp_path, monkeypat
     assert "claude" in err and "Traceback" not in err
 
 
-def test_preflight_blocks_rest_without_blotato_key(tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "rest")
-    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # the trap: live poster, no key -> 401
-    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)    # default manual responder (no claude check)
-    from fanops.config import Config
-    from fanops.cli import _check_preflight
-    rc = _check_preflight(Config(root=tmp_path))
-    assert rc == 2
-    err = capsys.readouterr().err
-    assert "BLOTATO_API_KEY" in err and "Traceback" not in err
-
-
-def test_preflight_blocks_mcp_without_blotato_key(tmp_path, monkeypatch, capsys):
-    # The mcp backend is auth-gated identically to rest — both 401 without the key.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "mcp")
-    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
-    from fanops.config import Config
-    from fanops.cli import _check_preflight
-    rc = _check_preflight(Config(root=tmp_path))
-    assert rc == 2
-    assert "BLOTATO_API_KEY" in capsys.readouterr().err
-
-
 def test_preflight_passes_default_dryrun_manual(tmp_path, monkeypatch):
     # The default cutover config (manual responder + dryrun poster, no creds) must pass cleanly.
     monkeypatch.chdir(tmp_path)
@@ -326,14 +300,14 @@ def test_preflight_passes_default_dryrun_manual(tmp_path, monkeypatch):
 
 def test_preflight_passes_llm_when_claude_present_no_api_key(tmp_path, monkeypatch, mocker):
     # The correctly-configured live cutover with the EXISTING subscription: FANOPS_RESPONDER=llm,
-    # `claude` ON PATH, NO ANTHROPIC_API_KEY (we ride OAuth, not a key), rest + BLOTATO_API_KEY.
+    # `claude` ON PATH, NO ANTHROPIC_API_KEY (we ride OAuth, not a key), postiz + its key.
     # Must pass — the gate blocks only the absent-`claude` case, and crucially does NOT require an
     # API key (that was the old --bare contract this change removes).
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # NO api key — riding the subscription
-    monkeypatch.setenv("FANOPS_POSTER", "rest")
-    monkeypatch.setenv("BLOTATO_API_KEY", "blot-test")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     mocker.patch("shutil.which", return_value="/usr/local/bin/claude")  # claude IS logged-in-capable
     from fanops.config import Config
     from fanops.cli import _check_preflight
@@ -358,7 +332,7 @@ def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, 
 
 def test_run_learning_pass_is_guarded_to_live_backends(tmp_path, monkeypatch):
     # E1 (learning_pass_guard): the new post-loop learning pass (pull_metrics -> classify ->
-    # amplify -> retire) runs ONLY when poster_backend != "dryrun" AND blotato_api_key is set
+    # amplify -> retire) runs ONLY when the backend is live AND its key is set (is_live_backend)
     # (the identical reconcile guard at pipeline.py:106). In dryrun (the default, FANOPS_POSTER
     # unset) the guard short-circuits, the pass is never entered, and `run` still converges and
     # exits 0 — a regression guard that the learning pass does NOT run in dryrun and does NOT
@@ -393,14 +367,14 @@ def test_run_learning_pass_not_entered_in_dryrun(tmp_path, monkeypatch, mocker):
     assert spy.call_count == 0                                # the learning pass is NEVER entered in dryrun
 
 def test_run_learning_pass_entered_with_live_backend_and_key(tmp_path, monkeypatch, mocker):
-    # E1 HARDEN (positive branch): with a LIVE backend (FANOPS_POSTER=rest) AND a key set, the
+    # E1 HARDEN (positive branch): with a LIVE backend (FANOPS_POSTER=zernio) AND a key set, the
     # guard's true-branch fires and the learning pass runs EXACTLY ONCE per run. pull_metrics /
     # classify_outcomes / amplify / retire are all spied to harmless no-ops so nothing touches the
     # network. This pins that the guard is a real branch (not dead code): flip either condition off
     # and the spy stops being called (covered by the dryrun test above).
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "rest")              # live backend
-    monkeypatch.setenv("BLOTATO_API_KEY", "k-test")          # key present
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")            # live backend
+    monkeypatch.setenv("ZERNIO_API_KEY", "k-test")           # key present
     import fanops.cli as cli
     # ECC fix #1: the learn pass now FETCHES (two-phase) before pull_metrics — stub the fetch so no network
     mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
@@ -778,10 +752,10 @@ def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, m
     # AuthError looked like a transient 5xx. The log entry must include the exception TYPE name so an
     # auth failure in the learn pass is distinguishable in run.log.
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k-test")
+    monkeypatch.setenv("FANOPS_POSTER", "zernio"); monkeypatch.setenv("ZERNIO_API_KEY", "k-test")
     import fanops.cli as cli
-    from fanops.errors import BlotatoAuthError
-    mocker.patch.object(cli, "pull_metrics", side_effect=BlotatoAuthError("Blotato 401 — bad key"))
+    from fanops.errors import PostizAuthError
+    mocker.patch.object(cli, "pull_metrics", side_effect=PostizAuthError("postiz 401 — bad key"))
     from fanops.config import Config
     cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps(
@@ -789,7 +763,7 @@ def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, m
     rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
     assert rc == 0                                            # learn hiccup is swallowed (run stays 0)
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "BlotatoAuthError" in log                         # the type name is in the breadcrumb
+    assert "PostizAuthError" in log                         # the type name is in the breadcrumb
 
 def test_main_hashtags_refresh_writes_from_graph_failopen(tmp_path, monkeypatch, capsys):
     # `fanops hashtags refresh` rebuilds the store from LIVE Graph reach — no ledger, no doctor gate. Without

@@ -107,7 +107,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
            "--strict-mcp-config"] + (["--model", model] if model else [])
 
     def _run(stdin_prompt: str) -> dict:
-        # Rate-limit backoff (mirrors the publishers' jittered exponential retry — blotato_rest.py:131):
+        # Rate-limit backoff (mirrors the publishers' jittered exponential retry (postiz/zernio)):
         # a 429/503/529 is rejected pre-processing and SAFE to retry. Without this a usage spike turned
         # the whole autonomous run into a silent no-op (one log line per gate). A timeout / hard nonzero
         # exit is NOT retried here (timeout has its own one-shot retry in the responder).

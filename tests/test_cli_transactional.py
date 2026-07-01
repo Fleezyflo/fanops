@@ -112,8 +112,8 @@ def test_learn_pass_fetch_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
 
 def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "rest")
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
@@ -136,8 +136,8 @@ def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker)
 
 def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "rest")
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))

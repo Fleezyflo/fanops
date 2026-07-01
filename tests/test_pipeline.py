@@ -360,34 +360,34 @@ def test_advance_last_post_age_is_none_when_scheduled_time_absent(tmp_path, monk
 
 
 def test_advance_still_halts_on_fatal_auth_error_from_publish(tmp_path, monkeypatch, mocker):
-    # The stage-level guard must NOT swallow a FATAL BlotatoAuthError — a bad key means every post
+    # The stage-level guard must NOT swallow a FATAL PostizAuthError — a bad key means every post
     # fails, so halting (and rolling back the pass) is the intended F52 behavior. The CLI run guard
     # turns the raise into a clean exit; here we just assert advance() RE-RAISES it.
     import pytest
-    from fanops.errors import BlotatoAuthError
+    from fanops.errors import PostizAuthError
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    mocker.patch("fanops.pipeline.publish_due", side_effect=BlotatoAuthError("401 invalid key"))
-    with pytest.raises(BlotatoAuthError):
+    mocker.patch("fanops.pipeline.publish_due", side_effect=PostizAuthError("401 invalid key"))
+    with pytest.raises(PostizAuthError):
         advance(cfg, base_time="2026-06-02T18:00:00Z")
 
 
 def test_advance_halts_on_fatal_auth_error_from_crosspost(tmp_path, monkeypatch, mocker):
     # Phase-B-followup (review Minor): the crosspost stage wrapper must re-raise a fatal
-    # BlotatoAuthError (symmetry with publish_due), not log-and-continue. crosspost has no Blotato
+    # PostizAuthError (symmetry with publish_due), not log-and-continue. crosspost has no Blotato
     # call today, but if one is added a bad key must halt the run, not be silently swallowed.
     import pytest
-    from fanops.errors import BlotatoAuthError
+    from fanops.errors import PostizAuthError
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    mocker.patch("fanops.pipeline.crosspost_clips", side_effect=BlotatoAuthError("401 bad key"))
-    with pytest.raises(BlotatoAuthError):
+    mocker.patch("fanops.pipeline.crosspost_clips", side_effect=PostizAuthError("401 bad key"))
+    with pytest.raises(PostizAuthError):
         advance(cfg, base_time="2026-06-02T18:00:00Z")
 
 
@@ -427,9 +427,9 @@ def test_advance_dryrun_never_reconciles(tmp_path, monkeypatch, mocker):
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     spy.assert_not_called()
 
-def test_advance_rest_backend_still_calls_reconciler(tmp_path, monkeypatch, mocker):
-    # Back-compat: a rest/mcp + key backend STILL reconciles its stranded posts (unchanged from pre-M2).
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
+def test_advance_zernio_backend_still_calls_reconciler(tmp_path, monkeypatch, mocker):
+    # Back-compat: a live (zernio) + key backend STILL reconciles its stranded posts (unchanged from pre-M2).
+    monkeypatch.setenv("FANOPS_POSTER", "zernio"); monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); led.add_post(_needs_reconcile_post()); led.save()
     spy = mocker.patch("fanops.pipeline.reconcile_due", side_effect=lambda _cfg: {"needs_reconcile": 0, "published": 0})
     advance(cfg, base_time="2026-06-02T18:00:00Z")

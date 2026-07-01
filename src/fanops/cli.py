@@ -85,8 +85,8 @@ def cmd_track(cfg: Config, window: str) -> int:
     # The metrics FETCH (up to ~30s network) runs OUTSIDE the ledger lock; only the apply
     # (record_metrics on the freshly-loaded ledger) runs inside a tight transaction — so a slow
     # fetch never serializes behind the flock, and a concurrent advance can't clobber the result.
-    # Snapshot the published submission_ids FIRST (postiz reads per-post analytics, so the client must
-    # know which ids to fetch; the Blotato client ignores them and fetches the bulk list).
+    # Snapshot the published submission_ids FIRST (postiz/zernio read per-post analytics, so the client
+    # must know which ids to fetch).
     led0 = Ledger.load(cfg)
     # P3: poll PUBLISHED OR ANALYZED posts (an analyzed post stays re-pollable so its metrics_series
     # accumulates later cadence offsets through the year; due_offset returns None once it's complete).
@@ -118,8 +118,8 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
     # lost-update window cmd_track closes (ECC-review fix #1): the metrics FETCH (up to ~30s network)
     # runs OUTSIDE the ledger lock; only classify/amplify/retire run inside a tight transaction.
     # Holding the flock across the network call serialized any concurrent advance/ingest behind it.
-    # Snapshot the published submission_ids FIRST (postiz reads per-post analytics, so the client
-    # must know which ids to fetch; the Blotato client ignores them and fetches the bulk list).
+    # Snapshot the published submission_ids FIRST (postiz/zernio read per-post analytics, so the client
+    # must know which ids to fetch).
     # Raises on a fetch/apply hiccup; the caller logs+swallows so the unattended run stays exit 0.
     led0 = Ledger.load(cfg)
     pollable_posts = [p for p in led0.posts.values()   # P3: published OR analyzed (re-pollable)
@@ -136,7 +136,7 @@ def cmd_reconcile(cfg: Config) -> int:
     # reconcile_due pre-polls each status (network) OUTSIDE the lock against a lock-free snapshot, then
     # applies the cached results in ONE tight transaction (a single poll error is contained per-post —
     # parked, never guessed failed). Needs a key (dryrun has no live status source) — skip cleanly if
-    # absent, like track: _default_get_status raises RuntimeError (blotato) / PostizAuthError (postiz)
+    # absent, like track: _default_get_status raises RuntimeError (non-postiz) / PostizAuthError (postiz)
     # when not configured, and a mid-poll fatal AuthError likewise = "can't reconcile, skip".
     try:
         r = reconcile_due(cfg)
@@ -262,7 +262,7 @@ def _cmd_doctor_fix_routing(cfg: Config) -> int:
 
 def cmd_resolve(cfg: Config, args) -> int:
     """AUDIT H1: the documented human-reconcile escape hatch. When `reconcile` can't auto-resolve a
-    post stuck in needs_reconcile (Blotato status ambiguous / never returns a terminal state), the
+    post stuck in needs_reconcile (backend status ambiguous / never returns a terminal state), the
     operator checks the platform by hand and forces the ledger to ground truth:
     `fanops resolve <post_id> published --url <live-url>` or `... failed`. Tight transaction,
     local-only mutation (no network).
@@ -529,7 +529,7 @@ def cmd_daemon(cfg: Config, args) -> int:
 
 def cmd_autopilot(cfg: Config, args) -> int:
     # One command -> autonomous: enable the llm responder (durably, in .env) + install the supervising
-    # daemon, then print a readiness report. BLOTATO-FREE: dryrun by default (publishes nothing); going
+    # daemon, then print a readiness report. dryrun by default (publishes nothing); going
     # live is a separate, deliberate step via Postiz or the manual publish-queue.
     try:
         interval = daemon.parse_interval(args.interval)
@@ -552,7 +552,7 @@ def cmd_autopilot(cfg: Config, args) -> int:
             print(f"    [ ] {c['label']}  -> {c['hint']}")
     else:
         print("  readiness -> all checks pass")
-    print("  go-live (separate, when you want posts to ship): self-host Postiz (FANOPS_POSTER=postiz) OR `fanops publish-queue` by hand — Blotato not required")
+    print("  go-live (separate, when you want posts to ship): self-host Postiz (FANOPS_POSTER=postiz) OR `fanops publish-queue` by hand")
     return 0
 
 def _http_url(s: str) -> str:
@@ -610,9 +610,9 @@ def main(argv: list[str] | None = None) -> int:
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
     p_studio.add_argument("--port", type=int, default=8787)
-    p_cut = sub.add_parser("cutover", help="live-cutover validation harness — prove the pipeline against REAL Blotato")
+    p_cut = sub.add_parser("cutover", help="live-cutover validation harness — prove the pipeline against a REAL Postiz backend")
     cut_sub = p_cut.add_subparsers(dest="cutover_action", required=True)
-    cut_sub.add_parser("auth", help="step 1: prove BLOTATO_API_KEY authenticates (read-only)")
+    cut_sub.add_parser("auth", help="step 1: prove POSTIZ_API_KEY authenticates (read-only)")
     p_cpost = cut_sub.add_parser("post", help="step 2: publish ONE 2099-scheduled probe to a THROWAWAY account")
     p_cpost.add_argument("account_id")
     p_cpost.add_argument("--i-understand-this-posts-to-a-real-account", dest="confirmed", action="store_true")
@@ -658,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(e), file=sys.stderr)
         return 1
     except AuthError as e:
-        # Bad/missing poster key (Blotato or Postiz, or a 401) escaping a publish — operator-actionable.
+        # Bad/missing poster key (Postiz or Zernio, or a 401) escaping a publish — operator-actionable.
         # str(e) carries the backend-specific message. One clean line + exit 2 (config-level, like
         # ControlFileError), not a stack dump (AUDIT H8).
         # In `run` this is already caught by the loop guard; this covers advance/other commands.
@@ -696,7 +696,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _check_accounts(cfg: Config) -> int:
     """Fail a run early if the active-account config is unusable (README promise: an empty
-    account_id on an active account is caught before a run, never reaching Blotato).
+    account_id on an active account is caught before a run, never reaching the backend).
     Returns 0 when clean, else prints the problems and returns 2."""
     problems = Accounts.load(cfg).validate()
     if problems:
@@ -721,7 +721,6 @@ def _check_preflight(cfg: Config) -> int:
         only on the binary's ABSENCE and otherwise point the operator at `claude login` — a
         logged-out `claude` then surfaces loudly via the run's `run halted`/heartbeat path, not a
         traceback.)
-      - FANOPS_POSTER in {rest, mcp} but no BLOTATO_API_KEY: publishing will 401 -> hard exit 2.
 
     The default dryrun+manual config (no creds) trips neither and passes cleanly (exit 0)."""
     import shutil
@@ -731,10 +730,6 @@ def _check_preflight(cfg: Config) -> int:
             "FANOPS_RESPONDER=llm but `claude` is not on PATH — the autonomous responder shells "
             "`claude -p` using your existing Claude subscription. Install Claude Code and run "
             "`claude login` on this host (no API key needed).")
-    if cfg.poster_backend in {"rest", "mcp"} and cfg.blotato_api_key is None:
-        problems.append(
-            f"FANOPS_POSTER={cfg.poster_backend} but BLOTATO_API_KEY is not set — publishing will "
-            "fail auth (401). Export BLOTATO_API_KEY.")
     if cfg.poster_backend == "postiz" and (cfg.postiz_url is None or cfg.postiz_api_key is None):
         miss = " and ".join(n for n, v in (("POSTIZ_URL", cfg.postiz_url),
                                            ("POSTIZ_API_KEY", cfg.postiz_api_key)) if v is None)

@@ -1,6 +1,6 @@
 # src/fanops/cutover_postiz.py — the Postiz half of the live-cutover validation harness (M3).
-"""Mirrors the four cutover steps for a FANOPS_POSTER=postiz deployment; dispatched from cutover.py by
-backend so the Blotato path stays byte-identical. Writes ONLY 00_control/cutover.json (NEVER the ledger
+"""The Postiz cutover body for a FANOPS_POSTER=postiz deployment; dispatched from cutover.py by
+backend. Writes ONLY 00_control/cutover.json (NEVER the ledger
 — the 2099-scheduled throwaway probe must never enter the unit chain). The POSTIZ_API_KEY is never
 logged, echoed, or returned (only an `ok` bool); a 401 raises PostizAuthError with the body withheld.
 cutover.py symbols (_save_state/reconcile_fields/CUTOVER_SCHEDULE) are lazy-imported inside the

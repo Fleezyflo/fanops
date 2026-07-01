@@ -110,7 +110,7 @@ def _needs_reconcile(led: Ledger) -> list[str]:
     # Needs reconcile (AUDIT C1): an ambiguous publish failure (5xx / network timeout after the
     # body was sent) — the post MAY be live on the platform. It is deliberately NOT in Failures
     # (re-queueing a failed post is safe; re-queueing this one could double-post). Surface it on
-    # its own so the operator verifies via GET /v2/posts/:id (or my.blotato.com/failed) before any
+    # its own so the operator verifies via the backend's per-post status endpoint before any
     # resubmit. This is a manual step by design — there is no idempotency key to make it automatic.
     reconcile = [f"- post `{p.id}` ({p.platform.value}): {p.error_reason or '(no reason given)'}"
                  for p in led.posts.values() if p.state is PostState.needs_reconcile]
@@ -120,7 +120,7 @@ def _needs_reconcile(led: Ledger) -> list[str]:
 
 def _unmeasured(led: Ledger) -> list[str]:
     # Published but never measured: track.py flips published->analyzed only when a metrics row
-    # matches by submission_id, so a post that shipped but Blotato never returned metrics for
+    # matches by submission_id, so a post that shipped but the backend never returned metrics for
     # stays 'published' with empty metrics forever. Surface it so the operator notices (the
     # one stuck-state the pipeline can't auto-resolve — you can't fabricate metrics).
     unmeasured = [f"- post `{p.id}` ({p.platform.value}): published, no metrics yet"

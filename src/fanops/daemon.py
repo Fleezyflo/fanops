@@ -66,7 +66,7 @@ def render_wrapper(cfg: Config, *, interval: int) -> str:
     --base-time each fire (the default base-time is a fixed past date — a daemon must advance it).
 
     This operator-installed loop is THE autonomous publish+reconcile trigger (P2): each fire's
-    `fanops run` -> advance -> reconciles parked posts (Blotato or Postiz) AND publishes every `queued`
+    `fanops run` -> advance -> reconciles parked posts (Postiz or Zernio) AND publishes every `queued`
     post whose operator-set scheduled_time is now due (publish_due's due-gate). No Python-side scheduler
     exists or is added — a due post fires unattended ONLY if the operator ran `fanops daemon install`;
     otherwise the supported paths are a manual `fanops run` / Studio Publish-now. dryrun publishes nothing.

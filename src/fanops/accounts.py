@@ -1,7 +1,7 @@
-"""Flat active-account registry — non-secret metadata only (the Blotato account_id is a
+"""Flat active-account registry — non-secret metadata only (the hosted-backend account_id is a
 non-secret identifier; the API key lives in .env). No lanes: every active account
 participates. surfaces() yields each (handle, account_id, platform). resolve_account_id()
-maps a handle to its numeric Blotato id (FIX F06: v1 passed the handle straight to Blotato)."""
+maps a handle to its hosted-backend id (FIX F06: v1 passed the handle straight to the backend)."""
 from __future__ import annotations
 import json
 from contextlib import contextmanager
@@ -20,11 +20,11 @@ class AccountStatus(str, Enum):
 
 class Account(BaseModel):
     handle: str
-    account_id: str = ""                   # shared/legacy id (Blotato numeric, or a Postiz integration);
+    account_id: str = ""                   # shared/legacy id (a Postiz integration id, or legacy numeric);
                                            # the FALLBACK when a platform has no per-platform id below
     platforms: list[Platform] = Field(default_factory=list)
     status: AccountStatus = AccountStatus.planned
-    access: str = "blotato"                # METHOD, never a credential
+    access: str = "postiz"                 # METHOD, never a credential
     persona: Optional[str] = None
     persona_id: Optional[str] = None       # A1: link to a first-class Persona (personas.json). When set AND it
                                            # resolves, the linked persona's voice/corpus/levers HYDRATE this

@@ -3,7 +3,7 @@
 import json
 import pytest
 from fanops.config import Config
-from fanops.errors import CutoverError, BlotatoAuthError
+from fanops.errors import CutoverError
 from fanops import cutover
 
 
@@ -27,101 +27,33 @@ def test_reconcile_ignores_nonnumeric_values():
     assert rec["scored"] == ["saves"] and "caption" not in rec["present_unweighted"]
 
 
-# ---- build_cutover_payload / the hardcoded 2099 schedule ----------------------------------------
-def test_cutover_payload_is_2099_twitter():
-    p = cutover.build_cutover_payload("acct123")
-    assert p["scheduledTime"] == "2099-01-01T00:00:00Z"
-    assert p["post"]["accountId"] == "acct123" and p["post"]["content"]["platform"] == "twitter"
-
-
-# ---- cutover_post guards (cannot fire accidentally) ---------------------------------------------
-def test_post_refuses_dryrun(tmp_path, monkeypatch):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)         # default dryrun
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    with pytest.raises(CutoverError, match="dryrun"):
-        cutover.cutover_post(Config(root=tmp_path), "acct", confirmed=True)
-
-def test_post_refuses_without_confirm_flag(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    with pytest.raises(CutoverError, match="refusing|THROWAWAY"):
-        cutover.cutover_post(Config(root=tmp_path), "acct", confirmed=False)
-
-def test_post_fires_and_saves_state_when_confirmed(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    captured = {}
-    def fake_post(url, **kw):
-        captured["json"] = kw["json"]; return _R(201, {"postSubmissionId": "sub_LIVE_1"})
-    out = cutover.cutover_post(cfg, "acct", confirmed=True, post=fake_post)
-    assert out["submission_id"] == "sub_LIVE_1"
-    assert captured["json"]["scheduledTime"] == "2099-01-01T00:00:00Z"
-    state = json.loads(cfg.cutover_path.read_text())
-    assert state["submission_id"] == "sub_LIVE_1"
-    assert not cfg.ledger_path.exists()        # ISOLATION: the test post never entered the unit chain
-
-def test_post_401_is_typed_auth_redacted(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    def fake_post(url, **kw): return _R(401, {"e": "denied key SENTINEL"}, text="denied key SENTINEL")
-    with pytest.raises(BlotatoAuthError) as ei:
-        cutover.cutover_post(Config(root=tmp_path), "acct", confirmed=True, post=fake_post)
-    assert "SENTINEL" not in str(ei.value)
-
-
-# ---- cutover_auth -------------------------------------------------------------------------------
-def test_auth_ok(tmp_path, monkeypatch):
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    out = cutover.cutover_auth(Config(root=tmp_path), get=lambda u, **kw: _R(200, []))
-    assert out["ok"] is True and out["status_code"] == 200
-
-def test_auth_401_typed(tmp_path, monkeypatch):
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    with pytest.raises(BlotatoAuthError):
-        cutover.cutover_auth(Config(root=tmp_path), get=lambda u, **kw: _R(401, {}, text="x"))
-
-def test_auth_requires_key(tmp_path, monkeypatch):
-    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    with pytest.raises(CutoverError, match="BLOTATO_API_KEY"):
+# ---- non-postiz backend fails closed (Blotato removed) ------------------------------------------
+def test_auth_non_postiz_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    with pytest.raises(CutoverError, match="postiz backend only"):
         cutover.cutover_auth(Config(root=tmp_path))
 
+def test_post_non_postiz_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    with pytest.raises(CutoverError, match="postiz backend only"):
+        cutover.cutover_post(Config(root=tmp_path), "acct", confirmed=True)
 
-# ---- cutover_metrics ----------------------------------------------------------------------------
-def test_metrics_reconciles_and_saves(tmp_path, monkeypatch):
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    rows = [{"postSubmissionId": "sub_1", "metrics": {"saves": 9, "bookmarks": 2}}]
-    out = cutover.cutover_metrics(cfg, "sub_1", list_posts=lambda w: rows)
-    assert out["reconciliation"]["scored"] == ["saves"]
-    assert out["reconciliation"]["present_unweighted"] == ["bookmarks"]
-    state = json.loads(cfg.cutover_path.read_text())
-    assert state["metrics_confirmed"] is True and state["metrics_row"]["saves"] == 9
-
-def test_metrics_missing_row_raises(tmp_path, monkeypatch):
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    with pytest.raises(CutoverError, match="no metrics row"):
+def test_metrics_non_postiz_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    with pytest.raises(CutoverError, match="postiz backend only"):
         cutover.cutover_metrics(Config(root=tmp_path), "sub_X", list_posts=lambda w: [])
 
 
-# ---- cutover_lift -------------------------------------------------------------------------------
-def test_lift_computes_on_captured_row(tmp_path, monkeypatch):
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+# ---- cutover_lift (backend-agnostic — reads the captured cutover.json row) -----------------------
+def test_lift_computes_on_captured_row(tmp_path):
     cfg = Config(root=tmp_path)
     cutover._save_state(cfg, {"metrics_row": {"saves": 10, "likes": 100}})
     out = cutover.cutover_lift(cfg, "sub_1")
     assert out["lift_score"] == 45.0          # 4.0*10 + 0.05*100
 
-def test_lift_without_captured_row_raises(tmp_path, monkeypatch):
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
+def test_lift_without_captured_row_raises(tmp_path):
     with pytest.raises(CutoverError, match="metrics"):
         cutover.cutover_lift(Config(root=tmp_path), "sub_1")
-
-
-# ---- CLI surface: the refuse path is a clean exit 2, not a traceback ----------------------------
-def test_cli_cutover_post_refuses_dryrun_exit2(tmp_path, monkeypatch):
-    from fanops.cli import main
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    assert main(["cutover", "post", "acct"]) == 2
 
 
 # ---- M3: Postiz cutover — dispatch + the 4 steps (offline, injected network; the LIVE post is operator-run) ----
@@ -212,19 +144,6 @@ def test_postiz_metrics_missing_row_says_postiz_not_blotato(tmp_path, monkeypatc
     with pytest.raises(CutoverError, match="no metrics row") as ei:
         cutover.cutover_metrics(Config(root=tmp_path), "pzX", list_posts=lambda w: [])
     assert "Postiz" in str(ei.value) and "Blotato" not in str(ei.value)
-
-
-def test_post_non_2xx_withholds_response_body(tmp_path, monkeypatch):
-    # FIX 8: the only non-auth poster path that embedded the raw response body was
-    # `raise CutoverError(f"blotato post {code}: {resp.text[:200]}")` — inconsistent with the
-    # no-echo posture everywhere else (cutover_postiz withholds it). The body must NOT leak.
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    def fake_post(url, **kw): return _R(500, {"e": "BODY_SENTINEL"}, text="BODY_SENTINEL details")
-    with pytest.raises(CutoverError) as ei:
-        cutover.cutover_post(Config(root=tmp_path), "acct", confirmed=True, post=fake_post)
-    msg = str(ei.value)
-    assert "BODY_SENTINEL" not in msg                         # raw body withheld
-    assert "500" in msg and "withheld" in msg.lower()         # status kept, body explicitly withheld
 
 
 # ---- WS-R1 XC-3: cutover.json written atomically (no torn file re-freezes learning) -------------

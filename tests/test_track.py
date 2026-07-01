@@ -164,17 +164,19 @@ def test_pull_leaves_unmatched_published_post(tmp_path):
     assert "lift_score" not in led.posts["pmiss"].metrics
 
 def test_pull_default_binding_requires_key(tmp_path, monkeypatch):
-    # The default (non-injected) path actually wires BlotatoMetricsClient, which needs a key. Slice-5: the
+    # The default (non-injected) path actually wires PostizMetricsClient, which needs a key. Slice-5: the
     # per-post router builds a client ONLY for backends that have pollable posts, so the key is demanded
     # when there IS something to fetch (a published post) — the real contract, not an empty-ledger no-op.
     # H1: the no-override channel resolves via effective_provider, so it needs a LIVE legacy global to
-    # bridge to Blotato (rest) — a dryrun global would now correctly SKIP the post (no client, no key).
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    # bridge to postiz — a dryrun global would now correctly SKIP the post (no client, no key).
+    from fanops.errors import PostizAuthError
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)         # URL present, KEY absent -> the key is what's demanded
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, submission_id="s1", public_url="dryrun://p1"))
     import pytest
-    with pytest.raises(RuntimeError, match="BLOTATO_API_KEY"):
+    with pytest.raises(PostizAuthError, match="POSTIZ_API_KEY"):
         pull_metrics(led, cfg)                                 # no list_posts injected -> default binding
 
 # --- T2 (audit b): the lift weights (the optimization target) are operator-tunable via tuning.json ---
@@ -230,11 +232,14 @@ def test_default_list_posts_postiz_no_ids_yields_empty(tmp_path, monkeypatch, mo
     assert list(_default_list_posts(cfg)("30d")) == []          # positional → submission_ids=None → [] no-op
     spy.assert_not_called()
 
-def test_default_list_posts_rest_backend_returns_blotato_client(tmp_path, monkeypatch):
-    from fanops.track import _default_list_posts
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    fetch = _default_list_posts(Config(root=tmp_path), submission_ids=["ignored"])  # kwarg inert for Blotato
-    assert fetch.__self__.__class__.__name__ == "BlotatoMetricsClient"
+def test_metrics_client_unknown_backend_fails_closed(tmp_path):
+    # Blotato removed: the else-branch that returned BlotatoMetricsClient now RAISES (fail-closed + legible,
+    # mirrors #251-#263) — an unknown backend must never silently construct a client. A stale FANOPS_POSTER=rest
+    # already degrades to dryrun at cfg (W4), so this raise is reachable only via a direct unknown backend.
+    import pytest
+    from fanops.track import _metrics_client_for
+    with pytest.raises(ValueError, match="unknown backend"):
+        _metrics_client_for(Config(root=tmp_path), "rest", ["ignored"])
 
 def test_cmd_track_postiz_threads_published_ids(tmp_path, monkeypatch, mocker):
     # 3a: cmd_track must snapshot the ledger's published ids and thread them into the postiz client —
@@ -258,18 +263,6 @@ def test_pull_metrics_no_list_posts_postiz_fetches_published_ids(tmp_path, monke
     led = pull_metrics(led, cfg)                                 # no list_posts injected → default postiz binding
     assert "analytics/post/sid1" in spy.call_args[0][0]
     assert led.posts["p1"].state is PostState.analyzed and led.posts["p1"].metrics["shares"] == 9.0
-
-def test_pull_metrics_blotato_path_unaffected_by_id_threading(tmp_path, monkeypatch, mocker):
-    # 3b back-compat: the Blotato default path is byte-identical — submission_ids is passed ONLY to the
-    # postiz branch, never to BlotatoMetricsClient; the bulk fetch + match is unchanged.
-    monkeypatch.setenv("FANOPS_POSTER", "rest"); monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(_published("p1", "s_A"))
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(200, [{"postSubmissionId": "s_A", "metrics": {"saves": 30}}]))
-    led = pull_metrics(led, cfg)                                 # default → BlotatoMetricsClient bulk, ignores ids
-    assert led.posts["p1"].state is PostState.analyzed and led.posts["p1"].metrics["saves"] == 30
-
 
 # ---- M2 Task 6: the full chain — documented Postiz array → analyzed + EXACT weighted lift_score ----
 def test_pull_metrics_postiz_computes_lift_score(tmp_path, monkeypatch, mocker):

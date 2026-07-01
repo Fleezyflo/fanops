@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 def safe_public_url(url: str | None) -> str | None:
     """Return `url` iff it is a well-formed https:// URL with a host — the only shape a public IG/TikTok
     permalink takes — else None. Guards a malformed/non-https value captured from a backend (Postiz
-    releaseURL / Blotato publicUrl) from being persisted and later surfaced as a dead 'live URL' (M2).
+    releaseURL / hosted publicUrl) from being persisted and later surfaced as a dead 'live URL' (M2).
     https-only on purpose: a public social permalink is always https; a non-https value here is malformed.
     None-safe, never raises. Operator-supplied URLs (`fanops resolve --url`, Studio mark-posted) are NOT
     routed through this — they are explicit operator intent, not untrusted backend capture."""

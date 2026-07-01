@@ -1,7 +1,7 @@
 """Zernio poster backend — a HOSTED scheduler (FANOPS_POSTER=zernio, or a per-account override). Lets
 FanOps publish TikTok WITHOUT passing TikTok app review: Zernio owns the TikTok app/OAuth, so the
 operator connects their TikTok accounts inside Zernio's dashboard and FanOps only needs an API key + the
-resulting account _ids. Same swappable-poster slot as Postiz/Blotato, SAME asymmetric-retry safety: a bad
+resulting account _ids. Same swappable-poster slot as Postiz, SAME asymmetric-retry safety: a bad
 key halts the queue by TYPE (ZernioAuthError); a 5xx / network drop after the body was sent parks
 needs_reconcile (Zernio's create-post has no idempotency key, so we NEVER re-POST a possible live post).
 

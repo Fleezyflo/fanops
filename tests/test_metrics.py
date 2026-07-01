@@ -1,87 +1,9 @@
+import pytest
 from fanops.config import Config
-from fanops.post.metrics import BlotatoMetricsClient
 
 class _R:
     def __init__(s, c, b): s.status_code = c; s._b = b; s.text = str(b)
     def json(s): return s._b
-
-def test_list_posts_returns_rows(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(200, {"items": [{"postSubmissionId": "s1", "metrics": {"saves": 5}}]}))
-    rows = BlotatoMetricsClient(cfg).list_posts("30d")
-    assert rows[0]["postSubmissionId"] == "s1" and rows[0]["metrics"]["saves"] == 5
-
-import pytest
-
-def test_list_posts_bare_list_response(tmp_path, monkeypatch, mocker):
-    # A top-level array response must be returned as-is, not crash on .get
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(200, [{"postSubmissionId": "s1"}, {"postSubmissionId": "s2"}]))
-    rows = BlotatoMetricsClient(cfg).list_posts()
-    assert [r["postSubmissionId"] for r in rows] == ["s1", "s2"]
-
-def test_list_posts_non_2xx_raises(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(500, {"e": "down"}))
-    with pytest.raises(RuntimeError, match="500"):
-        BlotatoMetricsClient(cfg).list_posts()
-
-def test_non_401_error_body_redacts_the_api_key(tmp_path, monkeypatch, mocker):
-    # stage-5 audit: a NON-401 error body that REFLECTS the presented key (a 5xx/proxy/WAF debug page)
-    # must NOT leak it into the RuntimeError that lands in error_reason -> ledger/stderr/run.log. The key
-    # is scrubbed to ***; the diagnosable status is preserved. (The 401 path already withholds the body.)
-    import pytest
-    monkeypatch.setenv("BLOTATO_API_KEY", "SECRET-BLOTATO-KEY")
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(500, {"error": "rejected header blotato-api-key=SECRET-BLOTATO-KEY"}))
-    with pytest.raises(RuntimeError) as ei:
-        BlotatoMetricsClient(cfg).list_posts()
-    assert "SECRET-BLOTATO-KEY" not in str(ei.value) and "***" in str(ei.value) and "500" in str(ei.value)
-
-class _RBadJson:
-    # a 200 whose body is NOT JSON (HTML error page from a misconfigured proxy)
-    def __init__(s, c, text): s.status_code = c; s.text = text
-    def json(s): raise ValueError("Expecting value: line 1 column 1 (char 0)")
-
-def test_list_posts_non_json_200_raises_clean_runtimeerror(tmp_path, monkeypatch, mocker):
-    # ECC-review fix #4: a 200-with-HTML made resp.json() raise a raw JSONDecodeError that aborted
-    # the WHOLE metrics pass (losing every post's metrics). It must become a diagnosable RuntimeError.
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_RBadJson(200, "<html>502 Bad Gateway</html>"))
-    with pytest.raises(RuntimeError, match="non-JSON"):
-        BlotatoMetricsClient(cfg).list_posts()
-
-def test_list_posts_401_is_typed_auth_with_redacted_body(tmp_path, monkeypatch, mocker):
-    # Audit follow-up: the df85662 401-redaction missed the two metrics clients. A 401 here must
-    # (a) raise BlotatoAuthError (so reconcile's halt-on-auth guard fires + track halts cleanly),
-    # and (b) NOT embed resp.text (a 401 body echoing the key would leak via stdout/ledger/digest).
-    from fanops.errors import BlotatoAuthError
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(401, {"e": "denied for key SENTINEL-KEY-ECHO"}))
-    with pytest.raises(BlotatoAuthError) as ei:
-        BlotatoMetricsClient(cfg).list_posts()
-    assert "SENTINEL-KEY-ECHO" not in str(ei.value) and "401" in str(ei.value)
-
-def test_get_status_401_is_typed_auth_with_redacted_body(tmp_path, monkeypatch, mocker):
-    from fanops.errors import BlotatoAuthError
-    from fanops.post.metrics import BlotatoStatusClient
-    monkeypatch.setenv("BLOTATO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(401, {"e": "denied for key SENTINEL-KEY-ECHO"}))
-    with pytest.raises(BlotatoAuthError) as ei:
-        BlotatoStatusClient(cfg).get_status("sub_1")
-    assert "SENTINEL-KEY-ECHO" not in str(ei.value) and "401" in str(ei.value)
 
 
 # ---- M2: PostizMetricsClient — Postiz analytics/post array → the {postSubmissionId, metrics} contract ----

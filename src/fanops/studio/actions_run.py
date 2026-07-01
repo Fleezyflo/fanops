@@ -237,7 +237,7 @@ def run_ingest_thirdparty(cfg: Config) -> ActionResult:
 def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True) -> ActionResult:
     """Drive one `fanops advance` pass (transcribe -> moments gate -> render -> captions gate ->
     crosspost -> publish due). Blocks on an unusable accounts config first (mirrors cmd_advance's
-    _check_accounts: an empty account_id must never reach Blotato). base_time defaults to now, so a
+    _check_accounts: an empty account_id must never reach the backend). base_time defaults to now, so a
     Studio-triggered pass schedules across today; any advance error (incl. a live auth failure) is
     surfaced cleanly, never a 500. On a LIVE backend a pass PUBLISHES to real accounts, so the Studio
     button must pass confirmed=True (the route derives it from a confirm checkbox); dryrun publishes
@@ -264,7 +264,7 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
         # live-ready provider's key (advance iterates accounts in deterministic order, so the first
         # failure is the first provider). Falls back to FANOPS_POSTER if no live channel exists.
         # UI-LIE-FIX: derive the auth-key name from the EXCEPTION CLASS, not a backend guess.
-        # The error type IS the truth (BlotatoAuthError -> BLOTATO_API_KEY, etc).
+        # The error type IS the truth (PostizAuthError -> POSTIZ_API_KEY, etc).
         key = Config.auth_key_name_from_error(exc)
         return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
     except Exception as exc:
