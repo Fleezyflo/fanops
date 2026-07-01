@@ -422,7 +422,15 @@ def build_system_strip(cfg: Config) -> dict:
         failed = sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.failed)
     except Exception:
         failed = 0
-    return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked, "failed": failed}
+    # Leg 2 (Insight): the one external gate — a persisted breadcrumb means Graph media-insights was refused
+    # for lack of instagram_manage_insights, so IG performance is frozen at its last snapshot until granted.
+    try:
+        from fanops.meta_graph import insights_blocked_signal
+        insights_blocked = insights_blocked_signal(cfg)
+    except Exception:
+        insights_blocked = False
+    return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
+            "failed": failed, "insights_blocked": insights_blocked}
 
 
 

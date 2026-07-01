@@ -159,30 +159,54 @@ def _default_list_posts(cfg: Config, *, submission_ids: Optional[list[str]] = No
     if posts is None:
         return _metrics_client_for(cfg, cfg.poster_backend, submission_ids)
     from fanops.accounts import load_accounts_safe
+    from fanops.models import Platform
     accounts, err = load_accounts_safe(cfg)
     if err: get_logger(cfg)("backend_route", "accounts", "load_failed_global_fallback", err=err)
+    # Leg 2 (Insight): Instagram metrics come from Meta Graph (the SOLE IG source) regardless of the
+    # PUBLISH backend (Postiz publishes IG, but Graph MEASURES it). Split IG posts to GraphInsightsClient
+    # (it needs the Post objects for media_id + cut_seconds), leave every non-IG post on its provider's
+    # reader UNCHANGED (TikTok -> Zernio). Both fetchers' rows concat into ONE pass.
+    ig_posts = [p for p in posts if p.platform is Platform.instagram and p.submission_id]
     groups: dict[str, list[str]] = {}
     for p in posts:
+        if p.platform is Platform.instagram: continue                  # Graph owns IG metrics now
         if not p.submission_id: continue
         backend = accounts.effective_provider(p.account, p.platform)   # H1: per-channel provider, NOT the global fallback
         if backend is None: continue                                   # no provider -> don't dryrun-default a live post's metrics
         groups.setdefault(backend, []).append(p.submission_id)
     fetchers = [_metrics_client_for(cfg, b, ids) for b, ids in groups.items()]
+    graph = None
+    if ig_posts:
+        from fanops.post.metrics import GraphInsightsClient
+        graph = GraphInsightsClient(cfg, posts=ig_posts)
     def fetch(window: str = "30d") -> list[dict]:
         rows: list[dict] = []
+        if graph is not None:
+            rows.extend(graph.list_posts(window))
         for f in fetchers:
             rows.extend(f(window))
         return rows
     return fetch
 
 def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = None,
-                 window: str = "30d", now: Optional[datetime] = None) -> Ledger:
+                 window: str = "30d", now: Optional[datetime] = None,
+                 resolve_media: Optional[Callable[[Ledger, Config], object]] = None) -> Ledger:
     # Clock injected (tests pass `now`; real callers default to UTC now — mirrors approve_post's
     # now_iso). The fetch id-set + match-set are PUBLISHED OR ANALYZED (P3): an analyzed post stays
     # re-pollable so its series accumulates later cadence offsets. due_offset returns None once a post's
     # series is complete (or the post predates published_at), so a finished/timeline-less post is still
     # fetched + flipped/updated but records no new row. Inert id-thread for any non-postiz backend (ignored).
     now = now or datetime.now(timezone.utc)
+    # Leg 2 (Insight): resolve each new IG post's Graph media_id AS PART of the automatic pull so the
+    # unattended daemon self-resolves — the sole-source insights read keys on media_id. FAIL-OPEN: a resolve
+    # failure (creds/transport) must never block the metrics pull (resolve_media_ids itself returns [] silently
+    # when it can't enumerate). Injectable for hermetic tests; default = the real reconcile resolver.
+    if resolve_media is None:
+        from fanops.reconcile import resolve_media_ids as resolve_media
+    try:
+        resolve_media(led, cfg)
+    except Exception as exc:
+        get_logger(cfg)("track", "resolve_media", "error", err=str(exc)[:160])   # fail-open, breadcrumb
     pollable = (PostState.published, PostState.analyzed)
     fetch = list_posts or _default_list_posts(
         cfg, posts=[p for p in led.posts.values()

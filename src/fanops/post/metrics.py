@@ -381,3 +381,66 @@ class ZernioStatusClient:
         if status == "published":
             out["publicUrl"] = _extract_zernio_permalink(body) or None
         return out
+
+
+# ---- Leg 2 (Insight): Meta Graph media insights as the SOLE IG performance reader --------------------
+
+def _retention_fraction(avg_watch_ms, duration_s) -> Optional[float]:
+    """Watch-through as a [0,1] rate (what _W['retention']=3.0 expects) = avg_watch_ms / (duration_s*1000),
+    CLAMPED to [0,1] (a loop/measurement can exceed the clip length). None when either input is missing/
+    non-positive -> retention is honestly ABSENT (degraded), NEVER fabricated. Raw ms would swamp the lift
+    scale (LOCKED #1), so this is the only shape that reaches record_metrics."""
+    if not isinstance(avg_watch_ms, (int, float)) or isinstance(avg_watch_ms, bool):
+        return None
+    if not isinstance(duration_s, (int, float)) or isinstance(duration_s, bool) or duration_s <= 0:
+        return None
+    return max(0.0, min(1.0, float(avg_watch_ms) / (float(duration_s) * 1000.0)))
+
+
+class GraphInsightsClient:
+    """The IG metrics reader (Leg 2): Meta Graph media-insights is the SOLE source of an IG post's real
+    performance (reach/views/saves/shares/likes/comments + retention). Emits the SAME {postSubmissionId,
+    metrics} row contract as PostizMetricsClient so track.record_metrics is UNCHANGED. Per-post isolation
+    mirrors the Postiz/Zernio readers: a post with no resolved media_id or a transient insights failure (None)
+    is SKIPPED (no row -> keeps its prior snapshot, re-polled next pass), never wholesale-zeroed. A scope
+    refusal (MetaInsightsScopeError) fails the pass CLOSED + LOUD: sets `insights_blocked` and STOPS (no rows
+    -> no wrong numbers), so doctor + Home can surface the one external gate. retention is the [0,1] watch-
+    through fraction derived from avg_watch_ms + the post's cut_seconds; absent when the duration is unknown."""
+    def __init__(self, cfg: Config, *, posts: Optional[list] = None, insights_fn=None):
+        self.cfg = cfg
+        self.posts = posts or []
+        # each post -> (media_id, duration_s, product_type). FanOps ships 9:16 reels, so REELS is the default
+        # product type (media_insights branches on it — LOCKED #3); a stamped type would override here.
+        self._insights = insights_fn or (lambda media_id, product_type:
+                                         __import__("fanops.meta_graph", fromlist=["media_insights"])
+                                         .media_insights(cfg, media_id, product_type))
+        self.insights_blocked = False
+
+    def list_posts(self, window: str = "30d") -> list[dict]:
+        from fanops.errors import MetaInsightsScopeError
+        rows: list[dict] = []
+        for p in self.posts:
+            media_id = getattr(p, "media_id", None)
+            sid = getattr(p, "submission_id", None)
+            if not (media_id and sid):
+                continue                                        # unresolved -> skip (keeps prior snapshot)
+            try:
+                raw = self._insights(media_id, "REELS")
+            except MetaInsightsScopeError:
+                # the one external gate: fail CLOSED + LOUD, write NOTHING, stop the pass.
+                self.insights_blocked = True
+                from fanops import meta_graph as _mg
+                _mg._set_insights_blocked(self.cfg)             # persist LOUD so doctor/Home surface the gate
+                get_logger(self.cfg)("graph_insights", str(sid), "insights_blocked_scope")
+                break
+            if raw is None:
+                get_logger(self.cfg)("graph_insights", str(sid), "transient_skip")
+                continue                                        # transient -> skip this id, keep going
+            metrics = {k: v for k, v in raw.items() if k != "avg_watch_ms"}
+            ret = _retention_fraction(raw.get("avg_watch_ms"), getattr(p, "cut_seconds", None))
+            if ret is not None:
+                metrics["retention"] = ret                      # [0,1] fraction; absent (degraded) if no duration
+            rows.append({"postSubmissionId": sid, "metrics": metrics})
+            from fanops import meta_graph as _mg
+            _mg._clear_insights_blocked(self.cfg)               # insights flowed -> self-heal the blocked signal
+        return rows

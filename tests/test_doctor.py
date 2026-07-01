@@ -120,3 +120,23 @@ def test_doctor_learning_note_names_studio_validate(tmp_path, monkeypatch):
     # line-57 Blotato-string fix: the unvalidated-learning note names the Studio Validate learning step
     rep = doctor.doctor_report(Config(root=tmp_path))
     assert any("Validate learning" in n for n in rep["notes"])
+
+
+def test_doctor_flags_insights_blocked_scope(tmp_path):
+    # Leg 2: when Graph media-insights was refused for lack of instagram_manage_insights, the persisted
+    # breadcrumb must surface LOUDLY in doctor (the one external gate), with the exact next action.
+    import json
+    cfg = Config(root=tmp_path)
+    cfg.insights_blocked_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.insights_blocked_path.write_text(json.dumps({"blocked": True}))
+    rep = doctor.doctor_report(cfg)
+    ic = next((c for c in rep["checks"] if "insights" in c["label"].lower()), None)
+    assert ic is not None and ic["ok"] is False and "instagram_manage_insights" in ic["hint"]
+
+
+def test_doctor_insights_check_passes_when_not_blocked(tmp_path):
+    # No breadcrumb -> the insights read is healthy -> the check passes (never a false alarm).
+    cfg = Config(root=tmp_path)
+    rep = doctor.doctor_report(cfg)
+    ic = next((c for c in rep["checks"] if "insights" in c["label"].lower()), None)
+    assert ic is not None and ic["ok"] is True

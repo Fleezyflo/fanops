@@ -65,6 +65,15 @@ def doctor_report(cfg: Config) -> dict:
         else:                         hint = ""
         checks.append(_check("Postiz learning ready (key + channels mapped + cutover validated)", ready, hint))
 
+    # Leg 2 (Insight): the ONE external gate — a persisted breadcrumb means a Graph media-insights read was
+    # refused for lack of the instagram_manage_insights scope, so IG posts kept their PRIOR snapshot (fail-
+    # closed, never a wrong number). Surface it LOUD with the exact unblock; self-clears once insights flow.
+    from fanops.meta_graph import insights_blocked_signal
+    blocked = insights_blocked_signal(cfg)
+    checks.append(_check("IG insights readable (Meta Graph media insights)", not blocked,
+                         "grant the instagram_manage_insights token scope — IG performance (reach/retention) "
+                         "is frozen at its last snapshot until then; identification still works on instagram_basic"))
+
     notes: list[str] = []
     notes.append(f"poster backend: {cfg.poster_backend}"
                  + (" (dryrun — writes payloads, posts nothing)" if not cfg.is_live else " (LIVE)"))

@@ -7,5 +7,6 @@
   <div class="strip-deps" hx-get="{{ url_for('do_golive_health', compact=1) }}" hx-trigger="load" hx-swap="innerHTML"><span class="muted">deps…</span></div>
   {% if system_strip.blocked_gates %}<a class="strip-alert danger" href="{{ url_for('gates') }}">{{ system_strip.blocked_gates }} gate{{ 's' if system_strip.blocked_gates != 1 else '' }} blocked</a>{% endif %}
   {% if system_strip.failed %}<a class="strip-alert danger" href="{{ url_for('posted', delivery='failed') }}">{{ system_strip.failed }} failed</a>{% endif %}
+  {% if system_strip.insights_blocked %}<a class="strip-alert danger" href="{{ url_for('golive_view') }}" title="Grant the instagram_manage_insights token scope — IG reach/retention is frozen at its last snapshot until then">IG insights blocked</a>{% endif %}
   <div class="strip-daemon" hx-get="{{ url_for('home_daemon_health') }}" hx-trigger="load" hx-swap="innerHTML"></div>
 </div>

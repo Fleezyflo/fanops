@@ -18,6 +18,7 @@ import re
 from datetime import datetime, timedelta, timezone
 import requests
 from fanops.config import Config
+from fanops.errors import MetaInsightsScopeError
 from fanops.log import get_logger
 from fanops.hashtags import _norm
 
@@ -78,6 +79,138 @@ def trend_score(cfg: Config, tag: str, *, get=None):
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 total += float(v)
     return total
+
+_MEDIA_FIELDS = "id,permalink,media_product_type,timestamp"
+_MEDIA_PAGE_CAP = 50            # defensive: >50 pages of the IG user's OWN media is a pathological/mocked paging loop
+
+def list_user_media(cfg: Config, *, get=None):
+    """Leg 2 identify-half: the live list of THIS IG user's media (id + permalink + product_type + timestamp),
+    walking `paging.next` to completion. READ-ONLY, spends NO hashtag budget (a separate high-limit endpoint).
+    FAIL-OPEN -> [] on any transport/shape failure or absent creds (mirrors trend_score) so an insights pull
+    that can't enumerate media simply resolves no new media_ids rather than crashing the daemon tick."""
+    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+        return []                                                # no creds -> nothing to enumerate (fail-open)
+    out: list[dict] = []
+    params = {"fields": _MEDIA_FIELDS, "limit": 100}
+    path = f"{cfg.meta_ig_user_id}/media"
+    for _ in range(_MEDIA_PAGE_CAP):
+        body = _graph_get(cfg, path, params, get=get)
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, list):
+            break                                                # transport/shape failure -> stop, return what we have ([] first pass)
+        out.extend(m for m in data if isinstance(m, dict) and m.get("id"))
+        nxt = (body.get("paging") or {}).get("next") if isinstance(body.get("paging"), dict) else None
+        if not nxt:
+            break
+        # `next` is a fully-formed absolute URL (host + querystring); pass it as the path with empty params
+        # so _graph_get GETs it verbatim (+ the access_token). Strip the base so we don't double it.
+        path, params = _next_path(cfg, nxt), {}
+    return out
+
+def _next_path(cfg: Config, next_url: str) -> str:
+    """The Graph `paging.next` is an absolute URL; _graph_get prepends `{meta_graph_url}/`. Strip that base
+    (and any leading slash) so the verbatim cursor URL is GET as-is, not concatenated onto the base twice."""
+    base = cfg.meta_graph_url.rstrip("/") + "/"
+    return next_url[len(base):] if next_url.startswith(base) else next_url.lstrip("/")
+
+# Leg 2 (Insight): the media-insights metric list per product type. REELS is the only type with an
+# avg-watch-time metric (LOCKED #3 — asking for it on a feed video 400s), so its list is a superset.
+_INSIGHTS_METRICS_REELS = ["reach", "plays", "saved", "shares", "likes", "comments", "ig_reels_avg_watch_time"]
+_INSIGHTS_METRICS_FEED = ["reach", "saved", "shares", "likes", "comments"]
+# Graph metric name -> our lift/row key. Meta renamed plays/impressions -> views; `saved` is our `saves`.
+# ig_reels_avg_watch_time lands as raw ms (`avg_watch_ms`); retention as a [0,1] fraction is derived
+# downstream (GraphInsightsClient, needs the clip duration) — kept out of here so this stays duration-free.
+_GRAPH_INSIGHTS_MAP = {
+    "reach": "reach", "views": "views", "plays": "views", "impressions": "views",
+    "saved": "saves", "saves": "saves", "shares": "shares",
+    "likes": "likes", "like_count": "likes", "comments": "comments", "comments_count": "comments",
+    "ig_reels_avg_watch_time": "avg_watch_ms",
+}
+
+def _is_scope_error(body) -> bool:
+    """True iff a Graph error body is a PERMISSION/scope refusal (missing instagram_manage_insights) vs a
+    transient failure. Meta signals it as an OAuthException (code 10 / 200) or a 'permission'-worded message.
+    Conservative: only a clear permission signal trips the loud path; anything else stays transient (None)."""
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict):
+        return False
+    if err.get("type") == "OAuthException" or err.get("code") in (10, 200, 803):
+        return True
+    return "permission" in str(err.get("message", "")).lower()
+
+def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=None):
+    """Leg 2 read-half: THE complete performance of one live IG media from Graph media-insights — the SOLE
+    IG analytics source (no Postiz fallback). Branches the requested metric list on `product_type` (reels get
+    avg-watch, feed does not — LOCKED #3). Returns a normalized dict {reach,views,saves,shares,likes,comments
+    [,avg_watch_ms]} on success; None on a TRANSIENT failure (5xx / network / no creds — re-poll next pass);
+    raises MetaInsightsScopeError on a PERMISSION refusal (LOUD, fail-closed — the one external gate). The
+    token rides the access_token param, never a logged string."""
+    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+        return None                                              # no creds -> transient-shaped (keep prior snapshot)
+    metrics = _INSIGHTS_METRICS_REELS if (product_type or "").upper() == "REELS" else _INSIGHTS_METRICS_FEED
+    get = get or requests.get
+    try:
+        resp = get(f"{cfg.meta_graph_url}/{media_id}/insights",
+                   params={"metric": ",".join(metrics), "access_token": cfg.meta_graph_token}, timeout=20)
+    except requests.exceptions.RequestException:
+        return None                                              # transport blip -> transient
+    if getattr(resp, "status_code", None) != 200:
+        try: body = resp.json()
+        except (ValueError, AttributeError): body = None
+        if _is_scope_error(body):
+            raise MetaInsightsScopeError(                        # LOUD: the insights scope is missing (body WITHHELD)
+                "Meta Graph media-insights refused: grant the instagram_manage_insights token scope")
+        return None                                              # non-permission non-200 -> transient
+    try:
+        data = resp.json().get("data")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(data, list):
+        return None
+    out: dict = {}
+    for item in data:
+        if not isinstance(item, dict): continue
+        key = _GRAPH_INSIGHTS_MAP.get(item.get("name"))
+        if key is None: continue                                 # unknown metric name -> dropped (mirrors _map_analytics)
+        vals = item.get("values")
+        v = vals[0].get("value") if isinstance(vals, list) and vals and isinstance(vals[0], dict) else None
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[key] = v
+    return out
+
+# The one-external-gate breadcrumb (Leg 2): a scope refusal during a pull persists here so a SEPARATE
+# doctor/Home read surfaces it (the block happens on a daemon tick; the operator looks later). Written
+# LOUD, cleared automatically the next time insights flow — a self-healing signal, no manual reset.
+def insights_blocked_signal(cfg: Config) -> bool:
+    """True iff the persisted insights-scope-blocked breadcrumb is present + set. Fail-open: any read error
+    -> False, but LOGGED (a torn/absent file must not itself raise a false alarm, yet a real read failure is
+    still surfaced on the log stream, never silently swallowed)."""
+    p = cfg.insights_blocked_path
+    if not p.exists():
+        return False
+    try:
+        d = json.loads(p.read_text())
+        return bool(d.get("blocked")) if isinstance(d, dict) else False
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
+        get_logger(cfg)("graph_insights", "signal", "read_failed", err=str(e)[:120]); return False
+
+def _set_insights_blocked(cfg: Config) -> None:
+    """Persist the LOUD scope-blocked breadcrumb (idempotent). A write error is LOGGED (not silent): the
+    in-pass insights_blocked flag + the scope log line already fired, so a missing breadcrumb degrades the
+    doctor/Home surfacing only, and the failure is visible on the log stream."""
+    try:
+        cfg.insights_blocked_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg.insights_blocked_path.write_text(json.dumps({"blocked": True}))
+    except OSError as e:
+        get_logger(cfg)("graph_insights", "signal", "write_failed", err=str(e)[:120])
+
+def _clear_insights_blocked(cfg: Config) -> None:
+    """Clear the breadcrumb once insights flow again (scope granted) — self-healing + idempotent (absent file
+    is already 'clear'). A clear failure is LOGGED, never silently swallowed."""
+    try:
+        cfg.insights_blocked_path.unlink(missing_ok=True)
+    except OSError as e:
+        get_logger(cfg)("graph_insights", "signal", "clear_failed", err=str(e)[:120])
 
 def _read_queries(cfg: Config):
     """The recorded search queries, or None if the file is corrupt/unreadable -> the caller treats None

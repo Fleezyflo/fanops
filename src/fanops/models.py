@@ -230,6 +230,10 @@ class Post(BaseModel):
     scheduled_time: Optional[str] = None
     submission_id: Optional[str] = None         # set BEFORE network return is confirmed (dedupe)
     public_url: Optional[str] = None
+    media_id: Optional[str] = None              # Leg 2 (Insight): the Instagram Graph media id of THIS live post,
+                                                # resolved from /{ig_user}/media by permalink (reconcile.resolve_media_ids).
+                                                # The identity the sole-source Graph insights read keys on. None until
+                                                # resolved / for non-IG posts (back-compat: old ledgers load fine).
     error_reason: Optional[str] = None
     metrics: dict = Field(default_factory=dict)
     # P3 append-only metrics time-series: one sparse row per captured cadence offset, each a superset of

@@ -146,6 +146,21 @@ def cmd_reconcile(cfg: Config) -> int:
     print(f"reconciled; needs_reconcile={r['needs_reconcile']} published={r['published']}")
     return 0
 
+def cmd_map_media(cfg: Config) -> int:
+    # Leg 2 (Insight) ops mirror: resolve each published/analyzed IG post's Graph media_id from the live
+    # media list (matched by permalink). READ-ONLY w.r.t. Instagram (a GET on /{ig_user}/media, needs only
+    # instagram_basic); the daemon does this automatically inside pull_metrics, this is the on-demand mirror.
+    # Fail-open (no creds -> resolves nobody, exit 0); never fabricates an id.
+    from fanops.reconcile import resolve_media_ids
+    led = Ledger.load(cfg)
+    resolve_media_ids(led, cfg)
+    led.save()
+    mapped = sum(1 for p in led.posts.values() if p.media_id)
+    ig = sum(1 for p in led.posts.values()
+             if p.platform.value == "instagram" and p.state.value in ("published", "analyzed"))
+    print(f"media mapped; ig_live={ig} with_media_id={mapped}")
+    return 0
+
 def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: float) -> int:
     # Phase-B-followup: wrap the whole classify->amplify->retire under one transaction (B4). No
     # network here — classify_outcomes/amplify/retire only read+mutate the ledger and write agent
@@ -574,6 +589,7 @@ def main(argv: list[str] | None = None) -> int:
     p_adv = sub.add_parser("advance"); p_adv.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     p_pull = sub.add_parser("pull"); p_pull.add_argument("url", type=_http_url)
     p_trk = sub.add_parser("track"); p_trk.add_argument("--window", default="30d")
+    sub.add_parser("map-media", help="Leg 2: resolve each live IG post's Graph media_id from its permalink (read-only; instagram_basic)")
     p_adj = sub.add_parser("adjust"); p_adj.add_argument("--winner-pct", type=float, default=0.3)
     p_adj.add_argument("--retire-pct", type=float, default=0.2); p_adj.add_argument("--lift-floor", type=float, default=20.0)
     p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=None)   # None -> cfg.gc_keep_days
@@ -799,6 +815,7 @@ def _dispatch(cfg: Config, args) -> int:
         s = advance(cfg, base_time=args.base_time)
         _heartbeat(cfg, s); print(s); return 0
     if args.cmd == "track":    return cmd_track(cfg, args.window)
+    if args.cmd == "map-media": return cmd_map_media(cfg)
     if args.cmd == "reconcile": return cmd_reconcile(cfg)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
