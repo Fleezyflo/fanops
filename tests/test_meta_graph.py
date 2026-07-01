@@ -89,6 +89,16 @@ def test_record_query_appends_and_decrements(tmp_path, monkeypatch):
     meta_graph.record_query(cfg, "#new", now=now)
     assert meta_graph.budget_remaining(cfg, now=now) == meta_graph._BUDGET_LIMIT - 1
 
+def test_record_query_serializes_under_a_flock(tmp_path, monkeypatch):
+    # meta-budget-race: record_query does read-filter-append-write with NO lock, so two concurrent Studio calls
+    # lose writes (the budget under-counts -> over-spends the Meta Graph 30/7-day quota). Serialize the RMW under
+    # the same fcntl flock the other control-file mutators use.
+    cfg = _cfg(tmp_path, monkeypatch)
+    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
+    meta_graph.record_query(cfg, "#new", now=now)
+    assert cfg.hashtag_budget_path.exists()                          # the query persisted
+    assert (cfg.control / "hashtag_budget.lock").exists()           # ...under an fcntl flock (the lost-update fix)
+
 
 def test_sample_trends_no_creds_returns_empty(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch, token=None)                 # no token -> Graph fails open (no trend signal)
