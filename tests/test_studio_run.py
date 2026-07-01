@@ -21,6 +21,18 @@ def test_run_ingest_catalogues_inbox(tmp_path, mocker):
     assert res.ok and res.detail["sources"] == 1
     assert len(Ledger.load(cfg).sources) == 1
 
+def test_run_ingest_surfaces_skipped_count_on_copy_failure(tmp_path, mocker):
+    # silent_ingest_failure_on_copy_enospc (high): a copy failure (ENOSPC/perms) leaves the file in the
+    # inbox and bumps counts.skipped, but run_ingest dropped `skipped` from the detail dict — the operator
+    # saw "Done" while the file silently jammed the inbox and re-failed every pass. The count must reach the
+    # action detail (like `excluded` already does) so the skip is VISIBLE, not silent.
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    mocker.patch("fanops.ingest.shutil.copy2", side_effect=OSError(28, "No space left on device"))
+    res = actions.run_ingest(cfg)
+    assert res.ok                                            # a per-file skip is NOT a pass failure
+    assert res.detail.get("skipped") == 1                   # the copy-failed file is surfaced, not silent
+    assert res.detail["added"] == 0                         # nothing was catalogued
+
 def test_run_ingest_with_batch_name_mints_batch_and_stamps_source(tmp_path, mocker):
     # A non-blank batch_name mints a named, account-targeted Batch in the SAME transaction; the catalogued
     # source carries its id and the detail reports the batch.

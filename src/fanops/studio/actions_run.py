@@ -81,6 +81,7 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_su
     if added >= 1: kick_prepare(cfg)                        # WS-D1: new footage -> drive NOW (best-effort; daemon backstops). Covers the one-click upload path too (it delegates here).
     detail = {"sources": n, "added": added}
     if counts is not None and counts.excluded: detail["excluded"] = counts.excluded   # ING-5: PII drops visible on native path too
+    if counts is not None and counts.skipped: detail["skipped"] = counts.skipped       # copy-failed/unverifiable files left in inbox — VISIBLE, not a silent "Done" while the inbox jams
     if batch is not None:
         detail.update(batch=batch.name, batch_id=batch.id)
         if batch.error_reason: detail["warnings"] = [batch.error_reason]   # zero-target advisory -> Studio Run panel
