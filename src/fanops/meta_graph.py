@@ -114,26 +114,32 @@ def budget_remaining(cfg: Config, *, now: datetime | None = None):
 
 def record_query(cfg: Config, tag: str, *, now: datetime | None = None) -> None:
     """Append a (tag, ts) to the budget counter, pruning entries older than the window so the file stays
-    small. Best-effort persist (an OSError just means the next read sees fewer entries — conservative)."""
+    small. SERIALIZED under an fcntl flock: the read-filter-append-write is a lost-update window — two
+    concurrent Studio calls (tag_metrics / discover_corpus) each re-read, filter, and write back, so the
+    second overwrote the first and the budget under-counted, over-spending the Meta Graph 30/7-day quota.
+    Best-effort persist: on a write/lock failure the next read just sees fewer entries (conservative)."""
     now = now or _now()
     cutoff = now - timedelta(days=_BUDGET_WINDOW_DAYS)
-    q = _read_queries(cfg) or []
-    kept = []
-    for e in q:
-        try:
-            ts = datetime.fromisoformat(e["ts"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        if ts >= cutoff:
-            kept.append(e)
-    kept.append({"tag": tag, "ts": now.isoformat()})
+    from fanops.ledger import _file_lock       # lazy: reuse the proven fcntl flock (accounts.py pattern) without a top-level cycle
+    from fanops.errors import LockBusyError
     try:
-        cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg.hashtag_budget_path.write_text(json.dumps({"queries": kept}, indent=2))
-    except OSError:
-        pass
+        with _file_lock(cfg.hashtag_budget_lock):
+            q = _read_queries(cfg) or []
+            kept = []
+            for e in q:
+                try:
+                    ts = datetime.fromisoformat(e["ts"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if ts >= cutoff:
+                    kept.append(e)
+            kept.append({"tag": tag, "ts": now.isoformat()})
+            cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg.hashtag_budget_path.write_text(json.dumps({"queries": kept}, indent=2))
+    except (OSError, LockBusyError) as e:
+        get_logger(cfg)("hashtags", tag, "budget_write_failed", err=str(e)[:120])   # best-effort, but no longer silent
 
 def tag_metrics(cfg: Config, tag: str, *, get=None, now: datetime | None = None) -> dict:
     """B2: ON-DEMAND live Graph metrics for ONE hashtag the operator wants to RECOMMEND into a persona's
