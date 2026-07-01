@@ -323,3 +323,22 @@ def test_rid_mismatch_logged_and_authoritative_rid_stamped(tmp_path, monkeypatch
     data = json.loads(response_path(cfg, "moments", "src_1").read_text())
     assert data["request_id"] == rid                                 # stamped with the AUTHORITATIVE rid, not "garbage-rid"
     assert any("rid_mismatch" in ev for ev in events)                # the mismatch is now a VISIBLE breadcrumb
+
+
+def test_context_limit_marks_source_degraded_for_captions_gate(tmp_path):
+    # context-limit-no-source-mark: a captions gate that hits the LLM context limit must mark its SOURCE
+    # degraded (the no-silent-degradation principle), same as the moment gates. Captions key on a CLIP id, so
+    # the source is resolved clip->moment->source. Previously captions was skipped (sid=None) -> the stall was
+    # invisible in status/digest and the operator had to grep run.log.
+    from fanops.responder import LlmResponder
+    from fanops.ledger import Ledger
+    from fanops.models import Source, Moment, MomentState, Clip, ClipState
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.queued))
+    led.save()
+    LlmResponder(cfg)._mark_context_limit(cfg, "captions", "clip_1", "payload too big")
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.degraded_reason and "captions" in src.degraded_reason and "context limit" in src.degraded_reason
