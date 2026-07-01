@@ -28,6 +28,7 @@ from fanops.reconcile import reconcile_due
 from fanops.digest import write_digest
 from fanops.log import get_logger
 from fanops.agentstep import pending
+from fanops.responder import _SCHEMA as _RESPONDER_SCHEMA   # the answerable-gate registry; GATE_KINDS derives from it
 from fanops.timeutil import parse_iso
 from fanops import produce
 
@@ -288,7 +289,11 @@ def _publish_safe(cfg: Config, log) -> None:
 # the awaiting summary, the convergence check, the LOUD blocked-note, the run.log breadcrumb, `fanops status` —
 # derives from THIS so a future 5th gate cannot be silently omitted from any of them (the bug was a 4th gate,
 # moment_casting, added to the awaiting dict but never to the operator-facing surfaces). Order = pipeline order.
-GATE_KINDS = ("moments", "moment_hooks", "moment_casting", "captions")
+# gate-kinds-drift-risk (high): GATE_KINDS itself was the LAST hand-copy — a 5th gate added to responder._SCHEMA
+# (the answerable-gate registry) but forgotten here would be silently starved (pending_gate_count / convergence
+# iterate GATE_KINDS). Derive it FROM _SCHEMA so the two are ONE source and cannot drift. dict insertion order ==
+# pipeline order (_SCHEMA is declared in pipeline order), so this is byte-identical to the old literal today.
+GATE_KINDS = tuple(_RESPONDER_SCHEMA)
 
 
 def pending_gate_count(cfg: Config) -> int:
