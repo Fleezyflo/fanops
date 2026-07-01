@@ -200,7 +200,8 @@ def asset_catalog(cfg: Config) -> dict:
         led = Ledger.load(cfg)
         rows = [{"id": s.id, "origin_kind": s.origin_kind, "state": s.state.value,
                  "name": Path(s.source_path).name if s.source_path else s.id,   # P6: human filename, not the opaque id
-                 "duration": s.duration, "width": s.width, "height": s.height} for s in led.sources.values()]
+                 "duration": s.duration, "width": s.width, "height": s.height,
+                 "degraded_reason": s.degraded_reason} for s in led.sources.values()]   # RF1: the VISIBLE-degradation channel (probe_failed) -> a Library marker, else a 0×0 source silently renders a mangled clip
         return {"native": [r for r in rows if r["origin_kind"] == "native"],
                 "third_party": [r for r in rows if r["origin_kind"] == "third_party"]}
     except Exception as exc:                          # invariant: the Library tab must never 500 — but
