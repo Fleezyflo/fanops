@@ -6,7 +6,6 @@ import os
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import PostState
-from fanops.post.payload import build_blotato_payload, default_target_fields
 
 class DryRunPoster:
     def __init__(self, cfg: Config):
@@ -14,10 +13,12 @@ class DryRunPoster:
 
     def publish(self, led: Ledger, post_id: str) -> Ledger:
         post = led.posts[post_id]
-        payload = build_blotato_payload(
-            account_id=post.account_id, platform=post.platform.value, text=post.caption,
-            media_urls=post.media_urls, scheduled_time=post.scheduled_time,
-            extra_target=default_target_fields(post.platform.value, artist_name=self.cfg.artist_name))
+        # Backend-neutral would-send preview (no Blotato payload builder — that backend is gone). A flat
+        # record of what a real poster WOULD send; the only consumer is the sidecar EXISTENCE check
+        # (dryrun-origin marker), never the internal shape, so a neutral summary is sufficient + honest.
+        payload = {"account": post.account, "account_id": post.account_id,
+                   "platform": post.platform.value, "text": post.caption,
+                   "media_urls": post.media_urls, "scheduled_time": post.scheduled_time}
         self.cfg.scheduled.mkdir(parents=True, exist_ok=True)
         pp = self.cfg.scheduled / f"{post_id}.json"
         pp.write_text(json.dumps(payload, indent=2))
