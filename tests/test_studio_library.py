@@ -42,6 +42,28 @@ def test_asset_catalog_records_read_failure_not_silent(tmp_path, monkeypatch):
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "library" in log and "error" in log                   # the failure is RECORDED, not swallowed
 
+def test_asset_catalog_surfaces_degraded_reason(tmp_path):
+    # probe_failed_degraded_not_visible_in_ui (high): Source.degraded_reason is "the single VISIBLE-degradation
+    # channel", but asset_catalog omitted it — a corrupt 0×0 source rendered a mangled clip with NO Library
+    # warning. The read-model must carry the field so the operator can SEE (and delete) the bad asset.
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_bad", source_path="/bad.mp4", state=SourceState.catalogued,
+                              degraded_reason="probe_failed"))
+    row = views.asset_catalog(cfg)["native"][0]
+    assert row.get("degraded_reason") == "probe_failed"          # the degradation channel reaches the UI read-model
+
+def test_library_route_shows_degraded_marker(tmp_path):
+    # The Library page must VISIBLY flag a degraded source so a corrupt asset is recognizable + deletable,
+    # not silently rendered into a mangled clip that ships to production.
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_bad", source_path="/bad.mp4", state=SourceState.catalogued,
+                              degraded_reason="probe_failed"))
+    r = _client(cfg).get("/library")
+    assert r.status_code == 200
+    assert b"degraded" in r.data and b"probe_failed" in r.data    # the marker + reason are rendered
+
 def test_pipeline_status_chain_count_excludes_third_party(tmp_path):
     cfg = Config(root=tmp_path); _seed_mixed(cfg)
     st = views.pipeline_status(cfg)
