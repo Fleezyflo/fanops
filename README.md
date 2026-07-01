@@ -169,11 +169,14 @@ fanops daemon stop                      # unload it
 launchd owns the process, so closing the terminal no longer kills the run — the failure mode a plain
 `nohup`/`setsid` can't fix (macOS has no `setsid`). The agent runs **dryrun by default** (publishes
 nothing). **Scheduling and the AI switch are decoupled**: `install` schedules only — it bakes no
-responder. The fire-time run resolves the responder from `.env` / `FANOPS_RESPONDER` (the single source
-of truth; defaults to `llm` when `claude` is logged in, else `manual`). `--responder` defaults to
-`inherit` (touch nothing) and **discloses** at install when it resolves to `llm` (each tick invokes
-`claude`); pass `--responder manual` for no-LLM scheduling, or `--responder llm` to persist the AI switch
-durably. macOS-only (launchd) — `install`/`stop` error loudly elsewhere instead of silently no-op'ing.
+responder, and it does NOT turn the AI on. The fire-time run resolves the responder from `.env` /
+`FANOPS_RESPONDER` (the single source of truth). **The AI responder is an explicit opt-in**: it is `llm`
+ONLY when you set `FANOPS_RESPONDER=llm` (via the Studio **Go-Live → Hands-off processing** toggle,
+`fanops autopilot`, or `daemon install --responder llm`); otherwise it defaults to `manual` — the mere
+presence of `claude` on PATH never auto-enables it, so the daemon makes **zero** `claude` calls until you
+turn AI on. `--responder` defaults to `inherit` (touch nothing) and **discloses** at install when it
+resolves to `llm` (each tick invokes `claude`); `--responder manual` forces no-LLM scheduling.
+macOS-only (launchd) — `install`/`stop` error loudly elsewhere instead of silently no-op'ing.
 `status` reports liveness from the same heartbeat below.
 
 **The learning loop now closes inside `run`.** After the respond→advance loop converges,

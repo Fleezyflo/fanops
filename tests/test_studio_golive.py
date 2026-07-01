@@ -18,7 +18,7 @@ from fanops.studio import golive
 # (os.environ[...]=...) would otherwise leak FANOPS_POSTER/POSTIZ_* into later tests — e.g. flipping
 # test_studio_run's dryrun assertions to postiz. Restore-to-baseline after every test fixes it at the source.
 _ENV_KEYS = ("FANOPS_LIVE", "FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "ZERNIO_API_KEY",
-             "FANOPS_CREATIVE_VARIATION", "FANOPS_ACCOUNT_CASTING")
+             "FANOPS_CREATIVE_VARIATION", "FANOPS_ACCOUNT_CASTING", "FANOPS_RESPONDER")
 _ENV_BASELINE = {k: os.environ.get(k) for k in _ENV_KEYS}
 
 @pytest.fixture(autouse=True)
@@ -208,6 +208,19 @@ def test_go_live_success_writes_fanops_live_dual_write(tmp_path, monkeypatch):
     assert "FANOPS_LIVE=1" in (tmp_path / ".env").read_text()               # durable
     assert "FANOPS_POSTER" not in (tmp_path / ".env").read_text()           # provider is per-channel, not global
     assert cfg.is_live is True
+
+
+def test_go_live_does_not_force_llm_responder(tmp_path, monkeypatch):
+    # ROOT decouple: going LIVE (publish switch) is orthogonal to enabling the AI responder. go_live must
+    # NOT silently write FANOPS_RESPONDER=llm — that conflated two switches and was a haphazard-claude source.
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                          "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}])
+    res = golive.go_live(cfg, confirmed=True)
+    assert res.ok is True
+    assert "FANOPS_RESPONDER" not in (tmp_path / ".env").read_text()        # NOT written by go-live
+    assert os.environ.get("FANOPS_RESPONDER") in (None, "", "manual")       # not force-set in-process
 
 
 # ---- go_dryrun: always allowed (safe direction), no confirm; writes FANOPS_LIVE=0 ----
@@ -760,3 +773,60 @@ def test_golive_off_renders_both_toggle_controls(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     html = _client(cfg).get("/golive").get_data(as_text=True)
     assert "Turn on (per-account hooks)" in html and "Turn on (per-account casting)" in html
+
+
+# ---- Hands-off processing (Slice 2): the explicit AI switch + daemon control, entirely in Studio ----
+def test_set_ai_responder_toggles_dual_write(tmp_path, monkeypatch):
+    # THE explicit AI switch: dual-write (.env durable + os.environ in-process), both directions.
+    cfg = _clean(monkeypatch, tmp_path)
+    res = golive.set_ai_responder(cfg, True)
+    assert res.ok and res.detail["responder"] == "llm"
+    assert "FANOPS_RESPONDER=llm" in (tmp_path / ".env").read_text()
+    assert cfg.responder_mode == "llm"                              # in-process immediately, no restart
+    res = golive.set_ai_responder(cfg, False)
+    assert res.ok and res.detail["responder"] == "manual"
+    assert cfg.responder_mode == "manual"
+    assert "FANOPS_RESPONDER=manual" in (tmp_path / ".env").read_text()
+
+def test_install_daemon_action_non_darwin_is_clean(tmp_path, monkeypatch):
+    from fanops import daemon
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setattr(daemon.sys, "platform", "linux")
+    res = golive.install_daemon(cfg)
+    assert res.ok is False and "macos" in res.error.lower()        # clean ActionResult, never a trace
+
+def test_install_and_uninstall_daemon_action_darwin(tmp_path, monkeypatch):
+    import subprocess as _sp
+    from fanops import daemon
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    def _fake(cmd, *a, **k):
+        verb = cmd[1] if len(cmd) > 1 else ""
+        rc = 0 if verb in ("bootstrap", "bootout") else 1          # list rc!=0 after bootout => stopped
+        return _sp.CompletedProcess(cmd, rc, stdout="", stderr="")
+    monkeypatch.setattr(daemon.subprocess, "run", _fake)
+    ri = golive.install_daemon(cfg, "10m")
+    assert ri.ok and ri.detail["interval"] == 600 and ri.detail["loaded"] is True
+    ru = golive.uninstall_daemon(cfg)
+    assert ru.ok and ru.detail["stopped"] is True
+
+def test_golive_status_carries_responder_and_daemon(tmp_path, monkeypatch):
+    from fanops.studio import views
+    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    st = views.golive_status(cfg)
+    assert st.responder_mode == "llm"
+    assert st.daemon is None or isinstance(st.daemon, dict)        # dict on darwin, None off-darwin — never raises
+
+def test_golive_responder_route_toggles_on(tmp_path, monkeypatch):
+    from fanops.studio.app import create_app
+    cfg = _clean(monkeypatch, tmp_path)
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().post("/golive/responder", data={"on": "1"})
+    assert r.status_code == 200
+    assert cfg.responder_mode == "llm"                             # the explicit opt-in took effect
+    assert "Turn off (manual" in r.get_data(as_text=True)         # panel re-renders showing the ON state
+
+def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "Hands-off processing" in html and "AI responder" in html

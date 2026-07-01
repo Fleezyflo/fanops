@@ -8,7 +8,6 @@ import logging
 import math
 import os
 import re
-import shutil
 from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
@@ -363,13 +362,14 @@ class Config:
 
     @property
     def responder_mode(self) -> str:
-        # Default hands-off when the Claude Code CLI is on PATH (mirrors kick_prepare/daemon); explicit
-        # FANOPS_RESPONDER=manual opts out. Without `claude`, fall back to manual so gates stay pending
-        # until a human/cron writes responses (never a silent no-op that looks like a healthy idle pass).
-        v = (os.getenv("FANOPS_RESPONDER") or "").strip().lower()
-        if v:
-            return v
-        return "llm" if shutil.which("claude") else "manual"
+        # NO haphazard claude (ROOT): the AI responder is an EXPLICIT opt-in, mirroring is_live's .env gate.
+        # It is 'llm' ONLY when the operator set FANOPS_RESPONDER=llm (via .env — the Studio AI-Responder
+        # toggle, `fanops autopilot`, or `daemon install --responder llm`). The mere PRESENCE of `claude` on
+        # PATH must NEVER auto-enable it: that fired `claude -p` on every run/kick/daemon-tick without intent.
+        # Default is 'manual' (gates stay pending until llm is explicitly enabled or a human/cron answers) —
+        # this single gate makes EVERY downstream responder path (run/respond/run_prepare/kick/daemon/
+        # intro_match) opt-in by construction, so no per-site guard is needed.
+        return (os.getenv("FANOPS_RESPONDER") or "").strip().lower() or "manual"
 
     def llm_model_for(self, kind: str) -> str:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).

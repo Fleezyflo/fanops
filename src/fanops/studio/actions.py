@@ -129,6 +129,12 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
                "guidance": full_guidance,
                "surfaces": [{"surface": surface, "platform": p.platform.value}]}
     if model is None:
+        # NO haphazard claude (ROOT): Regenerate calls the LLM, so it obeys the SAME single switch as every
+        # other gate — refuse unless the operator EXPLICITLY enabled the AI responder. Never spawn `claude`
+        # just because the binary is on PATH. (An injected `model` is the test/programmatic path — unchanged.)
+        if cfg.responder_mode != "llm":
+            return ActionResult(ok=False, error="AI responder is off — turn it on in Go-Live → AI Responder "
+                                "(or edit the caption by hand in Review). Regenerate uses the LLM.")
         from fanops.llm import claude_json
         model = claude_json
     try:                                                # the slow generation, OUTSIDE any lock
