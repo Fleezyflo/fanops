@@ -179,8 +179,9 @@ def test_surface_time_leans_the_hinted_hour(tmp_path):
 def test_run_fires_timing_bias_when_flag_on_and_live(tmp_path, monkeypatch, mocker):
     # apply_timing_bias must fire in the AUTONOMOUS run loop when its flag is on + live backend — symmetric
     # with apply_p4_dim_bias. Network-free (spied); self-guards on the flag + validation-frozen (fail-SAFE).
-    monkeypatch.setenv("FANOPS_TIMING_BIAS", "1")
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.chdir(tmp_path)  # cmd_run builds its OWN Config() from cwd — chdir into an empty tree so
+    monkeypatch.setenv("FANOPS_TIMING_BIAS", "1")  # advance() self-ingest is a no-op (toolchain-free CI safe)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk-test"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     import fanops.cli as cli
     mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
@@ -198,8 +199,9 @@ def test_run_fires_timing_bias_when_flag_on_and_live(tmp_path, monkeypatch, mock
 
 
 def test_run_skips_timing_bias_when_flag_off(tmp_path, monkeypatch, mocker):
-    monkeypatch.delenv("FANOPS_TIMING_BIAS", raising=False)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.chdir(tmp_path)  # cmd_run builds its OWN Config() from cwd — chdir into an empty tree so
+    monkeypatch.delenv("FANOPS_TIMING_BIAS", raising=False)  # advance() self-ingest is a no-op (CI toolchain-free safe)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk-test"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     import fanops.cli as cli
     mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
