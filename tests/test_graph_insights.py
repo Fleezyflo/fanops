@@ -164,6 +164,21 @@ def test_media_insights_no_creds_returns_none(tmp_path, monkeypatch):
     assert meta_graph.media_insights(cfg, "M1", "REELS", get=_get(_Resp(200, _insights_body([("reach", 1)])))) is None
 
 
+# ---- M2 residual: an unresolved product_type must NOT build an empty-metric request --------------
+
+def test_media_insights_none_product_type_builds_no_request(tmp_path, monkeypatch):
+    # LIVE RESIDUAL (post_4eb7c0802e79): media_id resolved but product_type=None -> insights_metrics_for(None)
+    # is [] -> today media_insights sends an EMPTY `metric=` -> Meta 400 OAuthException -> _is_scope_error
+    # (untouched) writes a FALSE scope-block. Honor the docstring ("the client skips an unresolved one"):
+    # an empty derived set must be refused PRE-FLIGHT -> ZERO HTTP calls (None, transient-shaped, re-resolve
+    # next pass), never a malformed request.
+    cfg = _cfg(tmp_path, monkeypatch)
+    got = _get(_Resp(200, _insights_body([("reach", 1)])))       # would answer 200 IF called
+    out = meta_graph.media_insights(cfg, "M1", None, get=got)
+    assert out is None                                           # transient-shaped skip, keep prior snapshot
+    assert got.calls == []                                       # no request built -> no empty `metric=` sent
+
+
 # ---- Task 3: GraphInsightsClient emits the row contract with retention as a [0,1] fraction ----------
 
 from fanops.models import Post, PostState, Platform
@@ -277,3 +292,20 @@ def test_scope_block_persists_a_breadcrumb_that_doctor_reads(tmp_path, monkeypat
     GraphInsightsClient(cfg, posts=[p1],
                         insights_fn=lambda mid, pt: {"reach": 10, "avg_watch_ms": 8000}).list_posts()
     assert meta_graph.insights_blocked_signal(cfg) is False     # cleared once insights flow again
+
+
+def test_none_product_type_post_writes_no_scope_block_end_to_end(tmp_path, monkeypatch):
+    # M2 end-to-end (through the REAL media_insights, not a stub): a resolved post whose product_type is
+    # None (the live post_4eb7c0802e79 shape) must NOT write a false scope-block. Meta would 400 the empty
+    # request, but the pre-flight refusal means Meta is never called -> the classifier is never reached ->
+    # no block. The injected `get` proves it: it is never invoked.
+    cfg = _cfg(tmp_path, monkeypatch)
+    assert meta_graph.insights_blocked_signal(cfg) is False      # clean by default
+    p1 = _ig_post("p1", "M1", cut_seconds=20.0, product_type=None)   # media_id resolved, type NOT yet
+    got = _get(_Resp(400, {"error": {"code": 100, "type": "OAuthException",
+                                     "message": "(#100) metric[0] must be one of the following values: ..."}}))
+    rows = GraphInsightsClient(cfg, posts=[p1],
+                              insights_fn=lambda mid, pt: meta_graph.media_insights(cfg, mid, pt, get=got)).list_posts()
+    assert rows == []                                            # transient skip (no data) -> keep prior snapshot
+    assert got.calls == []                                       # the malformed request was never built
+    assert meta_graph.insights_blocked_signal(cfg) is False      # NO false scope-block over a malformed request

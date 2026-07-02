@@ -123,16 +123,20 @@ def _pick_media(cands: list[dict], post) -> Optional[dict]:
     return min(cands, key=_dist)
 
 def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
-    """Stamp each published/analyzed IG post's Graph `media_id` by matching its permalink against the live
-    /{ig_user}/media list. Runs INSIDE the automatic pull path (pull_metrics) so the unattended daemon
-    resolves new posts itself — the sole-source insights read keys on media_id, so an unresolved post is
-    invisible to it. Idempotent (a post already carrying a media_id is skipped) and fail-open (an empty media
-    list resolves nobody, never crashes). An unmatched post is breadcrumbed, NEVER given a fabricated id."""
+    """Stamp each published/analyzed IG post's Graph `media_id` AND real `product_type` by matching its
+    permalink against the live /{ig_user}/media list. Runs INSIDE the automatic pull path (pull_metrics) so
+    the unattended daemon resolves new posts itself — the sole-source insights read keys on media_id AND
+    derives its request from product_type, so a post missing EITHER is un-measurable. Idempotent (a FULLY
+    resolved post — media_id AND product_type both set — is skipped) and fail-open (an empty media list
+    resolves nobody, never crashes). A media_id-bearing row whose product_type is still None (an older row
+    stamped before product_type was carried — the live post_4eb7c0802e79 shape) is RE-TARGETED and the real
+    type is back-stamped, so the insights request is no longer empty and never false-blocks. An unmatched
+    post is breadcrumbed, NEVER given a fabricated id."""
     from fanops.models import Platform
     from fanops import meta_graph
     log = get_logger(cfg)
     targets = [p for p in led.posts.values()
-               if p.platform is Platform.instagram and p.media_id is None
+               if p.platform is Platform.instagram and (p.media_id is None or p.product_type is None)
                and p.state in (PostState.published, PostState.analyzed)
                and _norm_permalink(p.public_url) is not None]
     if not targets:

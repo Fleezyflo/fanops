@@ -411,8 +411,10 @@ class GraphInsightsClient:
         self.posts = posts or []
         # each post -> (media_id, product_type). The insights request is DERIVED from the media's real
         # product_type (stamped at resolve, meta_graph.insights_metrics_for) — a feed video is never asked
-        # for a reels-only metric. product_type is guaranteed present past the media_id guard below (both
-        # are stamped in the SAME place, reconcile.py), so the client forwards it — no default, no skip.
+        # for a reels-only metric. The client forwards p.product_type verbatim (no default, no guess); when
+        # it is still unresolved (None — a legacy row stamped before product_type was carried), media_insights
+        # refuses the empty-metric request PRE-FLIGHT and returns None, so this post transient-skips (below)
+        # and re-resolves its type next reconcile pass — never a malformed request, never a false scope-block.
         self._insights = insights_fn or (lambda media_id, product_type:
                                          __import__("fanops.meta_graph", fromlist=["media_insights"])
                                          .media_insights(cfg, media_id, product_type))
