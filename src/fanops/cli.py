@@ -153,9 +153,11 @@ def cmd_map_media(cfg: Config) -> int:
     # instagram_basic); the daemon does this automatically inside pull_metrics, this is the on-demand mirror.
     # Fail-open (no creds -> resolves nobody, exit 0); never fabricates an id.
     from fanops.reconcile import resolve_media_ids, project_imported_media
+    from fanops.track import pull_imported_insights
     led = Ledger.load(cfg)
     resolve_media_ids(led, cfg)                 # forward: enrich authored posts matched to a live media
     project_imported_media(led, cfg)            # inverse (ledger-rebuild M2): mirror live-only media as ImportedMedia
+    pull_imported_insights(led, cfg)            # ledger-rebuild M3: fill each imported row's metrics by media_id
     led.save()
     mapped = sum(1 for p in led.posts.values() if p.media_id)
     ig = sum(1 for p in led.posts.values()

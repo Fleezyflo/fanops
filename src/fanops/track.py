@@ -177,6 +177,44 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
         post.state = PostState.analyzed
     return led
 
+
+def pull_imported_insights(led: Ledger, cfg: Config, *, get=None,
+                           now: Optional[datetime] = None) -> Ledger:
+    """ledger-rebuild M3: fill metrics for every ImportedMedia row (a live-only IG post) by its media_id,
+    via the SOLE-SOURCE Graph media-insights read. Mirrors the Post metrics path — merge (carrying forward a
+    dropped primary key so a partial pull never regresses the snapshot) + lift_score + the append-only
+    metrics_series row. CONSUMES the empty-metric guard: meta_graph.media_insights DERIVES the request from
+    product_type and refuses PRE-FLIGHT (returns None, NO HTTP, NO scope-block) when the type is
+    unresolved/None — so an ImportedMedia with unknown product_type NEVER builds an empty `metric=` request
+    (the row stays re-resolvable). FAIL-OPEN per row: a None (transient: no creds / 5xx / unresolved type)
+    preserves the prior metrics, never crashes; a LOUD scope refusal raises out of media_insights (the one
+    external gate), same as the Post path. Injectable `get` for hermetic tests."""
+    from fanops import meta_graph
+    now = now or datetime.now(timezone.utc)
+    weights = cfg.tuning().get("lift_weights")
+    log = get_logger(cfg)
+    for mid, im in list(led.imported_media.items()):
+        vals = meta_graph.media_insights(cfg, mid, im.product_type, get=get)   # None on transient/unresolved; refuses empty-metric pre-flight
+        if not vals:
+            continue                                             # transient / unresolved product_type -> preserve prior, re-poll next pass
+        prior_metrics = {k: v for k, v in (im.metrics or {}).items()
+                         if k not in (LIFT_SCORE, "lift_degraded", "lift_missing_keys")}
+        recovered = {k: prior_metrics[k] for k in _missing_high_weight(vals, weights)
+                     if prior_metrics.get(k) is not None}         # carry a dropped primary key forward (no regression)
+        merged = {**vals, **recovered}
+        new_metrics = {**merged, LIFT_SCORE: lift_score(merged, weights)}
+        missing = _missing_high_weight(merged, weights)
+        if missing:
+            new_metrics["lift_degraded"] = True; new_metrics["lift_missing_keys"] = missing
+        # append-only series: one SPARSE row per pull, keyed by a monotonic offset (ImportedMedia has no
+        # published_at cadence — the count-of-rows is a stable, never-duplicated tick).
+        offset = f"pull{len(im.metrics_series)}"
+        series = [*im.metrics_series, {**new_metrics, "offset": offset, "captured_at": iso_z(now)}]
+        led.imported_media[mid] = im.model_copy(update={"metrics": new_metrics, "metrics_series": series})
+        log("imported_insights", mid, "filled", reach=new_metrics.get("reach"), degraded=bool(missing))
+    return led
+
+
 def _metrics_client_for(cfg: Config, backend: str, submission_ids: Optional[list[str]]) -> ListPosts:
     # One backend's metrics fetcher. postiz/zernio read PER-POST analytics (need the published ids).
     # An unknown backend FAILS CLOSED + legibly (mirrors #251-#263): a stale FANOPS_POSTER already
