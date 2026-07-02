@@ -614,6 +614,12 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     # provider explicitly (route the channel in the Go-Live tab; that persists `backends[platform]`).
     bridge_only = sorted({h for (h, p, _prov) in ready if accounts.resolve_backend(h, Platform(p)) is None})
     detail = {"live": True, "mode": "live", "ready": len(ready)}
+    # D12: go_live NEVER writes FANOPS_POSTER — per-channel accounts.json routing is the source of truth.
+    # The operator who reads .env sees FANOPS_POSTER=dryrun (or absent) after a successful flip and panics
+    # that the flip reverted. Say so on the success surface: FANOPS_POSTER is a legacy bridge, not the
+    # switch. (The docstring already explains it; the OPERATOR doesn't read docstrings — the UI does.)
+    detail["routing_source"] = ("your channels publish via per-channel accounts.json routing — FANOPS_POSTER "
+                                "is a legacy bridge only, NOT the live switch, so it's intentionally left as-is.")
     if bridge_only:
         detail["bridge_only_warning"] = ("publishes only via the legacy FANOPS_POSTER bridge (goes dark if "
                                          "it's unset) — pin a provider for: " + ", ".join(bridge_only))
