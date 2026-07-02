@@ -415,10 +415,17 @@ class GraphInsightsClient:
         # it is still unresolved (None — a legacy row stamped before product_type was carried), media_insights
         # refuses the empty-metric request PRE-FLIGHT and returns None, so this post transient-skips (below)
         # and re-resolves its type next reconcile pass — never a malformed request, never a false scope-block.
-        self._insights = insights_fn or (lambda media_id, product_type:
-                                         __import__("fanops.meta_graph", fromlist=["media_insights"])
-                                         .media_insights(cfg, media_id, product_type))
+        # The injected insights_fn (the test seam) is a 2-arg (media_id, product_type) callable and is used
+        # verbatim (byte-identical). The DEFAULT path resolves PER-ACCOUNT creds from each post's handle (the
+        # per-handle-creds gap) so an authored IG post is measured with ITS handle's token, not the single
+        # global one — a handle with no per-account creds resolves the global (byte-identical single-account).
+        self._insights = insights_fn
         self.insights_blocked = False
+
+    def _default_insights(self, media_id, product_type, handle):
+        from fanops import meta_graph
+        creds = meta_graph.resolve_meta_creds(self.cfg, handle=handle)
+        return meta_graph.media_insights(self.cfg, media_id, product_type, creds=creds)
 
     def list_posts(self, window: str = "30d") -> list[dict]:
         from fanops.errors import MetaInsightsScopeError
@@ -429,7 +436,9 @@ class GraphInsightsClient:
             if not (media_id and sid):
                 continue                                        # unresolved -> skip (keeps prior snapshot)
             try:
-                raw = self._insights(media_id, getattr(p, "product_type", None))
+                pt = getattr(p, "product_type", None)
+                raw = (self._insights(media_id, pt) if self._insights is not None
+                       else self._default_insights(media_id, pt, getattr(p, "account", None)))
             except MetaInsightsScopeError:
                 # the one external gate: fail CLOSED + LOUD, write NOTHING, stop the pass.
                 self.insights_blocked = True
