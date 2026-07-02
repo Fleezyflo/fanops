@@ -96,6 +96,15 @@ def register_golive_routes(app, cfg):
         # Zernio slice 4: connect Zernio (key only, hosted) — dual-writes ZERNIO_API_KEY + tests it.
         return _golive_panel(golive.set_zernio_config(cfg, request.form.get("key", "")))
 
+    @app.post("/golive/account/meta-creds")
+    def do_golive_account_meta_creds():
+        # Set ONE handle's per-account Meta creds: its IG Business user id (non-secret -> accounts.json) +
+        # its Graph access token (SECRET -> a per-handle .env key, dual-written write-only, never echoed).
+        # So insights / live-linking read the RIGHT handle's creds instead of the single global META_IG_USER_ID.
+        return _golive_panel(golive.set_meta_creds(
+            cfg, request.form.get("handle", ""), request.form.get("ig_user_id", ""),
+            request.form.get("token", "")))
+
     @app.post("/golive/account/backend")
     def do_golive_account_backend():
         # Zernio slice 4: route ONE (handle, platform) channel to a backend. A LIVE backend is gated

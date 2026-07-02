@@ -14,13 +14,61 @@ on the publish path. Two design rules, both load-bearing:
      app). Meta deprecated hashtag media_count, so the trend signal is engagement summed over top_media."""
 from __future__ import annotations
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple, Optional
 import requests
 from fanops.config import Config
 from fanops.errors import MetaInsightsScopeError
 from fanops.log import get_logger
 from fanops.hashtags import _norm
+
+
+# ---- Per-account Meta credential resolution (the audit's per-handle-creds gap) --------------------------
+# META_IG_USER_ID + META_GRAPH_TOKEN were a SINGLE GLOBAL credential, so every Graph read (list_user_media /
+# insights / hashtag reads) enumerated ONE handle regardless of which account a post belonged to. A handle
+# can now carry its OWN ig_user_id (accounts.json, non-secret) + its OWN access token (a per-handle .env key
+# META_GRAPH_TOKEN__<SLUG>, a SECRET, never logged/echoed — mirrors the global META_GRAPH_TOKEN discipline).
+# resolve_meta_creds is THE single source of truth: given a handle, resolve ITS creds, falling back per-field
+# to the global env creds so a single-account setup (no per-account config) stays BYTE-IDENTICAL to today.
+class MetaCreds(NamedTuple):
+    ig_user_id: Optional[str]       # the IG Business user id (per-account ig_user_id, else global META_IG_USER_ID)
+    token: Optional[str]            # the Graph access token (per-handle .env key, else global META_GRAPH_TOKEN) — SECRET
+
+def _env_slug(handle: str) -> str:
+    """A handle -> the UPPERCASE alphanumeric suffix of its per-handle token env key
+    (META_GRAPH_TOKEN__<SLUG>), so '@markmakmouly' -> 'MARKMAKMOULY'. Strips '@'/punctuation/emoji (an env
+    var name must be [A-Z0-9_]); a handle that normalizes to empty yields '' (no per-handle key -> global)."""
+    return re.sub(r"[^A-Z0-9]", "", (handle or "").upper())
+
+def per_account_token_env_key(handle: str) -> Optional[str]:
+    """The .env key holding THIS handle's Graph access token, or None when the handle has no env-safe slug
+    (falls back to the global token). The dual-write surface and the resolver agree on this ONE derivation."""
+    slug = _env_slug(handle)
+    return f"META_GRAPH_TOKEN__{slug}" if slug else None
+
+def resolve_meta_creds(cfg: Config, *, handle: Optional[str] = None) -> MetaCreds:
+    """Resolve the Meta creds for `handle`: its per-account ig_user_id (accounts.json) + its per-handle token
+    (.env META_GRAPH_TOKEN__<SLUG>), each falling back to the GLOBAL env cred (cfg.meta_ig_user_id /
+    cfg.meta_graph_token) when unset. `handle=None` (a niche-wide call with no account in context — hashtag
+    discovery) returns the global creds exactly as today. NEVER raises: a corrupt accounts.json degrades to
+    the global creds (mirrors load_accounts_safe), so a read path can't be crashed by config. The token is a
+    SECRET — this returns it for use as the access_token param; the caller must never log/echo it."""
+    ig = cfg.meta_ig_user_id                                     # global fallback (per-field)
+    tok = cfg.meta_graph_token
+    if handle:
+        from fanops.accounts import load_accounts_safe          # lazy: accounts imports config, not meta_graph
+        accts, _err = load_accounts_safe(cfg)                    # never raises -> global fallback on a torn file
+        acc = next((a for a in accts.accounts if a.handle == handle), None)
+        if acc is not None and (acc.ig_user_id or "").strip():
+            ig = acc.ig_user_id.strip()                          # per-account IG Business id wins
+        key = per_account_token_env_key(handle)
+        if key:
+            v = os.getenv(key)
+            if v and v.strip():
+                tok = v.strip()                                  # per-handle access token wins
+    return MetaCreds(ig_user_id=ig, token=tok)
 
 _BUDGET_LIMIT = 30                  # Meta: 30 UNIQUE hashtags per IG user per rolling 7 days
 _BUDGET_WINDOW_DAYS = 7
@@ -30,13 +78,14 @@ _HARVEST_CAP = 5000                 # upper bound on distinct co-tags per harves
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
-def _graph_get(cfg: Config, path: str, params: dict, *, get=None):
+def _graph_get(cfg: Config, path: str, params: dict, *, get=None, token: Optional[str] = None):
     """Read-only Graph GET -> parsed JSON dict, or None on ANY failure (fail-soft enhancement). The
-    token rides in the `access_token` param; it is never placed in a logged string."""
+    token rides in the `access_token` param; it is never placed in a logged string. `token` overrides the
+    global cfg.meta_graph_token (per-account creds threading); None keeps the global (byte-identical)."""
     get = get or requests.get
     try:
         resp = get(f"{cfg.meta_graph_url}/{path}",
-                   params={**params, "access_token": cfg.meta_graph_token}, timeout=20)
+                   params={**params, "access_token": token if token is not None else cfg.meta_graph_token}, timeout=20)
     except requests.exceptions.RequestException:
         return None
     if getattr(resp, "status_code", None) != 200:
@@ -83,18 +132,21 @@ def trend_score(cfg: Config, tag: str, *, get=None):
 _MEDIA_FIELDS = "id,permalink,media_product_type,timestamp,caption"   # caption added (ledger-rebuild): the inverse projection mirrors a live-only media's caption (display-only); resolve ignores the extra field
 _MEDIA_PAGE_CAP = 50            # defensive: >50 pages of the IG user's OWN media is a pathological/mocked paging loop
 
-def list_user_media(cfg: Config, *, get=None):
+def list_user_media(cfg: Config, *, get=None, creds: Optional[MetaCreds] = None):
     """Leg 2 identify-half: the live list of THIS IG user's media (id + permalink + product_type + timestamp),
     walking `paging.next` to completion. READ-ONLY, spends NO hashtag budget (a separate high-limit endpoint).
     FAIL-OPEN -> [] on any transport/shape failure or absent creds (mirrors trend_score) so an insights pull
-    that can't enumerate media simply resolves no new media_ids rather than crashing the daemon tick."""
-    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+    that can't enumerate media simply resolves no new media_ids rather than crashing the daemon tick.
+    `creds` scopes the read to a specific handle's ig_user_id + token (per-account creds threading); None
+    resolves the GLOBAL creds (byte-identical to a single-account setup)."""
+    creds = creds or resolve_meta_creds(cfg)
+    if not (creds.token and creds.ig_user_id):
         return []                                                # no creds -> nothing to enumerate (fail-open)
     out: list[dict] = []
     params = {"fields": _MEDIA_FIELDS, "limit": 100}
-    path = f"{cfg.meta_ig_user_id}/media"
+    path = f"{creds.ig_user_id}/media"
     for _ in range(_MEDIA_PAGE_CAP):
-        body = _graph_get(cfg, path, params, get=get)
+        body = _graph_get(cfg, path, params, get=get, token=creds.token)
         data = body.get("data") if isinstance(body, dict) else None
         if not isinstance(data, list):
             break                                                # transport/shape failure -> stop, return what we have ([] first pass)
@@ -112,6 +164,33 @@ def _next_path(cfg: Config, next_url: str) -> str:
     (and any leading slash) so the verbatim cursor URL is GET as-is, not concatenated onto the base twice."""
     base = cfg.meta_graph_url.rstrip("/") + "/"
     return next_url[len(base):] if next_url.startswith(base) else next_url.lstrip("/")
+
+
+def credentialed_ig_handles(cfg: Config) -> list[str]:
+    """The active IG-carrying account handles that have their OWN per-account ig_user_id configured — the
+    set of handles reconcile must enumerate media for (the per-handle-creds gap: live-linking capped at the
+    single global handle). EMPTY when no account is per-account-credentialed -> the caller falls back to the
+    single global enumeration (byte-identical to before). NEVER raises: a torn accounts.json degrades to []
+    (mirrors load_accounts_safe), so a read path is never crashed by config."""
+    from fanops.accounts import load_accounts_safe
+    from fanops.models import Platform
+    accts, _err = load_accounts_safe(cfg)
+    return [a.handle for a in accts.active()
+            if Platform.instagram in a.platforms and (a.ig_user_id or "").strip()]
+
+
+def enumerate_scoped_media(cfg: Config, handles, *, get=None) -> list[tuple]:
+    """Enumerate each handle's live IG media with THAT handle's resolved creds, returning a flat
+    [(handle, media_dict), ...] across all handles. `handles` is the list of handles to enumerate; pass
+    [None] for the single GLOBAL enumeration (byte-identical to a bare list_user_media). FAIL-OPEN per
+    handle (list_user_media returns [] on a per-handle creds/transport failure) so one dark handle never
+    blocks the others. A handle with no resolvable creds simply contributes nothing."""
+    out: list[tuple] = []
+    for h in (handles or [None]):
+        creds = resolve_meta_creds(cfg, handle=h)
+        for m in list_user_media(cfg, get=get, creds=creds):
+            out.append((h, m))
+    return out
 
 # Leg 2 (Insight): the SINGLE Meta-derived source of which insights metric is valid for which media type.
 # Transcribed ONCE from Meta's official ig-media/insights reference (each metric -> the product types Meta
@@ -160,7 +239,7 @@ def _is_scope_error(body) -> bool:
         return True
     return "permission" in str(err.get("message", "")).lower()
 
-def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=None):
+def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=None, creds: Optional[MetaCreds] = None):
     """Leg 2 read-half: THE complete performance of one live IG media from Graph media-insights — the SOLE
     IG analytics source (no Postiz fallback). The requested metric list is DERIVED from `product_type` via
     `insights_metrics_for` (the one Meta table) — reels get avg-watch, feed cannot (Meta: REELS-only), and a
@@ -168,8 +247,10 @@ def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=
     [,avg_watch_ms]} on success; None on a TRANSIENT failure (5xx / network / no creds / an UNRESOLVED
     product_type — re-poll/re-resolve next pass); raises MetaInsightsScopeError on a PERMISSION refusal
     (LOUD, fail-closed — the one external gate). The token rides the access_token param, never a logged
-    string."""
-    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+    string. `creds` scopes the read to a handle's token (per-account creds threading); None resolves the
+    GLOBAL token (byte-identical). media_id is per-media so only the token varies by account here."""
+    creds = creds or resolve_meta_creds(cfg)
+    if not (creds.token and creds.ig_user_id):
         return None                                              # no creds -> transient-shaped (keep prior snapshot)
     metrics = insights_metrics_for(product_type)                 # SOLE source: Meta's per-type valid set
     if not metrics:                                              # unresolved/unknown product_type -> empty set:
@@ -182,7 +263,7 @@ def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=
     get = get or requests.get
     try:
         resp = get(f"{cfg.meta_graph_url}/{media_id}/insights",
-                   params={"metric": ",".join(metrics), "access_token": cfg.meta_graph_token}, timeout=20)
+                   params={"metric": ",".join(metrics), "access_token": creds.token}, timeout=20)
     except requests.exceptions.RequestException:
         return None                                              # transport blip -> transient
     if getattr(resp, "status_code", None) != 200:

@@ -175,6 +175,24 @@
         </form>
         {% endfor %}{% endfor %}
       </details>
+      <details class="account-meta-creds golive-sub">
+        <summary>Per-account Meta credentials <span class="muted">(optional — for multi-handle IG insights)</span></summary>
+        <p class="muted">Each IG handle can carry its OWN Meta Graph IG Business user id + access token, so
+          insights &amp; live-linking read the RIGHT handle instead of the single global <code>META_IG_USER_ID</code>.
+          The id is stored in accounts.json; the token is write-only (a per-handle <code>.env</code> key) and never shown back.
+          Leave blank to use the global credential.</p>
+        {% for a in status.accounts %}
+        <form class="meta-creds-row meta" hx-post="{{ url_for('do_golive_account_meta_creds') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+          <input type="hidden" name="handle" value="{{ a.handle }}">
+          <span><strong>{{ a.handle }}</strong>
+            {% if a.meta_token_set %}<span class="chip ok" title="A per-handle Graph access token is set">✦ token set</span>
+            {% else %}<span class="chip ro" title="No per-handle token — uses the global META_GRAPH_TOKEN">○ global token</span>{% endif %}</span>
+          <label>IG user id <input type="text" name="ig_user_id" value="{{ a.ig_user_id }}" placeholder="global" size="18" aria-label="Meta IG user id for {{ a.handle }}"></label>
+          <label>access token <input type="password" name="token" placeholder="{{ 'unchanged' if a.meta_token_set else 'global' }}" size="18" autocomplete="off" aria-label="Meta access token for {{ a.handle }} (write-only)"></label>
+          <button type="submit">Save Meta creds</button>
+        </form>
+        {% endfor %}
+      </details>
       <div class="account-manage">
         <p class="muted">Link each account to a persona (voice + hashtags), or demote/remove it. Demote stops
           publishing but keeps the row + history; remove clears a placeholder.</p>
