@@ -165,9 +165,10 @@ def test_migration_v3_to_v4_backfills_one_legacy_row_for_analyzed_post(tmp_path)
     # A pre-P3 analyzed post carrying metrics but no series gets ONE 'legacy'-tagged row preserving that
     # single data point, and STAYS analyzed. 'legacy' is deliberately not a cadence offset, so it never
     # blocks a real future poll. The lift_score / metrics are carried verbatim into the row.
-    # R1: an analyzed post MUST carry a public_url (terminal-with-URL invariant). v3 ledgers that
-    # DIDN'T (the pre-R1 reality) are handled separately by the R1 migration-on-read which parks them
-    # in needs_reconcile — that's right for production data and is tested by R1's doctor-fix-ghosts.
+    # R1: an analyzed post MUST carry a public_url (terminal-with-URL invariant), so this row seeds one.
+    # (dryrun-boundary M3 deleted the migration-on-read back-fill + the doctor-fix-ghosts healer that once
+    # papered over pre-R1 rows lacking a url; post-boundary such a row is a genuine defect that fails R1 at
+    # construction, and the live ledger + every backup already carry no such row — nothing to heal.)
     cfg = Config(root=tmp_path)
     raw = {"schema_version": 3, "sources": {}, "moments": {}, "clips": {},
            "posts": {"pa": _v3_post("pa", "analyzed", metrics={"saves": 9, "lift_score": 36.0},
