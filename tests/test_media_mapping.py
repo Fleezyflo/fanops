@@ -137,14 +137,33 @@ def test_resolve_leaves_non_ig_posts_alone(tmp_path, monkeypatch):
 
 
 def test_resolve_skips_when_no_media_id_field_on_model(tmp_path, monkeypatch):
-    # Model contract: a post that already carries a media_id is not re-resolved (idempotent, no wasted call).
+    # Model contract: a post that already carries a media_id AND product_type is not re-resolved (idempotent,
+    # no wasted call). (A media_id-bearing row with product_type=None IS re-targeted — see the M2 test below.)
     cfg = _cfg(tmp_path, monkeypatch)
     p = _post("p1", "https://www.instagram.com/reel/AAA/")
-    p = p.model_copy(update={"media_id": "PRESET"})
+    p = p.model_copy(update={"media_id": "PRESET", "product_type": "REELS"})
     led = _led(cfg, [p])
     getter = _media_get([_Resp(200, {"data": []})])
     reconcile.resolve_media_ids(led, cfg, get=getter)
     assert led.posts["p1"].media_id == "PRESET"      # untouched
+
+
+def test_resolve_backstamps_product_type_on_a_media_id_bearing_row(tmp_path, monkeypatch):
+    # M2 residual (LIVE post_4eb7c0802e79): a row stamped with media_id by an EARLIER pass (before
+    # product_type was carried) has media_id set but product_type=None. The pre-M2 target filter was
+    # `media_id is None`, so such a row was NEVER re-visited -> product_type stayed None -> the insights
+    # request derived [] -> empty `metric=` -> 400 -> false block. resolve_media_ids must ALSO target a
+    # media_id-bearing row whose product_type is None, re-match its permalink, and back-stamp the real type
+    # so the row heals on the next pass and real metrics flow.
+    cfg = _cfg(tmp_path, monkeypatch)
+    p = _post("p1", "https://www.instagram.com/reel/AAA/")
+    p = p.model_copy(update={"media_id": "M1", "product_type": None})   # resolved id, type not yet carried
+    led = _led(cfg, [p])
+    page = _Resp(200, {"data": [{"id": "M1", "permalink": "https://www.instagram.com/reel/AAA/",
+                                 "media_product_type": "REELS"}]})
+    reconcile.resolve_media_ids(led, cfg, get=_media_get([page]))
+    assert led.posts["p1"].media_id == "M1"          # media_id preserved (not re-fabricated)
+    assert led.posts["p1"].product_type == "REELS"   # the real type back-stamped -> request no longer empty
 
 
 def test_resolve_empty_media_list_does_not_false_breadcrumb(tmp_path, monkeypatch):
