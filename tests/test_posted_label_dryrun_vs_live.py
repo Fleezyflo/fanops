@@ -1,26 +1,17 @@
-"""M5 RED — the Posted tab must distinguish a dryrun-success row from a live-success row.
+"""The Posted tab never shows a dryrun row — a dryrun post never becomes `published`.
 
-The operator's verbatim complaint: 'the system says posted when nothing is posted — dry run has to
-be disabled now.' Today the Posted tab renders any `PostState.published` row identically,
-regardless of whether the row came from a real platform publish (live) or a synthetic dryrun
-no-op (where DryRunPoster never set `public_url`).
+dryrun-boundary M3 (PRD Finding #1): the five legacy tests that once lived here hand-CONSTRUCTED
+`Post(state=published, public_url="dryrun://...")` — the phantom-published-dryrun signature — to pin the
+`_classify_channel` dryrun:// scheme branch. M1 made that state unproducible (a dryrun post halts `queued`,
+never enters distribution) and M3 DELETED the dryrun:// branch itself; those tests are gone with it. The
+`dryrun://`→`dryrun` label survives only as the incidental non-http fall-through, pinned now by
+`test_classify_channel_still_labels_unknown_url_dryrun` in test_dryrun_scaffolding_gone.py — not here, where
+it would have falsely implied the pipeline can still ship a `published` dryrun row.
 
-The bad path: a published row with `public_url is None` reads as 'pending — link fills in later'
-in the template; the operator cannot tell scanning the cockpit that no real platform ever saw the
-post. The fix is structural: every PostedRow carries `posted_via in {"live", "dryrun"}` derived
-deterministically from `public_url`, and the template renders a distinct chip per channel + a
-global mode banner above the table.
-
-SUPERSEDED-BY-BOUNDARY (dryrun-boundary M1, PRD Finding #1) — READ THIS:
-The five tests below hand-CONSTRUCT `Post(state=published, public_url="dryrun://...")` — the
-phantom-published-dryrun signature. As of the dryrun boundary, the pipeline CAN NO LONGER PRODUCE
-that state: a dryrun post is not eligible for distribution, so `publish_due` leaves it `queued`
-and it never becomes a `published`+`dryrun://` row. These tests are RETAINED ONLY to characterize
-the `_classify_channel` dryrun:// classifier while it still exists; that classifier is scaffolding
-the boundary makes dead, and it (and these five tests with it) MUST be deleted in M3 (Finding #1's
-scaffolding-removal milestone). Do NOT read them as endorsing a `published` dryrun row — the
-POSITIVE contract is `test_dryrun_never_reaches_posted_via_publish_due` at the bottom of this file,
-which proves the boundary at the Posted surface."""
+What REMAINS is the POSITIVE contract: run a real dryrun post through the real publish path and prove the
+boundary keeps it out of the Posted library entirely. This is the operator's verbatim complaint answered
+structurally — 'the system says posted when nothing is posted' — by making the row unconstructable, not by
+labeling it after the fact."""
 from __future__ import annotations
 import json
 from datetime import datetime, timezone
@@ -53,120 +44,12 @@ def _seed_clip(led: Ledger) -> Clip:
     return clip
 
 
-def _seed_post(led: Ledger, clip: Clip, *, post_id: str, public_url: str | None) -> str:
-    p = Post(id=post_id, parent_id=clip.id, account="@a", account_id="ia",
-             platform=Platform.instagram, caption="c", state=PostState.published,
-             scheduled_time=FIXED_ISO, media_urls=["file:///clip_1_9x16.mp4"],
-             public_url=public_url, published_at=FIXED_ISO)
-    led.add_post(p)
-    return p.id
-
-
-def test_posted_row_with_dryrun_url_labels_dryrun(tmp_path, monkeypatch):
-    """RED: a published post with a dryrun:// public_url is a dryrun-success — the DryRunPoster
-    writes this synthetic permalink (R1/D1) so the row CAN'T be a ghost (empty URL is now refused
-    by the R1 invariant). PostedRow MUST surface this as posted_via='dryrun' via the scheme check
-    (M5 _classify_channel) so the operator can see at a glance that no real platform saw the post."""
-    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg)
-    led = Ledger.load(cfg)
-    clip = _seed_clip(led)
-    _seed_post(led, clip, post_id="p_dry", public_url="dryrun://p_dry")  # the post-R1 dryrun signature
-    led.save()
-
-    rows = posted_library(Ledger.load(cfg), cfg)
-    assert len(rows) == 1
-    assert hasattr(rows[0], "posted_via"), (
-        "PostedRow has no posted_via field — the operator cannot tell dryrun from live")
-    assert rows[0].posted_via == "dryrun", (
-        f"dryrun:// URL should label 'dryrun', got posted_via={rows[0].posted_via!r}")
-
-
-def test_posted_row_with_https_public_url_labels_live(tmp_path, monkeypatch):
-    """RED: a published post with a real https public_url is a live-success — only reconcile.py
-    sets public_url from a real provider permalink. posted_via='live' so the operator can see at
-    a glance that the platform actually saw the post."""
-    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg)
-    led = Ledger.load(cfg)
-    clip = _seed_clip(led)
-    _seed_post(led, clip, post_id="p_live", public_url="https://www.instagram.com/p/ABCDEFG/")
-    led.save()
-
-    rows = posted_library(Ledger.load(cfg), cfg)
-    assert len(rows) == 1
-    assert rows[0].posted_via == "live", (
-        f"https public_url should label 'live', got posted_via={rows[0].posted_via!r}")
-
-
-def test_posted_row_with_dryrun_scheme_labels_dryrun(tmp_path, monkeypatch):
-    """Belt-and-braces: a (future) writer that stamps a synthetic dryrun:// URL still labels as
-    dryrun. The classifier is on the URL SCHEME, not just on presence — a dryrun:// is dryrun
-    even though it's truthy."""
-    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg)
-    led = Ledger.load(cfg)
-    clip = _seed_clip(led)
-    _seed_post(led, clip, post_id="p_dry2", public_url="dryrun://p_dry2")
-    led.save()
-
-    rows = posted_library(Ledger.load(cfg), cfg)
-    assert len(rows) == 1
-    assert rows[0].posted_via == "dryrun", (
-        f"dryrun:// scheme should label 'dryrun', got posted_via={rows[0].posted_via!r}")
-
-
-def test_posted_template_renders_channel_chip(tmp_path, monkeypatch):
-    """RED: the rendered Posted page must show a visible channel chip per row, identifiable by
-    a data-testid='posted-channel-chip' attribute so the operator (and Playwright) can read it.
-    Mixed dryrun + live rows render different chip text ('dryrun' vs 'live')."""
-    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg)
-    led = Ledger.load(cfg)
-    clip = _seed_clip(led)
-    _seed_post(led, clip, post_id="p_dry", public_url="dryrun://p_dry")        # R1: dryrun:// post-invariant
-    _seed_post(led, clip, post_id="p_live", public_url="https://www.instagram.com/p/X/")
-    led.save()
-
-    from fanops.studio.app import create_app
-    app = create_app(cfg)
-    client = app.test_client()
-    resp = client.get("/posted")
-    assert resp.status_code == 200, f"Posted page returned {resp.status_code}"
-    body = resp.get_data(as_text=True)
-    assert 'data-testid="posted-channel-chip"' in body, (
-        "Posted template does not render a per-row channel chip with data-testid='posted-channel-chip'")
-    # Both labels must appear in the page (one for each row).
-    assert ">dryrun<" in body, "no 'dryrun' chip rendered for the dryrun row"
-    assert ">live<" in body, "no 'live' chip rendered for the live row"
-
-
-def test_posted_template_renders_global_mode_banner(tmp_path, monkeypatch):
-    """RED: the Posted page must carry a global mode banner so the operator knows the SYSTEM mode
-    (live vs dryrun) at a glance, separately from the per-row channel chip. The banner is keyed
-    on cfg.is_live, identifiable by data-testid='posted-mode-banner'."""
-    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg)
-    # No posts needed — the banner shows regardless.
-    from fanops.studio.app import create_app
-    app = create_app(cfg)
-    client = app.test_client()
-    resp = client.get("/posted")
-    assert resp.status_code == 200
-    body = resp.get_data(as_text=True)
-    assert 'data-testid="posted-mode-banner"' in body, (
-        "Posted template does not render a global mode banner with data-testid='posted-mode-banner'")
-    # System is dryrun (FANOPS_POSTER=dryrun, no FANOPS_LIVE), so banner must say so.
-    assert "dryrun" in body.lower(), "banner does not surface the dryrun mode"
-
-
 def test_dryrun_never_reaches_posted_via_publish_due(tmp_path, monkeypatch):
-    """dryrun-boundary M1 — the POSITIVE contract that REPLACES the dryrun://-in-Posted lie above.
+    """dryrun-boundary M1 — the POSITIVE contract that REPLACES the dryrun://-in-Posted lie.
     A dryrun (not-live) post is built + approved + scheduled, then run through the REAL publish path
     (publish_due). The boundary keeps it `queued` — it never enters distribution, never becomes a
-    `published` row, and therefore NEVER appears in the Posted library. (The five legacy tests above
-    hand-construct a `published`+dryrun:// row the pipeline can no longer produce; THIS proves the
-    pipeline can't produce it. This test FAILS if the boundary regresses.)"""
+    `published` row, and therefore NEVER appears in the Posted library. This test FAILS if the
+    boundary regresses."""
     from fanops.post.run import publish_due
     monkeypatch.delenv("FANOPS_LIVE", raising=False)
     monkeypatch.delenv("FANOPS_POSTER", raising=False)          # dryrun (not live)
