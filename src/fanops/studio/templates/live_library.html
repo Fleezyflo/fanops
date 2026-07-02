@@ -1,0 +1,10 @@
+{# src/fanops/studio/templates/live_library.html — MOL-27: the Live library page. "Viewed there, not
+   authored here" — live IG posts mirrored from the platform (ImportedMedia), DISTINCT from Posted (the
+   authored, shipped library). Read-only: no approve/repost/crosspost. #}
+{% extends "base.html" %}
+{% block title %}Live library{% endblock %}
+{% block body %}
+  <h2>Live library</h2>
+  <p class="muted">Live Instagram posts mirrored from the platform — <strong>viewed there, not authored here</strong>. These are real media on the connected account that this system did not create; Posted is our own shipped library.</p>
+  {% include "_live_library_panel.html" %}
+{% endblock %}
