@@ -397,9 +397,9 @@ class PostedRow:
     # M5: the delivery CHANNEL this row actually shipped through — derived from public_url, NEVER
     # from cfg.is_live (a row stamped published under dryrun must keep its 'dryrun' label even
     # after the operator flips live). Values: 'live' (https://... real provider permalink, only
-    # reconcile.py writes these) | 'dryrun' (public_url is None OR has the dryrun:// scheme — the
-    # DryRunPoster->publish_post transition never sets public_url). Pins the operator's verbatim
-    # complaint: 'the system says posted when nothing is posted'.
+    # reconcile.py writes these) | 'dryrun' (any non-http public_url — post dryrun-boundary a dryrun
+    # post carries no url at all, and a legacy 'dryrun://' still reads as 'dryrun'). Pins the
+    # operator's verbatim complaint: 'the system says posted when nothing is posted'.
     posted_via: str = "dryrun"
     submission_id: Optional[str] = None   # inflight rows: backend id awaiting permalink
     error_reason: Optional[str] = None      # inflight/failed: last reconcile error (truncated in UI)
@@ -509,38 +509,15 @@ def classify_post_delivery(post) -> str:
 
 def _classify_channel(public_url: Optional[str]) -> str:
     """Return the delivery channel for a published row: 'live' for an https/http permalink (only
-    reconcile.py from a real provider writes these), else 'dryrun'. Pure — no I/O, deterministic
-    on the post's on-disk state. NB: an empty public_url IS the dryrun signature today (the
-    DryRunPoster->publish_post transition never sets public_url; only reconcile.py does, and only
-    on a real provider response)."""
+    reconcile.py from a real provider writes these), else 'dryrun'. Pure — no I/O, deterministic on
+    the post's on-disk state. An empty/unrecognized public_url classifies as 'dryrun' (the fail-safe
+    default): post dryrun-boundary a dryrun post carries NO public_url, and a legacy 'dryrun://' value
+    still reads as 'dryrun' through this same fall-through — so the Posted chip is unchanged."""
     if not public_url:
         return "dryrun"
-    p = public_url.strip().lower()
-    if p.startswith("dryrun://"):
-        return "dryrun"
-    if p.startswith(("https://", "http://")):
+    if public_url.strip().lower().startswith(("https://", "http://")):
         return "live"
-    return "dryrun"   # an unrecognized scheme is NOT a live URL — fail safe to dryrun
-
-
-def is_phantom_published(post, *, cfg: Config | None = None) -> bool:
-    """A published row with no published_at stamp — promoted ONLY by reconcile, never by _publish_one.
-
-    _publish_one ALWAYS stamps published_at on a confirmed publish (run.py finalize). Reconcile
-    historically promoted submitted/needs_reconcile rows to published without that stamp, producing
-    rows with provider URLs the operator cannot verify and metrics can never bind to."""
-    if post.state is not PostState.published:
-        return False
-    if (getattr(post, "published_at", None) or "").strip():
-        return False
-    metrics = getattr(post, "metrics", None) or {}
-    if metrics and any(v is not None for v in metrics.values()):
-        return False
-    if cfg is not None:
-        sidecar = cfg.scheduled / f"{post.id}.json"
-        if sidecar.exists() and (getattr(post, "public_url", None) or "").startswith(("http://", "https://")):
-            return True   # dryrun sidecar + live-looking URL = reconcile-laundered phantom
-    return True
+    return "dryrun"   # empty / dryrun:// / any non-http scheme is NOT a live URL — fail safe to dryrun
 
 
 def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, batch: Optional[str] = None,

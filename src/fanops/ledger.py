@@ -315,26 +315,12 @@ class Ledger:
                 led.sources = {k: Source(**v) for k, v in raw.get("sources", {}).items()}
                 led.moments = {k: Moment(**v) for k, v in raw.get("moments", {}).items()}
                 led.clips = {k: Clip(**v) for k, v in raw.get("clips", {}).items()}
-                # R1 migration-on-read: heal pre-R1 ghost rows (state=published/analyzed/retired,
-                # public_url='') so the post-R1 invariant doesn't refuse to load a legitimate
-                # production ledger. A sidecar at cfg.scheduled/<post_id>.json proves dryrun-origin
-                # -> back-fill 'dryrun://<post_id>'; no sidecar -> park needs_reconcile so the
-                # reconciler can investigate. Fail-closed default (never auto-label as dryrun
-                # without the sidecar smoking gun). Idempotent: a post-R1 ledger that's already
-                # been healed is a byte-identical no-op through this block.
-                _terminal_url_states = {"published", "analyzed", "retired"}
-                for _pid, _pv in raw.get("posts", {}).items():
-                    if not isinstance(_pv, dict): continue
-                    if _pv.get("state") not in _terminal_url_states: continue
-                    if (_pv.get("public_url") or "").strip(): continue
-                    # Ghost row.
-                    _sidecar = cfg.scheduled / f"{_pid}.json"
-                    if _sidecar.exists():
-                        _pv["public_url"] = f"dryrun://{_pid}"
-                    else:
-                        _pv["state"] = "needs_reconcile"
-                        _pv["error_reason"] = ("publish_missing_url_pre_r1: ghost row pre-R1 with no "
-                                                "dryrun sidecar — investigate (R1 migration-on-read)")
+                # dryrun-boundary M3: the R1 migration-on-read back-fill that healed pre-R1 ghost rows
+                # (state=published + public_url='') by writing 'dryrun://<id>' or parking needs_reconcile
+                # is DELETED. Post-boundary nothing produces a ghost row (a dryrun post halts `queued`,
+                # never terminal-without-url); the 29 legacy rows were pruned outright (M4). A terminal
+                # row with no url now fails the R1 invariant at construction below — which is correct: it
+                # would be a genuine defect, not a dryrun artifact to paper over.
                 led.posts = {k: Post(**v) for k, v in raw.get("posts", {}).items()}
                 led.tag_log = raw.get("tag_log", {})
                 led.variant_streaks = raw.get("variant_streaks", {})

@@ -189,7 +189,8 @@ def test_migration_v3_to_v4_empty_metrics_post_gets_empty_series(tmp_path):
     cfg = Config(root=tmp_path)
     raw = {"schema_version": 3, "sources": {}, "moments": {}, "clips": {},
            "posts": {"pq": _v3_post("pq", "queued"),
-                     "pp": _v3_post("pp", "published", metrics={})},
+                     # R1: a published row carries a real permalink (the M3-deleted back-fill no longer heals it).
+                     "pp": _v3_post("pp", "published", metrics={}, public_url="https://www.instagram.com/reel/pp/")},
            "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
     _write(cfg, raw)
     led = Ledger.load(cfg)
@@ -201,7 +202,7 @@ def test_migration_v3_to_v4_idempotent_existing_series_untouched(tmp_path):
     existing = [{"saves": 5, "lift_score": 20.0, "offset": "4h", "captured_at": "2026-01-01T04:00:00Z"}]
     raw = {"schema_version": 3, "sources": {}, "moments": {}, "clips": {},
            "posts": {"pa": _v3_post("pa", "analyzed", metrics={"saves": 5, "lift_score": 20.0},
-                                    metrics_series=existing)},
+                                    metrics_series=existing, public_url="https://www.instagram.com/reel/pa/")},
            "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
     _write(cfg, raw)
     led = Ledger.load(cfg)

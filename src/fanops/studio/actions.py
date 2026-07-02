@@ -415,9 +415,9 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     # the claim) — tell the operator to retry rather than print a confusing "post is None".
     if state in ("published", "needs_reconcile", "submitted"):
         pub = Ledger.load(cfg).posts.get(post_id)
-        if cfg.is_live and pub is not None and str(pub.public_url or "").startswith("dryrun://"):
-            return ActionResult(ok=False, error=("LIVE publish ran dryrun — post NOT on social. "
-                                "Restart Studio (or Go Live) so FANOPS_LIVE=1 is active, then retry."))
+        # dryrun-boundary M3: the "LIVE publish accidentally ran dryrun -> dryrun:// url" guard is gone —
+        # nothing writes a dryrun:// url any more, and a dryrun provider is boundary-skipped before it can
+        # reach _publish_one on a live system. The row can't be constructed, so there's nothing to catch.
         from fanops.studio.views_results import classify_post_delivery
         delivery = classify_post_delivery(pub) if pub else "dryrun"
         outcome = {"live": "live_shipped", "inflight": "inflight_submitted", "dryrun": "dryrun_local"}.get(delivery, "live_shipped")
@@ -833,55 +833,11 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                                           "post_ids": moved})
 
 
-def revert_phantom_published(cfg: Config, post_ids: list[str] | None = None, *, reason: str,
-                             dry_run: bool = False) -> ActionResult:
-    """Revert reconcile-only phantom publishes (state=published, published_at empty, no metrics).
-
-    Unlike bulk_send_to_review, this CAN touch published rows — the operator's recovery path when
-    reconcile promoted rows the backend never truly shipped. Clears submission_id so the next
-    reconcile pass cannot re-promote the same phantom."""
-    from fanops.studio.views_results import is_phantom_published
-    led = Ledger.load(cfg)
-    if post_ids:
-        targets = [str(i) for i in post_ids if i]
-    else:
-        targets = [pid for pid, p in led.posts.items() if is_phantom_published(p, cfg=cfg)]
-    reverted: list[str] = []; skipped: list[str] = []; unknown: list[str] = []
-    evidence: dict[str, str] = {}
-    for pid in targets:
-        if pid not in led.posts:
-            unknown.append(pid); continue
-        p = led.posts[pid]
-        if not is_phantom_published(p, cfg=cfg):
-            skipped.append(pid); continue
-        sidecar = (cfg.scheduled / f"{pid}.json").exists()
-        url = (p.public_url or "")[:60]
-        evidence[pid] = "dryrun_sidecar+live_url" if sidecar and url.startswith("http") else "no_published_at"
-        reverted.append(pid)
-    if dry_run:
-        return ActionResult(ok=True, detail={"dry_run": True, "would_revert": len(reverted),
-                                              "skipped": len(skipped), "unknown": unknown,
-                                              "post_ids": reverted, "evidence": evidence})
-    try:
-        with Ledger.transaction(cfg) as led2:
-            for pid in reverted:
-                p = led2.posts.get(pid)
-                if p is None or not is_phantom_published(p, cfg=cfg):
-                    continue
-                p.state = PostState.awaiting_approval
-                p.scheduled_time = None
-                p.public_url = ""
-                p.metrics = {}
-                p.published_at = None
-                p.submission_id = None
-                p.error_reason = None
-    except Exception as exc:
-        return ActionResult(ok=False, error=f"revert_phantom_published failed: {str(exc)[:160]}")
-    if reverted:
-        write_audit(cfg, "revert_phantom_published", reverted, reason=reason,
-                    reverted=len(reverted), skipped=len(skipped), evidence=evidence)
-    return ActionResult(ok=True, detail={"reverted": len(reverted), "skipped": len(skipped),
-                                          "unknown": unknown, "post_ids": reverted, "evidence": evidence})
+# dryrun-boundary M3: revert_phantom_published (+ its CLI verb) is DELETED. It was the operator's
+# recovery path for reconcile-laundered phantom `published` rows — a class the boundary makes
+# unconstructable (a dryrun post never reaches `published`; nothing writes a terminal-without-url row).
+# The 29 legacy rows it once cleaned were pruned outright (M4). No detector, no undo — the bad row
+# can't be built in the first place.
 
 
 def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> ActionResult:
