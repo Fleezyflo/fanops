@@ -357,6 +357,11 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             continue
         if provider == "dryrun":                       # dryrun-boundary (Finding #1): NOT live -> no real backend to
             not_distributed += 1                       # distribute to. The post is built + approved + scheduled; it
+            from fanops.post.dryrun import write_preview   # M2: the boundary is the sole place a dryrun post is now
+            try:                                          # processed, so the would-send preview sidecar is written HERE
+                write_preview(cfg, post)                  # (DryRunPoster.publish is never reached post-M1). Fail-open:
+            except Exception as exc:                      # a preview-write error must still leave the post cleanly queued.
+                log("publish", post.id, "preview_write_failed", err=str(exc)[:120])
             log("publish", post.id, "dryrun_not_distributed",   # halts here at the processing<->distribution seam,
                 account=post.account, platform=post.platform.value)   # staying `queued` — never claimed, never a
             continue                                   # phantom-published row. A live-flip re-derives this each pass.
@@ -387,4 +392,13 @@ def publish_post(cfg: Config, post_id: str) -> str | None:
     if provider is None:                               # live but the channel has no provider -> can't publish
         get_logger(cfg)("publish", post_id, "no_provider", account=post.account, platform=post.platform.value)
         return None
+    if provider == "dryrun":                           # dryrun-boundary (M2): NOT live -> no backend to distribute to,
+        from fanops.post.dryrun import write_preview   # even on an explicit Publish-now click. Write the would-send
+        try:                                           # preview and HALT `queued` (never claim -> never a stuck
+            write_preview(cfg, post)                   # `submitting` post now that the poster no longer promotes state).
+        except Exception as exc:
+            get_logger(cfg)("publish", post_id, "preview_write_failed", err=str(exc)[:120])
+        get_logger(cfg)("publish", post_id, "dryrun_not_distributed",
+                        account=post.account, platform=post.platform.value)
+        return PostState.queued.value
     return _publish_one(cfg, post_id, provider, account_id=_resolve_publish_account_id(accounts, post))

@@ -308,13 +308,11 @@ def is_real_submission_id(sid: Optional[str]) -> bool:
     # submission_id="fanops_<hash>" so an ambiguous publish stays pollable). Analytics + status are keyed by
     # the REAL id; a fanops_ token 404s. A published/analyzed post must carry a real id before pull_metrics
     # attributes, else learning silently freezes (the post never reaches a non-degraded analyzed shape).
-    # R1/D16: also exclude the dryrun_ prefix — the DryRunPoster stamps submission_id="dryrun_<post_id>"
-    # to emulate a real backend id for the track.py / amplify lifecycle (AUDIT C4), but it's a SYNTHETIC
-    # stand-in, not an id the backend can resolve. track.pull_metrics / reconcile would otherwise poll
-    # Postiz/Zernio for a dryrun_ id and either 404 or smear analytics across the wrong post.
+    # (dryrun-boundary M2 removed the dryrun_ synthetic-id path: a dryrun post no longer stamps a
+    # submission_id at all — it halts `queued` at the boundary — so this predicate need not name it.)
     if not sid:
         return False
-    return not (sid.startswith("fanops_") or sid.startswith("dryrun_"))
+    return not sid.startswith("fanops_")
 
 
 class HookSource(str, Enum):

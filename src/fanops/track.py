@@ -22,10 +22,10 @@ from fanops.timeutil import iso_z
 # config edit, not a deploy. Absent override -> these defaults stand.
 
 def _metrics_trackable(cfg: Config, sid: Optional[str]) -> bool:
-    # C4 dryrun money loop: dryrun_ ids bind injected metrics when not live; live/reconcile still skip them (R1/D16).
-    if not sid: return False
-    if is_real_submission_id(sid): return True
-    return not cfg.is_live and sid.startswith("dryrun_")
+    # dryrun-boundary M2: only a REAL backend id is trackable. The old `dryrun_` money-loop branch is
+    # gone — post-M1 a dryrun post halts `queued` and never reaches a distribution state, so it is never
+    # in the pollable set here anyway; there is no dryrun learning loop left to feed.
+    return bool(sid) and is_real_submission_id(sid)
 
 _W = {"saves": 4.0, "shares": 4.0, "retention": 3.0, "reach": 0.001, "likes": 0.05}
 # T4 (honest lift): a weight at/above this is a PRIMARY signal (saves/shares/retention). When a primary

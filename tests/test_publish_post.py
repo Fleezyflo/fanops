@@ -3,6 +3,7 @@
 # Reuses publish_due's per-post claim->network->finalize core (_publish_one) with the network OUTSIDE
 # the ledger flock; returns the final post-state value (or None when nothing was claimable). Setup
 # persists to disk (self-loading path) and assertions reload from disk.
+import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Clip, PostState, ClipState, Platform
@@ -14,28 +15,37 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2999-01-01T00:00:00Z"):
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
                       platform=Platform.instagram, caption="ship it",
-                      scheduled_time=when, state=PostState.queued, public_url="dryrun://98432"))
+                      scheduled_time=when, state=PostState.queued))
     led.save()
 
 
-def test_publish_post_ships_a_future_scheduled_post_now(tmp_path, monkeypatch):
-    # the whole point: a post scheduled for 2999 still publishes when the operator clicks Publish now.
+def test_publish_post_dryrun_writes_preview_and_holds_queued(tmp_path, monkeypatch):
+    # dryrun-boundary M2: on a NOT-live system, clicking Publish now writes the would-send preview and
+    # HOLDS the post `queued` — there is no backend to distribute to, so it never enters distribution
+    # (never a phantom `published`). The schedule is still ignored (a 2999 post is "publish-now" eligible).
     monkeypatch.delenv("FANOPS_POSTER", raising=False)                      # dryrun
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2999-01-01T00:00:00Z")      # NOT due by schedule
-    assert publish_post(cfg, "p1") == "published"
-    assert Ledger.load(cfg).posts["p1"].state is PostState.published
+    assert publish_post(cfg, "p1") == "queued"                              # held at the boundary, not published
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.queued
+    assert p.submission_id is None and p.public_url is None                 # no fabricated artifacts
+    assert (cfg.scheduled / "p1.json").exists()                            # preview WAS written
 
 def test_publish_post_is_scoped_to_the_target(tmp_path, monkeypatch):
-    # other queued posts are UNTOUCHED — Publish now ships only the clicked piece, not the batch.
+    # other queued posts are UNTOUCHED — Publish now acts only on the clicked piece, not the batch.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2999-01-01T00:00:00Z")
     _queued(led, cfg, pid="p2", cid="c2", when="2020-01-01T00:00:00Z")      # already due, but NOT clicked
     publish_post(cfg, "p1")
     led = Ledger.load(cfg)
-    assert led.posts["p1"].state is PostState.published
-    assert led.posts["p2"].state is PostState.queued                        # untouched
+    # dryrun holds p1 queued (boundary) — but the point of THIS test is scoping: p1's preview is written,
+    # p2's is not. Only the clicked post was acted on.
+    assert (cfg.scheduled / "p1.json").exists()
+    assert not (cfg.scheduled / "p2.json").exists()                         # untouched — never processed
 
 def test_publish_post_unknown_is_noop(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
@@ -45,27 +55,33 @@ def test_publish_post_unknown_is_noop(tmp_path, monkeypatch):
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued
 
 def test_publish_post_non_queued_is_noop(tmp_path, monkeypatch):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    # LIVE: a non-queued post is a no-op at _publish_one's CLAIM step. (Must be live — on a dryrun
+    # system the M2 boundary short-circuits before the claim; this pins the claim guard itself.)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1")
     with Ledger.transaction(cfg) as led:
         led.posts["p1"].state = PostState.published                         # already published on disk
+        led.posts["p1"].public_url = "https://www.instagram.com/reel/AAA/"   # R1: a published row carries a permalink
     assert publish_post(cfg, "p1") is None                                  # claim sees non-queued -> no-op
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
 
 def test_publish_post_propagates_fatal_auth(tmp_path, monkeypatch):
-    # a bad key must HALT (raise), not silently mark the post failed — same contract as publish_due.
+    # LIVE: a bad key must HALT (raise), not silently mark the post failed — same contract as publish_due.
+    # (Must be live — a dryrun system never invokes the poster now that M2 boundary-skips it.)
     import fanops.post.run as run
     from fanops.errors import PostizAuthError
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1")
     class BoomPoster:
         def publish(self, led, post_id): raise PostizAuthError("401 unauthorized")
     monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: BoomPoster())
-    try:
-        publish_post(cfg, "p1"); assert False, "expected PostizAuthError to propagate"
-    except PostizAuthError:
-        pass
+    monkeypatch.setattr(run, "_ensure_media", lambda *a, **kw: None, raising=False)
+    with pytest.raises(PostizAuthError):
+        publish_post(cfg, "p1")
 
 
 def test_empty_integration_id_is_skipped_not_posted(tmp_path, monkeypatch):
@@ -125,18 +141,30 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
 
 def test_republish_of_real_id_post_warns(tmp_path, monkeypatch):
     # XC-7: re-publishing a post that already carries a REAL submission_id may double-post (repost-freely
-    # OK, but the claim must breadcrumb it).
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)                          # dryrun
+    # OK, but the claim must breadcrumb it). LIVE — the claim breadcrumb is inside _publish_one, which a
+    # dryrun system no longer reaches (M2 boundary-skips before the claim).
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
+    import fanops.post.run as run
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
     with Ledger.transaction(cfg) as lg: lg.posts["p1"].submission_id = "blotato_1"
+    class _OkPoster:
+        def publish(self, led, post_id):
+            led.posts[post_id].state = PostState.submitted
+            led.posts[post_id].public_url = "https://www.instagram.com/reel/AAA/"
+            return led
+    monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: _OkPoster())
+    monkeypatch.setattr(run, "_ensure_media", lambda *a, **kw: None, raising=False)
     publish_post(cfg, "p1")
     assert "republish_with_real_id" in cfg.log_path.read_text()
 
 def test_publish_records_the_integration_id_it_used(tmp_path, monkeypatch):
-    # XC-5 (characterization): a published post records the integration id it ACTUALLY published to.
+    # XC-5 (characterization): the post carries the integration id it is addressed to. On a dryrun
+    # system Publish-now holds it `queued` at the boundary (M2) but the id is preserved on the record.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)                          # dryrun
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")          # account_id="98432"
-    assert publish_post(cfg, "p1") == "published"
-    assert Ledger.load(cfg).posts["p1"].account_id == "98432"                   # the id it published to is recorded
+    assert publish_post(cfg, "p1") == "queued"                                  # held at the boundary (dryrun)
+    assert Ledger.load(cfg).posts["p1"].account_id == "98432"                   # the addressed id is preserved

@@ -8,6 +8,7 @@
 #
 # These tests drive the REAL chokepoint (publish_due), NOT DryRunPoster.publish directly (that poster
 # contract is M2's). Pure-fixture: a not-live Config + a seeded due `queued` post.
+import os, stat
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
@@ -56,3 +57,23 @@ def test_dryrun_publish_due_mints_no_distribution_artifacts(tmp_path, monkeypatc
     post = Ledger.load(cfg).posts["p1"]
     assert post.submission_id is None                           # no dryrun_<id> minted
     assert post.public_url is None                              # no dryrun://<id> minted
+
+
+def test_dryrun_boundary_writes_preview_not_artifacts(tmp_path, monkeypatch):
+    # M2: the boundary is the ONLY place a dryrun post is now processed (DryRunPoster.publish is never
+    # called post-M1). So the would-send PREVIEW sidecar must be written HERE — an honest "here's what
+    # WOULD ship, nothing was sent" record — while stamping NONE of the phantom-publish artifacts and
+    # leaving the post `queued`.
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = Ledger.load(cfg)
+    led.add_post(_due_queued_post("p1"))
+    led.save()
+
+    publish_due(cfg)
+
+    sidecar = cfg.scheduled / "p1.json"
+    assert sidecar.exists()                                     # preview WAS written at the boundary
+    assert stat.S_IMODE(os.stat(sidecar).st_mode) == 0o600     # owner-only at rest (caption/media/target)
+    post = Ledger.load(cfg).posts["p1"]
+    assert post.state is PostState.queued                      # still held at the boundary
+    assert post.submission_id is None and post.public_url is None   # no fabricated distribution artifacts
