@@ -165,12 +165,20 @@ def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=
     IG analytics source (no Postiz fallback). The requested metric list is DERIVED from `product_type` via
     `insights_metrics_for` (the one Meta table) — reels get avg-watch, feed cannot (Meta: REELS-only), and a
     deprecated metric is unrequestable. Returns a normalized dict {reach,views,saves,shares,likes,comments
-    [,avg_watch_ms]} on success; None on a TRANSIENT failure (5xx / network / no creds — re-poll next pass);
-    raises MetaInsightsScopeError on a PERMISSION refusal (LOUD, fail-closed — the one external gate). The
-    token rides the access_token param, never a logged string."""
+    [,avg_watch_ms]} on success; None on a TRANSIENT failure (5xx / network / no creds / an UNRESOLVED
+    product_type — re-poll/re-resolve next pass); raises MetaInsightsScopeError on a PERMISSION refusal
+    (LOUD, fail-closed — the one external gate). The token rides the access_token param, never a logged
+    string."""
     if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
         return None                                              # no creds -> transient-shaped (keep prior snapshot)
     metrics = insights_metrics_for(product_type)                 # SOLE source: Meta's per-type valid set
+    if not metrics:                                              # unresolved/unknown product_type -> empty set:
+        # honor the docstring above — SKIP an unresolved one, never build a request with an empty `metric=`.
+        # Meta 400s an empty metric list as an OAuthException, which the scope classifier would misread as a
+        # permission refusal and false-block. Refuse PRE-FLIGHT (no HTTP): transient-shaped so the row re-
+        # resolves its product_type next reconcile pass, then lands real metrics. NO request is ever built.
+        get_logger(cfg)("graph_insights", str(media_id), "unresolved_type_skip", product_type=str(product_type))
+        return None
     get = get or requests.get
     try:
         resp = get(f"{cfg.meta_graph_url}/{media_id}/insights",
