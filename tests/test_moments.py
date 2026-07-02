@@ -303,17 +303,20 @@ def test_decide_hooks_rejects_mechanical_dup_hook_to_clean_clip(tmp_path):
     led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "wait for the drop"})   # exact cross-clip dup
     assert led.moments_of("src_1")[0].hook is None    # exact dup -> clean clip, not burned twice
 
-def test_decide_hooks_rejects_third_person_hook_to_clean_clip(tmp_path):
-    # M1a floor on the WINDOW hook: a third-person scene-narration recap (no viewer address) is rejected;
-    # the stripped hook is PRESERVED on hook_removed (operator can restore it in Review).
+def test_decide_hooks_does_not_strip_perspective_at_ingest(tmp_path):
+    # RF5 (viewer-POV at the source): the post-generation PERSPECTIVE strip is REMOVED. The generator now
+    # owns perspective (its demos/echoes/voice/learned styles are all viewer-POV, MOL-20..22), so ingest no
+    # longer nulls a third-person hook — it SHIPS (any stray one is caught in Studio Review, not stripped
+    # here). The mechanical (is_weak_hook) + brand (brand_risk_flag) strips still fire — see the dup/off-brand
+    # tests. A third-person hook is intentionally passed to prove ingest does not gate perspective.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
     led = _decide_hooks(led, cfg, "src_1",
                         {"14.00-18.50": "he switches to Arabic when it gets personal"})
     m = led.moments_of("src_1")[0]
-    assert m.hook is None                                              # third-person recap -> clean clip
-    assert m.hook_removed == "he switches to Arabic when it gets personal"   # preserved for review
+    assert m.hook == "he switches to Arabic when it gets personal"     # NOT stripped — generator owns perspective
+    assert m.hook_removed is None                                      # nothing removed (no perspective gate)
 
 def test_decide_hooks_keeps_viewer_pov_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
@@ -322,9 +325,11 @@ def test_decide_hooks_keeps_viewer_pov_hook(tmp_path):
     led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "the part you'll replay"})
     assert led.moments_of("src_1")[0].hook == "the part you'll replay"   # viewer-POV ships
 
-def test_decide_hooks_rejects_third_person_per_account_hook_falls_back(tmp_path):
-    # The per-account hooks ride the WINDOW hook gate now. A third-person persona hook is dropped from
-    # hooks_by_persona -> that handle falls back to the shared (floored) hook at crosspost.
+def test_decide_hooks_does_not_strip_perspective_from_per_account_hooks(tmp_path):
+    # RF5: the per-account hooks ride the SAME ingest path — with the perspective strip removed, a
+    # third-person per-account hook is NO LONGER dropped from hooks_by_persona. The generator authors these
+    # viewer-POV by construction (persona voice is the account's stance, MOL-22); a stray one ships and is
+    # caught in Review. The brand strip still fires on hooks_by_persona — see the off-brand per-account test.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
@@ -334,7 +339,7 @@ def test_decide_hooks_rejects_third_person_per_account_hook_falls_back(tmp_path)
                                           "@b": "he flips the whole beat"})})
     hbp = led.moments_of("src_1")[0].hooks_by_persona
     assert hbp.get("@a") == "you won't expect the switch"   # viewer-POV kept
-    assert "@b" not in hbp                                   # third-person dropped -> falls back to shared
+    assert hbp.get("@b") == "he flips the whole beat"       # third-person NOT stripped — generator owns perspective
 
 def test_decide_hooks_rejects_off_brand_hook_to_clean_clip(tmp_path):
     # HIGH (audit): the BURNED on-screen hook must get the SAME brand-risk screen EN/AR captions get

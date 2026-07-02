@@ -19,12 +19,18 @@ returns [] on any doubt, never reaching adjust/ledger's amplify/retire/cascade p
 from __future__ import annotations
 from fanops.log import get_logger
 from fanops.variant_learning import best_hooks, ucb_rank
+from fanops.hookscore import narration_signature
 
 
 def proven_hook_styles(led, cfg, accounts) -> list[str]:
     """Read-only cross-surface union of each ACTIVE (account, platform) surface's gated winning hook
     style(s). Ordered, de-duplicated (insertion order -> deterministic). [] when the master flag or the
-    moment-hook flag is off, when accounts is None, or on any scorer error (fail-open)."""
+    moment-hook flag is off, when accounts is None, or on any scorer error (fail-open).
+
+    RF5 (viewer-POV at the source): each winner is filtered through the read-only viewer-POV METER
+    (narration_signature) BEFORE it can prime the hook author — a historically-winning-but-third-person
+    hook is a poisoned example that would re-teach the generator the exact anti-pattern we starve
+    everywhere else, so it is DROPPED here (not injected). The meter still gates NOTHING downstream."""
     if not cfg.variant_learning or not cfg.moment_hook_learning or accounts is None:
         return []
     try:
@@ -34,7 +40,7 @@ def proven_hook_styles(led, cfg, accounts) -> list[str]:
         for a in accounts.active():
             for plat in a.platforms:
                 for h in scorer(led, cfg, a.handle, plat):
-                    if h not in seen:
+                    if h not in seen and not narration_signature(h):   # drop a third-person winner (poisoned prime)
                         seen.add(h)
                         out.append(h)
         return out

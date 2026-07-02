@@ -369,7 +369,6 @@ def cmd_compose(cfg: Config, args) -> int:
     # base clip, composed=false) on missing MoviePy / render error. Needs the [compose] extra.
     import os
     from pathlib import Path
-    from fanops import overlay
     from fanops.compose import compose_clip, TemplateSpec
     led = Ledger.load(cfg)
     clip = led.clips.get(args.clip_id)
@@ -379,8 +378,8 @@ def cmd_compose(cfg: Config, args) -> int:
         print(f"clip file missing on disk: {clip.path}"); return 2
     mom = led.moments.get(clip.parent_id)
     title = args.title
-    if title is None and mom is not None:                    # default title = the clip's on-screen hook
-        title = mom.hook or overlay.derive_hook(mom.transcript_excerpt)
+    if title is None and mom is not None:                    # default title = the clip's on-screen hook ONLY
+        title = mom.hook                                     # RF5: no verbatim-transcript fallback; a hookless clip -> None -> the "nothing to compose" early-out below
     intro = cfg.artist_name if args.intro is None else args.intro   # default branded intro; '' disables
     spec = TemplateSpec(title=title or None, intro_text=(intro or None), outro_text=(args.outro or None))
     if spec.is_empty():

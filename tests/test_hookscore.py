@@ -3,7 +3,7 @@
 # flags only CLEAR third-person-pronoun recaps with no viewer address, accepting misses (the critic
 # owns the nuanced calls). Fixtures are the operator's REAL failures + real viewer-POV wins.
 import pytest
-from fanops.hookscore import narration_signature, hook_quality, has_artist_reference
+from fanops.hookscore import narration_signature, hook_quality
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, SourceState, MomentState
@@ -36,38 +36,10 @@ def test_narration_signature_passes_viewer_hooks(hook):
 def test_narration_signature_empty_is_false(hook):
     assert narration_signature(hook) is False   # nothing to flag (not a recap)
 
-# THE GATE rule (has_artist_reference, wired in moments.ingest_moment_hooks): a SINGULAR third-person
-# artist pronoun (he/him/his/she/her) or the artist's NAME = reject OUTRIGHT, with NO opener exemption.
-# These are the operator's repeated real failures that narration_signature MISSES because they open with
-# an imperative ('watch'/'wait'/'listen') — the meter exempts the opener, the GATE must not.
-@pytest.mark.parametrize("hook", [
-    "watch him define his whole life",      # narration_signature MISSES (opens 'watch') -> gate must catch 'him/his'
-    "wait til he names the song",           # MISSES (opens 'wait') -> 'he'
-    "listen for the line he means",         # MISSES (opens 'listen') -> 'he'
-    "listen for the line that changed him",
-    "she never said it out loud",
-])
-def test_has_artist_reference_flags_third_person_artist(hook):
-    assert has_artist_reference(hook) is True
-
-# Real viewer-POV hooks (the operator's golds this run) -> NOT flagged (no singular artist pronoun).
-@pytest.mark.parametrize("hook", [
-    "the food debate you can't win",
-    "tell me you weren't second",
-    "every younger sibling knows this",
-    "the people writing your favorites? nobodies.",   # 3rd-person PLURAL general claim is fine
-    "famous people don't write famous songs",
-])
-def test_has_artist_reference_passes_viewer_hooks(hook):
-    assert has_artist_reference(hook) is False
-
-def test_has_artist_reference_flags_artist_name():
-    assert has_artist_reference("a Moh Flow verse you slept on", artist_name="Moh Flow") is True
-    assert has_artist_reference("a verse you slept on", artist_name="Moh Flow") is False   # name absent
-
-@pytest.mark.parametrize("hook", ["", "   ", None])
-def test_has_artist_reference_empty_is_false(hook):
-    assert has_artist_reference(hook) is False
+# RF5: the stricter singular-pronoun perspective GATE (formerly wired in moments.ingest_moment_hooks) was
+# DELETED — perspective is owned at authorship now (the generator is starved of third person). Its tests are
+# gone with it; the read-only narration_signature METER above stays (it strips nothing). See test_moments.py
+# (test_decide_hooks_does_not_strip_perspective_*) for the ingest behavior that replaced the gate.
 
 # ---- Task 9: read-only hook scoreboard with a critic-INDEPENDENT viewer-POV meter ----
 
