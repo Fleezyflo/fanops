@@ -7,26 +7,29 @@ refresh_store harvests co-occurring candidate tags from our niche seeds (the per
 measures their live Graph reach within the 30/7-day ig_hashtag_search budget, ranks by reach, and writes
 the reach-ranked 00_control/hashtags.json store. No ledger, no learn-doctor gate — the store does not depend
 on any published post. FAIL-OPEN: no Meta creds / a fetch miss -> the frozen reach-ranked seed stands (the
-store is never empty and never raises). cmd_hashtags_discover REPORTS fresh per-persona discoveries and NEVER
-writes the caption menu (curation stays operator-gated in the Studio)."""
+store is never empty). The ONE case where refresh_store does NOT write is a CORRUPT personas.json: it aborts
+and preserves the existing store rather than let a bad control-file hand-edit clobber the operator's curated
+one with a generic set (the abort is loud + distinct from a genuinely persona-less rebuild). cmd_hashtags_
+discover REPORTS fresh per-persona discoveries and NEVER writes the caption menu (curation stays operator-
+gated in the Studio)."""
 from __future__ import annotations
-import json
+import json, sys
 from fanops.config import Config
 from fanops.hashtags import _norm, vetted_menu
 
 
 def _seed_tags(cfg: Config) -> list[str]:
     """The niche anchor seeds the Graph harvest reads from: every persona's curated corpus + its intake
-    `genre` words, normalized + deduped. FAIL-OPEN: an unreadable personas.json -> [] (the frozen seed still
-    drives the store). These are the categories whose currently-winning posts we mine for co-occurring tags."""
+    `genre` words, normalized + deduped. An ABSENT/empty personas.json is a legitimate no-seeds -> [] (the
+    frozen seed still drives the store). A CORRUPT one is NOT: the ControlFileError Personas.load raises
+    PROPAGATES (it is no longer swallowed to [], which was indistinguishable from "no personas" and let a bad
+    hand-edit clobber the curated store) — refresh_store catches it and ABORTS instead of overwriting. These
+    are the categories whose currently-winning posts we mine for co-occurring tags."""
     from fanops.personas import Personas
     seeds: list[str] = []
-    try:
-        for per in Personas.load(cfg).all():
-            seeds += [t for t in (per.hashtag_corpus or []) if isinstance(t, str)]
-            seeds += ["#" + w for w in (per.intake.get("genre") or "").split() if w.strip()]
-    except Exception:
-        return []
+    for per in Personas.load(cfg).all():                   # corrupt personas.json -> ControlFileError propagates
+        seeds += [t for t in (per.hashtag_corpus or []) if isinstance(t, str)]
+        seeds += ["#" + w for w in (per.intake.get("genre") or "").split() if w.strip()]
     out: list[str] = []; seen: set[str] = set()
     for s in seeds:
         n = _norm(s) if isinstance(s, str) else ""
@@ -41,14 +44,22 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     reach (desc), and write 00_control/hashtags.json — measured tags first, then the rest of the relevance-
     ordered universe so the store is never narrow, with the frozen seed as the cold-start floor. No ledger,
     no learn-doctor gate (the store is independent of any published post). FAIL-OPEN: no creds / fetch miss
-    -> measured is empty -> the frozen seed order stands. Returns a summary dict; never raises on a clean run."""
+    -> measured is empty -> the frozen seed order stands. Returns a summary dict. ABORTS (does NOT write —
+    the existing store is preserved untouched) when the persona seeds can't be read because personas.json is
+    CORRUPT: a bad hand-edit to a control file must not clobber the operator's curated store with a generic
+    one. The abort is loud (a non-`written` result carrying the reason), distinct from a genuinely persona-less
+    system (which still rebuilds from the frozen floor). Only a corrupt-personas ControlFileError is caught."""
+    from fanops.errors import ControlFileError
     from fanops.meta_graph import harvest_cooccurring, sample_trends
     seed = vetted_menu()                                  # frozen reach-ranked cold-start floor (never empty)
     if not cfg.hashtag_trends:                            # operator escape hatch: Graph sampling OFF -> frozen floor only
         cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
         cfg.hashtags_path.write_text(json.dumps({"tags": list(seed), "reach": {}}, indent=2))
         return {"written": True, "measured": 0, "harvested": 0, "total": len(seed)}
-    seeds = _seed_tags(cfg)
+    try:
+        seeds = _seed_tags(cfg)                           # absent/empty -> [] (rebuild from floor); corrupt -> raises
+    except ControlFileError as e:                         # corrupt personas.json: ABORT, leave the store UNTOUCHED
+        return {"written": False, "aborted": "corrupt_personas", "reason": str(e)}
     harvested = harvest_cooccurring(cfg, seeds, get=get, now=now) if seeds else {}
     by_count = [t for t, _ in sorted(harvested.items(),   # discovered co-occurring tags, most-relevant first
                                      key=lambda kv: (kv[1]["count"], kv[1]["host_engagement"]), reverse=True)]
@@ -72,7 +83,9 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=N
     per `max_age_s` (default 12h). Needs Meta creds (else a clean no-op — the store is a Graph artifact). Throttled
     by the store file's mtime so a 10-minute publish cadence does not hammer the 30/7-day ig_hashtag_search budget;
     across ticks the budget window rolls, so candidates rotate. FAIL-OPEN: any error -> a reason, NEVER raises — it
-    must never crash the unattended run (independent of the publish backend; not gated on is_live_backend)."""
+    must never crash the unattended run (independent of the publish backend; not gated on is_live_backend). A
+    corrupt personas.json is NOT a refresh: refresh_store aborts (store untouched) and this REPORTS the abort
+    reason (`refreshed=False` + the abort fields) so the tick never logs a false success on a broken control file."""
     import time
     if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
         return {"refreshed": False, "reason": "no Meta creds"}
@@ -80,7 +93,10 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=N
         p = cfg.hashtags_path
         if p.exists() and (time.time() - p.stat().st_mtime) < max_age_s:
             return {"refreshed": False, "reason": "fresh"}
-        return {"refreshed": True, **refresh_store(cfg, get=get, now=now)}
+        r = refresh_store(cfg, get=get, now=now)
+        if not r.get("written"):                              # corrupt-personas abort: preserve, report — not a refresh
+            return {"refreshed": False, **r}
+        return {"refreshed": True, **r}
     except Exception as exc:
         return {"refreshed": False, "reason": f"error: {str(exc)[:120]}"}
 
@@ -88,8 +104,15 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=N
 def cmd_hashtags_refresh(cfg: Config) -> int:
     """`fanops hashtags refresh` — rebuild the reach-ranked store from LIVE Meta Graph reach (harvest ->
     measure -> rank). Writes ONLY 00_control/hashtags.json; needs no ledger and no learn-doctor verdict.
-    FAIL-OPEN without Meta creds (the frozen seed stands). Always exits 0."""
+    FAIL-OPEN without Meta creds (the frozen seed stands) -> exit 0. The ONE non-zero exit is a CORRUPT
+    personas.json: refresh_store aborts (the curated store is preserved), so this prints the reason LOUDLY
+    and exits 2 instead of KeyError-ing the abort result (which carries no measured/harvested/total)."""
     r = refresh_store(cfg)
+    if not r.get("written"):                              # corrupt-personas abort: loud, non-zero, store untouched
+        print(f"hashtags store NOT refreshed — refresh aborted ({r.get('aborted', 'unknown')}): "
+              f"{r.get('reason', '')}\n  the curated 00_control/hashtags.json was left untouched; fix personas.json.",
+              file=sys.stderr)
+        return 2
     print(f"hashtags store refreshed from live Graph reach: {r['measured']} measured + "
           f"{r['harvested']} harvested -> {r['total']} tags (00_control/hashtags.json)")
     return 0
