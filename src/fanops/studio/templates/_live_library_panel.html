@@ -1,0 +1,35 @@
+{# src/fanops/studio/templates/_live_library_panel.html — MOL-27: the Live library body. Read-only over
+   led.imported_media (the M2 projection fills it, M3 fills metrics). DISTINCT from Posted: these are live IG
+   posts we did NOT author — "viewed there, not authored here" — so no approve / repost / crosspost actions.
+   Scope label states the single credentialed handle (PRD credential-scope note). Empty-state handled. #}
+<div id="live-library-body" aria-live="polite">
+  <p class="muted live-scope" data-testid="live-scope">{{ scope }}</p>
+  {% if rows %}
+  <ul class="posted-scan-list live-library-list">
+    {% for r in rows %}
+    <li class="posted-row live-media-row" data-testid="live-media-row">
+      <div class="posted-accent" aria-hidden="true"></div>
+      <div class="posted-main">
+        <div class="posted-head">{{ r.timestamp | localdt or r.imported_at | localdt or '—' }}
+          {% if r.account %}· <strong>{{ r.account }}</strong>{% endif %}
+          {% if r.product_type %}<span class="chip ro" data-testid="live-product-type">{{ r.product_type }}</span>{% endif %}
+          {% if not r.product_type %}<span class="chip ro muted" title="Media type not yet resolved from the platform">type pending</span>{% endif %}
+        </div>
+        <p class="clamp-1">{{ r.caption or '—' }}</p>
+        <div class="posted-primary">
+          <span>Lift {{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }}</span>
+          {% if r.permalink %}<a class="live-link" href="{{ r.permalink }}" target="_blank" rel="noopener">View on Instagram ↗</a>
+          {% else %}<span class="muted">no permalink</span>{% endif %}
+        </div>
+        <details class="posted-metrics-detail"><summary>Metrics</summary>
+          <span>Saves {{ r.saves if r.saves is not none else '—' }} · Shares {{ r.shares if r.shares is not none else '—' }} · Ret {{ r.retention if r.retention is not none else '—' }} · Reach {{ r.reach if r.reach is not none else '—' }}</span>
+          {% if r.error_reason %}<span class="err meta"> · {{ r.error_reason }}</span>{% endif %}
+        </details>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty" data-testid="live-empty">No live media imported yet. Run <strong>Map live media</strong> (or the daemon does it) to mirror the credentialed account's live Instagram posts here — nothing is authored, only viewed.</div>
+  {% endif %}
+</div>

@@ -396,6 +396,9 @@ def create_app(cfg: Config) -> Flask:
     from fanops.studio.app_routes_run import register_run_routes
     register_run_routes(app, cfg)
 
+    from fanops.studio.app_routes_live import register_live_routes   # MOL-27: the Live library (imported_media)
+    register_live_routes(app, cfg)
+
     @app.get("/stitches")
     def stitches():
         # M3 approval spine + M4 release: suggestions awaiting approval AND rendered drafts awaiting release.

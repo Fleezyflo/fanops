@@ -13,8 +13,10 @@ from fanops.models import (AccountSelection, SelectionMethod, account_selection_
 
 
 # ---- schema bump (the migration scaffold rides on it) ----
-def test_schema_version_is_nine():
-    assert SCHEMA_VERSION == 9
+def test_schema_version_at_least_nine():
+    # account_selections landed at v9; the version only ever climbs (v10 added imported_media). Pin the floor,
+    # not a magic literal, so a later additive map doesn't false-fail this account-selection test.
+    assert SCHEMA_VERSION >= 9
 
 
 # ---- inverted-default fix: a Post is BORN awaiting_approval, never queued (no-auto-publish invariant) ----
@@ -119,7 +121,7 @@ def test_account_selection_roundtrip(tmp_path):
     assert got is not None
     assert got.moment_ids == ["m1", "m2"]
     assert got.method == SelectionMethod.llm
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == 9
+    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
 
 
 def test_add_account_selection_overwrites_on_recast(tmp_path):

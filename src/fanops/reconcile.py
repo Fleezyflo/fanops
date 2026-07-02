@@ -35,7 +35,7 @@ from fanops.config import Config
 from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.models import PostState, is_real_submission_id
+from fanops.models import PostState, is_real_submission_id, ImportedMedia
 from fanops.text import safe_public_url
 from fanops.timeutil import parse_iso, iso_z, publish_buckets
 from datetime import datetime, timezone, timedelta
@@ -165,6 +165,61 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
             # re-resolvable (media_id stays None) + breadcrumb; never guess an id.
             led.posts[p.id] = p.model_copy(update={"error_reason": _MEDIA_ID_UNMATCHED})
             log("reconcile", p.id, "media_id_unmatched")
+    return led
+
+
+# ---- ledger-rebuild M2 (Instagram is the source of truth): the INVERSE projection -----------------
+# resolve_media_ids is the FORWARD direction (a live media matched to a ledger post ENRICHES that post).
+# project_imported_media is the INVERSE: a live media matched to NO ledger post is IMPORTED as an
+# ImportedMedia record — "viewed there, not authored here". Together they make the ledger a PROJECTION of
+# what is really on IG: every live media is either an enriched authored Post or a mirrored ImportedMedia.
+
+def project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
+    """Iterate the live /{ig_user}/media inventory; a media whose permalink matches an EXISTING ledger post
+    (any post carrying that public_url — "authored here") is SKIPPED; every OTHER live media is UPSERTED as
+    an ImportedMedia (keyed by its Graph media_id). IDEMPOTENT — a re-run over the same media OVERWRITES the
+    identity fields (latest live snapshot wins) but PRESERVES any metrics/metrics_series the insights read
+    (M3) already filled (the /media list carries no insights). SINGLE-HANDLE scope: META_IG_USER_ID is one
+    credential, so this enumerates ONE handle's media and stamps that credentialed handle on every record
+    (the Live library / wipe-preview scope label). FAIL-OPEN (no creds / empty list / transport failure ->
+    imports nobody, never crashes; mirrors resolve_media_ids). fan-accounts-repost-freely: an ImportedMedia
+    MIRRORS live — it never blocks reposting; there is no supersede/dedupe here."""
+    from fanops import meta_graph
+    from datetime import datetime, timezone
+    log = get_logger(cfg)
+    media = meta_graph.list_user_media(cfg, get=get)
+    if not media:
+        return led                                               # no creds / empty / transport -> import nobody (fail-open)
+    now_z = iso_z(datetime.now(timezone.utc))                    # audit birth stamp for a first-time import
+    # the set of live permalinks we ALREADY author (a ledger post points at them) — shadowed, never imported.
+    authored: set[str] = set()
+    for p in led.posts.values():
+        k = _norm_permalink(p.public_url)
+        if k: authored.add(k)
+    handle = cfg.meta_ig_user_id                                 # the single credentialed handle (scope label)
+    imported = 0
+    for m in media:
+        mid = m.get("id")
+        if not mid:
+            continue                                             # a media with no id is un-keyable -> skip (defensive)
+        if _norm_permalink(m.get("permalink")) in authored:
+            continue                                             # authored here -> the Post is the record, not an import
+        prior = led.imported_media.get(mid)
+        # UPSERT: refresh identity fields from the live snapshot; PRESERVE prior metrics/metrics_series + the
+        # original imported_at (a re-pull must not erase what the insights read filled, nor reset the audit birth).
+        led.add_imported_media(ImportedMedia(
+            media_id=mid,
+            permalink=m.get("permalink"),
+            product_type=m.get("media_product_type"),
+            timestamp=m.get("timestamp"),
+            caption=m.get("caption"),
+            account=handle,
+            metrics=(prior.metrics if prior else {}),
+            metrics_series=(prior.metrics_series if prior else []),
+            error_reason=(prior.error_reason if prior else None),
+            imported_at=(prior.imported_at if prior and prior.imported_at else now_z)))
+        imported += 1
+    log("reconcile", str(handle or "-"), "imported_media_projected", imported=imported, live=len(media))
     return led
 
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.
