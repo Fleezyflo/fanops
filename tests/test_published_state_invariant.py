@@ -141,22 +141,15 @@ def test_post_failed_with_or_without_url_constructs_ok():
 
 
 # ───────────────────────────────────────────────────────────────────────────
-# D16 — is_real_submission_id must EXCLUDE the dryrun_ prefix
-# (track.pull_metrics / reconcile use this to decide whether to hit the backend; a dryrun_
-# submission id is a SYNTHETIC stand-in, not a real Postiz/Zernio id)
+# is_real_submission_id excludes ONLY the fanops_ idempotency token.
+# (dryrun-boundary M2 removed the dryrun_ synthetic-id path entirely — no code stamps a dryrun_
+# submission id any more, since a dryrun post halts `queued` at the boundary and never distributes.
+# The predicate therefore no longer needs to name dryrun_; only the load-bearing fanops_ token is excluded.)
 # ───────────────────────────────────────────────────────────────────────────
 
-def test_is_real_submission_id_excludes_dryrun_prefix():
-    """RED: is_real_submission_id('dryrun_post_xyz') -> False. Today it returns True (only
-    fanops_ is excluded) — meaning track.py + reconcile.py would try to poll Postiz/Zernio for
-    metrics on a synthetic id and either 404 or smear metrics across the wrong post."""
-    assert is_real_submission_id("dryrun_post_xyz") is False
-    assert is_real_submission_id("dryrun_") is False
-
-
 def test_is_real_submission_id_still_excludes_fanops_prefix():
-    """RED (firewall): the existing fanops_ exclusion MUST stay — the idempotency-token contract
-    in crosspost is load-bearing."""
+    """The fanops_ exclusion MUST stay — the crosspost idempotency-token contract is load-bearing
+    (a fanops_ token is a birth stand-in, not a backend-resolvable id)."""
     assert is_real_submission_id("fanops_abc123") is False
 
 
@@ -167,29 +160,28 @@ def test_is_real_submission_id_accepts_real_backend_ids():
 
 
 # ───────────────────────────────────────────────────────────────────────────
-# D1 — DryRunPoster.publish MUST write public_url before advancing state to submitted
-# (so the next step's submitted→published promotion satisfies the D3 invariant)
+# dryrun-boundary M2 — DryRunPoster.publish is a PREVIEW writer: it writes the would-send sidecar
+# and touches NO distribution artifacts (no state / submission_id / public_url). A dry run does not
+# distribute, so it fabricates none of them. (Supersedes the old D1 pin, which required the poster to
+# stamp dryrun://<id> + dryrun_<id> + submitted — the phantom-publish behavior M1/M2 removed.)
 # ───────────────────────────────────────────────────────────────────────────
 
-def test_dryrun_poster_sets_public_url_to_dryrun_scheme(tmp_path):
-    """RED: DryRunPoster.publish(led, post_id) must set post.public_url = f'dryrun://{post_id}'
-    BEFORE advancing state. Today it doesn't — line dryrun.py:31 sets only submission_id and
-    state; public_url stays None and the next _publish_one round produces a ghost-published row.
-
-    This proves the dryrun writer respects the D3 invariant by-construction (not by guard)."""
+def test_dryrun_poster_writes_preview_and_no_artifacts(tmp_path):
+    """The reduced DryRunPoster.publish writes the would-send preview sidecar and leaves the post
+    otherwise untouched: no public_url, no submission_id, state unchanged. Post-M1 a dryrun post is
+    held `queued` at the publish_due boundary and never enters distribution, so the poster has no
+    honest reason to fabricate a permalink or a synthetic id."""
     from fanops.post.dryrun import DryRunPoster
     cfg = Config(root=tmp_path)
-    # Seed accounts.json so cfg has a real artist_name path
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
-    # Submitting state is the prerequisite for the dryrun poster (publish_one's claim step gets it there)
     led.add_post(Post(
         id="post_t", parent_id=clip.id, account="@a", account_id="ig_a",
-        platform=Platform.instagram, caption="c", state=PostState.submitting,
+        platform=Platform.instagram, caption="c", state=PostState.queued,
         media_urls=["file:///clip_1_9x16.mp4"],
     ))
     led.save()
@@ -199,17 +191,10 @@ def test_dryrun_poster_sets_public_url_to_dryrun_scheme(tmp_path):
     led_after = poster.publish(led, "post_t")
 
     p = led_after.posts["post_t"]
-    assert p.public_url, f"DryRunPoster MUST set public_url; got {p.public_url!r}"
-    assert p.public_url.startswith("dryrun://"), (
-        f"DryRunPoster public_url MUST use the dryrun:// scheme so M5's _classify_channel "
-        f"labels it correctly; got {p.public_url!r}")
-    assert p.public_url == "dryrun://post_t", (
-        f"DryRunPoster public_url MUST be content-addressed by post_id so re-publishes don't "
-        f"smear; got {p.public_url!r}")
-    # And the existing contract — submission_id is synthetic, state advanced to submitted —
-    # MUST remain (firewall).
-    assert p.submission_id == "dryrun_post_t"
-    assert p.state is PostState.submitted
+    assert (cfg.scheduled / "post_t.json").exists()            # the would-send preview WAS written
+    assert p.public_url is None                                # no fabricated permalink
+    assert p.submission_id is None                             # no synthetic id
+    assert p.state is PostState.queued                         # state untouched — nothing distributed
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -278,20 +263,20 @@ def test_publish_one_parks_post_without_url_in_needs_reconcile(tmp_path, monkeyp
 
 
 # ───────────────────────────────────────────────────────────────────────────
-# D8 — the Posted tub ghost-row defect (covered by D1+D2+D3 once invariant holds)
-# This test confirms the END-TO-END defense: a dryrun publish through _publish_one produces
-# a Post(state=published, public_url='dryrun://...') — readable by M5's _classify_channel and
-# satisfying the D3 invariant.
+# dryrun-boundary M1+M2 — the END-TO-END truth: a dryrun publish through the real chokepoint
+# (publish_due) HOLDS the post `queued` and writes a would-send preview. It NEVER produces a
+# published row (phantom or otherwise). (Supersedes the old D8 pin, which asserted the dryrun path
+# produced Post(state=published, public_url='dryrun://…') — the ghost row the boundary eliminates.)
 # ───────────────────────────────────────────────────────────────────────────
 
-def test_end_to_end_dryrun_publish_produces_classifiable_posted_row(tmp_path, monkeypatch):
-    """RED: a publish through the dryrun path produces a Post that the Posted tub can render
-    HONESTLY — state=published + public_url='dryrun://post_id' (label 'dryrun' via M5's
-    _classify_channel). Today the same path produces public_url='', which the M5 chip labels
-    'dryrun' too BUT the operator reads as a system failure (no clickable link)."""
-    from fanops.post.dryrun import DryRunPoster
-    from fanops.post.run import _publish_one
+def test_end_to_end_dryrun_publish_holds_queued_with_preview(tmp_path, monkeypatch):
+    """A dryrun advance through publish_due writes the would-send preview sidecar and leaves the
+    post `queued` — the honest 'here's what WOULD ship, nothing was sent' state. No published row,
+    no fabricated permalink: the phantom-published class is gone by construction, not by cleanup."""
+    from fanops.post.run import publish_due
 
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)         # dryrun
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(
@@ -302,21 +287,16 @@ def test_end_to_end_dryrun_publish_produces_classifiable_posted_row(tmp_path, mo
     led.add_post(Post(
         id="post_e2e", parent_id=clip.id, account="@a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
-        media_urls=["file:///clip_1_9x16.mp4"],
+        media_urls=["file:///clip_1_9x16.mp4"], scheduled_time="2020-01-01T00:00:00Z",   # due
     ))
     led.save()
 
-    from fanops.post import run as _run_mod
-    monkeypatch.setattr(_run_mod, "get_poster", lambda cfg, backend: DryRunPoster(cfg), raising=False)
-    monkeypatch.setattr(_run_mod, "_ensure_media", lambda *a, **kw: None, raising=False)
-
-    _publish_one(cfg, "post_e2e", backend="dryrun")
+    summary = publish_due(cfg)
+    assert summary["published"] == 0                           # nothing entered distribution
     p = Ledger.load(cfg).posts["post_e2e"]
-    assert p.state is PostState.published, (
-        f"the happy-path dryrun publish MUST end in published (the dryrun poster sets the URL "
-        f"per D1, then _publish_one promotes per D2's URL-gate); got {p.state.value}")
-    assert p.public_url == "dryrun://post_e2e", f"got {p.public_url!r}"
-    assert p.published_at, "published_at must be stamped on a real published transition"
+    assert p.state is PostState.queued                         # held at the boundary
+    assert p.public_url is None                                # no phantom permalink
+    assert (cfg.scheduled / "post_e2e.json").exists()          # the would-send preview WAS written
 
 
 # ───────────────────────────────────────────────────────────────────────────

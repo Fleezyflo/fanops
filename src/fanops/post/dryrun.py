@@ -1,43 +1,41 @@
-"""Dry-run poster: writes the exact payload it WOULD send (with media + target fields),
-posts nothing. Active whenever the system is not live (cfg.is_live False) — the default-safe state; the global live switch (FANOPS_LIVE / go_live), not any single backend, governs when a real poster takes over."""
+"""Dry-run PREVIEW writer (dryrun-boundary M2): writes the exact payload a real poster WOULD send
+(media + target fields), and touches NOTHING else — no state, no submission_id, no public_url. A dry
+run does not distribute, so it fabricates no distribution artifacts. Active whenever the system is not
+live (cfg.is_live False) — the default-safe state; the global live switch (FANOPS_LIVE / go_live), not
+any single backend, governs when a real poster takes over.
+
+The preview is written at the publish_due boundary (post/run.py), the sole place a dryrun post is now
+processed — post-M1 a dryrun post halts `queued` and never reaches a real poster's publish() path."""
 from __future__ import annotations
 import json
 import os
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import PostState
+from fanops.log import get_logger
+
+def write_preview(cfg: Config, post) -> None:
+    """Write the would-send sidecar `<scheduled>/<post_id>.json` (0o600). Backend-neutral — a flat
+    record of what a real poster WOULD send; the only consumer is the sidecar EXISTENCE check
+    (dryrun-origin marker), never the internal shape, so a neutral summary is honest + sufficient."""
+    payload = {"account": post.account, "account_id": post.account_id,
+               "platform": post.platform.value, "text": post.caption,
+               "media_urls": post.media_urls, "scheduled_time": post.scheduled_time}
+    cfg.scheduled.mkdir(parents=True, exist_ok=True)
+    pp = cfg.scheduled / f"{post.id}.json"
+    pp.write_text(json.dumps(payload, indent=2))
+    try:
+        os.chmod(pp, 0o600)                # owner-only at rest (audit): dryrun payloads carry caption/media/target
+    except OSError as exc:                 # chmod best-effort (e.g. a filesystem that ignores mode); the preview is
+        get_logger(cfg)("publish", post.id, "preview_chmod_failed", err=str(exc)[:120])   # written — trace, don't swallow
+
 
 class DryRunPoster:
+    """Kept as the `not-live` provider handle for get_poster; its publish() now ONLY writes the preview
+    (no distribution artifacts). The publish_due boundary calls write_preview directly, so this path is
+    exercised only by a caller that still routes a dryrun post through a Poster contract."""
     def __init__(self, cfg: Config):
         self.cfg = cfg
 
     def publish(self, led: Ledger, post_id: str) -> Ledger:
-        post = led.posts[post_id]
-        # Backend-neutral would-send preview (no backend payload builder — that path is gone). A flat
-        # record of what a real poster WOULD send; the only consumer is the sidecar EXISTENCE check
-        # (dryrun-origin marker), never the internal shape, so a neutral summary is sufficient + honest.
-        payload = {"account": post.account, "account_id": post.account_id,
-                   "platform": post.platform.value, "text": post.caption,
-                   "media_urls": post.media_urls, "scheduled_time": post.scheduled_time}
-        self.cfg.scheduled.mkdir(parents=True, exist_ok=True)
-        pp = self.cfg.scheduled / f"{post_id}.json"
-        pp.write_text(json.dumps(payload, indent=2))
-        try: os.chmod(pp, 0o600)            # owner-only at rest (audit): dryrun payloads carry caption/media/target
-        except OSError: pass
-        # Stamp a synthetic submission_id so dryrun emulates the real posters (which set this
-        # from a real backend's postSubmissionId). Without it, track.py — which binds metrics rows by
-        # submission_id — can never reach a dryrun post, so classify/amplify/retire never fire and
-        # the learning loop is dead in the default backend (AUDIT C4). The `dryrun_` prefix mirrors
-        # dryrun_media_url's honest stand-in and is collision-free vs real backend ids.
-        # R1/D16: is_real_submission_id now excludes the dryrun_ prefix so track/reconcile don't
-        # try to poll the backend for a synthetic id.
-        post.submission_id = f"dryrun_{post_id}"
-        # R1/D1: stamp a synthetic permalink in the dryrun:// scheme so the next promotion step
-        # (run.py _publish_one: submitted -> published) satisfies the R1 invariant: state=published
-        # MUST carry a non-empty public_url. M5's _classify_channel reads the scheme to label this
-        # row as 'dryrun' in the Posted tub — the operator sees an HONEST row, not a ghost. Without
-        # this line a dryrun publish produced Post(state=published, public_url='') — exactly the 5
-        # ghost rows on 2026-06-29 (5 sidecar JSONs at 05_scheduled/post_*.json).
-        post.public_url = f"dryrun://{post_id}"
-        post.state = PostState.submitted
+        write_preview(self.cfg, led.posts[post_id])    # preview only — no state/id/url (M2 boundary contract)
         return led
