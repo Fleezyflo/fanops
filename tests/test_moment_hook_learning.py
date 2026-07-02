@@ -44,6 +44,19 @@ def test_proven_hook_styles_unions_gated_winners(tmp_path, monkeypatch):
     accts = _accts(cfg, ("@a", [Platform.instagram]), ("@b", [Platform.instagram]))
     assert proven_hook_styles(led, cfg, accts) == ["WIN_A", "WIN_B"]   # ordered, de-duped union
 
+def test_proven_hook_styles_drops_third_person_winners(tmp_path, monkeypatch):
+    # RF5 (viewer-POV at the source): a historically-WINNING but third-person hook is a poisoned example —
+    # priming the generator with it re-teaches the exact anti-pattern. Filter proven styles through the
+    # read-only viewer-POV METER (narration_signature) BEFORE injection: a third-person narration winner is
+    # dropped, a viewer-POV winner survives. Both learning flags forced ON or the filter is never exercised.
+    _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _gated_winner(led, "@a", "you don't expect this")               # viewer-POV winner -> survives
+    _gated_winner(led, "@b", "he stopped answering for a reason")   # third-person narration winner -> dropped
+    accts = _accts(cfg, ("@a", [Platform.instagram]), ("@b", [Platform.instagram]))
+    out = proven_hook_styles(led, cfg, accts)
+    assert "you don't expect this" in out                          # viewer-POV survives the filter
+    assert "he stopped answering for a reason" not in out          # third-person winner starved from priming
+
 def test_proven_hook_styles_master_flag_off(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_VARIANT_LEARNING", raising=False)
     monkeypatch.setenv("FANOPS_MOMENT_HOOK_LEARNING", "on")
