@@ -478,7 +478,11 @@ def test_third_party_skipped_in_both_loops_native_still_processed(tmp_path, monk
                               state=SourceState.catalogued, sha256="n"))
         led.add_source(Source(id="src_tp", source_path=str(cfg.sources / "t.mp4"),
                               origin_kind="third_party", state=SourceState.catalogued, sha256="t"))
+    # advance() calls transcribe_source from BOTH binding sites (pipeline._prewarm AND produce._produce_one),
+    # each a module-level import. Patch BOTH to the SAME spy so the real whisper never runs and every call
+    # is observed on one object (patching only fanops.pipeline let the produce.py call hit real whisper).
     spy = mocker.patch("fanops.pipeline.transcribe_source", side_effect=lambda led, cfg, sid: led)
+    mocker.patch("fanops.produce.transcribe_source", side_effect=spy)
     advance(cfg, base_time="2099-01-01T00:00:00Z")
     sids = [c.args[2] for c in spy.call_args_list]
     assert "src_native" in sids and "src_tp" not in sids
@@ -491,9 +495,12 @@ def test_discovered_source_is_inert(tmp_path, monkeypatch, mocker):
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_disc", source_path=str(cfg.sources / "d.mp4"),
                               state=SourceState.discovered, sha256="d"))
+    # patch BOTH transcribe_source bindings (pipeline + produce) so a leaked call to either is caught (see
+    # the note in test_third_party_skipped_in_both_loops_native_still_processed).
     spy = mocker.patch("fanops.pipeline.transcribe_source", side_effect=lambda led, cfg, sid: led)
+    prod_spy = mocker.patch("fanops.produce.transcribe_source", side_effect=lambda led, cfg, sid: led)
     advance(cfg, base_time="2099-01-01T00:00:00Z")
-    assert spy.call_count == 0 and Ledger.load(cfg).sources["src_disc"].state is SourceState.discovered
+    assert spy.call_count == 0 and prod_spy.call_count == 0 and Ledger.load(cfg).sources["src_disc"].state is SourceState.discovered
 
 def test_native_renders_clip_while_third_party_inert(tmp_path, monkeypatch, mocker):
     # non-regression: with a third_party source present, a native moment STILL renders to a clip, and
