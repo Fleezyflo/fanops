@@ -187,13 +187,60 @@ def postiz_list_integrations(cfg: Config) -> list[PostizIntegration]:
     return out
 
 
+class PostizHealth(NamedTuple):
+    """Typed result of postiz_health_probe (R5/D13). Unlike the bare bool postiz_check_auth returned,
+    this carries the WHY so a UI surface can act on it: `healthy` (does the BACKEND answer, not just
+    nginx), `status_code` (the HTTP code, or None on a network/URL failure), and `hint` (an operator-
+    facing one-liner — the status + a pointer, NEVER the key). The Postiz container's own health check
+    is nginx-only, so a crash-looping Node backend still reports 'healthy' to Docker while returning
+    502 here — this probe goes PAST nginx by exercising the real /integrations endpoint."""
+    healthy: bool
+    status_code: int | None
+    hint: str
+
+
+def postiz_health_probe(cfg: Config) -> PostizHealth:
+    """Exercise the Postiz BACKEND (GET /integrations) and report typed health (R5/D13). This is the
+    honest health read the operator surfaces need: the container's Docker health is nginx-only and LIES
+    when the Node backend crash-loops (docs/POSTIZ_OPS.md), so a 502 here means 'up at the proxy, dead at
+    the app'. NEVER raises (a banner render must never 500) and NEVER echoes the key: a 401 is reported as
+    unhealthy-with-status (the auth-fault answer), a 5xx as unhealthy-with-status (backend down), a bad
+    URL / network error as unhealthy with status_code=None. The swallowed failure is LOGGED with its type
+    + truncated message (W8) so a silent 'unhealthy' is diagnosable; the message carries response text / a
+    network error, never the Authorization header. `postiz_check_auth` is the back-compat bool wrapper."""
+    try:
+        postiz_list_integrations(cfg)
+        return PostizHealth(True, 200, "")
+    except PostizAuthError:
+        # 401 is a real backend answer (bad key), not a crash — report it, don't raise (the banner
+        # surface must not 500). postiz_check_auth still re-raises for the Go-Live 'Save & test' callsite.
+        return PostizHealth(False, 401, "Postiz rejected the API key (401) — check POSTIZ_API_KEY (see docs/POSTIZ_OPS.md).")
+    except Exception as exc:
+        code = _status_of(exc)
+        _log.warning("Postiz health probe failed (treating as unhealthy): %s: %s",
+                     type(exc).__name__, str(exc)[:140])
+        where = f" ({code})" if code is not None else ""
+        return PostizHealth(False, code, f"Postiz backend unreachable{where} — the container's health "
+                                         "check is nginx-only and can lie; see docs/POSTIZ_OPS.md.")
+
+
+def _status_of(exc: Exception) -> int | None:
+    # postiz_list_integrations raises RuntimeError("... failed (<code>): ...") on a non-2xx; pull the
+    # code back out for the health hint. Best-effort — a network error (no code) yields None.
+    import re as _re
+    m = _re.search(r"\((\d{3})\)", str(exc))
+    return int(m.group(1)) if m else None
+
+
 def postiz_check_auth(cfg: Config) -> bool:
     """Cheap auth probe for the Go-Live 'Save & test' button: hit the integrations endpoint and report
     whether the key works. True on success, raise PostizAuthError on 401 (so the surface can name the
     key), False on any other failure (bad URL, 5xx, network) — the test must never crash the request
-    handler. The swallowed (non-401) failure is LOGGED with its type + truncated message so a silent
-    'auth failed' is diagnosable (W8); the message carries response text / a network error, never the
-    key (the Authorization header is never echoed into an exception). NEVER returns or logs the key."""
+    handler. NOW a thin bool wrapper over postiz_health_probe (R5/D13): the typed probe is the single
+    home of the /integrations exercise, this keeps the historical bool contract (INCLUDING the raise-on-
+    401 the Go-Live save flow relies on to name the key). NEVER returns or logs the key."""
+    # The probe never raises; re-derive the legacy raise-on-401 from the typed status so the Go-Live
+    # save surface keeps naming the key. A non-401 unhealthy stays a quiet False (bad URL/5xx/network).
     try:
         postiz_list_integrations(cfg)
         return True
