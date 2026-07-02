@@ -774,6 +774,21 @@ class Config:
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
+    def ig_retention_proof(self) -> bool:
+        # MOL-18c (learning proof, IG-tightening): with this ON, an IG row must carry a present-numeric
+        # `retention` to PROVE the shape and auto-unfreeze learning (track._shape_proves_learning) — IG
+        # can structurally deliver retention (Meta Graph ig_reels_avg_watch_time), so requiring it holds
+        # the IG proof to the full primary set. KILL SWITCH: DEFAULT OFF — the shipped proof exempts
+        # EVERYONE from retention (IG included), so requiring it is NEW behavior, opt-in only. FAIL-OPEN:
+        # a platform-less/unknown row, or a platform that structurally CAN'T deliver retention (TikTok/
+        # youtube), is never gated by this — it proves exactly as today. FREEZE RISK: a REELS row whose
+        # duration is unknown yields no derivable retention (_retention_fraction None, post/metrics.py
+        # ~:444) — with this ON such an IG post would stop proving until a retention-bearing IG row lands.
+        # That is why this is default-off and reversible, not a silent tightening of the live path.
+        v = (os.getenv("FANOPS_IG_RETENTION_PROOF") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def moment_hook_learning(self) -> bool:
         # P4(c): with this ON (and the FANOPS_VARIANT_LEARNING master gate on), request_moments feeds
         # the cross-surface union of gated winning hook STYLES into moment_prompt, so the vision hook
