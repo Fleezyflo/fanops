@@ -343,64 +343,10 @@ def cmd_bulk_send_to_review(cfg: Config, args) -> int:
     return 0
 
 
-def cmd_revert_phantom_published(cfg: Config, args) -> int:
-    """Revert reconcile-only phantom publishes (published + no published_at + no metrics)."""
-    from fanops.studio.actions import revert_phantom_published
-    ids = list(args.post_ids) if args.post_ids else None
-    res = revert_phantom_published(cfg, ids, reason=args.reason, dry_run=args.dry_run)
-    if not res.ok:
-        print(res.error, file=sys.stderr); return 2
-    d = res.detail or {}
-    if d.get("dry_run"):
-        print(f"dry-run: would revert {d.get('would_revert', 0)} phantom publishes")
-    else:
-        print(f"reverted {d.get('reverted', 0)} phantom publishes -> awaiting_approval")
-    skipped = d.get("skipped") or 0
-    if skipped:
-        print(f"skipped (not phantom): {skipped}")
-    unknown = d.get("unknown") or []
-    if unknown:
-        print(f"unknown ids: {', '.join(unknown)}")
-    return 0
-
-
-def cmd_doctor_fix_ghosts(cfg: Config, args) -> int:
-    """R1 migration: heal any pre-existing ghost rows (state=published, public_url='') in a ledger
-    written BEFORE the R1 invariant landed. Reads ledger.json as RAW JSON (bypassing the Pydantic
-    invariant on load — pre-R1 ledgers may already have ghost rows that would now refuse to load),
-    walks the posts, and:
-        - if a sidecar `05_scheduled/<post_id>.json` exists -> the ghost came from DryRunPoster
-          (smoking gun) -> back-fill public_url='dryrun://<post_id>' (M5 _classify_channel labels
-          this as 'dryrun' in the Posted tub — an HONEST row, not a deletion).
-        - else -> origin unknown; park state='needs_reconcile' so the reconciler investigates next
-          pass. Fail-closed: never auto-label as dryrun when the sidecar isn't there.
-    Returns 0 on success, prints a summary. NEVER touches non-ghost posts."""
-    import json
-    led_path = cfg.ledger_path
-    if not led_path.exists():
-        print(f"no ledger at {led_path}"); return 0
-    raw = json.loads(led_path.read_text())
-    posts = raw.get("posts", [])
-    healed_dryrun = 0; parked_unknown = 0; clean = 0
-    for p in posts:
-        if p.get("state") != "published":
-            clean += 1; continue
-        url = (p.get("public_url") or "").strip()
-        if url:
-            clean += 1; continue
-        # Ghost row.
-        post_id = p.get("id", "")
-        sidecar = cfg.scheduled / f"{post_id}.json"
-        if sidecar.exists():
-            p["public_url"] = f"dryrun://{post_id}"
-            healed_dryrun += 1
-        else:
-            p["state"] = "needs_reconcile"
-            p["error_reason"] = "publish_missing_url_pre_r1: ghost row pre-R1 with no dryrun sidecar — investigate"
-            parked_unknown += 1
-    led_path.write_text(json.dumps(raw, indent=2))
-    print(f"doctor-fix-ghosts: healed_dryrun={healed_dryrun} parked_unknown={parked_unknown} clean={clean}")
-    return 0
+# dryrun-boundary M3: cmd_revert_phantom_published + cmd_doctor_fix_ghosts are DELETED. Both existed
+# only to detect/heal reconcile-laundered or pre-R1 ghost `published` rows — a class the boundary makes
+# unconstructable. The migration-on-read back-fill they mirrored is gone from Ledger.load; the 29 legacy
+# rows were pruned outright (M4). No detector, no healer, no CLI verb.
 
 
 def cmd_cutover(cfg: Config, args) -> int:
@@ -598,7 +544,6 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("p4-bias")              # P4(b) cross-account reach dim-bias; inert unless flag on + validated
     p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
     p_res.add_argument("status", choices=["published", "failed", "analyzed", "retired"]); p_res.add_argument("--url", default=None)
-    sub.add_parser("doctor-fix-ghosts", help="R1 migration: heal pre-R1 ghost rows (state=published, public_url='') by back-filling dryrun:// or parking in needs_reconcile")
     p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
     p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
@@ -620,10 +565,6 @@ def main(argv: list[str] | None = None) -> int:
     p_bsr = sub.add_parser("bulk-send-to-review", help="(R3) revert posts to awaiting_approval; clears scheduled_time/public_url/metrics/published_at")
     p_bsr.add_argument("post_ids", nargs="+")
     p_bsr.add_argument("--reason", required=True, help="operator intent recorded in the audit (e.g. bad_batch_revert)")
-    p_ppp = sub.add_parser("purge-phantom-publishes", help="revert reconcile-only phantom publishes (published, no published_at, no metrics)")
-    p_ppp.add_argument("post_ids", nargs="*", help="optional ids; omit to auto-detect all phantoms")
-    p_ppp.add_argument("--reason", required=True, help="operator intent recorded in the audit")
-    p_ppp.add_argument("--dry-run", action="store_true", help="report what would revert without writing")
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
     p_studio.add_argument("--port", type=int, default=8787)
@@ -843,14 +784,10 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "compose":  return cmd_compose(cfg, args)
     if args.cmd == "resolve":
         return cmd_resolve(cfg, args)
-    if args.cmd == "doctor-fix-ghosts":
-        return cmd_doctor_fix_ghosts(cfg, args)
     if args.cmd == "audit":
         return cmd_audit(cfg, args)
     if args.cmd == "bulk-send-to-review":
         return cmd_bulk_send_to_review(cfg, args)
-    if args.cmd == "purge-phantom-publishes":
-        return cmd_revert_phantom_published(cfg, args)
     if args.cmd == "unhold":
         # RUNTIME backlog (f): clear a brand-risk hold WITHOUT a hand-edit of ledger.json. When a
         # clip was parked in `held` (held=True, held_reason set) by the brand-risk gate, the

@@ -1,12 +1,14 @@
-"""Phantom publish cleanup — reconcile-only promoted rows without published_at."""
+"""Reconcile promotes a needs_reconcile row to published WITH a published_at stamp.
+
+(dryrun-boundary M3 deleted the phantom-publish DETECTOR + revert action + their tests — the phantom
+`published` class is now unconstructable. The one test that outlived them is this reconcile-promotion
+characterization: it's about reconcile stamping published_at, not about the deleted scaffolding.)"""
 from __future__ import annotations
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Clip, Source, Moment, Platform, PostState, ClipState, MomentState, Fmt
 from fanops.reconcile import reconcile_posts
-from fanops.studio.actions import revert_phantom_published
-from fanops.studio.views_results import is_phantom_published
 from fanops.timeutil import iso_z
 
 _NOW = datetime(2026, 6, 29, 12, 0, 0, tzinfo=timezone.utc)
@@ -30,28 +32,6 @@ def _seed(cfg, pid, *, state=PostState.published, platform=Platform.tiktok, publ
     led.save()
 
 
-def test_is_phantom_published_detects_reconcile_only_row(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed(cfg, "p1", published_at=None)
-    p = Ledger.load(cfg).posts["p1"]
-    assert is_phantom_published(p, cfg=cfg)
-
-
-def test_is_phantom_published_keeps_real_ship(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed(cfg, "p1", published_at=_PAST)
-    p = Ledger.load(cfg).posts["p1"]
-    assert not is_phantom_published(p, cfg=cfg)
-
-
-def test_is_phantom_published_keeps_analyzed_with_metrics(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed(cfg, "p1", state=PostState.analyzed, platform=Platform.instagram,
-          public_url="https://www.instagram.com/reel/abc/", metrics={"views": 100, "lift_score": 1.0})
-    p = Ledger.load(cfg).posts["p1"]
-    assert not is_phantom_published(p, cfg=cfg)
-
-
 def test_reconcile_stamps_published_at_on_promote(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, "p1", state=PostState.needs_reconcile, published_at=None, public_url="")
@@ -60,35 +40,3 @@ def test_reconcile_stamps_published_at_on_promote(tmp_path):
     p = led.posts["p1"]
     assert p.state is PostState.published
     assert p.published_at and p.published_at.endswith("Z")
-
-
-def test_revert_phantom_published_clears_and_keeps_analyzed_ig(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed(cfg, "tt1", published_at=None)
-    _seed(cfg, "tt2", published_at=None)
-    _seed(cfg, "ig1", state=PostState.analyzed, platform=Platform.instagram,
-          public_url="https://www.instagram.com/reel/abc/", metrics={"views": 50, "lift_score": 2.0})
-    res = revert_phantom_published(cfg, None, reason="test_cleanup")
-    assert res.ok and res.detail["reverted"] == 2
-    led = Ledger.load(cfg)
-    assert led.posts["tt1"].state is PostState.awaiting_approval
-    assert not led.posts["tt1"].submission_id
-    assert led.posts["ig1"].state is PostState.analyzed
-    assert led.posts["ig1"].metrics.get("views") == 50
-
-
-def test_revert_phantom_published_dry_run(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed(cfg, "p1", published_at=None)
-    res = revert_phantom_published(cfg, None, reason="dry", dry_run=True)
-    assert res.ok and res.detail["would_revert"] == 1
-    assert Ledger.load(cfg).posts["p1"].state is PostState.published
-
-
-def test_revert_phantom_sidecar_evidence(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed(cfg, "p1", published_at=None)
-    cfg.scheduled.mkdir(parents=True, exist_ok=True)
-    (cfg.scheduled / "p1.json").write_text('{"text": "dryrun payload"}')
-    res = revert_phantom_published(cfg, ["p1"], reason="dryrun_sidecar")
-    assert res.ok and res.detail["evidence"]["p1"] == "dryrun_sidecar+live_url"

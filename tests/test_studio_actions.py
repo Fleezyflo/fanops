@@ -68,7 +68,9 @@ def test_reschedule_unknown_post_rejected(tmp_path):
 
 def test_reschedule_non_queued_rejected(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    led.posts["p_edit"].state = PostState.published; led.save()
+    led.posts["p_edit"].state = PostState.published
+    led.posts["p_edit"].public_url = "https://www.instagram.com/reel/p_edit/"   # R1: a published row carries a permalink
+    led.save()
     res = reschedule_post(cfg, "p_edit", _z(NOW + timedelta(hours=8)), now=NOW)
     assert res.ok is False and "queued" in res.error.lower()
 
@@ -517,26 +519,10 @@ def test_crosspost_warms_target_aspect_before_opening_the_lock(tmp_path, monkeyp
     assert r.ok and order[:2] == ["warm", "txn"], order        # warm ran lock-free BEFORE the transaction
 
 
-def test_publish_now_live_dryrun_url_rejected(tmp_path, monkeypatch, mocker):
-    import json
-    from fanops.studio.actions import publish_now
-    monkeypatch.setenv("FANOPS_LIVE", "1")
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    cfg = Config(root=tmp_path); _seed(cfg)
-    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps({"accounts": [
-        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-         "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}]}))
-    mocker.patch("fanops.post.run.publish_post", return_value="published")
-    dry_post = Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
-                    platform=Platform.instagram, caption="OLD", state=PostState.published,
-                    public_url="dryrun://p_edit")
-    led_guard = Ledger.load(cfg)
-    led_after = Ledger.load(cfg); led_after.posts["p_edit"] = dry_post
-    mocker.patch("fanops.ledger.Ledger.load", side_effect=[led_guard, led_after, led_after])
-    res = publish_now(cfg, "p_edit", confirmed=True)
-    assert res.ok is False
-    assert "dryrun" in (res.error or "").lower()
+# dryrun-boundary M3: test_publish_now_live_dryrun_url_rejected DELETED. It pinned the "LIVE publish
+# accidentally produced a dryrun:// url -> reject" guard, which M3 removed — post-boundary nothing writes
+# a dryrun:// url and a dryrun provider is boundary-skipped before _publish_one, so a published row with
+# a dryrun:// url is unconstructable. The guarded-against state can no longer exist.
 
 
 # ---- Sprint 1: recover_posts (failed-tab bulk recovery) ----

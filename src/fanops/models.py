@@ -284,16 +284,17 @@ class Post(BaseModel):
         # cli.cmd_resolve, a stray Post(...) constructor) can produce the ghost row Post(state=published,
         # public_url=""). Five such rows on 2026-06-29 (5 sidecar JSONs at 05_scheduled/post_*.json) made the
         # operator say "I can't see them" — they SHIPPED to dryrun and the Posted tub had nothing to render.
-        # The dryrun path is honored: a 'dryrun://<post_id>' is a valid permalink (M5 _classify_channel
-        # labels it 'dryrun'); failed/error/etc are NEGATIVE terminals and may legitimately lack a URL (a
-        # pre-network error has nothing to point at), so they're NOT gated here.
+        # A terminal-positive row therefore requires a REAL permalink (dryrun-boundary M3: a dryrun post
+        # never reaches a terminal state — it halts `queued` at the publish_due boundary — so there is no
+        # 'dryrun://' escape any more). failed/error/etc are NEGATIVE terminals and may legitimately lack a
+        # URL (a pre-network error has nothing to point at), so they're NOT gated here.
         if self.state in _POST_TERMINAL_REQUIRES_URL:
             if not (self.public_url or "").strip():
                 raise ValueError(
                     f"Post(id={self.id!r}, state={self.state.value}) requires a non-empty public_url — "
-                    f"'published'/'analyzed'/'retired' mean the operator has a permalink. A backend that "
-                    f"can't return one MUST park in needs_reconcile until the reconciler back-fills it; "
-                    f"a dryrun poster MUST write 'dryrun://<post_id>' before promoting (R1 invariant)."
+                    f"'published'/'analyzed'/'retired' mean the operator has a real permalink. A backend "
+                    f"that can't return one MUST park in needs_reconcile until the reconciler back-fills it "
+                    f"(R1 invariant)."
                 )
         return self
 
