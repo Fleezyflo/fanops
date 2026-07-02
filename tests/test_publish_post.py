@@ -168,3 +168,81 @@ def test_publish_records_the_integration_id_it_used(tmp_path, monkeypatch):
     _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")          # account_id="98432"
     assert publish_post(cfg, "p1") == "queued"                                  # held at the boundary (dryrun)
     assert Ledger.load(cfg).posts["p1"].account_id == "98432"                   # the addressed id is preserved
+
+
+# --- Degradation honesty (PRD .claude/prds/degradation-honesty.prd.md) ---
+# Every fallback/degradation leaves a trace at the right level; the safe value each path lands on is
+# BYTE-IDENTICAL (these tests prove the trace, not a behavior change).
+
+def test_produce_one_ledger_load_failure_logs_error_not_warn(tmp_path, monkeypatch):
+    # #9 (M1): a ledger-load failure inside _produce_one HALTS artifact production for that source and
+    # must log at outcome `error` (log.py is level-less; `error` is the outcome alerting keys on), NOT the
+    # `warn` it used to. Assert via the injected `log` spy the site already accepts.
+    from fanops.produce import _produce_one
+    from fanops.models import Fmt
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr("fanops.produce.Ledger.load", staticmethod(lambda c: (_ for _ in ()).throw(RuntimeError("disk gone"))))
+    seen: list[tuple] = []
+    def spy(stage, unit, outcome, **f): seen.append((stage, unit, outcome, f))
+    res = _produce_one(cfg, "src_x", {Fmt.r9x16}, log=spy)
+    assert res.error_reason and "disk gone" in res.error_reason                 # safe value: still fail-open, reason stamped
+    load_rows = [r for r in seen if r[0] == "produce" and r[1] == "src_x"]
+    assert load_rows and all(r[2] == "error" for r in load_rows)                # the load-failure row is `error`, not `warn`
+
+def test_run_all_ledger_load_failure_logs_error_not_warn(tmp_path, monkeypatch):
+    # #9 (M1): the SECOND ledger-load site — run_all's own load — halts the whole producer pass and must
+    # ALSO log `error`. Fixing only _produce_one half-fixes the register finding.
+    from fanops.produce import run_all
+    from fanops.models import Fmt
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr("fanops.produce.Ledger.load", staticmethod(lambda c: (_ for _ in ()).throw(RuntimeError("disk gone"))))
+    seen: list[tuple] = []
+    def spy(stage, unit, outcome, **f): seen.append((stage, unit, outcome, f))
+    run_all(cfg, {Fmt.r9x16}, spy)                                               # NEVER raises (returns early on load fail)
+    load_rows = [r for r in seen if r[0] == "produce" and r[1] == "-"]
+    assert load_rows and all(r[2] == "error" for r in load_rows)                # run_all's load-failure row is `error`
+
+def test_publish_backend_fallback_logs_when_it_fires(tmp_path, monkeypatch):
+    # #10 (M2): publish_backend_for_post falls back to `cfg.poster_backend or "dryrun"` when Accounts
+    # resolution raises. The SAFE value is unchanged; the only gap was no breadcrumb. Prove the fallback
+    # value AND that it now leaves a trace.
+    from fanops.post.compress import publish_backend_for_post
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr("fanops.accounts.Accounts.load", staticmethod(lambda c: (_ for _ in ()).throw(RuntimeError("accounts corrupt"))))
+    post = Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x")
+    assert publish_backend_for_post(cfg, post) == "dryrun"                      # safe value byte-identical (no poster_backend set)
+    assert "backend_fallback" in cfg.log_path.read_text()                       # breadcrumb landed
+
+def test_publish_backend_no_log_on_happy_path(tmp_path):
+    # #10 (M2): silence when the fallback does NOT fire — a clean resolve emits NO breadcrumb (manufactured
+    # noise is a half-fix too).
+    from fanops.post.compress import publish_backend_for_post
+    from fanops.accounts import add_account, set_backend
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active"); set_backend(cfg, "@tt", "tiktok", "zernio")
+    post = Post(id="p", parent_id="c", account="@tt", account_id="1", platform=Platform.tiktok, caption="x")
+    assert publish_backend_for_post(cfg, post) == "zernio"                      # resolved cleanly, no fallback
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "backend_fallback" not in log                                       # NOT logged on the happy path
+
+def test_resolve_publish_account_id_fallback_logs_when_it_fires(tmp_path):
+    # #10 (M2): _resolve_publish_account_id returns None (the frozen post.account_id then stands) when the
+    # per-channel lookup raises. Safe value (None) unchanged; breadcrumb it when the frozen-id fallback fires.
+    from fanops.post.run import _resolve_publish_account_id
+    cfg = Config(root=tmp_path)
+    class _Boom:
+        def resolve_account_id(self, handle, platform=None): raise RuntimeError("no mapping")
+    post = Post(id="p", parent_id="c", account="@a", account_id="frozen_id", platform=Platform.instagram, caption="x")
+    assert _resolve_publish_account_id(_Boom(), post, cfg=cfg) is None          # safe value: None -> frozen id stands
+    assert "account_id_fallback" in cfg.log_path.read_text()                    # breadcrumb landed
+
+def test_resolve_publish_account_id_no_log_on_happy_path(tmp_path):
+    # #10 (M2): a clean resolve returns the id and emits NO breadcrumb.
+    from fanops.post.run import _resolve_publish_account_id
+    cfg = Config(root=tmp_path)
+    class _Ok:
+        def resolve_account_id(self, handle, platform=None): return "live_id"
+    post = Post(id="p", parent_id="c", account="@a", account_id="frozen_id", platform=Platform.instagram, caption="x")
+    assert _resolve_publish_account_id(_Ok(), post, cfg=cfg) == "live_id"       # resolved cleanly
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "account_id_fallback" not in log                                    # NOT logged on the happy path

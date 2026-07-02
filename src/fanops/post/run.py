@@ -163,14 +163,17 @@ def _materialize_variant_media(led: Ledger, cfg: Config, post: Post, accts: Acco
     post.render_id = plan.render_id
     post.media_urls = [f"file://{r.path}"]
 
-def _resolve_publish_account_id(accounts: Accounts, post: Post) -> str | None:
+def _resolve_publish_account_id(accounts: Accounts, post: Post, *, cfg: Config | None = None) -> str | None:
     """The CURRENT poster/integration id for this post's channel, re-resolved at publish time so a Go-Live
     integration REMAP since crosspost reaches the post (account_id is otherwise frozen onto the post at
     crosspost). FAIL-OPEN: an unresolvable channel (removed account / empty id) returns None and the frozen
-    post.account_id stands — never crash a publish over a mapping lookup."""
+    post.account_id stands — never crash a publish over a mapping lookup. #10: when cfg is threaded in, the
+    fallback breadcrumbs so the frozen-id use is visible, not silent."""
     try:
         return accounts.resolve_account_id(post.account, post.platform)
-    except Exception:
+    except Exception as e:
+        if cfg is not None:                              # #10: breadcrumb when the frozen-id fallback fires (safe value None unchanged)
+            get_logger(cfg)("publish", getattr(post, "id", "-"), "account_id_fallback", account=post.account, platform=post.platform.value, err=str(e)[:120])
         return None
 
 
@@ -365,7 +368,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             log("publish", post.id, "dryrun_not_distributed",   # halts here at the processing<->distribution seam,
                 account=post.account, platform=post.platform.value)   # staying `queued` — never claimed, never a
             continue                                   # phantom-published row. A live-flip re-derives this each pass.
-        acct_id = _resolve_publish_account_id(accounts, post)
+        acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         if provider != "dryrun" and not ((acct_id or post.account_id or "").strip()):
             no_integration_id += 1                     # CULM-1: never claim a post we can't address; stays queued
             log("publish", post.id, "no_integration_id", account=post.account, platform=post.platform.value)
@@ -401,4 +404,4 @@ def publish_post(cfg: Config, post_id: str) -> str | None:
         get_logger(cfg)("publish", post_id, "dryrun_not_distributed",
                         account=post.account, platform=post.platform.value)
         return PostState.queued.value
-    return _publish_one(cfg, post_id, provider, account_id=_resolve_publish_account_id(accounts, post))
+    return _publish_one(cfg, post_id, provider, account_id=_resolve_publish_account_id(accounts, post, cfg=cfg))   # #10: cfg breadcrumbs a frozen-id fallback

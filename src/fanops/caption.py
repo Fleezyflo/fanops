@@ -67,13 +67,17 @@ def _tags_in(caption: str | None) -> list[str]:
     text); used as the fallback when the structured `hashtags` array is empty."""
     return _TAG_RE.findall(caption or "")
 
-def _platform_of(surface: str) -> Platform:
+def _platform_of(surface: str, *, cfg: Config | None = None) -> Platform:
     """The platform half of an 'account/platform' surface key. An unknown/missing platform falls
-    back to instagram (a sane default) rather than crashing an autonomous ingest on a typo'd key."""
+    back to instagram (a sane default) rather than crashing an autonomous ingest on a typo'd key —
+    but the coercion is now LOUD (finding #8): when cfg is threaded in from ingest_captions the bad
+    key is logged, so an IG hashtag set landing on a mis-keyed surface is a signal, not a silent swap."""
     tail = (surface or "").rsplit("/", 1)[-1].strip().lower()
     try:
         return Platform(tail)
     except ValueError:
+        if cfg is not None:                              # loud-coerce: never crash the run, but leave a trace
+            get_logger(cfg)("captions", surface or "-", "platform_coerced", bad_key=tail, coerced_to="instagram")
         return Platform.instagram
 
 # DEFAULT English off-brand / begging / main-brand-linkage anti-patterns. Operator-overridable
@@ -247,15 +251,16 @@ def _request_surfaces(cfg: Config, clip_id: str) -> tuple[set, dict, dict, list]
     content_tags = req.get("content_tags") or []
     return requested, surface_corpus, surface_platform, content_tags
 
-def _platform_for_surface(surface: str, surface_platform: dict) -> Platform:
+def _platform_for_surface(surface: str, surface_platform: dict, *, cfg: Config | None = None) -> Platform:
     """AGENT-6: the platform we ASKED to caption (from the request record), not a re-parse of the model's
     echoed surface string. A mangled model surface can no longer vet/cap under the wrong platform's discovery
-    set. Falls back to the legacy tail-parse ONLY when the request omits the platform (older on-disk request)."""
+    set. Falls back to the legacy tail-parse ONLY when the request omits the platform (older on-disk request).
+    cfg is passed through so a bad-key tail-parse coercion (#8) breadcrumbs at the _platform_of layer."""
     p = surface_platform.get(surface)
     if p:
         try: return Platform(p)
         except ValueError: pass
-    return _platform_of(surface)
+    return _platform_of(surface, cfg=cfg)   # #8: pass cfg so a bad-key tail-parse coercion breadcrumbs
 
 
 def _caption_entry(tags: list, hashtags_raw: list, *, fallback: bool = False, tag_sources: dict | None = None) -> dict:
@@ -319,7 +324,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         # ...THEN the hashtags are vetted: the model's tags filtered to the reach-vetted set,
         # reach-ordered, backfilled, and HARD-capped at 4 (operator rule). Whatever it returned
         # (5-15 random words) becomes <=4 proven tags. The posted caption IS that vetted tag line.
-        plat = _platform_for_surface(item.surface, surface_platform)   # AGENT-6: vet under the REQUESTED platform
+        plat = _platform_for_surface(item.surface, surface_platform, cfg=cfg)   # AGENT-6: vet under the REQUESTED platform (#8: cfg breadcrumbs a bad key)
         tags, sources = vet_hashtags_traced(item.hashtags or _tags_in(item.caption), plat,
                             src.language if src else None, store=load_store(cfg),   # M4: live store when present
                             corpus=surface_corpus.get(item.surface),                # B1: per-persona curated pool leads (the hashtag differentiator)
@@ -335,7 +340,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     # let the clip through to the operator's Review queue, logged. This is NOT F74's "silent default to
     # publish": the post is born awaiting_approval, so a human still reviews it before anything ships.
     for surface in sorted(missing):
-        plat = _platform_for_surface(surface, surface_platform)   # AGENT-6: vet under the REQUESTED platform
+        plat = _platform_for_surface(surface, surface_platform, cfg=cfg)   # AGENT-6: vet under the REQUESTED platform (#8: cfg breadcrumbs a bad key)
         tags, sources = vet_hashtags_traced(None, plat, src.language if src else None, store=load_store(cfg),
                             corpus=surface_corpus.get(surface),   # B1: the curated corpus leads the seed (the hashtag differentiator)
                             content=content_tags)              # ...and the clip's content tags STILL reach the line (the 83% case)

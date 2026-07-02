@@ -569,3 +569,31 @@ def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
     mocker.patch("fanops.caption.vet_hashtags_traced", side_effect=spy)
     ingest_captions(led, cfg, "clip_1")
     assert captured["plat"] == Platform.tiktok               # vetted under the REQUESTED platform, not the parsed @a/instagram
+
+
+# ---- #8 (degradation-honesty M1): a malformed surface platform coerces to instagram LOUDLY, never silently ----
+def test_platform_of_coercion_logs_the_bad_key(tmp_path):
+    # A surface whose platform tail is NOT a known Platform (and whose request omits a valid platform) is
+    # tolerated (coerced to instagram — autonomous ingest must not crash on a typo'd key) but the coercion
+    # is now LOGGED with the bad key, not swallowed. Structural: cfg is threaded from the ingest_captions
+    # call sites into _platform_of so the pure parser can breadcrumb.
+    from fanops.caption import _platform_of
+    cfg = Config(root=tmp_path)
+    assert _platform_of("@a/nonsense", cfg=cfg) == Platform.instagram          # safe value: still coerces, never crashes
+    log = cfg.log_path.read_text()
+    assert "platform_coerced" in log and "nonsense" in log                     # the bad key IS breadcrumbed
+
+def test_platform_of_no_log_on_known_platform(tmp_path):
+    # Silence when the tail IS a known platform — no manufactured noise on the happy path.
+    from fanops.caption import _platform_of
+    cfg = Config(root=tmp_path)
+    assert _platform_of("@a/tiktok", cfg=cfg) == Platform.tiktok               # parses cleanly
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "platform_coerced" not in log                                       # NOT logged on a valid tail
+
+def test_platform_of_coercion_backward_compatible_without_cfg():
+    # The pure 1-arg call still coerces silently (no cfg -> nothing to log with); existing callers/tests
+    # that pass no cfg keep their exact behavior.
+    from fanops.caption import _platform_of, _platform_for_surface
+    assert _platform_of("@a/nonsense") == Platform.instagram                   # 1-arg still works, coerces
+    assert _platform_for_surface("@a/nonsense", {}) == Platform.instagram      # 2-arg wrapper still works
