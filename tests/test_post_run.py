@@ -17,6 +17,41 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z"):
     led.save()                                          # persist so the self-loading publish_due sees it
 
 
+# dryrun-boundary (fix/dryrun-boundary-m1): publish_due now SKIPS a dryrun post (system NOT live) — it stays
+# `queued`, never `published` (dryrun must never enter the distribution rail / mint a phantom-published row).
+# Tests below that exercise a general PUBLISH MECHANISM (published_at stamp, 06_published archive, upload-once,
+# idempotency, only-due filtering, no-deadlock) used the dryrun poster only as a stand-in to REACH published.
+# Convert them to a genuinely LIVE backend so the post actually enters the rail. Helpers:
+#   _live(monkeypatch)      -> flip the process to a live postiz deployment (is_live True, effective_provider=postiz)
+#   _stub_ok_poster(...)    -> replace run.get_poster with a stub that drives submitted + a REAL https permalink
+#                              (the submitted->published gate in run.py refuses a missing/dryrun URL), so no real
+#                              network call happens. _queued's posts get an already-http media_url so _ensure_media
+#                              passes it through (no upload) on the live backend.
+_LIVE_PERMALINK = "https://www.instagram.com/reel/AAA/"
+
+
+def _live(monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+
+
+def _stub_ok_poster(mocker, cfg):
+    import fanops.post.run as run
+    class _OkPoster:
+        def __init__(self, cfg): pass
+        def publish(self, led_, post_id):
+            led_.posts[post_id].state = PostState.submitted; led_.posts[post_id].submission_id = "s"
+            led_.posts[post_id].public_url = _LIVE_PERMALINK   # real permalink -> submitted promotes to published
+            return led_
+    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
+
+
+def _http_media(led, *pids):
+    for pid in pids:
+        led.posts[pid].media_urls = ["https://h/v.mp4"]   # already-http -> passes through, no live upload
+    led.save()
+
+
 def test_is_fatal_auth_error_matches_by_type_not_substring():
     # AUDIT H8: the halt decision is now a TYPE check (PostizAuthError), not "401"/"API_KEY"
     # in the message. So it fires on a reworded auth error (under-fire fixed) and does NOT fire on a
@@ -27,24 +62,26 @@ def test_is_fatal_auth_error_matches_by_type_not_substring():
     assert _is_fatal_auth_error(RuntimeError("postiz 503: upstream 401abc")) is False  # "401" but not auth
     assert _is_fatal_auth_error(RuntimeError("POSTIZ_API_KEY missing")) is False       # substring, not the type
 
-def test_publishes_only_due_posts(tmp_path, monkeypatch):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)  # dryrun
+def test_publishes_only_due_posts(tmp_path, monkeypatch, mocker):
+    _live(monkeypatch)                                  # live backend so a due post actually enters the rail
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="due", cid="c_due", when="2020-01-01T00:00:00Z")     # past => due
     _queued(led, cfg, pid="future", cid="c_future", when="2999-01-01T00:00:00Z")  # not due
+    _http_media(led, "due", "future"); _stub_ok_poster(mocker, cfg)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     assert led.posts["due"].state is PostState.published
     assert led.posts["future"].state is PostState.queued       # held back (FIX F12)
 
-def test_publish_stamps_published_at(tmp_path, monkeypatch):
+def test_publish_stamps_published_at(tmp_path, monkeypatch, mocker):
     # content-lifecycle Phase 2: the submitted->published transition stamps a TRUE publish time (aware).
     # approve_post must NOT touch it (published_at is immutable after the stamp).
     from fanops.timeutil import parse_iso, iso_z
     from datetime import datetime, timezone
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)  # dryrun
+    _live(monkeypatch)                                  # live backend so the post reaches the published stamp
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pp", cid="c_pp", when="2020-01-01T00:00:00Z")
+    _http_media(led, "pp"); _stub_ok_poster(mocker, cfg)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     p = led.posts["pp"]
@@ -54,14 +91,15 @@ def test_publish_stamps_published_at(tmp_path, monkeypatch):
     led.approve_post("pp", now_iso=iso_z(datetime.now(timezone.utc)))   # a no-op on a non-awaiting post
     assert led.posts["pp"].published_at == before                       # untouched by approve
 
-def test_publish_writes_06_published_archive(tmp_path, monkeypatch):
+def test_publish_writes_06_published_archive(tmp_path, monkeypatch, mocker):
     # content-lifecycle Phase 3: a published post writes 06_published/<day>/<id>.json with expected fields;
     # the day == the post's published_at day.
     import json
     from fanops.timeutil import parse_iso
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)  # dryrun
+    _live(monkeypatch)                                  # live backend so the publish (and its archive) fires
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pa", cid="c_pa", when="2020-01-01T00:00:00Z")
+    _http_media(led, "pa"); _stub_ok_poster(mocker, cfg)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     day = parse_iso(led.posts["pa"].published_at).date().isoformat()
@@ -75,9 +113,10 @@ def test_archive_fail_open_write(tmp_path, monkeypatch, mocker):
     # A write_text failure on the archive record must NOT strand the live post: it still reaches published
     # (archive swallowed). Scope to 06_published only so the ledger's own atomic write is unaffected.
     import pathlib
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    _live(monkeypatch)                                  # live backend so the post publishes (and tries to archive)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pw", cid="c_pw", when="2020-01-01T00:00:00Z")
+    _http_media(led, "pw"); _stub_ok_poster(mocker, cfg)
     real_write = pathlib.Path.write_text
     def fake_write(self, *a, **k):
         if "06_published" in str(self): raise OSError("disk full")
@@ -90,9 +129,10 @@ def test_archive_fail_open_mkdir(tmp_path, monkeypatch, mocker):
     # A mkdir PermissionError on the published dir must also be swallowed — the post still publishes.
     # Scope the failure to 06_published only (a blanket Path.mkdir mock would also break the ledger save).
     import pathlib
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    _live(monkeypatch)                                  # live backend so the post publishes (and tries to mkdir the archive)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pm", cid="c_pm", when="2020-01-01T00:00:00Z")
+    _http_media(led, "pm"); _stub_ok_poster(mocker, cfg)
     real_mkdir = pathlib.Path.mkdir
     def fake_mkdir(self, *a, **k):
         if "06_published" in str(self): raise PermissionError("nope")
@@ -102,22 +142,26 @@ def test_archive_fail_open_mkdir(tmp_path, monkeypatch, mocker):
     assert Ledger.load(cfg).posts["pm"].state is PostState.published
 
 def test_publish_uploads_media_once_and_advances(tmp_path, monkeypatch, mocker):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    # dryrun-boundary: this used the dryrun poster only to REACH published. Run it LIVE so the two posts
+    # actually enter the rail; the property under test is the F44 cache surviving the per-post
+    # claim->network->finalize round-trip (ensure_clip_media runs once per post, clip.media_url persists,
+    # both posts resolve to the same url). The real single-upload-across-posts property is locked by the
+    # sibling test_publish_uploads_clip_media_once_across_posts_live; here we stub the uploader so no network
+    # is hit and keep the ensure_clip_media spy (call_count == 2 = once per post).
+    _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="clip_1", when="2020-01-01T00:00:00Z")
-    _queued(led, cfg, pid="p2", cid="clip_1", when="2020-01-01T00:00:00Z")  # same clip, 2 posts
-    # spy ensure_clip_media to prove one upload per clip
+    _queued(led, cfg, pid="p2", cid="clip_1", when="2020-01-01T00:00:00Z")  # same clip, 2 posts (no media_urls -> ensure runs)
+    mocker.patch("fanops.post.get_media_uploader",
+                 return_value=lambda cfg_, path, **kw: "https://cdn.postiz.test/clip_1.mp4")
+    _stub_ok_poster(mocker, cfg)
+    # spy ensure_clip_media to prove it runs once per post (the cache-survival property)
     import fanops.post.run as run
     spy = mocker.spy(run, "ensure_clip_media")
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     assert led.posts["p1"].state is PostState.published and led.posts["p2"].state is PostState.published
-    assert led.posts["p1"].media_urls[0].startswith("file://")
-    # dryrun cannot prove "one real upload" (its uploader just regenerates the same file:// string), but
-    # it DOES prove the F44 cache SURVIVES the per-post claim->network->finalize round-trip: ensure runs
-    # once per post (spy=2), clip.media_url is persisted by the first post's finalize, and both posts
-    # resolve to the same url. The actual single-upload-across-posts property is locked on a LIVE backend
-    # by test_publish_uploads_clip_media_once_across_posts_live below.
+    assert led.posts["p1"].media_urls[0] == "https://cdn.postiz.test/clip_1.mp4"
     assert spy.call_count == 2 and led.clips["clip_1"].media_url
     assert led.posts["p1"].media_urls == led.posts["p2"].media_urls
 
@@ -150,19 +194,23 @@ def test_publish_uploads_clip_media_once_across_posts_live(tmp_path, monkeypatch
     assert led.posts["p1"].state is PostState.published and led.posts["p2"].state is PostState.published
     assert led.posts["p1"].media_urls == led.posts["p2"].media_urls == ["https://cdn.postiz.test/shared.mp4"]
 
-def test_publish_idempotent_skips_already_submitted(tmp_path, monkeypatch):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+def test_publish_idempotent_skips_already_submitted(tmp_path, monkeypatch, mocker):
+    _live(monkeypatch)                                  # live backend so the 1st pass actually publishes
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, when="2020-01-01T00:00:00Z")
+    _http_media(led, "p1"); _stub_ok_poster(mocker, cfg)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     publish_due(cfg, now="2026-06-02T18:00:00Z")        # 2nd pass: p1 is published, not queued -> no-op
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
 
 def test_publish_failed_poster_marks_failed_durable(tmp_path, monkeypatch, mocker):
     # A poster that fails -> post.state failed (not analyzed, not published), durable.
-    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    # dryrun-boundary: live env swap so the post enters the rail and the poster stub runs; the stub (below)
+    # drives the terminal `failed` state. http media_urls -> _ensure_media passes through (no live upload).
+    _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pf", cid="c_pf", when="2020-01-01T00:00:00Z")
+    _http_media(led, "pf")
     # make get_poster return a poster whose publish sets the post to failed
     import fanops.post.run as run
     class _FailPoster:
@@ -216,8 +264,8 @@ def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch
     # REMAP must still reach the post — publish re-resolves the CURRENT integration id before sending,
     # rather than shipping the stale frozen id (which the backend would reject / route wrong).
     import json
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _live(monkeypatch)                                  # dryrun-boundary: live env so the post enters the rail
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)  # (the account_id-refresh only happens on a real backend)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active",
@@ -225,7 +273,7 @@ def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch
     f = cfg.clips / "c_a.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c_a", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pa", parent_id="c_a", account="@a", account_id="OLD_STALE_ID",   # frozen-at-crosspost id
-                      platform=Platform.instagram, caption="x",
+                      platform=Platform.instagram, caption="x", media_urls=["https://h/v.mp4"],  # http -> no live upload
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pa"))
     led.save()
     import fanops.post.run as run
@@ -378,18 +426,20 @@ def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeyp
     assert led.posts["pok"].state is PostState.published        # the run continued
 
 
-def test_publish_due_no_deadlock_self_manages_its_lock(tmp_path, monkeypatch):
+def test_publish_due_no_deadlock_self_manages_its_lock(tmp_path, monkeypatch, mocker):
     # publish-out-of-lock: publish_due owns its locking (per-post claim/finalize transactions) and is
     # called STANDALONE — never inside a caller-held Ledger.transaction (advance/publish_now both moved
     # the publish OUT of their lock). A normal call must acquire/release cleanly and complete (no hang).
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)   # dryrun
+    # dryrun-boundary: run LIVE (with a stubbed poster) so the post actually publishes through the rail.
+    _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"x")
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.queued,
+                      platform=Platform.instagram, caption="x", state=PostState.queued, media_urls=["https://h/v.mp4"],
                       scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://p1"))
     led.save()
+    _stub_ok_poster(mocker, cfg)
     publish_due(cfg, now="2020-01-02T00:00:00Z")
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
 

@@ -9,7 +9,18 @@ The bad path: a published row with `public_url is None` reads as 'pending — li
 in the template; the operator cannot tell scanning the cockpit that no real platform ever saw the
 post. The fix is structural: every PostedRow carries `posted_via in {"live", "dryrun"}` derived
 deterministically from `public_url`, and the template renders a distinct chip per channel + a
-global mode banner above the table."""
+global mode banner above the table.
+
+SUPERSEDED-BY-BOUNDARY (dryrun-boundary M1, PRD Finding #1) — READ THIS:
+The five tests below hand-CONSTRUCT `Post(state=published, public_url="dryrun://...")` — the
+phantom-published-dryrun signature. As of the dryrun boundary, the pipeline CAN NO LONGER PRODUCE
+that state: a dryrun post is not eligible for distribution, so `publish_due` leaves it `queued`
+and it never becomes a `published`+`dryrun://` row. These tests are RETAINED ONLY to characterize
+the `_classify_channel` dryrun:// classifier while it still exists; that classifier is scaffolding
+the boundary makes dead, and it (and these five tests with it) MUST be deleted in M3 (Finding #1's
+scaffolding-removal milestone). Do NOT read them as endorsing a `published` dryrun row — the
+POSITIVE contract is `test_dryrun_never_reaches_posted_via_publish_due` at the bottom of this file,
+which proves the boundary at the Posted surface."""
 from __future__ import annotations
 import json
 from datetime import datetime, timezone
@@ -147,3 +158,31 @@ def test_posted_template_renders_global_mode_banner(tmp_path, monkeypatch):
         "Posted template does not render a global mode banner with data-testid='posted-mode-banner'")
     # System is dryrun (FANOPS_POSTER=dryrun, no FANOPS_LIVE), so banner must say so.
     assert "dryrun" in body.lower(), "banner does not surface the dryrun mode"
+
+
+def test_dryrun_never_reaches_posted_via_publish_due(tmp_path, monkeypatch):
+    """dryrun-boundary M1 — the POSITIVE contract that REPLACES the dryrun://-in-Posted lie above.
+    A dryrun (not-live) post is built + approved + scheduled, then run through the REAL publish path
+    (publish_due). The boundary keeps it `queued` — it never enters distribution, never becomes a
+    `published` row, and therefore NEVER appears in the Posted library. (The five legacy tests above
+    hand-construct a `published`+dryrun:// row the pipeline can no longer produce; THIS proves the
+    pipeline can't produce it. This test FAILS if the boundary regresses.)"""
+    from fanops.post.run import publish_due
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)          # dryrun (not live)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    led = Ledger.load(cfg)
+    clip = _seed_clip(led)
+    # an approved (queued), DUE dryrun post with no fabricated distribution artifacts
+    led.add_post(Post(id="p_dry", parent_id=clip.id, account="@a", account_id="ia",
+                      platform=Platform.instagram, caption="c", state=PostState.queued,
+                      scheduled_time="2020-01-01T00:00:00Z", media_urls=["file:///clip_1_9x16.mp4"]))
+    led.save()
+
+    summary = publish_due(cfg)
+
+    post = Ledger.load(cfg).posts["p_dry"]
+    assert post.state is PostState.queued                      # boundary: stays queued, never published
+    assert summary["published"] == 0 and summary.get("not_distributed", 0) >= 1
+    rows = posted_library(Ledger.load(cfg), cfg)
+    assert [r for r in rows if getattr(r, "post_id", None) == "p_dry"] == []   # NOT in the Posted library

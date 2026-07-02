@@ -126,13 +126,28 @@ def test_publish_due_ignores_awaiting_approval(tmp_path):
     assert not (cfg.scheduled / "p1.json").exists()    # dryrun wrote nothing
 
 
-def test_publish_due_fires_approved_queued(tmp_path):
-    # Control: once approved (queued) and due, the same post DOES publish. publish_due upgrades the
-    # dryrun poster's `submitted` to `published` in the same pass (run.py), so the terminal state is published.
+def test_publish_due_fires_approved_queued(tmp_path, monkeypatch, mocker):
+    # Control: once approved (queued) and due, the same post DOES publish. dryrun-boundary: a dryrun post no
+    # longer reaches `published` (it's held at the distribution seam), so this control now runs on a genuinely
+    # LIVE backend (postiz) with a stubbed poster — the submitted->published promotion in run.py then fires and
+    # the terminal state is published. (The approval GATE itself — unapproved never publishes — is pinned by
+    # test_publish_due_ignores_awaiting_approval above and is boundary-independent.)
     from fanops.post.run import publish_due
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c1", parent_id="m1", path=str(cfg.clips / "c1.mp4"), state=ClipState.queued))
         led.add_post(_post(state=PostState.queued, when=_PAST))
+    with Ledger.transaction(cfg) as led:
+        led.posts["p1"].media_urls = ["https://h/v.mp4"]   # already-http -> _ensure_media passes through (no upload)
+    import fanops.post.run as run
+    class _OkPoster:
+        def __init__(self, cfg): pass
+        def publish(self, led_, post_id):
+            led_.posts[post_id].state = PostState.submitted; led_.posts[post_id].submission_id = "s"
+            led_.posts[post_id].public_url = "https://www.instagram.com/reel/AAA/"   # real permalink -> promotes to published
+            return led_
+    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
     publish_due(cfg, now=iso_z(_NOW))
     assert Ledger.load(cfg).posts["p1"].state is PostState.published

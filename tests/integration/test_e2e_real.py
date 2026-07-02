@@ -5,7 +5,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.pipeline import advance
 from fanops.agentstep import request_path, response_path, latest_request_id
-from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
+from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, PostState
 from fanops.transcribe import _cached_models, _resolve_model, real_transcript_signal
 
 pytestmark = pytest.mark.integration
@@ -136,8 +136,15 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     s = advance(cfg, base_time="2020-01-01T00:00:00Z")
     # post-approval gate: the 2 posts are born awaiting_approval -> an unattended advance publishes none.
     assert s["posts"] == 2 and s["published"] == 0
-    # operator approves both, then the next pass publishes them in dryrun.
+    # operator approves both. dryrun-boundary (M1): a dryrun (not-live) post is built + approved +
+    # scheduled but NEVER enters distribution — so the next pass publishes NOTHING and both posts stay
+    # `queued` (held at the processing<->distribution seam), never a phantom `published` row. This golden
+    # path proves the full real-toolchain pipeline UP TO the boundary; the live publish rail is covered by
+    # the live publish/track integration tests.
     with Ledger.transaction(cfg) as led:
         for pid in list(led.posts): led.approve_post(pid, now_iso="2020-01-01T00:00:00Z")
     s = advance(cfg, base_time="2020-01-01T00:00:00Z")
-    assert s["published"] == 2
+    assert s["published"] == 0
+    led = Ledger.load(cfg)
+    assert all(p.state is PostState.queued for p in led.posts.values())   # held at the boundary, not distributed
+    assert not any((p.public_url or "").startswith("dryrun://") for p in led.posts.values())   # no phantom url
