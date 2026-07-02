@@ -13,7 +13,6 @@ from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, discard_gate
 from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
-from fanops.hookscore import narration_signature, has_artist_reference
 from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
 from fanops.clip import fit_window
@@ -304,19 +303,21 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
         h = (dec.hook or "").strip()
         hook = sanitize_generated_text(h) if h else None
         hook_removed = None
-        # Reject KNOWN-mechanical slop (is_weak_hook: exact cross/within-source dup, opening-template
-        # cluster) OR a THIRD-PERSON scene-narration recap (narration_signature — high precision;
-        # viewer-POV/imperative pass). The stripped hook is PRESERVED so Review can restore it.
-        if hook and (is_weak_hook(hook, used, cluster_scope=cluster_used) or narration_signature(hook)
-                     or has_artist_reference(hook, cfg.artist_name)   # 12x-flagged: a 3rd-person ARTIST hook (he/him/his/she/her/name) — gated even with a 'watch'/'wait'/'listen' opener the meter exempts
+        # Reject only MECHANICAL slop (is_weak_hook: exact cross/within-source dup, opening-template cluster)
+        # OR an off-BRAND hook (brand_risk_flag). RF5: the post-generation PERSPECTIVE strip is REMOVED — the
+        # generator owns perspective now (viewer-POV demos/echoes/voice/learned styles), so a third-person hook
+        # is NOT nulled here; any stray one is caught in Studio Review, never stripped at ingest. The stripped
+        # (mechanical/brand) hook is still PRESERVED so Review can restore it.
+        if hook and (is_weak_hook(hook, used, cluster_scope=cluster_used)
                      or brand_risk_flag(hook, cfg)):   # HIGH (audit): the burned hook gets the SAME brand-risk screen captions get
             hook_removed = hook
             hook = None                             # ...the clip still ships CLEAN by default
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
-        # per-account hooks: sanitize each (em-dash/quote burn-safety) + drop a THIRD-PERSON one; a
-        # dropped handle falls back to the shared `hook` at crosspost. No cross-clip dedup (these are
-        # per-account variants of ONE clip).
+        # per-account hooks: sanitize each (em-dash/quote burn-safety) + drop an off-BRAND one; a dropped
+        # handle falls back to the shared `hook` at crosspost. RF5: NO perspective strip here either — the
+        # generator authors these viewer-POV (each account's voice is its own stance), so a third-person
+        # per-account hook is KEPT, not dropped. No cross-clip dedup (these are per-account variants of ONE clip).
         raw_hbp = dec.hooks_by_persona or {}
         # AGENT-5: crosspost reads m.hooks_by_persona.get(surf.account) by EXACT handle, so an author-echoed
         # key matching no real account (a near-miss like @MohFlow vs @mohflow, or a hallucinated handle)
@@ -335,7 +336,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
         hbp_removed: dict[str, str] = {}
         for hh, ph in raw_hbp.items():
             s = sanitize_generated_text(ph) if ph else ""
-            if s and not narration_signature(s) and not has_artist_reference(s, cfg.artist_name) and not brand_risk_flag(s, cfg):
+            if s and not brand_risk_flag(s, cfg):
                 hbp[hh] = s
             elif (ph or "").strip():
                 hbp_removed[hh] = s or (ph or "").strip()
