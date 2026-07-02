@@ -194,7 +194,12 @@ def pull_imported_insights(led: Ledger, cfg: Config, *, get=None,
     weights = cfg.tuning().get("lift_weights")
     log = get_logger(cfg)
     for mid, im in list(led.imported_media.items()):
-        vals = meta_graph.media_insights(cfg, mid, im.product_type, get=get)   # None on transient/unresolved; refuses empty-metric pre-flight
+        # per-account creds (the per-handle-creds gap): read this media's insights with ITS handle's token,
+        # so a live-only media under a non-global handle is measured with the RIGHT creds. im.account is the
+        # enumerating handle; a global-scope label (an ig id, no matching account) resolves to the global
+        # creds — byte-identical to before.
+        creds = meta_graph.resolve_meta_creds(cfg, handle=im.account)
+        vals = meta_graph.media_insights(cfg, mid, im.product_type, get=get, creds=creds)   # None on transient/unresolved; refuses empty-metric pre-flight
         if not vals:
             continue                                             # transient / unresolved product_type -> preserve prior, re-poll next pass
         prior_metrics = {k: v for k, v in (im.metrics or {}).items()

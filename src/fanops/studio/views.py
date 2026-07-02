@@ -41,6 +41,10 @@ class GoLiveAccount:
     channels: list[GoLiveChannel]    # one per platform this handle posts to
     persona_id: Optional[str] = None # S8: the linked first-class Persona record id (Account.persona_id) — None
                                      # when the account uses only inline text. Drives the linked/no-persona badge.
+    ig_user_id: str = ""             # per-account Meta IG Business user id (accounts.json, non-secret) — safe to
+                                     # render as the current value; "" == unset (falls back to global META_IG_USER_ID).
+    meta_token_set: bool = False     # whether a per-handle Graph access token is set (a per-handle .env key). BOOL
+                                     # only — the token value is a SECRET, NEVER carried in this read-model.
 
 
 @dataclass
@@ -344,9 +348,13 @@ def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
     effective per-platform id (integrations[platform] -> account_id fallback -> "" unmapped). Fail-open: a
     malformed accounts.json logs accounts_error and degrades to [] (the surface never 500s). NO secret."""
     try:
+        from fanops.meta_graph import per_account_token_env_key
+        import os as _os
         return [GoLiveAccount(
             handle=a.handle, persona=a.persona,
             persona_id=getattr(a, "persona_id", None),     # S8: the linked first-class Persona (badge), additive
+            ig_user_id=(a.ig_user_id or ""),               # per-account Meta id (non-secret) — render current value
+            meta_token_set=bool((k := per_account_token_env_key(a.handle)) and _os.getenv(k)),  # BOOL only; token is SECRET
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "",
                                     backend=a.backends.get(p.value) or "")

@@ -141,12 +141,19 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
                and _norm_permalink(p.public_url) is not None]
     if not targets:
         return led                                               # nothing to resolve -> no network call
-    media = meta_graph.list_user_media(cfg, get=get)
-    if not media:
+    # Per-account creds (the per-handle-creds gap): enumerate EACH credentialed IG handle's media with its
+    # OWN creds and combine into one permalink index — an IG permalink belongs to exactly one account, so a
+    # post matches whichever handle's media holds it (no longer capped at the single global handle). Restrict
+    # the fan-out to handles that actually have a target post; if none are per-account-credentialed, fall
+    # back to the single global enumeration ([None]) — byte-identical to before.
+    target_handles = {p.account for p in targets}
+    handles = [h for h in meta_graph.credentialed_ig_handles(cfg) if h in target_handles] or [None]
+    scoped = meta_graph.enumerate_scoped_media(cfg, handles, get=get)
+    if not scoped:
         return led                                               # couldn't enumerate (no creds / transport) ->
         #                                                          stay re-resolvable, DON'T false-breadcrumb "unmatched"
     by_key: dict[str, list[dict]] = {}
-    for m in media:
+    for _src_handle, m in scoped:
         k = _norm_permalink(m.get("permalink"))
         if k: by_key.setdefault(k, []).append(m)
     for p in targets:
@@ -187,8 +194,13 @@ def project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
     from fanops import meta_graph
     from datetime import datetime, timezone
     log = get_logger(cfg)
-    media = meta_graph.list_user_media(cfg, get=get)
-    if not media:
+    # Per-account creds (the per-handle-creds gap): enumerate EVERY per-account-credentialed IG handle's
+    # media, each with its own creds — no longer capped at the single global handle. Empty handle set ->
+    # [None] -> the single global enumeration (byte-identical). Each pair carries WHICH handle it came from
+    # so the imported record is stamped with its true handle, not the one global scope label.
+    handles = meta_graph.credentialed_ig_handles(cfg) or [None]
+    scoped = meta_graph.enumerate_scoped_media(cfg, handles, get=get)
+    if not scoped:
         return led                                               # no creds / empty / transport -> import nobody (fail-open)
     now_z = iso_z(datetime.now(timezone.utc))                    # audit birth stamp for a first-time import
     # the set of live permalinks we ALREADY author (a ledger post points at them) — shadowed, never imported.
@@ -196,9 +208,11 @@ def project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
     for p in led.posts.values():
         k = _norm_permalink(p.public_url)
         if k: authored.add(k)
-    handle = cfg.meta_ig_user_id                                 # the single credentialed handle (scope label)
     imported = 0
-    for m in media:
+    for src_handle, m in scoped:
+        # the scope label: the real handle this media was enumerated under, or the global ig id for the
+        # None (global-creds) enumeration — preserves the single-handle scope label byte-for-byte.
+        handle = src_handle if src_handle is not None else cfg.meta_ig_user_id
         mid = m.get("id")
         if not mid:
             continue                                             # a media with no id is un-keyable -> skip (defensive)
@@ -219,7 +233,7 @@ def project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
             error_reason=(prior.error_reason if prior else None),
             imported_at=(prior.imported_at if prior and prior.imported_at else now_z)))
         imported += 1
-    log("reconcile", str(handle or "-"), "imported_media_projected", imported=imported, live=len(media))
+    log("reconcile", "-", "imported_media_projected", imported=imported, live=len(scoped), handles=len(handles))
     return led
 
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.

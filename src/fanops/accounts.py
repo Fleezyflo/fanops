@@ -74,6 +74,15 @@ class Account(BaseModel):
     # publishes via Zernio in the SAME run. integrations[platform] still holds the id; this names WHICH
     # backend that id belongs to.
     backends: dict[str, str] = Field(default_factory=dict)
+    # Per-account Meta Graph IG Business user id (the audit's per-handle-creds gap): META_IG_USER_ID was a
+    # SINGLE GLOBAL credential, so every Graph read (list_user_media / insights / hashtag reads) saw ONE
+    # handle regardless of which account a post belonged to. This is a NON-SECRET identifier (exactly like
+    # account_id / integrations ids — the IG business id, not a token), so it lives here in accounts.json.
+    # ADDITIVE: None on a legacy account -> meta_graph.resolve_meta_creds falls back to the GLOBAL
+    # META_IG_USER_ID (byte-identical to a single-account setup). The per-account ACCESS TOKEN is a SECRET
+    # and does NOT live here — it rides a per-handle .env key (dual-written like POSTIZ_API_KEY). set_ig_user_id
+    # is the strict WRITE boundary.
+    ig_user_id: Optional[str] = None
 
 class Surface(NamedTuple):
     account: str
@@ -558,6 +567,28 @@ def set_framing(cfg: Config, handle: str, framing: str) -> str:
         for a in accounts:
             if isinstance(a, dict) and a.get("handle") == handle:
                 a["framing"] = framing or None; found = True
+        if not found:
+            raise KeyError(handle)
+        write_json_atomic(p, raw)
+    return handle
+
+
+def set_ig_user_id(cfg: Config, handle: str, ig_user_id: str) -> str:
+    """Set or clear ONE account's per-account Meta IG Business user id atomically (the Go-Live per-account
+    Meta credential control). A blank id CLEARS it (-> None -> meta_graph.resolve_meta_creds falls back to
+    the GLOBAL META_IG_USER_ID). The id is a NON-SECRET identifier (like account_id / integrations ids) so
+    it belongs in accounts.json; the per-account ACCESS TOKEN is a SECRET written separately to a per-handle
+    .env key (never here). Preserves every sibling, unknown field, and the account's own other fields; scans
+    ALL rows (dup-handle safety, mirrors set_persona). Unknown handle -> KeyError (caller -> clean
+    ActionResult)."""
+    ig_user_id = (ig_user_id or "").strip()
+    p = cfg.accounts_path
+    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
+        raw, accounts = _load_raw_accounts(p)
+        found = False
+        for a in accounts:
+            if isinstance(a, dict) and a.get("handle") == handle:
+                a["ig_user_id"] = ig_user_id or None; found = True
         if not found:
             raise KeyError(handle)
         write_json_atomic(p, raw)

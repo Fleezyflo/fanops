@@ -30,7 +30,7 @@ from fanops.accounts import (Accounts, write_integration, add_account as _accoun
                              set_status as _accounts_set_status, remove_account as _accounts_remove_account,
                              set_persona as _accounts_set_persona,
                              set_backend as _accounts_set_backend, ensure_channel as _accounts_ensure_channel,
-                             load_accounts_safe)
+                             set_ig_user_id as _accounts_set_ig_user_id, load_accounts_safe)
 from fanops.log import get_logger
 from fanops.autopilot import set_env_var, unset_env_var
 from fanops.errors import CutoverError, PostizAuthError, ToolchainMissingError, ZernioAuthError
@@ -357,6 +357,41 @@ def map_account(cfg: Config, handle: str, platform: str, integration_id: str) ->
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not map {handle} {platform}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"handle": handle, "platform": platform, "account_id": integration_id})
+
+
+def set_meta_creds(cfg: Config, handle: str, ig_user_id: str, token: str = "") -> ActionResult:
+    """Set ONE handle's per-account Meta Graph credentials (the audit's per-handle-creds gap): its IG
+    Business user id + its Graph access token, so the insights / live-linking reads use the RIGHT handle's
+    creds for that account instead of the single global META_IG_USER_ID. The id is NON-SECRET (persisted to
+    accounts.json via set_ig_user_id, like a Postiz integration id); the TOKEN is a SECRET, dual-written to a
+    PER-HANDLE .env key (META_GRAPH_TOKEN__<SLUG>) + os.environ — write-only, NEVER echoed/logged/returned
+    (mirrors set_postiz_config's key discipline). A blank token leaves any existing per-handle token untouched
+    (so the operator can update just the id). The id write happens FIRST (validates the handle exists); only
+    then is the token written, so a bad handle never leaks a token into .env. Unknown handle / blank handle ->
+    clean error. Fail-open: a durable-write failure surfaces as a clean ActionResult (the tab never 500s)."""
+    from fanops.meta_graph import per_account_token_env_key
+    handle = (handle or "").strip()
+    ig_user_id = (ig_user_id or "").strip()
+    token = (token or "").strip()
+    if not handle:
+        return ActionResult(ok=False, error="no account selected")
+    if not ig_user_id and not token:
+        return ActionResult(ok=False, error=f"nothing to set for {handle} — enter an IG user id and/or an access token")
+    try:
+        _accounts_set_ig_user_id(cfg, handle, ig_user_id)        # non-secret id -> accounts.json (validates the handle)
+    except KeyError:
+        return ActionResult(ok=False, error=f"no such account: {handle}")
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"could not set IG user id for {handle}: {str(exc)[:160]}")
+    if token:                                                    # write-only secret -> per-handle .env key + os.environ
+        key = per_account_token_env_key(handle)
+        if not key:
+            return ActionResult(ok=False, error=f"{handle} has no env-safe name for a per-account token — use the global META_GRAPH_TOKEN")
+        err = _dual_write(cfg, key, token)                       # stored, never echoed back
+        if err:
+            return ActionResult(ok=False, error=err)
+    # detail carries NO token — only the id (non-secret) + a token_set bool
+    return ActionResult(ok=True, detail={"handle": handle, "ig_user_id": ig_user_id, "token_set": bool(token)})
 
 
 # ── M4: discover → adopt — one-click onboarding from the connected providers ───────────────────────────
