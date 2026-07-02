@@ -939,7 +939,10 @@ def _dispatch(cfg: Config, args) -> int:
         try:
             from fanops.fanops_hashtags import refresh_store_if_due
             r = refresh_store_if_due(cfg)
-            if r.get("refreshed"):
+            if r.get("aborted"):     # corrupt personas.json: refresh_store preserved the store — report the abort LOUDLY,
+                                     # never the false-success store_refreshed (a bad control file stripping strategy is not routine)
+                get_logger(cfg)("hashtags", "-", "store_refresh_aborted", aborted=r.get("aborted"), reason=r.get("reason", ""))
+            elif r.get("refreshed"):
                 get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
         except Exception as e:
             get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")

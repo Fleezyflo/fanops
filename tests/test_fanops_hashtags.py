@@ -227,6 +227,7 @@ def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_p
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     curated = json.dumps({"tags": ["#curatedwinner"], "reach": {}}, indent=2)
     cfg.hashtags_path.write_text(curated)
+    _write_corrupt_personas(cfg)                            # the broken control file that must not clobber the store
     old = cfg.hashtags_path.stat().st_mtime - 100000
     os.utime(cfg.hashtags_path, (old, old))                 # make it stale so the throttle doesn't short-circuit
     r = refresh_store_if_due(cfg, max_age_s=10, get=_graph_router({"#beta": 900}, cooccur="#beta"))  # must NOT raise
@@ -243,6 +244,6 @@ def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path,
     cfg = Config(root=tmp_path)
     _write_corrupt_personas(cfg)
     rc = cmd_hashtags_refresh(cfg)
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err                          # the loud abort goes to stderr (CLI-error convention)
     assert rc == 2                                          # loud non-zero exit, no KeyError
-    assert "personas.json invalid:" in out and "aborted" in out.lower()
+    assert "personas.json invalid:" in err and "aborted" in err.lower()
