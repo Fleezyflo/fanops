@@ -4,7 +4,6 @@
 # The load-bearing safety: an old v9 ledger migrates 9->10 WITHOUT losing a row and gains an empty
 # imported_media map; the map SURVIVES a save/load round-trip (a naive add drops it on save).
 import json
-import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger, SCHEMA_VERSION
 from fanops.models import ImportedMedia, Source, SourceState
