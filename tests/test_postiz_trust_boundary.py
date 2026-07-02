@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
-from fanops.accounts import Accounts
 from fanops.studio import golive
 from fanops.studio import views
 from fanops.studio import views_common
