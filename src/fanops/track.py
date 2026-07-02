@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.metrics_schedule import due_offset
-from fanops.models import LIFT_SCORE, PostState, is_real_submission_id
+from fanops.models import LIFT_SCORE, Platform, PostState, is_real_submission_id
 from fanops.timeutil import iso_z
 
 # DEFAULT lift weights: saves/shares are the real algorithmic signal; likes ~ noise (deweighted).
@@ -33,15 +33,49 @@ _W = {"saves": 4.0, "shares": 4.0, "retention": 3.0, "reach": 0.001, "likes": 0.
 # PARTIAL objective; record_metrics stamps lift_degraded so the operator sees it instead of trusting a
 # reach/shares-dominated scalar. reach (0.001) / likes (0.05) are low-weight proxies, never "missing".
 _HIGH_WEIGHT = 1.0
+
+# Platform CAPABILITY: which lift keys a platform's analytics can STRUCTURALLY deliver — the ONE place
+# this knowledge lives (MOL-16/17 audit 2026-07-02). Derived from the three read maps: IG reads the Meta
+# Graph (meta_graph._MEDIA_METRICS/_GRAPH_INSIGHTS_MAP) which yields reach/views/saves/shares/likes/
+# comments AND avg_watch_time -> a DERIVED `retention` (REELS only, and only when the clip duration is
+# known); TikTok reads Zernio (post/metrics._ZERNIO_LABEL_MAP) and youtube/facebook/twitter publish via
+# Postiz (post/metrics._POSTIZ_LABEL_MAP) — NEITHER map has a watch-time/retention field, so retention is
+# absent BY CONSTRUCTION on every non-IG platform. Keyed to Platform (not "not TikTok") so youtube — a
+# third Platform via Postiz with retention equally unavailable — is exempted too. A metric a platform
+# CANNOT produce is NOT a REQUIRED primary when proving THAT platform's shape, and is NOT a "missing"
+# degraded key for it. Reach-only / likes-only noise still fails everywhere (the proof floor is
+# capability-independent). Stale-map guard: risks table — a mapped-available metric that stops appearing
+# is the failure mode; keep this in lockstep with the three maps.
+_PLATFORM_METRICS: dict[Platform, frozenset[str]] = {
+    Platform.instagram: frozenset({"reach", "views", "saves", "shares", "likes", "comments", "retention"}),
+    Platform.tiktok:    frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # Zernio: no watch-time
+    Platform.youtube:   frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # via Postiz: no retention
+    Platform.facebook:  frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # via Postiz: no retention
+    Platform.twitter:   frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # via Postiz: no retention
+}
+
+def _platform_delivers(platform: Optional[Platform], key: str) -> bool:
+    # True unless `platform` is a KNOWN Platform whose capability set provably EXCLUDES `key`. Fail-OPEN:
+    # an unknown / None platform (a legacy or platform-less row) delivers everything, so it proves and
+    # degrades EXACTLY as before the capability model — the model only ever WIDENS what a known-limited
+    # platform may skip, never tightens the platform-less path.
+    caps = _PLATFORM_METRICS.get(platform)
+    return caps is None or key in caps
+
 ListPosts = Callable[[str], list[dict]]
 
-def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None) -> bool:
+def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None,
+                           platform: Optional[Platform] = None, require_ig_retention: bool = False) -> bool:
     """True when a live analyzed row proves the metric field-shape for learning unfreeze. Broader than
     `not lift_degraded`: Postiz never delivers `retention`, so a Postiz-shaped row stays lift_degraded
     yet proves the shape once `reach` + a primary engagement key (saves|shares) reconcile — mirroring
     learn_doctor's reach gate, not an all-_W verdict. Still fails closed on present-but-null primaries
     (D1) and on reach-only noise (likes+reach with no saves/shares). A full primary set (Postiz-shaped)
-    always proves."""
+    always proves. MOL-17: `platform` names the row's Platform so a metric the platform CANNOT deliver
+    (retention on TikTok/youtube via _PLATFORM_METRICS) is not counted a missing primary. MOL-18c:
+    `require_ig_retention` (default OFF, caller-gated on cfg.ig_retention_proof) tightens ONLY a platform
+    that CAN deliver retention (IG) to require it present-numeric — fail-OPEN for platform None/unknown or
+    a platform that structurally can't (prove exactly as today)."""
     if LIFT_SCORE not in metrics:
         return False
     w = _W if weights is None else weights
@@ -52,8 +86,12 @@ def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None) -> 
             continue
         if k in raw and (raw[k] is None or not isinstance(raw[k], (int, float)) or isinstance(raw[k], bool)):
             return False                                    # D1: explicit null/non-numeric in the live row
-    if not _missing_high_weight(metrics, weights):
-        return True                                         # full primary set (e.g. Postiz)
+    if require_ig_retention and _platform_delivers(platform, "retention") and platform is not None:
+        r = metrics.get("retention")                        # MOL-18c: IG must show retention to prove (flag ON)
+        if not (isinstance(r, (int, float)) and not isinstance(r, bool)):
+            return False                                    # a retention-capable platform without it -> unproven
+    if not _missing_high_weight(metrics, weights, platform):
+        return True                                         # full primary set (platform-available keys present)
     has_reach = isinstance(metrics.get("reach"), (int, float)) and not isinstance(metrics.get("reach"), bool)
     has_eng = any(isinstance(metrics.get(k), (int, float)) and not isinstance(metrics.get(k), bool)
                  for k in ("saves", "shares"))
@@ -63,16 +101,20 @@ def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None) -> 
         return True                                         # Zernio-shaped: saves lands without reach
     return False
 
-def _missing_high_weight(metrics: dict, weights: Optional[dict]) -> list[str]:
+def _missing_high_weight(metrics: dict, weights: Optional[dict], platform: Optional[Platform] = None) -> list[str]:
     """The ACTIVE high-weight keys absent from this row (sorted). Judged against the ACTIVE weight map
     (a tuning override REPLACES _W), so 'degraded' tracks whatever objective is configured. NEVER
     recalibrates _W — purely observational (audit H3). D1: a key PRESENT-BUT-NULL counts as missing —
     lift_score drops a non-numeric value (isinstance guard) so a null saves contributes nothing, exactly
     like an absent saves; treating it as present would stamp a partial objective 'complete' and could
-    auto-unfreeze learning on an unproven shape."""
+    auto-unfreeze learning on an unproven shape. MOL-18b: a high-weight key the row's PLATFORM cannot
+    structurally deliver (retention on TikTok/youtube/facebook/twitter) is NOT counted missing — else the
+    lift_degraded marker stays PERMANENT for a metric the platform can never emit. Fail-OPEN: platform
+    None/unknown counts every absent key exactly as before (the platform-less path is byte-identical)."""
     w = _W if weights is None else weights
     return sorted(k for k, wt in w.items()
                   if isinstance(wt, (int, float)) and not isinstance(wt, bool) and wt >= _HIGH_WEIGHT
+                  and _platform_delivers(platform, k)   # skip a key this platform structurally can't emit
                   and metrics.get(k) is None)    # absent OR present-but-null (.get -> None for both)
 
 def lift_score(metrics: dict, weights: Optional[dict] = None) -> float:
@@ -112,7 +154,7 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     # captured_at keys) so every existing reader is byte-identical.
     prior_metrics = {k: v for k, v in (post.metrics or {}).items()
                      if k not in (LIFT_SCORE, "lift_degraded", "lift_missing_keys")}
-    recovered = {k: prior_metrics[k] for k in _missing_high_weight(metrics, weights)
+    recovered = {k: prior_metrics[k] for k in _missing_high_weight(metrics, weights, post.platform)
                  if prior_metrics.get(k) is not None}
     merged = {**metrics, **recovered}
     post.metrics = {**merged, LIFT_SCORE: lift_score(merged, weights)}
@@ -120,7 +162,7 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     # weighted metric is absent from the MERGED row, the objective is partial; surface it so the operator
     # does not trust a degraded lift as a full one. Marker keys are not weights, so a later lift_score
     # ignores them. Absent any missing primary key -> no marker -> byte-identical to today.
-    missing = _missing_high_weight(merged, weights)
+    missing = _missing_high_weight(merged, weights, post.platform)   # MOL-18b: platform-aware, not permanent
     if missing:
         post.metrics["lift_degraded"] = True
         post.metrics["lift_missing_keys"] = missing
@@ -249,8 +291,10 @@ def _auto_validate_metrics_shape(led: Ledger, cfg: Config) -> None:
     if learning_validated(cfg):
         return                                                   # already proven -> not frozen, nothing to explain
     weights = cfg.tuning().get("lift_weights")
+    require_ig_ret = cfg.ig_retention_proof                       # MOL-18c: default OFF; fail-open per-row inside the proof
     analyzed = [p for p in led.posts.values() if p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
-    proven = next((p for p in analyzed if _shape_proves_learning(p.metrics, weights=weights)), None)
+    proven = next((p for p in analyzed if _shape_proves_learning(
+        p.metrics, weights=weights, platform=p.platform, require_ig_retention=require_ig_ret)), None)
     if proven is None:                                           # XC-4: name WHY learning stays frozen, per branch
         if not analyzed:
             log("learning", "auto_validate", "frozen_no_analyzed_metric")    # no analyzed row yet (waiting on a pull)
