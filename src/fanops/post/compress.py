@@ -67,8 +67,10 @@ def publish_backend_for_post(cfg, post) -> str:
     from fanops.accounts import Accounts
     try:
         return Accounts.load(cfg).effective_provider(post.account, post.platform) or cfg.poster_backend or "dryrun"
-    except Exception:
-        return cfg.poster_backend or "dryrun"
+    except Exception as e:
+        safe = cfg.poster_backend or "dryrun"   # #10: SAFE fallback unchanged — but breadcrumb when the resolve fails so the fallback isn't silent
+        get_logger(cfg)("publish", getattr(post, "id", "-"), "backend_fallback", backend=safe, err=str(e)[:120])
+        return safe
 
 
 def upload_cap_bytes(cfg, post, backend: str) -> int | None:
