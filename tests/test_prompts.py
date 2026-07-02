@@ -187,6 +187,17 @@ def test_moment_hook_prompt_bans_narration_and_embeds_fewshot_priors():
     assert "he switches to arabic when it gets personal" not in low   # the poisoned positive example, removed
     assert "the artist's name as the subject" in low                  # ban now covers name-as-subject
 
+def test_hook_spec_carries_no_third_person_demonstrations():
+    # RF5 (viewer-POV at the source): the generator must never be SHOWN third person. Every third-person
+    # DEMONSTRATION fragment — whether in a positive few-shot, a FIXED-FAILURES line, or a BANNED negative
+    # example — is a line the model learns to echo, so none may appear in the hook prompt. The ABSTRACT ban
+    # clause (pronouns/name as the forbidden subject) STAYS — see the assertion in the test above; only the
+    # concrete demonstrations of the anti-pattern are removed (keep the craft, drop the person).
+    low = moment_hook_prompt(_hook_payload()).lower()
+    for frag in ["copying his", "she look good", "he stopped answering", "he switches to arabic",
+                 "his hardest bar", "watch how he cuts", "front row last song"]:
+        assert frag not in low, f"third-person demonstration still shown to the generator: {frag!r}"
+
 def test_moment_hook_prompt_teaches_viewer_specificity_not_clip_description():
     # specificity is about the VIEWER (their feeling/identity), NOT the clip's plot — and a UNIVERSAL
     # shared feeling is fine, VAGUE is the failure.
