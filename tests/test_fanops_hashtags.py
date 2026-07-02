@@ -6,6 +6,7 @@
 # the doctor gate were DELETED — a post's outcome attributes to the hook/clip/account, never to the hashtag.
 import inspect
 import json
+import pytest
 from fanops.config import Config
 from fanops.models import Platform
 from fanops.hashtags import load_store, vetted_menu, vet_hashtags
@@ -156,3 +157,92 @@ def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
     old = cfg.hashtags_path.stat().st_mtime - 100000
     os.utime(cfg.hashtags_path, (old, old))
     assert refresh_store_if_due(cfg, max_age_s=10)["refreshed"] is True       # stale -> refresh again
+
+
+# --- Corrupt personas.json MUST NOT clobber the curated store (MOL-12→15). _seed_tags used to swallow the
+# ControlFileError Personas.load raises, coercing corrupt->[]; the refresh then overwrote the operator's
+# curated store with a generic one, silently. The guard: corrupt personas -> refresh ABORTS, store untouched;
+# genuinely-absent personas still rebuild from the frozen floor exactly as before.
+def _write_corrupt_personas(cfg):
+    cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.personas_path.write_text('{"personas": [oops]}')    # bareword: not valid JSON -> ControlFileError
+
+def test_seed_tags_propagates_control_file_error_on_corrupt_personas(tmp_path):
+    # MOL-12: _seed_tags no longer swallows to [] — the ControlFileError propagates so refresh_store can tell
+    # "corrupt" (abort) apart from "no personas" (rebuild). Absent/empty personas still yield [] (no raise).
+    from fanops.fanops_hashtags import _seed_tags
+    from fanops.errors import ControlFileError
+    cfg = Config(root=tmp_path)
+    assert _seed_tags(cfg) == []                            # absent personas.json -> [] (legitimately empty)
+    _write_corrupt_personas(cfg)
+    with pytest.raises(ControlFileError):
+        _seed_tags(cfg)                                     # corrupt -> propagates, NOT coerced to []
+
+def test_refresh_store_aborts_and_preserves_store_on_corrupt_personas(tmp_path, monkeypatch):
+    # MOL-13: with a curated store already on disk, a corrupt personas.json makes refresh_store ABORT — the
+    # store is byte-identical afterward (the destroy-the-good-store defect is structurally impossible) and the
+    # return is a non-`written` abort result carrying the reason. Meta creds present so seeding is reached.
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    curated = json.dumps({"tags": ["#curatedwinner", "#second"], "reach": {"#curatedwinner": 5000}}, indent=2)
+    cfg.hashtags_path.write_text(curated)                   # the operator's reach-ranked store
+    _write_corrupt_personas(cfg)
+    out = refresh_store(cfg, get=_graph_router({"#beta": 900}, cooccur="#beta"))
+    assert out["written"] is False and out["aborted"] == "corrupt_personas"   # loud, non-success return
+    assert "personas.json invalid:" in out["reason"]                          # the reason surfaces
+    assert cfg.hashtags_path.read_text() == curated         # byte-identical: the curated store is UNTOUCHED
+
+def test_refresh_store_absent_personas_rebuilds_from_floor(tmp_path, monkeypatch):
+    # MOL-13: the genuinely-empty case (no personas configured) still rebuilds from the frozen floor — the
+    # abort is ONLY for corrupt, never for absent. Byte-identical to the no-creds frozen-floor behavior today.
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    cfg = Config(root=tmp_path)
+    assert not cfg.personas_path.exists()                   # no personas at all
+    out = refresh_store(cfg)
+    store = json.loads(cfg.hashtags_path.read_text())["tags"]
+    assert out["written"] is True and "aborted" not in out
+    assert store[0] == vetted_menu()[0] and "#hiphop" in store   # frozen floor, exactly as before
+
+def test_refresh_store_healthy_personas_output_unchanged(tmp_path, monkeypatch):
+    # MOL-13: the healthy path is byte-identical to today — a valid personas.json produces the same store the
+    # pre-guard code did. (The guard only ADDS a corrupt-abort branch; the clean run is untouched.)
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    from fanops import personas as P
+    P.add_persona(cfg, name="Curator", id="curator"); P.add_corpus_tag(cfg, "curator", "#seed")
+    out = refresh_store(cfg, get=_graph_router({"#beta": 900, "#alpha": 100}, cooccur="#alpha #beta"))
+    store = json.loads(cfg.hashtags_path.read_text())["tags"]
+    assert out["written"] is True and "aborted" not in out
+    assert store[0] == "#beta" and store.index("#beta") < store.index("#alpha")   # reach order preserved
+
+def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_path, monkeypatch):
+    # MOL-14: the unattended tick keeps its fail-open contract (never raises into the run) AND surfaces the
+    # corrupt-abort as a REPORTED reason — `refreshed` is False, the reason names the abort, and a curated
+    # store on disk is preserved byte-identical. Meta creds present so the tick reaches the refresh.
+    import os
+    from fanops.fanops_hashtags import refresh_store_if_due
+    monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    curated = json.dumps({"tags": ["#curatedwinner"], "reach": {}}, indent=2)
+    cfg.hashtags_path.write_text(curated)
+    old = cfg.hashtags_path.stat().st_mtime - 100000
+    os.utime(cfg.hashtags_path, (old, old))                 # make it stale so the throttle doesn't short-circuit
+    r = refresh_store_if_due(cfg, max_age_s=10, get=_graph_router({"#beta": 900}, cooccur="#beta"))  # must NOT raise
+    assert r["refreshed"] is False and r["aborted"] == "corrupt_personas"
+    assert "personas.json invalid:" in r["reason"]
+    assert cfg.hashtags_path.read_text() == curated         # curated store preserved
+
+def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path, monkeypatch, capsys):
+    # MOL-13 caller contract: `fanops hashtags refresh` used to index r['measured']/['harvested']/['total']
+    # unconditionally and always exit 0. On a corrupt-abort it must NOT KeyError on the abort shape — it prints
+    # the reason loudly and exits 2. The healthy verb still prints its summary and exits 0.
+    from fanops.fanops_hashtags import cmd_hashtags_refresh
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    _write_corrupt_personas(cfg)
+    rc = cmd_hashtags_refresh(cfg)
+    out = capsys.readouterr().out
+    assert rc == 2                                          # loud non-zero exit, no KeyError
+    assert "personas.json invalid:" in out and "aborted" in out.lower()

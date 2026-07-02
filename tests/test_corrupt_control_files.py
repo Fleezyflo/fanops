@@ -9,6 +9,7 @@ from fanops.config import Config
 from fanops.errors import ControlFileError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
+from fanops.personas import Personas
 
 
 def _write(p, text):
@@ -63,6 +64,18 @@ def test_accounts_load_wrong_toplevel_shape_raises_control_file_error(tmp_path):
     with pytest.raises(ControlFileError) as ei:
         Accounts.load(cfg)
     assert "accounts.json invalid:" in str(ei.value)
+
+
+def test_personas_load_corrupt_json_raises_control_file_error(tmp_path):
+    # MOL-12 pin: Personas.load raises loudly on a corrupt personas.json — the hashtag-store refresh relies
+    # on this raise reaching it (not being swallowed to []) so a broken control file can't clobber the store.
+    cfg = Config(root=tmp_path)
+    _write(cfg.personas_path, '{"personas": [oops]}')      # bareword: not valid JSON
+    with pytest.raises(ControlFileError) as ei:
+        Personas.load(cfg)
+    msg = str(ei.value)
+    assert "personas.json invalid:" in msg                 # names the file + the word "invalid"
+    assert "Traceback" not in msg                          # a reason, not a stack trace
 
 
 # ---- the happy path is unchanged ----
