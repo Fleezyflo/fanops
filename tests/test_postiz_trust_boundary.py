@@ -35,7 +35,12 @@ _BASELINE = {k: os.environ.get(k) for k in _KEYS}
 
 @pytest.fixture(autouse=True)
 def _restore_env():
+    # The Postiz health banner caches the probe ~30s keyed by postiz_url (process-local). Two tests here
+    # share the same URL with opposite mocked backend states, so clear the cache per test for isolation
+    # (the TTL is a production concern, not a test one).
+    views_common._postiz_health_cache.clear()
     yield
+    views_common._postiz_health_cache.clear()
     for k, v in _BASELINE.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
@@ -127,7 +132,8 @@ def test_studio_renders_postiz_down_banner_when_unhealthy(tmp_path, monkeypatch,
     # Postiz is down (502) AND a channel routes to postiz -> the banner shows, names the status code, and
     # points at docs/POSTIZ_OPS.md. Assert on the read-model that base.html renders (build_system_strip).
     cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
     strip = views.build_system_strip(cfg)
@@ -139,7 +145,8 @@ def test_studio_renders_postiz_down_banner_when_unhealthy(tmp_path, monkeypatch,
 
 def test_postiz_down_banner_absent_when_healthy(tmp_path, monkeypatch, mocker):
     cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     mocker.patch("fanops.post.postiz.requests.get", return_value=_R(200, []))
     strip = views.build_system_strip(cfg)

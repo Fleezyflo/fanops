@@ -2,6 +2,7 @@
 (lock-free) and assembles these dataclasses; templates render them. Mutations live in actions.py."""
 from __future__ import annotations
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ from fanops.timeutil import parse_iso
 # tests). Dead re-exports (no facade consumer AND no internal use here) were trimmed — every trimmed symbol
 # still lives in its home submodule (views_common/_review/_results); this is just the public views surface.
 # F401-silenced because each name is re-exported, not referenced within this file.
+from fanops.studio import views_common   # module alias for build_system_strip's health/banner delegates (D13b)
 from fanops.studio.views_common import (IMMINENT_THRESHOLD_MINUTES, GRID_PAGE_SIZE, paginate, TERM_DEFS, term_def, accounts_in, _imminent, suggest_time)  # noqa: F401
 from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch, awaiting_moment_count, review_awaiting_by_account)  # noqa: F401
 from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, schedule_lanes, due_publish_plan, DuePublishPlan, schedule_cockpit, ScheduleCockpit, inflight_watch, InflightWatchRow, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, metric_peaks, bar_pct, group_posted_by_day, lift_rows, classify_post_delivery, failure_rollup, operator_error, failure_label)  # noqa: F401
@@ -429,8 +431,30 @@ def build_system_strip(cfg: Config) -> dict:
         insights_blocked = insights_blocked_signal(cfg)
     except Exception:
         insights_blocked = False
+    # D15: HALF-LIVE — FANOPS_LIVE=1 (is_live) but NOTHING routes live (typo'd FANOPS_POSTER -> dryrun via
+    # W4, and no live per-channel backend). is_live shows LIVE while every publish halts in `queued`. Derive
+    # the distinct warning state HERE (the single mode-banner derivation point) so _system_strip renders the
+    # warning, never the plain LIVE banner. Fail-open: any read hiccup -> not half-live (never a false alarm).
+    half_live, half_live_hint = False, ""
+    try:
+        if cfg.is_live and not cfg.live_route_exists:
+            half_live = True
+            raw = (os.getenv("FANOPS_POSTER") or "").strip() or "(unset)"
+            half_live_hint = (f"LIVE flag is set but nothing routes live — FANOPS_POSTER={raw} is ignored "
+                              "(it's a legacy bridge, not the switch). Check .env / the Go-Live tab: route a "
+                              "channel to a provider with creds, or flip back to dryrun.")
+    except Exception:
+        half_live, half_live_hint = False, ""
+    # D13b: Postiz-down banner — the backend health probe (past the nginx-only container check) is unhealthy
+    # AND at least one channel routes to postiz. Delegated to views_common (30s-cached) so a Studio render
+    # doesn't slam Postiz every hit; fail-open to not-shown so a probe hiccup never blocks the page.
+    try:
+        postiz_down = views_common.postiz_health_for_banner(cfg)
+    except Exception:
+        postiz_down = {"show": False}
     return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
-            "failed": failed, "insights_blocked": insights_blocked}
+            "failed": failed, "insights_blocked": insights_blocked,
+            "half_live": half_live, "half_live_hint": half_live_hint, "postiz_down": postiz_down}
 
 
 
