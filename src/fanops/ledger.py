@@ -413,6 +413,39 @@ class Ledger:
         with _file_lock(self.cfg.lock_path):
             self._save_unlocked()
 
+    # ---- ledger-rebuild M4 (MOL-32): pre-wipe snapshot + rollback ---------------------------------
+    # A snapshot is a BYTE copy of ledger.json (which is already a complete atomic whole-file dump), named
+    # with a UTC timestamp under 00_control so it sits alongside the pre-R1 backups (the dryrun R1 decision:
+    # any snapshot in 00_control stays LOADABLE — construction semantics unchanged). It is the mandatory,
+    # verified-restorable rollback point BEFORE the M4 wipe removes anything (PRD risk table).
+    @classmethod
+    def snapshot(cls, cfg: Config, *, now: "datetime | None" = None) -> Path:
+        """Write a timestamped byte-copy of the live ledger.json to 00_control and RETURN its path. Taken
+        under the ledger lock (a consistent whole-file image, no half-written mid-transaction state). A
+        missing ledger.json first materializes an empty ledger so the snapshot is always a loadable file."""
+        import shutil
+        now = now or datetime.now(timezone.utc)
+        if not cfg.ledger_path.exists():
+            cls.load(cfg).save()                       # materialize an empty (but valid) ledger to snapshot
+        stamp = now.strftime("%Y%m%dT%H%M%SZ")
+        dest = cfg.control / f"ledger.snapshot.{stamp}.json"
+        with _file_lock(cfg.lock_path):
+            shutil.copy2(str(cfg.ledger_path), str(dest))   # byte-identical image under the lock
+        return dest
+
+    @classmethod
+    def restore_snapshot(cls, cfg: Config, snapshot_path: "Path | str") -> None:
+        """Atomically restore ledger.json FROM a snapshot (tmp + os.replace, same as _save_unlocked). The
+        wipe is thereby REVERSIBLE — a restore brings every removed row back byte-identically."""
+        import shutil
+        src = Path(snapshot_path)
+        if not src.exists():
+            raise ControlFileError(_reason("ledger snapshot not found", str(src)))
+        with _file_lock(cfg.lock_path):
+            tmp = cfg.ledger_path.with_suffix(".json.tmp")
+            shutil.copy2(str(src), str(tmp))
+            os.replace(str(tmp), str(cfg.ledger_path))   # atomic swap-in of the restored image
+
     # ---- idempotent adds (by id) ----
     def add_source(self, s: Source) -> None: self.sources.setdefault(s.id, s)
     def add_moment(self, m: Moment) -> None: self.moments.setdefault(m.id, m)
