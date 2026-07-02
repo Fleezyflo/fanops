@@ -1,0 +1,44 @@
+{# src/fanops/studio/templates/_wipe_panel.html — MOL-33: the fall-away wipe operator surface. A destructive
+   one-shot behind (1) a read-only PREVIEW (the would-remove id-set + per-entity counts) and (2) a TYPED
+   CONFIRM (type the word — the Go-Live confirm shape, strengthened). Snapshot-first + reversible: the action
+   takes a verified snapshot before removing, and reports the rollback point. The 7 analyzed posts with
+   history are NEVER touched (keep-guard keys on post state, never a live-match). #}
+<section id="wipe-panel" class="wipe-panel" aria-labelledby="wipe-h">
+  <h3 id="wipe-h">Reconcile: remove unbacked ledger rows</h3>
+  <p class="muted">Once Instagram is the source of truth, ledger rows not backed by any live post (never-shipped drafts and retired cruft) are stale cache. This removes exactly those — <strong>shipped/analyzed history is kept</strong> — and takes a restorable snapshot first. One-shot; the operator decides when.</p>
+
+  {% if wipe_result %}
+  <div class="result {{ 'ok' if wipe_result.ok else 'err' }}" role="status" aria-live="polite" data-testid="wipe-result">
+    {% if wipe_result.ok %}Removed {{ wipe_result.detail.removed.posts }} post(s) and their unbacked lineage. Snapshot saved for rollback: <code>{{ wipe_result.detail.snapshot }}</code>.
+    {% else %}{{ wipe_result.error }}{% endif %}
+  </div>
+  {% endif %}
+
+  {% if preview is none %}
+  <form hx-post="{{ url_for('do_wipe_preview') }}" hx-target="#wipe-panel" hx-swap="outerHTML">
+    <button type="submit" data-testid="wipe-preview-btn">Preview what would be removed</button>
+  </form>
+  {% else %}
+    {% if preview.ok and preview.detail.total > 0 %}
+    <div class="wipe-preview" data-testid="wipe-preview">
+      <p><strong>{{ preview.detail.total }}</strong> row(s) would be removed · <strong>{{ preview.detail.kept_posts }}</strong> post(s) with history KEPT.</p>
+      <ul class="wipe-counts">
+        {% for label, n in preview.detail.counts.items() %}{% if n %}<li>{{ label }}: <strong>{{ n }}</strong></li>{% endif %}{% endfor %}
+      </ul>
+      <details><summary>Post ids to remove ({{ preview.detail.post_ids|length }})</summary>
+        <ul class="wipe-ids">{% for pid in preview.detail.post_ids %}<li><code>{{ pid }}</code></li>{% endfor %}</ul>
+      </details>
+      <form hx-post="{{ url_for('do_wipe_confirm') }}" hx-target="#wipe-panel" hx-swap="outerHTML" class="wipe-confirm-form">
+        <label>Type <strong>{{ confirm_word }}</strong> to confirm this removal
+          <input type="text" name="confirm_text" autocomplete="off" placeholder="{{ confirm_word }}" data-testid="wipe-confirm-input"></label>
+        <button type="submit" class="danger" data-testid="wipe-confirm-btn">Remove unbacked rows</button>
+      </form>
+      <p class="muted small">A snapshot is taken automatically before anything is removed; you can restore it if needed.</p>
+    </div>
+    {% elif preview.ok %}
+    <div class="wipe-preview empty" data-testid="wipe-preview-empty">Nothing to remove — every ledger row is backed by shipped/analyzed history. The confirm word <strong>{{ confirm_word }}</strong> would be a no-op.</div>
+    {% else %}
+    <div class="result err" role="status">{{ preview.error }}</div>
+    {% endif %}
+  {% endif %}
+</section>
