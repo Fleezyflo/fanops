@@ -348,13 +348,18 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)
     log = get_logger(cfg)
-    published = no_provider = no_integration_id = 0
+    published = no_provider = no_integration_id = not_distributed = 0
     for post in due:
         provider = _post_provider(cfg, accounts, post)
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
             no_provider += 1
             log("publish", post.id, "no_provider", account=post.account, platform=post.platform.value)
             continue
+        if provider == "dryrun":                       # dryrun-boundary (Finding #1): NOT live -> no real backend to
+            not_distributed += 1                       # distribute to. The post is built + approved + scheduled; it
+            log("publish", post.id, "dryrun_not_distributed",   # halts here at the processing<->distribution seam,
+                account=post.account, platform=post.platform.value)   # staying `queued` — never claimed, never a
+            continue                                   # phantom-published row. A live-flip re-derives this each pass.
         acct_id = _resolve_publish_account_id(accounts, post)
         if provider != "dryrun" and not ((acct_id or post.account_id or "").strip()):
             no_integration_id += 1                     # CULM-1: never claim a post we can't address; stays queued
@@ -362,7 +367,8 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             continue
         if _publish_one(cfg, post.id, provider, account_id=acct_id) == PostState.published.value:
             published += 1
-    return {"due": len(due), "published": published, "no_provider": no_provider, "no_integration_id": no_integration_id}
+    return {"due": len(due), "published": published, "no_provider": no_provider,
+            "no_integration_id": no_integration_id, "not_distributed": not_distributed}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:

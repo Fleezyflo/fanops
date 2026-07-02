@@ -106,13 +106,18 @@ def test_publish_due_skips_live_channel_with_no_provider(tmp_path, monkeypatch, 
     gp = mocker.patch("fanops.post.run.get_poster")
     res = publish_due(cfg)
     gp.assert_not_called()                                    # never tried to publish
-    assert res == {"due": 1, "published": 0, "no_provider": 1, "no_integration_id": 0}
+    # LIVE channel with no provider -> the no_provider skip (unchanged); not_distributed stays 0 (this post
+    # is live-but-provider-less, NOT dryrun). The key exists in the summary since the dryrun-boundary landed.
+    assert res == {"due": 1, "published": 0, "no_provider": 1, "no_integration_id": 0, "not_distributed": 0}
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued   # left queued (not failed) — waits for a provider
 
 
 def test_publish_due_dryrun_posts_nothing_even_with_explicit_provider(tmp_path, monkeypatch, mocker):
-    # the footgun fix: in dryrun (not live), an explicitly-routed channel must NOT publish — the global
-    # on/off switch governs ALL channels. The post goes through the dryrun poster (posts nothing).
+    # the footgun fix, STRENGTHENED by the dryrun-boundary: in dryrun (not live) an explicitly-routed
+    # channel must NOT publish — the global on/off switch governs ALL channels. The boundary makes this a
+    # STRONGER "nothing" than before: the post never even reaches the distribution rail — the poster is
+    # NEVER constructed/invoked (was: it ran the dryrun poster and set `submitted`), the post stays
+    # `queued`, and the summary records it as not_distributed with published == 0.
     monkeypatch.setenv("FANOPS_LIVE", "0"); monkeypatch.setenv("ZERNIO_API_KEY", "sk")
     cfg = Config(root=tmp_path)
     _accounts(tmp_path, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"],
@@ -124,8 +129,10 @@ def test_publish_due_dryrun_posts_nothing_even_with_explicit_provider(tmp_path, 
         def __init__(self, backend): self.backend = backend
         def publish(self, led, pid): seen[pid] = self.backend; led.posts[pid].state = PostState.submitted; return led
     mocker.patch("fanops.post.run.get_poster", side_effect=lambda c, backend=None: _Fake(backend))
-    publish_due(cfg)
-    assert seen["p1"] == "dryrun"                             # NOT zernio — dryrun governs even an overridden channel
+    res = publish_due(cfg)
+    assert seen == {}                                        # the poster was NEVER invoked — dryrun never enters the rail
+    assert res["not_distributed"] >= 1 and res["published"] == 0
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued   # built + scheduled, but held at the boundary
 
 
 def test_publish_post_no_provider_returns_none(tmp_path, monkeypatch, mocker):

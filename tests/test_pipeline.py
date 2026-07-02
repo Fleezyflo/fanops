@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, SourceState
+from fanops.models import Source, SourceState, PostState
 from fanops.pipeline import advance
 
 def _put(p, b): p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
@@ -43,13 +43,35 @@ def _ff(mocker):
         mocker.patch(f"fanops.{mod}.subprocess.run", side_effect=fake)
 
 def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    # dryrun-boundary: the pipeline's publish tail must actually SHIP the approved posts, and a dryrun post
+    # no longer reaches `published` (it's held at the processing<->distribution seam). So run the publish
+    # leg on a genuinely LIVE backend (postiz) with a stubbed poster + stubbed media uploaders (no network),
+    # so `continues` past the approval gate means the posts truly enter the rail and reach `published`.
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    # explicit per-channel backend for BOTH platforms so each routes to postiz (explicit wins — no platform
+    # gate on an explicit provider), keeping the 2-posts-both-publish shape the test asserts.
     cfg.accounts_path.write_text(json.dumps({"accounts": [
-        {"handle": "@a", "account_id": "98432", "platforms": ["instagram", "tiktok"], "status": "active"}]}))
+        {"handle": "@a", "account_id": "98432", "platforms": ["instagram", "tiktok"], "status": "active",
+         "backends": {"instagram": "postiz", "tiktok": "postiz"}}]}))
     _put(cfg.inbox / "raw.mp4", b"V")
     _ff(mocker)
+    # stub the network leg of publish: a poster that promotes to submitted with a REAL permalink (so the
+    # submitted->published gate fires) + media uploaders that return an https url (so no real upload runs,
+    # whether a post carries plain-clip media, a file:// variant render, or a render_id).
+    import fanops.post.run as run
+    class _OkPoster:
+        def __init__(self, cfg): pass
+        def publish(self, led_, post_id):
+            led_.posts[post_id].state = PostState.submitted; led_.posts[post_id].submission_id = "s"
+            led_.posts[post_id].public_url = "https://www.instagram.com/reel/AAA/"
+            return led_
+    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
+    mocker.patch.object(run, "ensure_clip_media", return_value="https://cdn.postiz.test/c.mp4")
+    mocker.patch.object(run, "get_media_uploader", return_value=lambda c, p, **kw: "https://cdn.postiz.test/c.mp4")
+    mocker.patch("fanops.post.media.ensure_render_media", return_value="https://cdn.postiz.test/r.mp4")
     from fanops.models import MomentDecision, MomentPick, MomentHookDecision, CaptionSet, CaptionItem
     from fanops.agentstep import response_path, latest_request_id
 
@@ -89,16 +111,20 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
     assert s["posts"] == 2 and s["published"] == 0
     assert len(list(cfg.scheduled.glob("*.json"))) == 0
 
-    # the operator approves both posts (the human gate) -> queued; the next pass publishes them.
+    # the operator approves both posts (the human gate) -> queued; the next pass publishes them. On the
+    # LIVE backend the stubbed poster promotes each to published with a real permalink.
     with Ledger.transaction(cfg) as led:
         for pid in list(led.posts): led.approve_post(pid, now_iso="2020-01-01T00:00:00Z")
     s = advance(cfg, base_time="2020-01-01T00:00:00Z")
     assert s["published"] == 2
-    # AUDIT C1: needs_reconcile is an actionable parked state (ambiguous publish — may be live).
-    # It must be visible in the advance() summary the unattended operator sees, not only the
-    # digest. The dryrun backend never produces it, so the count is 0, but the KEY must exist.
+    # AUDIT C1: needs_reconcile is an actionable parked state (ambiguous publish — may be live) that must be
+    # visible in the advance() summary the unattended operator sees. Our stub poster returns a permalink, so
+    # every post promotes cleanly to published — none park — but the KEY must exist.
     assert s["needs_reconcile"] == 0
-    assert len(list(cfg.scheduled.glob("*.json"))) == 2
+    # both posts reached the terminal published state (the live rail's "shipped" proof; the dryrun poster's
+    # 04_scheduled/*.json payloads don't exist on a live backend).
+    led = Ledger.load(cfg)
+    assert len(led.posts) == 2 and all(p.state is PostState.published for p in led.posts.values())
 
 def test_advance_summary_counts_hook_burn_failed(tmp_path):
     # V2 M1/F9: a clip that silently lost its hook (couldn't burn) is COUNTED in the advance() summary
