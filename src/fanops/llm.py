@@ -147,7 +147,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     # HOOK-TRANSPORT: hand the frames + a read-them-first instruction, then VERIFY the model actually
     # OPENED them (num_turns proves a Read turn fired — Read is the only tool granted). If it answered
     # text-only, re-ask ONCE forcing the Read; if STILL unread, proceed but log a degraded breadcrumb
-    # (the hook is then text-grounded, not frame-grounded — the narration_signature strip backstops it).
+    # (the hook is then text-grounded, not frame-grounded — degraded but HONEST, surfaced by the breadcrumb).
     frames_unread = False                                    # AGENT-9: True iff frames were ATTACHED but never opened
     if images:
         env = _run("FIRST read these image frames with the Read tool, then answer using what you SEE:\n"

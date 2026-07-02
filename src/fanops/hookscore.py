@@ -26,10 +26,14 @@ _IMPERATIVE_OPEN = re.compile(r"^\s*(wait|watch|listen|stop|don'?t|play|tell me|
 _THIRD_PERSON = re.compile(r"\b(he|him|his|she|her|hers|they|them|their|theirs)\b", re.IGNORECASE)
 
 def narration_signature(text: str | None) -> bool:
-    """True if `text` reads as third-person scene-narration (a recap with no viewer address). Never a
-    gate — only a meter + a signal. High precision: flags a clear third-person-pronoun line that does
-    NOT address the viewer; everything that addresses the scroller (2nd person / POV / question /
-    imperative opener) is NOT narration, even if it also names 'he'/'she'.
+    """True if `text` reads as third-person scene-narration (a recap with no viewer address). Now genuinely
+    NEVER a gate — only a read-only METER + a signal. RF5 removed the post-generation perspective strip in
+    moments.ingest_moment_hooks (and deleted the stricter singular-pronoun perspective gate this meter once
+    sat beside); perspective is now owned at authorship (the generator is starved of third person). This
+    function is used ONLY by hook_quality (the read-only scoreboard) and by moment_hook_learning (to keep a
+    poisoned third-person winner out of priming) — neither strips a shipped hook. High precision: flags a
+    clear third-person-pronoun line that does NOT address the viewer; everything that addresses the scroller
+    (2nd person / POV / question / imperative opener) is NOT narration, even if it also names 'he'/'she'.
 
     Assumes ASCII apostrophes: ledger hooks pass through sanitize_generated_text first, so 'you're'/'you'll'
     use ASCII ', which the _VIEWER contraction branch matches. A smart apostrophe (U+2019) in raw
@@ -40,27 +44,6 @@ def narration_signature(text: str | None) -> bool:
     if _VIEWER.search(low) or _IMPERATIVE_OPEN.search(low):
         return False                                  # addresses the viewer -> not narration
     return bool(_THIRD_PERSON.search(low))            # third-person subject + no viewer address -> recap
-
-# THE GATE (stricter than the narration_signature METER above): a SINGULAR third-person personal pronoun
-# (he/him/his/she/her/hers) in this artist content almost always refers to the ARTIST, and a retention
-# hook must address the VIEWER, never narrate the artist — so reject it with NO viewer/imperative-opener
-# exemption ('watch HIM define HIS life' addresses the scroller yet still narrates the artist, which the
-# meter wrongly waves through). NARROW on purpose: plural 'they/people' is left to the prompt (a general
-# claim like 'famous people don't write hits' is a fine viewer hook, not artist narration).
-_ARTIST_PRONOUN = re.compile(r"\b(he|him|his|she|her|hers)\b", re.IGNORECASE)
-
-def has_artist_reference(text: str | None, artist_name: str = "") -> bool:
-    """True if `text` references the ARTIST in third person — a singular personal pronoun
-    (he/him/his/she/her/hers) or the artist's literal name. THE deterministic perspective GATE wired in
-    moments.ingest_moment_hooks: stricter than narration_signature (no opener/viewer exemption), narrower
-    on pronouns (singular only). Empty -> False."""
-    if not text or not text.strip():
-        return False
-    low = text.strip().lower()
-    if _ARTIST_PRONOUN.search(low):
-        return True
-    name = (artist_name or "").strip().lower()
-    return bool(name) and name in low
 
 def hook_quality(led: Ledger) -> dict:
     """Read-only hook scoreboard (Task 9) over the decided moments — no LLM, no network, no ledger

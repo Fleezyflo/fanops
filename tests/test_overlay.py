@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 
 import fanops.overlay as overlay
-from fanops.overlay import build_ass, write_ass, subtitles_vf, ffmpeg_has_textfilter, derive_hook
+from fanops.overlay import build_ass, write_ass, subtitles_vf, ffmpeg_has_textfilter
 
 import pytest
 
@@ -240,21 +240,11 @@ def test_write_ass_writes_file(tmp_path):
     assert p.read_text().startswith("[Script Info]")
 
 
-def test_derive_hook_takes_punchy_first_clause():
-    # the FIRST clause (split on . ! ? or newline), stripped — a deterministic top-third line
-    # with NO LLM. Here "They slept on me" (4 words) before the first period.
-    assert derive_hook("They slept on me. Not anymore, watch this whole thing.") == "They slept on me"
-
-    # empty / whitespace-only input -> None (no hook to show)
-    assert derive_hook("") is None
-    assert derive_hook("   \n  ") is None
-
-    # a first clause longer than max_words is trimmed to max_words words (default 7)
-    long = "one two three four five six seven eight nine. trailing clause"
-    assert derive_hook(long) == "one two three four five six seven"
-    assert len(derive_hook(long).split()) == 7
-    # explicit max_words is honoured
-    assert derive_hook(long, max_words=3) == "one two three"
+# RF5: the verbatim-transcript hook fallback (overlay.derive_hook) was DELETED — it lifted raw third-person
+# transcript as a title, the exact anti-pattern this PRD starves at the source. Its tests are gone with it.
+# INTENDED operator-visible side effect: cmd_compose now defaults its title to the clip's real on-screen
+# hook ONLY (mom.hook); a hookless clip yields title=None -> the "nothing to compose" early-out in cli.py,
+# with no silent transcript substitute. (The hook that IS present is still burned by build_ass, tested below.)
 
 
 def test_burn_hook_only_builds_hook_ass_and_cmd(tmp_path, mocker):

@@ -162,9 +162,9 @@ class Moment(BaseModel):
     end: float
     reason: str                                 # WHY worth posting (required)
     transcript_excerpt: str = ""
-    hook: Optional[str] = None                  # punchy top-third line for the clip; deterministic
-                                                # first-clause default (overlay.derive_hook), an LLM
-                                                # may overwrite. Optional/None -> old ledgers load fine.
+    hook: Optional[str] = None                  # punchy top-third line for the clip, AUTHORED by the
+                                                # frame-seeing hook gate (viewer-POV). None = a clean
+                                                # (hookless) clip. Optional/None -> old ledgers load fine.
     hook_removed: Optional[str] = None          # the model's hook that is_weak_hook STRIPPED (dup/opening-
                                                 # template cluster) instead of discarding it. Preserved so
                                                 # Studio Review can show "hook removed" + let the operator

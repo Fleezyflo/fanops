@@ -16,13 +16,9 @@ result so repeated clip renders don't re-spawn ffmpeg; it never raises if ffmpeg
 from __future__ import annotations
 import math
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
-
-# Sentence/clause boundary for the deterministic hook: split on . ! ? or a newline.
-_CLAUSE_SPLIT = re.compile(r"[.!?\n]")
 
 # ASS colours are &HAABBGGRR (alpha+BGR, hex). White text + heavy black outline reads on ANY footage
 # without a coloured box — the old amber-on-scrim hook card looked like a template (AI slop), so the
@@ -124,27 +120,10 @@ def hook_legibility_warnings(hook: str | None, *, width: int, height: int) -> li
     return warns
 
 
-def derive_hook(transcript_excerpt: str | None, *, max_words: int = 7) -> str | None:
-    """Deterministic top-third hook from a moment's spoken text — NO LLM required.
-
-    Take the FIRST sentence/clause (split on . ! ? or a newline), strip it, and trim to at most
-    `max_words` words. Returns None for empty/whitespace-only input (nothing to show). The text is
-    returned as-is (no re-casing) so the speaker's words are preserved; a future LLM may overwrite
-    Moment.hook with something punchier."""
-    if not transcript_excerpt or not transcript_excerpt.strip():
-        return None
-    # first non-empty clause (a leading delimiter would yield an empty piece first; skip those)
-    first = ""
-    for piece in _CLAUSE_SPLIT.split(transcript_excerpt):
-        if piece.strip():
-            first = piece.strip()
-            break
-    if not first:
-        return None
-    words = first.split()
-    if len(words) > max_words:
-        words = words[:max_words]
-    return " ".join(words)
+# RF5: derive_hook (the verbatim-transcript fallback title) was DELETED — it lifted raw third-person
+# transcript as a title, exactly the anti-pattern this PRD starves at the source. cmd_compose now defaults
+# its title to the clip's real on-screen hook alone (mom.hook); a hookless clip yields None -> the "nothing
+# to compose" early-out, with no silent transcript substitute.
 
 
 def _chunk(items: list, size: int) -> list[list]:
