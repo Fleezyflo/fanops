@@ -11,7 +11,8 @@ from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post, Render, SelectionFact, AccountSelection,
                            SelectionMethod, account_selection_id, normalize_account_handle,
-                           StitchPlan, StitchState, Batch, SourceState, MomentState, ClipState, PostState)
+                           StitchPlan, StitchState, Batch, ImportedMedia,
+                           SourceState, MomentState, ClipState, PostState)
 
 
 _DEFAULT_LOCK_TIMEOUT = 30.0
@@ -151,7 +152,7 @@ def _migrate_v8_account_selections(raw: dict) -> dict:
     return _dedupe_account_selections(out)
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
 # v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
@@ -172,6 +173,11 @@ SCHEMA_VERSION = 9
 # durable, account-owned crosspost-gate input — (source, account) -> moment_ids + method, replacing the
 # non-durable Moment.affinities filter-tag). NO row backfill in Task 1 (scaffold); the decided default for
 # legacy affinities lands in Task 4. Old ledgers load with account_selections={} — same injection shape as v5/v6/v7.
+# v9 -> v10 (ledger-rebuild, Instagram is the source of truth): inject the new top-level imported_media map
+# (additive; the ImportedMedia entity — a live IG post PROBED from the platform with NO clip lineage, keyed by
+# its Graph media_id). Old ledgers load with imported_media={} — same injection shape as v5/v6/v7/v9. A naive
+# add that skips this step AND the load/save lines silently DROPS the map on the next save (pydantic doesn't
+# own a top-level map); the round-trip test pins it.
 # Additive + idempotent + never-raising. The ledger is NEVER wiped — every migration is copy-on-write.
 _MIGRATIONS = {1: lambda raw: raw,
                2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})},
@@ -181,7 +187,8 @@ _MIGRATIONS = {1: lambda raw: raw,
                6: lambda raw: {**raw, "renders": raw.get("renders", {})},
                7: lambda raw: {**raw, "selection_facts": raw.get("selection_facts", {})},
                8: lambda raw: raw,
-               9: _migrate_v8_account_selections}
+               9: _migrate_v8_account_selections,
+               10: lambda raw: {**raw, "imported_media": raw.get("imported_media", {})}}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
@@ -294,6 +301,10 @@ class Ledger:
                                               # input (8th id->unit map; additive). One-per-(source, account),
                                               # content-addressed. Empty until casting writes one; the gate falls
                                               # back to Moment.affinities for a source that has none (pre-v9).
+        self.imported_media: dict[str, ImportedMedia] = {}   # ledger-rebuild: live IG posts PROBED from the platform
+                                              # with NO clip lineage (9th id->unit map; additive). Keyed by the Graph
+                                              # media_id (the natural key). Empty until the projection imports one (M2);
+                                              # old ledgers load with {} (pre-v10) — the OFF/baseline shape is byte-identical.
 
     @classmethod
     def load(cls, cfg: Config) -> "Ledger":
@@ -329,6 +340,7 @@ class Ledger:
                 led.renders = {k: Render(**v) for k, v in raw.get("renders", {}).items()}
                 led.selection_facts = {k: SelectionFact(**v) for k, v in raw.get("selection_facts", {}).items()}
                 led.account_selections = {k: AccountSelection(**v) for k, v in raw.get("account_selections", {}).items()}
+                led.imported_media = {k: ImportedMedia(**v) for k, v in raw.get("imported_media", {}).items()}
             except ControlFileError:
                 raise                                  # _NewerSchema / _migrate gap: pass through, unreworded
             except Exception as e:
@@ -383,6 +395,7 @@ class Ledger:
             "renders": {k: v.model_dump() for k, v in self.renders.items()},
             "selection_facts": {k: v.model_dump() for k, v in self.selection_facts.items()},
             "account_selections": {k: v.model_dump() for k, v in self.account_selections.items()},
+            "imported_media": {k: v.model_dump() for k, v in self.imported_media.items()},
         }
         self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
@@ -409,6 +422,8 @@ class Ledger:
     def get_render(self, rid: str): return self.renders.get(rid)
     def add_selection_fact(self, f: SelectionFact) -> None: self.selection_facts[f.id] = f   # M4: OVERWRITE — a re-cast updates the why (latest selection wins; NOT render's content-dedup)
     def get_selection_fact(self, fid: str): return self.selection_facts.get(fid)
+    def add_imported_media(self, im: ImportedMedia) -> None: self.imported_media[im.media_id] = im   # ledger-rebuild: UPSERT by media_id — a live re-pull carries fresher metrics that WIN (latest snapshot; NOT render's first-write dedup)
+    def get_imported_media(self, media_id: str): return self.imported_media.get(media_id)
     def add_account_selection(self, s: AccountSelection) -> None:
         acct = normalize_account_handle(s.account)
         canon_id = account_selection_id(s.source_id, acct)

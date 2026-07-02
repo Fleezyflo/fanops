@@ -501,6 +501,33 @@ def batch_id(name: str, created_at: str) -> str:
     return content_id("batch", name, created_at)
 
 
+# ---- ledger-rebuild (Instagram is the source of truth): the ImportedMedia entity ----
+class ImportedMedia(BaseModel):
+    # A live IG post PROBED from the platform that we did NOT author — it has NO Clip/Moment/Source in our
+    # system, so it CANNOT be a Post (Post.parent_id is required and every lineage reader — posts_of/clips_of/
+    # moments_of — depends on it). ImportedMedia is the DECIDED representation (PRD option a): Post keeps
+    # meaning "authored here"; this peer means "mirrored from live". Keyed by the Graph `media_id` itself (a
+    # NATURAL key — the platform's own id, NOT a content_id/child_id: there is no parent to hash off). Carries
+    # exactly what the platform returns + what the insights read fills: permalink, product_type, metrics, and
+    # the append-only metrics_series (mirroring Post's two fields). NO clip lineage by construction —
+    # `hasattr(im, "parent_id")` is False, so a lineage reader can never be handed one. Additive top-level
+    # `imported_media` map (v9->v10); old ledgers load with {} — the OFF/baseline shape is byte-identical.
+    # fan-accounts-repost-freely: an ImportedMedia MIRRORS live, it never blocks reposting — no supersede/dedupe
+    # logic keys on it anywhere.
+    media_id: str                               # the Instagram Graph media id — THE natural key (one-per-media)
+    permalink: Optional[str] = None             # the live IG permalink (the match key against a Post.public_url)
+    product_type: Optional[str] = None          # media_product_type (AD|FEED|STORY|REELS); the insights request is
+                                                # DERIVED from it (meta_graph.insights_metrics_for). None until resolved.
+    timestamp: Optional[str] = None             # the media's live publish timestamp (Graph `timestamp`), for display/order
+    caption: Optional[str] = None               # the media's live caption text, when the probe returns it (display-only)
+    account: Optional[str] = None               # the credentialed handle this media was enumerated under (scope label;
+                                                # META_IG_USER_ID is single-handle, so the projection is scoped to ONE handle)
+    metrics: dict = Field(default_factory=dict)          # the LATEST insights snapshot (same shape as Post.metrics)
+    metrics_series: list[dict] = Field(default_factory=list)   # append-only per-cadence rows (mirrors Post.metrics_series)
+    error_reason: Optional[str] = None          # breadcrumb for an unresolved product_type / a transient insights miss
+    imported_at: Optional[str] = None           # wall-clock ISO-Z when first mirrored into the ledger (audit)
+
+
 # ---- agent-step contracts (all carry request_id for correlation — FIX F21; the LLM responder self-stamps the
 # authoritative rid and VERIFIES the model's echo, logging rid_mismatch on divergence — AGENT-1, not silently trusted) ----
 class MomentRequest(BaseModel):

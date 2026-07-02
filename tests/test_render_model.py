@@ -14,8 +14,10 @@ def _write(cfg, raw):
     cfg.ledger_path.write_text(json.dumps(raw))
 
 
-def test_schema_version_is_nine():
-    assert SCHEMA_VERSION == 9
+def test_schema_version_at_least_six():
+    # renders landed at v6; the version only climbs. Pin the floor, not a magic literal, so a later
+    # additive map (v10 imported_media, ...) doesn't false-fail this render-model test.
+    assert SCHEMA_VERSION >= 6
 
 
 # ---- the Render model: per-account artifact, content-addressed, lifecycle state ----
