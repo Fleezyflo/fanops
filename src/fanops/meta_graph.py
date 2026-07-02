@@ -80,7 +80,7 @@ def trend_score(cfg: Config, tag: str, *, get=None):
                 total += float(v)
     return total
 
-_MEDIA_FIELDS = "id,permalink,media_product_type,timestamp"
+_MEDIA_FIELDS = "id,permalink,media_product_type,timestamp,caption"   # caption added (ledger-rebuild): the inverse projection mirrors a live-only media's caption (display-only); resolve ignores the extra field
 _MEDIA_PAGE_CAP = 50            # defensive: >50 pages of the IG user's OWN media is a pathological/mocked paging loop
 
 def list_user_media(cfg: Config, *, get=None):

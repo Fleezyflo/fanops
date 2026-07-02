@@ -152,14 +152,15 @@ def cmd_map_media(cfg: Config) -> int:
     # media list (matched by permalink). READ-ONLY w.r.t. Instagram (a GET on /{ig_user}/media, needs only
     # instagram_basic); the daemon does this automatically inside pull_metrics, this is the on-demand mirror.
     # Fail-open (no creds -> resolves nobody, exit 0); never fabricates an id.
-    from fanops.reconcile import resolve_media_ids
+    from fanops.reconcile import resolve_media_ids, project_imported_media
     led = Ledger.load(cfg)
-    resolve_media_ids(led, cfg)
+    resolve_media_ids(led, cfg)                 # forward: enrich authored posts matched to a live media
+    project_imported_media(led, cfg)            # inverse (ledger-rebuild M2): mirror live-only media as ImportedMedia
     led.save()
     mapped = sum(1 for p in led.posts.values() if p.media_id)
     ig = sum(1 for p in led.posts.values()
              if p.platform.value == "instagram" and p.state.value in ("published", "analyzed"))
-    print(f"media mapped; ig_live={ig} with_media_id={mapped}")
+    print(f"media mapped; ig_live={ig} with_media_id={mapped} imported_live_only={len(led.imported_media)}")
     return 0
 
 def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: float) -> int:
