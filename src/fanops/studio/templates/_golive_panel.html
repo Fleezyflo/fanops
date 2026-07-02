@@ -19,6 +19,8 @@
         {%- elif result.detail and result.detail.handle and result.detail.platform %} mapped {{ result.detail.handle }} · {{ result.detail.platform }}
         {%- elif result.detail and result.detail.integrations is defined %} found {{ result.detail.integrations|length }} integration(s)
         {%- elif result.detail and result.detail.mode %} switched to {{ result.detail.mode }}
+          {%- if result.detail.routing_source %}<div class="muted routing-source">{{ result.detail.routing_source }}</div>{% endif %}
+          {%- if result.detail.bridge_only_warning %}<div class="muted routing-source">{{ result.detail.bridge_only_warning }}</div>{% endif %}
         {%- elif result.detail and result.detail.url %} connected {{ result.detail.url }}
         {%- elif result.detail and result.detail.adopted is defined %} adopted {{ result.detail.adopted }} channel(s){% if result.detail.routed %}, routed {{ result.detail.routed }} live{% endif %}
         {%- elif result.detail and result.detail.channels is defined %} found {{ result.detail.channels|length }} channel(s) to adopt

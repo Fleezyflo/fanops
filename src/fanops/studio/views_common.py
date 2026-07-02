@@ -1,8 +1,14 @@
 """Shared read-model primitives for the Studio (no HTTP, no Flask): pagination, the terminology glossary,
 account-universe extraction, the time helpers (imminence + the deterministic per-post suggestion) and the
 batch-title lookup that several surfaces reuse. Imports ONLY fanops.* — never a sibling views_* module — so
-every surface module AND the views.py facade can depend on it without an import cycle."""
+every surface module AND the views.py facade can depend on it without an import cycle.
+
+Exception (D13b): postiz_health_for_banner is the ONE read-model here that touches the network (a single
+cheap GET, cached ~30s) — the Postiz backend health probe the Studio banner derives from. Kept here (not a
+new module) because it's a global-strip read like the others, and it imports only fanops.post.postiz."""
 from __future__ import annotations
+import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
@@ -11,6 +17,8 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ClipState
 from fanops.timeutil import parse_iso
+
+_log = logging.getLogger("fanops.studio.views_common")
 
 IMMINENT_THRESHOLD_MINUTES = 5     # spec §4: a post within this of now (or past) is edit-disabled
 RECENT_WINDOW_HOURS = 24           # spec §6: "what just shipped" read-only context window
@@ -225,3 +233,61 @@ def _batch_title(led: Ledger, bid: Optional[str]) -> Optional[str]:
     # yields None (renders no label), never an AttributeError. Dict lookup, no I/O.
     b = led.get_batch(bid) if bid else None
     return b.name if b is not None else None
+
+
+# D13b: the Postiz-down banner read-model. A Studio render hits build_system_strip on EVERY page, so a
+# raw probe-per-render would slam Postiz — cache the typed probe result for _POSTIZ_HEALTH_TTL_S. Keyed by
+# postiz_url so a URL change re-probes immediately. Process-local (a Studio worker); a stale-by-30s outage
+# signal is fine (the banner is informational, self-clears within the TTL of a Postiz recovery).
+_POSTIZ_HEALTH_TTL_S = 30.0
+_postiz_health_cache: "dict[str, tuple[float, object]]" = {}
+
+
+def _any_channel_routes_to_postiz(cfg: Config) -> bool:
+    """True when at least one ACTIVE account channel's effective provider is postiz (intent, not creds —
+    a down Postiz is exactly when creds-readiness is moot). Fail-open False: an unreadable registry never
+    raises here (the banner just doesn't show)."""
+    try:
+        from fanops.accounts import load_accounts_safe
+        accounts, err = load_accounts_safe(cfg)
+        if err:
+            return False
+        for a in accounts.active():
+            for p in a.platforms:
+                if accounts.effective_provider(a.handle, p) == "postiz":
+                    return True
+    except Exception as e:
+        _log.debug("postiz-route check failed (banner suppressed): %s", e)
+    return False
+
+
+def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict:
+    """D13b read-model for the Studio Postiz-down banner. Returns {show, status, hint}. `show` is True ONLY
+    when the backend health probe is unhealthy AND at least one channel routes to postiz — a Postiz outage
+    is irrelevant to a deployment that doesn't publish through it, and no banner should nag then. The probe
+    result is cached ~30s (keyed by postiz_url) so a per-render Studio hit doesn't slam Postiz. Fail-open:
+    any error -> {show: False} (an informational banner must never block a page). `now` is injected for
+    deterministic cache tests; defaults to time.monotonic()."""
+    if not _any_channel_routes_to_postiz(cfg):
+        return {"show": False, "status": None, "hint": ""}
+    key = cfg.postiz_url or ""
+    t = now if now is not None else time.monotonic()
+    cached = _postiz_health_cache.get(key)
+    if cached is not None and (t - cached[0]) < _POSTIZ_HEALTH_TTL_S:
+        health = cached[1]
+    else:
+        from fanops.post.postiz import postiz_health_probe
+        try:
+            health = postiz_health_probe(cfg)
+        except Exception as e:                       # postiz_health_probe never raises, but stay defensive
+            _log.warning("postiz_health_probe raised in banner read (suppressing banner): %s", e)
+            return {"show": False, "status": None, "hint": ""}
+        _postiz_health_cache[key] = (t, health)
+    if health.healthy:
+        return {"show": False, "status": health.status_code, "hint": ""}
+    status = health.status_code
+    where = f" (status: {status})" if status is not None else ""
+    return {"show": True, "status": status,
+            "hint": (f"Postiz API unhealthy{where} — publishes via Postiz are stalled. The container's "
+                     "health check is nginx-only and can lie; check `docker logs postiz` (see "
+                     "docs/POSTIZ_OPS.md).")}

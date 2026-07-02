@@ -732,6 +732,7 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
   min-height:var(--strip-h); margin:0 0 var(--s-3); padding:.45rem .65rem; background:var(--surface-1);
   border:1px solid var(--line); border-radius:var(--r-card); font-size:var(--t-meta); }
 .strip-live { color:var(--danger); font-weight:600; } .strip-dryrun { color:var(--muted); font-weight:600; }
+.strip-half-live { color:var(--warn); font-weight:600; }   /* D15: LIVE flag set but nothing routes live — a distinct caution, never the plain LIVE red */
 .strip-alert.danger { color:var(--danger); font-weight:500; }
 .health-pill { display:inline-block; padding:.1rem .45rem; border-radius:var(--r-pill); border:1px solid var(--line); margin-right:.25rem; }
 .health-pill.ok { border-color:var(--ok); color:var(--ok); } .health-pill.err { border-color:var(--danger); color:var(--danger); }

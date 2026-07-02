@@ -65,6 +65,20 @@ def doctor_report(cfg: Config) -> dict:
         else:                         hint = ""
         checks.append(_check("Postiz learning ready (key + channels mapped + cutover validated)", ready, hint))
 
+    # D15: live-route COHERENCE. FANOPS_LIVE=1 (is_live) but nothing actually routes live — a typo'd
+    # FANOPS_POSTER (W4 -> dryrun) with no live per-channel backend — is the HALF-LIVE state: the banner
+    # would say LIVE while every publish halts in `queued`. Flag it LOUD with the fix. A not-live config or
+    # a genuinely-live one (any live route) passes. Guarded so a bad accounts.json can't crash the report.
+    try:
+        half_live = cfg.is_live and not cfg.live_route_exists
+    except Exception:
+        half_live = False
+    if cfg.is_live:
+        checks.append(_check("live route exists (FANOPS_LIVE=1 actually publishes)", not half_live,
+                             "LIVE flag set but nothing routes live — FANOPS_POSTER is a legacy bridge, not "
+                             "the switch. Route a channel to a provider with creds (Studio Go-Live tab), or "
+                             "`fanops` back to dryrun. Every publish stays stuck in `queued` until then."))
+
     # Leg 2 (Insight): the ONE external gate — a persisted breadcrumb means a Graph media-insights read was
     # refused for lack of the instagram_manage_insights scope, so IG posts kept their PRIOR snapshot (fail-
     # closed, never a wrong number). Surface it LOUD with the exact unblock; self-clears once insights flow.

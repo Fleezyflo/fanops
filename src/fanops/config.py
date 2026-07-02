@@ -245,6 +245,29 @@ class Config:
         return False
 
     @property
+    def live_route_exists(self) -> bool:
+        # D15 coherence predicate: does ANYTHING actually route live? True iff the legacy global
+        # poster_backend is a live backend WITH creds, OR at least one active accounts.json channel
+        # resolves to a live provider whose creds are present (live_ready_channels). This exists to catch
+        # the HALF-LIVE state: FANOPS_LIVE=1 (is_live True) with a typo'd FANOPS_POSTER (W4 -> dryrun) and
+        # no per-channel backend — is_live says LIVE while every publish halts in `queued` (post-M1 dryrun
+        # boundary), so the operator believes it's live and it publishes NOTHING. is_live is the operator's
+        # INTENT; this is whether that intent has a live PATH. FAIL-OPEN: an unreadable registry must never
+        # crash config load / the autonomous run — load_accounts_safe degrades to an empty registry (then
+        # only the global-creds branch can be true), never raises. NB: does NOT read is_live — the caller
+        # composes them (is_live AND NOT live_route_exists == half-live) so this stays a pure route check.
+        if self.backend_has_creds(self.poster_backend):
+            return True                                 # a genuinely-live global (byte-identical to legacy)
+        from fanops.accounts import load_accounts_safe  # lazy: config<->accounts circular import
+        accounts, err = load_accounts_safe(self)
+        if err:
+            # torn registry + no global creds -> not provably a live route. Fail-safe False, but log WHY
+            # (mirrors is_live_backend / effective_publish_mode) so a silent False is diagnosable.
+            _log.warning("accounts registry unreadable (%s); live_route_exists -> False (not provably live)", err)
+            return False
+        return bool(accounts.live_ready_channels())
+
+    @property
     def postiz_url(self) -> str | None:
         # Base URL of a self-hosted (or hosted) Postiz instance, e.g. https://postiz.example.com or
         # https://api.postiz.com. The free, self-hosted poster backend (FANOPS_POSTER=postiz) posts
