@@ -3,7 +3,7 @@
 Writes are ATOMIC (temp file + os.replace) under a file lock so the 're-run advance()'
 model cannot corrupt or lose updates. Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
-import fcntl, json, os, re, time
+import fcntl, json, os, re, secrets, time
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
@@ -287,6 +287,16 @@ def _fallback_iso(suggested_iso: str | None, now_iso: str) -> str:
     except (ValueError, TypeError): return now_iso
 
 
+def _snapshot_dest(cfg: Config, now: datetime) -> Path:
+    """Mint the pre-wipe snapshot destination path (MOL-75). The filename keeps the second-granularity UTC
+    timestamp as a SORTABLE/recognizable prefix, then appends a short random uniqueness token so two
+    snapshots taken within the same wall-clock second can never target the same path — the collision class
+    that could silently clobber the sole pre-wipe rollback point is eliminated by construction."""
+    stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    token = secrets.token_hex(4)                    # 8 hex chars: unique per call, keeps the name short
+    return cfg.control / f"ledger.snapshot.{stamp}.{token}.json"
+
+
 class Ledger:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -442,9 +452,10 @@ class Ledger:
         now = now or datetime.now(timezone.utc)
         if not cfg.ledger_path.exists():
             cls.load(cfg).save()                       # materialize an empty (but valid) ledger to snapshot
-        stamp = now.strftime("%Y%m%dT%H%M%SZ")
-        dest = cfg.control / f"ledger.snapshot.{stamp}.json"
+        dest = _snapshot_dest(cfg, now)                # MOL-75: structurally-unique dest (timestamp + token)
         with _file_lock(cfg.lock_path):
+            if dest.exists():                          # never silently overwrite a pristine pre-wipe image
+                raise ControlFileError(f"ledger snapshot already exists: {dest}")
             shutil.copy2(str(cfg.ledger_path), str(dest))   # byte-identical image under the lock
         return dest
 

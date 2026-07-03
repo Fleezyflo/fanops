@@ -143,6 +143,51 @@ def test_snapshot_verify_restorable_catches_bad_snapshot(tmp_path):
     assert ledger_wipe.snapshot_is_restorable(bad) is False
 
 
+# ---- MOL-75: same-second snapshots must not clobber the pre-wipe rollback point ----
+def test_two_same_second_snapshots_yield_two_distinct_surviving_files(tmp_path):
+    # A UI double-click / fast retry inside confirm_wipe calls Ledger.snapshot(cfg) twice within the
+    # SAME wall-clock second. The first (pristine, pre-wipe) image must NOT be silently overwritten:
+    # both paths distinct, both files survive, each with its own content, each verified-restorable.
+    from datetime import datetime, timezone
+    cfg = Config(root=tmp_path)
+    _live_shaped(cfg)
+    fixed = datetime(2026, 7, 3, 12, 0, 0, tzinfo=timezone.utc)   # identical second for both calls
+
+    snap1 = Ledger.snapshot(cfg, now=fixed)
+    first_image = snap1.read_bytes()
+    # mutate the live ledger between the two snapshots so a clobber would be detectable as content-loss
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s_between", source_path="/between.mp4"))
+    snap2 = Ledger.snapshot(cfg, now=fixed)
+
+    assert snap1 != snap2                                        # structurally-unique dest paths
+    assert snap1.exists() and snap2.exists()                    # neither clobbered
+    assert snap1.read_bytes() == first_image                    # the pristine first image is intact
+    assert snap2.read_bytes() != first_image                    # the second captured the mutated state
+    # both remain valid rollback points (the wipe gate still accepts them)
+    assert ledger_wipe.snapshot_is_restorable(snap1) is True
+    assert ledger_wipe.snapshot_is_restorable(snap2) is True
+    # timestamp prefix retained -> sortable/recognizable
+    assert snap1.name.startswith("ledger.snapshot.2026") and snap2.name.startswith("ledger.snapshot.2026")
+
+
+def test_snapshot_refuses_to_overwrite_an_existing_path(tmp_path, monkeypatch):
+    # Belt-and-suspenders per the operator decision: even if two mint calls somehow collide on the same
+    # dest, the copy REFUSES rather than clobbering the pristine snapshot silently.
+    from fanops import ledger as ledger_mod
+    from fanops.errors import ControlFileError
+    cfg = Config(root=tmp_path)
+    _live_shaped(cfg)
+    # force both snapshots onto ONE fixed destination path to exercise the existence check directly
+    fixed_dest = cfg.control / "ledger.snapshot.COLLIDE.json"
+    monkeypatch.setattr(ledger_mod, "_snapshot_dest", lambda cfg, now: fixed_dest)
+    first = Ledger.snapshot(cfg)
+    assert first == fixed_dest and first.exists()
+    with pytest.raises(ControlFileError):
+        Ledger.snapshot(cfg)                                    # must refuse, not overwrite
+    assert ledger_wipe.snapshot_is_restorable(first) is True    # the original survives untouched
+
+
 def test_execute_wipe_refuses_without_snapshot(tmp_path):
     # the wipe CANNOT run unless a verified snapshot was taken first (enforced in code, not just doc).
     _live_shaped(Config(root=tmp_path))
