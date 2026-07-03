@@ -3,7 +3,7 @@
 Reframe is chosen from the PROBED source dimensions so vertical/odd sources don't break.
 render_aspects_for renders one clip per distinct aspect the active platforms need."""
 from __future__ import annotations
-import hashlib, json, os, subprocess
+import contextlib, hashlib, json, os, subprocess
 from pathlib import Path
 from statistics import median
 from fanops.config import Config
@@ -439,17 +439,45 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
       2. single-pass ffmpeg crop (single subject / centered) — one static subject-lock (or centered) crop.
     Both are LOCKED-OFF per shot (the crop is constant within a segment) so there is zero jitter. Returns the
     subprocess result for the caller's existing handling; FileNotFoundError/OSError/TimeoutExpired propagate
-    exactly like the single-pass `subprocess.run` they replace."""
-    if track and len(track) > 1:
-        seg_cmd = ffmpeg_segments_cmd(src_path, dst, cs, ce, aspect_value, track,
-                                      src_w=src_w, src_h=src_h, content_type=content_type, sub_token=extra_vf)
-        r = subprocess.run(seg_cmd, check=False, capture_output=True, text=True, timeout=timeout)
-        if r.returncode == 0 and Path(dst).exists() and Path(dst).stat().st_size > 0:
-            return r
-        # a working ffmpeg rejected the segment graph -> fall through to the single-pass crop (fail-open)
-    cmd = ffmpeg_clip_cmd(src_path, dst, cs, ce, aspect_value, src_w=src_w, src_h=src_h, extra_vf=extra_vf,
-                          top_bias=top_bias, focus=focus, track=track, content_type=content_type)
-    return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+    exactly like the single-pass `subprocess.run` they replace.
+
+    ATOMIC WRITE (MOL-78): ffmpeg renders to a `<dst>.part.mp4` temp SIBLING of `dst`, and the finished
+    output is `os.replace`d onto `dst` ONLY after success (rc==0 + temp exists + size>0). So `dst` is never
+    a torn file mid-write — a concurrent reader (preview fallback, ffprobe, upload) sees the OLD `dst` or
+    nothing, never a half-muxed byte stream; on failure/timeout `dst` is left untouched (absent, or its
+    prior good file), so the caller's rc/exists/size checks on `dst` still hold verbatim (an unreplaced
+    failure leaves `dst` missing, matching the existing `not dst.exists()` error branch). The temp MUST keep
+    a muxer-inferable `.mp4` suffix: `ffmpeg_clip_cmd`/`ffmpeg_segments_cmd` pass no `-f mp4`, so ffmpeg
+    picks the container from the OUTPUT EXTENSION alone — a bare `.part` temp fails "Error initializing the
+    muxer" and produces NO file (rc!=0), so os.replace would never run and `dst` would never be created
+    (the MOL-78 CI E2E failure; the unit tests missed it because they stubbed ffmpeg). This also heals
+    render_account_cut, which passes its OWN `<out>.part` as `dst` here: we render to `<dst>.part.mp4`
+    (muxes fine) and publish to `dst` whatever ITS extension. The temp is swept on EVERY exit path —
+    success, fail-through, or a raised exception — in the finally. Mirrors render_account_cut's proven
+    atomic+os.replace pattern in this same file (and overlay.burn_hook_only)."""
+    tmp = str(dst) + ".part.mp4"                              # keep a muxer-inferable .mp4 suffix (see ATOMIC WRITE)
+    try:
+        if track and len(track) > 1:
+            seg_cmd = ffmpeg_segments_cmd(src_path, tmp, cs, ce, aspect_value, track,
+                                          src_w=src_w, src_h=src_h, content_type=content_type, sub_token=extra_vf)
+            r = subprocess.run(seg_cmd, check=False, capture_output=True, text=True, timeout=timeout)
+            if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
+                os.replace(tmp, dst)                          # atomic publish — never a half-written clip at dst
+                return r
+            # a working ffmpeg rejected the segment graph -> fall through to the single-pass crop (fail-open);
+            # the .part is overwritten by the single-pass output below, and swept in finally on any failure.
+        cmd = ffmpeg_clip_cmd(src_path, tmp, cs, ce, aspect_value, src_w=src_w, src_h=src_h, extra_vf=extra_vf,
+                              top_bias=top_bias, focus=focus, track=track, content_type=content_type)
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+        if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
+            os.replace(tmp, dst)                              # atomic publish (single-pass)
+        # rc!=0 / empty / missing temp -> leave dst UNTOUCHED; the caller's rc+exists+size checks on dst fire.
+        return r
+    finally:
+        # sweep the .part on EVERY exit path (success os.replace consumes it; failure/timeout/exception leave
+        # it). suppress(OSError) so a sweep hiccup never MASKS a propagating TimeoutExpired/OSError from above.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
 
 def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
                   *, clip_start: float, clip_end: float):
