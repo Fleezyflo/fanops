@@ -98,7 +98,11 @@ def _graph_get(cfg: Config, path: str, params: dict, *, get=None, token: Optiona
 
 def hashtag_id(cfg: Config, tag: str, *, get=None):
     """Resolve a '#tag' to its Graph hashtag-node id via ig_hashtag_search (q has no leading '#'), or
-    None if it does not resolve / the call fails."""
+    None if it does not resolve / the call fails.
+    Meta permissions (docs/instagram-platform/.../hashtag-search): instagram_basic is REQUIRED but NOT
+    sufficient on its own — the separate 'Instagram Public Content Access' FEATURE (its OWN App Review
+    submission, distinct from the permission) is ALSO mandatory. An operator granting only instagram_basic
+    hits an opaque rejection; the missing piece is that App Review feature, not another scope."""
     body = _graph_get(cfg, "ig_hashtag_search",
                       {"user_id": cfg.meta_ig_user_id, "q": tag.lstrip("#")}, get=get)
     try:
@@ -138,7 +142,12 @@ def list_user_media(cfg: Config, *, get=None, creds: Optional[MetaCreds] = None)
     FAIL-OPEN -> [] on any transport/shape failure or absent creds (mirrors trend_score) so an insights pull
     that can't enumerate media simply resolves no new media_ids rather than crashing the daemon tick.
     `creds` scopes the read to a specific handle's ig_user_id + token (per-account creds threading); None
-    resolves the GLOBAL creds (byte-identical to a single-account setup)."""
+    resolves the GLOBAL creds (byte-identical to a single-account setup).
+    Meta permissions for the /media edge (docs/instagram-platform/.../instagram-media) — TWO valid auth paths:
+    EITHER instagram_business_basic ALONE (the newer Instagram Login flow), OR instagram_basic +
+    pages_read_engagement (the Facebook Login flow), plus ads_management or ads_read ONLY when the token's
+    Page role came from Business Manager. instagram_manage_insights is a DIFFERENT permission (it governs the
+    separate insights edge — see media_insights) and is NOT required here."""
     creds = creds or resolve_meta_creds(cfg)
     if not (creds.token and creds.ig_user_id):
         return []                                                # no creds -> nothing to enumerate (fail-open)
@@ -199,6 +208,12 @@ def enumerate_scoped_media(cfg: Config, handles, *, get=None) -> list[tuple]:
 # a feed video got asked for a reels-only metric. A metric invalid for a type simply is NOT in the derived
 # set, so it is UNCONSTRUCTABLE in the request; deprecated names are absent by design, never requestable.
 # Scoped to the metrics FanOps consumes.
+# Coverage note (docs/instagram-platform/.../instagram-media/insights): two real, NON-deprecated metrics
+# are valid but NOT collected here — total_interactions (a FEED/REELS/STORY aggregate of likes+saves+
+# comments+shares, and the ONLY aggregate engagement metric that works on STORY, where the individual
+# ones don't apply) and ig_reels_video_view_total_time (REELS-only, total watch incl. replays, a
+# complement to ig_reels_avg_watch_time). Wiring them into this table + the track.py/digest.py consumers
+# is a separate product decision (its own ticket) — noted here for awareness, deliberately NOT added.
 _MEDIA_METRICS: dict[str, frozenset[str]] = {
     "reach": frozenset({"FEED", "REELS", "STORY"}),
     "views": frozenset({"FEED", "REELS", "STORY"}),
