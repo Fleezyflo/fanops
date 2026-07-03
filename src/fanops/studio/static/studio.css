@@ -35,8 +35,8 @@
   --s-1:.35rem; --s-2:.6rem; --s-3:.9rem; --s-4:1.25rem; --s-5:1.9rem; --s-6:2.75rem;
   --pad-relaxed:.85rem;
   --r-sm:5px; --r-md:8px; --r-lg:16px; --r-pill:999px;
-  --elev-1:0 1px 0 oklch(100% 0 0 / .04) inset, 0 2px 8px oklch(0% 0 0 / .3);
-  --elev-2:0 1px 0 oklch(100% 0 0 / .05) inset, 0 12px 32px oklch(0% 0 0 / .42);
+  --elev-1:0 1px 3px rgba(0,0,0,.08);
+  --elev-2:0 8px 24px rgba(0,0,0,.12);
   --ring:0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
   --dur:180ms; --dur-slow:320ms; --ease:cubic-bezier(.2,.8,.2,1);
 }
