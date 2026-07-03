@@ -328,7 +328,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         tags, sources = vet_hashtags_traced(item.hashtags or _tags_in(item.caption), plat,
                             src.language if src else None, store=load_store(cfg),   # M4: live store when present
                             corpus=surface_corpus.get(item.surface),                # B1: per-persona curated pool leads (the hashtag differentiator)
-                            content=content_tags)                                   # per-clip content tags survive + reserve a slot
+                            content=content_tags, cfg=cfg)                          # per-clip content tags survive + reserve a slot (MOL-76: cfg -> brand-risk screen honors tuning.json)
         clip.meta_captions[item.surface] = _caption_entry(tags, [str(h) for h in (item.hashtags or [])], tag_sources=sources)
     answered = {item.surface for item in cs.items}
     missing = requested - answered
@@ -343,7 +343,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         plat = _platform_for_surface(surface, surface_platform, cfg=cfg)   # AGENT-6: vet under the REQUESTED platform (#8: cfg breadcrumbs a bad key)
         tags, sources = vet_hashtags_traced(None, plat, src.language if src else None, store=load_store(cfg),
                             corpus=surface_corpus.get(surface),   # B1: the curated corpus leads the seed (the hashtag differentiator)
-                            content=content_tags)              # ...and the clip's content tags STILL reach the line (the 83% case)
+                            content=content_tags, cfg=cfg)     # ...and the clip's content tags STILL reach the line (the 83% case; MOL-76: cfg -> brand-risk screen honors tuning.json)
         clip.meta_captions[surface] = _caption_entry(tags, [], fallback=True, tag_sources=sources)
         get_logger(cfg)("captions", clip_id, "caption_fallback_seed", surface=surface)
     if held_reason:
