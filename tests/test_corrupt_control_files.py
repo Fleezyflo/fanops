@@ -48,13 +48,19 @@ def test_ledger_load_schema_violation_raises_control_file_error(tmp_path):
     assert "ledger.json invalid:" in str(ei.value)
 
 
-def test_accounts_load_schema_violation_raises_control_file_error(tmp_path):
+def test_accounts_load_schema_violation_skips_row_and_surfaces_in_validate(tmp_path):
+    # MOL-79 supersedes the old all-or-nothing raise: a malformed ROW inside a well-formed
+    # {"accounts": [...]} envelope (here `platforms` is a string, tripping pydantic) is SKIPPED,
+    # the well-formed rows still load, and the skip is surfaced via validate() (never silent).
     cfg = Config(root=tmp_path)
-    # platforms must be a list; a string trips pydantic
-    _write(cfg.accounts_path, json.dumps({"accounts": [{"handle": "@a", "platforms": "instagram"}]}))
-    with pytest.raises(ControlFileError) as ei:
-        Accounts.load(cfg)
-    assert "accounts.json invalid:" in str(ei.value)
+    _write(cfg.accounts_path, json.dumps({"accounts": [
+        {"handle": "@bad", "platforms": "instagram"},                                          # row 0: platforms must be a list
+        {"handle": "@ok", "account_id": "1", "platforms": ["instagram"], "status": "active"},  # row 1: well-formed
+    ]}))
+    accts = Accounts.load(cfg)                                  # must NOT raise
+    assert [a.handle for a in accts.accounts] == ["@ok"]        # bad row skipped, good row loaded
+    problems = accts.validate()
+    assert any("row 0" in p and "malformed, skipped" in p for p in problems)  # surfaced, names the row
 
 
 def test_accounts_load_wrong_toplevel_shape_raises_control_file_error(tmp_path):

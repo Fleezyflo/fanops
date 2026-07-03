@@ -112,6 +112,12 @@ class Accounts:
                 # Hand-edit typo (the documented "paste account_id, set status:active" step).
                 # Clear one-liner instead of a raw traceback.
                 raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
+            # MOL-79: a WRONG TOP-LEVEL SHAPE (a bare list, a string, a null — not the documented
+            # {"accounts": [...]} envelope) is NOT a per-row typo; there are no rows to be lenient
+            # about. Fail loud like a corrupt file so the operator fixes the envelope, not so raw.get
+            # leaks an AttributeError. Per-row leniency (below) only applies inside a valid envelope.
+            if not isinstance(raw, dict):
+                raise ControlFileError(f"{p.name} invalid: top-level must be an object with an 'accounts' list, got {type(raw).__name__}")
             # MOL-79: per-ROW leniency. Build each Account under its own guard so ONE bad row (a
             # null, a trailing-comma artifact, a dict missing a required field) is skipped + recorded
             # while every other account still loads — the whole pipeline/Studio no longer goes down
