@@ -75,3 +75,16 @@ MohFlow-FanOps/00_control/*.lock
 *.docx
 docs/superpowers/
 tiktok-submission/
+
+# session/tooling scratch at repo root — machine-local, never committed
+.agents/
+.reports/
+skills-lock.json
+
+# 00_control runtime artifacts beyond the JSON/lock set above (same local-only stance:
+# machine-specific launchd wrapper, live-ledger-derived registers, kick/log/backup files)
+MohFlow-FanOps/00_control/.run-kick
+MohFlow-FanOps/00_control/*.preframing-bak
+MohFlow-FanOps/00_control/*.log
+MohFlow-FanOps/00_control/fanops-run.sh
+MohFlow-FanOps/00_control/pipeline_*.md

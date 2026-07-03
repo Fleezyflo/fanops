@@ -1,9 +1,9 @@
 {
   "env": {
     "ECC_HOOK_PROFILE": "standard",
-    "ECC_GATEGUARD": "off",
-    "GATEGUARD_DISABLED": "1",
-    "ECC_DISABLED_HOOKS": "pre:edit-write:gateguard-fact-force,pre:bash:gateguard-fact-force,pre:edit-write:suggest-compact,pre:observe:continuous-learning,post:observe:continuous-learning,pre:mcp-health-check,post:mcp-health-check,post:edit:design-quality-check,post:edit:console-warn,post:edit:accumulator,stop:format-typecheck,stop:check-console-log,stop:evaluate-session,stop:cost-tracker,post:ecc-context-monitor,pre:governance-capture,post:governance-capture,post:session-activity-tracker,post:ecc-metrics-bridge"
+    "ECC_GATEGUARD": "on",
+    "GATEGUARD_DISABLED": "0",
+    "ECC_DISABLED_HOOKS": "pre:mcp-health-check,pre:observe:continuous-learning,pre:edit-write:suggest-compact,post:observe:continuous-learning,post:mcp-health-check,post:edit:accumulator,stop:evaluate-session,stop:cost-tracker,post:ecc-context-monitor,post:session-activity-tracker,post:ecc-metrics-bridge"
   },
   "permissions": {
     "allow": [
@@ -61,6 +61,17 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/hookify-run.py\"",
             "timeout": 15,
             "description": "Vendored hookify runner: evaluates .claude/hookify.*.local.md (no plugin dependency)"
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decide_dont_ask.py\"",
+            "timeout": 10,
+            "description": "Blocks a DUMB question (re-asking the brief, reduced-ambition options, rule-governed, or asked with no decision-work) by correlating against this turn's transcript — a real fork survives"
           }
         ]
       }
