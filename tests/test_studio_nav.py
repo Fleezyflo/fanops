@@ -28,7 +28,7 @@ def _client(cfg):
 # every full-page surface (route → label fragment in the rail). The whole point: NONE is hidden.
 FULL_PAGES = ["/", "/run", "/review", "/publish", "/lift", "/posted", "/candidates", "/library",
               "/stitches", "/schedule", "/gates", "/personas", "/golive/connect"]
-RAIL_GROUPS = [b"Overview", b"Workflow", b"Tools", b"Setup"]
+RAIL_GROUPS = [b"Work", b"Library", b"Setup"]
 
 def test_rail_landmark_present(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
@@ -85,19 +85,19 @@ def test_brand_and_skip_survive(tmp_path):
     html = _client(cfg).get("/").data
     assert b"nav-brand" in html and b"skip-nav" in html
 
-# S1 — de-junk "Setup": the four OPERATIONAL surfaces move into their own "Tools" group so "Setup" means
+# S1 — de-junk "Setup": the four OPERATIONAL surfaces move into their own "Library" group so "Setup" means
 # only "configure this account once". Links MOVE (never drop / never hide) — every surface stays one click.
-def test_tools_group_precedes_setup_group(tmp_path):
+def test_library_group_precedes_setup_group(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
-    assert 'id="rg-tools"' in html and html.index('id="rg-tools"') < html.index('id="rg-setup"')  # operational Tools above one-time Setup
+    assert 'id="rg-library"' in html and html.index('id="rg-library"') < html.index('id="rg-setup"')  # operational Library above one-time Setup
 
-def test_tools_group_holds_the_operational_surfaces(tmp_path):
+def test_library_group_holds_the_operational_surfaces(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
-    tools = html[html.index('id="rg-tools"'):html.index('id="rg-setup"')]   # the Tools group's slice (it precedes Setup)
+    library = html[html.index('id="rg-library"'):html.index('id="rg-setup"')]   # the Library group's slice (it precedes Setup)
     for path in ("/lift", "/candidates", "/library", "/stitches"):
-        assert f'href="{path}"' in tools, f"{path} not under Tools"
+        assert f'href="{path}"' in library, f"{path} not under Library"
 
 def test_setup_group_is_only_personas_and_accounts(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
@@ -108,8 +108,8 @@ def test_setup_group_is_only_personas_and_accounts(tmp_path):
     for path in ("/candidates", "/library", "/stitches", "/gates"):
         assert f'href="{path}"' not in setup, f"{path} should have left Setup for Tools"
 
-def test_workflow_group_holds_decisions(tmp_path):
+def test_work_group_holds_decisions(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
-    wf = html[html.index('id="rg-workflow"'):html.index('id="rg-tools"')]
+    wf = html[html.index('id="rg-work"'):html.index('id="rg-library"')]
     assert 'href="/gates"' in wf
