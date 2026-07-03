@@ -903,3 +903,17 @@ def test_readonly_inputs_use_light_ground_tokens_not_raw_dark_literal():
         f"readonly background must be var(--surface-2) (was raw dark oklch), got {d.get('background')!r}"
     assert d.get("color") == "var(--muted)", \
         f"readonly text must be var(--muted), got {d.get('color')!r}"
+
+
+def test_table_row_hover_shifts_to_surface2():
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, "tbody tr:hover td, table tr:hover td"))
+    assert d.get("background") == "var(--surface-2)", \
+        f"table row hover must shift to --surface-2, got {d.get('background')!r}"
+
+
+def test_schedule_row_hover_shifts_to_surface2():
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, ".schedule-row:hover"))
+    assert d.get("background") == "var(--surface-2)", \
+        f".schedule-row hover must shift to --surface-2, got {d.get('background')!r}"
