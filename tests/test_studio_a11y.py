@@ -856,3 +856,50 @@ def test_active_state_rings_track_the_new_5px_width():
         f".spine-step.active > a:focus-visible ring must widen its outer stroke to 5px accent-bright, got {spine!r}"
     assert "0 0 0 2px var(--bg)" in re.sub(r'\s+', ' ', spine), \
         f".spine-step.active > a:focus-visible must preserve its own --bg moat, got {spine!r}"
+
+
+# ── T-09 (MOL-96): SVG-chevron select caret + light-ground readonly re-theme (P-03 caret half) ───────
+# The old caret was a two-linear-gradient triangular hack with fixed pixel offsets that don't scale with
+# T-02's larger base size. It becomes ONE crisp SVG chevron data-URI, scoped :not([multiple]) so the
+# native multi-select is left alone, with a dimmed disabled variant. SVG data-URIs cannot reference CSS
+# custom properties, so the stroke is a BAKED hex computed from --muted oklch(45% .015 60) ≈ #5c534d — a
+# required CSS comment ties the two so a future token change can't silently desync them.
+def test_select_caret_is_svg_chevron_not_gradient_hack():
+    css = _CSS.read_text()
+    body = _rule_body(css, "select:not([multiple])")
+    d = _decls(body)
+    assert d.get("appearance") == "none" and d.get("-webkit-appearance") == "none", \
+        f"select:not([multiple]) must strip native appearance, got {d!r}"
+    assert d.get("padding-right") == "2.2rem", \
+        f"select:not([multiple]) padding-right must be 2.2rem (breathing room for the SVG), got {d.get('padding-right')!r}"
+    assert "data:image/svg+xml" in body and "linear-gradient" not in body, \
+        "select:not([multiple]) caret must be an SVG data-URI, not the old linear-gradient hack"
+    # the enabled caret stroke is the baked hex computed from --muted (NOT the draft's saturated brown #724b28).
+    assert "%23724b28" not in body, "caret must not keep the draft's saturated-brown placeholder %23724b28"
+    assert "%235c534d" in body, \
+        "enabled caret stroke must be the baked hex computed from --muted oklch(45% .015 60) = %235c534d"
+
+
+def test_select_caret_has_dimmed_disabled_variant():
+    css = _CSS.read_text()
+    body = _rule_body(css, "select:not([multiple]):disabled")
+    assert "data:image/svg+xml" in body, "disabled select must supply its own dimmed SVG caret"
+    assert "%235c534d" not in body, "disabled caret must not reuse the full-strength enabled hex"
+    assert "%23" in body, "disabled caret must bake a (lighter) literal hex stroke"
+
+
+def test_select_caret_comment_ties_hex_to_muted_token():
+    # a bare hex desyncs silently if --muted is retuned; the exact comment wording is the guard.
+    css = _CSS.read_text()
+    assert "/* caret ≈ --muted oklch(45% .015 60); update together */" in css, \
+        "the caret rule must carry the exact desync-guard comment tying the baked hex to --muted"
+
+
+def test_readonly_inputs_use_light_ground_tokens_not_raw_dark_literal():
+    # the old readonly recipe was a raw dark-surface literal oklch(16% .012 280 / .6) — a dark-theme holdover
+    # invisible on the paper ground. It becomes two token refs: --surface-2 ground, --muted text.
+    d = _decls(_rule_body(_CSS.read_text(), "textarea[readonly], input[readonly]"))
+    assert d.get("background") == "var(--surface-2)", \
+        f"readonly background must be var(--surface-2) (was raw dark oklch), got {d.get('background')!r}"
+    assert d.get("color") == "var(--muted)", \
+        f"readonly text must be var(--muted), got {d.get('color')!r}"

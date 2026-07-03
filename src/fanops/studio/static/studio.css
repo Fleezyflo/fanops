@@ -187,11 +187,13 @@ textarea, input[type=text], input[type=password], input[type=datetime-local], in
   padding:.5rem .65rem; font:var(--t-base) var(--sans); transition:border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
 textarea { resize:vertical; min-height:2.6rem; line-height:1.5; }
 textarea:focus, input:focus, select:focus { outline:none; border-color:var(--accent); box-shadow:var(--ring); }
-textarea[readonly], input[readonly] { background:oklch(16% 0.012 280 / .6); color:var(--muted); }
+textarea[readonly], input[readonly] { background:var(--surface-2); color:var(--muted); }
 input::placeholder, textarea::placeholder { color:var(--faint); }
-select { -webkit-appearance:none; appearance:none; padding-right:2rem;
-  background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
-  background-position:calc(100% - 1rem) 1.05rem,calc(100% - .65rem) 1.05rem; background-size:6px 6px,6px 6px; background-repeat:no-repeat; }
+/* caret ≈ --muted oklch(45% .015 60); update together */
+select:not([multiple]) { -webkit-appearance:none; appearance:none; padding-right:2.2rem;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%235c534d' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right .75rem center; background-size:11px 8px; }
+select:not([multiple]):disabled { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23a69c95' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 label { display:block; }
 fieldset { border:1px solid var(--line); border-radius:var(--r-md); padding:var(--s-3); margin:var(--s-2) 0; background:oklch(16% 0.012 280 / .4); display:grid; gap:.5rem; }
 legend { font:600 var(--t-meta) var(--sans); padding:0 .5rem; color:var(--ink); }
