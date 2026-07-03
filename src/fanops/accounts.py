@@ -93,6 +93,12 @@ class Accounts:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.accounts: list[Account] = []
+        # MOL-79: per-row parse failures collected at load (index + reason). accounts.json is
+        # hand-edited by the operator, so ONE stray null / trailing-comma / missing-field row must
+        # degrade to "that row skipped" (mirrors the sibling Personas.load leniency) rather than
+        # crash the whole registry across the daemon + every Studio page. NOT silent: validate()
+        # promotes these to problems so the doctor/health surface names the bad row.
+        self.skipped_rows: list[str] = []
 
     @classmethod
     def load(cls, cfg: Config) -> "Accounts":
@@ -101,12 +107,20 @@ class Accounts:
         if p.exists():
             text = p.read_text()                       # an I/O error here is a real problem, not "invalid"
             try:
-                raw = json.loads(text)
-                a.accounts = [Account(**x) for x in raw.get("accounts", [])]
+                raw = json.loads(text)                 # a corrupt file (bad JSON) still fails loud
             except Exception as e:
                 # Hand-edit typo (the documented "paste account_id, set status:active" step).
                 # Clear one-liner instead of a raw traceback.
                 raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
+            # MOL-79: per-ROW leniency. Build each Account under its own guard so ONE bad row (a
+            # null, a trailing-comma artifact, a dict missing a required field) is skipped + recorded
+            # while every other account still loads — the whole pipeline/Studio no longer goes down
+            # over a single hand-edit typo. Skips surface via validate() -> doctor (never silent).
+            for i, x in enumerate(raw.get("accounts", [])):
+                try:
+                    a.accounts.append(Account(**x))
+                except Exception as e:
+                    a.skipped_rows.append(f"row {i}: {_reason(e)}")
         _hydrate_from_personas(a, cfg)               # A1: linked accounts read their persona's voice/corpus/levers
         return a
 
@@ -180,6 +194,11 @@ class Accounts:
         (or vice versa) silently fell back to the legacy FANOPS_POSTER=dryrun bridge on a 'live' config
         (the cisumwolfhom incident). The structural rule closes the bad path at go_live time."""
         problems = []
+        # MOL-79: a per-row parse skip at load is a config-integrity problem, surfaced HERE so the
+        # doctor/health screen names the malformed row (validate() is what doctor renders). Without
+        # this the skipped account would vanish silently — worse than the loud crash it replaced.
+        for s in self.skipped_rows:
+            problems.append(f"accounts.json {s} — malformed, skipped (fix the row in the Studio Go-Live tab or accounts.json)")
         for a in self.active():
             if not a.platforms:
                 problems.append(f"active account {a.handle} has no platforms")
