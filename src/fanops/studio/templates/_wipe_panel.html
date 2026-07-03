@@ -29,6 +29,7 @@
         <ul class="wipe-ids">{% for pid in preview.detail.post_ids %}<li><code>{{ pid }}</code></li>{% endfor %}</ul>
       </details>
       <form hx-post="{{ url_for('do_wipe_confirm') }}" hx-target="#wipe-panel" hx-swap="outerHTML" class="wipe-confirm-form">
+        <input type="hidden" name="preview_token" value="{{ preview.detail.token }}">
         <label>Type <strong>{{ confirm_word }}</strong> to confirm this removal
           <input type="text" name="confirm_text" autocomplete="off" placeholder="{{ confirm_word }}" data-testid="wipe-confirm-input"></label>
         <button type="submit" class="danger" data-testid="wipe-confirm-btn">Remove unbacked rows</button>

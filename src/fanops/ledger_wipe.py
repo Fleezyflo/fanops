@@ -169,8 +169,23 @@ def wipe_preview(led: Ledger) -> dict:
               "selection_facts": len(plan.selection_fact_ids), "account_selections": len(plan.account_selection_ids),
               "stitch_plans": len(plan.stitch_plan_ids), "batches": len(plan.batch_ids),
               "tag_log": len(plan.tag_log_keys), "variant_streaks": len(plan.variant_streak_keys)}
-    return {"counts": counts, "post_ids": sorted(plan.post_ids), "kept_posts": len(plan.kept_post_ids),
-            "total": sum(counts.values())}
+    detail = {"counts": counts, "post_ids": sorted(plan.post_ids), "kept_posts": len(plan.kept_post_ids),
+              "total": sum(counts.values())}
+    detail["token"] = preview_token(detail)
+    return detail
+
+
+def preview_token(preview_detail: dict) -> str:
+    """A deterministic fingerprint of a would-remove set (MOL-71). The Studio confirm carries the token from
+    the preview it showed; confirm_wipe recomputes a FRESH preview and refuses unless the tokens match — so a
+    confirm that never previewed (no token) or previewed a since-changed ledger (stale token) is server-refused
+    BEFORE any snapshot/removal, without weakening the typed-word/snapshot code gates. Pure over the id-set +
+    counts + total (a ledger change flips the fingerprint); no secret/session infra needed."""
+    import hashlib, json
+    payload = json.dumps({"post_ids": preview_detail.get("post_ids", []),
+                          "counts": preview_detail.get("counts", {}),
+                          "total": preview_detail.get("total", 0)}, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
 def snapshot_is_restorable(snapshot_path: "Path | str") -> bool:

@@ -32,15 +32,28 @@ def preview_wipe(cfg: Config) -> ActionResult:
     return ActionResult(ok=True, detail=ledger_wipe.wipe_preview(led))
 
 
-def confirm_wipe(cfg: Config, *, typed: str) -> ActionResult:
-    """Execute the wipe — GATED on the typed confirm word. Snapshot-first (MOL-32): take a verified
-    pre-wipe snapshot, then run the code-gated execute_wipe. A wrong/empty typed word REFUSES before any
-    snapshot or removal. Returns the snapshot path (the rollback point) + the removed-count summary on
-    success. Every outcome is logged (audit) — never a silent removal."""
+def confirm_wipe(cfg: Config, *, typed: str, token: str = "") -> ActionResult:
+    """Execute the wipe — GATED on (a) the typed confirm word AND (b) a server-verified preview token
+    (MOL-71). The token proves the operator saw the read-only preview of EXACTLY this would-remove set: it is
+    recomputed here against a FRESH preview, so a confirm that never previewed (empty token) or previewed a
+    since-changed ledger (stale token) is REFUSED before any snapshot or removal. Then snapshot-first (MOL-32):
+    a verified pre-wipe snapshot, then the code-gated execute_wipe. Additive only — the typed-word/snapshot
+    gates are untouched. Every outcome is logged (audit) — never a silent removal."""
     log = get_logger(cfg)
     if (typed or "").strip().upper() != CONFIRM_WORD:
         log("ledger_wipe", "-", "wipe_refused_bad_confirm")
         return ActionResult(ok=False, error=f'type "{CONFIRM_WORD}" to confirm — nothing was removed.')
+    # preview-ran gate (MOL-71): the confirm token must match a FRESH preview of the current would-remove set.
+    fresh = preview_wipe(cfg)
+    if not fresh.ok:
+        return fresh
+    expected = fresh.detail.get("token", "")
+    if not (token or "").strip():
+        log("ledger_wipe", "-", "wipe_refused_no_preview")
+        return ActionResult(ok=False, error="run the preview first — nothing was removed.")
+    if (token or "").strip() != expected:
+        log("ledger_wipe", "-", "wipe_refused_stale_preview")
+        return ActionResult(ok=False, error="the preview is stale (the ledger changed) — refresh the preview and try again. Nothing was removed.")
     # snapshot FIRST (mandatory, verified restorable) — the wipe cannot proceed without it.
     try:
         snap = Ledger.snapshot(cfg)
