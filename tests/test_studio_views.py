@@ -496,6 +496,18 @@ def test_group_posted_by_day_naive_is_undated(tmp_path):
     groups = group_posted_by_day(rows)
     assert [d for d, _ in groups] == ["undated"]
 
+def test_group_posted_by_day_operator_tz_shifts_day(tmp_path, monkeypatch):
+    # MOL-83: a 23:30Z ts falls on 2026-01-02 in Asia/Dubai (+04) but 2026-01-01 in UTC.
+    # With cfg carrying that operator_tz, the row groups under the LOCAL day, not the UTC day.
+    from fanops.studio.views import group_posted_by_day, PostedRow
+    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "Asia/Dubai")
+    cfg = Config(root=tmp_path)
+    rows = [PostedRow(post_id="p1", clip_id="c", account="@a", platform="instagram", caption="x",
+                      public_url=None, scheduled_time=None, lift_score=None,
+                      published_at="2026-01-01T23:30:00Z")]
+    assert [d for d, _ in group_posted_by_day(rows)] == ["2026-01-01"]          # cfg omitted -> UTC day (unchanged)
+    assert [d for d, _ in group_posted_by_day(rows, cfg=cfg)] == ["2026-01-02"] # cfg -> operator-local day
+
 def test_posted_library_row_carries_published_at(tmp_path):
     # PostedRow must expose published_at so the grouper keys on the TRUE publish day.
     from fanops.studio.views import posted_library

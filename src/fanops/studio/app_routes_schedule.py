@@ -121,7 +121,7 @@ def register_schedule_routes(app, cfg):
         rollup = views.posted_batch_rollup(rows) if batch else None     # Face 5: full scoped (pre-slice) per-batch summary
         views.lineage_stats(rows)                         # S6: rank repost/crosspost siblings within the filtered set
         page = views.paginate(rows, _offset_arg())
-        groups = views.group_posted_by_day(page.items)    # content-lifecycle Phase 3: publish-day buckets (over the slice)
+        groups = views.group_posted_by_day(page.items, cfg=cfg)    # content-lifecycle Phase 3: publish-day buckets (over the slice); MOL-83 operator-tz day
         peaks = views.metric_peaks(rows)                  # S6: normalise micro-bars over the FULL filtered set (same
                                                           # denominator as lineage_stats) so a bar is a STABLE reference
                                                           # across pages — a saves=10 row reads the same width on any page
