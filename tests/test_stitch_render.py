@@ -85,6 +85,34 @@ def test_suggest_ignores_stitch_draft_base(tmp_path):
     assert led.stitch_plans == {}
 
 
+# ---- MOL-80: an unreadable base fingerprint at mine time must SKIP minting this pass (retry next pass),
+# never mint a plan with a None pin that permanently disables the _precheck drift guard. The content-
+# addressed id excludes the fingerprint, so a None baked in once could never heal via re-mining. ----
+def test_suggest_skips_when_fingerprint_absent(tmp_path):
+    # no {clip}.render.json sidecar yet (the ordinary race where the base fp write hasn't landed) -> the
+    # plan is NOT minted this pass; the moment stays reserved so a later pass re-mines it once the fp reads.
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, peaks=[{"t": 12.0, "score": 0.9}], hook_strategy=awaiting("impact_cut"))
+    # deliberately do NOT write the fingerprint sidecar
+    mine_suggestions(led, cfg)
+    assert led.stitch_plans == {}                                    # no plan with a None pin
+    assert led.moments["m1"].hook_strategy == awaiting("impact_cut")  # stays reserved -> retries next pass
+
+def test_suggest_mints_once_fingerprint_lands(tmp_path):
+    # the skip is one-pass, not permanent: once the sidecar lands, the SAME pairing mints normally with a
+    # real, non-None base_fingerprint (so the _precheck drift guard is armed for its lifetime).
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg, peaks=[{"t": 12.0, "score": 0.9}], hook_strategy=awaiting("impact_cut"))
+    mine_suggestions(led, cfg)                                       # pass 1: fp absent -> skipped
+    assert led.stitch_plans == {}
+    _write_fp(cfg, "clip_base", "basefp")                           # sidecar lands
+    mine_suggestions(led, cfg)                                       # pass 2: fp readable -> mints
+    plans = list(led.stitch_plans.values())
+    assert len(plans) == 1
+    assert plans[0].base_fingerprint == "basefp"                    # real pin -> drift guard armed
+    assert led.moments["m1"].hook_strategy == "stitch:impact_cut"
+
+
 # ---- Task 4: render APPROVED plans (lock-free in prod) into stitch_draft clips + supersede ----
 def _seed_approved(cfg, *, base_fp="basefp", cur_fp="basefp"):
     led = Ledger.load(cfg)
@@ -294,6 +322,22 @@ def test_intro_tease_no_plan_when_unmatched(tmp_path, monkeypatch):
     mine_suggestions(led, cfg)
     assert led.stitch_plans == {}                                    # benign: nothing to suggest yet
     assert led.moments["m1"].hook_strategy == awaiting("intro_tease")  # stays reserved for next pass
+
+def test_intro_tease_skips_when_fingerprint_absent(tmp_path, monkeypatch):
+    # MOL-80 (second mining site): the same skip-when-fp-absent rule applies to intro_tease — no plan is
+    # minted with a None pin; once the sidecar lands a later pass mints it with a real base_fingerprint.
+    monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
+    cfg = Config(root=tmp_path)
+    led = _seed_intro(cfg, matches=[{"asset_id": "intro1", "fit_score": 0.88,
+                                     "rationale": "x", "tease_text": "wait"}])
+    # no fingerprint sidecar for clip_base yet
+    mine_suggestions(led, cfg)
+    assert led.stitch_plans == {}                                    # skipped this pass, no None pin
+    assert led.moments["m1"].hook_strategy == awaiting("intro_tease")  # stays reserved -> retries next pass
+    _write_fp(cfg, "clip_base", "basefp")
+    mine_suggestions(led, cfg)
+    plans = [p for p in led.stitch_plans.values() if p.strategy_key == "intro_tease"]
+    assert len(plans) == 1 and plans[0].base_fingerprint == "basefp"
 
 def test_intro_tease_off_emits_nothing(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_INTRO_TEASE", raising=False)
