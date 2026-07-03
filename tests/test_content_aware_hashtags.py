@@ -90,6 +90,42 @@ def test_traced_list_matches_plain_vet():
     assert plain == traced
 
 
+# ---- MOL-76: the content FLOOR is brand-risk screened before it ships --------------------------------
+# The content floor force-inserts the top transcript token as a hashtag. Raw ASR from a rap/hip-hop
+# catalogue can surface an off-brand word; brand_risk_flag (caption.py's one content guard) gates the
+# caption but NEVER the hashtag candidates. These pin the wiring fix: an off-brand content candidate is
+# dropped BEFORE the vetted/preferred sets + the reserved-floor promotion, and backfill still fills the line.
+def test_offbrand_content_candidate_never_ships_even_as_floor():
+    # "begging" trips brand_risk_flag's default \bbeg(ging)?\b; it is the top content token and would win
+    # the content-floor slot. It must NOT appear in the output, and the line still fills to 4 via backfill.
+    out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
+                       content=["#begging", "#loyalty"])
+    assert "#begging" not in out                       # off-brand content tag screened out of the floor
+    assert len(out) == 4                               # backfill guarantees a non-empty, full line
+
+
+def test_offbrand_content_candidate_not_admitted_to_membership():
+    # even when the model itself "picks" the off-brand content word, it must not survive vetting via the
+    # content= membership join (the floor screen is at the single choke point, not just the reserved slot).
+    out = vet_hashtags(["#begging"], Platform.tiktok, "en", content=["#begging"])
+    assert "#begging" not in out
+
+
+def test_clean_content_floor_still_force_inserts_unchanged():
+    # HAPPY PATH unchanged: a clean top token still claims the content-floor slot when the model's picks
+    # don't cover a content tag (mirrors test_content_floor_reserves_one_slot_when_reach_fills_four).
+    out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
+                       content=["#loyalty"])
+    assert "#loyalty" in out and len(out) == 4
+
+
+def test_offbrand_screen_leaves_next_clean_content_tag_as_floor():
+    # when the top content token is off-brand, the NEXT clean content token still reaches the line.
+    out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
+                       content=["#begging", "#loyalty"])
+    assert "#loyalty" in out                           # the clean runner-up content tag still floors
+
+
 # ---- Task 4: content reaches the POSTED line through request/ingest (the crux) ------------------------
 from fanops.ledger import Ledger
 from fanops.models import Clip, Moment, Source, ClipState, CaptionSet

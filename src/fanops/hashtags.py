@@ -137,9 +137,24 @@ def _composition(platform: Platform, language: str | None) -> list[str]:
     lang_slot = _ARABIC[:1] if (language or "").strip().lower().startswith("ar") else ["#newmusic"]
     return _MEGA[:1] + _RELEVANCE[:1] + lang_slot + disc[:1] + _MEGA[1:] + _RELEVANCE[1:] + disc[1:]
 
+def _screen_content(content_norm: list[str], cfg=None) -> list[str]:
+    """MOL-76: drop any content-derived candidate that trips brand_risk_flag — the SAME off-brand guard
+    caption.py runs on the model's caption/hook — BEFORE it can join the vetted set, float, or win the
+    content FLOOR. content_tag_candidates pulls the top token straight from raw, unscreened ASR transcript
+    (routinely explicit on a rap/hip-hop catalogue), and the floor force-inserts it; without this screen a
+    lyric slur / off-brand word ships as a live public hashtag, contradicting this module's own 'vetted,
+    never invented' invariant. Function-local import: caption.py imports FROM hashtags.py, so a module-level
+    import would cycle (moments.py gates the burned hook the same way for the same reason). corpus/store/
+    frozen tags are NOT screened (only the raw-transcript floor is the gap); content=[] -> [] (byte-identical)."""
+    if not content_norm:
+        return content_norm
+    from fanops.caption import brand_risk_flag       # function-local: caption imports hashtags -> no module cycle
+    return [t for t in content_norm if not brand_risk_flag(t, cfg)]
+
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
                  max_tags: int = 4, *, store: list[str] | None = None,
-                 corpus: list[str] | None = None, content: list[str] | None = None) -> list[str]:
+                 corpus: list[str] | None = None, content: list[str] | None = None,
+                 cfg=None) -> list[str]:
     """Return at most `max_tags` reach-vetted hashtags. Keeps the model's VETTED tags (reach-ordered),
     then backfills the balanced default until full. Drops every non-vetted word, dedupes case/'#'
     variants, hard-caps the count. Deterministic; never empty (the default always fills). With a live
@@ -155,7 +170,7 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     and RESERVES one slot so the clip's own information always reaches the line when present.
     content=None/empty -> byte-identical (no membership change, no float, no reserved slot)."""
     corpus_norm = _dedupe_norm(corpus)
-    content_norm = _dedupe_norm(content)
+    content_norm = _screen_content(_dedupe_norm(content), cfg)   # MOL-76: brand-risk screen the raw-transcript floor BEFORE it joins the gate/floats/floors
     vetted = (set(store) if store else set(VETTED)) | set(corpus_norm) | set(content_norm)   # corpus + content join the gate
     base_rank = {t: i for i, t in enumerate(store)} if store else dict(_RANK)
     # Preference float ahead of the frozen rank: corpus (operator curation) > content (clip info).
@@ -224,13 +239,13 @@ def _tag_source(tag: str, *, content_set: set, corpus_set: set, store_set: set) 
 def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: str | None = None,
                         max_tags: int = 4, *, store: list[str] | None = None,
                         corpus: list[str] | None = None,
-                        content: list[str] | None = None) -> tuple[list[str], dict[str, str]]:
+                        content: list[str] | None = None, cfg=None) -> tuple[list[str], dict[str, str]]:
     """vet_hashtags + a provenance `source` per shipped tag. SAME selection as vet_hashtags (DRY — it
     calls it), then labels each kept tag by the signal it traces to (content|corpus|region|graph-reach|
     discovery|genre-floor). This proves every shipped tag is evidence-backed — the hashtag-axis instance
     of the operator's 'every knob real, no theater' rule."""
     out = vet_hashtags(tags, platform, language, max_tags,
-                       store=store, corpus=corpus, content=content)
+                       store=store, corpus=corpus, content=content, cfg=cfg)
     content_set = set(_dedupe_norm(content)); corpus_set = set(_dedupe_norm(corpus))
     store_set = set(store) if store else set()
     sources = {t: _tag_source(t, content_set=content_set, corpus_set=corpus_set, store_set=store_set) for t in out}
