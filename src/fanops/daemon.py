@@ -14,7 +14,7 @@ rather than silently no-op'ing; a systemd --user sibling is the natural follow-u
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import os, plistlib, re, shlex, shutil, subprocess, sys
+import contextlib, os, plistlib, re, shlex, shutil, subprocess, sys, tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
@@ -101,9 +101,35 @@ def render_plist(cfg: Config, *, interval: int) -> str:
         "StandardOutPath": str(cfg.reports / "daemon.out"),
         "StandardErrorPath": str(cfg.reports / "daemon.err"),
         "ThrottleInterval": _MIN_INTERVAL,
+        # MOL-81 instance 2: a slow LLM/network tick can still be executing when StartInterval re-fires;
+        # launchd's default (false) permits a SECOND overlapping `fanops run`, which then contends for the
+        # ledger flock and silently wastes a full respond-and-advance cycle. Delegate de-duplication to
+        # launchd itself — the next fire is SKIPPED while the prior instance is alive. This is overlap
+        # prevention only; ThrottleInterval/RunAtLoad (crash-restart cadence) are a separate, unchanged concern.
+        "LSMultipleInstancesProhibited": True,
         "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
     }
     return plistlib.dumps(pl).decode()
+
+def write_wrapper_atomic(wp: Path, text: str) -> None:
+    """MOL-81 instance 1: persist the wrapper via a UNIQUE same-dir temp + chmod + os.replace, mirroring
+    controlio.write_json_atomic / autopilot.set_env_var exactly. launchd's plist names this exact path as
+    its ProgramArguments target, and bash reads a script via buffered reads AS it executes — so a direct,
+    non-atomic overwrite that crashes mid-write can be read torn by an in-flight tick. os.replace makes the
+    swap-in atomic: a crash mid-write leaves the ORIGINAL wrapper intact, never a partial one. chmod 0755 is
+    applied to the temp BEFORE the replace so the file is executable the instant it appears at the real path.
+    On any failure the temp is best-effort unlinked and the ORIGINAL error re-raised (the suppress guards only
+    the cleanup unlink, never the real write error) — so no half-written temp leaks into the workspace."""
+    wp.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(wp.parent), prefix=wp.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh: fh.write(text)
+        os.chmod(tmp, 0o755)                             # executable before it appears at the real path
+        os.replace(tmp, wp)                              # atomic: never a half-written wrapper
+    except BaseException:
+        with contextlib.suppress(OSError): os.unlink(tmp)   # best-effort cleanup; re-raise the real error
+        raise
+
 
 def parse_interval(raw: str) -> int:
     """'10m'->600, '90s'->90, '2h'->7200, bare '600'->600. Rejects < 60s with a clean ValueError
@@ -178,7 +204,7 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
         resolved = resolve_responder(cfg)                 # 'inherit' -> what the run resolves ambiently, persist nothing
     wp, pp = wrapper_path(cfg), plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
-    wp.write_text(render_wrapper(cfg, interval=interval)); wp.chmod(0o755)
+    write_wrapper_atomic(wp, render_wrapper(cfg, interval=interval))   # temp+os.replace: never a torn wrapper (MOL-81)
     pp.write_text(render_plist(cfg, interval=interval))
     uid = os.getuid()
     _launchctl("bootout", f"gui/{uid}/{LABEL}")          # idempotent reinstall; not-loaded -> rc!=0, ignored
