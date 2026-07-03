@@ -3,7 +3,7 @@
 Writes are ATOMIC (temp file + os.replace) under a file lock so the 're-run advance()'
 model cannot corrupt or lose updates. Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
-import fcntl, json, os, re, secrets, time
+import fcntl, json, os, re, secrets, sys, time
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
@@ -651,6 +651,12 @@ class Ledger:
             else:
                 # only drop the clip if no live / worklist post hangs off it (else the post is orphaned)
                 if not any(p.state in self._PROTECTED_POST_STATES for p in self.posts_of(c.id)):
+                    # MOL-77: unlink the .mp4 in the same breath as dropping the row — cmd_gc only sweeps
+                    # clips still in retired/analyzed state, so a row-less file is unreachable by gc forever
+                    # (a permanent orphan). Fail-open + surface like cmd_gc: a bad unlink never aborts the cascade.
+                    if c.path and os.path.exists(c.path):
+                        try: os.remove(c.path)
+                        except OSError as exc: print(f"cascade: could not remove {c.path}: {exc}", file=sys.stderr)
                     self.clips.pop(c.id, None)
                 else:
                     survived = True
