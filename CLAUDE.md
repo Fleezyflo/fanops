@@ -30,17 +30,14 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
   metrics). Don't run it speculatively; tests and read-only verbs only unless the operator asks.
 - `.claude/workflows/*.js` are tracked, load-bearing build workflows — never delete.
 
-## Context files & codemaps
+## Where to look (task-conditional — nested CLAUDE.md files load automatically when you edit under their dir)
 
-Division of labor: THIS root file = project rules + product semantics; nested `CLAUDE.md` = per-package
-structure + coder invariants; `docs/CODEMAPS/` = deep function-by-function reference.
-
-- `src/fanops/CLAUDE.md` — the 10 clusters, the Source→Moment→Clip→Post spine, hard invariants, the
-  name-based-call-graph blind spot.
-- `src/fanops/studio/CLAUDE.md` — Flask app factory + routes, actions(mutation)/views(read) split, go-live +
-  wipe gate orders, secrets discipline.
-- `src/fanops/post/CLAUDE.md` — the queued-only publish path, the lazy-lambda provider ladder (a false
-  dead-code source), the `_postiz_permalink`/reconcile two-phase dependency.
-- `tests/CLAUDE.md` — unit vs integration, the 60s deadlock-guardrail timeout, the `os.environ` leak gotcha.
-- `docs/CODEMAPS/README.md` — index of every codemap ("read this when…"); `docs/CONFIG.md` — the 64-env-var
-  reference (13 Studio-settable / 51 shell-only).
+- Touching publish / schedule / reconcile → `src/fanops/post/CLAUDE.md` (+ `docs/CODEMAPS/subsystem-traces/C6`).
+- Touching a Studio route/action/view → `src/fanops/studio/CLAUDE.md` (+ C9/C10 traces).
+- Writing or fixing a test → `tests/CLAUDE.md` (the `_LEAKY_ENV` gotcha + the deadlock-guardrail timeout).
+- Fixing any MOL-numbered issue → `.reports/issue-register-2026-07-03.md` FIRST (exact file:line + sibling-parity
+  note per issue); it saves re-deriving the location.
+- Before declaring code dead → the alias/lazy-import sweep rule in `src/fanops/CLAUDE.md` ("zero callers" is a lead).
+- Any env-var question (default / effect / Studio-settable vs shell-only) → `docs/CONFIG.md`.
+- Full 108-module map, cluster split, safety verdicts → `docs/CODEMAPS/full-trace-index.md`; index of all
+  codemaps → `docs/CODEMAPS/README.md`.
