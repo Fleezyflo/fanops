@@ -28,7 +28,9 @@ def register_live_routes(app, cfg):
 
     @app.post("/live-library/wipe/confirm")
     def do_wipe_confirm():
-        # GATED on the typed word (actions_wipe.confirm_wipe checks it, snapshots first, then executes).
-        res = actions_wipe.confirm_wipe(cfg, typed=request.form.get("confirm_text", ""))
+        # GATED on the typed word AND the preview token (MOL-71): confirm_wipe checks the word, then re-verifies
+        # the token against a fresh preview (preview-ran gate), snapshots first, then executes.
+        res = actions_wipe.confirm_wipe(cfg, typed=request.form.get("confirm_text", ""),
+                                        token=request.form.get("preview_token", ""))
         # re-render with a fresh preview so the operator sees the now-updated would-remove set (empty on success).
         return _page(preview=actions_wipe.preview_wipe(cfg), result=res)
