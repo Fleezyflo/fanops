@@ -10,7 +10,7 @@ from typing import Optional
 
 from fanops.config import Config
 from fanops.accounts import Accounts
-from fanops.ledger import Ledger
+from fanops.ledger import Ledger, selection_index_for_source
 from fanops.models import PostState, SelectionMethod, MomentState, normalize_account_handle
 from fanops.personas import casting_directive
 from fanops.bands import band_for
@@ -384,6 +384,10 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
     # empty cell of an excluded channel. Read fail-open; [] (ALL-sentinel / no batch) -> off-target never fires.
     _batch = led.get_batch(getattr(src, "batch_id", None)) if getattr(src, "batch_id", None) else None
     targets = list(_batch.target_accounts) if _batch is not None else []
+    # MOL-82: SCOPE the cast-handles lookup to this source — build the moment->handles index ONCE (one scan of
+    # the source's selections) instead of cast_handles_for rescanning the whole ledger-wide map per moment.
+    _cast_idx = selection_index_for_source(led, source_id)
+    _by_norm = _handle_display_map(acct_by_handle)
     channels: dict = {}; rows = []
     for m in moments:
         mposts = [p for c in clips_by_moment.get(m.id, []) for p in posts_by_clip.get(c.id, [])]
@@ -393,7 +397,7 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
             key = f"{p.account}{_CH}{p.platform.value}"
             by_channel.setdefault(key, []).append(p); channels[key] = (p.account, p.platform.value)
         cells: dict = {}
-        _aff = _display_handles(led.cast_handles_for(source_id, m.id), _handle_display_map(acct_by_handle))   # MOM-3: DERIVED from the durable AccountSelection (operator overrides included), not the legacy Moment.affinities tag
+        _aff = _display_handles(_cast_idx.get(m.id, []), _by_norm)   # MOM-3: DERIVED from the durable AccountSelection (operator overrides included), not the legacy Moment.affinities tag; MOL-82: O(1) scoped-index lookup, not a per-moment whole-map rescan
         for key, plist in by_channel.items():
             lead = _pick_lead(plist)
             sp = _surface(lead, persona=None, now=now, cfg=cfg, led=led, acct=acct_by_handle.get(lead.account), affinities=_aff)
@@ -467,10 +471,15 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
         if p.parent_id in clip_ids: posts_by_clip.setdefault(p.parent_id, []).append(p)
     acct_by_handle = {a.handle: a for a in accounts.accounts}
     personas = _personas(accounts)
+    # MOL-82: SCOPE the cast-handles lookup to this source — build the moment->handles index ONCE from a single
+    # scan of the source's selections, reused for every lane row below (was cast_handles_for rescanning the whole
+    # ledger-wide map per (account × moment)). _source_sels is that same one scan, reused for the universe + has-chosen.
+    _source_sels = led.selections_of_source(source_id)
+    _cast_idx = selection_index_for_source(led, source_id)
     # lane universe: active-first (in accounts.json order), then any has-selection / has-post handle, alpha.
     active_order = [a.handle for a in accounts.accounts]
     _by_norm = _handle_display_map(acct_by_handle)
-    extra = {_display_handle(s.account, _by_norm) for s in led.selections_of_source(source_id)} | {_display_handle(p.account, _by_norm) for p in led.posts.values() if p.parent_id in clip_ids}
+    extra = {_display_handle(s.account, _by_norm) for s in _source_sels} | {_display_handle(p.account, _by_norm) for p in led.posts.values() if p.parent_id in clip_ids}
     handles = active_order + sorted(h for h in extra if h not in set(active_order))
     # first-clip per moment owns the MASTER preview (clip -> source player), matching the cards/matrix.
     preview_by_moment = {mid: f"/clips/{cs[0].id}" for mid, cs in clips_by_moment.items() if cs}
@@ -478,7 +487,7 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
     # filters on) and is this a CAST source (any chosen selection — moment_ids non-empty per the sum-type)? A
     # candidate with NO record on a cast source posts nothing -> the lane shows a "0 cast" badge (visibility only).
     candidates = {a.handle for a in accounts.active() if casting_directive(a)}
-    source_has_chosen = any(s.moment_ids for s in led.selections_of_source(source_id))
+    source_has_chosen = any(s.moment_ids for s in _source_sels)   # MOL-82: reuse the one scan, no rescan
     lanes: list = []
     for handle in handles:
         sel = led.account_selection_for(source_id, handle)
@@ -490,7 +499,7 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
             mposts = [p for c in clips_by_moment.get(m.id, []) for p in posts_by_clip.get(c.id, [])
                       if p.account == handle and _state_matches(p, state)]
             sp = _surface(_pick_lead(mposts), persona=persona, now=now, cfg=cfg, led=led, acct=acct,
-                          affinities=_display_handles(led.cast_handles_for(source_id, m.id), _by_norm)) if mposts else None   # MOM-3: derived view, not the stored tag
+                          affinities=_display_handles(_cast_idx.get(m.id, []), _by_norm)) if mposts else None   # MOM-3: derived view, not the stored tag; MOL-82: O(1) scoped-index lookup, not a per-(account×moment) whole-map rescan
             rows.append(LaneRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
                                 hook=m.hook, is_cast=m.id in cast_ids,
                                 preview_url=preview_by_moment.get(m.id, ""), post=sp))

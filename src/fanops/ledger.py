@@ -125,6 +125,21 @@ def prune_orphan_account_selections(led: "Ledger") -> int:
     return dropped
 
 
+def selection_index_for_source(led: "Ledger", source_id: str) -> dict[str, list]:
+    """MOL-82: the SCOPED cast-handles index for ONE source — moment_id -> sorted cast handles, built by ONE
+    scan of the source's selections instead of rescanning the whole ledger-wide account_selections map per
+    moment/cell. Exactly cast_handles_for's per-moment truth (a handle is cast on a moment iff it owns a CHOSEN
+    selection listing that moment_id; fan_all_default/pending rows carry no moment_ids -> excluded), lifted to a
+    single pass so review_matrix/account_lanes look up O(1) per cell. A moment absent from the index == [] cast
+    (same as cast_handles_for returning []). Pure read; the sorted lists match cast_handles_for byte-for-byte."""
+    idx: dict[str, list] = {}
+    for s in led.selections_of_source(source_id):
+        for mid in (s.moment_ids or []):
+            idx.setdefault(mid, []).append(s.account)
+    for mid in idx: idx[mid].sort()
+    return idx
+
+
 def _migrate_v8_account_selections(raw: dict) -> dict:
     """v8->v9 (RF1): lift the legacy, non-durable Moment.affinities into durable AccountSelection rows."""
     out = dict(raw)
