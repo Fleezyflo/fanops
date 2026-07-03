@@ -109,6 +109,30 @@ def test_present_but_null_high_weight_blocks_auto_validation(tmp_path, monkeypat
     _auto_validate_metrics_shape(led, cfg)
     assert not learning_validated(cfg)                        # degraded null-shape never proves the gate
 
+def test_reach_carried_forward_when_a_poll_cycle_drops_it(tmp_path):
+    # MOL-84 half 1 (13e-2=A): reach's 0.001 weight put it BELOW the _HIGH_WEIGHT carry floor, so a poll
+    # cycle that dropped the reach label got no carry-forward — the stored snapshot silently regressed to a
+    # reach-less row and aggregate_by_dim then read reach as a literal 0.0, corrupting p4/timing ranking.
+    # Removing that exemption: reach is now carried forward uniformly with the other primaries.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"reach": 50000, "saves": 20, "shares": 12, "retention": 0.7})  # complete
+    assert led.posts["p1"].metrics["reach"] == 50000
+    led = record_metrics(led, "p1", {"saves": 25, "shares": 15, "retention": 0.8})   # this poll DROPS reach
+    m = led.posts["p1"].metrics
+    assert m["reach"] == 50000                                 # carried forward — NOT silently zeroed
+    assert m["saves"] == 25 and m["shares"] == 15              # latest-wins on the present keys
+    assert m["lift_score"] == lift_score({"reach": 50000, "saves": 25, "shares": 15, "retention": 0.8})
+
+def test_reach_carry_forward_does_not_stamp_lift_degraded(tmp_path):
+    # The carry-forward exemption removal is a CARRY concern only — it must NOT make a dropped reach a
+    # "missing high-weight" key (reach is a low-weight proxy, never a degraded/learning-proof primary).
+    # After carrying reach forward the merged row has every primary present -> not degraded.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _pub(led)
+    led = record_metrics(led, "p1", {"reach": 9000, "saves": 20, "shares": 12, "retention": 0.7})
+    led = record_metrics(led, "p1", {"saves": 25, "shares": 15, "retention": 0.8})   # drops reach
+    m = led.posts["p1"].metrics
+    assert "lift_degraded" not in m and "lift_missing_keys" not in m   # reach absence is not a degraded signal
+
 def test_pull_matches_by_submission_id_and_skips_failed(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1",

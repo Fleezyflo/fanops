@@ -101,6 +101,22 @@ def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None,
         return True                                         # Zernio-shaped: saves lands without reach
     return False
 
+# MOL-84 half 1 (13e-2=A): keys to CARRY FORWARD from a prior snapshot when a poll cycle DROPS them. The
+# high-weight primaries (saves/shares/retention) were already protected via _missing_high_weight, but reach
+# (weight 0.001) sat BELOW the _HIGH_WEIGHT floor, so it was silently EXEMPTED from carry-forward — a
+# dropped reach regressed the stored snapshot to a reach-less row and aggregate_by_dim then read reach as a
+# literal 0.0, corrupting the p4_dim_bias/timing_bias ranking that ranks EXCLUSIVELY on reach_mean. Removing
+# that exemption: reach joins the always-carry set uniformly with the primaries. This is a CARRY concern
+# ONLY — it does NOT touch _missing_high_weight, so the degraded marker and the learning-proof shape gate
+# (_shape_proves_learning) are byte-identical: reach stays a low-weight proxy there, never a "missing"
+# primary, never a proof requirement. Platform-aware like the primaries: a platform that structurally
+# cannot emit reach never carries it (fail-OPEN for platform None/unknown — carries as before).
+def _carry_forward_keys(metrics: dict, weights: Optional[dict], platform: Optional[Platform] = None) -> list[str]:
+    keys = set(_missing_high_weight(metrics, weights, platform))
+    if _platform_delivers(platform, "reach") and metrics.get("reach") is None:
+        keys.add("reach")                                  # reach: no longer exempt from carry-forward
+    return sorted(keys)
+
 def _missing_high_weight(metrics: dict, weights: Optional[dict], platform: Optional[Platform] = None) -> list[str]:
     """The ACTIVE high-weight keys absent from this row (sorted). Judged against the ACTIVE weight map
     (a tuning override REPLACES _W), so 'degraded' tracks whatever objective is configured. NEVER
@@ -154,8 +170,8 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     # captured_at keys) so every existing reader is byte-identical.
     prior_metrics = {k: v for k, v in (post.metrics or {}).items()
                      if k not in (LIFT_SCORE, "lift_degraded", "lift_missing_keys")}
-    recovered = {k: prior_metrics[k] for k in _missing_high_weight(metrics, weights, post.platform)
-                 if prior_metrics.get(k) is not None}
+    recovered = {k: prior_metrics[k] for k in _carry_forward_keys(metrics, weights, post.platform)
+                 if prior_metrics.get(k) is not None}     # MOL-84: reach now carried like the primaries
     merged = {**metrics, **recovered}
     post.metrics = {**merged, LIFT_SCORE: lift_score(merged, weights)}
     # T4: ADDITIVE honest-lift marker (NOT a scoring change — lift_score is untouched). When a primary
@@ -204,11 +220,16 @@ def pull_imported_insights(led: Ledger, cfg: Config, *, get=None,
             continue                                             # transient / unresolved product_type -> preserve prior, re-poll next pass
         prior_metrics = {k: v for k, v in (im.metrics or {}).items()
                          if k not in (LIFT_SCORE, "lift_degraded", "lift_missing_keys")}
-        recovered = {k: prior_metrics[k] for k in _missing_high_weight(vals, weights)
-                     if prior_metrics.get(k) is not None}         # carry a dropped primary key forward (no regression)
+        # MOL-84 half 2 (13e-1=YES): thread the platform into the weighting calls EXACTLY as record_metrics
+        # threads post.platform. This path is IG-only by construction (its sole caller enumerates
+        # credentialed IG handles via Graph media), so Platform.instagram is the row's true platform — the
+        # capability model then applies here as it does on the Post path, not the fail-open platform-None
+        # default that silently skipped it. reach carry-forward (half 1) rides the same _carry_forward_keys.
+        recovered = {k: prior_metrics[k] for k in _carry_forward_keys(vals, weights, Platform.instagram)
+                     if prior_metrics.get(k) is not None}         # carry a dropped primary/reach key forward (no regression)
         merged = {**vals, **recovered}
         new_metrics = {**merged, LIFT_SCORE: lift_score(merged, weights)}
-        missing = _missing_high_weight(merged, weights)
+        missing = _missing_high_weight(merged, weights, Platform.instagram)
         if missing:
             new_metrics["lift_degraded"] = True; new_metrics["lift_missing_keys"] = missing
         # append-only series: one SPARSE row per pull, keyed by a monotonic offset (ImportedMedia has no
