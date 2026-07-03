@@ -927,3 +927,17 @@ def test_schedule_row_hover_shifts_to_surface2():
     d = _decls(_rule_body(css, ".schedule-row:hover"))
     assert d.get("background") == "var(--surface-2)", \
         f".schedule-row hover must shift to --surface-2, got {d.get('background')!r}"
+
+
+# ── T-16 (MOL-103): the generic <details> ground was a raw dark-theme literal oklch(16% .012 280 / .4). On
+# the paper ground that alpha-over-nothing composites to a solid gray SLAB (the "View & density" bar on
+# /review, and the shared-styled disclosures on /personas and Home). It becomes the recessed-panel token
+# --surface-2 — the same raw-dark-literal → token fix class as the readonly inputs (T-09). The details.batch
+# override keeps its own gradient + accent left-border, so batch cards are unaffected by this generic ground.
+def test_generic_details_disclosure_uses_light_ground_token_not_raw_dark_literal():
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, "details"))
+    assert d.get("background") == "var(--surface-2)", \
+        f"generic details ground must be var(--surface-2) (was raw dark oklch slab), got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "")), \
+        "the generic details ground must not keep a raw oklch literal (it won't follow the token flip)"
