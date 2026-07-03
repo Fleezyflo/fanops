@@ -5,7 +5,7 @@
 # CRITICAL acceptance (PRD): the unresolved-product_type ImportedMedia case makes ZERO HTTP calls and
 # writes NO scope-block breadcrumb. Pure-fixture (injected `get=`), no real network.
 from fanops.config import Config
-from fanops.models import ImportedMedia
+from fanops.models import ImportedMedia, Platform
 from fanops.ledger import Ledger
 from fanops import track
 
@@ -109,6 +109,28 @@ def test_insights_transient_none_preserves_prior_metrics(tmp_path, monkeypatch):
     # 500 -> media_insights returns None (transient)
     track.pull_imported_insights(led, cfg, get=_insights_get({"M1": _Resp(500, None)}))
     assert led.imported_media["M1"].metrics.get("reach") == 777    # prior metrics preserved
+
+
+def test_imported_path_threads_platform_like_record_metrics(tmp_path, monkeypatch):
+    # MOL-84 half 2 (13e-1=YES): pull_imported_insights must thread the row's Platform into
+    # _missing_high_weight EXACTLY the way the sibling record_metrics threads post.platform. This path is
+    # IG-only by construction (its sole caller enumerates credentialed IG handles via Graph media), so the
+    # platform capability table can only apply if the argument is passed. Before the fix both call sites
+    # defaulted to platform=None (the fail-open "delivers everything" contract), silently skipping the
+    # capability model for this one path — an asymmetry vs record_metrics, which passes post.platform.
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = _led(cfg, [ImportedMedia(media_id="M1", permalink="https://ig/reel/A/", product_type="REELS")])
+    seen = []
+    real = track._missing_high_weight
+    def spy(metrics, weights, platform=None):
+        seen.append(platform)
+        return real(metrics, weights, platform)
+    monkeypatch.setattr(track, "_missing_high_weight", spy)
+    track.pull_imported_insights(led, cfg, get=_insights_get({
+        "M1": _reels_insights(reach=1000, saved=50, shares=10, likes=200, comments=5)}))
+    assert seen, "_missing_high_weight was never called on the imported path"
+    # every call on this IG-only path must carry Platform.instagram — never the fail-open None default
+    assert all(p is Platform.instagram for p in seen), f"expected all Platform.instagram, got {seen}"
 
 
 def test_insights_only_reads_imported_not_posts(tmp_path, monkeypatch):
