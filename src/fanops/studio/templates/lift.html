@@ -24,7 +24,7 @@
         <td>{{ r.account }}/{{ r.platform }}</td>
         <td class="muted">{{ r.scheduled_time | localdt_hybrid or '—' }}</td>
         {# MOL-50: the Lift number is the answer to "which variant won" -> .lift-num makes it the row's dominant element. #}
-        <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> <span class="lift-num">{{ '%.1f'|format(r.lift_score) }}</span> {{ lineage_delta(r) }}
+        <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> <span class="lift-num">{{ '%.1f'|format(r.lift_score) }}</span> {{ lineage_delta(r) }}{% if r.delta_vs_account_median is not none %}<span class="delta-arrow {{ 'delta-up' if r.delta_vs_account_median >= 0 else 'delta-down' }}" title="Δ vs this account's median lift">{{ '▲' if r.delta_vs_account_median >= 0 else '▼' }} {{ '%+.1f'|format(r.delta_vs_account_median) }}</span>{% endif %}
             {% if r.lift_degraded %}{% if view.degraded_mostly %}<span class="degraded-quiet" title="Reach/shares-weighted — missing {{ (r.lift_missing or ['a primary metric'])|join(', ') }} (see note above).">degraded</span>{% else %}<span class="badge degraded" title="Partial objective — a primary metric was not returned by the backend, so this lift is reach/shares-weighted, not the full saves/retention objective.">DEGRADED{% if r.lift_missing %} · missing {{ r.lift_missing|join(', ') }}{% endif %}</span>{% endif %}{% endif %}</td>
         <td>{{ metric(r.saves, peaks.saves) }}</td>
         <td>{{ metric(r.shares, peaks.shares) }}</td>

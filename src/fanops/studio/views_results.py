@@ -3,6 +3,7 @@ suggested-time rationale), the all-time Posted library (PostedRow + lineage stat
 and the cross-account Lift/learning view (LiftRow/LiftView). Pure (no HTTP/Flask). Depends on views_common for
 the shared time/batch helpers; never on a sibling surface module (review/cockpit) — the import graph stays acyclic."""
 from __future__ import annotations
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -67,6 +68,7 @@ class LiftRow:
     sibling_count: Optional[int] = None     # S6 lineage (see PostedRow): stamped by lineage_stats, additive/None.
     rank: Optional[int] = None
     delta_vs_best: Optional[float] = None
+    delta_vs_account_median: Optional[float] = None   # T-15: Δ vs the ACCOUNT's median lift (additive to delta_vs_best,
 
 
 @dataclass
@@ -611,6 +613,29 @@ def lineage_stats(rows) -> None:
                 r.delta_vs_best = round(r.lift_score - best, 4)
     except Exception:
         pass
+
+
+def account_median_deltas(rows) -> None:
+    """T-15 — IN-PLACE annotate each row with delta_vs_account_median = round(lift_score - account_median, 4),
+    so the operator reads 'this variant beat/trailed its ACCOUNT's typical lift'. This is a DIFFERENT statistic
+    from lineage_stats' delta_vs_best (best-in-clip-lineage): here the baseline is statistics.median over the
+    account's MEASURED lift scores. Groups by `account`; a group with <2 measured rows is degenerate (a median
+    vs a single point) and left at None — mirroring lineage_stats' judgment of only ranking within `measured`.
+    An unmeasured row (lift None/non-numeric) is excluded from the median AND never stamped. Pure over the
+    already-built list — NO ledger read. Fail-open: any error leaves the additive field at its None default."""
+    try:
+        groups: dict = {}
+        for r in rows:
+            acct = getattr(r, "account", None)
+            if acct: groups.setdefault(acct, []).append(r)
+        for grp in groups.values():
+            measured = [r for r in grp if isinstance(getattr(r, "lift_score", None), (int, float))
+                        and not isinstance(r.lift_score, bool)]
+            if len(measured) < 2: continue     # a median vs a single data point is degenerate
+            med = statistics.median(r.lift_score for r in measured)
+            for r in measured: r.delta_vs_account_median = round(r.lift_score - med, 4)
+    except Exception:
+        return   # fail-open (mirrors lineage_stats): additive field stays at its None default, never a raise
 
 
 def metric_peaks(rows) -> dict:

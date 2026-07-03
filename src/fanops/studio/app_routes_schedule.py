@@ -101,6 +101,7 @@ def register_schedule_routes(app, cfg):
         led = Ledger.load(cfg); accts = Accounts.load(cfg); account = _account_arg()
         view = views.lift_rows(led, cfg, accts, account=account)
         views.lineage_stats(view.variant_rows)            # S6: rank which hook won within each clip's lineage
+        views.account_median_deltas(view.variant_rows)    # T-15: Δ vs the account's median lift (additive to Δ-vs-best)
         peaks = views.metric_peaks(view.variant_rows)     # S6: micro-bar normalisation over the shown variants
         # Chip universe from a CHEAP post scan (the same analyzed-variant predicate lift_rows uses), so we
         # call lift_rows ONCE — building an unfiltered view just for chips would re-run its per-row gate I/O.

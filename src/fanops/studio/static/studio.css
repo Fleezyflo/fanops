@@ -694,6 +694,9 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .chip.win { color:var(--ok); border-color:var(--ok); background:color-mix(in oklch, var(--ok) 10%, transparent); }
 .lineage-chip { margin-left:.25rem; }
 .delta-best { display:inline-block; margin-left:.35rem; color:var(--faint); font-size:var(--t-eyebrow); font-variant-numeric:tabular-nums; }
+.delta-arrow { font-size:var(--t-eyebrow); font-variant-numeric:tabular-nums; margin-left:.3rem; }   /* T-15: Δ vs account median */
+.delta-arrow.delta-up { color:var(--ok); }
+.delta-arrow.delta-down { color:var(--danger); }
 .metric-bar { display:block; height:5px; margin:.2rem 0 0; min-width:0; box-shadow:none; opacity:.85; }
 
 /* Workflow spine (Slice 1) — the Make→Review→Schedule→Posted through-line atop every workflow surface: a
