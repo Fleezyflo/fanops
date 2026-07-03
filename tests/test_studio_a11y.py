@@ -381,6 +381,16 @@ def test_spine_danger_pill_uses_ink_token_for_wcag():
     assert c >= 4.5, f"spine danger fill/ink pair is {c:.2f}:1 (< 4.5:1 WCAG AA)"
 
 
+def test_spine_warn_and_info_pills_use_ink_tokens_for_wcag():
+    css = _CSS.read_text()
+    warn = _decls(_rule_body(css, ".spine-count.spine-sev-warn"))
+    assert warn.get("color") == "var(--warn-ink)", f"spine warn pill must use --warn-ink, got {warn.get('color')!r}"
+    info = _decls(_rule_body(css, ".spine-count.spine-sev-info"))
+    assert info.get("color") == "var(--info-ink)", f"spine info pill must use --info-ink, got {info.get('color')!r}"
+    assert _contrast(css, "warn", "warn-ink") >= 4.5
+    assert _contrast(css, "info", "info-ink") >= 4.5
+
+
 # ── MOL-48: Go-Live readiness — a failing check must INTERRUPT the scan (Tier-1 solid fill) ─────────
 # A failed row (.checks li.err) used to differ from a passing row (.checks li.ok) by a 35%-alpha border
 # tint + glyph/text color only — same bg, padding, weight. With one backend confirmed unreachable while

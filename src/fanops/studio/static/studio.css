@@ -788,8 +788,8 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .state-inflight,.state-inflight { color:var(--state-inflight); border-color:var(--state-inflight); }
 .state-dryrun { color:var(--state-dryrun); } .state-failed { color:var(--state-failed); border-color:var(--state-failed); }
 .state-queued,.state-due { color:var(--state-queued); } .state-awaiting { color:var(--muted); }
-.spine-count.spine-sev-warn { background:var(--warn); color:var(--bg); }
-.spine-count.spine-sev-info { background:var(--info); color:var(--bg); }
+.spine-count.spine-sev-warn { background:var(--warn); color:var(--warn-ink); }
+.spine-count.spine-sev-info { background:var(--info); color:var(--info-ink); }
 .spine-count.spine-sev-danger { background:var(--danger); color:var(--danger-ink); }   /* MOL-43 (delegated from MOL-40): --ink was 2.61:1; on-fill --danger-ink = 6.70:1, matching the warn/info siblings */
 .ops-board { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--s-3); margin:var(--s-4) 0; }
 @media (max-width:900px) { .ops-board { grid-template-columns:repeat(2,1fr); } }
