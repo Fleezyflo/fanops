@@ -340,6 +340,39 @@ def test_copy2_enospc_is_per_file_skip_not_pass_rollback(tmp_path, mocker):
     assert len(led.sources) == 1 and c.skipped == 1                 # the good one landed; the bad one skipped
     assert "copy_failed" in cfg.log_path.read_text()
 
+def test_interrupted_copy_leaves_no_partial_at_final_dest(tmp_path, mocker):
+    # MOL-74: the catalogue copy must be ATOMIC. Simulate a crash mid-copy (copy2 writes SOME bytes to
+    # wherever it's told, then the process dies) — the partial file must NEVER land at the final
+    # content-addressed dest, and the inbox original must stay in place for a retry. Otherwise the next
+    # pass sees dest.exists()==True, SKIPS the copy, and catalogues a TRUNCATED file as a real source.
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"VIDEOBYTES")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    def crash_midcopy(src, dst, *a, **k):
+        Path(dst).write_bytes(b"TRUNC")                              # a partially-written file lands at the copy target
+        raise OSError(4, "Interrupted system call")                 # ...then the copy dies before completing
+    mocker.patch("fanops.ingest.shutil.copy2", side_effect=crash_midcopy)
+    led, c = ingest_drops(Ledger.load(cfg), cfg)                     # must NOT raise (per-file skip)
+    survivors = list(cfg.sources.glob("src_*"))                     # the content-addressed final paths
+    assert survivors == [], f"a truncated partial was left at the final dest: {survivors}"
+    assert len(led.sources) == 0 and c.skipped == 1                 # nothing catalogued; skipped for retry
+    assert (cfg.inbox / "a.mp4").exists()                           # inbox original preserved for the next pass
+
+def test_happy_path_copy_lands_complete_file_and_catalogues(tmp_path, mocker):
+    # MOL-74 non-regression: the atomic staging must be invisible on the happy path — a successful copy
+    # leaves the COMPLETE bytes at the final dest, no .tmp sibling lingers, and led.add_source records the
+    # Source in the normal catalogued state. Byte-identical to today.
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"VIDEOBYTES")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
+    led, c = ingest_drops(Ledger.load(cfg), cfg)
+    s = next(iter(led.sources.values()))
+    assert s.state is SourceState.catalogued and s.sha256 and s.width == 1920 and s.height == 1080
+    landed = list(cfg.sources.glob("src_*"))
+    assert len(landed) == 1 and landed[0].read_bytes() == b"VIDEOBYTES"   # complete file at the final dest
+    assert not list(cfg.sources.glob("*.tmp")), "an atomic-staging .tmp sibling leaked into sources/"
+    assert c.added == 1
+
 
 # ---- WS-I1 Task 3 (ING-7): probe-fail degraded_reason + reprobe ----
 def test_probe_failure_catalogues_degraded_then_reprobes(tmp_path, mocker):
