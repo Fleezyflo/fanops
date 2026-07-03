@@ -50,3 +50,30 @@ def test_live_post_states_membership_pinned():
                                         PostState.submitting, PostState.needs_reconcile)
     assert PostState.awaiting_approval not in Ledger._LIVE_POST_STATES
     assert PostState.queued not in Ledger._LIVE_POST_STATES
+
+# MOL-77 (R-037): when the cascade POPS a clip row (no live/worklist post holds it), its on-disk .mp4 must
+# be unlinked in the same breath. cmd_gc only sweeps clips still in retired/analyzed state, so a
+# ledger-row-less file is unreachable by gc forever — a permanent orphan. Unlink it here or it leaks.
+def test_cascade_unlinks_dropped_clip_file(tmp_path):
+    led = _seed(tmp_path, PostState.rejected)                   # rejected post -> clip is droppable
+    f = tmp_path / "orphan.mp4"; f.write_bytes(b"x")
+    led.clips["c"] = led.clips["c"].model_copy(update={"path": str(f)})
+    led.reconcile_moments("s", {})                              # empty keep -> drops m -> cascade pops clip c
+    assert "c" not in led.clips, "the rejected-post clip is still dropped from the ledger"
+    assert not f.exists(), "the dropped clip's on-disk file must be unlinked, not left as a gc-unreachable orphan"
+
+def test_cascade_clip_unlink_is_fail_open_when_file_missing(tmp_path):
+    # a clip row whose file was already gc'd / never rendered must not blow up the cascade.
+    led = _seed(tmp_path, PostState.rejected)
+    led.clips["c"] = led.clips["c"].model_copy(update={"path": str(tmp_path / "nope.mp4")})
+    led.reconcile_moments("s", {})                              # must not raise
+    assert "c" not in led.clips and "m" not in led.moments
+
+def test_cascade_preserved_live_clip_keeps_its_file(tmp_path):
+    # a live clip SURVIVES the cascade -> its file must NOT be touched.
+    led = _seed(tmp_path, PostState.published)
+    led.clips["c"] = led.clips["c"].model_copy(
+        update={"state": ClipState.published, "path": str((tmp_path / "keep.mp4"))})
+    (tmp_path / "keep.mp4").write_bytes(b"x")
+    led.reconcile_moments("s", {})
+    assert "c" in led.clips and (tmp_path / "keep.mp4").exists(), "a surviving live clip keeps its file"
