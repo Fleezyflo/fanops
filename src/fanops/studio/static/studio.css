@@ -57,7 +57,7 @@ em { font-style:italic; color:var(--ink); }
 :root { --sticky-top:0px; }   /* approve-bar sticky offset; the rail is a side column, not a top header */
 .app-shell { display:grid; grid-template-columns:15rem 1fr; min-height:100vh; }
 .rail { position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto; display:flex; flex-direction:column; gap:var(--s-3);
-  padding:.9rem .7rem; background:oklch(17% 0.013 280 / .92); border-right:1px solid var(--line); }
+  padding:.9rem .7rem; background:var(--surface-2); border-right:1px solid var(--line); }
 .nav-brand { font:600 1.02rem var(--sans); letter-spacing:-.01em; margin:.2rem .4rem var(--s-2); display:inline-flex; align-items:center; gap:.5rem; color:var(--ink); text-decoration:none; }
 .nav-brand::before { content:""; width:.7rem; height:.7rem; border-radius:3px; background:linear-gradient(135deg,var(--accent-bright),var(--info)); box-shadow:0 0 12px var(--accent-dim); flex:none; }
 .rail-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:var(--s-3); }
@@ -65,7 +65,7 @@ em { font-style:italic; color:var(--ink); }
 .rail-group-label { margin:0 0 .25rem .4rem; font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase; letter-spacing:.13em; color:var(--muted); background:transparent; }
 .rail-link { position:relative; display:block; color:var(--muted); padding:.45rem .6rem; border-radius:var(--r-sm); font-size:var(--t-meta); font-weight:500;
   text-decoration:none; transition:color var(--dur) var(--ease), background var(--dur) var(--ease); }
-.rail-link:hover { color:var(--ink); background:oklch(100% 0 0 / .05); }
+.rail-link:hover { color:var(--ink); background:var(--surface-3); }
 .rail-link:focus-visible { outline:none; box-shadow:var(--ring); }
 .rail-link.active { color:var(--ink); background:var(--accent-dim); }
 .rail-link.active::before { content:""; position:absolute; left:0; top:.35rem; bottom:.35rem; width:2px; border-radius:2px; background:var(--accent-bright); box-shadow:0 0 8px var(--accent); }
@@ -167,7 +167,7 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 /* ── Badges & banners ───────────────────────────────────────────────────── */
 .badge { display:inline-flex; align-items:center; gap:.3rem; font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase;
   letter-spacing:.08em; padding:.18rem .5rem; border-radius:var(--r-pill); border:1px solid var(--warn); color:var(--warn);
-  background:oklch(80% 0.14 78 / .1); vertical-align:middle; }
+  background:color-mix(in oklch, var(--warn) 10%, transparent); vertical-align:middle; }
 .badge.shipped { color:var(--muted); border-color:var(--line-bright); background:oklch(100% 0 0 / .04); }
 .badge.degraded { color:var(--danger); border-color:var(--danger); background:var(--danger-dim); }   /* T4: partial-objective lift */
 .lift-num { font:700 var(--t-lg) var(--mono); color:var(--ink); font-variant-numeric:tabular-nums; }   /* MOL-50: the Lift number answers "which variant won" — dominant per-row element (larger/bolder/--ink) */
@@ -355,8 +355,8 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .run-advanced-body { display:grid; gap:var(--s-3); padding:var(--s-3); border-top:1px solid var(--line); }
 .run-advanced-body form { display:flex; gap:.5rem; align-items:flex-end; flex-wrap:wrap; margin:0; }
 .result { padding:.6rem .85rem; border-radius:var(--r-sm); margin:var(--s-3) 0; border:1px solid var(--line); font-size:var(--t-meta); font-weight:500; }
-.result.ok { color:var(--ok); border-color:oklch(76% 0.16 152 / .4); background:oklch(76% 0.16 152 / .08); }
-.result.err { color:var(--danger); border-color:oklch(66% 0.21 25 / .4); background:var(--danger-dim); }
+.result.ok { color:var(--ok); border-color:color-mix(in oklch, var(--ok) 40%, transparent); background:color-mix(in oklch, var(--ok) 8%, transparent); }
+.result.err { color:var(--danger); border-color:color-mix(in oklch, var(--danger) 40%, transparent); background:color-mix(in oklch, var(--danger) 8%, transparent); }
 
 /* ── Go-Live steps, checks, mapping ─────────────────────────────────────── */
 .golive-step { border:1px solid var(--line); border-radius:var(--r-lg); padding:var(--s-4); margin-top:var(--s-3); background:var(--surface-1); box-shadow:var(--elev-1); }   /* MOL-42: raised tier (shared recipe) */
@@ -369,7 +369,7 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .platform-pick:hover { border-color:var(--accent); }
 .checks { list-style:none; padding-left:0; display:grid; gap:.3rem; }
 .checks li { padding:.35rem .7rem; border-radius:var(--r-sm); background:var(--surface-2); border:1px solid var(--line); font-size:var(--t-meta); }
-.checks li.ok { border-color:oklch(76% 0.16 152 / .35); }
+.checks li.ok { border-color:color-mix(in oklch, var(--ok) 35%, transparent); }
 /* MOL-48: a failing readiness/dependency row is Tier-1 (ladder §top) — an operational failure gating
    live-publish safety. SOLID --danger fill + on-fill --danger-ink (the MOL-43-tuned 6.70:1 pair) + bold,
    so it INTERRUPTS the scan instead of differing from a passing row by a 35%-alpha border tint alone. */
@@ -380,7 +380,7 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .golive-map { margin:.5rem 0; }
 .golive-map td:first-child { white-space:nowrap; }
 .confirm { display:flex; align-items:center; gap:.4rem; color:var(--warn); font-weight:600; font-size:var(--t-meta);
-  padding:.5rem .7rem; background:oklch(80% 0.14 78 / .08); border:1px solid oklch(80% 0.14 78 / .35); border-radius:var(--r-sm); }
+  padding:.5rem .7rem; background:color-mix(in oklch, var(--warn) 8%, transparent); border:1px solid color-mix(in oklch, var(--warn) 35%, transparent); border-radius:var(--r-sm); }
 /* MOL-49: arming a LIVE publish is the ladder's Tier-1 (MOL-40 §top) — an operational act gating live-publish
    safety, the loudest tier. It must read unmistakably ABOVE every informational warn box, different in KIND not
    just hue: SOLID --danger fill + on-fill --danger-ink (the MOL-43-tuned 6.70:1 pair, label stays readable), a
@@ -562,7 +562,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
   font:600 var(--t-eyebrow) var(--sans); }   /* MOL-41: static step number — weight, not accent */
 /* S10: a zero-result batch is a SILENT-FAIL outcome — give it a prominent list-level banner, not a faint glyph. */
 .batch-zero-summary { margin:.3rem 0 .6rem; padding:.5rem .75rem; border:1px solid var(--warn); border-left:3px solid var(--warn);
-  border-radius:var(--r-sm); background:oklch(83% 0.13 78 / .08); }
+  border-radius:var(--r-sm); background:color-mix(in oklch, var(--warn) 8%, transparent); }
 .acct-post-count { font-variant-numeric:tabular-nums; }
 
 /* ── P5: Review density + Schedule caption ──────────────────────────────── */
@@ -634,7 +634,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
   padding:var(--s-2) var(--s-3); margin:0 0 var(--s-3); border:1px solid var(--line);
   border-radius:var(--r-md); background:var(--surface-1); }
 .review-live .live-dot { width:8px; height:8px; border-radius:var(--r-pill); background:var(--ok);
-  box-shadow:0 0 0 3px oklch(76% 0.16 152 / .18); animation:live-pulse 2s var(--ease) infinite; }
+  box-shadow:0 0 0 3px color-mix(in oklch, var(--ok) 18%, transparent); animation:live-pulse 2s var(--ease) infinite; }
 @keyframes live-pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
 @media (prefers-reduced-motion: reduce) { .review-live .live-dot { animation:none; } }
 
@@ -683,7 +683,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .chip.lane-method.danger { background:var(--danger); color:var(--danger-ink); border-color:var(--danger); }
 .chip .cause { font-style:normal; color:var(--faint); font-size:var(--t-eyebrow); margin-left:.1rem; }
 /* Lineage (S6) — winner star, "N in lineage" chip, muted Δ-vs-best, and the proportional metric micro-bar. */
-.chip.win { color:var(--ok); border-color:var(--ok); background:oklch(76% 0.16 152 / .1); }
+.chip.win { color:var(--ok); border-color:var(--ok); background:color-mix(in oklch, var(--ok) 10%, transparent); }
 .lineage-chip { margin-left:.25rem; }
 .delta-best { display:inline-block; margin-left:.35rem; color:var(--faint); font-size:var(--t-eyebrow); font-variant-numeric:tabular-nums; }
 .metric-bar { display:block; height:5px; margin:.2rem 0 0; min-width:0; box-shadow:none; opacity:.85; }
@@ -856,7 +856,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .sched-suggest { margin:0; }
 
 /* Home alerts */
-.alerts-lane { margin:var(--s-3) 0; padding:var(--s-3); border:1px solid var(--warn); border-radius:var(--r-md); background:oklch(80% 0.14 78 / .08); }
+.alerts-lane { margin:var(--s-3) 0; padding:var(--s-3); border:1px solid var(--warn); border-radius:var(--r-md); background:color-mix(in oklch, var(--warn) 8%, transparent); }
 .alerts-lane h3 { margin-top:0; }
 .alerts-lane ul { margin:0; padding-left:1.2rem; }
 .home-acct-table a { color:var(--accent-bright); text-decoration:none; }
