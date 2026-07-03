@@ -29,3 +29,18 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
 - The `fanops` CLI has live verbs that hit external services (Postiz publish, Meta Graph
   metrics). Don't run it speculatively; tests and read-only verbs only unless the operator asks.
 - `.claude/workflows/*.js` are tracked, load-bearing build workflows — never delete.
+
+## Context files & codemaps
+
+Division of labor: THIS root file = project rules + product semantics; nested `CLAUDE.md` = per-package
+structure + coder invariants; `docs/CODEMAPS/` = deep function-by-function reference.
+
+- `src/fanops/CLAUDE.md` — the 10 clusters, the Source→Moment→Clip→Post spine, hard invariants, the
+  name-based-call-graph blind spot.
+- `src/fanops/studio/CLAUDE.md` — Flask app factory + routes, actions(mutation)/views(read) split, go-live +
+  wipe gate orders, secrets discipline.
+- `src/fanops/post/CLAUDE.md` — the queued-only publish path, the lazy-lambda provider ladder (a false
+  dead-code source), the `_postiz_permalink`/reconcile two-phase dependency.
+- `tests/CLAUDE.md` — unit vs integration, the 60s deadlock-guardrail timeout, the `os.environ` leak gotcha.
+- `docs/CODEMAPS/README.md` — index of every codemap ("read this when…"); `docs/CONFIG.md` — the 64-env-var
+  reference (13 Studio-settable / 51 shell-only).
