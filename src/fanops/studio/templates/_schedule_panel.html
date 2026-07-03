@@ -42,7 +42,7 @@
         <div class="sched-row-main">
           {% if r.clip_id %}<img class="sched-thumb" loading="lazy" src="{{ url_for('clip_thumb', clip_id=r.clip_id) }}" alt="">{% endif %}
           <div class="sched-row-text">
-            <div class="sched-row-head"><span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %} · {{ r.scheduled_time | localdt or 'unscheduled' }}</div>
+            <div class="sched-row-head"><span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %} · {{ r.scheduled_time | localdt_hybrid or 'unscheduled' }}</div>
             <p class="sched-caption clamp-1">{% if r.variant_hook %}✦ {{ r.variant_hook }} · {% endif %}{{ r.caption or '—' }}</p>
             <div class="sched-row-meta">{{ state_badge(r.delivery or r.lane) }}</div>
           </div>

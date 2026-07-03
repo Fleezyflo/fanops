@@ -22,7 +22,7 @@
       <tr>
         <td>{{ r.variant_hook }} {{ lineage(r) }}</td>
         <td>{{ r.account }}/{{ r.platform }}</td>
-        <td class="muted">{{ r.scheduled_time | localdt or '—' }}</td>
+        <td class="muted">{{ r.scheduled_time | localdt_hybrid or '—' }}</td>
         {# MOL-50: the Lift number is the answer to "which variant won" -> .lift-num makes it the row's dominant element. #}
         <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> <span class="lift-num">{{ '%.1f'|format(r.lift_score) }}</span> {{ lineage_delta(r) }}
             {% if r.lift_degraded %}{% if view.degraded_mostly %}<span class="degraded-quiet" title="Reach/shares-weighted — missing {{ (r.lift_missing or ['a primary metric'])|join(', ') }} (see note above).">degraded</span>{% else %}<span class="badge degraded" title="Partial objective — a primary metric was not returned by the backend, so this lift is reach/shares-weighted, not the full saves/retention objective.">DEGRADED{% if r.lift_missing %} · missing {{ r.lift_missing|join(', ') }}{% endif %}</span>{% endif %}{% endif %}</td>
@@ -43,7 +43,7 @@
         <tr><th>Hook</th><th>Account/Platform</th><th>When</th><th>Lift</th><th>Evidence</th></tr>
         {% for r in view.amplify_rows %}
         <tr><td>{{ r.variant_hook }}</td><td>{{ r.account }}/{{ r.platform }}</td>
-            <td class="muted">{{ r.scheduled_time | localdt or '—' }}</td>
+            <td class="muted">{{ r.scheduled_time | localdt_hybrid or '—' }}</td>
             <td>{{ '%.1f'|format(r.lift_score) }}</td><td class="ro">{{ r.amplify_state }}</td></tr>
         {% endfor %}
       </table>

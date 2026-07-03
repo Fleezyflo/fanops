@@ -16,7 +16,7 @@ from fanops.models import Platform
 from fanops.discover import make_thumbnail        # reuse the cheap one-frame ffmpeg extractor for clip posters
 from fanops.studio import views, actions
 from fanops.personas import lever_catalog        # the code-derived lever catalog (every option + its real effect)
-from fanops.timeutil import local_input_to_utc_z, to_local_display, to_local_input  # local-time rendering at the web boundary
+from fanops.timeutil import local_input_to_utc_z, to_local_display, to_local_display_hybrid, to_local_input  # local-time rendering at the web boundary
 
 _ALL_PLATFORMS = [p.value for p in Platform]    # the add-account form's platform checkboxes (no enum drift)
 # Lever exposure for the Personas tab — ALL sourced from personas.lever_catalog() so the option lists, their
@@ -253,6 +253,7 @@ def create_app(cfg: Config) -> Flask:
     # Both return "" on None/absent/garbage, so a display cell reads `{{ t | localdt or '—' }}` (filter binds
     # tighter than `or` in Jinja, so the dash is the fallback for an empty/missing time).
     app.jinja_env.filters["localdt"] = to_local_display
+    app.jinja_env.filters["localdt_hybrid"] = to_local_display_hybrid   # T-17/D-02: absolute leads + relative parenthetical (Schedule + Lift)
     app.jinja_env.filters["localinput"] = to_local_input
     # Face 4: group the editable Review cards by their REAL Batch (Post.batch_id) for collapsible
     # per-batch <details> sections. Pure read-model helper (views), exposed as a filter so the
