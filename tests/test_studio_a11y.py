@@ -814,3 +814,45 @@ def test_rail_link_hover_is_legible_on_surface_2():
     d = _decls(_rule_body(_CSS.read_text(), ".rail-link:hover"))
     assert not _RAW_OKLCH.search(d.get("background", "")), \
         f".rail-link:hover must not keep the raw white-alpha holdover (invisible on --surface-2), got {d.get('background')!r}"
+
+
+# ── T-08 (MOL-95): high-visibility 3px accent-bright focus ring (non-default, new work per P-06) ─────
+# The shared --ring recipe (used at every :focus-visible site via box-shadow:var(--ring)) is a double
+# box-shadow: a 2px moat in the page background, then an OUTER accent ring. This pins the new recipe:
+# a 2px moat + 5px outer = a 3px visible accent-bright stroke (brief's literal "3px accent-bright ring").
+# The two active-state sites that diverge with their OWN inline double-box-shadow (because the active
+# background already IS accent-dim, so the moat differs from --bg) must track the same 5px outer width.
+_RING_RE = re.compile(r'--ring\s*:\s*([^;]+);')
+
+
+def _ring_value(css):
+    m = _RING_RE.search(css)
+    assert m, "--ring token not found in studio.css"
+    return re.sub(r'\s+', ' ', m.group(1).strip())
+
+
+def test_ring_is_3px_accent_bright_stroke():
+    # 2px moat + 5px outer = a 3px visible accent-bright stroke; hue is --accent-bright (not the dimmer --accent).
+    ring = _ring_value(_CSS.read_text())
+    assert "5px var(--accent-bright)" in ring, \
+        f"--ring must end in a 5px var(--accent-bright) outer ring (3px visible stroke), got {ring!r}"
+    assert "2px var(--bg)" in ring, \
+        f"--ring must keep its 2px var(--bg) moat before the accent stroke, got {ring!r}"
+    assert "var(--accent)," not in ring and not re.search(r'\bvar\(--accent\)\s*$', ring), \
+        f"--ring must use the brighter --accent-bright hue, not the dimmer --accent, got {ring!r}"
+
+
+def test_active_state_rings_track_the_new_5px_width():
+    # the two divergent active-state rings (own inline double-box-shadow) must widen to the same 5px outer,
+    # each preserving its OWN moat color (rail-link.active = --accent-dim; spine-step.active = --bg).
+    css = _CSS.read_text()
+    rail = _decls(_rule_body(css, ".rail-link.active:focus-visible")).get("box-shadow", "")
+    assert "0 0 0 5px var(--accent-bright)" in re.sub(r'\s+', ' ', rail), \
+        f".rail-link.active:focus-visible ring must widen its outer stroke to 5px accent-bright, got {rail!r}"
+    assert "0 0 0 2px var(--accent-dim)" in re.sub(r'\s+', ' ', rail), \
+        f".rail-link.active:focus-visible must preserve its own --accent-dim moat, got {rail!r}"
+    spine = _decls(_rule_body(css, ".spine-step.active > a:focus-visible")).get("box-shadow", "")
+    assert "0 0 0 5px var(--accent-bright)" in re.sub(r'\s+', ' ', spine), \
+        f".spine-step.active > a:focus-visible ring must widen its outer stroke to 5px accent-bright, got {spine!r}"
+    assert "0 0 0 2px var(--bg)" in re.sub(r'\s+', ' ', spine), \
+        f".spine-step.active > a:focus-visible must preserve its own --bg moat, got {spine!r}"

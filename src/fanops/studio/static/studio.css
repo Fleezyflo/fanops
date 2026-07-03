@@ -37,7 +37,7 @@
   --r-sm:5px; --r-md:8px; --r-lg:16px; --r-pill:999px;
   --elev-1:0 1px 3px rgba(0,0,0,.08);
   --elev-2:0 8px 24px rgba(0,0,0,.12);
-  --ring:0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  --ring:0 0 0 2px var(--bg), 0 0 0 5px var(--accent-bright);
   --dur:180ms; --dur-slow:320ms; --ease:cubic-bezier(.2,.8,.2,1);
 }
 
@@ -69,7 +69,7 @@ em { font-style:italic; color:var(--ink); }
 .rail-link:focus-visible { outline:none; box-shadow:var(--ring); }
 .rail-link.active { color:var(--ink); background:var(--accent-dim); }
 .rail-link.active::before { content:""; position:absolute; left:0; top:.35rem; bottom:.35rem; width:2px; border-radius:2px; background:var(--accent-bright); box-shadow:0 0 8px var(--accent); }
-.rail-link.active:focus-visible { box-shadow:0 0 0 2px var(--accent-dim), 0 0 0 4px var(--accent-bright); }
+.rail-link.active:focus-visible { box-shadow:0 0 0 2px var(--accent-dim), 0 0 0 5px var(--accent-bright); }
 .rail .active-account { margin-top:auto; padding:.5rem .4rem 0; font-size:var(--t-meta); color:var(--muted); line-height:1.5; }
 .rail .active-account strong { color:var(--ink); }
 .workspace { min-width:0; }
@@ -704,7 +704,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .spine-step.done .spine-num { border-color:var(--ok); color:var(--ok); }
 .spine-step.active > a { color:var(--ink); background:var(--accent-dim); border-color:var(--accent); }
 .spine-step.active .spine-num { border-color:var(--accent-bright); color:var(--accent-bright); box-shadow:0 0 8px var(--accent-dim); }
-.spine-step.active > a:focus-visible { box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--accent-bright); }  /* full-contrast ring over the active step's accent-dim bg (mirrors .rail-link.active:focus-visible) */
+.spine-step.active > a:focus-visible { box-shadow:0 0 0 2px var(--bg), 0 0 0 5px var(--accent-bright); }  /* full-contrast ring over the active step's accent-dim bg (mirrors .rail-link.active:focus-visible) */
 .spine-next { display:inline-flex; align-items:center; gap:.4rem; padding:.4rem .8rem; border-radius:var(--r-pill); background:var(--accent); color:var(--accent-ink); font-size:var(--t-meta); font-weight:600; text-decoration:none; white-space:nowrap; transition:filter var(--dur) var(--ease); }
 .spine-next:hover { filter:brightness(1.08); }
 .spine-next:focus-visible { outline:none; box-shadow:var(--ring); }
