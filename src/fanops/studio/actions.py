@@ -85,7 +85,11 @@ def clear_time(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> 
 
 
 def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datetime] = None) -> ActionResult:
+    from fanops.caption import brand_risk_flag       # function-local: the ONE off-brand guardrail captions use (no module cycle)
     now = _now(now)
+    flag = brand_risk_flag(caption, cfg)             # MOL-86: SAME guard as regenerate_caption / ingest_captions — no bypass
+    if flag:
+        return ActionResult(ok=False, error=f"caption rejected — {flag}. Edit it to stay on-brand.")
     with Ledger.transaction(cfg) as led:
         p, err = _guard_editable_post(led, post_id, now)
         if err:
