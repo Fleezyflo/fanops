@@ -11,6 +11,20 @@
   --line:oklch(31% 0.014 280); --line-bright:oklch(40% 0.02 280);
   --accent:oklch(72% 0.16 292); --accent-bright:oklch(80% 0.15 292); --accent-dim:oklch(72% 0.16 292 / .14); --accent-ink:oklch(18% 0.03 292);
   --ok:oklch(76% 0.16 152); --warn:oklch(83% 0.13 78); --danger:oklch(70% 0.21 25); --danger-dim:oklch(70% 0.21 25 / .12); --info:oklch(70% 0.15 250);
+  /* Filled-pill on-fill INK (MOL-40). Companion to the four state hues above, for a SOLID fill (background:var(--danger); color:var(--danger-ink)).
+     All alias --bg (a near-black), which clears WCAG AA 4.5:1 on every fill: ok 9.76, warn 11.50, danger 6.70, info 7.40 (OKLCH->rel-luminance).
+     A per-hue tuned dark ink was measured (18% L: 9.27/11.01/6.44/7.06) — no advantage over --bg, so a single alias keeps it legible.
+     NB the older .spine-count.spine-sev-danger uses color:var(--ink) (near-WHITE) = 2.61:1, a real contrast bug this token exists to retire. */
+  --ok-ink:var(--bg); --warn-ink:var(--bg); --danger-ink:var(--bg); --info-ink:var(--bg);
+  /* SEVERITY LADDER (MOL-40) — the ONE convention MOL-43/48/49/50 consume. Expressed at the CLASS level, not the token level:
+     a token is a raw hue+ink pair; a tier is a USAGE (how loud, whether it may fill, whether it may repeat). Same token can serve
+     two tiers with different loudness, so tiers are picked per call site, not baked into a colour.
+       Tier 1 — OPERATIONAL FAILURE gating live-publish safety (loudest): SOLID fill, background:var(--danger); color:var(--danger-ink),
+                may pulse/glow (cf .banner.live/.banner.warn). Reserved for state that blocks or endangers a live post. One per view, max.
+       Tier 2 — real per-post QUALITY signal (visible, must NOT repeat-to-noise): SOLID fill on its hue (--warn/--danger + matching -ink),
+                but static, no glow, deduplicated per surface — a filled pill that reads once, never a wall of identical red.
+       Tier 3 — routine INFORMATIONAL fallback (quiet, never competes with actions): OUTLINED pill only (1px border + hue text on --surface),
+                the --info hue by default; never a fill, never adjacent-to-a-button emphasis. */
 
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -80,8 +94,8 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 .ok { color:var(--ok); } .err { color:var(--danger); }
 
 /* ── Cards & media ──────────────────────────────────────────────────────── */
-.card { background:linear-gradient(180deg, var(--surface-2), var(--surface-1)); border:1px solid var(--line);
-  border-radius:var(--r-lg); padding:var(--s-4); margin-bottom:var(--s-4); box-shadow:var(--elev-1);
+.card { background:var(--surface-1); border:1px solid var(--line);
+  border-radius:var(--r-lg); padding:var(--s-4); margin-bottom:var(--s-4); box-shadow:var(--elev-1);   /* MOL-42: raised tier (shared --elev-1 recipe) */
   transition:border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease); }
 .card:hover { border-color:var(--line-bright); box-shadow:var(--elev-2); }
 .card > strong { font-size:var(--t-lg); letter-spacing:-.01em; }
@@ -121,7 +135,7 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 .snooze button { font-size:var(--t-eyebrow); }
 /* M3a: the per-account spec chips (length · cut · framing) — a tight inline row under the surface head */
 .surface-spec { display:flex; flex-wrap:wrap; gap:.3rem; align-items:center; }
-.surface-spec .chip.cut { border-color:var(--accent-bright); color:var(--accent-bright); }
+.surface-spec .chip.cut { border-color:var(--line-bright); color:var(--ink); font-weight:600; }   /* MOL-41: static spec chip — emphasis via weight, not accent (accent reads as clickable) */
 /* M3c compact mode: a dense, video-less single-column list for scanning rich per-account sets at scale */
 .view-toggle { display:flex; justify-content:flex-end; }
 /* Phase 4 account pivot: a small lazy preview per surface row (ultra-compact drops it) */
@@ -133,7 +147,7 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 .clip-grid.compact { grid-template-columns:1fr; gap:.5rem; }
 .clip-card.compact .clip-body { padding:.5rem var(--s-3); gap:.3rem; }
 .clip-card.compact .surface { margin-top:.3rem; padding-top:.35rem; }
-.clip-card.compact .compact-hook { font-size:var(--t-meta); color:var(--accent-bright); }
+.clip-card.compact .compact-hook { font-size:var(--t-meta); color:var(--ink); font-weight:600; }   /* MOL-41: static hook text — weight, not accent */
 .vh { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
 /* skip-to-content: hidden (.vh) until keyboard focus reveals it as a real, visible target (WCAG 2.4.1) */
 .skip-nav:focus { position:fixed; left:.6rem; top:.6rem; width:auto; height:auto; padding:.5rem .85rem; margin:0; clip:auto; overflow:visible; white-space:normal; z-index:200; background:var(--accent); color:var(--accent-ink); border-radius:var(--r-sm); box-shadow:var(--elev-2); }
@@ -149,7 +163,7 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 .clip-card:not(.compact) .surface-col .surface-hook { padding:.3rem 0 0; }
 /* narrow viewports: stack the master above the columns instead of a cramped 2-col grid */
 @media (max-width:680px) { .clip-card:not(.compact) { grid-template-columns:1fr; } }
-.surface-hook { font:600 var(--t-meta) var(--serif); color:var(--accent-bright); padding:.4rem .55rem 0; line-height:1.35; }
+.surface-hook { font:600 var(--t-meta) var(--serif); color:var(--ink); padding:.4rem .55rem 0; line-height:1.35; }   /* MOL-41: static emphasis — already serif+600, drop the accent (it read as a link) */
 
 /* ── Badges & banners ───────────────────────────────────────────────────── */
 .badge { display:inline-flex; align-items:center; gap:.3rem; font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase;
@@ -157,6 +171,8 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
   background:oklch(80% 0.14 78 / .1); vertical-align:middle; }
 .badge.shipped { color:var(--muted); border-color:var(--line-bright); background:oklch(100% 0 0 / .04); }
 .badge.degraded { color:var(--danger); border-color:var(--danger); background:var(--danger-dim); }   /* T4: partial-objective lift */
+.lift-num { font:700 var(--t-lg) var(--mono); color:var(--ink); font-variant-numeric:tabular-nums; }   /* MOL-50: the Lift number answers "which variant won" — dominant per-row element (larger/bolder/--ink) */
+.degraded-quiet { font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }   /* MOL-50: when uniform, the table-level note carries the message — per-row marker is a quiet muted chip, no danger fill */
 .banner { display:flex; align-items:center; gap:.6rem; padding:.7rem 1rem; border-radius:var(--r-md); margin:.3rem 0 var(--s-4);
   font-weight:600; border:1px solid var(--line); background:var(--surface-2); }
 .banner::before { content:""; width:.6rem; height:.6rem; border-radius:50%; background:currentColor; flex:none; }
@@ -180,7 +196,7 @@ select { -webkit-appearance:none; appearance:none; padding-right:2rem;
 label { display:block; }
 fieldset { border:1px solid var(--line); border-radius:var(--r-md); padding:var(--s-3); margin:var(--s-2) 0; background:oklch(16% 0.012 280 / .4); display:grid; gap:.5rem; }
 legend { font:600 var(--t-meta) var(--sans); padding:0 .5rem; color:var(--ink); }
-legend em { color:var(--accent-bright); font-style:normal; font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.08em; }
+legend em { color:var(--ink); font-weight:600; font-style:normal; font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.08em; }   /* MOL-41: static eyebrow — weight, not accent */
 
 /* ── Buttons (tiered) ───────────────────────────────────────────────────── */
 button, .button { display:inline-flex; align-items:center; justify-content:center; gap:.4rem; background:var(--surface-3); color:var(--ink);
@@ -194,6 +210,8 @@ button.primary:hover { box-shadow:0 6px 20px var(--accent-dim), var(--elev-1); }
 button.danger { background:transparent; border-color:var(--danger); color:var(--danger); }
 button.danger:hover { background:var(--danger-dim); border-color:var(--danger); }
 button.primary.danger { background:linear-gradient(180deg,var(--danger),oklch(58% 0.21 25)); color:oklch(98% 0.01 25); border-color:transparent; }
+button:disabled, .button:disabled { background:var(--surface-2); color:var(--muted); border-color:var(--line); opacity:.5; cursor:not-allowed; box-shadow:none; }   /* MOL-52: inert bulk-action — flat muted fill OVERRIDES .primary gradient, dimmed, no-op cursor */
+button:disabled:hover, .button:disabled:hover { background:var(--surface-2); border-color:var(--line); color:var(--muted); transform:none; box-shadow:none; }   /* MOL-52: a disabled control never lifts on hover */
 input[type=file] { border:1px dashed var(--line-bright); background:oklch(16% 0.012 280 / .5); cursor:pointer; padding:.45rem; }
 input[type=file]::file-selector-button { margin-right:.7rem; background:var(--surface-3); color:var(--ink); border:1px solid var(--line-bright);
   border-radius:var(--r-sm); padding:.4rem .8rem; font:600 var(--t-meta) var(--sans); cursor:pointer; transition:border-color var(--dur) var(--ease); }
@@ -215,7 +233,7 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
   border:1px solid var(--line); border-radius:var(--r-md); font-size:var(--t-eyebrow); text-transform:uppercase;
   letter-spacing:.08em; color:var(--faint); min-width:6.5rem; }
 .status > span strong { font:600 1.7rem var(--mono); letter-spacing:-.02em; color:var(--ink); font-variant-numeric:tabular-nums; text-transform:none; }
-.status > span:last-child strong { color:var(--accent-bright); font-size:1.2rem; }
+.status > span:last-child strong { color:var(--ink); font-size:1.2rem; }   /* MOL-41: static stat value — accent read as clickable */
 .status.status-sub > span { padding:.5rem .75rem; min-width:5rem; }
 .status.status-sub > span strong { font-size:1.25rem; }
 .status.status-sub > span:last-child strong { color:var(--ink); font-size:1.25rem; }
@@ -260,15 +278,15 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 /* Stage card: one per stage. The primary one (Make clips) gets the deeper surface treatment so the
    page has a single visual centre of gravity. */
 .stage-card { border:1px solid var(--line); border-radius:var(--r-lg); background:var(--surface-1);
-  padding:var(--s-4); margin:var(--s-3) 0; box-shadow:var(--elev-1); }
+  padding:var(--s-4); margin:var(--s-3) 0; box-shadow:var(--elev-1); }   /* MOL-42: raised tier (shared recipe) */
 .stage-card-primary { background:linear-gradient(180deg, var(--surface-2), var(--surface-1));
-  border-color:var(--line-bright); }
+  border-color:var(--line-bright); box-shadow:var(--elev-2); }   /* MOL-42: floating tier (--elev-2 + brighter border) */
 .stage-card-handoff { background:transparent; box-shadow:none; padding:var(--s-3) var(--s-4); }
 .stage-card-head { display:flex; align-items:baseline; gap:.7rem; flex-wrap:wrap; margin:0 0 var(--s-3); }
 .stage-card-head h3 { margin:0; }
 .stage-card-head h3::before { display:none; }
 .stage-card-num { font:600 var(--t-eyebrow) var(--mono); letter-spacing:.08em; padding:.15rem .45rem;
-  border:1px solid var(--line-bright); border-radius:4px; color:var(--accent-bright); background:var(--surface-2); }
+  border:1px solid var(--line-bright); border-radius:4px; color:var(--ink); background:var(--surface-2); }   /* MOL-41: static number badge — weight, not accent */
 .stage-card-hint { color:var(--muted); font-size:var(--t-meta); flex-basis:100%; margin-top:.1rem; }
 
 /* Stage form: one field per row, labelled, scoped. Replaces the inline horizontal wrap that buried
@@ -342,7 +360,7 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .result.err { color:var(--danger); border-color:oklch(66% 0.21 25 / .4); background:var(--danger-dim); }
 
 /* ── Go-Live steps, checks, mapping ─────────────────────────────────────── */
-.golive-step { border:1px solid var(--line); border-radius:var(--r-lg); padding:var(--s-4); margin-top:var(--s-3); background:var(--surface-1); box-shadow:var(--elev-1); }
+.golive-step { border:1px solid var(--line); border-radius:var(--r-lg); padding:var(--s-4); margin-top:var(--s-3); background:var(--surface-1); box-shadow:var(--elev-1); }   /* MOL-42: raised tier (shared recipe) */
 .golive-step h3 { margin-top:0; }
 .golive-step form { display:grid; gap:.6rem; margin:.5rem 0 0; }
 .golive-step button { justify-self:start; }
@@ -353,11 +371,25 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .checks { list-style:none; padding-left:0; display:grid; gap:.3rem; }
 .checks li { padding:.35rem .7rem; border-radius:var(--r-sm); background:var(--surface-2); border:1px solid var(--line); font-size:var(--t-meta); }
 .checks li.ok { border-color:oklch(76% 0.16 152 / .35); }
-.checks li.err { border-color:oklch(66% 0.21 25 / .35); }
+/* MOL-48: a failing readiness/dependency row is Tier-1 (ladder §top) — an operational failure gating
+   live-publish safety. SOLID --danger fill + on-fill --danger-ink (the MOL-43-tuned 6.70:1 pair) + bold,
+   so it INTERRUPTS the scan instead of differing from a passing row by a 35%-alpha border tint alone. */
+.checks li.err { background:var(--danger); color:var(--danger-ink); border-color:var(--danger); font-weight:600; }
+/* MOL-48: banner-level alert raised above §4 when a SYSTEM dependency (docker/postiz/zernio — the sole
+   feed of the .deps strip) is down; loud fill, matching the LIVE/warn banner weight. One per view. */
+.dep-alert { background:var(--danger); color:var(--danger-ink); border-radius:var(--r-sm); padding:.5rem .7rem; margin:0 0 var(--s-3); font-weight:600; }
 .golive-map { margin:.5rem 0; }
 .golive-map td:first-child { white-space:nowrap; }
 .confirm { display:flex; align-items:center; gap:.4rem; color:var(--warn); font-weight:600; font-size:var(--t-meta);
   padding:.5rem .7rem; background:oklch(80% 0.14 78 / .08); border:1px solid oklch(80% 0.14 78 / .35); border-radius:var(--r-sm); }
+/* MOL-49: arming a LIVE publish is the ladder's Tier-1 (MOL-40 §top) — an operational act gating live-publish
+   safety, the loudest tier. It must read unmistakably ABOVE every informational warn box, different in KIND not
+   just hue: SOLID --danger fill + on-fill --danger-ink (the MOL-43-tuned 6.70:1 pair, label stays readable), a
+   full --danger border, heavier padding/weight/tracking. The checkbox keeps a bright accent so it reads on the
+   fill. Used ONLY at live-arming call sites (both /run confirms + the Go-Live flip); base .confirm stays quiet. */
+.confirm.danger { color:var(--danger-ink); font-weight:700; padding:.65rem .85rem; letter-spacing:.01em;
+  background:var(--danger); border-color:var(--danger); box-shadow:0 4px 14px var(--danger-dim); }
+.confirm.danger input[type=checkbox] { accent-color:var(--danger-ink); }
 
 /* ── Gates: transcript + pick rows ──────────────────────────────────────── */
 details { margin:var(--s-2) 0; border:1px solid var(--line); border-radius:var(--r-md); background:oklch(16% 0.012 280 / .4); overflow:hidden; }
@@ -402,8 +434,10 @@ details.batch > summary { font:600 var(--t-lg) var(--sans); letter-spacing:-.01e
 details.batch > summary:hover { color:var(--ink); background:oklch(100% 0 0 / .03); }
 details.batch[open] > summary { border-bottom:1px solid var(--line); }
 details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
-.batch-targets { color:var(--accent-bright); }
+.batch-targets { color:var(--ink); font-weight:600; }   /* MOL-41: static target label — weight, not accent */
 .batch-meta { padding:.45rem .9rem 0; margin:0; }
+.batch-open { color:var(--muted); text-decoration:none; }   /* MOL-53: the drill-in nav link is the QUIETEST of the header's three affordances — muted plain text, never a button */
+.batch-open:hover { color:var(--ink); text-decoration:underline; }   /* MOL-53: underline-on-hover marks it navigable without competing with the action band above */
 .batch-excluded { color:var(--warn); }
 .batch-scope { margin:.2rem 0 var(--s-3); }
 /* a day sub-header inside a batch / over a Schedule group — quieter than a section h3, no accent dot */
@@ -427,8 +461,8 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
    real IG/TikTok post), not a raw URL dump; the muted "pending ⟳" sibling reads when reconcile hasn't
    captured public_url yet. */
 .live-link { display:inline-block; font:600 var(--t-meta) var(--sans); padding:.12rem .55rem; border-radius:var(--r-sm);
-  background:var(--accent-dim); color:var(--accent-bright); white-space:nowrap; transition:background var(--dur) var(--ease), color var(--dur) var(--ease); }
-.live-link:hover { background:var(--accent); color:var(--accent-ink); }
+  background:var(--accent); color:var(--accent-ink); white-space:nowrap; transition:background var(--dur) var(--ease), color var(--dur) var(--ease); }   /* MOL-51: the payoff link LEADS the row's action cluster — solid --accent fill out-weighs the tertiary .ghost utilities beside it (was accent-DIM, which read quieter than the buttons) */
+.live-link:hover { background:var(--accent-bright); color:var(--accent-ink); }
 .live-link:focus-visible { outline:none; box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--accent-bright); }
 /* cast-to affinity row on a Review card */
 .cast-affinity { display:flex; align-items:center; flex-wrap:wrap; gap:.3rem; margin:.3rem 0; }
@@ -440,7 +474,7 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
   border-radius:var(--r-sm); margin:0 0 var(--s-3); }
 /* casting/routing explainer strip shown on Review + Run when casting is ON */
 .cast-state { padding:.45rem .75rem; background:var(--accent-dim); border:1px solid var(--line); border-radius:var(--r-sm); margin:.3rem 0 var(--s-3); }
-.cast-state strong { color:var(--accent-bright); }
+.cast-state strong { color:var(--ink); }   /* MOL-41: static emphasis (<strong> already bold) — accent read as a link */
 /* Home: the headline count cluster + section lists */
 .count-strip { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .6rem; margin:var(--s-3) 0 var(--s-4); }
 .count-strip span { display:inline-flex; align-items:baseline; gap:.35rem; }
@@ -493,8 +527,8 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .manifest-lever { white-space:nowrap; font-weight:500; }
 .manifest-produces { color:var(--muted); }
 .drawer-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:var(--s-2); padding-top:var(--s-3); border-top:1px solid var(--line); }
-button.ghost { background:transparent; border-color:var(--line); color:var(--muted); }
-button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
+button.ghost, .button.ghost { background:transparent; border-color:transparent; color:var(--muted); box-shadow:none; }   /* MOL-44: tertiary tier — text-only, no fill, no border (the true low-weight option) */
+button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transparent; border-color:transparent; box-shadow:none; transform:none; }   /* MOL-44: tertiary hover — text resolves to --ink, still no chrome */
 
 /* ── Persona compose panel (S7) — the LIVE "compiles to" translation inside the drawer. Was unstyled; this
    gives it a card surface, a plain-words "Produces" lead, tagged directive rows, and muted provenance frags. */
@@ -502,7 +536,7 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .produces-line { margin:0 0 var(--s-2); padding:.45rem .65rem; border-left:3px solid var(--accent);
   background:var(--accent-dim); border-radius:var(--r-sm); color:var(--ink); font-size:var(--t-meta); line-height:1.5; }
 .produces-eyebrow { font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase; letter-spacing:.1em;
-  color:var(--accent-bright); margin-right:.4rem; }
+  color:var(--ink); margin-right:.4rem; }   /* MOL-41: static eyebrow — already 600, drop the accent */
 .compose-grid { display:grid; gap:.35rem; padding:var(--s-3); background:var(--surface-1);
   border:1px solid var(--line); border-radius:var(--r-md); }
 .compose-row { display:grid; grid-template-columns:5.5rem 1fr; gap:.5rem; align-items:baseline;
@@ -525,8 +559,8 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
    no done/next/todo marks. The number badge replaces the old step-mark glyph. */
 .setup-steps.teaching .step { counter-increment:step; }
 .setup-steps.teaching .step::before { content:counter(step); flex:none; width:1.4rem; height:1.4rem; display:inline-flex;
-  align-items:center; justify-content:center; border-radius:50%; background:var(--accent-dim); color:var(--accent-bright);
-  font:600 var(--t-eyebrow) var(--sans); }
+  align-items:center; justify-content:center; border-radius:50%; background:var(--accent-dim); color:var(--ink);
+  font:600 var(--t-eyebrow) var(--sans); }   /* MOL-41: static step number — weight, not accent */
 /* S10: a zero-result batch is a SILENT-FAIL outcome — give it a prominent list-level banner, not a faint glyph. */
 .batch-zero-summary { margin:.3rem 0 .6rem; padding:.5rem .75rem; border:1px solid var(--warn); border-left:3px solid var(--warn);
   border-radius:var(--r-sm); background:oklch(83% 0.13 78 / .08); }
@@ -541,7 +575,7 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .clip-transcript p { margin:.2rem 0 0; max-height:9rem; overflow:auto; }
 /* per-surface reject — quiet danger affordance, pushed to the right of the surface head */
 .surface-reject { margin-left:auto; padding:.2rem .55rem; font:600 var(--t-eyebrow) var(--sans); background:transparent;
-  border:1px solid var(--line); color:var(--faint); }
+  border:1px solid var(--line-bright); color:var(--muted); }   /* MOL-43: a destructive action must not be the FAINTEST element — real --line-bright border + --muted text, still quiet */
 .surface-reject:hover { border-color:var(--danger); color:var(--danger); background:var(--danger-dim); transform:none; }
 /* Schedule caption cell — truncate to keep the table scannable; full text on hover (title attr) */
 .schedule-caption { max-width:22rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
@@ -555,7 +589,7 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 /* Library asset rows — filename leads, technicals + id demote to context */
 .asset-list { list-style:none; padding:0; margin:.4rem 0 var(--s-4); display:grid; gap:.3rem; }
 .asset-row { display:flex; align-items:baseline; flex-wrap:wrap; gap:.5rem; padding:.5rem .75rem;
-  background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r-sm); }
+  background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r-sm); }   /* MOL-42: flat tier (list row — bg only, no shadow) */
 .asset-name { font:600 var(--t-base) var(--sans); color:var(--ink); letter-spacing:-.01em; }
 .asset-tech { font-size:var(--t-meta); }
 .asset-id { margin-left:auto; font:var(--t-eyebrow) var(--mono); }
@@ -576,12 +610,15 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 @media (max-width:768px) {
   .app-shell { grid-template-columns:1fr; }
   .rail { position:static; height:auto; flex-direction:row; align-items:center; overflow-x:auto; gap:var(--s-2);
-    border-right:none; border-bottom:1px solid var(--line); }
+    border-right:none; border-bottom:1px solid var(--line);
+    scroll-snap-type:x proximity; scroll-padding-inline:1.5rem;   /* MOL-58: snapped items land whole, edge peeks */
+    -webkit-mask-image:linear-gradient(90deg, #000 0, #000 calc(100% - 2rem), transparent 100%);
+    mask-image:linear-gradient(90deg, #000 0, #000 calc(100% - 2rem), transparent 100%); }  /* MOL-58: right-edge fade → "more →" */
   .rail .nav-brand { flex:none; margin:0 .4rem 0 0; }
   .rail-list { flex-direction:row; align-items:center; gap:var(--s-3); }
   .rail-list ul { flex-direction:row; }
   .rail-group-label { display:none; }   /* the strip is too tight for group headers; links stay */
-  .rail-link { min-height:44px; display:flex; align-items:center; flex-shrink:0; padding:.4rem 1rem; }
+  .rail-link { min-height:44px; display:flex; align-items:center; flex-shrink:0; padding:.4rem 1rem; white-space:nowrap; scroll-snap-align:start; }  /* MOL-58: one-line labels, each a snap target */
   .rail .active-account { margin:0 0 0 auto; flex:none; }
   .skip-to-nav { display:block; }        /* re-enable the mobile jump-to-nav escape (still .vh until focus) */
   .run-actions { grid-template-columns:1fr; }
@@ -612,7 +649,7 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .matrix-scroll { overflow:auto; max-height:calc(100vh - 14rem); border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface-1);
   scroll-padding-top:3rem; scroll-padding-left:13rem; }   /* keep a Tab-focused cell clear of the opaque sticky header/first-column (WCAG 2.4.11) */
 .matrix-scroll:focus-visible { outline:none; box-shadow:var(--ring); }
-.review-matrix { border-collapse:separate; border-spacing:0; width:max-content; min-width:100%; font-size:var(--t-meta); }
+.review-matrix { border-collapse:separate; border-spacing:0; width:max-content; min-width:100%; font-size:var(--t-meta); overflow:visible; border-radius:0; }   /* MOL-62: override global table{overflow:hidden} so sticky thead/row-head pin to .matrix-scroll (which owns the radius+clip), not the non-scrolling table box; drop the now-useless table radius to avoid corner bleed */
 .review-matrix th, .review-matrix td { border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:var(--s-2); text-align:left; vertical-align:top; }
 .review-matrix thead th { position:sticky; top:0; z-index:20; background:var(--surface-2); }
 .review-matrix th[scope="row"] { position:sticky; left:0; z-index:10; background:var(--surface-2); min-width:8.5rem; max-width:13rem; }
@@ -632,11 +669,19 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .cell-meta .chip { font-size:var(--t-eyebrow); padding:.05rem .4rem; }
 .chip.cut { color:var(--ok); border-color:var(--ok); }
 .chip.shared { color:var(--faint); }
-.chip.mult { color:var(--accent-bright); border-color:var(--accent); }
+.chip.mult { color:var(--ink); border-color:var(--line-bright); }   /* MOL-41: static multi-account chip — accent read as clickable */
 /* Provenance chips (S2) — "value ← why": tone maps to existing colour tokens; .cause is the muted WHY phrase. */
 .chip.ok { color:var(--ok); border-color:var(--ok); }
-.chip.warn { color:var(--warn); border-color:var(--warn); }
+/* MOL-43: .chip.warn is the ROUTINE degraded-quality family (shared-cut / shared-hook / fix-clip / fans-to-all) —
+   every live consumer is intentional metadata, none an alert. Demoted to Tier 3 (ladder §top): MUTED outline +
+   muted text, so 2-3 stacked warn chips no longer out-shout the action buttons. A warn-hued leading ⚠ glyph keeps
+   the notice legible without the saturated border+text it used to carry. (Was: color/border both var(--warn).) */
+.chip.warn { color:var(--muted); border-color:var(--line-bright); }
+.chip.warn::before { content:"⚠"; color:var(--warn); margin-right:.2rem; font-size:.9em; }
 .chip.danger { color:var(--danger); border-color:var(--danger); }   /* MOM-2: zero-cast candidate — posts nothing */
+/* MOL-43: zero_cast ("0 cast — posts nothing") is a real Tier-2 alert — SOLID --danger fill + on-fill ink, scoped
+   to .lane-method so the generic S2 provenance .chip.danger (outlined) is untouched; deduplicated one-per-lane. */
+.chip.lane-method.danger { background:var(--danger); color:var(--danger-ink); border-color:var(--danger); }
 .chip .cause { font-style:normal; color:var(--faint); font-size:var(--t-eyebrow); margin-left:.1rem; }
 /* Lineage (S6) — winner star, "N in lineage" chip, muted Δ-vs-best, and the proportional metric micro-bar. */
 .chip.win { color:var(--ok); border-color:var(--ok); background:oklch(76% 0.16 152 / .1); }
@@ -679,12 +724,12 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
   border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:var(--r-sm); color:var(--ink);
   font-size:var(--t-meta); font-weight:400; line-height:1.45; }
 .term:hover > .term-def, .term:focus > .term-def, .term:focus-within > .term-def { display:block; }
-.term-def strong { color:var(--accent-bright); text-transform:none; }
+.term-def strong { color:var(--ink); text-transform:none; }   /* MOL-41: static def emphasis (<strong> already bold) */
 
 /* ── Personas clarity: the cards had NO styling, so personas blurred into one wall. Give each a real boundary
    (mirrors the existing .golive-step card, so the two setup pages match) + clean the disclosures. ─────────── */
 .persona-card { border:1px solid var(--line); border-radius:var(--r-lg); padding:var(--s-4); margin-top:var(--s-3);
-  background:var(--surface-1); box-shadow:var(--elev-1); }
+  background:var(--surface-1); box-shadow:var(--elev-1); }   /* MOL-42: raised tier (shared recipe) */
 .persona-card-head { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
 .persona-card-head strong { font-size:1.05rem; }
 .persona-voice { color:var(--ink); margin:.45rem 0 .65rem; max-width:72ch; }
@@ -744,7 +789,7 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .state-queued,.state-due { color:var(--state-queued); } .state-awaiting { color:var(--muted); }
 .spine-count.spine-sev-warn { background:var(--warn); color:var(--bg); }
 .spine-count.spine-sev-info { background:var(--info); color:var(--bg); }
-.spine-count.spine-sev-danger { background:var(--danger); color:var(--ink); }
+.spine-count.spine-sev-danger { background:var(--danger); color:var(--danger-ink); }   /* MOL-43 (delegated from MOL-40): --ink was 2.61:1; on-fill --danger-ink = 6.70:1, matching the warn/info siblings */
 .ops-board { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--s-3); margin:var(--s-4) 0; }
 @media (max-width:900px) { .ops-board { grid-template-columns:repeat(2,1fr); } }
 .ops-tile { display:flex; flex-direction:column; gap:.2rem; padding:var(--s-3); background:var(--surface-1);
@@ -753,6 +798,9 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .ops-tile--danger { border-color:var(--danger); background:color-mix(in srgb, var(--danger) 8%, var(--surface-1)); }
 .ops-tile--danger .ops-value { color:var(--danger); }
 .ops-tile--warn { border-color:var(--warn); }
+.ops-tile--zero { border-color:var(--line); }   /* MOL-42: idle dashboard tile — recedes, no accent */
+.ops-tile--zero .ops-value { color:var(--muted); opacity:.55; }   /* MOL-42: zero count reads as empty, not full-weight --ink */
+.ops-tile--zero .ops-label, .ops-tile--zero .ops-hint { opacity:.7; }   /* MOL-42 */
 .ops-label { font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.1em; color:var(--muted); }
 .ops-value { font:600 1.6rem var(--mono); color:var(--ink); }
 .schedule-scan-list,.posted-scan-list { list-style:none; padding:0; margin:0; }
@@ -793,16 +841,17 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .review-action-dock .sel-count { min-width: 10rem; font-weight: 600; color: var(--ink); }
 .review-account-actions { display:flex; flex-wrap:wrap; gap:.45rem .65rem; align-items:center; margin:.5rem 0 1rem; padding:.55rem .7rem; border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface-1); }
 .acct-action-chip { display:inline-flex; flex-wrap:wrap; align-items:center; gap:.35rem; padding:.2rem .45rem; border:1px solid var(--line); border-radius:var(--r-pill); }
-.batch-actions { display:flex; flex-wrap:wrap; gap:.4rem; margin:.35rem 0; }
+.batch-actions { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; margin-top:.5rem; padding:.55rem .9rem 0; border-top:1px solid var(--line); }   /* MOL-53: the action row is a SEPARATED band under the title — a subtle top rule + top margin off the summary, summary-aligned padding, so "where the header ends and actions begin" is unmistakable */
 .review-hint { margin:0 0 var(--s-2); }
 /* Schedule per-account blocks + inline controls */
-.schedule-account-block { margin:var(--s-4) 0; border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden; }
+.schedule-account-block { margin:var(--s-4) 0; border:1px solid var(--line); border-radius:var(--r-lg); background:var(--surface-1); box-shadow:var(--elev-1); overflow:hidden; }   /* MOL-42: raised tier */
 .schedule-account-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.5rem; padding:.55rem .75rem; background:var(--surface-2); border-bottom:1px solid var(--line); }
 .schedule-account-head h3 { margin:0; font-size:var(--t-base); text-transform:none; letter-spacing:0; }
 .schedule-account-head h3::before { display:none; }
-.schedule-account-tools { display:flex; flex-wrap:wrap; gap:.35rem; align-items:center; }
+.schedule-account-tools { display:flex; flex-wrap:wrap; gap:.35rem; align-items:center; border-left:2px solid var(--line); padding-left:.65rem; }   /* MOL-64: block-scope tools sit in a SEPARATED band — a leading rule + gap marks "these mutate the whole account, not one row" without demoting them (MOL-44 kept them secondary) */
 .schedule-account-tools .inline-shift { display:inline; margin:0; }
-.sched-row-controls { display:flex; flex-wrap:wrap; gap:.35rem; align-items:center; margin-left:auto; }
+.sched-row-text { flex:1; min-width:0; }   /* MOL-63: the caption column absorbs the row's slack and its clamp-1 truncates — a long caption no longer pushes the control cluster into a 2nd line */
+.sched-row-controls { display:flex; flex-wrap:nowrap; flex:none; gap:.35rem; align-items:center; margin-left:auto; }   /* MOL-63: fixed no-wrap cluster — every editable row's actions start at the same x with uniform height regardless of caption length */
 .sched-move { display:flex; flex-wrap:wrap; gap:.3rem; align-items:center; margin:0; }
 .sched-move input[type=datetime-local] { width:auto; min-width:11rem; font-size:var(--t-meta); }
 .sched-suggest { margin:0; }
@@ -820,14 +869,14 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .pick-row { display:flex; flex-wrap:wrap; gap:.35rem; }
 /* Publish recovery scan list */
 .publish-scan-list, .footage-scan-list { list-style:none; padding:0; margin:0; display:grid; gap:.45rem; }
-.publish-row, .footage-row { display:flex; flex-wrap:wrap; align-items:flex-start; gap:.5rem; padding:.55rem .65rem; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface-1); }
+.publish-row, .footage-row { display:flex; flex-wrap:wrap; align-items:flex-start; gap:.5rem; padding:.55rem .65rem; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface-1); }   /* MOL-42: flat tier (list row) */
 .publish-row-text { flex:1; min-width:12rem; }
 .publish-head { font-size:var(--t-meta); margin-bottom:.2rem; }
 .posted-action-dock .recover-bar { display:inline-flex; flex-wrap:wrap; gap:.35rem; margin:0; padding:0; border:none; background:transparent; }
 .posted-action-dock { gap:.5rem; }
 /* Stitches */
 .stitch-list { list-style:none; padding:0; margin:0 0 var(--s-2); display:grid; gap:.35rem; }
-.stitch-row { padding:.45rem .55rem; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface-1); }
+.stitch-row { padding:.45rem .55rem; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface-1); }   /* MOL-42: flat tier (list row) */
 .stitch-row label { display:flex; flex-wrap:wrap; gap:.35rem; align-items:baseline; cursor:pointer; }
 .stitch-actions { display:flex; gap:.5rem; margin-bottom:var(--s-4); }
 .rationale { color:var(--muted); font-size:var(--t-meta); }
@@ -847,6 +896,8 @@ button.ghost:hover { color:var(--ink); border-color:var(--line-bright); }
 .home-acct-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.5rem; padding:.65rem .75rem; border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface-1); }
 .home-acct-stats { display:block; font-size:var(--t-meta); margin-top:.2rem; }
 .home-acct-ctas { display:flex; flex-wrap:wrap; gap:.35rem; }
+.acct-cta-pending { border-color:var(--accent); }   /* MOL-55: "needs action" row CTA — secondary fill (base .button) + accent border, NO gradient (not primary); reads apart from the .ghost "Open" browse row at a glance */
+.cta-badge { background:var(--accent); color:var(--accent-ink); border-radius:999px; padding:.05rem .4rem; font-weight:700; font-size:var(--t-eyebrow); line-height:1.4; }   /* MOL-55: filled accent count pill — the pending-work count read WITHOUT scanning digits */
 .review-focus { margin:var(--s-3) 0; }
 .focus-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:var(--s-3); }
 .focus-card { display:flex; flex-direction:column; gap:var(--s-3); }

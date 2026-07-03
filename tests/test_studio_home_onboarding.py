@@ -86,6 +86,17 @@ def test_no_zero_result_summary_when_all_batches_match(tmp_path):
     assert 'data-warn="zero-result-summary"' not in html      # no false alarm when targets match
 
 
+# ── MOL-45: the Batches disclosure summary reads "Batches (N)", not the broken "es (N)" ─────────────
+def test_batches_summary_label_is_legible(tmp_path):
+    from fanops.batches import create_batch
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
+    led = Ledger.load(cfg)
+    create_batch(led, name="Real", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000009Z"); led.save()
+    html = _client(cfg).get("/").data.decode()
+    assert "<summary>Batches" in html                          # the base word survives, fully formed
+    assert ">es (" not in html                                 # never the term-mark-eats-the-word breakage
+
+
 # ── per-account counts inline; #home-metrics only the orphan fallback ──────────────────────────────
 def test_inline_per_account_post_count(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
@@ -115,3 +126,55 @@ def test_home_torn_ledger_still_200(tmp_path, monkeypatch):
     monkeypatch.setattr(Ledger, "load", _boom)
     r = _client(cfg).get("/")
     assert r.status_code == 200                                # fail-open: zeroed shell, never a 500
+
+
+# ── MOL-55: Home account-row CTAs distinguish "needs action" from "just browse" ────────────────────
+# "Open" is a low-stakes browse action (a caught-up account) → tertiary .ghost. "Review (N)"/"Schedule (N)"
+# carry real pending work → secondary weight PLUS an accent-border pending-work cue (.acct-cta-pending) and a
+# filled count badge (.cta-badge), so a scanning operator separates action-rows from browse-rows WITHOUT
+# reading numbers. Neither is .primary (Home's one primary is the .home-start-here handoff).
+def _b(handle="@b"):
+    return {"handle": handle, "account_id": "2", "platforms": ["instagram"], "status": "active"}
+
+def _future_iso():
+    from datetime import datetime, timezone, timedelta
+    return (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def test_open_cta_is_ghost_for_clear_account(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])   # @a active, no pending work → caught up
+    html = _client(cfg).get("/").data.decode()
+    assert 'class="button ghost"' in html and ">Open</a>" in html   # browse action is quiet tertiary
+    # and the quiet Open never carries the pending cue
+    assert 'acct-cta-pending"' not in html
+
+
+def test_review_cta_carries_pending_cue_and_badge(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
+    html = _client(cfg).get("/").data.decode()
+    assert "acct-cta-pending" in html and ">Review " in html   # needs-action cue on the Review CTA
+    assert '<span class="cta-badge">1</span>' in html          # count in a filled badge (replaces "(N)")
+    assert 'class="button primary"' not in html.split("home-acct-ctas")[1].split("</ul>")[0]  # not primary in the row cluster
+
+
+def test_schedule_cta_carries_pending_cue_and_badge(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.queued, scheduled_time=_future_iso(), public_url="dryrun://p1"))
+    html = _client(cfg).get("/").data.decode()
+    assert "acct-cta-pending" in html and ">Schedule " in html
+    assert '<span class="cta-badge">1</span>' in html
+
+
+def test_zero_count_row_carries_no_pending_cue(tmp_path):
+    # a caught-up account renders ONLY the quiet Open — no Review(0)/Schedule(0) path, so no cue can leak.
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
+    html = _client(cfg).get("/").data.decode()
+    assert "acct-cta-pending" not in html and "cta-badge" not in html
+    assert "Review (0)" not in html and "Schedule (0)" not in html

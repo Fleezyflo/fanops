@@ -314,22 +314,23 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     for a in accts:
         if getattr(a, "persona_id", None):
             by_pid.setdefault(a.persona_id, []).append(a.handle)
-    # Surface each corpus REACH-RANKED by the LIVE Graph-reach store and flag the currently-most-active
-    # (store-present) tags. No store -> insertion order preserved, reach_tags empty (no signal yet).
+    # Surface each corpus REACH-RANKED by the LIVE Graph-reach store and flag the currently-most-active tags.
+    # MOL-59: "most-active" (★) is gated on a MEASURED Graph reach value, NOT mere store presence — a seed tag
+    # with no measurement asserts no live-reach fact, so it never stars. No measurements -> reach_tags empty.
     from fanops.hashtags import vetted_menu, load_store, load_store_reach, _norm
     store = load_store(cfg)
     rank = {t: i for i, t in enumerate(vetted_menu(store))}
-    store_set = {_norm(t) for t in (store or [])}
     # The numeric reach annotation per tag is the tag's LIVE Graph reach, persisted in the store by
     # refresh_store — NOT own-post reach (the own-reach judge was deleted; a tag's worth is its platform
     # reach, never a post that used it). Absent store / no creds -> {} (the number simply doesn't render).
+    # MOL-59: `means` is also the ★ gate — a tag is "most-active" iff it has a measured reach here.
     means = load_store_reach(cfg)
     def _ranked(corpus):
         return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
     cards = [PersonaCard(id=p.id, name=p.name, voice=p.voice,
                          corpus=_ranked(p.hashtag_corpus), intake=dict(p.intake),
                          linked_handles=by_pid.get(p.id, []),
-                         reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in store_set],
+                         reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],   # MOL-59: measured-reach-gated, not store-present
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
                          content_focus=list(p.content_focus), energy=p.energy, hook_angle=p.hook_angle,
                          clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],   # M3: the DERIVED tier (the per-persona pin is retired)
@@ -422,23 +423,27 @@ def _post_live_today(p, now: datetime) -> bool:
 
 def build_system_strip(cfg: Config) -> dict:
     """Global system strip read-model: LIVE/DRYRUN mode + blocked gate count + failed-post alert. Health dots lazy-load via htmx."""
+    from fanops.log import get_logger                     # a strip sub-read failure is RECORDED, never a silently-zeroed badge
     try:
         ps = pipeline_status(cfg)
         blocked = (ps.get("pending_moments", 0) + ps.get("pending_moment_hooks", 0)
                    + ps.get("pending_moment_casting", 0) + ps.get("pending_captions", 0))
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("system_strip", "-", "pipeline_status_error", err=str(exc)[:160])
         blocked = 0
     failed = 0
     try:
         failed = sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.failed)
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("system_strip", "-", "failed_scan_error", err=str(exc)[:160])
         failed = 0
     # Leg 2 (Insight): the one external gate — a persisted breadcrumb means Graph media-insights was refused
     # for lack of instagram_manage_insights, so IG performance is frozen at its last snapshot until granted.
     try:
         from fanops.meta_graph import insights_blocked_signal
         insights_blocked = insights_blocked_signal(cfg)
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("system_strip", "-", "insights_blocked_error", err=str(exc)[:160])
         insights_blocked = False
     # D15: HALF-LIVE — FANOPS_LIVE=1 (is_live) but NOTHING routes live (typo'd FANOPS_POSTER -> dryrun via
     # W4, and no live per-channel backend). is_live shows LIVE while every publish halts in `queued`. Derive
@@ -452,7 +457,8 @@ def build_system_strip(cfg: Config) -> dict:
             half_live_hint = (f"LIVE flag is set but nothing routes live — FANOPS_POSTER={raw} is ignored "
                               "(it's a legacy bridge, not the switch). Check .env / the Go-Live tab: route a "
                               "channel to a provider with creds, or flip back to dryrun.")
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("system_strip", "-", "half_live_error", err=str(exc)[:160])
         half_live, half_live_hint = False, ""
     # D13b: Postiz-down banner — the backend health probe (past the nginx-only container check) is unhealthy
     # AND at least one channel routes to postiz. Delegated to views_common (30s-cached) so a Studio render

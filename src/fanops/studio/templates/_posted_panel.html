@@ -36,22 +36,22 @@
         <p class="clamp-1">{% if r.variant_hook %}✦ {{ r.variant_hook }} · {% endif %}{{ r.caption or '—' }}</p>
         <div class="posted-primary">
           {% if r.posted_via == 'failed' %}<span class="err">{{ (r.error_reason or 'failed') | operator_error(kind=r.failure_kind) }}</span>
-          {% else %}<span>Lift {{ '%.3f'|format(r.lift_score) if r.lift_score is not none else '—' }} {{ lineage_delta(r) }}</span>{% endif %}
+          {% else %}<span>Lift {% if r.lift_score is not none %}<span class="lift-num">{{ '%.3f'|format(r.lift_score) }}</span>{% else %}—{% endif %} {{ lineage_delta(r) }}</span>{% endif %}{# MOL-51: Lift value is the dominant per-row datum → MOL-50's .lift-num (Δ vs best stays the quiet .delta-best annotation) #}
           {% if r.posted_via == 'live' and r.public_url %}<a class="live-link" href="{{ r.public_url }}" target="_blank" rel="noopener">View on {{ r.platform }} ↗</a>
           {% elif r.posted_via == 'inflight' %}<span class="muted">Waiting for link</span>{% if r.error_reason %} · <span class="err">{{ r.error_reason | operator_error }}</span>{% endif %}
           {% elif r.posted_via == 'dryrun' %}<span class="muted">no link</span>{% elif r.posted_via not in ('failed',) %}<span class="muted">no live link</span>{% endif %}
         </div>
         {% if r.posted_via not in ('failed',) %}
-        <details class="posted-metrics-detail"><summary>Metrics</summary>
+        <details class="posted-metrics-detail"><summary class="ghost">Metrics</summary>{# MOL-51: disclosure toggle → tertiary ghost (same family as MOL-44's demoted toggles) #}
           <span>Saves {{ metric(r.saves, peaks.saves) }} · Shares {{ metric(r.shares, peaks.shares) }} · Ret {{ metric(r.retention, peaks.retention) }} · Reach {{ metric(r.reach, peaks.reach) }} {{ lineage(r) }}</span>
         </details>
         {% endif %}
         {% if r.posted_via in ('live', 'dryrun') %}
-        <form class="inline" hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML"><button type="submit">Post again</button></form>
+        <form class="inline" hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML"><button type="submit" class="ghost">Post again</button></form>{# MOL-51: infrequent utility → tertiary ghost (class-only, form/hx unchanged) #}
         <form class="inline posted-crosspost-one" hx-post="{{ url_for('do_crosspost_to_account', clip_id=r.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
           <input name="target_account" placeholder="target @handle" size="14">
           <input name="platform" placeholder="platform" size="10">
-          <button type="submit">Crosspost</button>
+          <button type="submit" class="ghost">Crosspost</button>{# MOL-51: infrequent utility → tertiary ghost (class-only) #}
         </form>
         {% elif r.posted_via == 'inflight' %}
         <div class="posted-row-actions">

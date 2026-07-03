@@ -54,15 +54,15 @@
             {% elif r.editable %}
               <form class="sched-move" hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
                 <input type="datetime-local" name="new_time" value="{{ r.scheduled_time | localinput }}" aria-label="Time for {{ r.account }} {{ r.platform }}">
-                <button type="submit">Move</button>
+                <button type="submit" class="ghost">Move</button>{# MOL-64: per-row reversible action → tertiary ghost; block-scope tools stay secondary #}
               </form>
               {% if r.suggested_time %}
               <form class="sched-clear" hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-                <button type="submit">Clear time</button>
+                <button type="submit" class="ghost">Clear time</button>{# MOL-64: per-row reversible → ghost #}
               </form>
               <form class="sched-suggest" hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
                 <input type="hidden" name="new_time" value="{{ r.suggested_time }}">
-                <button type="submit" title="{{ r.why_suggested or '' }}">Use suggested</button>
+                <button type="submit" class="ghost" title="{{ r.why_suggested or '' }}">Use suggested</button>{# MOL-64: per-row reversible → ghost #}
               </form>
               {% endif %}
               {% if r.ready %}<span class="chip ok schedule-ready">ready</span>{% elif r.ready is not none %}<span class="chip warn schedule-ready">fix clip</span>{% endif %}
@@ -73,7 +73,7 @@
               </form>
               {% endif %}
               <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-                <button type="submit">← Review</button>
+                <button type="submit" class="ghost">← Review</button>{# MOL-64: send-back-to-Review is a reversible per-row nav → ghost (NOT Publish, which ships live and keeps .primary) #}
               </form>
             {% else %}<span class="muted">read-only</span>{% endif %}
           </div>
@@ -85,7 +85,7 @@
   {% endfor %}
   {% if page and page.total > page.items|length %}
     <div class="grid-more meta">Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
-      {% if page.next_offset is not none %}<a class="button" href="{{ url_for('schedule', offset=page.next_offset, account=active, batch=active_batch|default(none)) }}">Show more</a>{% endif %}
+      {% if page.next_offset is not none %}<a class="button ghost" href="{{ url_for('schedule', offset=page.next_offset, account=active, batch=active_batch|default(none)) }}">Show more</a>{% endif %}{# MOL-44: pagination disclosure → tertiary #}
     </div>
   {% endif %}
   {% elif active %}<div class="empty">No scheduled posts for {{ active }}.</div>

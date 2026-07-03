@@ -32,7 +32,7 @@ def _client(cfg):
 def test_home_review_link_includes_focus(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
-    assert "focus=1" in html and "Review (" in html
+    assert "focus=1" in html and ">Review " in html and "cta-badge" in html   # MOL-55: count moved into the pending badge (was "Review (N)")
 
 def test_approve_in_focus_shows_next_clip_not_schedule(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)

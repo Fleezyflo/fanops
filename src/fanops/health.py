@@ -58,7 +58,27 @@ def _http_reachable(url: str | None, name: str) -> DepHealth:
 
 
 def postiz_health(cfg: Config) -> DepHealth:
-    return _http_reachable(cfg.postiz_url, "postiz")
+    # MOL-61: the readiness row must agree with the strip-alert's deeper probe. `_http_reachable` only
+    # proves the HOST answers ANY HTTP (nginx 502'ing a crash-looped Node backend still reads "reachable"),
+    # so an operator consulting §4 while LIVE saw all-green while publishes were stalled. Route through the
+    # SAME postiz_health_probe the strip-alert uses (GET /integrations, past nginx) — one source of truth,
+    # no second heuristic — and map its typed verdict to three states: healthy -> ok; an HTTP answer that
+    # is NOT healthy (5xx/401/…) -> DEGRADED (not-ok, so MOL-48's err + dep-alert fire); a network/URL
+    # failure (no status) -> unreachable (the existing path). Fail-open: if the probe can't be reached,
+    # fall back to host-alive so a probe-import fault never makes the row worse than before.
+    if not (cfg.postiz_url or "").strip():
+        return DepHealth("postiz", False, "not configured")
+    try:
+        from fanops.post.postiz import postiz_health_probe
+        h = postiz_health_probe(cfg)                      # never raises; typed (healthy, status_code, hint)
+    except Exception as exc:                              # import/unexpected fault -> degrade gracefully to host-alive
+        _log.warning("postiz_health_probe unavailable, falling back to host-alive: %s", type(exc).__name__)
+        return _http_reachable(cfg.postiz_url, "postiz")
+    if h.healthy:
+        return DepHealth("postiz", True, "reachable")
+    if h.status_code is not None:                         # answered HTTP but the API is unhealthy -> DEGRADED
+        return DepHealth("postiz", False, f"answers HTTP but API unhealthy ({h.status_code}) — publishes stalled")
+    return DepHealth("postiz", False, "unreachable")     # no HTTP answer (refused/timeout/bad URL)
 
 
 def zernio_health(cfg: Config) -> DepHealth:

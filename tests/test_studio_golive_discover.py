@@ -7,6 +7,7 @@ os.environ-leak guard: the routes read POSTIZ/ZERNIO keys via the env; restore t
 test so a setenv never leaks into a later test (pytest-os-environ-leak-guard)."""
 import json
 import os
+import re
 import types
 import pytest
 from fanops.config import Config
@@ -113,3 +114,46 @@ def test_golive_health_route_renders_dependency_strip(tmp_path, monkeypatch):
     body = r.data.decode()
     assert "docker" in body and "postiz" in body and "zernio" in body
     assert "unreachable" in body                          # the down dependency is surfaced, not buried
+
+
+def test_golive_health_failing_dep_row_carries_loud_class(tmp_path, monkeypatch):
+    # MOL-48: a failing system dependency must be visually LOUD, not styled identically to a passing
+    # row. The failing <li> keeps class "err" (the CSS Tier-1 hook); prove the render still emits it
+    # for a down dep so the studio.css .checks li.err solid-fill treatment lands on it.
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    import fanops.health as health
+    monkeypatch.setattr(health, "system_health", lambda c: [
+        health.DepHealth("docker", True, "daemon up"),
+        health.DepHealth("postiz", False, "unreachable"),
+        health.DepHealth("zernio", True, "reachable")])
+    body = _client(cfg).get("/golive/health").data.decode()
+    # the postiz row is the failing one — it must carry the loud err class.
+    assert re.search(r'class="[^"]*\berr\b[^"]*"[^>]*>[^<]*postiz', body), \
+        "failing postiz dependency row must carry the loud 'err' class"
+
+
+def test_golive_health_emits_banner_alert_when_a_dependency_is_down(tmp_path, monkeypatch):
+    # MOL-48 fix 2: system_health feeds ONLY system dependencies (docker/postiz/zernio), so a down row
+    # is unambiguously a failing dependency — promote it to a banner-level alert above the strip. The
+    # banner names the down dependency and carries the loud banner class (.banner.warn / .banner-alert).
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    import fanops.health as health
+    monkeypatch.setattr(health, "system_health", lambda c: [
+        health.DepHealth("docker", True, "daemon up"),
+        health.DepHealth("postiz", False, "unreachable"),
+        health.DepHealth("zernio", True, "reachable")])
+    body = _client(cfg).get("/golive/health").data.decode()
+    assert "dep-alert" in body, "a down dependency must raise a banner-level alert above the strip"
+    assert "postiz" in body.split("dep-alert", 1)[1][:200], "the alert must name the down dependency (postiz)"
+
+
+def test_golive_health_no_banner_when_all_deps_up(tmp_path, monkeypatch):
+    # the banner is failure-only: all-green must NOT raise it (no false alarm).
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    import fanops.health as health
+    monkeypatch.setattr(health, "system_health", lambda c: [
+        health.DepHealth("docker", True, "daemon up"),
+        health.DepHealth("postiz", True, "reachable"),
+        health.DepHealth("zernio", True, "reachable")])
+    body = _client(cfg).get("/golive/health").data.decode()
+    assert "dep-alert" not in body, "all-green health must not raise a dependency alert banner"

@@ -305,7 +305,8 @@
       </form>
     {% else %}
       <form hx-post="{{ url_for('do_golive_live') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-        <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> I understand this publishes to REAL accounts</label>
+        {# MOL-49: live-arming = ladder Tier-1 (.confirm.danger), same consequence class as the /run arming confirms #}
+        <label class="confirm danger">⚠ <input type="checkbox" name="confirm" value="1"> I understand this publishes to REAL accounts</label>
         <button type="submit" class="primary danger">GO LIVE — publish for real</button>
       </form>
     {% endif %}

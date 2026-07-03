@@ -47,6 +47,7 @@ coverage.json
 .claude/plans/
 .claude/prds/
 .claude/PRPs/
+.claude/*.local.md
 
 # browser-QA / playwright scratch (screenshots, traces) — regenerated, never committed
 .playwright-mcp/

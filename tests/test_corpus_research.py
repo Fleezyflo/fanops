@@ -65,10 +65,11 @@ def test_personas_page_surfaces_corpus_reach_ranked(tmp_path):
     pid = core.add_persona(cfg, name="P1")
     core.add_corpus_tag(cfg, pid, "#bars")             # added first, but lower reach
     core.add_corpus_tag(cfg, pid, "#owned")
-    cfg.hashtags_path.write_text(json.dumps({"tags": ["#owned", "#bars"]}))   # #owned ranks above #bars
+    # MOL-59: ★ is measured-reach-gated — both tags carry a real reach value here so both stay flagged.
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#owned", "#bars"], "reach": {"#owned": 900, "#bars": 300}}))   # #owned ranks above #bars
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
     assert card.corpus[0] == "#owned"                   # displayed reach-first (store order), not insertion order
-    assert "#owned" in card.reach_tags and "#bars" in card.reach_tags   # both are in the reach store -> flagged
+    assert "#owned" in card.reach_tags and "#bars" in card.reach_tags   # both have MEASURED reach -> flagged
 
 
 def test_personas_page_reach_tags_empty_without_store(tmp_path):

@@ -13,6 +13,9 @@
   {% include "_account_filter.html" %}
   <h3>Lift by variant</h3>
   {% if view.variant_rows %}
+    {# MOL-50: when degradation is UNIFORM it's a table-level fact — say it ONCE here, then the per-row
+       badge shrinks to a quiet marker so the Lift number leads. A minority keeps the loud per-row badge. #}
+    {% if view.degraded_mostly %}<p class="muted lift-degraded-note" title="A primary metric (saves/retention) was not returned by the backend for these posts, so these lift scores are reach/shares-weighted, not the full objective.">Retention data missing for {% if view.degraded_count == view.degraded_total %}all{% else %}{{ view.degraded_count }} of {{ view.degraded_total }}{% endif %} posts — the lift scores below are reach/shares-weighted, not the full saves/retention objective.</p>{% endif %}
     <table>
       <tr><th>Hook</th><th>Account/Platform</th><th>When</th><th>Lift</th><th>Saves</th><th>Shares</th><th>Retention</th><th>Reach</th><th>Loop state</th></tr>
       {% for r in view.variant_rows %}
@@ -20,8 +23,9 @@
         <td>{{ r.variant_hook }} {{ lineage(r) }}</td>
         <td>{{ r.account }}/{{ r.platform }}</td>
         <td class="muted">{{ r.scheduled_time | localdt or '—' }}</td>
-        <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> {{ '%.1f'|format(r.lift_score) }} {{ lineage_delta(r) }}
-            {% if r.lift_degraded %}<span class="badge degraded" title="Partial objective — a primary metric was not returned by the backend, so this lift is reach/shares-weighted, not the full saves/retention objective.">DEGRADED{% if r.lift_missing %} · missing {{ r.lift_missing|join(', ') }}{% endif %}</span>{% endif %}</td>
+        {# MOL-50: the Lift number is the answer to "which variant won" -> .lift-num makes it the row's dominant element. #}
+        <td><div class="bar" style="width: {{ [r.lift_score, 100]|min }}%"></div> <span class="lift-num">{{ '%.1f'|format(r.lift_score) }}</span> {{ lineage_delta(r) }}
+            {% if r.lift_degraded %}{% if view.degraded_mostly %}<span class="degraded-quiet" title="Reach/shares-weighted — missing {{ (r.lift_missing or ['a primary metric'])|join(', ') }} (see note above).">degraded</span>{% else %}<span class="badge degraded" title="Partial objective — a primary metric was not returned by the backend, so this lift is reach/shares-weighted, not the full saves/retention objective.">DEGRADED{% if r.lift_missing %} · missing {{ r.lift_missing|join(', ') }}{% endif %}</span>{% endif %}{% endif %}</td>
         <td>{{ metric(r.saves, peaks.saves) }}</td>
         <td>{{ metric(r.shares, peaks.shares) }}</td>
         <td>{{ metric(r.retention, peaks.retention) }}</td>
