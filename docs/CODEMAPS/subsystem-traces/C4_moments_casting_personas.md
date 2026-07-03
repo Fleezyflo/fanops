@@ -1,0 +1,239 @@
+# C4: Moments, Casting & Personas
+
+## Files covered (all 10 read in full)
+
+1. `src/fanops/moments.py` (349 lines) — read
+2. `src/fanops/casting.py` (414 lines) — read
+3. `src/fanops/casting_bias.py` (79 lines) — read
+4. `src/fanops/personas.py` (102 lines) — read
+5. `src/fanops/persona_directives.py` (291 lines) — read
+6. `src/fanops/persona_levers.py` (178 lines) — read
+7. `src/fanops/persona_research.py` (60 lines) — read
+8. `src/fanops/persona_store.py` (228 lines) — read
+9. `src/fanops/accounts.py` (629 lines) — read
+10. `src/fanops/batches.py` (56 lines) — read
+
+Cross-checked against `.reports/structural_index.json` and `.reports/call_graph.json`. Note: there are look-alike files elsewhere (`src/fanops/studio/actions_casting.py`, `src/fanops/studio/app_routes_personas.py`, `src/fanops/studio/personas.py`) which are Studio-layer callers, NOT part of this cluster — excluded per the exact file list given.
+
+## Persona/account data flow (definition → hydration → use)
+
+```
+personas.json (disk)
+   │  Personas.load()
+   ▼
+Persona (BaseModel: id, name, voice, hashtag_corpus, intake,
+         content_focus[], energy, hook_angle)
+   │
+   │  accounts.py: Accounts.load() → _hydrate_from_personas(accts, cfg)
+   │    - resolves each Account's linked Persona via _persona_for_account
+   │      (persona_id exact match, else inline-voice exact match)
+   │    - OVERWRITES in-memory (never persisted back):
+   │        acc.persona      = per.voice        (if voice non-blank)
+   │        acc.hashtag_corpus = per.hashtag_corpus
+   │        acc.content_focus  = per.content_focus
+   │        acc.energy         = per.energy
+   │        acc.hook_angle     = per.hook_angle
+   │        acc.clip_profile, acc.framing = resolved_cut_spec(per)  (only if derived/pinned)
+   │        acc.persona_owns_profile = True (provenance flag, if clip_profile came from persona)
+   │    - FAIL-OPEN: no personas.json / dangling persona_id / any exception → inline values stand, no crash
+   ▼
+Account (hydrated, in memory only)
+   │
+   ├─► casting.py: casting_directive(account) → per-account "which moments" instruction
+   │      → request_moment_casting brief → LLM selects moments per account
+   │
+   ├─► moments.py: hook_author_slot(account) → per-account on-screen-hook brief
+   │      → request_moment_hooks personas[] payload → LLM authors hooks_by_persona
+   │
+   └─► caption.py (outside cluster): caption_directive(account) → per-surface caption angle
+          + account.hashtag_corpus leads the vetted hashtag set
+```
+
+The lever engine (`persona_levers.py`) is the single upstream declaration. `personas.py`'s `CONTENT_FOCUS`/`ENERGY_LEVELS`/`HOOK_ANGLES` (validation vocabularies), `persona_directives.py`'s `_FOCUS_CLAUSE`/`_ENERGY_CLAUSE`/`_ANGLE_CLAUSE`/`_FOCUS_PROFILE`/`_ENERGY_FRAMING` (compile clause maps), and `lever_catalog()` (operator-facing catalog) are all **projections** derived from `LEVER_REGISTRY` at import/call time — one edit to the registry propagates to validation, compilation, and the UI catalog simultaneously (no manual-parity risk).
+
+## Per-file breakdown
+
+### `moments.py` — the clip DECISION stage (2-pass: pick windows, then author hooks)
+
+- `_source_frames(cfg, src)` — PASS-1 stills: extracts up to 6 keyframes evenly across the whole source for the pick-author's eyes. Calls `extract_keyframes`. Fail-open `[]` if no real source file/duration. Called by `request_moments`.
+- `_window_frames(cfg, src, start, end)` — PASS-2 stills: up to 3 keyframes over the picked+fitted window for the hook-author's eyes. Logs `hook_window_frames_empty` (warn) if extraction yields nothing. Called by `request_moment_hooks`.
+- `_token(pick)` — formats `"{start:.2f}-{end:.2f}"` as the content-address token for a pick. Called by `ingest_moments`.
+- `_peak_in_window(p, cs, ce)` — pure predicate, True iff a signal-peak dict's `t` falls in `[cs,ce]`; fail-open per-peak (malformed peak → excluded, never raises). Called by `request_moment_hooks`.
+- `_drop_overlaps(picks)` — greedy dedup: keeps start-ordered picks, drops any overlapping a kept pick by more than 50% of the shorter window. Pure. Called by `ingest_moments`.
+- `validate_pick(pick, *, duration)` — pure validator returning a reason string or `None`; rejects non-finite timestamps, `end<=start`, negative start, overrun past EOF (0.5s tolerance), sub-0.5s duration, blank reason. Called by `ingest_moments`.
+- `_is_num(v)` — pure try/except float-coercion probe. Called by `_bounded_transcript`.
+- `_bounded_transcript(transcript, peaks)` — bounds a transcript to a 60,000-char budget by keeping segments nearest a signal peak (deterministic tie-break on index), preserving chronological order in output; returns `(kept_segments, dropped_count)`. Pure. Called by `request_moments`.
+- `request_moments(led, cfg, source_id, accounts=None)` — **writes a gate request** (`write_request(kind="moments", ...)`) carrying transcript, duration, signal peaks, language, guidance, clip_profile, and PASS-1 frames. Sets `SourceState.moments_requested`. `accounts` param unused (signature stability only — personas belong to the hook pass). Mutates `led` in place and returns it. Called by `pipeline._stage_source_to_moments`.
+- `ingest_moments(led, cfg, source_id)` — **reads a gate response**, validates + dedups picks, and reconciles them into `Moment` records at state `picked` (no hook yet). On all-invalid picks → sets `SourceState.error`. On zero picks returned by the agent → sets `SourceState.moments_empty` (visible, non-terminal), does NOT reconcile (avoids cascading-deleting a prior good set). On a real reconcile: discards stale `moment_hooks` gates for this source (`discard_gates_for`), discards the stale `moment_casting` gate (`discard_gate`), drops all prior `AccountSelection`s for the source, then `led.reconcile_moments(source_id, keep)` (upsert + cascade-delete dropped lineages), and sets `SourceState.picks_decided`. Called by `pipeline._stage_ingest_moments`.
+- `request_moment_hooks(led, cfg, source_id, accounts=None)` — **writes one gate request per `picked` moment** (write-once, guarded by `latest_request_id`). Builds `personas=[{handle, persona: hook_author_slot(a)}]` for every active account, pulls cross-surface `proven_hook_styles` (P4c bias, fail-open `[]`), computes the fit window via `fit_window`/`band_for`, and window-scoped signal peaks. Calls into `fanops.personas.hook_author_slot`. Called by `pipeline._stage_moment_hooks`.
+- `ingest_moment_hooks(led, cfg, source_id, accounts=None)` — **atomic-per-source** ingest: waits until EVERY `picked` moment of the source has a hook-gate response before authoring any (avoids order-dependent dedup). Sanitizes hooks, screens for mechanical slop (`is_weak_hook`) and off-brand risk (`brand_risk_flag`, function-local import from `fanops.caption` to avoid a module cycle) — a rejected hook is nulled but preserved in `hook_removed` for operator restore. Per-account `hooks_by_persona`: when `accounts` is passed, drops/logs any handle key that doesn't match a real active account (`hook_persona_unknown_handle`); each per-account hook is independently sanitized/brand-screened, with rejects logged (`hook_persona_stripped`) and preserved in `hooks_by_persona_removed`. Promotes each moment to `MomentState.decided`, sets `SourceState.moments_decided`. Called by `pipeline._stage_moment_hooks`.
+
+### `casting.py` — per-account LLM moment SELECTION (Account-First Studio Face 3)
+
+- `_record_fact(led, m, handle, *, method, overlap=None, signal=None, rank=None)` — best-effort (own `try/except Exception: pass`) write of a `SelectionFact` audit record for (moment, account). Never lets a fact-write error lose the casting decision. Called by `ingest_moment_casting`.
+- `_learned_account_signal(led, handles)` — pure, deterministic per-account HISTORY hint: up to 5 prior selection reasons per handle from `led.account_selections`. Omits handles with no history. Called by `request_moment_casting`.
+- `request_moment_casting(led, cfg, source_id, accounts)` — **writes the LLM casting-gate request** (write-once). Pool = decided-or-clipped moments of the source; skips if no pool or no persona-bearing active account. Builds one still-frame per moment (`_moment_frame`, fail-open `None`), a `_learned_account_signal` hint, and — gated on `cfg.casting_bias` — the `casting_reach_prior` (Leg 3 reach bias). Both hints are dropped from the payload when empty (byte-identical text-only path). Called by `pipeline._stage_casting`.
+- `ingest_moment_casting(led, cfg, source_id, accounts)` — **reads the LLM response**, wrapped in a top-level `try/except Exception` (fail-open — any error routes through `Source.degraded_reason`, never raises). For each selected `(handle, moment_id)`: normalizes the handle, skips inactive/unknown handles and unknown/foreign/non-castable moment ids (P1/AGENT-10 safety), appends to `Moment.affinities` (legacy mirror) and writes a DURABLE `AccountSelection` (RF1, `method=llm`) plus a `SelectionFact` per pick. WS1: gives every persona-less-but-candidate active account an explicit `fan_all_default` selection (visible, not silent). MOM-2: flags a persona-bearing candidate that got ZERO moments as `degraded_reason` (no auto-fan — operator intervenes). Called by `pipeline._stage_casting`.
+- `_mirror_affinities(led, source_id, account, moment_ids)` — mutates `Moment.affinities` (sorted union) to mirror a durable selection. Called by `_upgrade_stale_fan_all_defaults`.
+- `_affinity_moments_by_account(led, source_id)` — pure map of normalized handle → moment_ids from legacy `Moment.affinities` tags. Called by `_persona_donor_moments`, `repair_casting_selections`.
+- `_persona_donor_moments(led, accounts, source_id)` — pure map persona_id → moment_ids from chosen `AccountSelection`s / affinity tags (used for persona-parity repair). Called by `_upgrade_stale_fan_all_defaults`.
+- `_upgrade_stale_fan_all_defaults(led, cfg, accounts, source_id)` — mutates ledger: upgrades `fan_all_default` selections to real picks (`method=migrated`) for accounts that gained a `casting_directive` post-cast, copying from a same-persona donor. Logs `repair_persona_cast`. Called by `repair_casting_selections`.
+- `repair_casting_selections(led, cfg, accounts, source_id)` — backfills durable `AccountSelection`s from legacy affinity tags when a cast source has none (RF1 drift repair), and calls `_upgrade_stale_fan_all_defaults`. No-op if `cfg.account_casting` is off. Called by `crosspost.crosspost_clips`.
+- `casting_gate_pending(cfg, source_id, led=None)` — read-only, fail-open-to-`False` predicate: True iff casting is ON and the moment_casting gate is open-but-unanswered (crosspost must wait), OR (when `led` passed) the source has a re-picked `picked`-state moment (MOM-1: fresh recast incoming). Called by `crosspost.crosspost_clips`.
+- `casting_gate_failed_to_open(cfg, led, accounts, source_id)` — read-only, fail-open-to-`False` predicate detecting an I/O failure fingerprint: candidate accounts exist, castable moments exist, but no gate opened and no selections/affinities were written. Distinguishes a real failure from the legit no-candidate-accounts case. Called by `crosspost.crosspost_clips`.
+- `affinity_admits(cfg, moment, account)` — pure legacy predicate: True if casting OFF, or moment uncast (`affinities==[]`), or account in `moment.affinities`. Called by `account_selection_admits`.
+- `account_selection_admits(cfg, led, moment, account)` — **THE crosspost gate predicate** (RF1). Casting OFF → admit all. Missing moment under casting-ON → deny. Has a selection → `fan_all_default`/`pending` decide by method, else admit iff moment id in `sel.moment_ids`. No selection for this account but the source HAS other selections (casting ran) → deny (not silent fan-to-all). Source has NO selections at all → falls back to `affinity_admits` (pre-v9/casting-never-ran legacy). Called by `casting.scoped_caption_surfaces`, `crosspost._mint_surface_post`.
+- `scoped_caption_surfaces(cfg, led, moment, surfaces)` — pure, reuses `account_selection_admits` as the SAME gate crosspost enforces, so caption scoping can't drift from post-minting. Called by `pipeline._stage_refresh_caption_requests`, `pipeline._stage_render_and_caption`.
+
+### `casting_bias.py` — Leg 3 Task 4: the reach prior injected into the casting brief
+
+- `reach_by_account_type(led)` — pure aggregation: groups `analyzed` posts by `(account, clip_profile)`, reports `{n, reach_mean}` per cell. Called by `casting_reach_prior`.
+- `casting_reach_prior(led, cfg, handles)` — the gated, fail-safe hint `{handle: {clip_profile: reach_mean}}`. Wrapped in `try/except Exception` → `{}` on any error (logged once via `get_logger`). Returns `{}` until `learning_validated(cfg)` is True (validation-frozen). Emits a cell only when it clears `_MIN_ATTRIBUTED_N` (explore-guard: an unproven cell is omitted, never penalized). Called by `casting.request_moment_casting`, **inline at brief-build time** — confirmed NOT a control-file: it's a direct function call recomputed from the live ledger on every `request_moment_casting` invocation, gated by `cfg.casting_bias` (kill switch, **default OFF** per `config.py:788`).
+
+### `personas.py` — the Persona entity + facade re-export hub
+
+- `CONTENT_FOCUS`, `ENERGY_LEVELS`, `HOOK_ANGLES` — module-level constants, `frozenset` projections of `persona_levers.vocab(...)` (via aliased import `_lever_vocab`).
+- `Persona` (pydantic `BaseModel`) — fields: `id`, `name`, `voice`, `hashtag_corpus`, `intake`, `content_focus`, `energy`, `hook_angle`. Note the docstring records that per-persona `clip_profile`/`framing` pins and the 3 freeform directive overrides (`casting_directive`/`hook_directive`/`caption_directive` as persona fields) were **retired in M3/M3e** — they no longer exist on the model; cut length now derives from `content_focus`, framing from `energy`.
+- `Personas.__init__(cfg)` — trivial init, `self.personas = []`.
+- `Personas.load(cfg)` (classmethod) — reads `cfg.personas_path`, parses JSON, builds `Persona` list; raises `ControlFileError` (chained from the original exception) on a corrupt file rather than a raw traceback. Called by `accounts._hydrate_from_personas`, `persona_research.research_corpus`/`discover_corpus`, `persona_store.link_personas_by_voice`/`migrate_from_accounts`, CLI (`cli._check_accounts`, `_dispatch`, `_learn_pass`, `cmd_adjust`).
+- `Personas.get(pid)` — linear lookup by id, `None` if `pid` falsy or not found.
+- `Personas.all()` — returns a copy of the list.
+- `_slug(s)` — pure: lowercase, strip leading `@`, collapse non-alphanumerics to `-`. Called by `persona_store.add_persona`/`migrate_from_accounts`.
+- The tail of the file (lines 94-103) is a deliberate **facade re-export block**, importing every public name from `persona_directives`, `persona_store`, `persona_research`, and `persona_levers` back into the `personas` namespace so `from fanops.personas import X` keeps resolving — documented as load-order-safe (no cycle) because the siblings import the (already-partially-initialized) `personas` module back for `Persona`/`Personas`.
+
+### `persona_directives.py` — the DIRECTIVE / COMPOSE / PREVIEW engine
+
+- `_FOCUS_CLAUSE`, `_ENERGY_CLAUSE`, `_ANGLE_CLAUSE` (module-level) — projections of `persona_levers.clause_map(...)`.
+- `_FOCUS_PROFILE`, `_ENERGY_FRAMING` (module-level) — projections of `persona_levers.focus_profile_map()`/`energy_framing_map()`.
+- `derive_cut_spec(p)` — pure, duck-typed (Persona or hydrated Account): derives `(clip_profile|None, framing|None)` from `content_focus` (longest-tier-first match) and `energy`. Called by `_cut_fragments`, `resolved_cut_spec`.
+- `resolved_cut_spec(p)` — pure: explicit pin OR derived OR `None`. THE single function both `accounts._hydrate_from_personas` and the operator UI (`compose_breakdown`) call — floor can't drift. Called by `accounts._hydrate_from_personas`, `compose_breakdown`, `persona_facts`, Studio views.
+- `_base_voice(p)` — pure, duck-typed: reads `.voice` or the hydrated account's `.persona`. Called by `_caption_fragments`, `_casting_fragments`, `_hook_fragments`, `caption_directive`, `casting_directive`, `hook_author_slot`.
+- `_join(voice, body)` — pure string join; either-empty → the other.
+- `casting_directive(p)` — pure: compiles `content_focus` + `energy` into the casting-prompt clause, joined with the base voice (firewall: no levers → bare voice). Called by `casting._upgrade_stale_fan_all_defaults`, `casting_gate_failed_to_open`, `ingest_moment_casting`, `repair_casting_selections`, `request_moment_casting`, `compose_breakdown`.
+- `hook_directive(p)` — pure: compiles `hook_angle` into the hook-prompt clause + base voice. Called by `hook_author_slot`, `compose_breakdown`.
+- `hook_author_slot(p)` — pure, ALWAYS non-empty: falls back `hook_directive` → inline voice → `tag_lean` hint → handle floor, so every active account gets a hook brief. Called by `moments.request_moment_hooks`.
+- `caption_directive(p)` — pure: bare voice only (hashtags are deterministic elsewhere). Called by `caption.request_captions` (outside cluster).
+- `compose_persona_instruction(p)` — alias for `casting_directive(p)` (back-compat + human-facing headline).
+- `lever_catalog()` — pure, delegates to `persona_levers.build_catalog()`. Called by `manifest`.
+- `_casting_fragments`, `_hook_fragments`, `_caption_fragments`, `_cut_fragments` — pure provenance-tagging helpers reconstructing which lever produced which text fragment. Called only by `compose_breakdown`.
+- `compose_breakdown(cfg, p)` — pure read: the live composed translation (casting/hook/caption directive text + fragments, resolved cut band/framing, lead hashtags, no-op notes). Calls `band_for` (lazy import) and `persona_facts`. Called by `manifest`, Studio's `preview_compose`.
+- `manifest(cfg, p)` — pure read: one row per editable lever (value, output channels, `produces`, `health`), derived from `persona_levers` + `compose_breakdown` so operator view and live output can't disagree. Called by Studio's `personas_page`.
+- `produces_summary(breakdown)` — pure: distills an operator-facing clause list (e.g. `"~8-15s clips"`) from an already-built breakdown dict; each dimension is silent unless deliberately configured.
+- `persona_facts(cfg, p)` — the transparency read: resolves length band, framing, and lead hashtags via `bands.band_for` and `hashtags.vet_hashtags`/`load_store` (lazy imports). Fail-open: `try/except Exception: store = None` if the hashtag store fails to load — this is the ONE bare `except Exception` in this file (line 287), swallowing any store-load error silently and falling through to a `None` store (which `vet_hashtags` handles as "no store"). Called by `compose_breakdown`, Studio's `personas_page`.
+
+### `persona_levers.py` — the single lever REGISTRY (pure leaf, stdlib only)
+
+- `PROFILE_TIERS`, `_CONTENT_FOCUS_OPTIONS`, `_ENERGY_OPTIONS`, `_HOOK_ANGLE_OPTIONS`, `_CLIP_PROFILE_BANDS`, `LEVER_REGISTRY` — module-level declarative data (the single source of truth).
+- `PERSONA_FIELD_EXEMPT` — `frozenset({"id", "name", "intake"})`: identity/metadata fields NOT editable levers.
+- `PERSONA_EDITABLE_CHANNELS` — dict: the 5 editable lever fields (`voice`, `content_focus`, `energy`, `hook_angle`, `hashtag_corpus`) → the output channel(s) each owns. Documents that 6 fields were deliberately quarantined/removed in M3 (tag_lean, clip_profile pin, framing pin, and 3 freeform directive overrides) as "incoherent" (no save-route control and/or duplicate channel ownership).
+- `is_exempt(field)` — pure predicate. **No callers found anywhere in `src/`** (dead code candidate).
+- `editable_fields()` — pure: `frozenset(PERSONA_EDITABLE_CHANNELS)`. Called by `persona_directives.manifest`.
+- `channels_of(field)` — pure. Called by `persona_directives.manifest`.
+- `all_channels()` — pure. Called by `channels()`.
+- `channels()` — alias of `all_channels()`. **No callers found anywhere in `src/`** (dead code candidate — even its stated purpose, "the M4 manifest reads it," is inaccurate; `manifest` actually calls `channels_of`, not `channels`).
+- `owner_of(channel)` — pure. Called by `persona_directives.manifest`.
+- `lever(key)` — pure lookup. Called by `option_values`, `clause_map`, `focus_profile_map`, `energy_framing_map`, `build_catalog`.
+- `option_values(key)` — pure. Called by `vocab`.
+- `vocab(key)` — pure: `frozenset` of option values. **Confirmed used** — imported as `_lever_vocab` alias in `personas.py` (the call-graph's name-based matching missed this because of the alias).
+- `clause_map(key)` — pure. Called by `persona_directives` module-level constants (`_FOCUS_CLAUSE` etc.) at import time — call-graph shows no function-level caller because these are module-level statements, but it IS exercised on every import.
+- `focus_profile_map()` — pure, `OrderedDict` longest-tier-first. Called by `persona_directives._FOCUS_PROFILE` at import time (same module-level-call caveat).
+- `energy_framing_map()` — pure. Called by `persona_directives._ENERGY_FRAMING` at import time (same caveat).
+- `build_catalog()` — pure, lazy-imports `bands.band_for`. Called by `persona_directives.lever_catalog`.
+
+### `persona_research.py` — per-persona hashtag corpus research + live discovery
+
+- `research_corpus(cfg, pid, *, limit=8)` — budget-free offline re-rank: reach-ranked store minus the persona's current corpus, capped at `limit`. Raises `KeyError` on unknown `pid`. Reads `cfg.personas_path` via `Personas.load`; no writes. Called by `discover_corpus` (fallback), Studio's `research_corpus` route action.
+- `discover_corpus(cfg, pid, *, limit=8, measure_k=0, get=None)` — live per-persona discovery via `meta_graph.discover_candidates` (Meta Graph co-occurrence harvest), seeded from the persona's corpus + `intake["genre"]`, excluding known tags (`VETTED ∪ store ∪ corpus`). **Fail-open**: `except Exception: cands = []` (line 56, catches "any Graph/transport error") then falls back to `research_corpus` wrapped as evidence-less dicts. Raises `KeyError` on unknown `pid`. No disk writes — read-only research. Called by `fanops_hashtags.cmd_hashtags_discover`, Studio's `research_corpus`.
+
+### `persona_store.py` — persona WRITERS + account→persona migration
+
+- `_enum_or_none(v, names, label)` — pure validator: lowercase-or-`None`; raises `ValueError` on an unknown non-empty value (write boundary). Called by `add_persona`, `update_persona`.
+- `_norm_focus(content_focus)` — pure validator for the multi-select `content_focus` lever: lowercase, dedupe, raise `ValueError` on any unknown kind. Called by `add_persona`, `update_persona`.
+- `_load_raw(p)` — reads `personas.json` as a raw dict + list (preserves unknown fields). Called by every mutator.
+- `_personas_txn(cfg)` — context manager: serializes read-modify-write under `cfg.personas_lock_path` via `fanops.ledger._file_lock` (lazy import, avoids a load cycle). **Disk side effect**: `mkdir(parents=True, exist_ok=True)` on the lock dir. Called by `add_corpus_tag`, `add_persona`, `delete_persona`, `remove_corpus_tag`, `update_persona`.
+- `add_persona(cfg, name, voice="", intake=None, id="", *, content_focus=None, energy="", hook_angle="")` — **writes** a new persona record atomically (`write_json_atomic`). Validates name non-blank, id uniqueness, and every lever against its vocabulary BEFORE acquiring the lock. Returns the id; raises `ValueError` on bad input. Called by `migrate_from_accounts`, Studio's `create_persona`.
+- `update_persona(cfg, pid, *, name=_UNSET, voice=_UNSET, intake=_UNSET, content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET)` — **writes**; only passed fields change (sentinel pattern). Raises `KeyError` on unknown id, `ValueError` on bad lever value. Called by Studio's `edit_persona`/`research_corpus`.
+- `add_corpus_tag(cfg, pid, tag)` — **writes** one normalized hashtag into a persona's corpus, deduped, capped at `_CORPUS_CAP=40`; refuses (raises) a NEW tag past the cap rather than silently dropping it. Raises `ValueError` on empty tag, `KeyError` on unknown id. Called by Studio's `add_corpus_tag`.
+- `remove_corpus_tag(cfg, pid, tag)` — **writes**; removes one tag (normalization-insensitive); a tag not present is a silent no-op (intentional, not an error). Raises `KeyError` on unknown id. Called by Studio's `remove_corpus_tag`.
+- `delete_persona(cfg, pid)` — **writes**; drops the matching record. Raises `KeyError` on unknown id. Note: doesn't cascade to accounts still linked — the docstring explicitly documents the dangling `persona_id` fails open at the next `Accounts.load` (falls back to inline persona). Called by Studio's `delete_persona`.
+- `link_personas_by_voice(cfg)` — **reads accounts + writes account links**: idempotently links any unlinked account whose inline `.persona` string exactly matches a `Persona.voice`, via `accounts.link_persona`. Returns handles linked. Does NOT create personas. Called by `migrate_from_accounts`.
+- `migrate_from_accounts(cfg)` — **the one-time lift**: for every account with no `persona_id` and a non-blank inline `.persona`, creates a first-class `Persona` (id = slug of handle) if one doesn't already exist, then links it via `accounts.link_persona`. Two SEQUENTIAL transactions (never nested locks): first `link_personas_by_voice`, then create+link. Idempotent. Returns `{created, linked, voice_linked}`. Called by Studio's `run_migration`.
+
+### `accounts.py` — the flat active-account registry + lever hydration entrypoint
+
+- `AccountStatus` (str Enum) — `planned`, `warming`, `active`, `retired`.
+- `Account` (pydantic `BaseModel`) — the account record: `handle`, `account_id`, `platforms`, `status`, `access`, `persona`, `persona_id`, `clip_profile`, `framing`, `hashtag_corpus`, `content_focus`, `energy`, `hook_angle`, `persona_owns_profile` (hydration-only provenance flag, never persisted), `integrations` (per-platform poster id), `backends` (per-platform poster backend override), `ig_user_id` (per-account Meta Graph credential, non-secret).
+- `Surface` (`NamedTuple`) — `(account, account_id, platform)`.
+- `Accounts.__init__(cfg)` — trivial.
+- `Accounts.load(cfg)` (classmethod) — reads `cfg.accounts_path`, parses JSON into `Account` list; raises `ControlFileError` (chained) on a corrupt file — deliberately distinct from a missing-file I/O error, which is allowed to raise raw ("a real problem, not 'invalid'"). **Always calls `_hydrate_from_personas(a, cfg)` before returning.** Called throughout the CLI/pipeline/studio.
+- `Accounts.active()` — pure filter on `AccountStatus.active`. Called by `live_ready_channels`, `surfaces`, `validate`, `casting._persona_donor_moments`/`_upgrade_stale_fan_all_defaults`/`casting_gate_failed_to_open`.
+- `Accounts.resolve_account_id(handle, platform=None)` — pure lookup: prefers `integrations[platform]`, falls back to `account_id`; raises `KeyError` (loud, never returns `""`) if the handle is known but has no id for the platform, or if the handle is entirely unknown. Called by `post.run._resolve_publish_account_id`.
+- `Accounts.resolve_backend(handle, platform=None)` — pure lookup; returns `None` (never raises) when no override — the normal case. Called by `effective_provider`, Studio's `golive.go_live`.
+- `Accounts.effective_provider(handle, platform=None)` — pure: explicit per-channel `backends` override, else a platform-aware bridge to the legacy global `FANOPS_POSTER` (only if it's a LIVE backend that actually serves the platform). `None` if neither. Called by `live_ready_channels`, `post.compress.publish_backend_for_post`, `post.run._post_provider`, `reconcile._reconcilable_routing`, Studio views.
+- `Accounts.live_ready_channels()` — pure: active `(handle, platform, provider)` triples where the provider resolves AND has creds present (`cfg.backend_has_creds`). Called by `config.Config.effective_publish_mode`/`is_live_backend`/`live_route_exists`, `postiz_lifecycle._backend_is_postiz`, Studio's `golive.go_live`.
+- `Accounts.validate()` — pure: returns a list of config-problem strings — missing per-platform ids, the R2/D5/D15 drift state (one side of `integrations`/`backends` set without the other), duplicate handles, and (when `creative_variation` is on) missing persona links / cut specs that match the global (no differentiation). Called by `cli._check_accounts`, `doctor.doctor_report`, `pipeline.advance`, Studio's `actions_run.run_advance`/`run_prepare`, `golive.go_live`.
+- `Accounts.surfaces()` — pure: every active `(handle, platform)` as a `Surface`, each resolving its own poster id. Called by `crosspost.crosspost_clips`, `pipeline._aspects_for`/`_stage_refresh_caption_requests`/`_stage_render_and_caption`, Studio's `actions.crosspost_to_account`.
+- `_persona_for_account(acc, reg)` — pure: resolves the `Persona` record for an account via `persona_id` first, else exact inline-voice match. Called by `_hydrate_from_personas`.
+- `_hydrate_from_personas(accts, cfg)` — **THE hydration entrypoint** (traced above in data-flow). Wrapped in `try/except Exception: return` (line 250, the second bare-`except Exception` in this cluster) — any error loading `Personas` (corrupt/absent file) leaves every account's inline values untouched, never crashes a load. Called only by `Accounts.load`.
+- `link_persona(cfg, handle, persona_id)` — **writes**: sets/clears `persona_id` atomically; a blank id clears the link. Does NOT validate the id exists (fails open at load time — Studio resolves against the live registry first). Raises `KeyError` on unknown handle. Called by `persona_store.link_personas_by_voice`/`migrate_from_accounts`.
+- `load_accounts_safe(cfg)` — **never raises**: wraps `Accounts.load`, returns `(Accounts(cfg), None)` on success-equivalent, or `(empty Accounts(cfg), truncated_error_str)` on any exception — used by read paths that must degrade rather than crash. Called by `cli._cmd_doctor_fix_routing`, `config.Config.is_live_backend`/`live_route_exists`, `meta_graph.credentialed_ig_handles`/`resolve_meta_creds`, `reconcile._reconcilable_routing`.
+- `_load_raw_accounts(p)` — reads `accounts.json` as raw dict + list. Called by every mutator.
+- `_accounts_txn(cfg)` — context manager: serializes via `_file_lock(cfg.accounts_lock_path)` (lazy import from `ledger`). Called by `add_account`, `ensure_channel`, `link_persona`, `remove_account`, `set_backend`, `set_channel_routing`.
+- `write_integration(cfg, handle, platform, integration_id)` — **writes**: maps one `(handle, platform)` to its poster id in `integrations`. Raises `ValueError` on unknown platform, `KeyError` on unknown handle. Called by Studio's `golive.adopt_channels`/`map_account`.
+- `set_backend(cfg, handle, platform, backend)` — **writes**: sets/clears one channel's backend override in `backends`; blank/"default" clears. Validates platform + backend vocab. **CORRECTED: LIVE — called as `_accounts_set_backend` at `studio/golive.py:188`/`:506` (aliased import the call graph missed).**
+- `set_channel_routing(cfg, handle, platform, *, backend, integration_id)` — **writes**: atomically sets BOTH `integrations[platform]` and `backends[platform]` together (the R2 replacement for the two-write `write_integration`+`set_backend` seam that caused "the cisumwolfhom incident" per the docstring). Refuses partial/clearing calls. **No callers found anywhere in `src/`** (dead code candidate — the fix for a documented incident appears never wired into any route or CLI command).
+- `add_account(cfg, handle, platforms, persona="", status="active", access="postiz", clip_profile="", framing="")` — **writes**: onboards a brand-new account atomically; validates platforms/clip_profile/framing vocab; rejects duplicate handle. Called by Studio's `app_routes_golive.register_golive_routes`.
+- `ensure_channel(cfg, handle, platform, persona="")` — **writes** idempotently: appends a platform to an existing account or creates a new inert one. Never raises on duplicate (by design). **CORRECTED: LIVE — called as `_accounts_ensure_channel` at `studio/golive.py:501` (the discover→adopt flow; aliased import the call graph missed).**
+- `set_status(cfg, handle, status)` — **writes**: changes one account's status atomically. Validates against `AccountStatus`. **CORRECTED: LIVE — called as `_accounts_set_status` at `studio/golive.py:543`/`:558` (aliased import the call graph missed).**
+- `set_clip_profile(cfg, handle, profile)` — **writes**: sets/clears the per-account clip length tier; validates against `bands.PROFILE_NAMES`. Called by Studio's `app_routes_golive.register_golive_routes`.
+- `set_framing(cfg, handle, framing)` — **writes**: sets/clears the per-account crop bias; validates against `config.FRAMING_NAMES`. **No callers found anywhere in `src/`** (dead code candidate).
+- `set_ig_user_id(cfg, handle, ig_user_id)` — **writes**: sets/clears the per-account Meta Graph IG business user id (non-secret; token itself lives in `.env`, not here). **CORRECTED: LIVE — called as `_accounts_set_ig_user_id` at `studio/golive.py:381` (aliased import the call graph missed).**
+- `set_persona(cfg, handle, persona)` — **writes**: sets/clears the inline persona string. Called by Studio's `app_routes_golive.register_golive_routes`.
+- `remove_account(cfg, handle)` — **writes**: deletes an account row atomically. Called by Studio's `app_routes_golive.register_golive_routes`.
+
+### `batches.py` — Account-First Studio: named, account-targeted ingest groups
+
+- `_resolver_now_utc()` — trivial clock wrapper (`datetime.now(timezone.utc)`), extracted purely so tests can pin the date deterministically. Called by `resolve_or_mint_drop_batch`.
+- `resolve_or_mint_drop_batch(led)` — mint-once-per-UTC-day fallback batch named `drop-YYYY-MM-DD`, content-addressed on `(name, midnight_iso)` so repeated calls the same day are idempotent (`led.get_batch(bid)` short-circuits). `target_accounts=[]` (the all-active sentinel) preserves today's byte-identical fan-to-all default for unbatched ingest. Called by `ingest.ingest_drops`.
+- `create_batch(led, *, name, target_accounts, now_iso, active_handles=None, burn_subs=None)` — pure on an already-loaded `Ledger` (caller holds the transaction). Validates `name` non-blank (`ValueError` otherwise), normalizes `target_accounts` to a stripped/deduped/order-preserving handle list (`[]` = all-active sentinel, never flagged). When `active_handles` is supplied and the target intersects NO active handle, sets an advisory `Batch.error_reason` (state stays open, batch still mints — never a hard error). Mints `Batch(id=batch_id(name, now_iso), ...)`, calls `led.add_batch(b)`, returns it. Called by `resolve_or_mint_drop_batch`, Studio's `actions_run.run_ingest`.
+
+**Denormalization onto Source/Post** (traced via `crosspost.py`, outside this cluster but the consumer): `Batch.target_accounts` lands on `Source.batch_id` at ingest time; `crosspost_clips` (crosspost.py:325-335) reads `led.get_batch(src_batch).target_accounts` and — for a non-empty target — HARD-bounds the fan-out, emitting a `batch_target_skip` breadcrumb per excluded surface and a `batch_target_summary` for the pass. This is the enforcement point `batches.py` itself never touches (batches.py is pure minting; crosspost.py is the sole enforcer).
+
+## Casting decision logic (LLM path vs fallback path, gates/flags)
+
+**As of current source, the LLM path is the SOLE selector; the token-overlap heuristic is gone from the repo.**
+
+- The module docstring (casting.py:1-13) explicitly states the old `cast_moments` token-overlap heuristic **was DELETED** in WS-M1/MOM-7 — confirmed: no `cast_moments` function exists anywhere in `casting.py` or the whole cluster. What remains as the "fallback" is architecturally different: `affinity_admits`/`account_selection_admits`'s legacy branch, which is a **read-time fallback for a source that never ran casting** (pre-v9, or casting-never-ran), not a live alternative selector. There is no second LLM-alternative algorithm active.
+- **Gate**: `cfg.account_casting` (config.py:574-582) — **DEFAULT ON** (`FANOPS_ACCOUNT_CASTING=0` restores legacy fan-to-all). When on, `request_moment_casting`/`ingest_moment_casting` run (wired into `pipeline._stage_casting`), writing durable `AccountSelection`s that `account_selection_admits` reads at crosspost time.
+- **Bias gate**: `cfg.casting_bias` (config.py:787-…) — **DEFAULT OFF**. When on, `casting_reach_prior` is called inline inside `request_moment_casting` at brief-build time (confirmed: no control-file, no cmd_run stage — it's a direct function call recomputed from the live ledger on every gate-open), and is itself validation-frozen (`learning_validated`) and fail-safe (`except Exception → {}`).
+- **Operator manual override**: `cast_add`/`cast_remove` (in `studio/actions_casting.py`, outside this cluster) is documented in the module header as writing the durable `AccountSelection` the same way the LLM gate does — a manual selection path, not a fallback algorithm.
+- **Never-fan-leak contract (RF1)**: `account_selection_admits` is structured so a cast source with no record for an account DENIES (not silent fan-to-all) — this is the "un-collapsible by construction" design the file repeatedly cross-references.
+
+## Anomalies found
+
+**Dead code candidates — CORRECTED ON VALIDATION.** The first pass trusted the name-based
+call graph's zero-call-site result, but that graph cannot resolve **aliased imports**
+(`from fanops.accounts import set_backend as _accounts_set_backend`). Four of the eight below are
+actually LIVE via `_accounts_*` aliases in `studio/golive.py`. Re-verified by grepping for both the
+bare name and every `<name> as <alias>` binding across `src/`:
+- `src/fanops/accounts.py:347` `set_backend` — **NOT dead.** Called as `_accounts_set_backend` at `studio/golive.py:188` and `:506`.
+- `src/fanops/accounts.py:383` `set_channel_routing` — **genuinely dead** (no bare or aliased call site). The documented fix for "the cisumwolfhom incident" (a real production drift bug per its own docstring) appears never wired into any route.
+- `src/fanops/accounts.py:469` `ensure_channel` — **NOT dead.** Called as `_accounts_ensure_channel` at `studio/golive.py:501` (the discover→adopt flow it was built for).
+- `src/fanops/accounts.py:509` `set_status` — **NOT dead.** Called as `_accounts_set_status` at `studio/golive.py:543` and `:558`.
+- `src/fanops/accounts.py:553` `set_framing` — **genuinely dead** (no bare or aliased call site; note: `set_clip_profile` IS wired via Studio go-live routes; its sibling `set_framing` is not).
+- `src/fanops/accounts.py:576` `set_ig_user_id` — **NOT dead.** Called as `_accounts_set_ig_user_id` at `studio/golive.py:381`.
+- `src/fanops/persona_levers.py:87` `is_exempt` — **genuinely dead** (no caller).
+- `src/fanops/persona_levers.py:107` `channels` — **genuinely dead** (no caller); its own docstring's claim ("the M4 manifest reads it") is inaccurate — `manifest` actually calls `channels_of`, a different function.
+
+**Fail-open exception handlers (all intentional per surrounding comments, not silent-failure bugs — cited for completeness):**
+- `src/fanops/casting.py:40` `except Exception: pass` in `_record_fact` — deliberate best-effort audit-trail write; documented as "must NEVER lose the casting."
+- `src/fanops/casting.py:194-199` `except Exception as e:` in `ingest_moment_casting` — routes through `Source.degraded_reason` + logs, deliberately visible not silent.
+- `src/fanops/persona_directives.py:287` `except Exception: store = None` in `persona_facts` — silently swallows any hashtag-store load error with no logging (the one handler in this cluster with zero trace on failure — worth flagging since every other fail-open path in this cluster logs via `get_logger` before swallowing).
+- `src/fanops/persona_research.py:56` `except Exception: cands = []` in `discover_corpus` — documented fail-open to the offline `research_corpus` re-rank.
+- `src/fanops/accounts.py:250` `except Exception: return` in `_hydrate_from_personas` — documented fail-open leaving inline account values untouched.
+
+**No TODO/FIXME/XXX markers** found in any of the 10 files (grep confirmed zero hits).
+
+**No bare `except:`** (all exception handlers are typed `except Exception` or narrower — e.g. `moments.py`'s `except (TypeError, ValueError)`).
+
+**Retired-field trap**: `persona_directives.py` and `persona_levers.py` repeatedly reference 6 fields deliberately removed from the `Persona`/`Account` models in M3/M3e (`tag_lean`, per-persona `clip_profile`/`framing` pins, and 3 freeform directive overrides `casting_directive`/`hook_directive`/`caption_directive` as persona fields — not to be confused with the compiler *functions* of the same names in `persona_directives.py`, which are current and load-bearing). A reader tracing "casting_directive" by grep alone would conflate the retired persona-field override with the live compiler function; the distinction is only clear from reading the docstrings, which is why this cluster is worth reading in full rather than name-matching.

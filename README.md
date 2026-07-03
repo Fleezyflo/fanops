@@ -4,8 +4,19 @@ An autonomous fan-account engine for **Moh Flow** — a bilingual (EN/AR) rapper
 his own videos, **decides which moments are worth posting** (transcript + audio/scene signals
 → an agent decision that records *why*), cuts **platform-ready vertical clips** with
 **agent-written captions**, and **cross-posts to every fan account on every platform** via
-[Blotato](https://blotato.com), then pulls real performance back to **make more of what
-works**.
+self-hosted [Postiz](https://github.com/gitroomhq/postiz-app) (IG/others) and Zernio (TikTok),
+then pulls real performance back (Meta Graph for IG) to **make more of what works**.
+
+> **Orientation for contributors:** the authoritative project rules + product semantics live in
+> [CLAUDE.md](CLAUDE.md); the deep per-package structure is in the nested `src/fanops/**/CLAUDE.md`
+> files and [docs/CODEMAPS/README.md](docs/CODEMAPS/README.md); the full env-var reference is
+> [docs/CONFIG.md](docs/CONFIG.md). This README is the human-facing overview and does not duplicate them.
+>
+> **Note (2026-07):** earlier revisions of this README described publishing via Blotato and a
+> `cutover` harness against it. Blotato is no longer in the codebase — publishing is Postiz + Zernio,
+> live-cutover is proven via the Studio Go-Live tab, and learning auto-validates on the first real
+> non-degraded live metric. Sections below still written against Blotato are historical; the current
+> publish/live/learning contract is CLAUDE.md + docs/CONFIG.md.
 
 The whole system is one deterministic stage DAG with two agent gates. Everything between the
 gates (ingest, transcribe, signal-detect, render, crosspost, publish) is automatic and
