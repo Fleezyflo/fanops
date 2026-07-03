@@ -660,14 +660,59 @@ def test_sched_row_text_absorbs_and_truncates_not_pushes():
         f".sched-row-text needs min-width:0 so the clamp-1 caption can actually shrink, got {d.get('min-width')!r}"
 
 
-def test_sched_row_controls_do_not_wrap():
-    # The control cluster must be a fixed-width column that never reflows to a 2nd line — uniform x + height.
+# ── C3.2 (MOL-104): the cluster must be ABLE to wrap so it can't blow out the page ───────────────────
+# MOL-63 set flex-wrap:nowrap to stop a long caption pushing the cluster onto a 2nd line. That job is now
+# done by .sched-row-text {flex:1;min-width:0} (above) — the caption column absorbs slack + clamp-1
+# truncates. But nowrap + flex:none made the LIVE-mode editable cluster (datetime input + Move + Clear time
+# + Use suggested + ready chip + live-confirm + Publish + ← Review) un-shrinkable: MEASURED at 738px against
+# only ~720px available @1024 and ~596px @900 (15rem rail + 2rem main padding each side) — 97px overflow
+# @1024, 221px @900; grid `main` has min-width:auto so the overflow blows out the grid track → whole-page
+# horizontal scrollbar. The fix is a THREE-declaration mechanism — one alone is inert (browser-verified):
+#   • flex-wrap:wrap on .sched-row-controls ALONE did nothing: as a flex:none item its flex-basis is auto →
+#     it is always laid out at its one-line max-content width (738px), the item box is never narrower than
+#     its content, so its internal wrap never engaged.
+#   • flex:0 1 auto + min-width:0 make the controls ITEM shrinkable below max-content, arming its internal
+#     wrap. (Shrinkable WITHOUT the row-level wrap starved .sched-row-text to 0 width — the controls'
+#     max-content basis wins the shrink fight — hence the next piece.)
+#   • flex-wrap:wrap on .sched-row-main — the SCOPED rule only, NOT the shared .sched-row-main,.posted-main
+#     rule (Posted rows are out of C3.2's scope) — lets the controls drop below the caption as their own
+#     line at narrow widths. Browser-verified: 0px overflow @1024 + @900 (caption keeps 641px/517px);
+#     byte-identical single-line right-aligned layout at wide widths (wrap is inert when everything fits).
+
+def test_sched_row_controls_wrap_to_avoid_page_overflow():
     css = _CSS.read_text()
     d = _decls(_rule_body(css, ".sched-row-controls"))
-    assert d.get("flex-wrap") == "nowrap", \
-        f".sched-row-controls must be flex-wrap:nowrap (MOL-63) so the cluster never wraps caption-dependently, got {d.get('flex-wrap')!r}"
-    assert d.get("flex") == "none", \
-        f".sched-row-controls must be flex:none so the caption column (not the cluster) absorbs slack, got {d.get('flex')!r}"
+    assert d.get("flex-wrap") == "wrap", \
+        f".sched-row-controls must be flex-wrap:wrap (C3.2/MOL-104) so the 738px live cluster can reflow internally, got {d.get('flex-wrap')!r}"
+    assert d.get("flex") == "0 1 auto", \
+        f".sched-row-controls must be flex:0 1 auto — flex:none pinned it at its max-content basis so wrap NEVER engaged (inert as first shipped); shrinkability is what arms the wrap, got {d.get('flex')!r}"
+    assert d.get("min-width") == "0", \
+        f".sched-row-controls needs min-width:0 so the item can actually shrink below its 738px max-content width, got {d.get('min-width')!r}"
+    # Row-level wrap must live on a rule scoped to .sched-row-main ALONE — never the shared
+    # .sched-row-main,.posted-main rule — so Posted rows keep their current layout.
+    row = _decls(_rule_body(css, ".sched-row-main"))
+    assert row.get("flex-wrap") == "wrap", \
+        f".sched-row-main (scoped rule) must be flex-wrap:wrap so the controls drop below the caption instead of overflowing the page (97px @1024, 221px @900), got {row.get('flex-wrap')!r}"
+    shared = _decls(_rule_body(css, ".sched-row-main,.posted-main"))
+    assert "flex-wrap" not in shared, \
+        f"the SHARED .sched-row-main,.posted-main rule must NOT gain flex-wrap — Posted rows are out of C3.2's scope, got {shared.get('flex-wrap')!r}"
+
+
+def test_clamp_1_line_clamps_without_nowrap_intrinsic_blowout():
+    # C3.2/MOL-104 deeper root: .clamp-1's white-space:nowrap gave a long caption its FULL unwrapped width
+    # as intrinsic (min/max-content) size. `main` is margin:0 auto (grid stretch disabled) so its width
+    # resolves from content max-content — one long hashtag caption blew the page out to a horizontal
+    # scrollbar (measured 78px page overflow @1024 even AFTER the controls fix; max-width:100% does NOT cap
+    # intrinsic contribution). Fix: the -webkit-box line-clamp idiom .cell-hook already uses (studio.css
+    # -webkit-line-clamp:2) — text WRAPS for intrinsic sizing (min/max-content = longest word, killing the
+    # blowout class) and -webkit-line-clamp renders its own single-line ellipsis. Guards all 4 consumers:
+    # _schedule_panel.html, _posted_panel.html, publish.html, _live_library_panel.html.
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, ".clamp-1"))
+    assert d.get("-webkit-line-clamp") == "1", \
+        f".clamp-1 must use -webkit-line-clamp:1 (the .cell-hook idiom) so it truncates WITHOUT nowrap's intrinsic-width blowout, got {d.get('-webkit-line-clamp')!r}"
+    assert "white-space" not in d, \
+        f".clamp-1 must NOT carry white-space:nowrap — it gives long captions full unwrapped intrinsic width → page blowout (78px @1024 measured), got {d.get('white-space')!r}"
 
 
 # ── MOL-64: block-scope tools legible from row-scope actions ────────────────────────────────────────

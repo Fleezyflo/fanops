@@ -818,7 +818,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .schedule-row:hover { background:var(--surface-2); }
 .sched-row-main,.posted-main { display:flex; gap:var(--s-2); padding:var(--s-2); align-items:flex-start; }
 .sched-thumb { width:3rem; height:5.3rem; object-fit:cover; border-radius:var(--r-sm); flex:none; }
-.clamp-1 { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+.clamp-1 { display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; max-width:100%; }   /* C3.2/MOL-104: the old white-space:nowrap gave a long caption its FULL unwrapped intrinsic width — main (margin:0 auto) sizes from content max-content → page-wide scrollbar (78px @1024 measured). -webkit-box wraps for intrinsic sizing and clamps to 1 line with its own ellipsis (the .cell-hook idiom). Consumers: _schedule_panel, _posted_panel, publish, _live_library_panel */
 .sched-caption,.posted-row p { margin:.2rem 0; color:var(--muted); font-size:var(--t-meta); }
 .row-actions summary { cursor:pointer; font-size:var(--t-meta); color:var(--accent-bright); }
 .row-actions-menu { padding:.4rem 0; display:flex; flex-direction:column; gap:.35rem; font-size:var(--t-meta); }
@@ -861,8 +861,9 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .schedule-account-head h3::before { display:none; }
 .schedule-account-tools { display:flex; flex-wrap:wrap; gap:.35rem; align-items:center; border-left:2px solid var(--line); padding-left:.65rem; }   /* MOL-64: block-scope tools sit in a SEPARATED band — a leading rule + gap marks "these mutate the whole account, not one row" without demoting them (MOL-44 kept them secondary) */
 .schedule-account-tools .inline-shift { display:inline; margin:0; }
+.sched-row-main { flex-wrap:wrap; }   /* C3.2/MOL-104: scoped ONLY here (NOT the shared .sched-row-main,.posted-main rule — Posted untouched) — lets the controls cluster drop below the caption as its own line when it can't fit; inert (single line) at wide widths */
 .sched-row-text { flex:1; min-width:0; }   /* MOL-63: the caption column absorbs the row's slack and its clamp-1 truncates — a long caption no longer pushes the control cluster into a 2nd line */
-.sched-row-controls { display:flex; flex-wrap:nowrap; flex:none; gap:.35rem; align-items:center; margin-left:auto; }   /* MOL-63: fixed no-wrap cluster — every editable row's actions start at the same x with uniform height regardless of caption length */
+.sched-row-controls { display:flex; flex-wrap:wrap; flex:0 1 auto; min-width:0; gap:.35rem; align-items:center; margin-left:auto; }   /* MOL-63: caption-push is handled by .sched-row-text min-width:0, not by nowrap. C3.2/MOL-104: the 738px live cluster (input+Move+Clear+Use suggested+chip+confirm+Publish+←Review) overflowed 97px @1024 / 221px @900 → page-wide scrollbar (grid main min-width:auto). flex-wrap:wrap alone was INERT — a flex:none item sits at its max-content basis so its box is never narrower than its content and the wrap never engages; flex:0 1 auto + min-width:0 make the item shrinkable (arming the wrap) and .sched-row-main's flex-wrap:wrap (above) lets it drop below the caption instead of starving .sched-row-text to 0. Browser-verified: 0px overflow @1024+@900, byte-identical single right-aligned line at wide widths */
 .sched-move { display:flex; flex-wrap:wrap; gap:.3rem; align-items:center; margin:0; }
 .sched-move input[type=datetime-local] { width:auto; min-width:11rem; font-size:var(--t-meta); }
 .sched-suggest { margin:0; }
