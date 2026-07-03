@@ -6,16 +6,16 @@
 
 /* ── Tokens ─────────────────────────────────────────────────────────────── */
 :root {
-  --bg:oklch(15% 0.012 280); --surface-1:oklch(19.5% 0.014 280); --surface-2:oklch(24% 0.016 280); --surface-3:oklch(28% 0.018 280);
-  --ink:oklch(96% 0.005 280); --muted:oklch(70% 0.02 280); --faint:oklch(66% 0.02 280);  /* faint 62->66%: clears WCAG AA 4.5:1 even on the brightest card (surface-3) */
-  --line:oklch(31% 0.014 280); --line-bright:oklch(40% 0.02 280);
-  --accent:oklch(72% 0.16 292); --accent-bright:oklch(80% 0.15 292); --accent-dim:oklch(72% 0.16 292 / .14); --accent-ink:oklch(18% 0.03 292);
-  --ok:oklch(76% 0.16 152); --warn:oklch(83% 0.13 78); --danger:oklch(70% 0.21 25); --danger-dim:oklch(70% 0.21 25 / .12); --info:oklch(70% 0.15 250);
+  --bg:oklch(96.5% 0.01 90); --surface-1:oklch(99% 0.005 90); --surface-2:oklch(92.5% 0.012 90); --surface-3:oklch(88% 0.014 90);
+  --ink:oklch(24% 0.02 60); --muted:oklch(45% 0.015 60); --faint:oklch(45% 0.015 60);  /* light-editorial (T-01): --faint collapses onto --muted (brief names one "muted" tone; the dark split was AA-on-dark only) */
+  --line:oklch(85% 0.012 90); --line-bright:oklch(74% 0.014 90);
+  --accent:oklch(43% 0.09 185); --accent-bright:oklch(52% 0.1 185); --accent-dim:oklch(43% 0.09 185 / .12); --accent-ink:oklch(98% 0.005 185);
+  --ok:oklch(46% 0.12 152); --warn:oklch(50% 0.11 75); --danger:oklch(48% 0.19 27); --danger-dim:oklch(48% 0.19 27 / .12); --info:oklch(48% 0.1 235);
   /* Filled-pill on-fill INK (MOL-40). Companion to the four state hues above, for a SOLID fill (background:var(--danger); color:var(--danger-ink)).
-     All alias --bg (a near-black), which clears WCAG AA 4.5:1 on every fill: ok 9.76, warn 11.50, danger 6.70, info 7.40 (OKLCH->rel-luminance).
-     A per-hue tuned dark ink was measured (18% L: 9.27/11.01/6.44/7.06) — no advantage over --bg, so a single alias keeps it legible.
-     NB the older .spine-count.spine-sev-danger uses color:var(--ink) (near-WHITE) = 2.61:1, a real contrast bug this token exists to retire. */
-  --ok-ink:var(--bg); --warn-ink:var(--bg); --danger-ink:var(--bg); --info-ink:var(--bg);
+     LIGHT THEME (T-01): each hue gets its OWN light on-fill ink — NOT aliased to --bg. On a light ground --bg is near-white, which on a
+     mid-tone --ok/--warn/--danger fill would be the INVERSE of "on-fill ink". Ratios (OKLCH->rel-luminance): ok/ok-ink 6.36, warn/warn-ink 5.94,
+     danger/danger-ink 6.81, info/info-ink ~7. NB the older .spine-count.spine-sev-danger uses color:var(--ink), a real contrast bug this token exists to retire. */
+  --ok-ink:oklch(98% 0.005 152); --warn-ink:oklch(99% 0.005 75); --danger-ink:oklch(98% 0.005 27); --info-ink:oklch(98% 0.005 235);
   /* SEVERITY LADDER (MOL-40) — the ONE convention MOL-43/48/49/50 consume. Expressed at the CLASS level, not the token level:
      a token is a raw hue+ink pair; a tier is a USAGE (how loud, whether it may fill, whether it may repeat). Same token can serve
      two tiers with different loudness, so tiers are picked per call site, not baked into a colour.
@@ -26,27 +26,26 @@
        Tier 3 — routine INFORMATIONAL fallback (quiet, never competes with actions): OUTLINED pill only (1px border + hue text on --surface),
                 the --info hue by default; never a fill, never adjacent-to-a-button emphasis. */
 
-  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
 
-  --t-eyebrow:.72rem; --t-meta:.82rem; --t-base:.94rem; --t-lg:1.05rem;
+  --t-eyebrow:.72rem; --t-meta:.82rem; --t-base:1.06rem; --t-lg:1.18rem;
   --t-h3:clamp(.8rem,.75rem + .25vw,.9rem); --t-h2:clamp(1.55rem,1.2rem + 1.6vw,2.4rem);
   --s-1:.35rem; --s-2:.6rem; --s-3:.9rem; --s-4:1.25rem; --s-5:1.9rem; --s-6:2.75rem;
-  --r-sm:7px; --r-md:11px; --r-lg:16px; --r-pill:999px;
-  --elev-1:0 1px 0 oklch(100% 0 0 / .04) inset, 0 2px 8px oklch(0% 0 0 / .3);
-  --elev-2:0 1px 0 oklch(100% 0 0 / .05) inset, 0 12px 32px oklch(0% 0 0 / .42);
-  --ring:0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  --pad-relaxed:.85rem;
+  --r-sm:5px; --r-md:8px; --r-lg:16px; --r-pill:999px;
+  --elev-1:0 1px 3px rgba(0,0,0,.08);
+  --elev-2:0 8px 24px rgba(0,0,0,.12);
+  --ring:0 0 0 2px var(--bg), 0 0 0 5px var(--accent-bright);
   --dur:180ms; --dur-slow:320ms; --ease:cubic-bezier(.2,.8,.2,1);
 }
 
 /* ── Base ───────────────────────────────────────────────────────────────── */
 * { box-sizing:border-box; }
 html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
-body { margin:0; background:
-    radial-gradient(120% 80% at 100% -10%, oklch(24% 0.04 292 / .35), transparent 60%),
-    radial-gradient(90% 60% at -10% 0%, oklch(22% 0.03 250 / .25), transparent 55%), var(--bg);
-  background-attachment:fixed; color:var(--ink); font:var(--t-base)/1.6 var(--sans);
+body { margin:0; background:var(--bg);
+  color:var(--ink); font:var(--t-base)/1.6 var(--sans);
   -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
 a { color:var(--accent-bright); text-decoration:none; transition:color var(--dur) var(--ease); }
 a:hover { color:var(--ink); }
@@ -58,7 +57,7 @@ em { font-style:italic; color:var(--ink); }
 :root { --sticky-top:0px; }   /* approve-bar sticky offset; the rail is a side column, not a top header */
 .app-shell { display:grid; grid-template-columns:15rem 1fr; min-height:100vh; }
 .rail { position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto; display:flex; flex-direction:column; gap:var(--s-3);
-  padding:.9rem .7rem; background:oklch(17% 0.013 280 / .92); border-right:1px solid var(--line); }
+  padding:.9rem .7rem; background:var(--surface-2); border-right:1px solid var(--line); }
 .nav-brand { font:600 1.02rem var(--sans); letter-spacing:-.01em; margin:.2rem .4rem var(--s-2); display:inline-flex; align-items:center; gap:.5rem; color:var(--ink); text-decoration:none; }
 .nav-brand::before { content:""; width:.7rem; height:.7rem; border-radius:3px; background:linear-gradient(135deg,var(--accent-bright),var(--info)); box-shadow:0 0 12px var(--accent-dim); flex:none; }
 .rail-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:var(--s-3); }
@@ -66,11 +65,11 @@ em { font-style:italic; color:var(--ink); }
 .rail-group-label { margin:0 0 .25rem .4rem; font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase; letter-spacing:.13em; color:var(--muted); background:transparent; }
 .rail-link { position:relative; display:block; color:var(--muted); padding:.45rem .6rem; border-radius:var(--r-sm); font-size:var(--t-meta); font-weight:500;
   text-decoration:none; transition:color var(--dur) var(--ease), background var(--dur) var(--ease); }
-.rail-link:hover { color:var(--ink); background:oklch(100% 0 0 / .05); }
+.rail-link:hover { color:var(--ink); background:var(--surface-3); }
 .rail-link:focus-visible { outline:none; box-shadow:var(--ring); }
 .rail-link.active { color:var(--ink); background:var(--accent-dim); }
 .rail-link.active::before { content:""; position:absolute; left:0; top:.35rem; bottom:.35rem; width:2px; border-radius:2px; background:var(--accent-bright); box-shadow:0 0 8px var(--accent); }
-.rail-link.active:focus-visible { box-shadow:0 0 0 2px var(--accent-dim), 0 0 0 4px var(--accent-bright); }
+.rail-link.active:focus-visible { box-shadow:0 0 0 2px var(--accent-dim), 0 0 0 5px var(--accent-bright); }
 .rail .active-account { margin-top:auto; padding:.5rem .4rem 0; font-size:var(--t-meta); color:var(--muted); line-height:1.5; }
 .rail .active-account strong { color:var(--ink); }
 .workspace { min-width:0; }
@@ -112,6 +111,12 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 .clip-frame video, .clip-frame img { width:100%; height:100%; object-fit:cover; border:none; border-radius:0; }
 .clip-frame.thumb { aspect-ratio:9/16; }
 .clip-frame.thumb img { object-fit:cover; }
+/* T-14 (C2 washout fix): the media well. An inset box-shadow on the replaced <video>/<img> is an invisible
+   no-op (the opaque frame paints over it), so the recessed seam is an ::after overlay on the CONTAINER.
+   pointer-events:none keeps clicks/controls live; border-radius:inherit hugs each frame's own corners. */
+.clip-frame, .pivot-preview { position:relative; }
+.clip-frame::after, .pivot-preview::after { content:""; position:absolute; inset:0; pointer-events:none;
+  border-radius:inherit; box-shadow:inset 0 1px 3px rgba(0,0,0,.18); }
 .held-badge { position:absolute; top:.6rem; left:.6rem; z-index:2; border-color:var(--danger); color:var(--danger); background:var(--danger-dim); }
 .clip-body { display:flex; flex-direction:column; gap:.45rem; padding:var(--s-3); }
 .clip-title { font:600 var(--t-base) var(--sans); letter-spacing:-.01em; color:var(--ink); }
@@ -168,7 +173,7 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 /* ── Badges & banners ───────────────────────────────────────────────────── */
 .badge { display:inline-flex; align-items:center; gap:.3rem; font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase;
   letter-spacing:.08em; padding:.18rem .5rem; border-radius:var(--r-pill); border:1px solid var(--warn); color:var(--warn);
-  background:oklch(80% 0.14 78 / .1); vertical-align:middle; }
+  background:color-mix(in oklch, var(--warn) 10%, transparent); vertical-align:middle; }
 .badge.shipped { color:var(--muted); border-color:var(--line-bright); background:oklch(100% 0 0 / .04); }
 .badge.degraded { color:var(--danger); border-color:var(--danger); background:var(--danger-dim); }   /* T4: partial-objective lift */
 .lift-num { font:700 var(--t-lg) var(--mono); color:var(--ink); font-variant-numeric:tabular-nums; }   /* MOL-50: the Lift number answers "which variant won" — dominant per-row element (larger/bolder/--ink) */
@@ -188,11 +193,13 @@ textarea, input[type=text], input[type=password], input[type=datetime-local], in
   padding:.5rem .65rem; font:var(--t-base) var(--sans); transition:border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
 textarea { resize:vertical; min-height:2.6rem; line-height:1.5; }
 textarea:focus, input:focus, select:focus { outline:none; border-color:var(--accent); box-shadow:var(--ring); }
-textarea[readonly], input[readonly] { background:oklch(16% 0.012 280 / .6); color:var(--muted); }
+textarea[readonly], input[readonly] { background:var(--surface-2); color:var(--muted); }
 input::placeholder, textarea::placeholder { color:var(--faint); }
-select { -webkit-appearance:none; appearance:none; padding-right:2rem;
-  background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
-  background-position:calc(100% - 1rem) 1.05rem,calc(100% - .65rem) 1.05rem; background-size:6px 6px,6px 6px; background-repeat:no-repeat; }
+/* caret ≈ --muted oklch(45% .015 60); update together */
+select:not([multiple]) { -webkit-appearance:none; appearance:none; padding-right:2.2rem;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%235c534d' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right .75rem center; background-size:11px 8px; }
+select:not([multiple]):disabled { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23a69c95' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 label { display:block; }
 fieldset { border:1px solid var(--line); border-radius:var(--r-md); padding:var(--s-3); margin:var(--s-2) 0; background:oklch(16% 0.012 280 / .4); display:grid; gap:.5rem; }
 legend { font:600 var(--t-meta) var(--sans); padding:0 .5rem; color:var(--ink); }
@@ -209,7 +216,7 @@ button.primary { background:linear-gradient(180deg,var(--accent-bright),var(--ac
 button.primary:hover { box-shadow:0 6px 20px var(--accent-dim), var(--elev-1); }
 button.danger { background:transparent; border-color:var(--danger); color:var(--danger); }
 button.danger:hover { background:var(--danger-dim); border-color:var(--danger); }
-button.primary.danger { background:linear-gradient(180deg,var(--danger),oklch(58% 0.21 25)); color:oklch(98% 0.01 25); border-color:transparent; }
+button.primary.danger { background:linear-gradient(180deg,var(--danger),color-mix(in oklch, var(--danger) 80%, black)); color:oklch(98% 0.01 25); border-color:transparent; }
 button:disabled, .button:disabled { background:var(--surface-2); color:var(--muted); border-color:var(--line); opacity:.5; cursor:not-allowed; box-shadow:none; }   /* MOL-52: inert bulk-action — flat muted fill OVERRIDES .primary gradient, dimmed, no-op cursor */
 button:disabled:hover, .button:disabled:hover { background:var(--surface-2); border-color:var(--line); color:var(--muted); transform:none; box-shadow:none; }   /* MOL-52: a disabled control never lifts on hover */
 input[type=file] { border:1px dashed var(--line-bright); background:oklch(16% 0.012 280 / .5); cursor:pointer; padding:.45rem; }
@@ -356,8 +363,8 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .run-advanced-body { display:grid; gap:var(--s-3); padding:var(--s-3); border-top:1px solid var(--line); }
 .run-advanced-body form { display:flex; gap:.5rem; align-items:flex-end; flex-wrap:wrap; margin:0; }
 .result { padding:.6rem .85rem; border-radius:var(--r-sm); margin:var(--s-3) 0; border:1px solid var(--line); font-size:var(--t-meta); font-weight:500; }
-.result.ok { color:var(--ok); border-color:oklch(76% 0.16 152 / .4); background:oklch(76% 0.16 152 / .08); }
-.result.err { color:var(--danger); border-color:oklch(66% 0.21 25 / .4); background:var(--danger-dim); }
+.result.ok { color:var(--ok); border-color:color-mix(in oklch, var(--ok) 40%, transparent); background:color-mix(in oklch, var(--ok) 8%, transparent); }
+.result.err { color:var(--danger); border-color:color-mix(in oklch, var(--danger) 40%, transparent); background:color-mix(in oklch, var(--danger) 8%, transparent); }
 
 /* ── Go-Live steps, checks, mapping ─────────────────────────────────────── */
 .golive-step { border:1px solid var(--line); border-radius:var(--r-lg); padding:var(--s-4); margin-top:var(--s-3); background:var(--surface-1); box-shadow:var(--elev-1); }   /* MOL-42: raised tier (shared recipe) */
@@ -370,7 +377,7 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .platform-pick:hover { border-color:var(--accent); }
 .checks { list-style:none; padding-left:0; display:grid; gap:.3rem; }
 .checks li { padding:.35rem .7rem; border-radius:var(--r-sm); background:var(--surface-2); border:1px solid var(--line); font-size:var(--t-meta); }
-.checks li.ok { border-color:oklch(76% 0.16 152 / .35); }
+.checks li.ok { border-color:color-mix(in oklch, var(--ok) 35%, transparent); }
 /* MOL-48: a failing readiness/dependency row is Tier-1 (ladder §top) — an operational failure gating
    live-publish safety. SOLID --danger fill + on-fill --danger-ink (the MOL-43-tuned 6.70:1 pair) + bold,
    so it INTERRUPTS the scan instead of differing from a passing row by a 35%-alpha border tint alone. */
@@ -381,7 +388,7 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .golive-map { margin:.5rem 0; }
 .golive-map td:first-child { white-space:nowrap; }
 .confirm { display:flex; align-items:center; gap:.4rem; color:var(--warn); font-weight:600; font-size:var(--t-meta);
-  padding:.5rem .7rem; background:oklch(80% 0.14 78 / .08); border:1px solid oklch(80% 0.14 78 / .35); border-radius:var(--r-sm); }
+  padding:.5rem .7rem; background:color-mix(in oklch, var(--warn) 8%, transparent); border:1px solid color-mix(in oklch, var(--warn) 35%, transparent); border-radius:var(--r-sm); }
 /* MOL-49: arming a LIVE publish is the ladder's Tier-1 (MOL-40 §top) — an operational act gating live-publish
    safety, the loudest tier. It must read unmistakably ABOVE every informational warn box, different in KIND not
    just hue: SOLID --danger fill + on-fill --danger-ink (the MOL-43-tuned 6.70:1 pair, label stays readable), a
@@ -392,7 +399,7 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .confirm.danger input[type=checkbox] { accent-color:var(--danger-ink); }
 
 /* ── Gates: transcript + pick rows ──────────────────────────────────────── */
-details { margin:var(--s-2) 0; border:1px solid var(--line); border-radius:var(--r-md); background:oklch(16% 0.012 280 / .4); overflow:hidden; }
+details { margin:var(--s-2) 0; border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface-2); overflow:hidden; }   /* T-16: was raw dark literal oklch(16% .012 280 / .4) — a solid gray SLAB on paper; --surface-2 is the recessed-panel token (cf readonly inputs). .batch overrides this ground below. */
 summary { cursor:pointer; padding:.55rem .8rem; font-size:var(--t-meta); color:var(--muted); font-weight:500; -webkit-user-select:none; user-select:none; border-radius:var(--r-sm); }
 summary:hover { color:var(--ink); }
 summary:focus-visible { outline:none; box-shadow:var(--ring); }
@@ -410,7 +417,7 @@ th { text-align:left; padding:.6rem .85rem; font:600 var(--t-eyebrow) var(--sans
   color:var(--faint); background:var(--surface-2); border-bottom:1px solid var(--line); }
 td { text-align:left; padding:.6rem .85rem; border-bottom:1px solid var(--line); font-size:var(--t-meta); vertical-align:middle; }
 tr:last-child td { border-bottom:none; }
-tbody tr:hover td, table tr:hover td { background:oklch(100% 0 0 / .025); }
+tbody tr:hover td, table tr:hover td { background:var(--surface-2); }
 td form { display:flex; gap:.4rem; align-items:center; margin:0; }
 td input { width:auto; min-width:9rem; }
 .bar { display:inline-block; height:8px; min-width:2px; background:linear-gradient(90deg,var(--info),var(--accent-bright)); border-radius:var(--r-pill);
@@ -563,7 +570,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
   font:600 var(--t-eyebrow) var(--sans); }   /* MOL-41: static step number — weight, not accent */
 /* S10: a zero-result batch is a SILENT-FAIL outcome — give it a prominent list-level banner, not a faint glyph. */
 .batch-zero-summary { margin:.3rem 0 .6rem; padding:.5rem .75rem; border:1px solid var(--warn); border-left:3px solid var(--warn);
-  border-radius:var(--r-sm); background:oklch(83% 0.13 78 / .08); }
+  border-radius:var(--r-sm); background:color-mix(in oklch, var(--warn) 8%, transparent); }
 .acct-post-count { font-variant-numeric:tabular-nums; }
 
 /* ── P5: Review density + Schedule caption ──────────────────────────────── */
@@ -635,7 +642,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
   padding:var(--s-2) var(--s-3); margin:0 0 var(--s-3); border:1px solid var(--line);
   border-radius:var(--r-md); background:var(--surface-1); }
 .review-live .live-dot { width:8px; height:8px; border-radius:var(--r-pill); background:var(--ok);
-  box-shadow:0 0 0 3px oklch(76% 0.16 152 / .18); animation:live-pulse 2s var(--ease) infinite; }
+  box-shadow:0 0 0 3px color-mix(in oklch, var(--ok) 18%, transparent); animation:live-pulse 2s var(--ease) infinite; }
 @keyframes live-pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
 @media (prefers-reduced-motion: reduce) { .review-live .live-dot { animation:none; } }
 
@@ -684,9 +691,12 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .chip.lane-method.danger { background:var(--danger); color:var(--danger-ink); border-color:var(--danger); }
 .chip .cause { font-style:normal; color:var(--faint); font-size:var(--t-eyebrow); margin-left:.1rem; }
 /* Lineage (S6) — winner star, "N in lineage" chip, muted Δ-vs-best, and the proportional metric micro-bar. */
-.chip.win { color:var(--ok); border-color:var(--ok); background:oklch(76% 0.16 152 / .1); }
+.chip.win { color:var(--ok); border-color:var(--ok); background:color-mix(in oklch, var(--ok) 10%, transparent); }
 .lineage-chip { margin-left:.25rem; }
 .delta-best { display:inline-block; margin-left:.35rem; color:var(--faint); font-size:var(--t-eyebrow); font-variant-numeric:tabular-nums; }
+.delta-arrow { font-size:var(--t-eyebrow); font-variant-numeric:tabular-nums; margin-left:.3rem; }   /* T-15: Δ vs account median */
+.delta-arrow.delta-up { color:var(--ok); }
+.delta-arrow.delta-down { color:var(--danger); }
 .metric-bar { display:block; height:5px; margin:.2rem 0 0; min-width:0; box-shadow:none; opacity:.85; }
 
 /* Workflow spine (Slice 1) — the Make→Review→Schedule→Posted through-line atop every workflow surface: a
@@ -705,7 +715,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .spine-step.done .spine-num { border-color:var(--ok); color:var(--ok); }
 .spine-step.active > a { color:var(--ink); background:var(--accent-dim); border-color:var(--accent); }
 .spine-step.active .spine-num { border-color:var(--accent-bright); color:var(--accent-bright); box-shadow:0 0 8px var(--accent-dim); }
-.spine-step.active > a:focus-visible { box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--accent-bright); }  /* full-contrast ring over the active step's accent-dim bg (mirrors .rail-link.active:focus-visible) */
+.spine-step.active > a:focus-visible { box-shadow:0 0 0 2px var(--bg), 0 0 0 5px var(--accent-bright); }  /* full-contrast ring over the active step's accent-dim bg (mirrors .rail-link.active:focus-visible) */
 .spine-next { display:inline-flex; align-items:center; gap:.4rem; padding:.4rem .8rem; border-radius:var(--r-pill); background:var(--accent); color:var(--accent-ink); font-size:var(--t-meta); font-weight:600; text-decoration:none; white-space:nowrap; transition:filter var(--dur) var(--ease); }
 .spine-next:hover { filter:brightness(1.08); }
 .spine-next:focus-visible { outline:none; box-shadow:var(--ring); }
@@ -787,8 +797,8 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .state-inflight,.state-inflight { color:var(--state-inflight); border-color:var(--state-inflight); }
 .state-dryrun { color:var(--state-dryrun); } .state-failed { color:var(--state-failed); border-color:var(--state-failed); }
 .state-queued,.state-due { color:var(--state-queued); } .state-awaiting { color:var(--muted); }
-.spine-count.spine-sev-warn { background:var(--warn); color:var(--bg); }
-.spine-count.spine-sev-info { background:var(--info); color:var(--bg); }
+.spine-count.spine-sev-warn { background:var(--warn); color:var(--warn-ink); }
+.spine-count.spine-sev-info { background:var(--info); color:var(--info-ink); }
 .spine-count.spine-sev-danger { background:var(--danger); color:var(--danger-ink); }   /* MOL-43 (delegated from MOL-40): --ink was 2.61:1; on-fill --danger-ink = 6.70:1, matching the warn/info siblings */
 .ops-board { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--s-3); margin:var(--s-4) 0; }
 @media (max-width:900px) { .ops-board { grid-template-columns:repeat(2,1fr); } }
@@ -805,6 +815,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .ops-value { font:600 1.6rem var(--mono); color:var(--ink); }
 .schedule-scan-list,.posted-scan-list { list-style:none; padding:0; margin:0; }
 .schedule-row,.posted-row { border:1px solid var(--line); border-radius:var(--r-card); margin-bottom:var(--s-2); background:var(--surface-1); }
+.schedule-row:hover { background:var(--surface-2); }
 .sched-row-main,.posted-main { display:flex; gap:var(--s-2); padding:var(--s-2); align-items:flex-start; }
 .sched-thumb { width:3rem; height:5.3rem; object-fit:cover; border-radius:var(--r-sm); flex:none; }
 .clamp-1 { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
@@ -857,7 +868,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .sched-suggest { margin:0; }
 
 /* Home alerts */
-.alerts-lane { margin:var(--s-3) 0; padding:var(--s-3); border:1px solid var(--warn); border-radius:var(--r-md); background:oklch(80% 0.14 78 / .08); }
+.alerts-lane { margin:var(--s-3) 0; padding:var(--s-3); border:1px solid var(--warn); border-radius:var(--r-md); background:color-mix(in oklch, var(--warn) 8%, transparent); }
 .alerts-lane h3 { margin-top:0; }
 .alerts-lane ul { margin:0; padding-left:1.2rem; }
 .home-acct-table a { color:var(--accent-bright); text-decoration:none; }

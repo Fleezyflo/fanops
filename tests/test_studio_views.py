@@ -314,6 +314,80 @@ def test_lift_amplify_section_present_when_flag_on(tmp_path, monkeypatch):
     assert view.amplify_rows == [] and view.amplify_empty_reason is not None
 
 
+# ── T-15 (MOL-102): Δ-vs-account-MEDIAN annotator (additive sibling of lineage_stats' Δ-vs-best) ──────
+from fanops.studio.views_results import LiftRow, account_median_deltas
+
+def _lr(account, lift, hook="h"):
+    return LiftRow(variant_hook=hook, account=account, platform="instagram", lift_score=lift, loop_state="s")
+
+def test_account_median_deltas_stamps_delta_vs_group_median():
+    # median of [10, 30, 50] = 30 -> deltas -20 / 0 / +20 for the same account.
+    rows = [_lr("@a", 10.0), _lr("@a", 30.0), _lr("@a", 50.0)]
+    account_median_deltas(rows)
+    assert [r.delta_vs_account_median for r in rows] == [-20.0, 0.0, 20.0]
+
+def test_account_median_deltas_even_count_uses_mean_of_middle_two():
+    # statistics.median of [10, 20, 30, 40] = 25 -> matches stdlib semantics, not a pick-one.
+    rows = [_lr("@a", 10.0), _lr("@a", 20.0), _lr("@a", 30.0), _lr("@a", 40.0)]
+    account_median_deltas(rows)
+    assert [r.delta_vs_account_median for r in rows] == [-15.0, -5.0, 5.0, 15.0]
+
+def test_account_median_deltas_single_row_account_stays_none():
+    # a median vs a single data point is degenerate -> no chip (mirrors lineage_stats' measured guard).
+    rows = [_lr("@solo", 42.0)]
+    account_median_deltas(rows)
+    assert rows[0].delta_vs_account_median is None
+
+def test_account_median_deltas_groups_are_per_account():
+    # @a has 2 rows (median 15), @b has 1 row -> @b stays None, @a is deltated against ITS own median.
+    a1, a2, b1 = _lr("@a", 10.0), _lr("@a", 20.0), _lr("@b", 99.0)
+    account_median_deltas([a1, a2, b1])
+    assert [a1.delta_vs_account_median, a2.delta_vs_account_median] == [-5.0, 5.0]
+    assert b1.delta_vs_account_median is None
+
+def test_account_median_deltas_excludes_unmeasured_rows_from_median_and_delta():
+    # a None lift_score is excluded from the median AND never stamped; a group needs >=2 MEASURED rows.
+    measured1, measured2 = _lr("@a", 10.0), _lr("@a", 30.0)
+    unmeasured = LiftRow(variant_hook="u", account="@a", platform="instagram", lift_score=None, loop_state="s")  # type: ignore[arg-type]
+    account_median_deltas([measured1, unmeasured, measured2])
+    assert [measured1.delta_vs_account_median, measured2.delta_vs_account_median] == [-10.0, 10.0]  # median 20
+    assert unmeasured.delta_vs_account_median is None
+
+def test_account_median_deltas_one_measured_plus_unmeasured_stays_none():
+    # only ONE measured row in the group (the other is None) -> degenerate, no delta.
+    measured = _lr("@a", 50.0)
+    unmeasured = LiftRow(variant_hook="u", account="@a", platform="instagram", lift_score=None, loop_state="s")  # type: ignore[arg-type]
+    account_median_deltas([measured, unmeasured])
+    assert measured.delta_vs_account_median is None
+
+def test_account_median_deltas_fail_open_on_bad_input():
+    # mirrors lineage_stats' blanket fail-open: a non-iterable / attribute-less arg must not raise.
+    account_median_deltas(None)          # no exception
+    account_median_deltas([object()])    # rows without .account/.lift_score are skipped, not fatal
+
+def test_lift_row_carries_account_median_delta_field():
+    # the additive field exists and defaults None WITHOUT disturbing the existing delta_vs_best.
+    r = _lr("@a", 5.0)
+    assert r.delta_vs_account_median is None and r.delta_vs_best is None
+
+def test_lift_page_renders_delta_arrow_glyphs(tmp_path):
+    # end-to-end: /lift shows a green ▲ for the above-median row and a red ▼ for the below-median one.
+    # The ledger is PERSISTED (the /lift route does a fresh Ledger.load), so seed via a transaction.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    with Ledger.transaction(cfg) as led:
+        _lineage(led)
+        for i, (pid, hook, lift) in enumerate([("p_lo", "CALM", 10.0), ("p_mid", "MID", 30.0), ("p_hi", "HYPE", 50.0)]):
+            led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                              caption=hook, state=PostState.analyzed, variant_key="vk_%d" % i, variant_hook=hook,
+                              metrics={"lift_score": lift}, public_url="dryrun://%s" % pid))
+    from fanops.studio.app import create_app
+    app = create_app(cfg); app.config.update(TESTING=True)
+    h = app.test_client().get("/lift").data.decode()
+    assert "delta-arrow" in h and "delta-up" in h and "delta-down" in h   # median 30 -> HYPE +20 up, CALM -20 down
+    assert "▲" in h and "▼" in h
+
+
 def test_golive_status_reports_learning_validated(tmp_path):
     # M3: the Go-Live read-model exposes whether the loop is unfrozen (cutover.json metrics_confirmed).
     from fanops.studio.views import golive_status

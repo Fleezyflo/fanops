@@ -1,5 +1,5 @@
 {# src/fanops/studio/templates/base.html — left-rail cockpit shell.
-   The whole IA: a vertical <nav class="rail"> grouped Overview/Workflow/Insights/Setup — every surface
+   The whole IA: a vertical <nav class="rail"> grouped Work/Library/Setup — every surface
    reachable in ONE click, nothing hidden in a dropdown. Face-4 SPINE preserved: every rail link carries the
    active ?account= (nav_account, injected globally) so the filter persists across surfaces; nav_account=None
    drops the param. `tab` (passed per-route) drives the active state + aria-current. #}
@@ -25,10 +25,9 @@
     <nav class="rail" id="rail-nav" aria-label="Studio navigation">
       <a class="nav-brand" href="{{ url_for('index') }}">FanOps Studio</a>
       <ul class="rail-list" role="list">
-        <li class="rail-group"><p class="rail-group-label" id="rg-overview">Overview</p>
-          <ul role="list" aria-labelledby="rg-overview"><li>{{ rail_link('index','home','Home') }}</li></ul></li>
-        <li class="rail-group"><p class="rail-group-label" id="rg-workflow">Workflow</p>
-          <ul role="list" aria-labelledby="rg-workflow">
+        <li class="rail-group"><p class="rail-group-label" id="rg-work">Work</p>
+          <ul role="list" aria-labelledby="rg-work">
+            <li>{{ rail_link('index','home','Home') }}</li>
             <li>{{ rail_link('run_panel','run','Add & run') }}</li>
             <li>{{ rail_link('gates','gates','Blocked') }}</li>
             <li>{{ rail_link('review','review','Review') }}</li>
@@ -36,8 +35,8 @@
             <li>{{ rail_link('posted','posted','Results') }}</li>
             <li>{{ rail_link('publish_panel','publish','Manual publish') }}</li>
           </ul></li>
-        <li class="rail-group"><p class="rail-group-label" id="rg-tools">Tools</p>
-          <ul role="list" aria-labelledby="rg-tools">
+        <li class="rail-group"><p class="rail-group-label" id="rg-library">Library</p>
+          <ul role="list" aria-labelledby="rg-library">
             <li>{{ rail_link('lift','lift','Lift') }}</li>
             <li>{{ rail_link('live_library','live','Live library') }}</li>
             <li>{{ rail_link('library','library','Library') }}</li>

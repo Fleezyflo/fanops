@@ -381,6 +381,16 @@ def test_spine_danger_pill_uses_ink_token_for_wcag():
     assert c >= 4.5, f"spine danger fill/ink pair is {c:.2f}:1 (< 4.5:1 WCAG AA)"
 
 
+def test_spine_warn_and_info_pills_use_ink_tokens_for_wcag():
+    css = _CSS.read_text()
+    warn = _decls(_rule_body(css, ".spine-count.spine-sev-warn"))
+    assert warn.get("color") == "var(--warn-ink)", f"spine warn pill must use --warn-ink, got {warn.get('color')!r}"
+    info = _decls(_rule_body(css, ".spine-count.spine-sev-info"))
+    assert info.get("color") == "var(--info-ink)", f"spine info pill must use --info-ink, got {info.get('color')!r}"
+    assert _contrast(css, "warn", "warn-ink") >= 4.5
+    assert _contrast(css, "info", "info-ink") >= 4.5
+
+
 # ── MOL-48: Go-Live readiness — a failing check must INTERRUPT the scan (Tier-1 solid fill) ─────────
 # A failed row (.checks li.err) used to differ from a passing row (.checks li.ok) by a 35%-alpha border
 # tint + glyph/text color only — same bg, padding, weight. With one backend confirmed unreachable while
@@ -696,3 +706,238 @@ def test_schedule_publish_keeps_distinct_primary_weight():
     seg = src[button_open:idx]
     assert 'class="primary"' in seg, f"Publish must keep .primary weight (never ghost), got: {seg!r}"
     assert "ghost" not in seg, "Publish must never be ghosted — it publishes live"
+
+
+# ── T-05 (MOL-92): raw dark-theme color literals → token-tracking color-mix ─────────────────────────
+# The state-tint backgrounds/borders were hardcoded oklch literals frozen to the OLD dark-theme hues, so
+# they did NOT follow the T-01 token flip and rendered the wrong hue on the light ground. Each is converted
+# to `color-mix(in oklch, var(--X) N%, transparent)` so it tracks --warn/--ok/--danger automatically. The
+# pins below assert (a) the mix references the right token and (b) no raw oklch literal remains in the rule.
+
+_MIX = re.compile(r'color-mix\(\s*in\s+oklch\s*,\s*var\(\s*--([\w-]+)\s*\)\s*(\d+)%\s*,\s*transparent\s*\)')
+_RAW_OKLCH = re.compile(r'oklch\(\s*\d')  # a raw oklch(<number>...) literal (not a var()/color-mix)
+
+
+def _mix_token(value):  # (token, pct) from a color-mix(...) value, or None
+    m = _MIX.search(value or "")
+    return (m.group(1), int(m.group(2))) if m else None
+
+
+def test_badge_background_tracks_warn_token():
+    d = _decls(_rule_body(_CSS.read_text(), ".badge"))
+    assert _mix_token(d.get("background")) == ("warn", 10), \
+        f".badge background must be color-mix warn 10% (was raw oklch), got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "")), ".badge background must carry no raw oklch literal"
+
+
+def test_confirm_bg_and_border_track_warn_token():
+    d = _decls(_rule_body(_CSS.read_text(), ".confirm"))
+    assert _mix_token(d.get("background")) == ("warn", 8), \
+        f".confirm background must be color-mix warn 8%, got {d.get('background')!r}"
+    # border shorthand carries the mix (35%); no raw oklch literal survives anywhere in the border/bg.
+    border = d.get("border", "")
+    assert _mix_token(border) == ("warn", 35), f".confirm border must carry color-mix warn 35%, got {border!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "") + " " + border), \
+        ".confirm bg/border must carry no raw oklch literal"
+
+
+def test_batch_zero_summary_bg_tracks_warn_token():
+    d = _decls(_rule_body(_CSS.read_text(), ".batch-zero-summary"))
+    assert _mix_token(d.get("background")) == ("warn", 8), \
+        f".batch-zero-summary background must be color-mix warn 8%, got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "")), ".batch-zero-summary bg must carry no raw oklch literal"
+
+
+def test_alerts_lane_bg_tracks_warn_token():
+    d = _decls(_rule_body(_CSS.read_text(), ".alerts-lane"))
+    assert _mix_token(d.get("background")) == ("warn", 8), \
+        f".alerts-lane background must be color-mix warn 8%, got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "")), ".alerts-lane bg must carry no raw oklch literal"
+
+
+def test_result_ok_tracks_ok_token():
+    d = _decls(_rule_body(_CSS.read_text(), ".result.ok"))
+    assert _mix_token(d.get("border-color")) == ("ok", 40), \
+        f".result.ok border-color must be color-mix ok 40%, got {d.get('border-color')!r}"
+    assert _mix_token(d.get("background")) == ("ok", 8), \
+        f".result.ok background must be color-mix ok 8%, got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("border-color", "") + " " + d.get("background", "")), \
+        ".result.ok must carry no raw oklch literal"
+
+
+def test_result_err_tracks_danger_token():
+    d = _decls(_rule_body(_CSS.read_text(), ".result.err"))
+    assert _mix_token(d.get("border-color")) == ("danger", 40), \
+        f".result.err border-color must be color-mix danger 40%, got {d.get('border-color')!r}"
+    assert _mix_token(d.get("background")) == ("danger", 8), \
+        f".result.err background must be color-mix danger 8%, got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("border-color", "") + " " + d.get("background", "")), \
+        ".result.err must carry no raw oklch literal"
+
+
+def test_checks_ok_border_tracks_ok_token():
+    # the passing-row quiet border tint was a raw old-ok literal (35%-alpha) — the same straggler class as
+    # .result.ok; it must track --ok via color-mix, preserving its 35% weight. (.checks li.err is a SOLID
+    # --danger fill already token-referenced by MOL-48 — out of scope, untouched.)
+    d = _decls(_rule_body(_CSS.read_text(), ".checks li.ok"))
+    assert _mix_token(d.get("border-color")) == ("ok", 35), \
+        f".checks li.ok border-color must be color-mix ok 35%, got {d.get('border-color')!r}"
+    assert not _RAW_OKLCH.search(d.get("border-color", "")), ".checks li.ok border must carry no raw oklch literal"
+
+
+def test_chip_win_bg_tracks_ok_token():
+    d = _decls(_rule_body(_CSS.read_text(), ".chip.win"))
+    assert _mix_token(d.get("background")) == ("ok", 10), \
+        f".chip.win background must be color-mix ok 10%, got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "")), ".chip.win bg must carry no raw oklch literal"
+
+
+def test_live_dot_ring_tracks_ok_token():
+    d = _decls(_rule_body(_CSS.read_text(), ".review-live .live-dot"))
+    bs = d.get("box-shadow", "")
+    assert _mix_token(bs) == ("ok", 18), f".live-dot box-shadow ring must be color-mix ok 18%, got {bs!r}"
+    assert "0 0 0 3px" in bs, f".live-dot ring must keep its 3px spread, got {bs!r}"
+    assert not _RAW_OKLCH.search(bs), ".live-dot box-shadow must carry no raw oklch literal"
+
+
+# ── T-05 orchestrator addition: rail background swap off the dark-theme holdover ────────────────────
+# `.rail` was a raw near-black oklch(17% ...) — a dark-theme holdover the T-05 list missed. Post-flip it
+# renders near-black on paper, making --muted labels barely legible. It becomes --surface-2 (computed
+# --muted/--surface-2 = 5.99:1, AA-pass). The white-alpha `.rail-link:hover` (a second dark-theme holdover)
+# is invisible on --surface-2 and must resolve to a real surface tone the swap makes legible.
+
+def test_rail_background_is_surface_token_not_raw_literal():
+    d = _decls(_rule_body(_CSS.read_text(), ".rail"))
+    assert d.get("background") == "var(--surface-2)", \
+        f".rail background must be var(--surface-2) (was raw dark oklch), got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "")), ".rail background must carry no raw oklch literal"
+
+
+def test_rail_muted_labels_meet_wcag_aa_on_surface_2():
+    # the whole reason for the swap: --muted (.rail-group-label AND .rail-link at rest) must clear AA on --surface-2.
+    c = _contrast(_CSS.read_text(), "muted", "surface-2")
+    assert c >= 4.5, f"--muted on --surface-2 is {c:.2f}:1 (< 4.5:1 WCAG AA) — rail labels illegible"
+
+
+def test_rail_link_hover_is_legible_on_surface_2():
+    # the white-alpha hover holdover is invisible on the new --surface-2 ground; it must resolve to a real tone.
+    d = _decls(_rule_body(_CSS.read_text(), ".rail-link:hover"))
+    assert not _RAW_OKLCH.search(d.get("background", "")), \
+        f".rail-link:hover must not keep the raw white-alpha holdover (invisible on --surface-2), got {d.get('background')!r}"
+
+
+# ── T-08 (MOL-95): high-visibility 3px accent-bright focus ring (non-default, new work per P-06) ─────
+# The shared --ring recipe (used at every :focus-visible site via box-shadow:var(--ring)) is a double
+# box-shadow: a 2px moat in the page background, then an OUTER accent ring. This pins the new recipe:
+# a 2px moat + 5px outer = a 3px visible accent-bright stroke (brief's literal "3px accent-bright ring").
+# The two active-state sites that diverge with their OWN inline double-box-shadow (because the active
+# background already IS accent-dim, so the moat differs from --bg) must track the same 5px outer width.
+_RING_RE = re.compile(r'--ring\s*:\s*([^;]+);')
+
+
+def _ring_value(css):
+    m = _RING_RE.search(css)
+    assert m, "--ring token not found in studio.css"
+    return re.sub(r'\s+', ' ', m.group(1).strip())
+
+
+def test_ring_is_3px_accent_bright_stroke():
+    # 2px moat + 5px outer = a 3px visible accent-bright stroke; hue is --accent-bright (not the dimmer --accent).
+    ring = _ring_value(_CSS.read_text())
+    assert "5px var(--accent-bright)" in ring, \
+        f"--ring must end in a 5px var(--accent-bright) outer ring (3px visible stroke), got {ring!r}"
+    assert "2px var(--bg)" in ring, \
+        f"--ring must keep its 2px var(--bg) moat before the accent stroke, got {ring!r}"
+    assert "var(--accent)," not in ring and not re.search(r'\bvar\(--accent\)\s*$', ring), \
+        f"--ring must use the brighter --accent-bright hue, not the dimmer --accent, got {ring!r}"
+
+
+def test_active_state_rings_track_the_new_5px_width():
+    # the two divergent active-state rings (own inline double-box-shadow) must widen to the same 5px outer,
+    # each preserving its OWN moat color (rail-link.active = --accent-dim; spine-step.active = --bg).
+    css = _CSS.read_text()
+    rail = _decls(_rule_body(css, ".rail-link.active:focus-visible")).get("box-shadow", "")
+    assert "0 0 0 5px var(--accent-bright)" in re.sub(r'\s+', ' ', rail), \
+        f".rail-link.active:focus-visible ring must widen its outer stroke to 5px accent-bright, got {rail!r}"
+    assert "0 0 0 2px var(--accent-dim)" in re.sub(r'\s+', ' ', rail), \
+        f".rail-link.active:focus-visible must preserve its own --accent-dim moat, got {rail!r}"
+    spine = _decls(_rule_body(css, ".spine-step.active > a:focus-visible")).get("box-shadow", "")
+    assert "0 0 0 5px var(--accent-bright)" in re.sub(r'\s+', ' ', spine), \
+        f".spine-step.active > a:focus-visible ring must widen its outer stroke to 5px accent-bright, got {spine!r}"
+    assert "0 0 0 2px var(--bg)" in re.sub(r'\s+', ' ', spine), \
+        f".spine-step.active > a:focus-visible must preserve its own --bg moat, got {spine!r}"
+
+
+# ── T-09 (MOL-96): SVG-chevron select caret + light-ground readonly re-theme (P-03 caret half) ───────
+# The old caret was a two-linear-gradient triangular hack with fixed pixel offsets that don't scale with
+# T-02's larger base size. It becomes ONE crisp SVG chevron data-URI, scoped :not([multiple]) so the
+# native multi-select is left alone, with a dimmed disabled variant. SVG data-URIs cannot reference CSS
+# custom properties, so the stroke is a BAKED hex computed from --muted oklch(45% .015 60) ≈ #5c534d — a
+# required CSS comment ties the two so a future token change can't silently desync them.
+def test_select_caret_is_svg_chevron_not_gradient_hack():
+    css = _CSS.read_text()
+    body = _rule_body(css, "select:not([multiple])")
+    d = _decls(body)
+    assert d.get("appearance") == "none" and d.get("-webkit-appearance") == "none", \
+        f"select:not([multiple]) must strip native appearance, got {d!r}"
+    assert d.get("padding-right") == "2.2rem", \
+        f"select:not([multiple]) padding-right must be 2.2rem (breathing room for the SVG), got {d.get('padding-right')!r}"
+    assert "data:image/svg+xml" in body and "linear-gradient" not in body, \
+        "select:not([multiple]) caret must be an SVG data-URI, not the old linear-gradient hack"
+    # the enabled caret stroke is the baked hex computed from --muted (NOT the draft's saturated brown #724b28).
+    assert "%23724b28" not in body, "caret must not keep the draft's saturated-brown placeholder %23724b28"
+    assert "%235c534d" in body, \
+        "enabled caret stroke must be the baked hex computed from --muted oklch(45% .015 60) = %235c534d"
+
+
+def test_select_caret_has_dimmed_disabled_variant():
+    css = _CSS.read_text()
+    body = _rule_body(css, "select:not([multiple]):disabled")
+    assert "data:image/svg+xml" in body, "disabled select must supply its own dimmed SVG caret"
+    assert "%235c534d" not in body, "disabled caret must not reuse the full-strength enabled hex"
+    assert "%23" in body, "disabled caret must bake a (lighter) literal hex stroke"
+
+
+def test_select_caret_comment_ties_hex_to_muted_token():
+    # a bare hex desyncs silently if --muted is retuned; the exact comment wording is the guard.
+    css = _CSS.read_text()
+    assert "/* caret ≈ --muted oklch(45% .015 60); update together */" in css, \
+        "the caret rule must carry the exact desync-guard comment tying the baked hex to --muted"
+
+
+def test_readonly_inputs_use_light_ground_tokens_not_raw_dark_literal():
+    # the old readonly recipe was a raw dark-surface literal oklch(16% .012 280 / .6) — a dark-theme holdover
+    # invisible on the paper ground. It becomes two token refs: --surface-2 ground, --muted text.
+    d = _decls(_rule_body(_CSS.read_text(), "textarea[readonly], input[readonly]"))
+    assert d.get("background") == "var(--surface-2)", \
+        f"readonly background must be var(--surface-2) (was raw dark oklch), got {d.get('background')!r}"
+    assert d.get("color") == "var(--muted)", \
+        f"readonly text must be var(--muted), got {d.get('color')!r}"
+
+
+def test_table_row_hover_shifts_to_surface2():
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, "tbody tr:hover td, table tr:hover td"))
+    assert d.get("background") == "var(--surface-2)", \
+        f"table row hover must shift to --surface-2, got {d.get('background')!r}"
+
+
+def test_schedule_row_hover_shifts_to_surface2():
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, ".schedule-row:hover"))
+    assert d.get("background") == "var(--surface-2)", \
+        f".schedule-row hover must shift to --surface-2, got {d.get('background')!r}"
+
+
+# ── T-16 (MOL-103): the generic <details> ground was a raw dark-theme literal oklch(16% .012 280 / .4). On
+# the paper ground that alpha-over-nothing composites to a solid gray SLAB (the "View & density" bar on
+# /review, and the shared-styled disclosures on /personas and Home). It becomes the recessed-panel token
+# --surface-2 — the same raw-dark-literal → token fix class as the readonly inputs (T-09). The details.batch
+# override keeps its own gradient + accent left-border, so batch cards are unaffected by this generic ground.
+def test_generic_details_disclosure_uses_light_ground_token_not_raw_dark_literal():
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, "details"))
+    assert d.get("background") == "var(--surface-2)", \
+        f"generic details ground must be var(--surface-2) (was raw dark oklch slab), got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "")), \
+        "the generic details ground must not keep a raw oklch literal (it won't follow the token flip)"

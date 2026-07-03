@@ -121,6 +121,35 @@ def to_local_display(ts, *, cfg=None) -> str:
     return loc.strftime("%Y-%m-%d %H:%M") + (f" {tz}" if tz else "")
 
 
+def _relative_fragment(delta) -> str:
+    """A stdlib-only relative bucket for a (now - ts) timedelta: 'just now' within +/-60s, else the coarsest
+    non-zero of minutes/hours/days with an 'in N' (future) or 'N ago' (past) frame. Pure math, no dependency."""
+    secs = delta.total_seconds()
+    if abs(secs) < 60: return "just now"
+    ago = secs >= 0                                  # now is AFTER ts -> ts is in the past
+    m = int(abs(secs) // 60)
+    if m < 60: n, unit = m, "m"
+    elif m < 1440: n, unit = m // 60, "h"
+    else: n, unit = m // 1440, "d"
+    return f"{n}{unit} ago" if ago else f"in {n}{unit}"
+
+
+def to_local_display_hybrid(ts, *, cfg=None, now=None) -> str:
+    """The absolute LOCAL string (to_local_display) with a relative parenthetical appended: 'YYYY-MM-DD HH:MM TZ
+    (in 3h)' / '(2d ago)' / '(just now)'. now defaults to datetime.now(UTC); tests inject it for determinism.
+    FAIL-OPEN: any parse/compute failure (or an empty absolute string) returns the plain to_local_display output
+    with NO parenthetical, exactly as today — mirrors this module's fail-open convention."""
+    base = to_local_display(ts, cfg=cfg)
+    if not base: return base                         # empty/absent/garbage ts -> plain (empty) display, no parenthetical
+    try:
+        dt = _aware_utc(ts)
+        if dt is None: return base
+        ref = now if now is not None else datetime.now(timezone.utc)
+        return f"{base} ({_relative_fragment(ref - dt)})"
+    except Exception:
+        return base                                  # bad now / any failure -> absolute string unchanged
+
+
 def to_local_input(ts, *, cfg=None) -> str:
     """A stored UTC ISO time -> naive-LOCAL 'YYYY-MM-DDTHH:MM' for an <input type=datetime-local> value
     (minute precision, no tz suffix — the control is local by the HTML spec). Uses cfg.operator_tz
