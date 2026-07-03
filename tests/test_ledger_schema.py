@@ -54,6 +54,19 @@ def test_v1_ledger_migrates_to_current_with_empty_stitch_plans(tmp_path):
     led = Ledger.load(cfg)                                     # must NOT raise
     assert led.stitch_plans == {} and "s1" in led.sources      # migrated; sources intact
 
+def test_module_docstring_names_every_persisted_map(tmp_path):
+    # MOL-72: the Ledger module docstring's field inventory drifted stale ("four id->unit maps" while
+    # the class persists far more). Derive the persisted-map list PROGRAMMATICALLY from the on-disk doc
+    # that _save_unlocked writes (the serialization truth, gated by SCHEMA_VERSION), then assert the
+    # docstring names each key. Re-goes-red automatically the next time a map is added without a doc update.
+    import fanops.ledger as ledger_mod
+    cfg = Config(root=tmp_path); _seed(cfg)
+    doc = json.loads(cfg.ledger_path.read_text())
+    persisted = {k for k in doc if k != "schema_version"}   # every top-level map key, minus the version stamp
+    docstring = ledger_mod.__doc__ or ""
+    missing = sorted(k for k in persisted if k not in docstring)
+    assert not missing, f"module docstring omits persisted map(s): {missing}"
+
 def test_stitch_plan_round_trips(tmp_path):
     # M3: the stitch_plans map serializes + reloads (additive top-level collection, like tag_log).
     from fanops.models import StitchPlan, StitchState

@@ -1,5 +1,9 @@
 # src/fanops/ledger.py
-"""Single source of truth: one JSON doc, four id->unit maps, git-versioned.
+"""Single source of truth: one JSON doc of top-level maps (SCHEMA_VERSION-stamped), git-versioned.
+Persists 10 id->unit (model) maps — sources, moments, clips, posts, stitch_plans, batches, renders,
+selection_facts, account_selections, imported_media — plus 2 non-unit scalar/plain-dict maps: tag_log
+("account|clip_id" -> ISO tag time) and variant_streaks ("account|platform" -> streak dict). Keep this
+inventory in sync with _save_unlocked's `doc` (the serialization truth) whenever a map is added/removed.
 Writes are ATOMIC (temp file + os.replace) under a file lock so the 're-run advance()'
 model cannot corrupt or lose updates. Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
