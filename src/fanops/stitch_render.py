@@ -82,8 +82,14 @@ def _impact_cut_candidates(led: Ledger, cfg: Config, log) -> list[tuple]:
         for c in list(led.clips.values()):
             if c.parent_id != m.id or c.state in _NON_BASE_STATES:
                 continue
+            base_fp = _read_fingerprint(cfg, c.id)
+            if base_fp is None:                          # MOL-80: unreadable fp (sidecar raced/absent) -> SKIP
+                # this pass rather than mint a None pin. The content-addressed id excludes the fp, so a plan
+                # minted once with a None pin would never re-mint with the real fp (setdefault no-op) and would
+                # permanently skip the _precheck drift guard. Skip-and-retry closes that window to one pass.
+                log("impact_cut", c.id, "info", skip="base fp unreadable — retry next pass"); continue
             try:
-                plan = make_stitch_plan(c, m, src, base_fp=_read_fingerprint(cfg, c.id))
+                plan = make_stitch_plan(c, m, src, base_fp=base_fp)
             except Exception as e:                       # fail-open per candidate — the pass still completes
                 log("impact_cut", c.id, "warn", err=str(e)[:120]); continue
             if plan is not None:
@@ -114,13 +120,16 @@ def _intro_tease_candidates(led: Ledger, cfg: Config, log) -> list[tuple]:
         for c in list(led.clips.values()):
             if c.parent_id != m.id or c.state in _NON_BASE_STATES:
                 continue
+            base_fp = _read_fingerprint(cfg, c.id)
+            if base_fp is None:                          # MOL-80: same skip-and-retry as impact_cut — never
+                log("intro_tease", c.id, "info", skip="base fp unreadable — retry next pass"); continue  # a None pin
             try:
                 params = {"intro_asset_id": top["asset_id"], "tease_text": top["tease_text"],
                           "intro_seconds": INTRO_TEASE_SECONDS}
                 plan = StitchPlan(id=stitch_plan_id(c.id, [top["asset_id"]], INTRO_STRATEGY, params),
                                   clip_id=c.id, strategy_key=INTRO_STRATEGY, asset_ids=[top["asset_id"]],
                                   plan_params=params, state=StitchState.suggested,
-                                  base_fingerprint=_read_fingerprint(cfg, c.id),
+                                  base_fingerprint=base_fp,
                                   rank_score=round(float(top["fit_score"]), 4), rationale=top.get("rationale"))
             except Exception as e:                       # fail-open per candidate — the pass still completes
                 log("intro_tease", c.id, "warn", err=str(e)[:120]); continue
