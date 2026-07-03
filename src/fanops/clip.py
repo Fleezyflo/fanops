@@ -441,15 +441,21 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
     subprocess result for the caller's existing handling; FileNotFoundError/OSError/TimeoutExpired propagate
     exactly like the single-pass `subprocess.run` they replace.
 
-    ATOMIC WRITE (MOL-78): ffmpeg renders to a `.part` temp SIBLING of `dst`, and the finished output is
-    `os.replace`d onto `dst` ONLY after success (rc==0 + temp exists + size>0). So `dst` is never a torn
-    file mid-write — a concurrent reader (preview fallback, ffprobe, upload) sees the OLD `dst` or nothing,
-    never a half-muxed byte stream; on failure/timeout `dst` is left untouched (absent, or its prior good
-    file), so the caller's rc/exists/size checks on `dst` still hold verbatim (an unreplaced failure leaves
-    `dst` missing, matching the existing `not dst.exists()` error branch). The temp is swept on EVERY exit
-    path — success, fail-through, or a raised exception — in the finally. Mirrors render_account_cut's proven
-    `.part`+os.replace pattern in this same file (and overlay.burn_hook_only)."""
-    tmp = str(dst) + ".part"
+    ATOMIC WRITE (MOL-78): ffmpeg renders to a `<dst>.part.mp4` temp SIBLING of `dst`, and the finished
+    output is `os.replace`d onto `dst` ONLY after success (rc==0 + temp exists + size>0). So `dst` is never
+    a torn file mid-write — a concurrent reader (preview fallback, ffprobe, upload) sees the OLD `dst` or
+    nothing, never a half-muxed byte stream; on failure/timeout `dst` is left untouched (absent, or its
+    prior good file), so the caller's rc/exists/size checks on `dst` still hold verbatim (an unreplaced
+    failure leaves `dst` missing, matching the existing `not dst.exists()` error branch). The temp MUST keep
+    a muxer-inferable `.mp4` suffix: `ffmpeg_clip_cmd`/`ffmpeg_segments_cmd` pass no `-f mp4`, so ffmpeg
+    picks the container from the OUTPUT EXTENSION alone — a bare `.part` temp fails "Error initializing the
+    muxer" and produces NO file (rc!=0), so os.replace would never run and `dst` would never be created
+    (the MOL-78 CI E2E failure; the unit tests missed it because they stubbed ffmpeg). This also heals
+    render_account_cut, which passes its OWN `<out>.part` as `dst` here: we render to `<dst>.part.mp4`
+    (muxes fine) and publish to `dst` whatever ITS extension. The temp is swept on EVERY exit path —
+    success, fail-through, or a raised exception — in the finally. Mirrors render_account_cut's proven
+    atomic+os.replace pattern in this same file (and overlay.burn_hook_only)."""
+    tmp = str(dst) + ".part.mp4"                              # keep a muxer-inferable .mp4 suffix (see ATOMIC WRITE)
     try:
         if track and len(track) > 1:
             seg_cmd = ffmpeg_segments_cmd(src_path, tmp, cs, ce, aspect_value, track,
