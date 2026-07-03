@@ -177,9 +177,13 @@ def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str, now_iso: 
     sid = make_id("src", digest)                  # identity = content, not path
     dest = cfg.sources / f"{sid}{f.suffix.lower()}"
     if not dest.exists():
+        tmp = dest.with_name(dest.name + ".tmp")                    # sibling temp in the SAME dir (same-fs os.replace -> atomic, mirrors _archive_inbox_file)
         try:
-            shutil.copy2(f, dest)
-        except OSError as e:                                         # ENOSPC / perms: a PER-FILE skip, NOT a pass rollback
+            shutil.copy2(f, tmp); os.replace(tmp, dest)             # copy to temp then publish atomically: dest.exists() ⇒ COMPLETE, never a truncated partial (MOL-74)
+        except OSError as e:                                         # ENOSPC / perms / interrupted copy: a PER-FILE skip, NOT a pass rollback
+            if tmp.exists():
+                try: tmp.unlink()                                   # discard this pass's partial so it never accumulates in sources/
+                except OSError as ue: get_logger(cfg)("ingest", f.name, "tmp_cleanup_failed", why=str(ue)[:120])
             get_logger(cfg)("ingest", f.name, "copy_failed", why=str(e)[:120]); return False
     w, h, dur = probe_dimensions(dest)
     degraded = "probe_failed" if (w == 0 or h == 0) else None        # ING-7: a 0×0 probe is degraded, re-probed next pass
