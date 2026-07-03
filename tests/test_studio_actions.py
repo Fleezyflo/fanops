@@ -142,6 +142,21 @@ def test_edit_caption_imminent_rejected(tmp_path):
     assert res.ok is False
     assert Ledger.load(cfg).posts["p_edit"].caption == "OLD"
 
+# MOL-86: a manual caption edit runs the SAME brand-risk screen regenerate_caption enforces —
+# an off-brand edit is REJECTED and never written (no guardrail bypass).
+def test_edit_caption_off_brand_rejected(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    res = edit_caption(cfg, "p_edit", "stream now — link in bio", now=NOW)
+    assert res.ok is False
+    assert res.error and "off-brand" in res.error
+    assert Ledger.load(cfg).posts["p_edit"].caption == "OLD"   # original preserved, edit not written
+
+def test_edit_caption_clean_still_persists(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    res = edit_caption(cfg, "p_edit", "raw energy, all gas no brakes", now=NOW)
+    assert res.ok is True
+    assert Ledger.load(cfg).posts["p_edit"].caption == "raw energy, all gas no brakes"
+
 def test_snooze_pushes_all_clip_posts_far_out(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg)
     led.add_post(Post(id="p2", parent_id="clip_1", account="@b", account_id="2",
