@@ -157,10 +157,11 @@ def amplify_candidates(led, cfg) -> list[dict]:
 def apply_variant_amplify(led: Ledger, cfg: Config) -> Ledger:
     """Actuator. Update streaks, then amplify each fully-gated candidate's source — injecting the
     winning hook as extra guidance. AMPLIFY-ONLY: never calls retire/_delete_moment_cascade. FAIL-SAFE:
-    any exception -> log once, NO partial mutation beyond what already committed, return led. The
-    caller (cli.run / cmd_amplify_variants) holds the transaction; an uncaught raise there would roll
-    back, but we swallow here so an autonomous run never even sees it. Inert when the kill switch
-    (FANOPS_VARIANT_AMPLIFY) is off — the default."""
+    any exception -> log once and continue; a mid-loop failure is ISOLATED to that candidate (the
+    others still amplify) — the docstring's "no silent starvation of the rest of the batch" contract,
+    mirroring apply_p4_dim_bias's per-item guard. The caller (cli.run / cmd_amplify_variants) holds
+    the transaction; an uncaught raise there would roll back, but we swallow here so an autonomous run
+    never even sees it. Inert when the kill switch (FANOPS_VARIANT_AMPLIFY) is off — the default."""
     if not cfg.variant_amplify:
         return led                                  # kill switch / default OFF -> inert
     if not learning_validated(cfg):
@@ -174,14 +175,26 @@ def apply_variant_amplify(led: Ledger, cfg: Config) -> Ledger:
         get_logger(cfg)("variant_amplify", "-", "skipped_unvalidated",
                         hint="auto-unfreezes on the first real non-degraded live metric (optional early: `fanops cutover metrics`)")
         return led
+    # Streak update + candidate build share ONE broad guard: a failure here means zero candidates (a
+    # genuinely different failure mode than one bad candidate mid-loop), so it fails the whole pass to a
+    # single logged 'error' — same as p4_dim_bias isolates its candidate-list step.
     try:
         update_streaks(led, cfg)
-        for cand in amplify_candidates(led, cfg):
+        candidates = amplify_candidates(led, cfg)
+    except Exception as e:
+        get_logger(cfg)("variant_amplify", "-", "error", err=str(e)[:120])   # fail-SAFE
+        return led
+    for cand in candidates:
+        # Per-candidate isolation (fail-SAFE, not fail-silent): one surface's amplify failure must NOT
+        # abort the OTHER surfaces (a multi-account/-platform pass with several winning surfaces would
+        # otherwise silently starve every OTHER earned amplify on ONE bad candidate), and the log must
+        # name WHICH candidate (post_id/winning_hook) failed — a generic outer 'error' hides whether 0
+        # or k-1 amplified. MAX_AMPLIFY_PER_SOURCE is enforced INSIDE amplify, so re-runs stay bounded.
+        try:
             hint = (f"Recent on-screen hooks that performed best here: '{cand['winning_hook']}'. "
                     f"Lean toward this STYLE (tone, length, angle) — do not copy verbatim.")
             amplify(led, cfg, [cand["post_id"]], extra_guidance=hint)   # the existing C1-fixed path
-    except Exception as e:
-        # FAIL-SAFE, not fail-silent: record WHY so a run that quietly stops amplifying is
-        # distinguishable from one with nothing to amplify (FIX F51's whole point).
-        get_logger(cfg)("variant_amplify", "-", "error", err=str(e)[:120])
+        except Exception as e:
+            get_logger(cfg)("variant_amplify", cand.get("post_id", "-"), "error",
+                            hook=cand.get("winning_hook", "-"), err=str(e)[:120])
     return led

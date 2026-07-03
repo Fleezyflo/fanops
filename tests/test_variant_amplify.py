@@ -323,6 +323,68 @@ def test_apply_failsafe_logs_the_error_detail(tmp_path, monkeypatch):
     assert "AMPLIFY-BOOM-SENTINEL" in log and "err=" in log
 
 
+# ---- MOL-85: per-candidate isolation in the amplify loop (mirror p4_dim_bias's per-item guard) ----
+def _seed_gated_surface(led, cfg, acct):
+    """Build ONE fully-gated amplify surface on `acct` with its OWN source lineage (source_<acct>,
+    clip_<acct>, moment_<acct>). 8 analyzed WIN posts + 3 runner-ups, streak 3 — clears every gate,
+    so amplify_candidates emits exactly one candidate for this surface. Post ids are namespaced by
+    acct so the three surfaces' lineages never collide."""
+    sid, cid, mid = f"source_{acct}", f"clip_{acct}", f"moment_{acct}"
+    posts = ([_post(f"{acct}_w{i}", acct, "WIN", 90.0) for i in range(8)]
+             + [_post(f"{acct}_l{i}", acct, "LOSE", 1.0) for i in range(3)])
+    for p in posts:
+        led.add_post(p.model_copy(update={"parent_id": cid}))
+    led.add_source(Source(id=sid, source_path=f"{acct}.mp4", state=SourceState.transcribed,
+                          duration=10.0, transcript=[], language="en"))
+    led.add_moment(Moment(id=mid, parent_id=sid, start=0.0, end=4.0, reason="r",
+                          transcript_excerpt="ex"))
+    led.add_clip(Clip(id=cid, parent_id=mid, path=f"{cid}.mp4"))
+    led.variant_streaks[f"{acct}|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+
+
+def test_apply_isolates_one_failing_candidate(tmp_path, monkeypatch):
+    """MOL-85: a mid-loop amplify failure must isolate to THAT candidate — the others still amplify.
+    Three fully-gated surfaces (@a, @b, @c → sources source_@a/@b/@c, candidate order is account-
+    sorted). The middle candidate's amplify() raises; @a and @c must still flip to moments_requested
+    (their mutations land) and the log must name @b's post_id — proving isolation + diagnosability,
+    versus today's ONE outer guard where @a commits, @b raises, and @c is never even attempted."""
+    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    for acct in ("@a", "@b", "@c"):
+        _seed_gated_surface(led, cfg, acct)
+    _validate(cfg)                                   # Phase 2: reach the try-body
+
+    # The middle candidate (@b) is source_@b; its representative post_id is the lowest WIN post_id
+    # for @b. Make amplify() raise ONLY for that source's candidate, commit for the others.
+    from fanops import variant_amplify as va
+    real_amplify = va.amplify
+    b_pids = {c["post_id"] for c in va.amplify_candidates(led, cfg)
+              if c["source_id"] == "source_@b"}
+    assert b_pids, "fixture must produce a @b candidate"
+
+    def _amplify(led_, cfg_, post_ids, *a, **k):
+        if set(post_ids) & b_pids:
+            raise RuntimeError("MIDDLE-CANDIDATE-BOOM")
+        return real_amplify(led_, cfg_, post_ids, *a, **k)
+
+    monkeypatch.setattr("fanops.variant_amplify.amplify", _amplify)
+    apply_variant_amplify(led, cfg)                  # must NOT raise
+
+    # @a and @c amplified (their mutations landed); @b did NOT (its amplify raised, isolated).
+    assert led.sources["source_@a"].state is SourceState.moments_requested
+    assert led.sources["source_@c"].state is SourceState.moments_requested
+    assert led.sources["source_@b"].state is SourceState.transcribed   # untouched — failure isolated
+    assert request_path(cfg, "moments", "source_@a").exists()
+    assert request_path(cfg, "moments", "source_@c").exists()
+    assert not request_path(cfg, "moments", "source_@b").exists()
+
+    # Diagnosability: the log names WHICH candidate failed (its post_id), not a generic outer 'error'.
+    log = cfg.log_path.read_text()
+    failed_pid = next(iter(b_pids))
+    assert failed_pid in log and "MIDDLE-CANDIDATE-BOOM" in log
+
+
 # --- The retire-isolation invariant (v3's C1 safety, mechanized — mirrors test_variant_learning's
 #     AST approach but asserts the REVERSE direction: variant_amplify must be BLIND to the
 #     retire/delete surface). HARDENED after adversarial review (2026-06-04): the original walked a
