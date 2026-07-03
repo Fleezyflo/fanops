@@ -121,15 +121,15 @@
               <input type="hidden" name="id" value="{{ p.id }}">
               <input type="text" name="genre" value="{{ p.intake.get('genre', '') }}" placeholder="genre" size="10"
                 title="seeds the hashtag search for this persona (saved when you Research)">
-              <button type="submit" title="propose the reach-best tags this persona is missing">Research</button>
+              <button type="submit" class="ghost" title="propose the reach-best tags this persona is missing">Research</button>{# MOL-60: hashtag utils demoted to ghost so the consequential Assign out-weighs them #}
             </form>
             <form class="inline" hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
               <input type="hidden" name="id" value="{{ p.id }}">
-              <input type="text" name="tag" placeholder="#tag" size="12"><button type="submit">Add</button>
+              <input type="text" name="tag" placeholder="#tag" size="12"><button type="submit" class="ghost">Add</button>{# MOL-60: ghost tier #}
             </form>
             <form class="inline" hx-post="{{ url_for('do_personas_recommend') }}" hx-target="#personas-panel" hx-swap="outerHTML">
               <input type="hidden" name="id" value="{{ p.id }}">
-              <input type="text" name="tag" placeholder="#candidate" size="12"><button type="submit" title="look up this tag's live Instagram reach via the Graph API">Check reach</button>
+              <input type="text" name="tag" placeholder="#candidate" size="12"><button type="submit" class="ghost" title="look up this tag's live Instagram reach via the Graph API">Check reach</button>{# MOL-60: ghost tier #}
             </form>
           </div>
         </div>

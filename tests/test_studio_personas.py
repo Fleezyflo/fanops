@@ -135,16 +135,52 @@ def test_personas_page_read_model(tmp_path):
 
 
 def test_personas_page_surfaces_live_graph_reach(tmp_path):
-    # WS5: the card's reach annotation + ★ come from the LIVE Graph-reach store (refresh_store), NOT own-post
-    # reach. A curated tag present in the store is flagged most-active and shows its Graph reach number.
+    # WS5 / MOL-59: the card's reach annotation + ★ come from the LIVE Graph-reach store (refresh_store), NOT
+    # own-post reach. A curated tag with a MEASURED Graph reach value is flagged most-active + shows the number.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
     core.add_corpus_tag(cfg, pid, "#detroitrap")
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({"tags": ["#detroitrap", "#hiphop"], "reach": {"#detroitrap": 4200}}))
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
-    assert "#detroitrap" in card.reach_tags                 # store-present -> flagged most-active (★)
+    assert "#detroitrap" in card.reach_tags                 # measured reach -> flagged most-active (★)
     assert card.reach_means.get("#detroitrap") == 4200.0    # the LIVE Graph reach, surfaced honestly
+
+
+def test_personas_page_star_gated_on_measured_reach_not_store_presence(tmp_path):
+    # MOL-59: a tag merely PRESENT in the store (a seed) with an EMPTY reach map is NOT most-active — the ★
+    # asserts a live-reach fact, so with zero measurements ZERO tags star. This is today's live state.
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1", voice="v1")
+    core.add_corpus_tag(cfg, pid, "#detroitrap")
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#detroitrap", "#hiphop"], "reach": {}}))
+    card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
+    assert card.reach_tags == []                            # store-present but unmeasured -> no ★
+    # and the rendered panel shows no star for it
+    html = _client(cfg).get("/personas").get_data(as_text=True)
+    assert "#detroitrap" in html and "★" not in html
+
+
+def test_personas_page_star_only_on_measured_tags(tmp_path):
+    # MOL-59: with reach covering SOME corpus tags, ONLY the measured ones star.
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1", voice="v1")
+    core.add_corpus_tag(cfg, pid, "#detroitrap")
+    core.add_corpus_tag(cfg, pid, "#hiphop")
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#detroitrap", "#hiphop"], "reach": {"#detroitrap": 4200}}))
+    card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
+    assert card.reach_tags == ["#detroitrap"]               # measured only; #hiphop present-in-store but unmeasured
+
+
+def test_personas_page_no_store_no_stars(tmp_path):
+    # MOL-59: no store at all -> no measurements -> no ★ (pins the existing fail-open).
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1", voice="v1")
+    core.add_corpus_tag(cfg, pid, "#detroitrap")
+    card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
+    assert card.reach_tags == []
 
 
 def test_personas_page_failopen_on_corrupt(tmp_path):
@@ -242,3 +278,36 @@ def test_account_assignment_is_folded_into_each_card(tmp_path):
     assert "persona-accounts" in html and "@linked" in html          # the driven handle shows on the card
     assert "persona-assign" in html and "@free" in html              # the unassigned account is assignable inline
     assert "Connect accounts" not in html                            # the orphan page-foot section is removed
+
+
+def test_persona_card_action_tiers_assign_over_hashtag_utils(tmp_path):
+    # MOL-60: on a persona card the CONSEQUENTIAL, rare Assign (rewires which voice drives a real account,
+    # stealing it from another persona) must out-weigh the FREQUENT, low-stakes hashtag utilities (Research /
+    # Add / Check reach — two of which only PROPOSE, never mutate). Per the MOL-44 3-tier system + the
+    # MOL-44/51/55 demote-the-utility pattern: Assign stays secondary (base .button = fill+border), the three
+    # hashtag tools drop to .ghost (text-only). "Tune this voice" keeps the single per-view .primary gradient.
+    import re
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@free", "platforms": ["tiktok"], "status": "active"}])
+    core.add_persona(cfg, name="Curator", voice="champions craft")
+    html = _client(cfg).get("/personas").get_data(as_text=True)
+
+    def _btn(label):  # the <button ...>LABEL</button> opening tag whose text is exactly `label`
+        m = re.search(r'<button\b[^>]*>' + re.escape(label) + r'</button>', html)
+        assert m, f"{label!r} button not found in rendered personas panel"
+        return m.group(0)
+
+    # the three hashtag utilities are demoted to the tertiary ghost tier
+    assert 'class="ghost"' in _btn("Research")
+    assert 'class="ghost"' in _btn("Add")
+    # "Check reach" may wrap across whitespace in the template; match on its title as the anchor
+    check = re.search(r'<button\b[^>]*title="look up this tag[^"]*"[^>]*>', html)
+    assert check and 'class="ghost"' in check.group(0), "Check reach must be a ghost button"
+
+    # Assign stays secondary — NOT demoted to ghost, NOT promoted to primary
+    assign = _btn("Assign")
+    assert "ghost" not in assign, "Assign must out-weigh the hashtag utils (not ghost)"
+    assert "primary" not in assign, "Assign must not become a second primary (one per view)"
+
+    # the card's single primary stays "Tune this voice"
+    assert html.count('class="persona-edit-open primary"') >= 1

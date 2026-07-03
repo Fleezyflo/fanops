@@ -245,6 +245,64 @@ def test_lift_row_carries_degraded_marker(tmp_path):
     assert rows["HYPE"].lift_degraded is True and "saves" in (rows["HYPE"].lift_missing or [])
     assert rows["CALM"].lift_degraded is False        # a full-objective row is not flagged
 
+# ── MOL-50: uniform DEGRADED is a TABLE-level fact — surface once, quiet the per-row repetition ──
+# When >50% of the shown variant rows are degraded, the view reports it as a table-level fact
+# (degraded_count/degraded_total + degraded_mostly=True) so the template can emit ONE note and
+# shrink the per-row badge. A minority (<=50%) keeps degraded_mostly False so the loud per-row
+# badge stays the exception-signal it was built to be.
+def _deg_post(led, pid, hook, lift, degraded):
+    m = {"lift_score": lift}
+    if degraded: m |= {"lift_degraded": True, "lift_missing_keys": ["saves", "retention"]}
+    led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      variant_key="vk_" + pid, variant_hook=hook, metrics=m, public_url="dryrun://" + pid))
+
+def test_lift_all_degraded_reports_table_level_fact(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    for i in range(4): _deg_post(led, f"p{i}", f"H{i}", 10.0 * i, degraded=True)   # 4/4 degraded
+    view = lift_rows(led, cfg, Accounts.load(cfg))
+    assert view.degraded_count == 4 and view.degraded_total == 4
+    assert view.degraded_mostly is True                    # 100% > 50% -> table-level
+
+def test_lift_majority_degraded_is_mostly(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    for i in range(3): _deg_post(led, f"p{i}", f"H{i}", 10.0 * i, degraded=True)    # 3 degraded
+    _deg_post(led, "pok", "OK", 99.0, degraded=False)                               # 1 clean -> 3/4 = 75%
+    view = lift_rows(led, cfg, Accounts.load(cfg))
+    assert view.degraded_count == 3 and view.degraded_total == 4
+    assert view.degraded_mostly is True                    # 75% > 50% -> table-level
+
+def test_lift_minority_degraded_is_not_mostly(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    _deg_post(led, "pdeg", "DEG", 10.0, degraded=True)                              # 1 degraded
+    for i in range(3): _deg_post(led, f"pok{i}", f"OK{i}", 20.0 + i, degraded=False)  # 3 clean -> 1/4 = 25%
+    view = lift_rows(led, cfg, Accounts.load(cfg))
+    assert view.degraded_count == 1 and view.degraded_total == 4
+    assert view.degraded_mostly is False                   # 25% <= 50% -> loud per-row badge stays
+
+def test_lift_no_degraded_is_not_mostly(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    for i in range(3): _deg_post(led, f"pok{i}", f"OK{i}", 10.0 + i, degraded=False)
+    view = lift_rows(led, cfg, Accounts.load(cfg))
+    assert view.degraded_count == 0 and view.degraded_mostly is False
+
+def test_lift_empty_view_degraded_summary_safe(tmp_path):
+    # no analyzed variant posts -> the summary fields must be well-defined (no note, not mostly)
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    view = lift_rows(led, cfg, Accounts.load(cfg))
+    assert view.variant_rows == []
+    assert view.degraded_count == 0 and view.degraded_total == 0 and view.degraded_mostly is False
+
 def test_lift_amplify_section_present_when_flag_on(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)

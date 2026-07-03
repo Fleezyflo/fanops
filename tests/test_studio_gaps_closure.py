@@ -107,6 +107,20 @@ def test_zero_post_clips_surfaces_orphans(tmp_path):
     led.save()
     assert len(views.zero_post_clips(cfg)) == 1
 
+def test_home_renders_zero_post_clip_warning(tmp_path):
+    # home.html's {% if zero_post_clips %} block must actually receive the projection —
+    # the view existed but the route never passed it, so the warning silently never rendered.
+    cfg = Config(root=tmp_path); _accounts(cfg)
+    cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+    (cdir / "orph.mp4").write_bytes(b"V")
+    led.add_clip(Clip(id="orph", parent_id="m1", path=str(cdir / "orph.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
+    led.save()
+    html = _client(cfg).get("/").data.decode()
+    assert "birthed zero posts" in html and "orph" in html
+
 
 def test_answer_casting_gate_from_studio(tmp_path):
     from fanops.agentstep import write_request, latest_request_id

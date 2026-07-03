@@ -167,6 +167,42 @@ def test_lift_route_carries_clip_id_and_bars(tmp_path):
     assert "★" in html and 'class="bar metric-bar"' in html
 
 
+# ── MOL-50: uniform DEGRADED dedup — table-level note + quiet per-row marker vs loud minority badge ──
+def test_lift_all_degraded_emits_table_note_and_quiet_marker(tmp_path):
+    cfg = Config(root=tmp_path)
+    for i in range(3):
+        _seed_published(cfg, pid=f"d{i}", clip=f"clip_{i}", lift=0.1 * i, hook=f"H{i}",
+                        state=PostState.analyzed, variant_key=f"k{i}",
+                        metrics_extra={"lift_degraded": True, "lift_missing_keys": ["retention"]})
+    html = _client(cfg).get("/lift").data.decode()
+    assert "retention data missing" in html.lower()        # table-level note emitted once...
+    assert 'class="badge degraded"' not in html            # ...loud per-row badge dropped...
+    assert "degraded-quiet" in html                        # ...replaced by the quiet per-row marker
+    assert html.count("degraded-quiet") == 3               # one quiet marker per degraded row
+
+
+def test_lift_minority_degraded_keeps_loud_badge_no_note(tmp_path):
+    # 1 of 4 degraded (25%) -> the exception: loud per-row badge stays, NO table-level note.
+    _seed_published(cfg := Config(root=tmp_path), pid="deg", clip="clip_d", lift=0.1, hook="DEG",
+                    state=PostState.analyzed, variant_key="kd",
+                    metrics_extra={"lift_degraded": True, "lift_missing_keys": ["retention"]})
+    for i in range(3):
+        _seed_published(cfg, pid=f"ok{i}", clip=f"clip_ok{i}", lift=0.2 + i, hook=f"OK{i}",
+                        state=PostState.analyzed, variant_key=f"kok{i}")
+    html = _client(cfg).get("/lift").data.decode()
+    assert "retention data missing" not in html.lower()    # no table-level note for a minority
+    assert 'class="badge degraded"' in html                # the loud per-row badge stays (exception-signal)
+    assert "degraded-quiet" not in html
+
+
+def test_lift_number_uses_dominant_class(tmp_path):
+    # MOL-50: the Lift number is the answer to "which variant won" -> it carries the dominant .lift-num class.
+    _seed_published(cfg := Config(root=tmp_path), pid="v", clip="clip_1", lift=0.3, hook="H",
+                    state=PostState.analyzed, variant_key="k")
+    html = _client(cfg).get("/lift").data.decode()
+    assert 'class="lift-num"' in html
+
+
 def test_singleton_posted_panel_has_no_star(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_published(cfg, pid="only", clip="clip_solo", lift=0.55, hook="alone")
@@ -221,3 +257,52 @@ def test_posted_link_dryrun_row_labels_no_link_not_pending(tmp_path):
     assert 'data-testid="posted-channel-chip"' in html       # M5: channel chip present
     assert ">dryrun<" in html                                # labels as dryrun (no real platform saw it)
     assert "no link" in html                                 # the honest dryrun placeholder, NOT 'pending'
+
+
+# ── MOL-51: per-row action weights ranked deliberately ──────────────────────────────────────────────
+# Before MOL-51 the Posted list row had ~3 default-weight controls (Metrics disclosure, Post again,
+# Crosspost) at IDENTICAL weight, the payoff "View on {platform}" quieter than them, and the Lift value
+# as plain text regardless of magnitude. MOL-51 assigns MOL-44's 3 tiers: the two infrequent utility
+# submit-buttons + the Metrics disclosure → tertiary .ghost; the live permalink stays the accent-bright
+# leading affordance; the Lift value reuses MOL-50's dominant .lift-num. Class-only — no form/hx change.
+def test_posted_utility_buttons_are_ghost(tmp_path):
+    # "Post again" and "Crosspost" are infrequent utility actions -> demoted to the tertiary .ghost tier.
+    cfg = Config(root=tmp_path)
+    _seed_published(cfg, pid="p_live", lift=0.42)            # published + https:// url -> live delivery row
+    html = _client(cfg).get("/posted").data.decode()
+    import re as _re
+    # every submit button carrying the Post again / Crosspost label must have the ghost class
+    for label in ("Post again", "Crosspost"):
+        m = _re.findall(r'<button[^>]*>' + _re.escape(label) + r'</button>', html)
+        assert m, f"{label!r} button not rendered on the live row"
+        for btn in m:
+            assert "ghost" in btn, f"{label!r} button must be tertiary .ghost, got: {btn}"
+
+
+def test_posted_metrics_disclosure_is_ghost(tmp_path):
+    # the Metrics <summary> disclosure toggle is the same low-weight family as MOL-44's demoted toggles.
+    cfg = Config(root=tmp_path)
+    _seed_published(cfg, pid="p_live", lift=0.42)
+    html = _client(cfg).get("/posted").data.decode()
+    import re as _re
+    m = _re.search(r'<summary[^>]*>Metrics</summary>', html)
+    assert m, "Metrics disclosure summary not rendered"
+    assert "ghost" in m.group(0), f"Metrics summary must carry the ghost class, got: {m.group(0)}"
+
+
+def test_posted_lift_value_uses_dominant_class(tmp_path):
+    # MOL-51 item 3: Posted's Lift value becomes the dominant per-row datum -> reuse MOL-50's .lift-num.
+    cfg = Config(root=tmp_path)
+    _seed_published(cfg, pid="p_live", lift=0.42)
+    html = _client(cfg).get("/posted").data.decode()
+    assert 'class="lift-num"' in html                        # the Lift number is bold mono --ink, not plain text
+
+
+def test_posted_live_link_keeps_promoted_class(tmp_path):
+    # MOL-51 item 2: the live permalink is the payoff link -> stays the leading .live-link accent affordance.
+    cfg = Config(root=tmp_path)
+    _seed_published(cfg, pid="p_live", lift=0.42)
+    html = _client(cfg).get("/posted").data.decode()
+    import re as _re
+    m = _re.search(r'<a class="live-link"[^>]*>View on instagram', html)
+    assert m, f"live permalink must keep the promoted .live-link class as the leading affordance, html: {html[:200]}"

@@ -28,32 +28,32 @@
   </section>
 
   <section class="ops-board" aria-label="Operations">
-    <a class="ops-tile" href="{{ url_for('review') }}">
+    <a class="ops-tile{{ ' ops-tile--zero' if not status.counts.awaiting_posts else '' }}" href="{{ url_for('review') }}">
       <span class="ops-label">Awaiting review</span>
       <span class="ops-value">{{ status.counts.awaiting_posts }}</span>
       <span class="ops-hint muted">posts · {{ status.counts.awaiting }} moments</span>
     </a>
-    <a class="ops-tile" href="{{ url_for('schedule') }}">
+    <a class="ops-tile{{ ' ops-tile--zero' if not status.counts.scheduled else '' }}" href="{{ url_for('schedule') }}">
       <span class="ops-label">Approved</span>
       <span class="ops-value">{{ status.counts.scheduled }}</span>
       <span class="ops-hint muted">{{ status.counts.due_soon }} due now</span>
     </a>
-    <a class="ops-tile" href="{{ url_for('posted', delivery='inflight') }}">
+    <a class="ops-tile{{ ' ops-tile--zero' if not status.counts.inflight else '' }}" href="{{ url_for('posted', delivery='inflight') }}">
       <span class="ops-label">In flight</span>
       <span class="ops-value">{{ status.counts.inflight }}</span>
       <span class="ops-hint muted">awaiting permalink</span>
     </a>
-    <a class="ops-tile" href="{{ url_for('posted', delivery='live') }}">
+    <a class="ops-tile{{ ' ops-tile--zero' if not status.counts.live_trackable else '' }}" href="{{ url_for('posted', delivery='live') }}">
       <span class="ops-label">Live</span>
       <span class="ops-value">{{ status.counts.live_trackable }}</span>
       <span class="ops-hint muted">with live links</span>
     </a>
-    <a class="ops-tile{{ ' ops-tile--danger' if status.counts.failed else '' }}" href="{{ url_for('posted', delivery='failed') }}">
+    <a class="ops-tile{{ ' ops-tile--danger' if status.counts.failed else ' ops-tile--zero' }}" href="{{ url_for('posted', delivery='failed') }}">
       <span class="ops-label">Failed</span>
       <span class="ops-value">{{ status.counts.failed }}</span>
       <span class="ops-hint muted">needs recovery</span>
     </a>
-    <a class="ops-tile{{ ' ops-tile--warn' if system_strip.blocked_gates else '' }}" href="{{ url_for('gates') }}">
+    <a class="ops-tile{{ ' ops-tile--warn' if system_strip.blocked_gates else ' ops-tile--zero' }}" href="{{ url_for('gates') }}">
       <span class="ops-label">Blocked</span>
       <span class="ops-value">{{ system_strip.blocked_gates }}</span>
       <span class="ops-hint muted">processing blocked</span>
@@ -89,9 +89,10 @@
           <span class="home-acct-stats muted" data-acct-count="{{ a.handle }}">{% if w.get('awaiting') %}<span data-acct-awaiting="{{ a.handle }}">{{ w.get('awaiting') }} to review</span>{% endif %}{% if w.get('scheduled') %}{% if w.get('awaiting') %} · {% endif %}<span data-acct-scheduled="{{ a.handle }}">{{ w.get('scheduled') }} scheduled</span>{% endif %}{% if w.get('inflight') %}{% if w.get('awaiting') or w.get('scheduled') %} · {% endif %}<span data-acct-inflight="{{ a.handle }}" class="warn">{{ w.get('inflight') }} waiting for link</span>{% endif %}{% if w.get('failed') %}{% if w.get('awaiting') or w.get('scheduled') or w.get('inflight') %} · {% endif %}<span data-acct-failed="{{ a.handle }}" class="warn">{{ w.get('failed') }} failed</span>{% endif %}{% if not w.get('awaiting') and not w.get('scheduled') and not w.get('inflight') and not w.get('failed') %}<span class="muted">clear</span>{% endif %}</span>
         </div>
         <div class="home-acct-ctas">
-          {% if w.get('awaiting') %}<a class="button primary" href="{{ url_for('review', account=a.handle, view='account', focus=1, batch=w.get('review_batch')) }}">Review ({{ w.get('awaiting') }})</a>
-          {% elif w.get('scheduled') %}<a class="button primary" href="{{ url_for('schedule', account=a.handle) }}">Schedule ({{ w.get('scheduled') }})</a>
-          {% else %}<a class="button" href="{{ url_for('review', account=a.handle, view='account') }}">Open</a>{% endif %}
+          {# MOL-55: "needs action" rows (Review/Schedule, count>0) get a pending cue (accent border + filled count badge) at secondary weight — NOT primary (Home's one primary is .home-start-here); "Open" (browse) drops to quiet .ghost #}
+          {% if w.get('awaiting') %}<a class="button acct-cta-pending" href="{{ url_for('review', account=a.handle, view='account', focus=1, batch=w.get('review_batch')) }}">Review <span class="cta-badge">{{ w.get('awaiting') }}</span></a>
+          {% elif w.get('scheduled') %}<a class="button acct-cta-pending" href="{{ url_for('schedule', account=a.handle) }}">Schedule <span class="cta-badge">{{ w.get('scheduled') }}</span></a>
+          {% else %}<a class="button ghost" href="{{ url_for('review', account=a.handle, view='account') }}">Open</a>{% endif %}
           {% if w.get('failed') %}<a class="button ghost" href="{{ url_for('posted', account=a.handle, delivery='failed') }}">Failed</a>{% endif %}
         </div>
       </li>
@@ -108,7 +109,7 @@
     </table>
     {% endif %}
   </section>
-  {% if batches %}<details class="home-batches"{% if batches|length <= 5 %} open{% endif %}><summary>{{ term('batch') }}es ({{ batches|length }})</summary><ul>
+  {% if batches %}<details class="home-batches"{% if batches|length <= 5 %} open{% endif %}><summary>Batches{{ term('batch') }} ({{ batches|length }})</summary>{# MOL-45: full plural word first, then the ⓘ mark — the term macro renders only the mark, so a leading term() left "es (N)" #}<ul>
   {% for b in batches %}<li><a href="{{ url_for('review', batch=b.id) }}">{{ b.name }}</a> · {{ b.posts_born }} posts{% if b.is_zero_result %} <span class="badge warn zero-result-badge" data-warn="zero-result">⚠ 0</span>{% endif %}</li>{% endfor %}
   </ul></details>{% endif %}
 {% endblock %}

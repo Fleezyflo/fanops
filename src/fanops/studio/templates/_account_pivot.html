@@ -22,9 +22,9 @@
       <span class="pivot-plat muted">{{ s.platform }}</span>
       {% if s.ready %}<span class="chip ok schedule-ready" title="{{ s.ready_reason or 'ready' }}">ready</span>{% elif s.ready is not none %}<span class="chip warn schedule-ready" title="{{ s.ready_reason }}">fix clip</span>{% endif %}
       {% if s.length_label %}<span class="chip ro" title="clip length band">{{ s.length_label }}</span>{% endif %}
-      {% if s.is_account_cut %}<span class="chip ro cut" title="a real per-account cut at this account's own length and framing">✂ cut</span>{% elif creative_variation %}<span class="chip ro warn shared-cut" title="this surface fell back to a SHARED cut — not a real per-account clip">⚠ shared-cut</span>{% endif %}
+      {% if s.is_account_cut %}<span class="chip ro cut" title="a real per-account cut at this account's own length and framing">✂ cut</span>{% elif creative_variation %}<span class="chip ro warn shared-cut" title="this surface fell back to a SHARED cut — not a real per-account clip">shared-cut</span>{% endif %}{# MOL-43: ⚠ glyph now via ::before (Tier-3 demote) #}
       {% if s.framing %}<span class="chip ro" title="vertical crop framing">{{ s.framing }}</span>{% endif %}
-      {% if s.hook_source == 'shared_fallback' %}<span class="chip ro warn shared-hook" title="this account's on-screen hook fell back to the SHARED moment hook — not its own">⚠ shared-hook</span>{% endif %}
+      {% if s.hook_source == 'shared_fallback' %}<span class="chip ro warn shared-hook" title="this account's on-screen hook fell back to the SHARED moment hook — not its own">shared-hook</span>{% endif %}{# MOL-43: ⚠ glyph now via ::before (Tier-3 demote) #}
       {% if s.variant_hook %}<span class="pivot-hook" title="the on-screen hook burned into {{ s.account }}'s video">✦ {{ s.variant_hook }}</span>{% endif %}
       {% if not ultra %}
         {% if s.caption %}<span class="pivot-caption ro">{{ s.caption }}</span>{% endif %}
@@ -38,7 +38,7 @@
     <div class="grid-more meta">
       Showing {{ pivot_page.offset + 1 }}–{{ pivot_page.offset + pivot_page.items|length }} of {{ pivot_page.total }} ({{ active }}).
       {% if pivot_page.next_offset is not none %}
-        <a class="button" href="{{ url_for('review', offset=pivot_page.next_offset, view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Show more</a>
+        <a class="button ghost" href="{{ url_for('review', offset=pivot_page.next_offset, view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Show more</a>{# MOL-44: pagination disclosure → tertiary #}
       {% endif %}
       {% if pivot_page.offset > 0 %}
         <a class="button" href="{{ url_for('review', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Back to start</a>

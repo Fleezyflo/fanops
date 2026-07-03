@@ -9,6 +9,9 @@
     if (el) el.textContent = n ? n + " selected" : "Tick posts below, then approve or reject";
     const bar = document.getElementById("review-action-dock");
     if (bar) bar.classList.toggle("has-selection", n > 0);
+    // MOL-52: the bulk Approve/Reject buttons ship server-rendered disabled (0 on load); reflect live count.
+    // Queried document-wide + re-run from htmx:afterSwap so the disable state survives every swap.
+    document.querySelectorAll("[data-bulk-action]").forEach(b => { b.disabled = n === 0; });
   }
   document.addEventListener("change", e => { if (e.target && e.target.name === "ids") count(); });
   document.addEventListener("click", e => {

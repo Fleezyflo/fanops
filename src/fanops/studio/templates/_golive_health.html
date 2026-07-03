@@ -1,5 +1,10 @@
 {# Issue 1 — live system-dependency strip, htmx-loaded into Go-Live §4 (GET /golive/health). The system
    auto-starts these on launch; this shows their live state so nothing sits silently off. #}
+{# MOL-48 — `health` is system_health(cfg): ONLY the runtime dependencies (docker/postiz/zernio), so any
+   down row is unambiguously a failing SYSTEM dependency. Promote it to a banner-level alert above the strip
+   (Tier-1), naming the down dep(s), so "postiz unreachable" while LIVE is the first thing the eye lands on. #}
+{% set down = health | rejectattr('ok') | list %}
+{% if down %}<p class="dep-alert" role="alert"><strong>Dependency down</strong> — {{ down | map(attribute='name') | join(', ') }} unreachable while publishing is configured LIVE. Reviewed posts cannot ship until it recovers.</p>{% endif %}
 <p class="muted"><strong>System dependencies</strong> — live (auto-started on launch; nothing sits silently off).</p>
 <ul class="checks deps">
   {% for d in health %}

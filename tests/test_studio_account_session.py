@@ -30,7 +30,7 @@ def _client(cfg):
 def test_home_account_launcher_shows_work_counts(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 2)
     html = _client(cfg).get("/").data.decode()
-    assert "Review (2)" in html
+    assert ">Review " in html and '<span class="cta-badge">2</span>' in html   # MOL-55: count in the pending badge (was "Review (2)")
     assert 'data-acct-awaiting="@a"' in html
 
 def test_session_bar_on_scoped_pages(tmp_path):

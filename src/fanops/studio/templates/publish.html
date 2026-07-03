@@ -38,7 +38,7 @@
   </ul>
   {% if page and page.total > rows|length %}
     <div class="grid-more meta">Showing {{ page.offset + 1 }}–{{ page.offset + rows|length }} of {{ page.total }}.
-      {% if page.next_offset is not none %}<a class="button" href="{{ url_for('publish_panel', offset=page.next_offset, account=active) }}">Show more</a>{% endif %}
+      {% if page.next_offset is not none %}<a class="button ghost" href="{{ url_for('publish_panel', offset=page.next_offset, account=active) }}">Show more</a>{% endif %}{# MOL-44: pagination disclosure → tertiary #}
     </div>
   {% endif %}
   {% elif active %}<div class="empty">Nothing queued for {{ active }}.</div>

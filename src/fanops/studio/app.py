@@ -362,7 +362,7 @@ def create_app(cfg: Config) -> Flask:
         # Face 2: a real read-only status home (accounts + connection + headline counts + batch entry + per-
         # account post counts), NOT a redirect. nav_account is injected globally (Face 4 spine); no chip context
         # here (Home renders no per-surface chip row — the chip universe is a per-tab concern).
-        return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), work_by_account=views.account_work_counts(cfg), review_handoff=views.review_handoff(cfg), tab="home")
+        return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), work_by_account=views.account_work_counts(cfg), review_handoff=views.review_handoff(cfg), zero_post_clips=views.zero_post_clips(cfg), tab="home")
 
     @app.post("/home/pull-metrics")
     def do_home_pull_metrics():

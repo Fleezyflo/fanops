@@ -3,6 +3,7 @@
 # LAST), a clip dedup across editable+recent, and collapsible <details> batch sections. No schema/migration
 # (read-model only); the None/unbatched path renders byte-identical. Mirrors test_studio_p5_account.py.
 import json
+import re
 from datetime import datetime, timezone, timedelta
 import pytest
 from fanops.config import Config
@@ -201,3 +202,56 @@ def test_route_unbatched_has_no_batch_param_or_excluded(tmp_path):   # nonregres
     _await(led, "p_a", "clip_1", "@a"); led.save()
     html = _client(cfg).get("/review").data.decode()
     assert "batch=" not in html and "excluded by batch target" not in html and "show all batches" not in html
+
+
+# ---- MOL-53: batch header hierarchy — title / separated action band / quiet nav link ----
+from pathlib import Path                                              # MOL-53
+import fanops.studio                                                 # MOL-53
+_CSS = Path(fanops.studio.__file__).parent / "static" / "studio.css"  # MOL-53
+
+def _batch_header_html(tmp_path):
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    _lineage(led, batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["@a"],
+                        created_at="2026-06-22T00:00:00Z"))
+    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x"); led.save()
+    # a SECOND batch so the header's "open just this batch" nav link is present (drill-in only shown off-scope)
+    _lineage(led, cid="clip_2", mid="mom_2", sid="src_2", batch_id="batch_y")
+    led.add_batch(Batch(id="batch_y", name="Promo", target_accounts=["@a"]))
+    _await(led, "p_b", "clip_2", "@a", batch_id="batch_y"); led.save()
+    return _client(cfg).get("/review?view=list").data.decode()
+
+def test_batch_approve_is_not_a_second_gradient_primary(tmp_path):   # #2: demote — Review's only primary is the dock's "Approve selected"
+    html = _batch_header_html(tmp_path)
+    m = re.search(r'<button[^>]*>Approve batch</button>', html)
+    assert m, "Approve batch button not rendered"
+    assert 'class="primary"' not in m.group(0) and "primary" not in m.group(0)   # NOT a 2nd gradient primary
+
+def test_batch_actions_band_is_visually_separated_in_css():          # #2: the action row is a separated band (rule + top margin)
+    css = _CSS.read_text()
+    m = re.search(r'\.batch-actions\s*\{[^}]*\}', css)
+    assert m, ".batch-actions rule not found"
+    rule = m.group(0)
+    assert "border-top" in rule, "action band needs a separating rule line (border-top)"
+    assert "margin-top" in rule or re.search(r'margin:[^;]*var\(--s', rule), "action band needs top margin off the summary"
+
+def test_batch_open_link_is_a_quiet_link_not_a_button(tmp_path):     # #3: quietest — plain quiet link, NOT a button
+    html = _batch_header_html(tmp_path)
+    m = re.search(r'<a[^>]*>open just this batch</a>', html)
+    assert m, "open-just-this-batch link not rendered"
+    assert 'class="button' not in m.group(0), "the nav link must not be a button"
+    assert "batch-open" in m.group(0), "the nav link should carry the batch-open quiet-link class"
+
+def test_batch_open_link_has_quiet_muted_underline_css():            # #3: muted + underline-on-hover
+    css = _CSS.read_text()
+    m = re.search(r'\.batch-open(?:[:,][^{]*)?\s*\{[^}]*\}', css)
+    assert m, ".batch-open quiet-link rule not found"
+    base = re.search(r'\.batch-open\s*\{[^}]*\}', css)
+    assert base and "var(--muted)" in base.group(0), "the quiet link should read muted"
+    assert ":hover" in css[base.start():base.start()+400] and "underline" in css[base.start():base.start()+400], \
+        "the quiet link should underline on hover"
+
+def test_batch_summary_is_the_largest_of_the_three():                # #1: title = largest/boldest (already CSS; pin it)
+    css = _CSS.read_text()
+    m = re.search(r'details\.batch\s*>\s*summary\s*\{([^}]*)\}', css)
+    assert m and "var(--t-lg)" in m.group(1), "batch summary must be the section-title size (--t-lg)"

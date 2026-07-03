@@ -76,6 +76,13 @@ class LiftView:
     amplify_present: bool
     amplify_rows: list[LiftRow]
     amplify_empty_reason: Optional[str]
+    # MOL-50: uniform DEGRADED is a TABLE-level fact, not a per-row one. When most rows are degraded the
+    # badge stops being a signal and becomes red noise, drowning the Lift number it annotates. These
+    # summary fields let the template surface it ONCE (a table-level note) + shrink the per-row badge to
+    # a quiet marker; a MINORITY (<=50%) keeps the loud per-row badge as the exception-signal it is.
+    degraded_count: int = 0
+    degraded_total: int = 0
+    degraded_mostly: bool = False
 
 
 # non-terminal render states a shippable artifact can be in (mirrors crosspost._REUSABLE_CLIP_STATES philosophy;
@@ -719,6 +726,12 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None, *,
             from fanops.log import get_logger     # ECC fix #5: log the real cause, not just "unavailable"
             get_logger(cfg)("lift", "-", "amplify_error", err=str(exc)[:160])
             amplify_empty_reason = "Amplify state unavailable (fail-open)."
+    # MOL-50: fold the per-row degraded flags into a table-level summary. "Mostly" = strictly MORE than
+    # half the shown rows are degraded (>50%) — the point past which the repeated badge is noise, not signal.
+    deg_count = sum(1 for r in variant_rows if r.lift_degraded)
+    deg_total = len(variant_rows)
+    deg_mostly = deg_total > 0 and deg_count * 2 > deg_total
     return LiftView(variant_rows=variant_rows, variant_empty_reason=variant_empty_reason,
                     amplify_present=amplify_present, amplify_rows=amplify_rows,
-                    amplify_empty_reason=amplify_empty_reason)
+                    amplify_empty_reason=amplify_empty_reason,
+                    degraded_count=deg_count, degraded_total=deg_total, degraded_mostly=deg_mostly)
