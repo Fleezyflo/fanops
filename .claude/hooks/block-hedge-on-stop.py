@@ -44,6 +44,16 @@ TELLS = [
 ]
 _COMPILED = [(re.compile(p, re.IGNORECASE), why) for p, why in TELLS]
 
+# Completion-claim guard lives in completion_evidence.py: it does NOT trust
+# evidence-shaped text in my prose (I can type a fake `123 passed` as easily as
+# a bare claim). It correlates the claim against the harness-written execution
+# record in the transcript — a real, non-errored, current-turn tool run whose
+# ACTUAL output substantiates it. That record I cannot forge in my message.
+# This is the effective form of the parked hookify `block-unbacked-completion-
+# claim` rule, which was dead (PreToolUse-only runner, whole-transcript scan,
+# never wired to Stop). Fails open on any parse error.
+from completion_evidence import unbacked_claim_reason  # noqa: E402
+
 
 def last_assistant_text(transcript_path):
     """Return the concatenated text of the final assistant message, or ''."""
@@ -87,6 +97,14 @@ def main():
         sys.exit(0)
 
     hits = sorted({why for rx, why in _COMPILED if rx.search(text)})
+
+    # Unbacked completion claim: a done/works/passing assertion that NO real,
+    # non-errored tool run in the current turn substantiates. Evidence-shaped
+    # prose does not count — only the harness execution record does.
+    claim_reason = unbacked_claim_reason(text, path)
+    if claim_reason:
+        hits.append(claim_reason)
+
     if hits:
         reason = (
             "BLOCKED ending: your message carries diversion tells — "
@@ -94,7 +112,8 @@ def main():
             + ". Rewrite it: lead with the verdict, do the full grounded route (brief > requirement > "
             "best practice > base-compliance > reliability/robustness/resilience > scalability), and "
             "DELIVER the action instead of offering it or armoring a weaker answer. No half-measures, "
-            "no permission-asking, no self-exculpating preamble."
+            "no permission-asking, no self-exculpating preamble. If you claim something is done or "
+            "passing, put the evidence in the same message."
         )
         print(json.dumps({"decision": "block", "reason": reason}))
         sys.exit(0)
