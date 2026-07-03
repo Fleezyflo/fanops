@@ -30,7 +30,7 @@
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
 
-  --t-eyebrow:.72rem; --t-meta:.82rem; --t-base:1.06rem; --t-lg:1.05rem;
+  --t-eyebrow:.72rem; --t-meta:.82rem; --t-base:1.06rem; --t-lg:1.18rem;
   --t-h3:clamp(.8rem,.75rem + .25vw,.9rem); --t-h2:clamp(1.55rem,1.2rem + 1.6vw,2.4rem);
   --s-1:.35rem; --s-2:.6rem; --s-3:.9rem; --s-4:1.25rem; --s-5:1.9rem; --s-6:2.75rem;
   --pad-relaxed:.85rem;
