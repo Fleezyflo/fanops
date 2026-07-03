@@ -659,16 +659,25 @@ def bar_pct(value, peak) -> int:
     except (TypeError, ValueError): return 0
 
 
-def group_posted_by_day(rows: list) -> list:
+def group_posted_by_day(rows: list, cfg=None) -> list:
     """Group Posted rows by PUBLISH day (published_at — the TRUE shipped day; falls back to scheduled_time for
     pre-v3/in-flight rows), newest day first, 'undated' last. Pure; preserves within-day order (content-
-    lifecycle Phase 3). A naive/None/unparseable time -> 'undated' (never a local-tz guess)."""
+    lifecycle Phase 3). A naive/None/unparseable time -> 'undated' (never a local-tz guess). MOL-83: with cfg,
+    the aware ts is converted to the operator zone (cfg.operator_tz, via the same _operator_zone helper
+    publish_buckets uses) BEFORE .date() — so a 23:30Z post lands on the operator's calendar day. cfg omitted
+    -> UTC day (unchanged)."""
+    zone = None
+    if cfg is not None:
+        from fanops.timeutil import _operator_zone
+        zone = _operator_zone(cfg)
     def _day(r) -> str:
         ts = getattr(r, "published_at", None) or r.scheduled_time
         if not ts: return "undated"
         try:
             dt = parse_iso(ts)
-            return dt.date().isoformat() if dt.tzinfo is not None else "undated"
+            if dt.tzinfo is None: return "undated"
+            if zone is not None: dt = dt.astimezone(zone)
+            return dt.date().isoformat()
         except (ValueError, TypeError): return "undated"
     by_day: dict[str, list] = {}
     for r in rows: by_day.setdefault(_day(r), []).append(r)
