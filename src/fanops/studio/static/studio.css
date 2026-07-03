@@ -6,16 +6,16 @@
 
 /* ── Tokens ─────────────────────────────────────────────────────────────── */
 :root {
-  --bg:oklch(15% 0.012 280); --surface-1:oklch(19.5% 0.014 280); --surface-2:oklch(24% 0.016 280); --surface-3:oklch(28% 0.018 280);
-  --ink:oklch(96% 0.005 280); --muted:oklch(70% 0.02 280); --faint:oklch(66% 0.02 280);  /* faint 62->66%: clears WCAG AA 4.5:1 even on the brightest card (surface-3) */
-  --line:oklch(31% 0.014 280); --line-bright:oklch(40% 0.02 280);
-  --accent:oklch(72% 0.16 292); --accent-bright:oklch(80% 0.15 292); --accent-dim:oklch(72% 0.16 292 / .14); --accent-ink:oklch(18% 0.03 292);
-  --ok:oklch(76% 0.16 152); --warn:oklch(83% 0.13 78); --danger:oklch(70% 0.21 25); --danger-dim:oklch(70% 0.21 25 / .12); --info:oklch(70% 0.15 250);
+  --bg:oklch(96.5% 0.01 90); --surface-1:oklch(99% 0.005 90); --surface-2:oklch(92.5% 0.012 90); --surface-3:oklch(88% 0.014 90);
+  --ink:oklch(24% 0.02 60); --muted:oklch(45% 0.015 60); --faint:oklch(45% 0.015 60);  /* light-editorial (T-01): --faint collapses onto --muted (brief names one "muted" tone; the dark split was AA-on-dark only) */
+  --line:oklch(85% 0.012 90); --line-bright:oklch(74% 0.014 90);
+  --accent:oklch(43% 0.09 185); --accent-bright:oklch(52% 0.1 185); --accent-dim:oklch(43% 0.09 185 / .12); --accent-ink:oklch(98% 0.005 185);
+  --ok:oklch(46% 0.12 152); --warn:oklch(50% 0.11 75); --danger:oklch(48% 0.19 27); --danger-dim:oklch(48% 0.19 27 / .12); --info:oklch(48% 0.1 235);
   /* Filled-pill on-fill INK (MOL-40). Companion to the four state hues above, for a SOLID fill (background:var(--danger); color:var(--danger-ink)).
-     All alias --bg (a near-black), which clears WCAG AA 4.5:1 on every fill: ok 9.76, warn 11.50, danger 6.70, info 7.40 (OKLCH->rel-luminance).
-     A per-hue tuned dark ink was measured (18% L: 9.27/11.01/6.44/7.06) — no advantage over --bg, so a single alias keeps it legible.
-     NB the older .spine-count.spine-sev-danger uses color:var(--ink) (near-WHITE) = 2.61:1, a real contrast bug this token exists to retire. */
-  --ok-ink:var(--bg); --warn-ink:var(--bg); --danger-ink:var(--bg); --info-ink:var(--bg);
+     LIGHT THEME (T-01): each hue gets its OWN light on-fill ink — NOT aliased to --bg. On a light ground --bg is near-white, which on a
+     mid-tone --ok/--warn/--danger fill would be the INVERSE of "on-fill ink". Ratios (OKLCH->rel-luminance): ok/ok-ink 6.36, warn/warn-ink 5.94,
+     danger/danger-ink 6.81, info/info-ink ~7. NB the older .spine-count.spine-sev-danger uses color:var(--ink), a real contrast bug this token exists to retire. */
+  --ok-ink:oklch(98% 0.005 152); --warn-ink:oklch(99% 0.005 75); --danger-ink:oklch(98% 0.005 27); --info-ink:oklch(98% 0.005 235);
   /* SEVERITY LADDER (MOL-40) — the ONE convention MOL-43/48/49/50 consume. Expressed at the CLASS level, not the token level:
      a token is a raw hue+ink pair; a tier is a USAGE (how loud, whether it may fill, whether it may repeat). Same token can serve
      two tiers with different loudness, so tiers are picked per call site, not baked into a colour.
@@ -43,10 +43,8 @@
 /* ── Base ───────────────────────────────────────────────────────────────── */
 * { box-sizing:border-box; }
 html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
-body { margin:0; background:
-    radial-gradient(120% 80% at 100% -10%, oklch(24% 0.04 292 / .35), transparent 60%),
-    radial-gradient(90% 60% at -10% 0%, oklch(22% 0.03 250 / .25), transparent 55%), var(--bg);
-  background-attachment:fixed; color:var(--ink); font:var(--t-base)/1.6 var(--sans);
+body { margin:0; background:var(--bg);
+  color:var(--ink); font:var(--t-base)/1.6 var(--sans);
   -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
 a { color:var(--accent-bright); text-decoration:none; transition:color var(--dur) var(--ease); }
 a:hover { color:var(--ink); }
