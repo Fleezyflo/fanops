@@ -5,7 +5,7 @@ the shared time/batch helpers; never on a sibling surface module (review/cockpit
 from __future__ import annotations
 import logging
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -590,32 +590,37 @@ def posted_batch_rollup(rows) -> Optional[dict]:
 _BAR_METRICS = ("saves", "shares", "retention", "reach")
 
 
-def lineage_stats(rows) -> None:
-    """S6 — IN-PLACE annotate each row (PostedRow/LiftRow) with sibling_count / rank / delta_vs_best so the
-    operator reads 'this hook BEAT that hook'. Groups by clip_id (the durable key a repost/crosspost shares
-    with its origin) and ranks by lift_score desc within the group (COMPETITION ranking — tied bests both
-    read rank 1). A falsy clip_id is skipped (no join key -> untouched). An unmeasured sibling (lift None)
-    still counts toward sibling_count but keeps rank/delta None (can't rank what wasn't measured). Pure over
-    the already-built list — NO ledger read, reads ONLY clip_id+lift (so it is FANOPS_CREATIVE_VARIATION-
-    independent: a shared clip across accounts is a real lineage in either mode). Fail-open: any error leaves
-    the additive fields at their None defaults. Ranks within whatever filtered set is passed in."""
+def lineage_stats(rows) -> list:
+    """S6 — return a NEW list of rows (PostedRow/LiftRow) annotated with sibling_count / rank / delta_vs_best
+    so the operator reads 'this hook BEAT that hook'. Never mutates the caller's rows: an annotated row is a
+    dataclasses.replace copy; a skipped row passes through as the same object. Groups by clip_id (the durable
+    key a repost/crosspost shares with its origin) and ranks by lift_score desc within the group (COMPETITION
+    ranking — tied bests both read rank 1). A falsy clip_id is skipped (no join key -> passed through). An
+    unmeasured sibling (lift None) still counts toward sibling_count but keeps rank/delta None (can't rank
+    what wasn't measured). Pure over the already-built list — NO ledger read, reads ONLY clip_id+lift (so it
+    is FANOPS_CREATIVE_VARIATION-independent: a shared clip across accounts is a real lineage in either mode).
+    Fail-open: any error returns the input rows unchanged (additive fields stay at their None defaults).
+    Ranks within whatever filtered set is passed in. Same order and length as the input."""
     try:
         groups: dict = {}
         for r in rows:
             cid = getattr(r, "clip_id", None)
             if cid: groups.setdefault(cid, []).append(r)
+        ann: dict = {}                                   # id(row) -> the fields to stamp on its copy
         for sibs in groups.values():
             n = len(sibs)
-            for r in sibs: r.sibling_count = n
+            for r in sibs: ann[id(r)] = {"sibling_count": n}
             measured = [r for r in sibs if isinstance(getattr(r, "lift_score", None), (int, float))
                         and not isinstance(r.lift_score, bool)]
             if not measured: continue
             best = max(r.lift_score for r in measured)
             for r in measured:
-                r.rank = 1 + sum(1 for o in measured if o.lift_score > r.lift_score)
-                r.delta_vs_best = round(r.lift_score - best, 4)
+                ann[id(r)].update(rank=1 + sum(1 for o in measured if o.lift_score > r.lift_score),
+                                  delta_vs_best=round(r.lift_score - best, 4))
+        return [replace(r, **ann[id(r)]) if id(r) in ann else r for r in rows]
     except Exception:
         logger.warning("lineage sibling-ranking skipped (fail-open, additive fields stay None)", exc_info=True)
+        return rows
 
 
 def account_median_deltas(rows) -> None:

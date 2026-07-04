@@ -202,5 +202,5 @@ def test_lineage_stats_logs_on_error(tmp_path, caplog):
     rows = [_BadRow(), _BadRow()]
     with caplog.at_level(logging.WARNING, logger="fanops.studio.views_results"):
         result = views_results.lineage_stats(rows)
-    assert result is None                                          # fallback unchanged (returns None)
+    assert result is rows                                          # fail-open returns the input rows unchanged (MOL-70: returns list, not None)
     assert any(r.name == "fanops.studio.views_results" for r in caplog.records)
