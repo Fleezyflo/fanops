@@ -35,10 +35,14 @@ def test_reconcile_due_routes_zernio_when_global_dryrun(tmp_path, monkeypatch, m
                       caption="x", state=PostState.needs_reconcile, submission_id="zsid",
                       public_url="dryrun://tt"))
     led.save()
-    url = "https://www.tiktok.com/@x/video/1"
+    # T8: the TikTok url must oEmbed-verify to the post's handle (@tt) to rest; the mock answers both the
+    # Zernio status poll (gives the url) and the oEmbed live-verify (author==@tt).
+    url = "https://www.tiktok.com/@tt/video/1"
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(200, {"status": "published", "permalink": url}))
+    def _get(u, **kw):
+        if "oembed" in u: return _R(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
+        return _R(200, {"status": "published", "permalink": url})
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=_get)
     reconcile_due(cfg)
     led2 = Ledger.load(cfg)
     assert led2.posts["tt"].state is PostState.published
@@ -81,10 +85,13 @@ def test_reconcile_inflight_live_dryrun_global_zernio(tmp_path, monkeypatch, moc
                       caption="x", state=PostState.needs_reconcile, submission_id="zsid",
                       public_url="dryrun://tt"))
     led.save()
-    url = "https://www.tiktok.com/@x/video/9"
+    # T8: the TikTok url must oEmbed-verify to the handle (@tt); the mock answers the status poll + oEmbed.
+    url = "https://www.tiktok.com/@tt/video/9"
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(200, {"status": "published", "permalink": url}))
+    def _get(u, **kw):
+        if "oembed" in u: return _R(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
+        return _R(200, {"status": "published", "permalink": url})
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=_get)
     res = actions.reconcile_inflight(cfg)
     assert res.ok
     assert Ledger.load(cfg).posts["tt"].public_url == url

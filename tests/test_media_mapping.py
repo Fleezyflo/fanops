@@ -118,13 +118,20 @@ def test_resolve_disambiguates_by_timestamp(tmp_path, monkeypatch):
 
 
 def test_resolve_breadcrumbs_unmatched_never_fabricates(tmp_path, monkeypatch):
+    # T4 (publish-verify at the transition): an ENUMERATED-but-unmatched IG post has its media_id proven
+    # absent, so resolve_media_ids now QUARANTINES it out of the terminal-positive rest (published->
+    # needs_reconcile) with the labeled unverified reason — it no longer merely breadcrumbs and leaves the
+    # phantom URL resting. media_id is still never fabricated.
+    from fanops.reconcile import _UNVERIFIED_PREFIX
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [_post("p1", "https://www.instagram.com/reel/ZZZ/")])
     page = _Resp(200, {"data": [{"id": "M1", "permalink": "https://www.instagram.com/reel/AAA/",
                                  "media_product_type": "REELS"}]})
     reconcile.resolve_media_ids(led, cfg, get=_media_get([page]))
     assert led.posts["p1"].media_id is None          # no match -> NOT fabricated
-    assert (led.posts["p1"].error_reason or "").find("media_id") >= 0   # breadcrumbed
+    assert led.posts["p1"].state is PostState.needs_reconcile           # quarantined out of the rest
+    assert (led.posts["p1"].error_reason or "").startswith(_UNVERIFIED_PREFIX)
+    assert (led.posts["p1"].error_reason or "").find("media_id") >= 0   # reason names the missing identity
 
 
 def test_resolve_leaves_non_ig_posts_alone(tmp_path, monkeypatch):

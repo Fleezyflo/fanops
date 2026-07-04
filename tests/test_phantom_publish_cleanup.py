@@ -32,11 +32,19 @@ def _seed(cfg, pid, *, state=PostState.published, platform=Platform.tiktok, publ
     led.save()
 
 
-def test_reconcile_stamps_published_at_on_promote(tmp_path):
+def test_reconcile_stamps_published_at_on_promote(tmp_path, monkeypatch, mocker):
+    # T8: a TikTok post rests published only when its url oEmbed-verifies to the handle (@tt). Mock the oEmbed
+    # verify so the promotion succeeds, then characterize that reconcile stamps published_at on that promote.
+    monkeypatch.setenv("FANOPS_POSTER", "zernio"); monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
+    class _OE:
+        def __init__(s, c, b): s.status_code = c; s._b = b; s.text = str(b)
+        def json(s): return s._b
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_OE(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"}))
     cfg = Config(root=tmp_path)
     _seed(cfg, "p1", state=PostState.needs_reconcile, published_at=None, public_url="")
     led = reconcile_posts(Ledger.load(cfg), cfg,
-                          get_status=lambda sid: {"status": "published", "publicUrl": "https://www.tiktok.com/@x/video/9"})
+                          get_status=lambda sid: {"status": "published", "publicUrl": "https://www.tiktok.com/@tt/video/9"})
     p = led.posts["p1"]
     assert p.state is PostState.published
     assert p.published_at and p.published_at.endswith("Z")
