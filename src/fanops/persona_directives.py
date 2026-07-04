@@ -284,7 +284,9 @@ def persona_facts(cfg: Config, p) -> dict:
     band = band_for(prof)                    # SAME spec hydration applies), so the card shows the REAL length, not
     try:                                     # the raw-unset value (which made every persona read as one global band)
         store = load_store(cfg)
-    except Exception:
+    except Exception as exc:
+        from fanops.log import get_logger     # a store read-fail falls to the frozen floor — record it, don't hide it
+        get_logger(cfg)("personas", getattr(p, "handle", "-"), "store_load_error", err=str(exc)[:160])
         store = None
     lead = vet_hashtags([], Platform.instagram,
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store)

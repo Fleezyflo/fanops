@@ -71,7 +71,9 @@ def doctor_report(cfg: Config) -> dict:
     # a genuinely-live one (any live route) passes. Guarded so a bad accounts.json can't crash the report.
     try:
         half_live = cfg.is_live and not cfg.live_route_exists
-    except Exception:
+    except Exception as exc:
+        from fanops.log import get_logger     # a route-read hiccup falls to not-half-live — record it, don't hide it
+        get_logger(cfg)("doctor", "-", "half_live_error", err=str(exc)[:160])
         half_live = False
     if cfg.is_live:
         checks.append(_check("live route exists (FANOPS_LIVE=1 actually publishes)", not half_live,

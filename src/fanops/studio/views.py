@@ -465,7 +465,8 @@ def build_system_strip(cfg: Config) -> dict:
     # doesn't slam Postiz every hit; fail-open to not-shown so a probe hiccup never blocks the page.
     try:
         postiz_down = views_common.postiz_health_for_banner(cfg)
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("system_strip", "-", "postiz_down_error", err=str(exc)[:160])
         postiz_down = {"show": False}
     return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
             "failed": failed, "insights_blocked": insights_blocked,
