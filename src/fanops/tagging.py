@@ -14,7 +14,7 @@ from fanops.timeutil import parse_iso as _parse
 ARTIST_HANDLE = "@mohflowmusic"
 
 def should_tag(clip_id: str, account: str, *, rate: float = 0.25) -> bool:
-    h = int(hashlib.sha1(f"{clip_id}|{account}".encode()).hexdigest()[:8], 16)
+    h = int(hashlib.sha1(f"{clip_id}|{account}".encode(), usedforsecurity=False).hexdigest()[:8], 16)
     return (h % 1000) / 1000.0 < rate
 
 def decide_tag(led: Ledger, *, account: str, clip_id: str = "", when: datetime,

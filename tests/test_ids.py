@@ -30,6 +30,24 @@ def test_content_id_stable_across_processes():
     r2 = subprocess.run([sys.executable, "-c", here], capture_output=True, text=True)
     assert r1.stdout.strip() == r2.stdout.strip() != ""
 
+def test_sha1_digests_unchanged_after_usedforsecurity_flag():
+    # PKT-2 (MOL-108): four non-security sha1 seeds gained `usedforsecurity=False` for S324 clarity.
+    # The flag documents intent and MUST NOT shift the digest — content-addressed ids and the
+    # schedule/tag/jitter seeds all derive from these bytes, so a drift would duplicate posts or
+    # reshuffle schedules. These literals are the pre-flag digests captured on a fixed input; they
+    # pin all four sites (R-021 crosspost, R-022 ids, R-023 views_common, R-024 tagging) at once.
+    import hashlib
+    from fanops.ids import _hash
+    # R-022 ids._hash — the content-address primitive, called through the real (patched) function.
+    assert _hash("render", "x") == "aa57e8962bf8"
+    # R-021 crosspost._seed digest (account|platform|date|clip).
+    assert hashlib.sha1("acc|ig|2026-07-04|clip_1".encode(), usedforsecurity=False).hexdigest() \
+        == "5e6382900211691d71309cbaf7732c8c1554869b"
+    # R-024 tagging.should_tag digest (clip|account), first 8 hex.
+    assert hashlib.sha1("clip_1|acc".encode(), usedforsecurity=False).hexdigest()[:8] == "6cf198e8"
+    # R-023 views_common per-account anchor seed (handle|date), first 8 hex.
+    assert hashlib.sha1("handle|2026-07-04".encode(), usedforsecurity=False).hexdigest()[:8] == "7075bcca"
+
 def test_no_builtin_hash_in_source():
     # Guard: the builtin hash() must never be CALLED in ids.py (it is salted per process
     # — PEP 456 — and reintroduces the duplicate-post bug). We parse the AST and look for a
