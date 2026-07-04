@@ -103,7 +103,10 @@ def _parse_gate_form(kind: str, form) -> dict:
         return {"items": items}
     if kind == "moments":
         picks = []
-        for s, e, r in zip(form.getlist("pick_start"), form.getlist("pick_end"), form.getlist("pick_reason")):
+        # MOL-109: strict= — three independently-populated form field lists; a desynced submission must
+        # surface as a ValueError (handled by do_answer_gate as form validation), never silently truncate.
+        for s, e, r in zip(form.getlist("pick_start"), form.getlist("pick_end"), form.getlist("pick_reason"),
+                           strict=True):
             if not (s or e or r):
                 continue                            # skip blank rows
             picks.append({"start": s, "end": e, "reason": r})
@@ -485,8 +488,15 @@ def create_app(cfg: Config) -> Flask:
 
     @app.post("/gates/answer/<kind>/<key>")
     def do_answer_gate(kind, key):
-        result = actions.answer_gate(cfg, kind, key, _parse_gate_form(kind, request.form))
-        return render_template("_result.html", result=result)
+        try:
+            data = _parse_gate_form(kind, request.form)
+        except ValueError:
+            # MOL-109: length-desynced pick triples (zip strict=True) — a FORM-VALIDATION error, so
+            # re-render the result partial with a clear message at HTTP 200 (htmx 2.x drops non-2xx
+            # swaps; mirrors the oversize-upload convention). Never a 500, never a silent truncation.
+            return render_template("_result.html", result=actions.ActionResult.failure(
+                "mismatched pick rows: start/end/reason field counts differ — reload the gate and retry"))
+        return render_template("_result.html", result=actions.answer_gate(cfg, kind, key, data))
 
     @app.get("/media/<post_id>")
     def media(post_id):
