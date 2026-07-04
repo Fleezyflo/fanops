@@ -117,21 +117,22 @@ def test_resolve_disambiguates_by_timestamp(tmp_path, monkeypatch):
     assert led.posts["p1"].media_id == "M_near"      # nearest published_at wins, not first-seen
 
 
-def test_resolve_breadcrumbs_unmatched_never_fabricates(tmp_path, monkeypatch):
-    # T4 (publish-verify at the transition): an ENUMERATED-but-unmatched IG post has its media_id proven
-    # absent, so resolve_media_ids now QUARANTINES it out of the terminal-positive rest (published->
-    # needs_reconcile) with the labeled unverified reason — it no longer merely breadcrumbs and leaves the
-    # phantom URL resting. media_id is still never fabricated.
-    from fanops.reconcile import _UNVERIFIED_PREFIX
+def test_resolve_breadcrumbs_unmatched_rests_never_fabricates(tmp_path, monkeypatch):
+    # IG-liveness fix (the single-credential feed reality): an ENUMERATED-but-unmatched IG post is NOT
+    # quarantined — its account's media simply isn't enumerable under the one global Graph credential, so
+    # the Graph match is unavailable ENRICHMENT, not a liveness failure. The post RESTS in its terminal-
+    # positive state (liveness stands on the Postiz-confirmed releaseURL), media_id stays None (never
+    # fabricated), and only a NON-fatal enrichment breadcrumb is set.
+    from fanops.reconcile import _IG_MEDIA_ENRICH_UNRESOLVED, _UNVERIFIED_PREFIX
     cfg = _cfg(tmp_path, monkeypatch)
-    led = _led(cfg, [_post("p1", "https://www.instagram.com/reel/ZZZ/")])
+    led = _led(cfg, [_post("p1", "https://www.instagram.com/reel/ZZZ/")])   # _post defaults state=published
     page = _Resp(200, {"data": [{"id": "M1", "permalink": "https://www.instagram.com/reel/AAA/",
                                  "media_product_type": "REELS"}]})
     reconcile.resolve_media_ids(led, cfg, get=_media_get([page]))
     assert led.posts["p1"].media_id is None          # no match -> NOT fabricated
-    assert led.posts["p1"].state is PostState.needs_reconcile           # quarantined out of the rest
-    assert (led.posts["p1"].error_reason or "").startswith(_UNVERIFIED_PREFIX)
-    assert (led.posts["p1"].error_reason or "").find("media_id") >= 0   # reason names the missing identity
+    assert led.posts["p1"].state is PostState.published                 # RESTS (never demoted)
+    assert led.posts["p1"].error_reason == _IG_MEDIA_ENRICH_UNRESOLVED  # non-fatal enrichment note
+    assert not (led.posts["p1"].error_reason or "").startswith(_UNVERIFIED_PREFIX)   # NOT a quarantine sentinel
 
 
 def test_resolve_leaves_non_ig_posts_alone(tmp_path, monkeypatch):

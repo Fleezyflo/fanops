@@ -86,18 +86,32 @@ def _is_giveup(post) -> bool:
 
 # ---- Leg 2 (Insight) identify: resolve each live IG post's Graph media_id from its permalink ----------
 
-# T4 (publish-verify at the transition): the sentinel prefix on error_reason marking a post the REST gate
-# refused to let rest in a terminal-positive state (published/analyzed) because its identity is NOT confirmed
-# — an IG post whose permalink was ENUMERATED-but-unmatched (media_id proven absent), or a TikTok post with
-# no live-verifiable url / no real submission_id. Distinct from _GIVEUP_PREFIX (a give-up terminal) and from
-# the transient "reconcile poll error:" / "stuck …" breadcrumbs. A post carrying it is QUARANTINED to
-# needs_reconcile: reconcile_posts refuses to re-promote it while it is still unconfirmed (so the two
-# enforcement points don't thrash published<->parked), and the digest surfaces it.
+# REST-gate quarantine sentinel (publish-verify at the transition): the prefix on error_reason marking a
+# TikTok post the REST gate refused to let rest in a terminal-positive state (published/analyzed) because its
+# LIVENESS is NOT confirmed — no live-verifiable url (oEmbed author != reported username) / no real
+# submission_id. (IG NO LONGER uses this prefix: with the IG-liveness fix, IG liveness is confirmed by Postiz
+# — status==published + a real releaseURL — and the Graph media_id match is opportunistic enrichment, not a
+# gate; an unmatched IG post RESTS on the Postiz confirmation and carries the non-fatal enrichment note below,
+# never this quarantine sentinel.) Distinct from _GIVEUP_PREFIX (a give-up terminal) and from the transient
+# "reconcile poll error:" / "stuck …" breadcrumbs. A TikTok post carrying it is QUARANTINED to needs_reconcile:
+# reconcile_posts refuses to re-promote it while still unconfirmed, and the digest surfaces it.
 _UNVERIFIED_PREFIX = "unverified:"
-_UNVERIFIED_IG_MEDIA = (_UNVERIFIED_PREFIX + " IG media_id not matched — the live /{ig_user}/media inventory "
-                        "was enumerated and this post's permalink was NOT among it, so its Graph media_id "
-                        "(the IG identity-of-truth) is proven absent. Parked out of published/analyzed until "
-                        "a matching live media appears; never rested on an unconfirmed URL.")
+# (The former _UNVERIFIED_IG_MEDIA quarantine reason was REMOVED with the IG-liveness fix: an IG post whose
+# permalink is absent from the single-credential Graph feed is no longer quarantined — see below. The
+# _UNVERIFIED_PREFIX sentinel now marks ONLY the TikTok park; the IG path uses the enrichment note instead.)
+# IG-liveness fix: a NON-fatal ENRICHMENT breadcrumb — DELIBERATELY not the `_UNVERIFIED_PREFIX` sentinel, so
+# reconcile_posts never re-parks on it (that prefix is the quarantine trigger). The corrected contract splits
+# LIVENESS from ENRICHMENT for IG: liveness is authoritatively Postiz (status==published + a real releaseURL,
+# which get_status sets ONLY on a published row); the Graph media_id match is opportunistic METRICS enrichment.
+# With one global Meta credential (META_IG_USER_ID) we can enumerate only ONE account's /media, so an IG post
+# published to ANOTHER credentialed handle (perca.late, cisumwolfhom) is Postiz-confirmed-live yet can never
+# appear in the enumerable feed. resolve_media_ids used to read "not in the one feed I can see" as "not live"
+# and quarantine it (the 6-stuck-posts bug). Now it leaves such a post RESTING (published/analyzed untouched),
+# media_id None (never fabricated), and stamps this note — enrichment simply isn't available for that account.
+_IG_MEDIA_ENRICH_UNRESOLVED = ("ig_media_id_unresolved: this post's permalink is not in the enumerated "
+                               "(single-credential) Graph feed, so reach/media_id enrichment is unavailable — "
+                               "liveness stands on the Postiz-confirmed releaseURL. Add this account's own "
+                               "ig_user_id credential to enable Graph reach metrics; the post is live and rests.")
 _UNVERIFIED_TIKTOK = (_UNVERIFIED_PREFIX + " TikTok post not live-verified — needs a real backend "
                       "submission_id AND a public_url proven live for this handle (oEmbed author==handle). "
                       "Backend reported published but the URL/id could not be confirmed; parked, not rested.")
@@ -207,17 +221,18 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
             log("reconcile", p.id, "media_id_resolved", media_id=mid,
                 product_type=picked.get("media_product_type"))
         else:
-            # T4 (publish-verify at the transition): we DID enumerate live media and this permalink wasn't
-            # among it, so the Graph media_id — the IG identity-of-truth — is PROVEN absent. This is the
-            # phantom-IG-URL shape (a reel resting `analyzed` on a `media_id_unmatched` breadcrumb nobody
-            # actioned). Rather than leave it RESTING in published/analyzed on an unconfirmed URL, QUARANTINE
-            # it to needs_reconcile (out of the terminal-positive rest) + a labeled unverified reason. media_id
-            # stays None (never fabricated); once quarantined it leaves this published/analyzed target set, so a
-            # SECOND pass is a no-op (stable park, not thrash). reconcile_posts refuses to re-promote it while
-            # still unconfirmed, so the poll<->resolve pair never flips it back and forth.
-            led.posts[p.id] = p.model_copy(update={"state": PostState.needs_reconcile,
-                                                   "error_reason": _UNVERIFIED_IG_MEDIA})
-            log("reconcile", p.id, "media_id_unmatched: quarantined->needs_reconcile")
+            # IG-liveness fix (SPLIT liveness from enrichment): we enumerated live media and this permalink
+            # wasn't among it — but with ONE global Meta credential we only ever see ONE account's feed, so a
+            # post published to another credentialed handle (perca.late/cisumwolfhom) is Postiz-confirmed-live
+            # yet structurally absent here. That is a missing ENRICHMENT source, NOT proof the post isn't live
+            # (the old code quarantined it -> the 6-stuck-posts bug). LEAVE IT RESTING in published/analyzed
+            # (liveness stands on the Postiz-confirmed releaseURL), keep media_id None (never fabricated), and
+            # stamp a NON-fatal enrichment note. NOT the _UNVERIFIED_PREFIX sentinel, so reconcile_posts never
+            # re-parks on it. Idempotent: re-stamp only when the note isn't already set (a matched-later post
+            # clears it via the branch above), so a resting post never churns its ledger row each daemon tick.
+            if p.error_reason != _IG_MEDIA_ENRICH_UNRESOLVED:
+                led.posts[p.id] = p.model_copy(update={"error_reason": _IG_MEDIA_ENRICH_UNRESOLVED})
+                log("reconcile", p.id, "media_id_unmatched: enrichment-only, rests on Postiz liveness")
     return led
 
 
@@ -506,24 +521,25 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 })
                 log("reconcile", post.id, "published_no_url_parked")
                 continue
-            # T4 REST-gate: a post may only REST in published/analyzed if its identity is CONFIRMED; else
-            # it QUARANTINES to needs_reconcile (visible, labeled) rather than resting on an unconfirmed URL.
-            #   IG      -> media_id is the identity-of-truth (resolve_media_ids stamps it after matching the
-            #              permalink). A FRESH IG post (no unverified sentinel) is still promoted here so
-            #              resolve_media_ids gets a shot at it (it only targets published/analyzed — refusing
-            #              here would be a chicken-and-egg where media_id can never be stamped). But an IG post
-            #              already carrying the unverified sentinel with STILL no media_id is NOT re-promoted
-            #              (that would thrash with resolve_media_ids parking it back). FAIL CLOSED.
-            #   TikTok  -> a live-verified public_url (T8 oEmbed author==handle) atop a real submission_id.
-            # Preserve today's fail-open of resolve_media_ids itself; the NEW fail-closed is only this REST
-            # decision. Non-IG/non-TikTok surfaces keep resting on the R1-validated URL (no identity notion).
+            # REST-gate: a post may only REST in published/analyzed if its LIVENESS is CONFIRMED by the
+            # PUBLISHER; else it QUARANTINES to needs_reconcile (visible, labeled) rather than resting on an
+            # unconfirmed URL.
+            #   IG      -> LIVENESS is Postiz: status==published + a real releaseURL (get_status sets publicUrl
+            #              ONLY on a published Postiz row). Reaching HERE already means both — a non-published
+            #              status never enters this branch, and a published-with-no-releaseURL was parked at
+            #              the no-url gate above. So a Postiz-confirmed IG post ALWAYS rests here. The Graph
+            #              media_id match is opportunistic METRICS ENRICHMENT (resolve_media_ids), NOT a
+            #              liveness gate — with one global Meta credential we can enumerate only one account's
+            #              feed, so gating liveness on it stranded posts published to other handles (the
+            #              6-stuck-posts bug). PHANTOM PROTECTION is preserved by the Postiz-confirmation
+            #              itself: a stored URL that Postiz does NOT confirm published never reaches this rest.
+            #   TikTok  -> a live-verified public_url (T8 oEmbed author==reported username) atop a real
+            #              submission_id — UNCHANGED (Zernio has no releaseURL-shaped liveness, so it keeps the
+            #              oEmbed identity gate). FAIL CLOSED.
+            # Non-IG/non-TikTok surfaces keep resting on the R1-validated URL (no identity notion).
             from fanops.models import Platform
-            _unverified = bool(post.error_reason) and post.error_reason.startswith(_UNVERIFIED_PREFIX)
             _reason = None
-            if post.platform is Platform.instagram:
-                if post.media_id is None and _unverified:
-                    _reason = _UNVERIFIED_IG_MEDIA         # a quarantined phantom, still unmatched -> keep parked
-            elif post.platform is Platform.tiktok:
+            if post.platform is Platform.tiktok:
                 # reported_username (resolved above from the status body, or the /analytics fallback body) is the
                 # authority the oEmbed author must match — NOT post.account (the internal handle, the shipped bug).
                 # Absent (fail-closed input) -> the gate rejects and the post stays parked.
