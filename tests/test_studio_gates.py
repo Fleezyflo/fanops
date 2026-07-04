@@ -134,3 +134,31 @@ def test_gates_answer_moment_hooks_route_parses_form(tmp_path):
     assert r.status_code == 200
     dec = read_response(cfg, "moment_hooks", "s1.1.00-9.00", MomentHookDecision)
     assert dec.hook == "wait for the switch" and dec.hooks_by_persona["@a"] == "raw bars"
+
+
+# ---- MOL-109 / PKT-3: a length-desynced pick form is a FORM-VALIDATION error, never a silent
+#      truncation and never a 500 (zip(strict=True) on the pick_start/pick_end/pick_reason triples;
+#      the ValueError re-renders the result partial at HTTP 200 — htmx 2.x drops non-2xx swaps). ----
+def test_gates_answer_moments_mismatched_triples_is_validation_error_not_truncation(tmp_path):
+    from fanops.studio.app import create_app
+    cfg = Config(root=tmp_path); _moments_req(cfg)
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().post("/gates/answer/moments/s1",
+                               data={"pick_start": ["1.0", "6.0"], "pick_end": ["5.0", "9.0"],
+                                     "pick_reason": ["bar lands"]})     # 2/2/1 — desynced submission
+    assert r.status_code == 200                                         # handled swap, not a 500
+    assert b"mismatched pick rows" in r.data                            # clear validation message shown
+    assert read_response(cfg, "moments", "s1", MomentDecision) is None  # picks NOT ingested
+    assert pending(cfg, kind="moments") != []                           # gate still open for a retry
+
+def test_gates_answer_moments_route_matched_triples_still_ingests(tmp_path):
+    # Happy path through the SAME route: equal-length triples parse and write the decision unchanged.
+    from fanops.studio.app import create_app
+    cfg = Config(root=tmp_path); _moments_req(cfg)
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().post("/gates/answer/moments/s1",
+                               data={"pick_start": ["1.0", "6.0"], "pick_end": ["5.0", "9.0"],
+                                     "pick_reason": ["bar lands", "the switch"]})
+    assert r.status_code == 200
+    dec = read_response(cfg, "moments", "s1", MomentDecision)
+    assert dec is not None and len(dec.picks) == 2 and dec.picks[1].reason == "the switch"
