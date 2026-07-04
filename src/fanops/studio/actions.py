@@ -303,7 +303,11 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
 
 
 def _studio_publish_guard(cfg: Config, post=None) -> Optional[str]:
-    """Studio publish actions must not silently dryrun when the operator expects live."""
+    """Studio publish actions must not silently dryrun when the operator expects live — and must not submit
+    into a DEAD backend. T10: once the per-post provider is resolved, exercise that provider's REAL health
+    (Postiz's docker health-check is nginx-only and LIES while the Node backend crash-loops; Zernio auth can
+    lapse) and FAIL FAST with an ops pointer BEFORE the poster runs, instead of submitting-then-parking the
+    post in needs_reconcile. FAIL CLOSED: an unhealthy probe / failed auth blocks. The probe never echoes a key."""
     if not cfg.is_live:
         return "Not live — flip Go Live before publishing. Nothing reaches social in dryrun."
     if post is not None:
@@ -315,6 +319,23 @@ def _studio_publish_guard(cfg: Config, post=None) -> Optional[str]:
             return (f"{post.account} on {post.platform.value} routes to dryrun — map the channel in Go Live → Accounts.")
         if prov is None:
             return (f"{post.account} on {post.platform.value} is not mapped — connect the channel in Go Live.")
+        if prov == "postiz":
+            from fanops.post import postiz as _postiz            # module ref so a test monkeypatch on the symbol applies
+            health = _postiz.postiz_health_probe(cfg)
+            if not health.healthy:
+                return (f"Postiz backend unhealthy ({health.status_code or 'unreachable'}) — its docker health-check "
+                        f"is nginx-only and can lie while the Node backend crash-loops. Publishing now would submit "
+                        f"then park in needs_reconcile. Fix Postiz first; see docs/POSTIZ_OPS.md.")
+        elif prov == "zernio":
+            from fanops.post import zernio as _zernio            # module ref so a test monkeypatch on the symbol applies
+            from fanops.errors import ZernioAuthError
+            try:
+                if not _zernio.zernio_check_auth(cfg):
+                    return ("Zernio unreachable — publishing now would submit then park. Check ZERNIO_API_KEY / the "
+                            "Zernio API; see docs/POSTIZ_OPS.md.")
+            except ZernioAuthError:
+                return ("Zernio rejected the API key (401) — check ZERNIO_API_KEY in the Studio Go-Live tab; "
+                        "see docs/POSTIZ_OPS.md.")
     return None
 
 

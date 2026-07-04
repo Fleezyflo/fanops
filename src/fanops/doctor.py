@@ -17,7 +17,190 @@ def _check(label: str, ok: bool, hint: str = "") -> dict:
     return {"label": label, "ok": bool(ok), "hint": "" if ok else hint}
 
 
-def doctor_report(cfg: Config) -> dict:
+def _ig_user_id_check(cfg: Config) -> tuple[bool, str]:
+    """T3: (ok, hint) for 'every active IG account resolves to its OWN ig_user_id'. Loads accounts FAIL-CLOSED
+    (a torn accounts.json -> ok=False, never a silent pass). BORROWERS = active IG-carrying accounts with no
+    own ig_user_id while >=2 active IG accounts exist (each falls back to the single global -> unverifiable
+    against its own media). DUPES = two active handles sharing the SAME non-None id. A single active IG on the
+    global is legitimate (not flagged). Reads only accounts.json (the OWN id) -- not resolve_meta_creds -- so
+    the global env id is never treated as an account's own; that separation is the demote-to-bootstrap point."""
+    from fanops.accounts import Accounts
+    from fanops.models import Platform
+    try:
+        active_ig = [a for a in Accounts.load(cfg).active() if Platform.instagram in a.platforms]
+    except Exception as e:                                # corrupt/unreadable accounts.json -> fail CLOSED (unknown != pass)
+        return False, f"accounts.json unreadable -- cannot verify per-account ig_user_id ({str(e)[:120]}); fix it in the Studio Go-Live tab"
+    own = {a.handle: ((a.ig_user_id or "").strip() or None) for a in active_ig}
+    borrowers = [h for h, i in own.items() if i is None]
+    borrow_bad = borrowers if len(active_ig) >= 2 else []   # a lone active IG on the global is fine; borrow only harms once >=2 share one id
+    dupes: list[str] = []; seen: dict[str, str] = {}
+    for h, i in own.items():
+        if i is None: continue
+        if i in seen: dupes.extend([seen[i], h])         # both handles that collide on this id
+        else: seen[i] = h
+    dupes = sorted(set(dupes))
+    if not borrow_bad and not dupes:
+        return True, ""
+    parts = []
+    if borrow_bad:
+        parts.append("set a per-account ig_user_id for: " + ", ".join(sorted(borrow_bad))
+                     + " (they fall back to the single global META_IG_USER_ID and can't be verified against their own media)")
+    if dupes:
+        parts.append("duplicate ig_user_id shared by: " + ", ".join(dupes) + " (each active handle needs a distinct IG Business id)")
+    return False, "; ".join(parts) + " -- set it per account in the Studio Go-Live tab (accounts.json ig_user_id)"
+
+
+_META_TOKEN_LEAD_DAYS = 10                                # WARN this many days before a Meta token expires
+
+
+def _meta_token_expiry_check(cfg: Config, *, get=None):
+    """T9: build the 'Meta Graph token not expiring' check dict, or None when no Meta token is configured (the
+    check is simply N/A then — never a false alarm). Introspects EVERY distinct resolvable token (global +
+    per-handle) via meta_graph.debug_token_expiry: an expired OR unintrospectable (FAIL-CLOSED) token -> ok=False;
+    a token inside the _META_TOKEN_LEAD_DAYS window -> ok=True + warn=True (surface, never block). The token value
+    is NEVER read into the label/hint (only the handle label + the human expiry date). Fail-open around the
+    enumeration so a torn accounts.json can't crash the report (resolvable_meta_tokens already degrades to global)."""
+    from datetime import datetime, timezone
+    from fanops.meta_graph import resolvable_meta_tokens, debug_token_expiry
+    try:
+        toks = resolvable_meta_tokens(cfg)
+    except Exception:
+        toks = []                                        # never crash the report over enumeration
+    if not toks:
+        return None                                      # no Meta token to introspect -> check N/A
+    now = int(datetime.now(timezone.utc).timestamp())
+    lead = _META_TOKEN_LEAD_DAYS * 86400
+    expired: list[str] = []; unknown: list[str] = []; soon: list[tuple[str, int]] = []
+    for label, tok in toks:
+        status, detail = debug_token_expiry(cfg, tok, get=get)
+        if status == "expired":
+            expired.append(label)
+        elif status == "unknown":
+            unknown.append(label)
+        elif status == "ok" and isinstance(detail, int) and detail != 0 and detail - now <= lead:
+            soon.append((label, detail))                 # a real future expiry inside the lead window (0 == never-expires)
+    lbl = "Meta Graph token valid + not near expiry (debug_token)"
+    if expired or unknown:
+        parts = []
+        if expired: parts.append("EXPIRED for: " + ", ".join(sorted(expired)))
+        if unknown: parts.append("could not introspect (fail-closed) for: " + ", ".join(sorted(unknown)))
+        hint = ("; ".join(parts) + " — mint a fresh long-lived token + set it (global META_GRAPH_TOKEN, or the "
+                "per-handle META_GRAPH_TOKEN__<SLUG>) via the Studio Go-Live tab; see docs/META_CREDS_OPS.md. "
+                "Postiz keeps publishing on its own OAuth while Graph verification + metrics go dark.")
+        return _check(lbl, False, hint)
+    c = _check(lbl, True, "")
+    if soon:
+        def _fmt(e): return datetime.fromtimestamp(e, tz=timezone.utc).date().isoformat()
+        who = ", ".join(f"{h} (expires {_fmt(e)})" for h, e in sorted(soon, key=lambda x: x[1]))
+        c["warn"] = True
+        c["warn_hint"] = ("Meta token expiring within %d days: %s — rotate it now (docs/META_CREDS_OPS.md) "
+                          "before Graph verification + metrics go dark." % (_META_TOKEN_LEAD_DAYS, who))
+    return c
+
+
+def _postiz_reach_check(cfg: Config, *, probe=None):
+    """T10: the 'Postiz backend reachable (real probe, not nginx)' check dict, or None when the deployment has
+    no Postiz key (N/A — never a false alarm). Exercises postiz_health_probe (reused, not reinvented): its
+    docker health-check is nginx-only and lies during a crash-loop, so this is the honest read. FAIL CLOSED —
+    healthy=False (502/401/network) -> ok=False with the probe's own POSTIZ_OPS-pointing hint (never the key).
+    `probe` is injected for tests; None -> the real postiz_health_probe."""
+    if not cfg.backend_has_creds("postiz"):
+        return None                                          # no Postiz key -> the check is N/A
+    from fanops.post.postiz import postiz_health_probe
+    probe = probe or postiz_health_probe
+    try:
+        h = probe(cfg)
+        healthy = bool(getattr(h, "healthy", False)); hint = getattr(h, "hint", "") or ""
+    except Exception as e:                                    # a probe that raises -> fail CLOSED (unknown != healthy)
+        healthy = False; hint = f"Postiz probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md."
+    if not hint:
+        hint = "Postiz backend unreachable — its health-check is nginx-only and can lie; see docs/POSTIZ_OPS.md."
+    return _check("Postiz backend reachable (real /integrations probe, not the nginx health-check)", healthy, hint)
+
+
+def _zernio_reach_check(cfg: Config, *, auth=None):
+    """T10: the 'Zernio backend auth ok' check dict, or None when the deployment has no Zernio key (N/A). Does
+    the lightest authenticated read (zernio_check_auth -> GET /accounts): True ok; a 401 (ZernioAuthError) or
+    any unreachable (False) FAILS CLOSED. Never echoes the key. `auth` is injected for tests; None -> the real
+    zernio_check_auth (which lives in post/zernio.py, outside the reconcile-owned metrics.py)."""
+    if not cfg.backend_has_creds("zernio"):
+        return None                                          # no Zernio key -> the check is N/A
+    from fanops.post.zernio import zernio_check_auth
+    from fanops.errors import ZernioAuthError
+    auth = auth or zernio_check_auth
+    lbl = "Zernio backend auth ok (authenticated /accounts read)"
+    try:
+        return _check(lbl, bool(auth(cfg)), "Zernio unreachable — check ZERNIO_API_KEY / the Zernio API; see docs/POSTIZ_OPS.md.")
+    except ZernioAuthError:
+        return _check(lbl, False, "Zernio rejected the API key (401) — check ZERNIO_API_KEY (Studio Go-Live); see docs/POSTIZ_OPS.md.")
+    except Exception as e:
+        return _check(lbl, False, f"Zernio probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md.")
+
+
+_DAEMON_STALE_TICKS = 3                                    # heartbeat older than this many install intervals == dead pump (mirrors daemon.status)
+_DAEMON_DEFAULT_INTERVAL_S = 600                           # fallback tick interval when the daemon isn't installed / interval unknown
+
+
+def _daemon_liveness_check(cfg: Config) -> dict:
+    """T12: (dict) 'the publish pump is alive AND the queue is draining'. TWO fail conditions:
+      (a) the last `fanops run` heartbeat in run.log is older than _DAEMON_STALE_TICKS install intervals
+          (dead/stopped/crashing pump) — OR the signal is ABSENT (never ran) -> FAIL CLOSED (unknown != alive);
+      (b) queued posts are PAST-DUE beyond a grace window (the pump missed cycles / can't drain) -> FAIL naming
+          the count + the oldest age.
+    Signal: daemon._heartbeat_age_s (the run.log heartbeat line, a LIVE-clock write each completed tick) — a
+    real liveness signal, not a proxy. The past-due gate reuses timeutil.is_due_or_past, the SAME <=now check
+    publish_due fires on, so 'past-due here' == 'should have published already'. A grace window (2 intervals)
+    keeps a just-due post from a false backlog flag. Ledger read is fail-open: an unreadable ledger degrades the
+    backlog half to 'unknown' (surfaced in the hint) while the heartbeat half still governs -> never a crash."""
+    from datetime import datetime, timezone
+    from fanops import daemon
+    interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
+    try:
+        age = daemon._heartbeat_age_s(cfg)
+    except Exception:
+        age = None                                        # a read hiccup -> treat as no signal (fail-closed)
+    lbl = "publish daemon alive + queue draining (heartbeat + past-due backlog)"
+    # (b) past-due backlog — fail-open ledger read
+    now = datetime.now(timezone.utc)
+    backlog_n = 0; oldest_h = 0.0; backlog_unknown = False
+    try:
+        from fanops.ledger import Ledger
+        from fanops.models import PostState
+        from fanops.timeutil import is_due_or_past, parse_iso
+        led = Ledger.load(cfg)
+        grace = 2 * interval
+        for p in led.posts_in_state(PostState.queued):
+            if not is_due_or_past(p.scheduled_time, now):
+                continue
+            try:
+                due_age = (now - parse_iso(p.scheduled_time)).total_seconds()
+            except (ValueError, TypeError):
+                due_age = grace + 1                       # unparseable due time counts as stale-past (mirrors is_due_or_past)
+            if due_age > grace:
+                backlog_n += 1; oldest_h = max(oldest_h, due_age / 3600.0)
+    except Exception as e:
+        backlog_unknown = True
+        logging.getLogger("fanops.doctor").debug("daemon backlog read failed: %s", e)
+    # (a) heartbeat staleness / absence
+    stale = age is None or age > _DAEMON_STALE_TICKS * interval
+    ok = (not stale) and backlog_n == 0 and not backlog_unknown
+    if ok:
+        return _check(lbl, True, "")
+    parts = []
+    if age is None:
+        parts.append("no daemon heartbeat in run.log — the pump has never completed a tick (or run.log is "
+                     "missing). Install/start it: `fanops daemon install` then check `fanops daemon status`")
+    elif stale:
+        parts.append(f"daemon heartbeat is {int(age)}s old (> {_DAEMON_STALE_TICKS}x the {interval}s tick) — the "
+                     f"pump looks dead/stopped; approved posts won't send. Restart it (`fanops daemon status`)")
+    if backlog_n:
+        parts.append(f"{backlog_n} queued post(s) past-due by up to {oldest_h:.1f}h — backlog is piling up "
+                     f"(the pump isn't draining the queue)")
+    if backlog_unknown:
+        parts.append("could not read the ledger to assess past-due backlog (fail-closed)")
+    return _check(lbl, False, "; ".join(parts))
+
+def doctor_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None) -> dict:
     """Return {checks: [{label, ok, hint}], notes: [str]}. `checks` are pass/fail setup gates;
     `notes` are informational (learning-validation state, review-queue depth)."""
     checks: list[dict] = []
@@ -89,6 +272,48 @@ def doctor_report(cfg: Config) -> dict:
     checks.append(_check("IG insights readable (Meta Graph media insights)", not blocked,
                          "grant the instagram_manage_insights token scope — IG performance (reach/retention) "
                          "is frozen at its last snapshot until then; identification still works on instagram_basic"))
+
+    # T3: per-account ig_user_id required for ACTIVE IG accounts (the shared/borrowed-id root bug). With ≥2
+    # active IG accounts, one lacking its OWN ig_user_id silently BORROWS the global META_IG_USER_ID (another
+    # handle's id) -> it can never be verified against its own media, and its insights attribute to the wrong
+    # account. FAIL naming every borrower + any two handles resolving to the SAME non-None id. A single active
+    # IG account legitimately using the global is fine. FAIL CLOSED: a corrupt/unreadable accounts.json is
+    # reported failing (unknown != silent pass) — the whole point is that this class of drift stays LOUD.
+    ig_ok, ig_hint = _ig_user_id_check(cfg)
+    checks.append(_check("active IG accounts have their OWN ig_user_id (no shared/borrowed Meta id)", ig_ok, ig_hint))
+
+    # T9: Meta token expiry preflight. When the Graph token (or a per-handle token) lapses, Postiz keeps
+    # publishing via its OWN OAuth while Graph verification + metrics silently die -> a repeat of this incident
+    # on a KNOWN date (~2026-08-18). Introspect each distinct resolvable token via debug_token: FAIL on an
+    # expired one, WARN inside a 10-day lead window (ok stays True so it never blocks a run, warn surfaces it),
+    # FAIL CLOSED on an unreadable introspection. The token VALUE is never echoed (only the handle + a date).
+    # `get` is injected so tests never hit the network; None -> the real requests.get inside meta_graph.
+    tcheck = _meta_token_expiry_check(cfg, get=get)
+    if tcheck is not None:
+        checks.append(tcheck)
+
+    # T10: REAL backend reachability on the publish path (the operator-confirms-health step, as code). Postiz's
+    # docker health-check is nginx-only and LIES while the Node backend crash-loops (mastra_ai_spans) — the real
+    # probe (GET /integrations, postiz_health_probe) goes PAST nginx. Zernio auth can lapse the same way. Each
+    # check is applicable ONLY when that backend has creds (else it is N/A — never a false alarm on a single-
+    # backend deployment), FAILS CLOSED on a down/unauthorized/erroring probe, and NEVER echoes a key. The
+    # probes are injected so tests never hit the network; None -> the real client.
+    pcheck = _postiz_reach_check(cfg, probe=postiz_probe)
+    if pcheck is not None:
+        checks.append(pcheck)
+    zcheck = _zernio_reach_check(cfg, auth=zernio_auth)
+    if zcheck is not None:
+        checks.append(zcheck)
+
+    # T12: PERMANENT daemon-liveness + past-due-backlog sensor. The launchd daemon runs `fanops run` ticks
+    # that call publish_due; if that pump is dead/stopped, approved posts silently never send (27-queued-stuck
+    # incident). FAIL when the last heartbeat is stale (dead pump) OR queued posts are past-due beyond a grace
+    # window (backlog piling up). FAIL CLOSED: no heartbeat signal at all -> FAIL (unknown != healthy). Signal
+    # is REAL, not a proxy: daemon._heartbeat_age_s reads the `heartbeat` line `fanops run` writes to run.log
+    # every completed tick (a live clock -> a frozen age means the cron is dead / the tick crashes before the
+    # heartbeat). The past-due gate mirrors the pump's own due-check (timeutil.is_due_or_past).
+    dchk = _daemon_liveness_check(cfg)
+    checks.append(dchk)
 
     notes: list[str] = []
     notes.append(f"poster backend: {cfg.poster_backend}"
