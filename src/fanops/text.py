@@ -23,7 +23,7 @@ def safe_public_url(url: str | None) -> str | None:
 _DASHES = re.compile(r"\s*[—–‒―]\s*")   # em / en / figure / horizontal-bar -> ", "
 _SQUO = re.compile(r"[‘’‛]")                 # curly single -> straight '
 _DQUO = re.compile(r"[“”‟]")                 # curly double -> straight "
-_ZEROWIDTH = re.compile(r"[​‌‍﻿]")      # zero-width / joiners / BOM -> dropped
+_ZEROWIDTH = re.compile(r"[\u200B\u200C\u200D\uFEFF]")   # zero-width / joiners / BOM -> dropped
 
 def sanitize_generated_text(text: str | None, *, max_words: int | None = None) -> str | None:
     """Strip AI-tell punctuation + invisibles from LLM / transcript-derived text. None -> None.
