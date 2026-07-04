@@ -171,10 +171,11 @@ def test_tiktok_real_id_but_no_url_quarantines(tmp_path, monkeypatch, mocker):
 
 
 def test_tiktok_real_id_and_url_rests_when_oembed_verifies(tmp_path, mocker):
-    # A TikTok post with a real submission_id AND a public_url that oEmbed-verifies to the handle RESTS
-    # published — the full T4+T8 confirmed shape (real id + live-verified url). The oEmbed getter is patched
-    # at the module level so the REST-gate's live verify runs against the fake, no network. (Pre-T8 this same
-    # test asserted the T4 baseline of real-id+url alone; T8 tightened it to additionally require oEmbed.)
+    # A TikTok post with a real submission_id AND a public_url that oEmbed-verifies to the ZERNIO-REPORTED tiktok
+    # username RESTS published — the full confirmed shape (real id + live-verified url + author==reported username).
+    # The oEmbed getter is patched at the module level so the REST-gate's live verify runs against the fake, no
+    # network. (Pre-T8 this asserted real-id+url alone; T8 added oEmbed; the username fix keys the compare off the
+    # username Zernio reports — surfaced in the status dict as tiktokUsername — not the internal handle.)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="zreal_1", account="@tt")
     class _OE:
@@ -183,7 +184,7 @@ def test_tiktok_real_id_and_url_rests_when_oembed_verifies(tmp_path, mocker):
     mocker.patch("fanops.post.metrics.requests.get",
                  return_value=_OE(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"}))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {
-        "status": "published", "publicUrl": "https://www.tiktok.com/@tt/video/7"})
+        "status": "published", "publicUrl": "https://www.tiktok.com/@tt/video/7", "tiktokUsername": "tt"})
     assert led.posts["tt"].state is PostState.published
 
 

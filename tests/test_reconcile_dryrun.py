@@ -35,13 +35,15 @@ def test_reconcile_due_routes_zernio_when_global_dryrun(tmp_path, monkeypatch, m
                       caption="x", state=PostState.needs_reconcile, submission_id="zsid",
                       public_url="dryrun://tt"))
     led.save()
-    # T8: the TikTok url must oEmbed-verify to the post's handle (@tt) to rest; the mock answers both the
-    # Zernio status poll (gives the url) and the oEmbed live-verify (author==@tt).
+    # The TikTok url must oEmbed-verify to the ZERNIO-REPORTED tiktok username to rest. The live Zernio status
+    # body carries that username on post.platforms[].accountId (_id == post.account_id "z1"); get_status surfaces
+    # it and the oEmbed author ("tt") must equal it. The mock answers the status poll (url + username) + oEmbed.
     url = "https://www.tiktok.com/@tt/video/1"
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
     def _get(u, **kw):
         if "oembed" in u: return _R(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
-        return _R(200, {"status": "published", "permalink": url})
+        return _R(200, {"post": {"platforms": [{"platform": "tiktok", "status": "published",
+                                                "platformPostUrl": url, "accountId": {"_id": "z1", "username": "tt"}}]}})
     mocker.patch("fanops.post.metrics.requests.get", side_effect=_get)
     reconcile_due(cfg)
     led2 = Ledger.load(cfg)
@@ -85,12 +87,14 @@ def test_reconcile_inflight_live_dryrun_global_zernio(tmp_path, monkeypatch, moc
                       caption="x", state=PostState.needs_reconcile, submission_id="zsid",
                       public_url="dryrun://tt"))
     led.save()
-    # T8: the TikTok url must oEmbed-verify to the handle (@tt); the mock answers the status poll + oEmbed.
+    # The TikTok url must oEmbed-verify to the ZERNIO-REPORTED tiktok username (carried on post.platforms[].
+    # accountId, _id == post.account_id "z1"); get_status surfaces it and the oEmbed author ("tt") must equal it.
     url = "https://www.tiktok.com/@tt/video/9"
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
     def _get(u, **kw):
         if "oembed" in u: return _R(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
-        return _R(200, {"status": "published", "permalink": url})
+        return _R(200, {"post": {"platforms": [{"platform": "tiktok", "status": "published",
+                                                "platformPostUrl": url, "accountId": {"_id": "z1", "username": "tt"}}]}})
     mocker.patch("fanops.post.metrics.requests.get", side_effect=_get)
     res = actions.reconcile_inflight(cfg)
     assert res.ok

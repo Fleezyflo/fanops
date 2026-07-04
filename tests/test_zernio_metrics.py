@@ -287,12 +287,16 @@ def test_default_get_status_mixed_routes_each_sid(tmp_path, monkeypatch, mocker)
     led.add_post(Post(id="ig", parent_id="c", account="@ig", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="psid",
                       scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://ig"))
-    # T8: the TikTok url must oEmbed-verify to the post's handle (@tt) to rest — so the url's author is @tt
-    # and the mock answers the oEmbed call (the status endpoint gives the url; the REST-gate live-verifies it).
+    # The TikTok url must oEmbed-verify to the ZERNIO-REPORTED tiktok username to rest. The real Zernio status
+    # body carries that username on post.platforms[].accountId (keyed by _id == post.account_id "z1"); get_status
+    # surfaces it, and the live oEmbed author ("tt") must equal it. This exercises the real username extraction
+    # end-to-end (no injected get_status).
     tt_url = "https://www.tiktok.com/@tt/video/7"
     def by_url(url, **kw):
         if "oembed" in url: return _R(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
-        if "zernio" in url: return _R(200, {"status": "published", "permalink": tt_url})
+        if "zernio" in url: return _R(200, {"post": {"platforms": [{"platform": "tiktok", "status": "published",
+                                                                    "platformPostUrl": tt_url,
+                                                                    "accountId": {"_id": "z1", "username": "tt"}}]}})
         return _R(200, {"posts": [{"id": "psid", "state": "PUBLISHED", "releaseURL": "https://www.instagram.com/reel/X/"}]})
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
     led = reconcile_posts(led, cfg)                                       # NO injected get_status -> real per-post dispatch
@@ -316,7 +320,8 @@ def test_default_list_posts_corrupt_accounts_degrades_to_global(tmp_path, monkey
 # A captured TikTok URL must be PROVEN a real live post for that handle (symmetric with IG's media_id) — else
 # Zernio handing back a dead/wrong URL passes on paper. verify_tiktok_permalink confirms via TikTok oEmbed
 # (author_url/author_unique_id/author == handle); the HTTP getter is injected so tests never touch the network.
-from fanops.post.metrics import verify_tiktok_permalink, zernio_permalink_from_analytics
+from fanops.post.metrics import (verify_tiktok_permalink, zernio_permalink_from_analytics,
+                                  zernio_reported_tiktok_username)
 
 
 class _OE:
@@ -382,6 +387,165 @@ def test_verify_tiktok_permalink_bad_url_fails_closed(tmp_path):
     assert called == []                                            # never hit the network for a malformed url
 
 
+# ================================================================ zernio_reported_tiktok_username ====
+# The Zernio status body (GET /posts/{id}) is authoritative for WHICH TikTok username a post went to:
+# post.platforms[].accountId.username, keyed by accountId._id == the account's integration id (accounts.json
+# integrations.tiktok == post.account_id). verify_tiktok_permalink must compare the LIVE oEmbed author to
+# THIS Zernio-reported username, NOT our internal handle (@hrmny-blog posts to tiktok.com/@wahed_bared).
+_LIVE_ZERNIO_TIKTOK_ROW = {
+    "platform": "tiktok",
+    "accountId": {"_id": "6a37ea985f7d1751ab2e7e92", "username": "wahed_bared", "displayName": "wahed_bared"},
+    "platformSpecificData": {"__usernameSnapshot": "wahed_bared", "tiktokUsername": "wahed_bared"},
+    "platformPostId": "7658622855357173009",
+    "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/7658622855357173009",
+    "status": "published"}
+
+
+def test_zernio_reported_username_matches_integration_id():
+    # The real live shape: the tiktok row whose accountId._id == the post's integration id -> its username.
+    body = {"post": {"platforms": [_LIVE_ZERNIO_TIKTOK_ROW]}}
+    assert zernio_reported_tiktok_username(body, "6a37ea985f7d1751ab2e7e92") == "wahed_bared"
+
+
+def test_zernio_reported_username_picks_the_matching_row_among_many():
+    # Two tiktok rows (two accounts on one post): the ONE whose _id matches wins — not the first row.
+    other = {"platform": "tiktok", "accountId": {"_id": "OTHER_ID", "username": "someone_else"},
+             "platformPostUrl": "https://www.tiktok.com/@someone_else/video/1", "status": "published"}
+    body = {"post": {"platforms": [other, _LIVE_ZERNIO_TIKTOK_ROW]}}
+    assert zernio_reported_tiktok_username(body, "6a37ea985f7d1751ab2e7e92") == "wahed_bared"
+    assert zernio_reported_tiktok_username(body, "OTHER_ID") == "someone_else"
+
+
+def test_zernio_reported_username_sole_row_fallback_when_no_id():
+    # When no integration id is supplied (or it matches nothing) but there is exactly ONE tiktok row, use it —
+    # this is the bound-method dispatch path (get_status has no post in scope to pass an id).
+    body = {"post": {"platforms": [_LIVE_ZERNIO_TIKTOK_ROW]}}
+    assert zernio_reported_tiktok_username(body, None) == "wahed_bared"
+    assert zernio_reported_tiktok_username(body, "NON_MATCHING_ID") == "wahed_bared"   # sole tiktok row
+
+
+def test_zernio_reported_username_fallback_keys():
+    # accountId.username absent -> __usernameSnapshot -> tiktokUsername -> displayName, in that order.
+    snap = {"platform": "tiktok", "accountId": {"_id": "X"},
+            "platformSpecificData": {"__usernameSnapshot": "snap_user"}}
+    assert zernio_reported_tiktok_username({"platforms": [snap]}, "X") == "snap_user"
+    tk = {"platform": "tiktok", "accountId": {"_id": "X"}, "platformSpecificData": {"tiktokUsername": "tk_user"}}
+    assert zernio_reported_tiktok_username({"platforms": [tk]}, "X") == "tk_user"
+    disp = {"platform": "tiktok", "accountId": {"_id": "X", "displayName": "disp_user"}}
+    assert zernio_reported_tiktok_username({"platforms": [disp]}, "X") == "disp_user"
+
+
+def test_zernio_reported_username_none_when_absent_fails_closed():
+    # No tiktok row / no username anywhere -> None (fail-closed: the caller must NOT accept the post).
+    assert zernio_reported_tiktok_username({"post": {"platforms": []}}, "X") is None
+    assert zernio_reported_tiktok_username({"post": {"platforms": [{"platform": "instagram",
+                                                                    "accountId": {"_id": "X", "username": "ig"}}]}}, "X") is None
+    assert zernio_reported_tiktok_username({}, "X") is None
+    assert zernio_reported_tiktok_username(None, "X") is None
+    # a tiktok row that carries NO username field at all (and >1 so the sole-row fallback can't fire) -> None
+    r1 = {"platform": "tiktok", "accountId": {"_id": "A"}}
+    r2 = {"platform": "tiktok", "accountId": {"_id": "B"}}
+    assert zernio_reported_tiktok_username({"platforms": [r1, r2]}, "A") is None
+
+
+def test_status_published_surfaces_reported_username(tmp_path, monkeypatch, mocker):
+    # ZernioStatusClient.get_status carries the Zernio-reported tiktok username OUT to reconcile (so the
+    # REST-gate verifies against it WITHOUT a second fetch). Additive: only present when derivable.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    body = {"post": {"platforms": [_LIVE_ZERNIO_TIKTOK_ROW]}}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
+    out = ZernioStatusClient(cfg).get_status("zid")
+    assert out["status"] == "published"
+    assert out["publicUrl"] == "https://www.tiktok.com/@wahed_bared/video/7658622855357173009"
+    assert out["tiktokUsername"] == "wahed_bared"                  # the sole-tiktok-row username rides out
+
+
+# ================================================================ verify against REPORTED username ====
+def test_verify_tiktok_permalink_matches_zernio_reported_username(tmp_path):
+    # THE REAL DEFECT CASE: the live url oEmbed-authors to "wahed_bared"; the expected username (Zernio's
+    # reported accountId.username) is "wahed_bared" -> CONFIRMED. The internal handle "hrmny-blog" is NEVER
+    # what we compare against (that was the bug: it never equals the real tiktok username).
+    cfg = Config(root=tmp_path)
+    url = "https://www.tiktok.com/@wahed_bared/video/7658622855357173009"
+    def get(u, **kw): return _OE(200, {"author_unique_id": "wahed_bared",
+                                       "author_url": "https://www.tiktok.com/@wahed_bared"})
+    assert verify_tiktok_permalink(cfg, url, "wahed_bared", get=get) is True
+    # and proof it is NOT the internal handle being compared: hrmny-blog would fail against this same body
+    assert verify_tiktok_permalink(cfg, url, "hrmny-blog", get=get) is False
+
+
+def test_verify_tiktok_permalink_missing_expected_username_fails_closed(tmp_path):
+    # No expected username (Zernio reported none) -> fail closed regardless of what oEmbed says.
+    cfg = Config(root=tmp_path)
+    url = "https://www.tiktok.com/@wahed_bared/video/7"
+    def get(u, **kw): return _OE(200, {"author_unique_id": "wahed_bared"})
+    assert verify_tiktok_permalink(cfg, url, None, get=get) is False
+    assert verify_tiktok_permalink(cfg, url, "", get=get) is False
+
+
+# ================================================================ the FULL real case, end-to-end ====
+def test_reconcile_tiktok_rests_when_oembed_author_equals_zernio_reported_username(tmp_path, monkeypatch, mocker):
+    # THE EXACT BROKEN LIVE CASE, end-to-end: hrmny-blog (internal handle) posted to tiktok.com/@wahed_bared.
+    # Zernio's status body reports accountId.username "wahed_bared" for the post's integration id; the live url
+    # oEmbed-authors to "wahed_bared". They AGREE -> the post RESTS published. Before the fix this parked
+    # because the oEmbed author ("wahed_bared") was compared to the internal handle ("hrmny-blog").
+    _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    integ = "6a37ea985f7d1751ab2e7e92"
+    led.add_post(Post(id="tt", parent_id="c", account="@hrmny-blog", account_id=integ, platform=Platform.tiktok,
+                      caption="x", state=PostState.needs_reconcile, submission_id="zreal_1"))
+    url = "https://www.tiktok.com/@wahed_bared/video/7658622855357173009"
+    status_body = {"post": {"platforms": [_LIVE_ZERNIO_TIKTOK_ROW]}}
+    def by_url(u, **kw):
+        if "oembed" in u:                                          # the REST-gate live verify
+            return _OE(200, {"author_unique_id": "wahed_bared", "author_url": "https://www.tiktok.com/@wahed_bared"})
+        return _R(200, status_body)                               # the GET /posts/{id} status body (carries the username)
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
+    led = reconcile_posts(led, cfg)                               # real per-post dispatch (no injected get_status)
+    p = led.posts["tt"]
+    assert p.state is PostState.published and p.public_url == url  # oEmbed author == Zernio-reported username -> rests
+
+
+def test_reconcile_tiktok_parks_when_oembed_author_mismatches_zernio_reported(tmp_path, monkeypatch, mocker):
+    # A genuine mismatch: oEmbed says the live video's author is "wahed_bared" but Zernio reports the post went
+    # to "someone_else" for this integration id -> REJECTED (parked). A real identity mismatch still fails closed.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    integ = "6a37ea985f7d1751ab2e7e92"
+    led.add_post(Post(id="tt", parent_id="c", account="@hrmny-blog", account_id=integ, platform=Platform.tiktok,
+                      caption="x", state=PostState.needs_reconcile, submission_id="zreal_1"))
+    mismatched_row = {**_LIVE_ZERNIO_TIKTOK_ROW,
+                      "accountId": {"_id": integ, "username": "someone_else"}}
+    def by_url(u, **kw):
+        if "oembed" in u: return _OE(200, {"author_unique_id": "wahed_bared"})
+        return _R(200, {"post": {"platforms": [mismatched_row]}})
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
+    led = reconcile_posts(led, cfg)
+    p = led.posts["tt"]
+    assert p.state is PostState.needs_reconcile                   # oEmbed author != Zernio-reported username -> parked
+    from fanops.reconcile import _UNVERIFIED_PREFIX
+    assert (p.error_reason or "").startswith(_UNVERIFIED_PREFIX)
+
+
+def test_reconcile_tiktok_parks_when_zernio_reports_no_username(tmp_path, monkeypatch, mocker):
+    # Zernio's status body carries NO derivable username for the post's integration id (fail-closed input) ->
+    # the REST-gate has nothing authoritative to compare against -> parked, never rested on an unproven shape.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="tt", parent_id="c", account="@hrmny-blog", account_id="INTEG_X", platform=Platform.tiktok,
+                      caption="x", state=PostState.needs_reconcile, submission_id="zreal_1"))
+    url = "https://www.tiktok.com/@wahed_bared/video/7658622855357173009"
+    # a tiktok row with a url but NO accountId/username at all, plus a decoy so the sole-row fallback can't fire
+    row_no_user = {"platform": "tiktok", "platformPostUrl": url, "status": "published"}
+    decoy = {"platform": "tiktok", "platformPostUrl": "https://www.tiktok.com/@x/video/2", "status": "published"}
+    def by_url(u, **kw):
+        if "oembed" in u: return _OE(200, {"author_unique_id": "wahed_bared"})
+        return _R(200, {"post": {"platforms": [row_no_user, decoy]}})
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
+    led = reconcile_posts(led, cfg)
+    p = led.posts["tt"]
+    assert p.state is PostState.needs_reconcile                   # no reported username -> fail-closed -> parked
+    from fanops.reconcile import _UNVERIFIED_PREFIX
+    assert (p.error_reason or "").startswith(_UNVERIFIED_PREFIX)
+
+
 # ---- the verifier WIRED into the reconcile REST-gate (the T4<->T8 seam closes) --------------------------
 def _tt_post(led, pid, sub, account="@mark"):
     led.add_post(Post(id=pid, parent_id="c", account=account, account_id="z1", platform=Platform.tiktok,
@@ -389,28 +553,30 @@ def _tt_post(led, pid, sub, account="@mark"):
 
 
 def test_reconcile_tiktok_rests_only_when_oembed_author_matches(tmp_path, monkeypatch, mocker):
-    # END-TO-END: a TikTok post whose Zernio status is published + a url whose oEmbed author == the handle
-    # RESTS published (the identity is live-verified). The oEmbed getter is patched at the module level so the
-    # reconcile REST-gate's live verify runs against the fake, no network.
+    # END-TO-END: a TikTok post whose Zernio status is published + a url whose oEmbed author == the ZERNIO-REPORTED
+    # tiktok username (surfaced in the status dict as tiktokUsername) RESTS published (the identity is live-verified).
+    # The oEmbed getter is patched at the module level so the reconcile REST-gate's live verify runs against the
+    # fake, no network. Zernio reports "mark" and the live oEmbed author is "mark" -> they agree.
     _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _tt_post(led, "tt", "zreal_1", account="@mark")
     url = "https://www.tiktok.com/@mark/video/7"
     def oembed_get(u, **kw): return _OE(200, {"author_unique_id": "mark", "author_url": "https://www.tiktok.com/@mark"})
     mocker.patch("fanops.post.metrics.requests.get", side_effect=oembed_get)   # the oEmbed verify getter
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": url})
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": url, "tiktokUsername": "mark"})
     p = led.posts["tt"]
     assert p.state is PostState.published and p.public_url == url   # live-verified -> rests
 
 
 def test_reconcile_tiktok_stays_parked_when_oembed_author_mismatch(tmp_path, monkeypatch, mocker):
-    # A url whose oEmbed author != handle (Zernio handed back a wrong/dead url) is REJECTED by the REST-gate
-    # -> the post STAYS parked (needs_reconcile), never rests on an unverified url. FAIL CLOSED.
+    # A url whose oEmbed author != the Zernio-reported username (Zernio reported the post went to "mark" but the
+    # live url's author is "intruder" — a wrong/dead url) is REJECTED by the REST-gate -> the post STAYS parked
+    # (needs_reconcile), never rests on an unverified url. FAIL CLOSED.
     _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _tt_post(led, "tt", "zreal_1", account="@mark")
     url = "https://www.tiktok.com/@intruder/video/7"
     def oembed_get(u, **kw): return _OE(200, {"author_unique_id": "intruder"})
     mocker.patch("fanops.post.metrics.requests.get", side_effect=oembed_get)
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": url})
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": url, "tiktokUsername": "mark"})
     p = led.posts["tt"]
     assert p.state is PostState.needs_reconcile                    # author mismatch -> parked, not rested
     from fanops.reconcile import _UNVERIFIED_PREFIX
@@ -448,20 +614,23 @@ def test_zernio_permalink_from_analytics_fails_soft(tmp_path, monkeypatch):
 
 
 def test_tiktok_analytics_fallback_unparks_after_oembed_verify(tmp_path, monkeypatch, mocker):
-    # CONDITIONAL end-to-end: Zernio status is published but gives NO url; the /analytics body carries the
-    # permalink; it is oEmbed-verified (author==handle) THEN accepted -> the post UN-PARKS to published.
+    # CONDITIONAL end-to-end: Zernio status is published but gives NO url; the /analytics body carries BOTH the
+    # permalink AND the reported tiktok username (accountId on the platform row); the url is oEmbed-verified
+    # against that reported username THEN accepted -> the post UN-PARKS to published. One /analytics fetch yields
+    # both. account_id "z1" (from _tt_post) keys the accountId._id match; oEmbed author "mark" == reported "mark".
     _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _tt_post(led, "tt", "zreal_1", account="@mark")
     url = "https://www.tiktok.com/@mark/video/7656936928327027969"
     def by_url(u, **kw):
         if u.endswith("/analytics"):
-            return _OE(200, {"platformAnalytics": [{"platform": "tiktok", "shareUrl": url}]})   # analytics carries url
+            return _OE(200, {"platformAnalytics": [{"platform": "tiktok", "shareUrl": url,
+                                                    "accountId": {"_id": "z1", "username": "mark"}}]})   # url + username
         if "oembed" in u:
             return _OE(200, {"author_unique_id": "mark", "author_url": "https://www.tiktok.com/@mark"})
         raise AssertionError(f"unexpected GET {u}")
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
     # status endpoint (the get_status seam) reports published-with-no-url — the R1 park would fire, but the
-    # analytics fallback back-fills a verified url so the post reaches a REAL terminal state.
+    # analytics fallback back-fills a verified url + username so the post reaches a REAL terminal state.
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": None})
     p = led.posts["tt"]
     assert p.state is PostState.published and p.public_url == url   # analytics-backfilled + oEmbed-verified -> rests

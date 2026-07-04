@@ -103,21 +103,27 @@ _UNVERIFIED_TIKTOK = (_UNVERIFIED_PREFIX + " TikTok post not live-verified — n
                       "Backend reported published but the URL/id could not be confirmed; parked, not rested.")
 
 
-def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[str], *, get=None) -> bool:
+def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[str],
+                          reported_username: Optional[str], *, get=None) -> bool:
     """REST-gate for a TikTok post: it may only rest published when its identity is CONFIRMED, symmetric with
     IG's matched media_id. Two necessary conditions, BOTH required: (1) a real (non fanops_) submission_id AND
-    a non-empty safe_public_url — the T4 baseline; (2) the url passes the live TikTok oEmbed verifier (T8:
-    author_unique_id/author_url == the post's handle), so a dead/wrong URL Zernio handed back can't pass on
-    paper. FAIL CLOSED at every step — any missing/failing piece (bad url, fake token, oEmbed mismatch, an
-    unimportable/erroring verifier) returns False and the post stays parked. The oEmbed HTTP getter is
-    injectable (`get`) so tests never touch the network; the verifier is imported lazily to keep reconcile
-    import-light."""
+    a non-empty safe_public_url — the T4 baseline; (2) the url passes the live TikTok oEmbed verifier: the live
+    video's oEmbed author == the username ZERNIO REPORTS THIS POST WENT TO (`reported_username`, surfaced by
+    ZernioStatusClient.get_status from the status body it already fetched — NO second network call). A TikTok
+    video's real author is the TikTok username on the Zernio integration (our internal @hrmny-blog publishes to
+    tiktok.com/@wahed_bared), so comparing to `post.account` (the internal handle) FALSE-REJECTED genuinely-live
+    posts — this now compares to Zernio's authoritative reported username instead. FAIL CLOSED at every step —
+    any missing/failing piece (bad url, fake token, MISSING reported username, oEmbed mismatch, an unimportable/
+    erroring verifier) returns False and the post stays parked. The oEmbed HTTP getter is injectable (`get`) so
+    tests never touch the network; the verifier is imported lazily to keep reconcile import-light."""
     ok = safe_public_url(url)
     if not (ok and is_real_submission_id(sub)):
         return False                                         # baseline: no verifiable url / no real id -> not confirmed
+    if not (reported_username or "").strip():
+        return False                                         # no authoritative Zernio username -> fail closed (never rest on an unproven shape)
     try:
-        from fanops.post.metrics import verify_tiktok_permalink   # live oEmbed author==handle
-        return bool(verify_tiktok_permalink(cfg, ok, post.account, get=get))
+        from fanops.post.metrics import verify_tiktok_permalink   # live oEmbed author == Zernio-reported username
+        return bool(verify_tiktok_permalink(cfg, ok, reported_username, get=get))
     except Exception:
         return False                                         # an unimportable/erroring verifier is NOT proof it is live
 
@@ -473,17 +479,23 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             # back-fill a real https permalink — never promote to published with public_url=None
             # (the Pydantic R1 invariant would refuse the save below; fail-closed BEFORE construction).
             captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
+            # The Zernio-reported tiktok username for THIS post (its real published-to username, e.g. wahed_bared)
+            # rides out of the status body via get_status; the TikTok REST-gate verifies the live oEmbed author
+            # against IT, not against post.account (the internal handle — the shipped false-reject bug).
+            reported_username = info.get("tiktokUsername")
             # T8 CONDITIONAL capture fallback: Zernio's status endpoint often reports published-with-no-url
             # ({'status':'published','publicUrl':None}). When a TikTok post has NO url yet, the Zernio
-            # /analytics?postId= body may still carry a permalink the metrics mapper drops — read it and
-            # back-fill. Best-effort + FAIL-SOFT (None on any error) so it never crashes the pass; the T4
-            # REST-gate below still oEmbed-verifies whatever this yields before the post is allowed to rest.
+            # /analytics?postId= body may still carry BOTH the permalink AND the reported username the status
+            # endpoint lacked — read them from ONE fetch and back-fill. Best-effort + FAIL-SOFT (None on any
+            # error) so it never crashes the pass; the REST-gate below still oEmbed-verifies against the username.
             if not (captured_url or "").strip():
                 from fanops.models import Platform as _Plat
                 if post.platform is _Plat.tiktok:
                     try:
-                        from fanops.post.metrics import zernio_permalink_from_analytics
-                        captured_url = zernio_permalink_from_analytics(cfg, post.submission_id) or captured_url
+                        from fanops.post.metrics import zernio_analytics_url_and_username
+                        _u, _un = zernio_analytics_url_and_username(cfg, post.submission_id, post.account_id)
+                        captured_url = _u or captured_url
+                        reported_username = reported_username or _un
                     except Exception as exc:
                         log("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
             if not (captured_url or "").strip():
@@ -512,8 +524,11 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 if post.media_id is None and _unverified:
                     _reason = _UNVERIFIED_IG_MEDIA         # a quarantined phantom, still unmatched -> keep parked
             elif post.platform is Platform.tiktok:
-                if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub):
-                    _reason = _UNVERIFIED_TIKTOK           # no live-verified url / no real id -> parked
+                # reported_username (resolved above from the status body, or the /analytics fallback body) is the
+                # authority the oEmbed author must match — NOT post.account (the internal handle, the shipped bug).
+                # Absent (fail-closed input) -> the gate rejects and the post stays parked.
+                if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username):
+                    _reason = _UNVERIFIED_TIKTOK           # no live-verified url / no reported username / no real id -> parked
             if _reason is not None:
                 led.posts[post.id] = post.model_copy(update={
                     "state": PostState.needs_reconcile, "error_reason": _reason})
