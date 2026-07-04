@@ -1,8 +1,8 @@
 # tests/test_studio_posted_results.py — S6: make Posted & Results legible. The surfaces showed a raw
 # lift_score + a bare metric breakdown but never "this hook BEAT that hook" — a repost/crosspost is a
-# disconnected row though it shares clip_id with its origin. lineage_stats() is a PURE in-place annotation
-# over the already-built rows: group by clip_id (the durable join key), rank by lift desc within the group,
-# stamp sibling_count / rank / delta_vs_best. metric_peaks()+bar_pct() drive a proportional micro-bar.
+# disconnected row though it shares clip_id with its origin. lineage_stats() is a PURE annotation over the
+# already-built rows returning a NEW list (MOL-70 — the caller's rows are never mutated): group by clip_id
+# (the durable join key), rank by lift desc within the group, stamp sibling_count / rank / delta_vs_best. metric_peaks()+bar_pct() drive a proportional micro-bar.
 #
 # OFF-firewall note (deliberate, mirrors S4's reasoning): lineage_stats reads ONLY clip_id + lift_score —
 # neither of which FANOPS_CREATIVE_VARIATION changes for already-shipped posts. The honest invariant is
@@ -46,8 +46,7 @@ def _seed_published(cfg, *, pid, clip="clip_1", lift=None, account="@a", hook=No
 
 # ── lineage_stats: rank siblings by lift within a clip ─────────────────────────────────────────────
 def test_lineage_ranks_siblings_by_lift():
-    rows = [_row("a", "clip_1", 0.9), _row("b", "clip_1", 0.5)]
-    views.lineage_stats(rows)
+    rows = views.lineage_stats([_row("a", "clip_1", 0.9), _row("b", "clip_1", 0.5)])
     win = next(r for r in rows if r.post_id == "a"); lose = next(r for r in rows if r.post_id == "b")
     assert win.sibling_count == 2 and lose.sibling_count == 2
     assert win.rank == 1 and lose.rank == 2
@@ -56,23 +55,20 @@ def test_lineage_ranks_siblings_by_lift():
 
 
 def test_winner_is_rank_one_delta_zero():
-    rows = [_row("a", "c", 0.3), _row("b", "c", 0.7), _row("d", "c", 0.1)]
-    views.lineage_stats(rows)
+    rows = views.lineage_stats([_row("a", "c", 0.3), _row("b", "c", 0.7), _row("d", "c", 0.1)])
     best = next(r for r in rows if r.post_id == "b")
     assert best.rank == 1 and best.delta_vs_best == 0.0 and best.sibling_count == 3
 
 
 def test_singleton_clip_has_no_winner_badge():
-    rows = [_row("solo", "clip_solo", 0.5)]
-    views.lineage_stats(rows)
+    rows = views.lineage_stats([_row("solo", "clip_solo", 0.5)])
     r = rows[0]
     assert r.sibling_count == 1                       # one post -> a lineage of one
     assert not (r.rank == 1 and r.sibling_count > 1)  # the star condition is FALSE -> no badge in the panel
 
 
 def test_competition_ranking_ties_both_rank_one():
-    rows = [_row("a", "c", 0.8), _row("b", "c", 0.8), _row("d", "c", 0.4)]
-    views.lineage_stats(rows)
+    rows = views.lineage_stats([_row("a", "c", 0.8), _row("b", "c", 0.8), _row("d", "c", 0.4)])
     a = next(r for r in rows if r.post_id == "a"); b = next(r for r in rows if r.post_id == "b")
     d = next(r for r in rows if r.post_id == "d")
     assert a.rank == 1 and b.rank == 1 and a.delta_vs_best == 0.0 and b.delta_vs_best == 0.0
@@ -81,8 +77,7 @@ def test_competition_ranking_ties_both_rank_one():
 
 def test_lineage_fail_open_on_none_lift():
     # an unmeasured sibling (lift None) still counts toward the lineage size but can't be RANKED
-    rows = [_row("measured", "c", 0.6), _row("blank", "c", None)]
-    views.lineage_stats(rows)
+    rows = views.lineage_stats([_row("measured", "c", 0.6), _row("blank", "c", None)])
     m = next(r for r in rows if r.post_id == "measured"); b = next(r for r in rows if r.post_id == "blank")
     assert m.sibling_count == 2 and b.sibling_count == 2
     assert m.rank == 1 and m.delta_vs_best == 0.0
@@ -90,15 +85,13 @@ def test_lineage_fail_open_on_none_lift():
 
 
 def test_lineage_ignores_falsy_clip_id():
-    rows = [_row("a", "", 0.9), _row("b", None, 0.5)]
-    views.lineage_stats(rows)
+    rows = views.lineage_stats([_row("a", "", 0.9), _row("b", None, 0.5)])
     assert all(r.sibling_count is None and r.rank is None for r in rows)  # untouched — no join key
 
 
 def test_lineage_ranks_within_the_passed_set():
     # ranks within whatever filtered list is handed in (the route passes the account/batch-filtered rows)
-    filtered = [_row("a", "c", 0.4), _row("b", "c", 0.9)]   # 'b' would NOT be top if a stronger sibling existed elsewhere
-    views.lineage_stats(filtered)
+    filtered = views.lineage_stats([_row("a", "c", 0.4), _row("b", "c", 0.9)])   # 'b' would NOT be top if a stronger sibling existed elsewhere
     assert next(r for r in filtered if r.post_id == "b").rank == 1
 
 
@@ -107,11 +100,22 @@ def test_lineage_never_raises():
     views.lineage_stats([Weird(), Weird()])              # missing every attr -> fail-open, no exception
 
 
+def test_lineage_returns_new_rows_originals_untouched():
+    # MOL-70: lineage_stats must NOT mutate the caller-owned rows — it returns a NEW annotated list.
+    originals = [_row("a", "clip_1", 0.9), _row("b", "clip_1", 0.5)]
+    out = views.lineage_stats(originals)
+    assert all(r.sibling_count is None and r.rank is None and r.delta_vs_best is None for r in originals)
+    assert [r.post_id for r in out] == ["a", "b"]        # same order, same length as the input
+    win, lose = out
+    assert win.sibling_count == 2 and win.rank == 1 and win.delta_vs_best == 0.0
+    assert lose.sibling_count == 2 and lose.rank == 2 and lose.delta_vs_best == pytest.approx(-0.4)
+    assert all(o is not n for o, n in zip(originals, out))   # annotated rows are copies, never the caller's objects
+
+
 # ── flag-independence (the honest OFF firewall) ────────────────────────────────────────────────────
 def test_lineage_is_creative_variation_independent(monkeypatch):
     def annotate():
-        rows = [_row("a", "c", 0.9), _row("b", "c", 0.5)]
-        views.lineage_stats(rows)
+        rows = views.lineage_stats([_row("a", "c", 0.9), _row("b", "c", 0.5)])
         return [(r.post_id, r.sibling_count, r.rank, r.delta_vs_best) for r in rows]
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1"); on = annotate()
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); off = annotate()
@@ -161,8 +165,8 @@ def test_lift_route_carries_clip_id_and_bars(tmp_path):
     led = Ledger.load(cfg)
     view = views.lift_rows(led, cfg)
     assert all(getattr(r, "clip_id", None) == "clip_1" for r in view.variant_rows)  # LiftRow now carries it
-    views.lineage_stats(view.variant_rows)
-    assert any(r.rank == 1 and r.sibling_count == 2 for r in view.variant_rows)
+    annotated = views.lineage_stats(view.variant_rows)
+    assert any(r.rank == 1 and r.sibling_count == 2 for r in annotated)
     html = _client(cfg).get("/lift").data.decode()
     assert "★" in html and 'class="bar metric-bar"' in html
 

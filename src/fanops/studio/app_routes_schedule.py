@@ -100,7 +100,7 @@ def register_schedule_routes(app, cfg):
     def lift():
         led = Ledger.load(cfg); accts = Accounts.load(cfg); account = _account_arg()
         view = views.lift_rows(led, cfg, accts, account=account)
-        views.lineage_stats(view.variant_rows)            # S6: rank which hook won within each clip's lineage
+        view.variant_rows = views.lineage_stats(view.variant_rows)   # S6: rank which hook won within each clip's lineage (returns NEW rows)
         views.account_median_deltas(view.variant_rows)    # T-15: Δ vs the account's median lift (additive to Δ-vs-best)
         peaks = views.metric_peaks(view.variant_rows)     # S6: micro-bar normalisation over the shown variants
         # Chip universe from a CHEAP post scan (the same analyzed-variant predicate lift_rows uses), so we
@@ -119,7 +119,7 @@ def register_schedule_routes(app, cfg):
                                     delivery=delivery if delivery else None, failure_kind=failure)
         failure_rollup = views.failure_rollup(led) if (delivery == "failed") else None
         rollup = views.posted_batch_rollup(rows) if batch else None     # Face 5: full scoped (pre-slice) per-batch summary
-        views.lineage_stats(rows)                         # S6: rank repost/crosspost siblings within the filtered set
+        rows = views.lineage_stats(rows)                  # S6: rank repost/crosspost siblings within the filtered set (returns NEW rows)
         page = views.paginate(rows, _offset_arg())
         groups = views.group_posted_by_day(page.items, cfg=cfg)    # content-lifecycle Phase 3: publish-day buckets (over the slice); MOL-83 operator-tz day
         peaks = views.metric_peaks(rows)                  # S6: normalise micro-bars over the FULL filtered set (same
