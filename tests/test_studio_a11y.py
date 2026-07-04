@@ -4,6 +4,8 @@ import math
 import re
 from pathlib import Path
 
+import pytest
+
 import fanops.studio
 from fanops.config import Config
 from fanops.studio.app import create_app
@@ -1025,17 +1027,9 @@ def test_t18_matrix_empty_cell_uses_surface_token_not_raw_dark_literal():
         ".matrix-cell.empty background must carry no raw oklch literal"
 
 
-def test_t18_approve_bar_dock_is_light_ground_not_raw_dark_literal():
-    # `.approve-bar` (bare) has NO template consumer — the live docks use `.approve-bar-sticky` (already
-    # --surface-1). Fixed anyway: leaving a raw dark literal is a latent regression if the class is reused. It
-    # becomes a near-opaque light surface (color-mix on --surface-1 96%, keeping the sticky/blur distinction)
-    # with a --line border; contents inherit --ink text + themed buttons, legible on the light ground.
-    d = _decls(_rule_body(_CSS.read_text(), ".approve-bar"))
-    bg = d.get("background", "")
-    assert not _RAW_OKLCH.search(bg), \
-        f".approve-bar must not keep the raw dark oklch literal, got {bg!r}"
-    assert "var(--surface-1)" in bg, \
-        f".approve-bar ground must be a --surface-1-based light surface, got {bg!r}"
+# MOL-111: the T-18 pin `test_t18_approve_bar_dock_is_light_ground_not_raw_dark_literal` was REMOVED — the
+# `.approve-bar` (bare) selector it guarded had no template consumer (live docks use `.approve-bar-sticky`) and
+# was deleted as dead code. Its coverage is subsumed by `test_mol111_approve_bar_dead_selector_removed` above.
 
 
 def test_t18_batch_summary_hover_tracks_a_token_not_white_alpha_noop():
@@ -1047,6 +1041,47 @@ def test_t18_batch_summary_hover_tracks_a_token_not_white_alpha_noop():
         f"details.batch > summary:hover must not keep the raw white-alpha no-op, got {bg!r}"
     assert "var(--surface" in bg, \
         f"details.batch > summary:hover must resolve to a real surface tone, got {bg!r}"
+
+
+# ── MOL-111: literal-hygiene batch + dead-selector removal ───────────────────────────────────────────
+def test_mol111_primary_danger_ink_is_tokenized_not_baked():
+    # 2a: button.primary.danger on-fill ink must track the --danger-ink token, not a baked near-duplicate literal.
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, "button.primary.danger"))
+    assert d.get("color") == "var(--danger-ink)", \
+        f"button.primary.danger color must be var(--danger-ink), got {d.get('color')!r}"
+    assert not _RAW_OKLCH.search(d.get("color", "")), \
+        "button.primary.danger color must carry no raw oklch literal"
+
+
+def test_mol111_white_alpha_noop_backgrounds_are_gone():
+    # 2b: the three imperceptible white-alpha tint backgrounds (lifted dark surfaces) are deleted on light.
+    css = _CSS.read_text()
+    for sel in (".pivot-row", ".badge.shipped"):
+        bg = _decls(_rule_body(css, sel)).get("background", "")
+        assert not _RAW_OKLCH.search(bg), f"{sel} must carry no raw white-alpha no-op background, got {bg!r}"
+    # the .surface-col nested rule shares its body across two lines; assert the family literal is gone globally.
+    body = _COMMENT.sub(' ', css)
+    assert "oklch(100% 0 0 / .015)" not in body, "the white-alpha .015 tint no-op must be fully removed"
+    assert "oklch(100% 0 0 / .04)" not in body, "the white-alpha .04 tint no-op must be fully removed"
+
+
+def test_mol111_spine_step_hover_tracks_a_surface_token_not_white_alpha():
+    # 2c: .spine-step > a:hover white-alpha tint -> a real surface token (T-11 hover convention).
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, ".spine-step > a:hover"))
+    bg = d.get("background", "")
+    assert not _RAW_OKLCH.search(bg), f".spine-step > a:hover must carry no raw white-alpha no-op, got {bg!r}"
+    assert "var(--surface" in bg, f".spine-step > a:hover must resolve to a real surface tone, got {bg!r}"
+
+
+def test_mol111_approve_bar_dead_selector_removed():
+    # 3: `.approve-bar` (bare) has no template consumer (live docks use `.approve-bar-sticky`) — removed as
+    # dead code. The compound `.approve-bar-sticky` must survive. (Supersedes the T-18 re-theme pin.)
+    css = _CSS.read_text()
+    with pytest.raises(AssertionError):
+        _rule_body(css, ".approve-bar")                          # the bare selector's rule no longer exists
+    assert _decls(_rule_body(css, ".approve-bar-sticky")), ".approve-bar-sticky (the live dock) must survive"
 
 
 def test_t18_no_raw_dark_theme_surface_literal_family_survives():
