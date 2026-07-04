@@ -40,10 +40,9 @@ def test_no_produced_fragment_is_sourceless(tmp_path):
             assert f.get("source"), f"{dim} has a sourceless fragment: {f}"
 
 
-# ---- registry channel map: channels()/owner_of() expose the lever<->channel map from the single source ----
+# ---- registry channel map: all_channels()/owner_of() expose the lever<->channel map from the single source ----
 def test_channels_and_owner_of_are_consistent():
-    chans = pl.channels()
-    assert chans == pl.all_channels()
+    chans = pl.all_channels()
     for ch in chans:
         owner = pl.owner_of(ch)
         assert owner in pl.editable_fields() and ch in pl.channels_of(owner)   # round-trips

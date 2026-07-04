@@ -8,7 +8,7 @@ import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
-from fanops.learn_doctor import field_shape_report, cmd_learn_doctor, load_verdict
+from fanops.learn_doctor import field_shape_report, cmd_learn_doctor
 
 
 def _led_with_shipped(tmp_path, *, sub="s_A", state=PostState.published):
@@ -88,8 +88,7 @@ def test_cmd_persists_verdict_for_m4_to_gate(tmp_path, monkeypatch, capsys):
     assert rc == 0
     assert cfg.learn_doctor_path.exists()
     persisted = json.loads(cfg.learn_doctor_path.read_text())
-    assert persisted["verdict"] == "PASS"
-    assert load_verdict(cfg)["verdict"] == "PASS"       # the M4-facing reader round-trips
+    assert persisted["verdict"] == "PASS"               # the persisted sidecar M4 gates on
 
 
 def test_cmd_never_logs_the_postiz_key(tmp_path, monkeypatch, capsys):
@@ -137,23 +136,17 @@ def test_cmd_swallows_a_transport_failure(tmp_path, monkeypatch, capsys):
     assert "fetch failed" in capsys.readouterr().out.lower()
 
 
-def test_load_verdict_absent_returns_empty(tmp_path):
-    cfg = Config(root=tmp_path)
-    assert load_verdict(cfg) == {}                             # no file yet -> empty, never crashes
-
-
 # ---- WS-R1 XC-3: learn_doctor.json written atomically (no torn sidecar re-freezes M4) -----------
 def test_persist_verdict_is_atomic_no_torn_file_on_crash(tmp_path, monkeypatch):
-    # XC-3: a crash mid-write leaves the PRIOR valid learn_doctor.json, never a half-file; load_verdict still
-    # fail-closed on a corrupt one.
+    # XC-3: a crash mid-write leaves the PRIOR valid learn_doctor.json, never a half-file.
     import pytest
     from fanops import learn_doctor, controlio
     cfg = Config(root=tmp_path)
     learn_doctor._persist_verdict(cfg, {"verdict": "PASS", "posts_sampled": 1})       # valid file
-    good = load_verdict(cfg)
+    good = json.loads(cfg.learn_doctor_path.read_text())
     def boom(src, dst): raise OSError("simulated crash during replace")
     monkeypatch.setattr(controlio.os, "replace", boom)
     with pytest.raises(OSError):
         learn_doctor._persist_verdict(cfg, {"verdict": "FAIL"})
-    assert load_verdict(cfg) == good                       # prior verdict intact
+    assert json.loads(cfg.learn_doctor_path.read_text()) == good     # prior verdict intact
     assert not list(cfg.learn_doctor_path.parent.glob(cfg.learn_doctor_path.name + ".*tmp"))

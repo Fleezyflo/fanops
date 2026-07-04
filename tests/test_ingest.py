@@ -8,7 +8,7 @@ from fanops.ledger import Ledger
 from fanops.models import SourceState
 from fanops.errors import ToolchainMissingError
 from fanops.ingest import (ingest_drops, sha256_of, is_excluded, scan_local, probe_dimensions,
-                           has_video_stream, download_source, download_url)
+                           has_video_stream, download_url)
 
 def _put(p, b):
     p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
@@ -53,8 +53,8 @@ def test_has_video_stream_raises_clean_toolchain_error_when_ffprobe_absent(tmp_p
     with pytest.raises(ToolchainMissingError, match="ffprobe"):
         has_video_stream(tmp_path / "a.mp4")
 
-def test_download_source_raises_clean_toolchain_error_when_ytdlp_absent(tmp_path, mocker):
-    # yt-dlp off PATH -> FileNotFoundError before the process starts. download_source backs the
+def test_download_url_raises_clean_toolchain_error_when_ytdlp_absent(tmp_path, mocker):
+    # yt-dlp off PATH -> FileNotFoundError before the process starts. download_url backs the
     # one-shot `fanops pull <url>` command (pre-Source, outside any quarantine), so without a guard
     # it crashes `pull` with a traceback. yt-dlp absent is an operator config error -> typed
     # ToolchainMissingError naming yt-dlp -> cli.main exit 2, never a bare FileNotFoundError.
@@ -63,7 +63,7 @@ def test_download_source_raises_clean_toolchain_error_when_ytdlp_absent(tmp_path
         raise FileNotFoundError(2, "No such file or directory", cmd[0])
     mocker.patch("fanops.ingest.subprocess.run", side_effect=absent)
     with pytest.raises(ToolchainMissingError, match="yt-dlp"):
-        download_source(Ledger.load(cfg), cfg, "https://example.com/v")
+        download_url(cfg, "https://example.com/v")
 
 def test_probe_timeout_is_per_file_fail_soft(tmp_path, mocker):
     # A PER-FILE ffprobe hang (corrupt media, stuck mount) is NOT the binary-absent case above:

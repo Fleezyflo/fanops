@@ -13,7 +13,6 @@ record_metrics. The CLI persists the verdict to its OWN sidecar (00_control/lear
 gates on a machine-readable PASS — a SEPARATE gate from cutover.json/metrics_confirmed. The POSTIZ key
 is sent as auth by PostizMetricsClient and never logged/echoed here (mirror its sentinel discipline)."""
 from __future__ import annotations
-import json
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
 from fanops.ledger import Ledger
@@ -67,23 +66,10 @@ def _mapped_lift_keys() -> set:
     return set(_POSTIZ_LABEL_MAP.values())
 
 
-def load_verdict(cfg: Config) -> dict:
-    """M4-facing reader: the persisted field-shape report, or {} if the doctor never ran. Never raises
-    (a corrupt sidecar reads as absent), so M4's gate treats missing/corrupt as 'not validated'."""
-    p = cfg.learn_doctor_path
-    if not p.exists():
-        return {}
-    try:
-        raw = json.loads(p.read_text())
-        return raw if isinstance(raw, dict) else {}
-    except Exception:
-        return {}
-
-
 def _persist_verdict(cfg: Config, report: dict) -> None:
     # XC-3: atomic like every other control file (controlio.write_json_atomic). A crash mid-write must leave
-    # the PRIOR verdict, never a torn sidecar (load_verdict reads fail-closed -> {} -> M4 treats as 'not
-    # validated'). write_json_atomic serializes the dict (every value here is JSON-native), so no json.dumps.
+    # the PRIOR verdict, never a torn sidecar.
+    # write_json_atomic serializes the dict (every value here is JSON-native), so no json.dumps.
     write_json_atomic(cfg.learn_doctor_path, report)
 
 

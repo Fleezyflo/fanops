@@ -7,7 +7,7 @@
 # leaving every pre-existing file the "drop" default.
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.ingest import download_url, download_source
+from fanops.ingest import download_url, ingest_drops, _pull_stage
 
 
 def _put(p, b):
@@ -23,12 +23,13 @@ def test_pull_does_not_mislabel_a_pre_existing_drop_as_url(tmp_path, mocker):
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
     _put(cfg.inbox / "manual_drop.mp4", b"DROPPED")        # already in the inbox before the pull
     def fake_ytdlp(cmd, **kw):
-        from fanops.ingest import _pull_stage
         _put(_pull_stage(cfg) / "pulled_video.mp4", b"PULLED")
         class R: returncode = 0; stdout = ""; stderr = ""
         return R()
     mocker.patch("fanops.ingest.subprocess.run", side_effect=fake_ytdlp)
-    led = download_source(Ledger.load(cfg), cfg, "https://example.com/v")
+    # The live `pull` seam (cli.cmd_pull / actions_run): download outside the lock, then correlate.
+    produced = download_url(cfg, "https://example.com/v")
+    led, _ = ingest_drops(Ledger.load(cfg), cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
     assert len(led.sources) == 1                               # ONLY the pulled file is catalogued
     url_src = next(iter(led.sources.values()))
     assert url_src.source_origin == "url" and url_src.meta["bytes"] == len(b"PULLED")
@@ -36,7 +37,6 @@ def test_pull_does_not_mislabel_a_pre_existing_drop_as_url(tmp_path, mocker):
 
 
 def test_download_url_returns_the_files_it_produced(tmp_path, mocker):
-    from fanops.ingest import _pull_stage
     cfg = Config(root=tmp_path)
     _put(cfg.inbox / "preexisting.mp4", b"OLD")               # a manual drop in the inbox — NOT in the pull stage
     def fake_ytdlp(cmd, **kw):

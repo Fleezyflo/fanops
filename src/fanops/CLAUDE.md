@@ -29,9 +29,8 @@
   imports (`from x import f as _y`), lazy in-function imports (the `post/providers.py` lambdas are ALL flagged
   dead and are ALL live), dict-of-lambdas dispatch, Jinja filters, or argparse `type=` callbacks. Before deleting
   anything, grep the whole `src/fanops/` for `<name> as`, `import <name>`, and lazy-import call sites. The
-  10 genuinely-dead functions are already enumerated in the issue register (R-028 / MOL-68) with exact lines —
-  start there, don't re-derive. Two of them (`set_channel_routing`, `set_framing`) have test-only callers you
-  must remove in the same change.
+  10 genuinely-dead functions enumerated in the issue register (R-028 / MOL-68) were re-verified and REMOVED
+  (test-only callers removed, or converted to the live siblings — e.g. `is_due_or_past`, `download_url`).
 - **Sibling parity is where the real bugs live.** Several defects are "one function guards the input, its twin
   doesn't." When you touch one, check its sibling: `Accounts.load` (`accounts.py:98`) has a broad `except` with
   no per-row guard while `Personas.load` (`personas.py:66`) is defensive (MOL-79); `_catalogue_file` in

@@ -7,7 +7,7 @@
 import json
 import pytest
 from fanops.config import Config
-from fanops.accounts import Accounts, link_persona, set_clip_profile, set_framing
+from fanops.accounts import Accounts, link_persona, set_clip_profile
 from fanops import personas as P
 
 
@@ -168,9 +168,8 @@ def test_migrate_preserves_inline_cut_spec(tmp_path):
     # would silently drop an operator's inline length on migrate).
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
-                           "persona": "hypewoman energy"}])
+                           "persona": "hypewoman energy", "framing": "top"}])
     set_clip_profile(cfg, "@a", "long")               # operator hand-set an inline cut spec
-    set_framing(cfg, "@a", "top")
     P.migrate_from_accounts(cfg)
     a = Accounts.load(cfg).accounts[0]                 # reloaded + hydrated (now linked)
     assert a.persona_id and a.persona == "hypewoman energy"   # voice carried

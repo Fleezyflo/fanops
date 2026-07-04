@@ -67,21 +67,6 @@ def publish_buckets(ts: str, cfg) -> "tuple[int, int] | tuple[None, None]":
     return (loc.hour, loc.weekday())
 
 
-def is_past_due(scheduled_time, now: datetime) -> bool:
-    """Single 'past-due' truth. Strict: equal is NOT past-due. None / unparseable / tz-naive
-    → False (never raise; bad input never auto-triggers a past-due action). For 'would fire on
-    the next tick' (the publish_due / go_live gate semantics, `<=`), use is_due_or_past."""
-    if not scheduled_time:
-        return False
-    try:
-        dt = parse_iso(scheduled_time)
-    except (ValueError, TypeError):
-        return False
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt < now
-
-
 def is_due_or_past(scheduled_time, now: datetime) -> bool:
     """'Ready to fire on the next publish_due tick' — past OR exactly now. Mirrors publish_due's
     `<=` gate. Unparseable -> True (treat-as-stale — the safe direction for the go_live readiness

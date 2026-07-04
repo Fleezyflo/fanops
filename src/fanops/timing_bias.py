@@ -108,15 +108,3 @@ def apply_timing_bias(led: Ledger, cfg: Config) -> Ledger:
     except OSError as e:
         get_logger(cfg)("timing_bias", "-", "error", err=f"persist: {str(e)[:110]}")   # fail-SAFE
     return led
-
-
-def timing_prior_hour(cfg) -> "int | None":
-    """Read the persisted reach-winning hour (cfg.timing_bias_path), or None when no prior exists. The
-    schedule seam calls this then clamps per-account via timing_bias_hour_for's window logic. Fail-open:
-    a missing/corrupt prior -> None (no bias). Pure read."""
-    try:
-        if not cfg.timing_bias_path.exists():
-            return None
-        return int(json.loads(cfg.timing_bias_path.read_text())["publish_hour"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
