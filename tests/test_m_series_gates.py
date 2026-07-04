@@ -1,8 +1,9 @@
-# tests/test_m_series_gates.py — R4: the M-series time-gate contract. A single `is_past_due` helper
-# in timeutil owns "now > scheduled_time"; `_seconds_away` owns the imminent-fire band; the two are
-# disjoint by construction. `reschedule_bucket` MUST leave every queued post strictly-future when it
-# returns — an unparseable scheduled_time is sent back to Review (R3 audit trail), never left in the
-# bucket as a silent landmine the next `publish_due` would fire on.
+# tests/test_m_series_gates.py — R4: the M-series time-gate contract. A single `is_due_or_past`
+# helper in timeutil owns the "ready to fire on the next tick" gate (publish_due / go_live `<=`
+# semantics); `_seconds_away` owns the imminent-fire band. `reschedule_bucket` MUST leave every
+# queued post strictly-future when it returns — an unparseable scheduled_time is sent back to
+# Review (R3 audit trail), never left in the bucket as a silent landmine the next `publish_due`
+# would fire on.
 import json
 from datetime import datetime, timezone, timedelta
 from fanops.config import Config
@@ -36,29 +37,17 @@ def _seed_one(cfg, *, pid, state=PostState.queued, when):
 
 
 # ---- A: the helper itself ----
-def test_is_past_due_detects_strictly_past():
-    """A1: a scheduled_time strictly before `now` is past-due. The future / equal / None / unparseable
-    paths return False (mirrors `_seconds_away`'s never-raise contract — bad input → fail safe, not crash)."""
-    from fanops.timeutil import is_past_due
-    assert is_past_due(_z(_NOW - timedelta(minutes=1)), _NOW) is True
-    assert is_past_due(_z(_NOW + timedelta(minutes=1)), _NOW) is False
-    assert is_past_due(_z(_NOW), _NOW) is False                                   # equal is NOT past-due
-    assert is_past_due(None, _NOW) is False
-    assert is_past_due("garbage", _NOW) is False
-
-
-def test_past_due_and_seconds_away_are_disjoint():
-    """A2: the gate domains do not overlap. `_seconds_away` covers [now, now+window]; `is_past_due`
-    covers (-inf, now). A single timestamp cannot satisfy both, so the two paths in `reschedule_bucket`
-    (protect vs. respread) can never both fire for the same post."""
-    from fanops.timeutil import is_past_due
-    from fanops.studio.actions import _seconds_away
-    past = _z(_NOW - timedelta(minutes=1))
-    imminent = _z(_NOW + timedelta(seconds=10))
-    far = _z(_NOW + timedelta(hours=2))
-    assert is_past_due(past, _NOW) is True and _seconds_away(past, _NOW) is False
-    assert is_past_due(imminent, _NOW) is False and _seconds_away(imminent, _NOW) is True
-    assert is_past_due(far, _NOW) is False and _seconds_away(far, _NOW) is False
+def test_is_due_or_past_contract():
+    """A1 (converted to the live helper): `is_due_or_past` mirrors publish_due's `<=` gate — past
+    and exactly-now both fire; future does not. None -> False (no time is never 'due'); an
+    UNPARSEABLE time -> True (treat-as-stale — the safe direction for the go_live readiness check:
+    a torn time blocks the flip, never silently passes). Never raises."""
+    from fanops.timeutil import is_due_or_past
+    assert is_due_or_past(_z(_NOW - timedelta(minutes=1)), _NOW) is True
+    assert is_due_or_past(_z(_NOW + timedelta(minutes=1)), _NOW) is False
+    assert is_due_or_past(_z(_NOW), _NOW) is True                                 # equal IS due (`<=`)
+    assert is_due_or_past(None, _NOW) is False
+    assert is_due_or_past("garbage", _NOW) is True                                # torn time blocks the flip
 
 
 # ---- B: regression pins — reschedule_bucket leaves no past-due / no garbage ----
@@ -100,23 +89,15 @@ def test_reschedule_bucket_replaces_unparseable_time(tmp_path):
     assert parse_iso(bad.scheduled_time) > _NOW
 
 
-# ---- C: the consolidation — every site reads the same is_past_due ----
-def test_golive_past_due_gate_uses_shared_helper(tmp_path, monkeypatch):
-    """C1: the M6 go_live past-due gate (golive.py:520-532) reads is_past_due. If a refactor swaps the
-    helper to a stub returning False, the gate must rely on the helper — so go_live no longer flags
-    posts as past-due. This is the consolidation contract: there is ONE definition of past-due."""
-    from fanops import timeutil
-    cfg = Config(root=tmp_path)
-    _seed_one(cfg, pid="late", when=_z(_NOW - timedelta(hours=2)))               # past-due today
-    # If the helper is the single source of truth, stubbing it changes golive's count.
-    monkeypatch.setattr(timeutil, "is_past_due", lambda ts, now: False)
-    # We can't easily call go_live live; instead assert the helper is importable from the call site.
-    # The actual structural check is that `from fanops.timeutil import is_past_due` succeeds AND
-    # `golive` imports the same symbol — verified by an attribute lookup against the module.
+# ---- C: the consolidation — every site reads the same shared time-gate helper ----
+def test_golive_past_due_gate_uses_shared_helper():
+    """C1: the M6 go_live past-due gate reads the shared timeutil helper (`is_due_or_past`) — the
+    consolidation contract: there is ONE definition of 'ready to fire', never an open-coded
+    parse_iso(scheduled_time) <= now at the call site."""
     import fanops.studio.golive as gl_mod
     src = pathlib.Path(gl_mod.__file__).read_text()
-    assert ("is_past_due" in src) or ("is_due_or_past" in src), (
-        "golive.py must use a shared timeutil helper, not an open-coded "
+    assert "is_due_or_past" in src, (
+        "golive.py must use the shared timeutil helper, not an open-coded "
         "parse_iso(scheduled_time) <= now")
 
 

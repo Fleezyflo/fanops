@@ -30,36 +30,14 @@ from fanops.personas import caption_directive
 from fanops.hashtags import vet_hashtags_traced, content_tag_candidates, load_store
 from fanops.log import get_logger
 from fanops.control import load_guidance
-from fanops.hookcheck import is_weak_hook
 
 logger = logging.getLogger(__name__)
 
 _TAG_RE = re.compile(r"#\S+")
 
 # P2 coherent variations. The CHEAP-TEXT axes a justified variant may move (render-expensive frame/
-# length axes are a P4-gated follow-up, NOT here). normalize_variation_axis maps an LLM label to a
-# canonical key (case/space/dash-insensitive), unknown -> None — so a bad label is "unlabeled", never a
-# crash. The coherence gate (T2) requires a KNOWN axis + a rationale; P3 attributes reach by the axis.
+# length axes are a P4-gated follow-up, NOT here).
 VARIATION_AXES = ("hook_string", "caption_angle", "hook_placement")
-
-def normalize_variation_axis(value) -> str | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    key = re.sub(r"[\s/\-]+", "_", value.strip().lower())
-    return key if key in VARIATION_AXES else None
-
-def coherent_variation(hook, rationale, *, siblings=frozenset()) -> bool:
-    """T2 coherence gate: a variant earns its extra post ONLY when it is distinct AND explained —
-    (a) a non-empty hook that (b) clears the MECHANICAL floor against its siblings (is_weak_hook:
-    empty / exact-dup / opening-template cluster), and (c) carries a non-empty rationale. Else dropped:
-    clean beats noise. Pure. NB v2: is_weak_hook no longer judges QUALITY (superlative/hype/narration) —
-    that moved to the reasoning critic, which does NOT run on per-surface caption siblings, so a
-    quality-weak caption variant can now post; accepted trade (rare; the caption prompt discourages hype)."""
-    if not (rationale and str(rationale).strip()):
-        return False
-    if not (hook and str(hook).strip()):
-        return False
-    return not is_weak_hook(hook, siblings)
 
 
 def _tags_in(caption: str | None) -> list[str]:

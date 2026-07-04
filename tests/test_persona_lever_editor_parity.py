@@ -43,7 +43,7 @@ def test_update_route_also_persists_each_editable_field(tmp_path):
 def test_no_model_field_escapes_the_editable_exempt_or_quarantine_partition():
     # the partition is total: every model field is editable, exempt, or quarantined — nothing falls through.
     for f in Persona.model_fields:
-        assert (f in pl.editable_fields() or pl.is_exempt(f) or f in _QUARANTINE), (
+        assert (f in pl.editable_fields() or f in pl.PERSONA_FIELD_EXEMPT or f in _QUARANTINE), (
             f"{f!r} is in none of editable/exempt/quarantine — the coherence partition has a hole")
 
 

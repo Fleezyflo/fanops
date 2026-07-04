@@ -1,5 +1,5 @@
 # tests/test_account_framing.py — M2c: per-account FRAMING (Account.framing + Config.resolve_top_bias
-# + the set_framing mutator), wired into the per-account render CUT. An account can pin its vertical
+# + the add_account framing write path), wired into the per-account render CUT. An account can pin its vertical
 # crop bias ("top" = head-safe upper-third, "center" = default) independent of the GLOBAL aware_reframe;
 # when the resolved framing differs from the global, the account's Render becomes a real per-account CUT
 # (its own framing) — content-addressed with a frame tag so two accounts sharing one hook+band but a
@@ -8,7 +8,7 @@ import json
 import pytest
 from pathlib import Path
 from fanops.config import Config, FRAMING_NAMES
-from fanops.accounts import Accounts, set_framing, add_account
+from fanops.accounts import Accounts, add_account
 from fanops.ledger import Ledger
 from fanops.models import Clip, Moment, Source, ClipState, MomentState, Fmt
 from fanops.crosspost import crosspost_clips
@@ -76,40 +76,7 @@ def test_resolve_top_bias_unknown_falls_back(tmp_path):
     assert cfg.resolve_top_bias(a) is False                     # unknown is inert -> global (validate-or-default on read)
 
 
-# ---------------------------------------------------------------- set_framing mutator ----
-def test_set_framing_sets_and_clears_preserving_siblings(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed(cfg, [_acct("@a", note="keep me"),
-                {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"}])
-    assert set_framing(cfg, "@a", "top") == "@a"
-    a = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "@a")
-    assert a["framing"] == "top" and a["note"] == "keep me"     # set + sibling/unknown field intact
-    set_framing(cfg, "@a", "")                                  # blank clears
-    a = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "@a")
-    assert a["framing"] is None
-    b = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "@b")
-    assert b["account_id"] == "x"                               # sibling untouched throughout
-
-def test_set_framing_center(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a")])
-    set_framing(cfg, "@a", "center")
-    assert Accounts.load(cfg).accounts[0].framing == "center"
-
-def test_set_framing_rejects_unknown(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a")])
-    with pytest.raises(ValueError):
-        set_framing(cfg, "@a", "diagonal")                     # not a known framing -> never written
-
-def test_set_framing_unknown_handle_raises(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a")])
-    with pytest.raises(KeyError):
-        set_framing(cfg, "@nope", "top")
-
-def test_set_framing_round_trips_through_resolve(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a")])
-    set_framing(cfg, "@a", "top")
-    assert cfg.resolve_top_bias(Accounts.load(cfg).accounts[0]) is True
-
+# ---------------------------------------------------------------- add_account framing write path ----
 def test_add_account_with_framing_persists(tmp_path):
     cfg = Config(root=tmp_path)
     assert add_account(cfg, "@a", ["instagram"], framing="top") == "@a"

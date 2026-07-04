@@ -42,7 +42,7 @@ class Account(BaseModel):
                                            # resolve_top_bias falls back to the GLOBAL aware_reframe (byte-
                                            # identical to today). Additive (empty on legacy rows); an unknown
                                            # value reloads fine and resolve_top_bias ignores it (-> global) —
-                                           # fail-open. set_framing is the strict WRITE boundary (refuses
+                                           # fail-open. add_account is the strict WRITE boundary (refuses
                                            # anything not in config.FRAMING_NAMES).
     hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona curated hashtag pool, HYDRATED in
                                            # memory from the linked Persona at load (never stored on the account row —
@@ -405,55 +405,6 @@ def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
     return handle
 
 
-def set_channel_routing(cfg: Config, handle: str, platform: str, *,
-                        backend: str, integration_id: str | int) -> str:
-    """Atomically map ONE (handle, platform) channel to its provider + integration id in a SINGLE
-    accounts.json write — the canonical R2 routing setter that REPLACES the legacy
-    `write_integration` + `set_backend` two-write seam, which silently drifted (the cisumwolfhom
-    incident). Writes integrations[platform] AND backends[platform] together, never one without
-    the other; the post-write validate is clean by construction. Validates strictly at the
-    control-file boundary: a non-blank handle, a known Platform.value, a non-blank integration_id,
-    a non-blank backend in _VALID_BACKENDS, AND the platform is one the account actually carries
-    (config error vs silent write). Refuses BOTH `clearing` modes — clearing belongs on the
-    legacy setters; this API only WRITES a complete pair (the doctor surveys, the operator clears
-    via the legacy seam). Scans ALL rows (dup-handle safety, mirrors set_backend/write_integration);
-    preserves every sibling, unknown field, and the account's other platforms. Unknown handle ->
-    KeyError (caller -> clean ActionResult)."""
-    platform = getattr(platform, "value", platform)
-    if platform not in {pf.value for pf in Platform}:
-        raise ValueError(f"unknown platform: {platform!r}")
-    integration_id = str(integration_id or "").strip()
-    if not integration_id:
-        raise ValueError("integration_id is required — set_channel_routing writes a complete pair "
-                         "(use set_backend with blank to clear a routing instead)")
-    backend = (backend or "").strip().lower()
-    if not backend:
-        raise ValueError("backend is required — set_channel_routing writes a complete pair "
-                         "(use set_backend with blank to clear a routing instead)")
-    if backend not in _VALID_BACKENDS:
-        raise ValueError(f"unknown backend: {backend!r} (valid: {', '.join(sorted(_VALID_BACKENDS))})")
-    p = cfg.accounts_path
-    with _accounts_txn(cfg):
-        raw, accounts = _load_raw_accounts(p)
-        found = False
-        for a in accounts:                                       # scan ALL rows (dup-handle safety)
-            if isinstance(a, dict) and a.get("handle") == handle:
-                if platform not in (a.get("platforms") or []):
-                    raise ValueError(f"{handle} does not carry {platform!r} — add the platform first")
-                integ = a.get("integrations")
-                if not isinstance(integ, dict): integ = {}
-                bk = a.get("backends")
-                if not isinstance(bk, dict): bk = {}
-                integ[str(platform)] = integration_id
-                bk[str(platform)] = backend
-                a["integrations"] = integ; a["backends"] = bk
-                found = True
-        if not found:
-            raise KeyError(handle)
-        write_json_atomic(p, raw)
-    return handle
-
-
 def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
                 status: str = "active", access: str = "postiz",
                 clip_profile: str = "", framing: str = "") -> str:
@@ -569,29 +520,6 @@ def set_clip_profile(cfg: Config, handle: str, profile: str) -> str:
         for a in accounts:
             if isinstance(a, dict) and a.get("handle") == handle:
                 a["clip_profile"] = profile or None; found = True
-        if not found:
-            raise KeyError(handle)
-        write_json_atomic(p, raw)
-    return handle
-
-
-def set_framing(cfg: Config, handle: str, framing: str) -> str:
-    """Set or clear ONE account's framing atomically (the M2 per-account vertical-CROP control). A blank
-    framing CLEARS it (-> None -> resolve_top_bias falls back to the global FANOPS_AWARE_REFRAME). Validates
-    a non-blank framing at the control-file boundary (must be a known config.FRAMING_NAMES value — never write
-    a framing that resolve_top_bias would ignore as a typo); preserves every sibling, unknown field, and the
-    account's own other fields; scans ALL rows (dup-handle safety, mirrors set_clip_profile). Unknown handle
-    -> KeyError."""
-    framing = (framing or "").strip().lower()
-    if framing and framing not in FRAMING_NAMES:
-        raise ValueError(f"unknown framing: {framing!r} (valid: {', '.join(sorted(FRAMING_NAMES))})")
-    p = cfg.accounts_path
-    with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
-        raw, accounts = _load_raw_accounts(p)
-        found = False
-        for a in accounts:
-            if isinstance(a, dict) and a.get("handle") == handle:
-                a["framing"] = framing or None; found = True
         if not found:
             raise KeyError(handle)
         write_json_atomic(p, raw)

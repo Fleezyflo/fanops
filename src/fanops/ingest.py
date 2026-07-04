@@ -295,13 +295,6 @@ def download_url(cfg: Config, url: str) -> set[Path]:
     return _inbox_media(stage) - before          # the media files THIS pull produced, in its isolated stage
 
 
-def download_source(led: Ledger, cfg: Config, url: str) -> Ledger:
-    """Download + ingest in one call (kept for any direct caller/test). The CLI's `pull` command
-    splits these (download outside the lock, ingest inside a transaction) — see cli.cmd_pull."""
-    produced = download_url(cfg, url)
-    led, _ = ingest_drops(led, cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
-    return led
-
 def scan_local(roots: list[Path]) -> list[str]:
     out: list[str] = []
     for root in roots:

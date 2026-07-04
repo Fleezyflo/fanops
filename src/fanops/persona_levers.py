@@ -84,11 +84,6 @@ PERSONA_EDITABLE_CHANNELS = {
 }
 
 
-def is_exempt(field: str) -> bool:
-    """True if a model field is an identity/metadata exemption (not a per-clip output lever)."""
-    return field in PERSONA_FIELD_EXEMPT
-
-
 def editable_fields() -> frozenset:
     """The persona model fields the save route persists (the coherent editable lever set)."""
     return frozenset(PERSONA_EDITABLE_CHANNELS)
@@ -102,11 +97,6 @@ def channels_of(field: str) -> tuple:
 def all_channels() -> frozenset:
     """Every output channel owned by an editable lever — the distinctness namespace."""
     return frozenset(ch for chans in PERSONA_EDITABLE_CHANNELS.values() for ch in chans)
-
-
-def channels() -> frozenset:
-    """Alias of all_channels() — the full output-channel namespace (the M4 manifest reads it)."""
-    return all_channels()
 
 
 def owner_of(channel: str) -> str | None:

@@ -431,9 +431,8 @@ def caption_prompt(payload: dict) -> str:
         "any remaining slots (up to 4) from the menu above.\n"
         # ROOT FIX: the caption gate is HASHTAGS ONLY now — the on-screen hook is authored by the frame-
         # seeing MOMENT gate (hooks_by_persona), never this blind text-only gate. The per-surface
-        # hook/axis/rationale ask was removed. The dormant variation machinery (coherent_variation +
-        # the learned/transferred feeds, empty by default while learning is frozen) is a /ecc:prp-plan
-        # deeper-fix follow-up next session.
+        # hook/axis/rationale ask was removed (the dormant coherence-gate machinery was deleted with it;
+        # the learned/transferred feeds stay, empty by default while learning is frozen).
         f"{learned_block}"
         f"{transferred_block}"
         "\n"

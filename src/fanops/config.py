@@ -61,7 +61,7 @@ _LIVE_BACKENDS = frozenset({"postiz", "zernio"})
 
 # M2 per-account FRAMING values (Account.framing): the vertical crop bias for the account's render CUT.
 # "top" -> head-safe upper-third crop (reframe_filter top_bias=True), "center" -> default centred crop.
-# The strict WRITE boundary (set_framing/add_account refuse anything else); resolve_top_bias maps these to
+# The strict WRITE boundary (add_account refuses anything else); resolve_top_bias maps these to
 # the bool top_bias, falling back to the GLOBAL aware_reframe for None/blank/unknown (validate-or-default).
 FRAMING_NAMES = frozenset({"top", "center"})
 

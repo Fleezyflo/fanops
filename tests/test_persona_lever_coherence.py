@@ -65,7 +65,7 @@ def test_every_field_is_exempt_quarantined_or_fully_coherent():
     # FAIL-CLOSED: every model field is identity/metadata (exempt), explicitly quarantined, or fully coherent
     # (editable ∧ wired ∧ distinct). A field that is none of these is the rot we ban.
     for f in Persona.model_fields:
-        if pl.is_exempt(f) or f in _KNOWN_INCOHERENT:
+        if f in pl.PERSONA_FIELD_EXEMPT or f in _KNOWN_INCOHERENT:
             continue
         assert f in pl.editable_fields(), (
             f"{f!r} is neither exempt, quarantined, nor EDITABLE (no persona save-route control). "
@@ -103,8 +103,8 @@ def test_quarantine_teeth_a_hypothetical_incoherent_field_would_red():
     # editability axis that catches the Phase-1 over-claim — a field wired to output but with NO save-route
     # control is a violator even though output-sensitivity alone would pass it.
     phantom = "phantom_invisible_lever"
-    assert not pl.is_exempt(phantom) and phantom not in pl.editable_fields()
-    is_violator = (not pl.is_exempt(phantom)
+    assert phantom not in pl.PERSONA_FIELD_EXEMPT and phantom not in pl.editable_fields()
+    is_violator = (phantom not in pl.PERSONA_FIELD_EXEMPT
                    and phantom not in _KNOWN_INCOHERENT
                    and phantom not in pl.editable_fields())
     assert is_violator, "the guard predicate must flag a non-exempt, non-editable, non-quarantined field"
