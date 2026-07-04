@@ -391,15 +391,52 @@ def _oembed_author_key(body: dict) -> Optional[str]:
         if seg: return _handle_key(seg)
     return None
 
-def verify_tiktok_permalink(cfg: Config, url: Optional[str], handle: Optional[str], *, get=None) -> bool:
-    """True iff `url` is a live TikTok post whose author == `handle`, proven via TikTok oEmbed. Injectable
-    `get` (defaults to requests.get) so tests never hit the network. FAIL CLOSED: a non-https/empty url
-    (rejected by safe_public_url before any request), a non-200 oEmbed (404 = dead video), a transport
-    error, or an author that doesn't match the handle all return False — an unverifiable URL is never
-    accepted. oEmbed is public (no token), so nothing sensitive is logged."""
+def zernio_reported_tiktok_username(body, integration_id: Optional[str]) -> Optional[str]:
+    """The TikTok username ZERNIO reports a post went to, read from a GET /posts/{id} status body — the SOLE
+    authority for 'which TikTok account did this post publish to'. A post's TikTok video is authored by the
+    TikTok USERNAME on the Zernio integration (e.g. our internal @hrmny-blog publishes to tiktok.com/@wahed_bared),
+    NOT by our internal account name; verify_tiktok_permalink must therefore compare the live oEmbed author to
+    THIS, never to our handle (the shipped bug). Scans the SAME platform rows _zernio_platform_rows yields,
+    restricted to tiktok rows, and returns the username of the row whose accountId._id == `integration_id`
+    (accounts.json integrations.tiktok == post.account_id). FALLBACK: the SOLE tiktok row when the id matches
+    nothing / is None (the bound-method dispatch has no post in scope to pass an id, but a single-account post
+    has exactly one tiktok row). Per-row username source order: accountId.username -> platformSpecificData
+    __usernameSnapshot -> tiktokUsername -> accountId.displayName. FAIL-CLOSED: None when no tiktok row carries
+    a usable username (the caller must then reject — a post with no derivable Zernio username stays parked)."""
+    tt_rows = [r for r in _zernio_platform_rows(body) if str(r.get("platform", "")).strip().lower() == "tiktok"]
+    if not tt_rows:
+        return None
+    def _row_username(r: dict) -> Optional[str]:
+        acct = r.get("accountId") if isinstance(r.get("accountId"), dict) else {}
+        psd = r.get("platformSpecificData") if isinstance(r.get("platformSpecificData"), dict) else {}
+        for v in (acct.get("username"), psd.get("__usernameSnapshot"), psd.get("tiktokUsername"), acct.get("displayName")):
+            if isinstance(v, str) and v.strip(): return v.strip()
+        return None
+    if integration_id:
+        for r in tt_rows:
+            acct = r.get("accountId") if isinstance(r.get("accountId"), dict) else {}
+            if str(acct.get("_id") or "") == str(integration_id):
+                return _row_username(r)                          # the EXACT account this post went to
+    if len(tt_rows) == 1:
+        return _row_username(tt_rows[0])                         # sole tiktok row -> unambiguous even with no id
+    return None                                                  # >1 row and no id match -> can't disambiguate, fail closed
+
+
+def verify_tiktok_permalink(cfg: Config, url: Optional[str], expected_username: Optional[str], *, get=None) -> bool:
+    """True iff `url` is a live TikTok post whose oEmbed author == `expected_username`, proven via TikTok oEmbed.
+    `expected_username` is the username ZERNIO reports for this post's own account (zernio_reported_tiktok_username)
+    — the real TikTok username the post published to — NOT our internal handle (comparing to the internal handle
+    was the shipped bug: @hrmny-blog's live post is tiktok.com/@wahed_bared, so oEmbed author 'wahed_bared' never
+    equaled 'hrmny-blog' and a genuinely-live post fail-closed). Injectable `get` (defaults to requests.get) so
+    tests never hit the network. FAIL CLOSED: a non-https/empty url (rejected by safe_public_url before any
+    request), a missing expected_username, a non-200 oEmbed (404 = dead video), a transport error, or an author
+    that doesn't match all return False — an unverifiable URL is never accepted. oEmbed is public (no token)."""
     ok = safe_public_url(url)
     if not ok:
         return False                                            # malformed/non-https -> never reaches the network
+    want = _handle_key(expected_username)
+    if not want:
+        return False                                            # no authoritative username to compare against -> fail closed
     get = get or requests.get
     try:
         resp = get(_TIKTOK_OEMBED, params={"url": ok}, timeout=20)
@@ -411,18 +448,14 @@ def verify_tiktok_permalink(cfg: Config, url: Optional[str], handle: Optional[st
         body = resp.json()
     except ValueError:
         return False
-    want = _handle_key(handle)
     got = _oembed_author_key(body if isinstance(body, dict) else {})
-    return bool(want) and got == want                           # exact, normalized author match
+    return got == want                                          # exact, normalized author == Zernio-reported username
 
 
-def zernio_permalink_from_analytics(cfg: Config, submission_id: str, *, get=None) -> Optional[str]:
-    """CONDITIONAL capture fallback (T8): when the status endpoint yields NO url, the Zernio
-    GET /analytics?postId= body may still carry a permalink field the metrics mapper drops. Fetch it and
-    extract the URL via _extract_zernio_permalink (the same shape-tolerant reader the status client uses).
-    Best-effort + FAIL-SOFT: a 401/5xx/transport error or an absent url returns None (the post simply stays
-    parked and surfaced, never crashes the pass). This is exercised only if Zernio never backfills the url on
-    the status endpoint — the caller still oEmbed-verifies whatever this returns before accepting it."""
+def _fetch_zernio_analytics_body(cfg: Config, submission_id: str, *, get=None):
+    """The shared single-fetch core for the two /analytics?postId= fallback readers: returns the parsed body,
+    or None on any 401/202/5xx/transport/JSON error (best-effort, FAIL-SOFT). One request; both the permalink
+    and the reported-username readers below extract from what it returns, so the fallback never double-fetches."""
     base = _zbase(cfg); key = _zkey(cfg)                        # _zkey raises ZernioAuthError if missing (caller-guarded)
     get = get or requests.get
     try:
@@ -433,10 +466,33 @@ def zernio_permalink_from_analytics(cfg: Config, submission_id: str, *, get=None
     if getattr(resp, "status_code", None) != 200:
         return None                                             # 202 sync-pending / 5xx / 401 -> nothing to extract
     try:
-        body = resp.json()
+        return resp.json()
     except ValueError:
         return None
+
+def zernio_permalink_from_analytics(cfg: Config, submission_id: str, *, get=None) -> Optional[str]:
+    """CONDITIONAL capture fallback (T8): when the status endpoint yields NO url, the Zernio
+    GET /analytics?postId= body may still carry a permalink field the metrics mapper drops. Fetch it and
+    extract the URL via _extract_zernio_permalink (the same shape-tolerant reader the status client uses).
+    Best-effort + FAIL-SOFT: a 401/5xx/transport error or an absent url returns None (the post simply stays
+    parked and surfaced, never crashes the pass). This is exercised only if Zernio never backfills the url on
+    the status endpoint — the caller still oEmbed-verifies whatever this returns before accepting it."""
+    body = _fetch_zernio_analytics_body(cfg, submission_id, get=get)
+    if body is None:
+        return None
     return safe_public_url(_extract_zernio_permalink(body))     # https-only; None if no url-shaped field present
+
+def zernio_analytics_url_and_username(cfg: Config, submission_id: str, integration_id: Optional[str],
+                                      *, get=None) -> tuple[Optional[str], Optional[str]]:
+    """The url-less-status fallback that reconcile needs: from ONE GET /analytics?postId= fetch return BOTH the
+    permalink AND the Zernio-reported tiktok username (keyed by integration_id == post.account_id). The live
+    /analytics body carries platformAnalytics[] rows with the SAME accountId shape the status body does, so both
+    the url and the username come out of a single request (no double-fetch when the status endpoint gave no url).
+    FAIL-SOFT: (None, None) on any error / absent field — the caller then keeps the post parked."""
+    body = _fetch_zernio_analytics_body(cfg, submission_id, get=get)
+    if body is None:
+        return None, None
+    return safe_public_url(_extract_zernio_permalink(body)), zernio_reported_tiktok_username(body, integration_id)
 
 
 class ZernioStatusClient:
@@ -460,6 +516,14 @@ class ZernioStatusClient:
         out = {"status": status}
         if status == "published":
             out["publicUrl"] = _extract_zernio_permalink(body) or None
+            # T-VERIFY: carry the Zernio-REPORTED TikTok username out of the SAME body (no second fetch) so
+            # reconcile's TikTok REST-gate can verify the live oEmbed author against the username Zernio actually
+            # published to — NOT our internal handle. integration_id is not in scope here (bound-method dispatch),
+            # so this resolves the SOLE tiktok row; reconcile disambiguates a multi-account body via post.account_id.
+            # ADDITIVE + fail-closed: the key is present ONLY when a username is derivable (a status body with no
+            # accountId.username adds nothing -> the {status, publicUrl} shape is byte-identical for those bodies).
+            uname = zernio_reported_tiktok_username(body, None)
+            if uname: out["tiktokUsername"] = uname
         return out
 
 
