@@ -5,7 +5,7 @@ interpreter (PEP 456) and would make ids differ every run, causing duplicate pos
 import hashlib
 
 def _hash(*parts: str) -> str:
-    return hashlib.sha1("\x00".join(parts).encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha1("\x00".join(parts).encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 def make_id(kind: str, source: str) -> str:
     """Top-level id from a stable source string (e.g. a sha256 digest or a path)."""

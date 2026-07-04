@@ -172,7 +172,7 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
     date_str = now.date().isoformat()
     out: dict[str, str] = {}
     for ai, handle in enumerate(accounts_sorted):
-        rng = random.Random(int(hashlib.sha1(f"{handle}|{date_str}".encode()).hexdigest()[:8], 16))
+        rng = random.Random(int(hashlib.sha1(f"{handle}|{date_str}".encode(), usedforsecurity=False).hexdigest()[:8], 16))
         # Per-account anchor offset: a small minute offset (< STEP) keyed on the account so two
         # accounts don't both open at minute 0. Bounded so the first slot stays near `now`.
         anchor_offset = rng.randint(0, step - 1)

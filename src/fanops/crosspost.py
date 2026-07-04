@@ -34,7 +34,7 @@ def _seed(account: str, platform: str, date_str: str, clip_id: str = "") -> int:
     # SHA1, NOT builtin hash() (FIX F00) — deterministic across processes. clip_id is part of the
     # seed (AUDIT H1/H2) so two clips on the SAME surface get DIFFERENT times instead of colliding
     # on the identical minute (the old seed ignored the clip -> lockstep fingerprint).
-    h = hashlib.sha1(f"{account}|{platform}|{date_str}|{clip_id}".encode()).hexdigest()
+    h = hashlib.sha1(f"{account}|{platform}|{date_str}|{clip_id}".encode(), usedforsecurity=False).hexdigest()
     return int(h[:8], 16)
 
 def surface_time(base: datetime, account: str, platform: str, date_str: str, index: int,
