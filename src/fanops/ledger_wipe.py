@@ -34,6 +34,7 @@ MACHINERY ONLY — nothing here runs against live 00_control automatically; the 
 the Studio typed-confirm surface, later. fan-accounts-repost-freely: this removes UNBACKED cache, never
 adds any supersede/dedupe; no new auto-publish path."""
 from __future__ import annotations
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -41,6 +42,8 @@ from typing import Optional
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import PostState
+
+logger = logging.getLogger(__name__)
 
 
 class SnapshotRequired(Exception):
@@ -201,6 +204,7 @@ def snapshot_is_restorable(snapshot_path: "Path | str") -> bool:
         # the ledger doc is a dict carrying the id->unit maps; a valid image has at least the posts map key.
         return isinstance(doc, dict) and "posts" in doc
     except Exception:
+        logger.warning("snapshot restorability check failed (fail-open, treated as unrestorable)", exc_info=True)
         return False
 
 

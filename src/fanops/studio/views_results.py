@@ -3,6 +3,7 @@ suggested-time rationale), the all-time Posted library (PostedRow + lineage stat
 and the cross-account Lift/learning view (LiftRow/LiftView). Pure (no HTTP/Flask). Depends on views_common for
 the shared time/batch helpers; never on a sibling surface module (review/cockpit) — the import graph stays acyclic."""
 from __future__ import annotations
+import logging
 import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,8 @@ from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState, RenderState
 from fanops.timeutil import parse_iso
 from fanops.studio.views_common import RECENT_WINDOW_HOURS, _batch_title, _imminent, suggest_time
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -612,7 +615,7 @@ def lineage_stats(rows) -> None:
                 r.rank = 1 + sum(1 for o in measured if o.lift_score > r.lift_score)
                 r.delta_vs_best = round(r.lift_score - best, 4)
     except Exception:
-        pass
+        logger.warning("lineage sibling-ranking skipped (fail-open, additive fields stay None)", exc_info=True)
 
 
 def account_median_deltas(rows) -> None:

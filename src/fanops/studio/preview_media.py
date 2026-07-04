@@ -28,14 +28,16 @@ def preview_media_path(cfg: Config, led: Ledger, post_id: str) -> str | None:
             vpath = cfg.render_path(src.batch_id if src else None, src.id if src else None, rid, clip.aspect)
             if Path(vpath).exists() and Path(vpath).stat().st_size > 0:
                 return vpath
-        except Exception:
-            pass
+        except Exception as exc:
+            from fanops.log import get_logger   # a resolved-spec miss falls through the ladder — record it, don't hide it
+            get_logger(cfg)("preview", post_id, "spec_resolve_error", err=str(exc)[:160])
         try:
             plan = render_account_file(led, cfg, post=post, acct=acct, target_clip=clip, src=src, caller="preview")
             if plan.vpath and Path(plan.vpath).exists():
                 return plan.vpath
-        except Exception:
-            pass
+        except Exception as exc:
+            from fanops.log import get_logger   # a preview burn miss falls through to media_urls/clip.path — record it
+            get_logger(cfg)("preview", post_id, "burn_error", err=str(exc)[:160])
     if post.media_urls:
         raw = post.media_urls[0]
         if raw.startswith("file://"):

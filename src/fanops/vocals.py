@@ -13,8 +13,11 @@ never breaks. Two environment gotchas (both solved here so production doesn't hi
      (lameenc) via --mp3 instead, which Whisper reads fine.
 """
 from __future__ import annotations
+import logging
 import os, subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Same flock-critical bound as the whisper run (clip.py / transcribe.py): demucs runs INSIDE the
 # transcribe pass's ledger transaction, so an unbounded hang would hold the lock. ~30s/clip on CPU
@@ -32,8 +35,8 @@ def _demucs_env() -> dict:
         import certifi
         env.setdefault("SSL_CERT_FILE", certifi.where())
         env.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-    except Exception:
-        pass
+    except ImportError:
+        logger.warning("certifi absent — demucs SSL cert fix skipped (fail-open)", exc_info=True)
     return env
 
 

@@ -3,6 +3,7 @@ because this module is only imported LAZILY from the CLI dispatch branch (never 
 core no-[studio] install never touches it. Reads use lock-free Ledger.load (atomic os.replace
 guarantees a complete file); writes go through studio.actions (one Ledger.transaction each)."""
 from __future__ import annotations
+import logging
 import os
 from collections import Counter
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ from fanops.discover import make_thumbnail        # reuse the cheap one-frame ff
 from fanops.studio import views, actions
 from fanops.personas import lever_catalog        # the code-derived lever catalog (every option + its real effect)
 from fanops.timeutil import local_input_to_utc_z, to_local_display, to_local_display_hybrid, to_local_input  # local-time rendering at the web boundary
+
+logger = logging.getLogger(__name__)
 
 _ALL_PLATFORMS = [p.value for p in Platform]    # the add-account form's platform checkboxes (no enum drift)
 # Lever exposure for the Personas tab — ALL sourced from personas.lever_catalog() so the option lists, their
@@ -157,7 +160,7 @@ def _account_arg():
         if cfg:
             return views.resolve_account_handle(v, cfg)
     except Exception:
-        pass
+        logger.warning("account handle resolution failed (fail-open, using raw handle)", exc_info=True)
     return v
 
 def _batch_arg():

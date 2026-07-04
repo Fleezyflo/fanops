@@ -349,7 +349,8 @@ def _read_queries(cfg: Config):
         d = json.loads(p.read_text())
         q = d.get("queries") if isinstance(d, dict) else None
         return q if isinstance(q, list) else None
-    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
+        get_logger(cfg)("hashtags", "budget", "queries_read_error", err=str(e)[:160])   # None == fail-closed, but recorded
         return None
 
 def budget_remaining(cfg: Config, *, now: datetime | None = None):
