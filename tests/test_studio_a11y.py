@@ -986,3 +986,95 @@ def test_generic_details_disclosure_uses_light_ground_token_not_raw_dark_literal
         f"generic details ground must be var(--surface-2) (was raw dark oklch slab), got {d.get('background')!r}"
     assert not _RAW_OKLCH.search(d.get("background", "")), \
         "the generic details ground must not keep a raw oklch literal (it won't follow the token flip)"
+
+
+# ── T-18 (MOL-105): remaining-surface sweep — the last raw dark-theme literals the ticket-set grep audit
+# missed. Same defect class as the T-16 <details> slab / T-09 readonly inputs: a raw `oklch(16% .012 280 / .N)`
+# (plus the `.approve-bar` `oklch(24% .016 280 / .92)` and `.matrix-cell.empty` `oklch(17% .012 280)`) is a
+# dark-theme holdover that composites as a wrong-hue gray SLAB on the paper ground — it does NOT follow the
+# T-01 token flip. Each recessed panel becomes --surface-2 (the recessed-panel token, cf readonly inputs +
+# details). These sit on Go-Live (fieldset / file-input / account-hooks / channel-backends), Run (surface-edit
+# / run-advanced), empty-states (.empty), Review (.approve-bar dock + .matrix-cell.empty).
+_T18_SURFACE2_SELECTORS = [
+    ".surface-edit",          # Run: per-surface variant editor panel
+    "fieldset",               # Go-Live + forms: grouped-field ground
+    "input[type=file]",       # Go-Live/Run: upload dropzone ground
+    ".run-advanced",          # Run: collapsed advanced-options disclosure
+    ".empty",                 # every list zero-state card
+    ".account-hooks",         # Go-Live: per-account routing panel
+    ".channel-backends",      # Go-Live: per-channel backend map panel
+]
+
+
+def test_t18_recessed_panels_use_surface2_not_raw_dark_literal():
+    css = _CSS.read_text()
+    for sel in _T18_SURFACE2_SELECTORS:
+        d = _decls(_rule_body(css, sel))
+        assert d.get("background") == "var(--surface-2)", \
+            f"{sel} background must be var(--surface-2) (was raw dark oklch slab), got {d.get('background')!r}"
+        assert not _RAW_OKLCH.search(d.get("background", "")), \
+            f"{sel} background must carry no raw oklch literal (it won't follow the token flip)"
+
+
+def test_t18_matrix_empty_cell_uses_surface_token_not_raw_dark_literal():
+    # Review-matrix-only, unexercisable with current data — literal fixed (defect class proven), visually unverified.
+    d = _decls(_rule_body(_CSS.read_text(), ".matrix-cell.empty"))
+    assert d.get("background") == "var(--surface-2)", \
+        f".matrix-cell.empty background must be var(--surface-2), got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "")), \
+        ".matrix-cell.empty background must carry no raw oklch literal"
+
+
+def test_t18_approve_bar_dock_is_light_ground_not_raw_dark_literal():
+    # `.approve-bar` (bare) has NO template consumer — the live docks use `.approve-bar-sticky` (already
+    # --surface-1). Fixed anyway: leaving a raw dark literal is a latent regression if the class is reused. It
+    # becomes a near-opaque light surface (color-mix on --surface-1 96%, keeping the sticky/blur distinction)
+    # with a --line border; contents inherit --ink text + themed buttons, legible on the light ground.
+    d = _decls(_rule_body(_CSS.read_text(), ".approve-bar"))
+    bg = d.get("background", "")
+    assert not _RAW_OKLCH.search(bg), \
+        f".approve-bar must not keep the raw dark oklch literal, got {bg!r}"
+    assert "var(--surface-1)" in bg, \
+        f".approve-bar ground must be a --surface-1-based light surface, got {bg!r}"
+
+
+def test_t18_batch_summary_hover_tracks_a_token_not_white_alpha_noop():
+    # `details.batch > summary:hover` was raw oklch(100% 0 0 / .03) white-alpha — a near-invisible no-op on the
+    # light ground. It becomes a token-tracking hover tint (T-11 convention: shift to a surface tone).
+    d = _decls(_rule_body(_CSS.read_text(), "details.batch > summary:hover"))
+    bg = d.get("background", "")
+    assert not _RAW_OKLCH.search(bg), \
+        f"details.batch > summary:hover must not keep the raw white-alpha no-op, got {bg!r}"
+    assert "var(--surface" in bg, \
+        f"details.batch > summary:hover must resolve to a real surface tone, got {bg!r}"
+
+
+def test_t18_no_raw_dark_theme_surface_literal_family_survives():
+    # Sweep-level guard: the whole `oklch(16%/17%/24% .012-.016 280 ...)` dark-theme surface-literal family
+    # (the details-slab class) must be GONE from studio.css. One named survivor is allowed: the .drawer-backdrop
+    # scrim `oklch(0% 0 0 / .55)` and the .review-action-dock lift-shadow `oklch(0% 0 0 / .35)` are pure-black
+    # alpha (a real light-mode scrim/shadow IS black-alpha), NOT the dark-purple 280-hue surface family.
+    css = _COMMENT.sub(' ', _CSS.read_text())
+    dark_surface = re.compile(r'oklch\(\s*(?:1[0-9]|2[0-9])(?:\.\d+)?%\s+0?\.\d+\s+280\b')
+    hits = dark_surface.findall(css)
+    assert hits == [], \
+        f"raw dark-theme 280-hue surface literals must all be token-swapped, found {len(hits)}: {hits}"
+
+
+# ── T-18 --state-* re-derivation: the delivery/schedule badge hue family (studio.css :root L783-784) was NOT
+# re-derived by T-01 (which flipped only the primary --ok/--warn/--danger/--info). These stayed dark-theme-
+# bright (70-83% L) and are used BOTH as outlined-badge/stat TEXT on the near-white --surface-1 (.state-live,
+# .cockpit-stat--due, .reconcile-age, .daemon-ok, ...) AND as small .posted-accent stripe FILLS. As text on a
+# ~99% L ground the bright hues FAIL WCAG AA. Re-derived to the T-01 light-hue band (~46-52% L, chroma/hue
+# preserved) so text clears 4.5:1 on --surface-1 AND --surface-2; the decorative accent stripe still reads as a
+# mid-tone colored bar. No ticket claimed this block — orchestrator judgment call, noted in the PR.
+_T18_STATE_TEXT_HUES = ["state-live", "state-inflight", "state-dryrun", "state-failed", "state-queued"]
+
+
+def test_t18_state_tokens_clear_wcag_aa_as_text_on_light_surfaces():
+    css = _CSS.read_text()
+    for hue in _T18_STATE_TEXT_HUES:
+        for ground in ("surface-1", "surface-2"):
+            c = _contrast(css, ground, hue)
+            assert c >= 4.5, \
+                f"--{hue} as text on --{ground} is {c:.2f}:1 (< 4.5:1 WCAG AA) — badge/stat text illegible on paper"
