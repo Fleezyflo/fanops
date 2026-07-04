@@ -11,6 +11,7 @@ from fanops.config import Config
 from fanops.errors import PostizAuthError, ZernioAuthError, redact
 from fanops.post.postiz import _base, _key
 from fanops.post.zernio import _base as _zbase, _key as _zkey
+from fanops.text import safe_public_url
 from fanops.timeutil import parse_iso
 from fanops.log import get_logger
 
@@ -317,14 +318,19 @@ _ZERNIO_STATE_MAP = {"published": "published", "posted": "published", "live": "p
 
 def _zernio_platform_rows(body) -> list[dict]:
     """Per-platform publish rows from the live GET /posts/{id} shape (verified 2026-06-30): status + platformPostUrl
-    live under post.platforms[], NOT at the top level — missing this stranded every TikTok reconcile as published-with-no-url."""
+    live under post.platforms[], NOT at the top level — missing this stranded every TikTok reconcile as published-with-no-url.
+    T8: ALSO scans platformAnalytics[] (the GET /analytics?postId= shape) so the same shape-tolerant permalink
+    reader finds a url a Zernio analytics body carries (shareUrl/postUrl on the platform row) when the status
+    endpoint returned none — the conditional capture fallback. A status body never carries platformAnalytics
+    and vice-versa, so scanning both is additive and never crosses the two shapes."""
     if not isinstance(body, dict): return []
     out: list[dict] = []
     for node in (body, body.get("post"), body.get("data"), body.get("result")):
         if not isinstance(node, dict): continue
-        plats = node.get("platforms")
-        if isinstance(plats, list):
-            out.extend(p for p in plats if isinstance(p, dict))
+        for key in ("platforms", "platformAnalytics"):
+            plats = node.get(key)
+            if isinstance(plats, list):
+                out.extend(p for p in plats if isinstance(p, dict))
     return out
 
 def _extract_zernio_state(body) -> str:
@@ -358,6 +364,80 @@ def _extract_zernio_permalink(body) -> Optional[str]:
             u = _extract_zernio_permalink(nested)
             if u: return u
     return None
+
+# ---- T8: TikTok permalink LIVE-VERIFY (symmetric with IG's matched media_id) --------------------------
+# A captured TikTok URL must be PROVEN a real live post FOR THAT HANDLE before a post rests published — else
+# Zernio handing back a dead/wrong URL passes on paper (the same silent-failure class as a phantom IG reel).
+# TikTok oEmbed (https://www.tiktok.com/oembed?url=…) is the Graph-native proof: a 200 returns the post's
+# author (author_unique_id / author_url), a 404 means the video is dead/removed. No token needed (oEmbed is
+# public), so nothing is logged/echoed beyond the pass/fail. FAIL CLOSED at every step (bad url, non-200,
+# transport error, author mismatch -> False), so an unverifiable URL never lets a post rest.
+_TIKTOK_OEMBED = "https://www.tiktok.com/oembed"
+
+def _handle_key(handle: Optional[str]) -> str:
+    # normalize a handle for comparison: strip a leading @, lowercase, trim. accounts.json stores "@mark";
+    # TikTok oEmbed returns the bare "mark" — normalizing both sides makes the compare exact, case-insensitive.
+    return (handle or "").strip().lstrip("@").lower()
+
+def _oembed_author_key(body: dict) -> Optional[str]:
+    # the author's unique username from an oEmbed body: author_unique_id when present, else the last path
+    # segment of author_url (…/@mark -> mark). None when neither is usable -> the verify fails closed.
+    if not isinstance(body, dict): return None
+    uid = body.get("author_unique_id")
+    if isinstance(uid, str) and uid.strip(): return _handle_key(uid)
+    au = body.get("author_url")
+    if isinstance(au, str) and au.strip():
+        seg = au.rstrip("/").rsplit("/", 1)[-1]                  # ".../@mark" -> "@mark"
+        if seg: return _handle_key(seg)
+    return None
+
+def verify_tiktok_permalink(cfg: Config, url: Optional[str], handle: Optional[str], *, get=None) -> bool:
+    """True iff `url` is a live TikTok post whose author == `handle`, proven via TikTok oEmbed. Injectable
+    `get` (defaults to requests.get) so tests never hit the network. FAIL CLOSED: a non-https/empty url
+    (rejected by safe_public_url before any request), a non-200 oEmbed (404 = dead video), a transport
+    error, or an author that doesn't match the handle all return False — an unverifiable URL is never
+    accepted. oEmbed is public (no token), so nothing sensitive is logged."""
+    ok = safe_public_url(url)
+    if not ok:
+        return False                                            # malformed/non-https -> never reaches the network
+    get = get or requests.get
+    try:
+        resp = get(_TIKTOK_OEMBED, params={"url": ok}, timeout=20)
+    except requests.exceptions.RequestException:
+        return False                                            # transport error is not proof it is live
+    if getattr(resp, "status_code", None) != 200:
+        return False                                            # 404 (removed) / any non-200 -> unverified
+    try:
+        body = resp.json()
+    except ValueError:
+        return False
+    want = _handle_key(handle)
+    got = _oembed_author_key(body if isinstance(body, dict) else {})
+    return bool(want) and got == want                           # exact, normalized author match
+
+
+def zernio_permalink_from_analytics(cfg: Config, submission_id: str, *, get=None) -> Optional[str]:
+    """CONDITIONAL capture fallback (T8): when the status endpoint yields NO url, the Zernio
+    GET /analytics?postId= body may still carry a permalink field the metrics mapper drops. Fetch it and
+    extract the URL via _extract_zernio_permalink (the same shape-tolerant reader the status client uses).
+    Best-effort + FAIL-SOFT: a 401/5xx/transport error or an absent url returns None (the post simply stays
+    parked and surfaced, never crashes the pass). This is exercised only if Zernio never backfills the url on
+    the status endpoint — the caller still oEmbed-verifies whatever this returns before accepting it."""
+    base = _zbase(cfg); key = _zkey(cfg)                        # _zkey raises ZernioAuthError if missing (caller-guarded)
+    get = get or requests.get
+    try:
+        resp = get(f"{base}/analytics", headers={"Authorization": f"Bearer {key}"},
+                   params={"postId": str(submission_id)}, timeout=30)
+    except requests.exceptions.RequestException:
+        return None
+    if getattr(resp, "status_code", None) != 200:
+        return None                                             # 202 sync-pending / 5xx / 401 -> nothing to extract
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    return safe_public_url(_extract_zernio_permalink(body))     # https-only; None if no url-shaped field present
+
 
 class ZernioStatusClient:
     """Reconcile READ for the Zernio backend. GET /posts/{id} -> a per-post status + TikTok permalink.

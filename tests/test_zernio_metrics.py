@@ -287,8 +287,11 @@ def test_default_get_status_mixed_routes_each_sid(tmp_path, monkeypatch, mocker)
     led.add_post(Post(id="ig", parent_id="c", account="@ig", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="psid",
                       scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://ig"))
-    tt_url = "https://www.tiktok.com/@mark/video/7"
+    # T8: the TikTok url must oEmbed-verify to the post's handle (@tt) to rest — so the url's author is @tt
+    # and the mock answers the oEmbed call (the status endpoint gives the url; the REST-gate live-verifies it).
+    tt_url = "https://www.tiktok.com/@tt/video/7"
     def by_url(url, **kw):
+        if "oembed" in url: return _R(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
         if "zernio" in url: return _R(200, {"status": "published", "permalink": tt_url})
         return _R(200, {"posts": [{"id": "psid", "state": "PUBLISHED", "releaseURL": "https://www.instagram.com/reel/X/"}]})
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
@@ -307,3 +310,174 @@ def test_default_list_posts_corrupt_accounts_degrades_to_global(tmp_path, monkey
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"saves": 1}))
     rows = _default_list_posts(cfg, posts=list(led.posts.values()))("30d")   # global=zernio -> all routed to zernio
     assert rows == [{"postSubmissionId": "zsid", "metrics": {"saves": 1.0}, "_raw_labels": ["saves"]}]
+
+
+# ================================================================ T8 — TikTok permalink live-verify ====
+# A captured TikTok URL must be PROVEN a real live post for that handle (symmetric with IG's media_id) — else
+# Zernio handing back a dead/wrong URL passes on paper. verify_tiktok_permalink confirms via TikTok oEmbed
+# (author_url/author_unique_id/author == handle); the HTTP getter is injected so tests never touch the network.
+from fanops.post.metrics import verify_tiktok_permalink, zernio_permalink_from_analytics
+
+
+class _OE:
+    # a tiny fake requests.Response for the oEmbed / analytics getter (mirrors _R but named for T8 clarity).
+    def __init__(self, code, body): self.status_code = code; self._b = body; self.text = str(body)
+    def json(self):
+        if isinstance(self._b, Exception): raise self._b
+        return self._b
+
+
+def test_verify_tiktok_permalink_author_matches_accepted(tmp_path):
+    # oEmbed author_unique_id == the post's handle (bare, no @) -> the URL is a real live post for that handle.
+    cfg = Config(root=tmp_path)
+    url = "https://www.tiktok.com/@mark/video/7300000000000000000"
+    calls = {}
+    def get(u, **kw):
+        calls["url"] = u; calls["params"] = kw.get("params")
+        return _OE(200, {"author_unique_id": "mark", "author_name": "Mark",
+                         "author_url": "https://www.tiktok.com/@mark", "title": "clip"})
+    assert verify_tiktok_permalink(cfg, url, "@mark", get=get) is True
+    assert "tiktok.com/oembed" in calls["url"]                     # hits the oEmbed endpoint
+    assert (calls["params"] or {}).get("url") == url               # with the candidate url as the query
+
+
+def test_verify_tiktok_permalink_author_mismatch_rejected(tmp_path):
+    # oEmbed author != handle -> the URL belongs to a DIFFERENT account (Zernio handed back a wrong url).
+    # REJECTED -> the post must NOT rest (T4 gate keeps it parked).
+    cfg = Config(root=tmp_path)
+    url = "https://www.tiktok.com/@someoneelse/video/7"
+    def get(u, **kw):
+        return _OE(200, {"author_unique_id": "someoneelse",
+                         "author_url": "https://www.tiktok.com/@someoneelse"})
+    assert verify_tiktok_permalink(cfg, url, "@mark", get=get) is False
+
+
+def test_verify_tiktok_permalink_normalizes_at_and_case(tmp_path):
+    # Handle is stored WITH @ (accounts.json) and can differ in case; oEmbed returns the bare lowercase
+    # username. The compare normalizes both sides (strip @, lowercase) so @Mark == author_unique_id "mark".
+    cfg = Config(root=tmp_path)
+    url = "https://www.tiktok.com/@Mark/video/7"
+    def get(u, **kw): return _OE(200, {"author_url": "https://www.tiktok.com/@mark"})   # only author_url present
+    assert verify_tiktok_permalink(cfg, url, "@Mark", get=get) is True
+
+
+def test_verify_tiktok_permalink_network_or_404_fails_closed(tmp_path):
+    # oEmbed 404 (a dead/removed video) or a transport error is NOT proof the post is live -> fail CLOSED
+    # (False), never accept an unverifiable URL.
+    cfg = Config(root=tmp_path)
+    url = "https://www.tiktok.com/@mark/video/7"
+    assert verify_tiktok_permalink(cfg, url, "@mark", get=lambda u, **kw: _OE(404, "gone")) is False
+    import requests as _rq
+    def boom(u, **kw): raise _rq.exceptions.ConnectionError("no route")
+    assert verify_tiktok_permalink(cfg, url, "@mark", get=boom) is False
+
+
+def test_verify_tiktok_permalink_bad_url_fails_closed(tmp_path):
+    # A non-https / empty candidate never even reaches oEmbed -> False (safe_public_url rejects it first).
+    cfg = Config(root=tmp_path)
+    called = []
+    def get(u, **kw): called.append(u); return _OE(200, {"author_unique_id": "mark"})
+    assert verify_tiktok_permalink(cfg, "not-a-url", "@mark", get=get) is False
+    assert verify_tiktok_permalink(cfg, None, "@mark", get=get) is False
+    assert called == []                                            # never hit the network for a malformed url
+
+
+# ---- the verifier WIRED into the reconcile REST-gate (the T4<->T8 seam closes) --------------------------
+def _tt_post(led, pid, sub, account="@mark"):
+    led.add_post(Post(id=pid, parent_id="c", account=account, account_id="z1", platform=Platform.tiktok,
+                      caption="x", state=PostState.needs_reconcile, submission_id=sub))
+
+
+def test_reconcile_tiktok_rests_only_when_oembed_author_matches(tmp_path, monkeypatch, mocker):
+    # END-TO-END: a TikTok post whose Zernio status is published + a url whose oEmbed author == the handle
+    # RESTS published (the identity is live-verified). The oEmbed getter is patched at the module level so the
+    # reconcile REST-gate's live verify runs against the fake, no network.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _tt_post(led, "tt", "zreal_1", account="@mark")
+    url = "https://www.tiktok.com/@mark/video/7"
+    def oembed_get(u, **kw): return _OE(200, {"author_unique_id": "mark", "author_url": "https://www.tiktok.com/@mark"})
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=oembed_get)   # the oEmbed verify getter
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": url})
+    p = led.posts["tt"]
+    assert p.state is PostState.published and p.public_url == url   # live-verified -> rests
+
+
+def test_reconcile_tiktok_stays_parked_when_oembed_author_mismatch(tmp_path, monkeypatch, mocker):
+    # A url whose oEmbed author != handle (Zernio handed back a wrong/dead url) is REJECTED by the REST-gate
+    # -> the post STAYS parked (needs_reconcile), never rests on an unverified url. FAIL CLOSED.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _tt_post(led, "tt", "zreal_1", account="@mark")
+    url = "https://www.tiktok.com/@intruder/video/7"
+    def oembed_get(u, **kw): return _OE(200, {"author_unique_id": "intruder"})
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=oembed_get)
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": url})
+    p = led.posts["tt"]
+    assert p.state is PostState.needs_reconcile                    # author mismatch -> parked, not rested
+    from fanops.reconcile import _UNVERIFIED_PREFIX
+    assert (p.error_reason or "").startswith(_UNVERIFIED_PREFIX)
+
+
+# ---- CONDITIONAL capture fallback: Zernio /analytics body carries a permalink the status endpoint lacked --
+def test_zernio_permalink_from_analytics_extracts_url(tmp_path, monkeypatch, mocker):
+    # If ZernioStatusClient returns no url, the /analytics?postId= body may still carry one (a field the
+    # metrics mapper drops). zernio_permalink_from_analytics fetches it and extracts the permalink.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    url = "https://www.tiktok.com/@mark/video/7656936928327027969"
+    def get(u, **kw):
+        assert u.endswith("/analytics") and (kw.get("params") or {}).get("postId") == "zid"
+        return _OE(200, {"platformAnalytics": [{"platform": "tiktok", "shareUrl": url, "playCount": 9000}]})
+    assert zernio_permalink_from_analytics(cfg, "zid", get=get) == url
+
+
+def test_zernio_permalink_from_analytics_none_when_absent(tmp_path, monkeypatch):
+    # No url-shaped field anywhere in the analytics body -> None (the fallback yields nothing; the post stays
+    # parked and surfaced, never silently stuck).
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    def get(u, **kw): return _OE(200, {"platformAnalytics": [{"platform": "tiktok", "playCount": 9000}]})
+    assert zernio_permalink_from_analytics(cfg, "zid", get=get) is None
+
+
+def test_zernio_permalink_from_analytics_fails_soft(tmp_path, monkeypatch):
+    # A 5xx / transport error on the analytics fetch returns None (soft) — the fallback is best-effort; the
+    # post simply stays parked, never crashes the reconcile pass.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    import requests as _rq
+    def boom(u, **kw): raise _rq.exceptions.ConnectionError("down")
+    assert zernio_permalink_from_analytics(cfg, "zid", get=boom) is None
+    assert zernio_permalink_from_analytics(cfg, "zid", get=lambda u, **kw: _OE(503, "x")) is None
+
+
+def test_tiktok_analytics_fallback_unparks_after_oembed_verify(tmp_path, monkeypatch, mocker):
+    # CONDITIONAL end-to-end: Zernio status is published but gives NO url; the /analytics body carries the
+    # permalink; it is oEmbed-verified (author==handle) THEN accepted -> the post UN-PARKS to published.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _tt_post(led, "tt", "zreal_1", account="@mark")
+    url = "https://www.tiktok.com/@mark/video/7656936928327027969"
+    def by_url(u, **kw):
+        if u.endswith("/analytics"):
+            return _OE(200, {"platformAnalytics": [{"platform": "tiktok", "shareUrl": url}]})   # analytics carries url
+        if "oembed" in u:
+            return _OE(200, {"author_unique_id": "mark", "author_url": "https://www.tiktok.com/@mark"})
+        raise AssertionError(f"unexpected GET {u}")
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
+    # status endpoint (the get_status seam) reports published-with-no-url — the R1 park would fire, but the
+    # analytics fallback back-fills a verified url so the post reaches a REAL terminal state.
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": None})
+    p = led.posts["tt"]
+    assert p.state is PostState.published and p.public_url == url   # analytics-backfilled + oEmbed-verified -> rests
+
+
+def test_tiktok_analytics_fallback_still_parks_when_unverifiable(tmp_path, monkeypatch, mocker):
+    # If neither the status endpoint nor the /analytics body yields a verifiable url, the post STAYS parked
+    # (needs_reconcile) AND carries a clear surfaced reason — never silently stuck forever.
+    _zenv(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _tt_post(led, "tt", "zreal_1", account="@mark")
+    def by_url(u, **kw):
+        if u.endswith("/analytics"):
+            return _OE(200, {"platformAnalytics": [{"platform": "tiktok", "playCount": 9000}]})   # no url
+        raise AssertionError(f"unexpected GET {u}")                # oEmbed never reached (no url to verify)
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": None})
+    p = led.posts["tt"]
+    assert p.state is PostState.needs_reconcile                    # no verifiable url anywhere -> parked
+    assert (p.error_reason or "").strip()                          # a surfaced reason, never silent

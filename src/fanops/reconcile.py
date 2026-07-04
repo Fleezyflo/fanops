@@ -86,7 +86,40 @@ def _is_giveup(post) -> bool:
 
 # ---- Leg 2 (Insight) identify: resolve each live IG post's Graph media_id from its permalink ----------
 
-_MEDIA_ID_UNMATCHED = "media_id_unmatched: no live IG media permalink matched this post's public_url (re-resolving next pass)"
+# T4 (publish-verify at the transition): the sentinel prefix on error_reason marking a post the REST gate
+# refused to let rest in a terminal-positive state (published/analyzed) because its identity is NOT confirmed
+# — an IG post whose permalink was ENUMERATED-but-unmatched (media_id proven absent), or a TikTok post with
+# no live-verifiable url / no real submission_id. Distinct from _GIVEUP_PREFIX (a give-up terminal) and from
+# the transient "reconcile poll error:" / "stuck …" breadcrumbs. A post carrying it is QUARANTINED to
+# needs_reconcile: reconcile_posts refuses to re-promote it while it is still unconfirmed (so the two
+# enforcement points don't thrash published<->parked), and the digest surfaces it.
+_UNVERIFIED_PREFIX = "unverified:"
+_UNVERIFIED_IG_MEDIA = (_UNVERIFIED_PREFIX + " IG media_id not matched — the live /{ig_user}/media inventory "
+                        "was enumerated and this post's permalink was NOT among it, so its Graph media_id "
+                        "(the IG identity-of-truth) is proven absent. Parked out of published/analyzed until "
+                        "a matching live media appears; never rested on an unconfirmed URL.")
+_UNVERIFIED_TIKTOK = (_UNVERIFIED_PREFIX + " TikTok post not live-verified — needs a real backend "
+                      "submission_id AND a public_url proven live for this handle (oEmbed author==handle). "
+                      "Backend reported published but the URL/id could not be confirmed; parked, not rested.")
+
+
+def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[str], *, get=None) -> bool:
+    """REST-gate for a TikTok post: it may only rest published when its identity is CONFIRMED, symmetric with
+    IG's matched media_id. Two necessary conditions, BOTH required: (1) a real (non fanops_) submission_id AND
+    a non-empty safe_public_url — the T4 baseline; (2) the url passes the live TikTok oEmbed verifier (T8:
+    author_unique_id/author_url == the post's handle), so a dead/wrong URL Zernio handed back can't pass on
+    paper. FAIL CLOSED at every step — any missing/failing piece (bad url, fake token, oEmbed mismatch, an
+    unimportable/erroring verifier) returns False and the post stays parked. The oEmbed HTTP getter is
+    injectable (`get`) so tests never touch the network; the verifier is imported lazily to keep reconcile
+    import-light."""
+    ok = safe_public_url(url)
+    if not (ok and is_real_submission_id(sub)):
+        return False                                         # baseline: no verifiable url / no real id -> not confirmed
+    try:
+        from fanops.post.metrics import verify_tiktok_permalink   # live oEmbed author==handle
+        return bool(verify_tiktok_permalink(cfg, ok, post.account, get=get))
+    except Exception:
+        return False                                         # an unimportable/erroring verifier is NOT proof it is live
 
 def _norm_permalink(url: Optional[str]) -> Optional[str]:
     """Canonical key for matching a stored public_url to a Graph media `permalink`: `host_without_www + path`,
@@ -168,10 +201,17 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
             log("reconcile", p.id, "media_id_resolved", media_id=mid,
                 product_type=picked.get("media_product_type"))
         else:
-            # we DID enumerate live media and this permalink wasn't among them: honest miss -> keep
-            # re-resolvable (media_id stays None) + breadcrumb; never guess an id.
-            led.posts[p.id] = p.model_copy(update={"error_reason": _MEDIA_ID_UNMATCHED})
-            log("reconcile", p.id, "media_id_unmatched")
+            # T4 (publish-verify at the transition): we DID enumerate live media and this permalink wasn't
+            # among it, so the Graph media_id — the IG identity-of-truth — is PROVEN absent. This is the
+            # phantom-IG-URL shape (a reel resting `analyzed` on a `media_id_unmatched` breadcrumb nobody
+            # actioned). Rather than leave it RESTING in published/analyzed on an unconfirmed URL, QUARANTINE
+            # it to needs_reconcile (out of the terminal-positive rest) + a labeled unverified reason. media_id
+            # stays None (never fabricated); once quarantined it leaves this published/analyzed target set, so a
+            # SECOND pass is a no-op (stable park, not thrash). reconcile_posts refuses to re-promote it while
+            # still unconfirmed, so the poll<->resolve pair never flips it back and forth.
+            led.posts[p.id] = p.model_copy(update={"state": PostState.needs_reconcile,
+                                                   "error_reason": _UNVERIFIED_IG_MEDIA})
+            log("reconcile", p.id, "media_id_unmatched: quarantined->needs_reconcile")
     return led
 
 
@@ -433,6 +473,19 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             # back-fill a real https permalink — never promote to published with public_url=None
             # (the Pydantic R1 invariant would refuse the save below; fail-closed BEFORE construction).
             captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
+            # T8 CONDITIONAL capture fallback: Zernio's status endpoint often reports published-with-no-url
+            # ({'status':'published','publicUrl':None}). When a TikTok post has NO url yet, the Zernio
+            # /analytics?postId= body may still carry a permalink the metrics mapper drops — read it and
+            # back-fill. Best-effort + FAIL-SOFT (None on any error) so it never crashes the pass; the T4
+            # REST-gate below still oEmbed-verifies whatever this yields before the post is allowed to rest.
+            if not (captured_url or "").strip():
+                from fanops.models import Platform as _Plat
+                if post.platform is _Plat.tiktok:
+                    try:
+                        from fanops.post.metrics import zernio_permalink_from_analytics
+                        captured_url = zernio_permalink_from_analytics(cfg, post.submission_id) or captured_url
+                    except Exception as exc:
+                        log("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
             if not (captured_url or "").strip():
                 led.posts[post.id] = post.model_copy(update={
                     "state": PostState.needs_reconcile,
@@ -440,6 +493,31 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                                      "https url captured (M2 safe_public_url rejected it); re-polling next pass"),
                 })
                 log("reconcile", post.id, "published_no_url_parked")
+                continue
+            # T4 REST-gate: a post may only REST in published/analyzed if its identity is CONFIRMED; else
+            # it QUARANTINES to needs_reconcile (visible, labeled) rather than resting on an unconfirmed URL.
+            #   IG      -> media_id is the identity-of-truth (resolve_media_ids stamps it after matching the
+            #              permalink). A FRESH IG post (no unverified sentinel) is still promoted here so
+            #              resolve_media_ids gets a shot at it (it only targets published/analyzed — refusing
+            #              here would be a chicken-and-egg where media_id can never be stamped). But an IG post
+            #              already carrying the unverified sentinel with STILL no media_id is NOT re-promoted
+            #              (that would thrash with resolve_media_ids parking it back). FAIL CLOSED.
+            #   TikTok  -> a live-verified public_url (T8 oEmbed author==handle) atop a real submission_id.
+            # Preserve today's fail-open of resolve_media_ids itself; the NEW fail-closed is only this REST
+            # decision. Non-IG/non-TikTok surfaces keep resting on the R1-validated URL (no identity notion).
+            from fanops.models import Platform
+            _unverified = bool(post.error_reason) and post.error_reason.startswith(_UNVERIFIED_PREFIX)
+            _reason = None
+            if post.platform is Platform.instagram:
+                if post.media_id is None and _unverified:
+                    _reason = _UNVERIFIED_IG_MEDIA         # a quarantined phantom, still unmatched -> keep parked
+            elif post.platform is Platform.tiktok:
+                if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub):
+                    _reason = _UNVERIFIED_TIKTOK           # no live-verified url / no real id -> parked
+            if _reason is not None:
+                led.posts[post.id] = post.model_copy(update={
+                    "state": PostState.needs_reconcile, "error_reason": _reason})
+                log("reconcile", post.id, "unverified_identity_parked")
                 continue
             upd = {"state": PostState.published,
                    "public_url": captured_url,
