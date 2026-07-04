@@ -262,10 +262,10 @@ def _file_lock(lock_path: Path, timeout: float | None = None):
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
-            except BlockingIOError:                          # held by another LIVE process
+            except BlockingIOError as err:                   # held by another LIVE process
                 if time.monotonic() - start > timeout:
                     raise LockBusyError(
-                        f"ledger lock busy > {timeout}s (another fanops process is writing): {lock_path}")
+                        f"ledger lock busy > {timeout}s (another fanops process is writing): {lock_path}") from err
                 time.sleep(0.1)
         try:
             yield

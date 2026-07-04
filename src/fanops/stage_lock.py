@@ -59,11 +59,11 @@ def stage_lock(cfg: Config, *, stage: str, key: str, timeout: float | None = Non
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
-            except BlockingIOError:                       # held by another LIVE producer
+            except BlockingIOError as err:                # held by another LIVE producer
                 if time.monotonic() - start > timeout:
                     raise StageBusyError(
                         f"stage lock busy > {timeout}s ({stage}/{key}): another fanops producer is "
-                        f"running this stage on this source — {lock_path}")
+                        f"running this stage on this source — {lock_path}") from err
                 time.sleep(0.1)
         try:
             yield
