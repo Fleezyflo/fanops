@@ -5,7 +5,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, Moment, Source, Batch, ClipState, MomentState, Platform, Fmt, PostState
 from fanops.accounts import Accounts
-from fanops.crosspost import surface_time, crosspost_clips
+from fanops.crosspost import surface_time, crosspost_clips, _STEP_MIN, _JITTER_MAX
 from fanops.ids import _hash
 
 def _seed_accounts(cfg, accounts):
@@ -60,6 +60,26 @@ def test_surface_time_is_monotonic_across_many_indices():
     base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
     times = [surface_time(base, "@a", "instagram", "2026-06-02", index=i) for i in range(12)]
     assert times == sorted(times) and len(set(times)) == len(times)   # strictly increasing, no dupes
+
+
+def test_jitter_max_strictly_less_than_step_min_is_asserted_at_import():
+    # MOL-69: the H1/H2 monotonicity invariant (index*_STEP + jitter monotonic in index) requires
+    # _JITTER_MAX < _STEP_MIN. Pin the live relationship AND prove a module-level assert enforces it
+    # at import — so inverting the constants (or deleting the assert) can never ship silently.
+    assert _JITTER_MAX < _STEP_MIN                     # live invariant holds
+
+    # Negative path: extract the constants-through-assert fragment from the module source, invert
+    # _JITTER_MAX past _STEP_MIN, and exec it in isolation — the module-level assert MUST fire. If
+    # the assert line were deleted, exec would NOT raise, so this pins its presence. RED.
+    import re, pytest
+    from fanops import crosspost
+    src = Path(crosspost.__file__).read_text()
+    m = re.search(r"^(_STEP_MIN = \d+.*?^assert _JITTER_MAX < _STEP_MIN.*?$)", src, re.M | re.S)
+    assert m, "constants + module-level assert block not found in crosspost.py source"
+    inverted = re.sub(r"_JITTER_MAX = 30\b", "_JITTER_MAX = 50", m.group(1), count=1)
+    assert "_JITTER_MAX = 50" in inverted                # substitution applied
+    with pytest.raises(AssertionError):
+        exec(compile(inverted, "<mol69-probe>", "exec"), {})
 
 
 def test_surface_time_differs_per_clip_no_minute_collision():

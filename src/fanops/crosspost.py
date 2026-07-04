@@ -27,6 +27,7 @@ from fanops.log import get_logger
 # _STEP_MIN - (_JITTER_MAX-1) > 0, so a higher index can never land before a lower one.
 _STEP_MIN = 40
 _JITTER_MAX = 30          # < _STEP_MIN — do not raise past it without breaking monotonicity
+assert _JITTER_MAX < _STEP_MIN, "H1/H2 monotonicity: _JITTER_MAX must stay strictly < _STEP_MIN so index*_STEP + jitter is monotonic in index"
 _ANCHOR_SPAN = 50         # per-(surface,clip) head start, 0.._ANCHOR_SPAN min after base
 
 def _seed(account: str, platform: str, date_str: str, clip_id: str = "") -> int:
