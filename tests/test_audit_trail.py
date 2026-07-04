@@ -118,6 +118,8 @@ def test_publish_now_writes_audit_entry(tmp_path, monkeypatch, mocker):
         led.posts[pid].public_url = "https://www.instagram.com/p/audit/"
         led.save()
         return "published"
+    from fanops.post.postiz import PostizHealth
+    mocker.patch("fanops.post.postiz.postiz_health_probe", return_value=PostizHealth(True, 200, ""))   # T10: probe healthy -> reach the audit-writing success path
     mocker.patch("fanops.post.run.publish_post", side_effect=_fake_publish)
     from fanops.studio.actions import publish_now
     res = publish_now(cfg, "p1", confirmed=True)

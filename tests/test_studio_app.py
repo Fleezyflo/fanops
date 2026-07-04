@@ -330,7 +330,9 @@ def test_mark_posted_success_does_not_leak_raw_dict_repr(tmp_path):
     assert b"\xe2\x9c\x93" in r.data                            # still shows the ✓ success mark
 
 def test_publish_now_success_does_not_leak_raw_dict_repr(tmp_path, monkeypatch, mocker):
+    from fanops.post.postiz import PostizHealth
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    mocker.patch("fanops.post.postiz.postiz_health_probe", return_value=PostizHealth(True, 200, ""))   # T10: probe healthy -> reach the publish success path this test exercises
     mocker.patch("fanops.post.run.publish_post", return_value="published")
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     r = _client(cfg).post("/publish/now/p_base", data={"confirm": "1"})

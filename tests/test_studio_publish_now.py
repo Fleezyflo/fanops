@@ -54,8 +54,11 @@ def test_publish_now_live_requires_confirm(tmp_path, monkeypatch):
 def test_publish_now_surfaces_fatal_auth(tmp_path, monkeypatch):
     from fanops.errors import PostizAuthError
     import fanops.post.run as run
+    import fanops.post.postiz as postiz
+    from fanops.post.postiz import PostizHealth
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); _seed(cfg, media=["file://x.mp4"])         # pre-stamped -> skips ensure_clip_media
+    monkeypatch.setattr(postiz, "postiz_health_probe", lambda c: PostizHealth(True, 200, ""))   # T10: probe healthy -> reach the poster-auth path this test exercises
     monkeypatch.setattr(run, "get_media_uploader", lambda cfg, backend=None: (lambda c, p, **kw: "https://x/u.mp4"))
     class Boom:
         def publish(self, led, post_id): raise PostizAuthError("401 unauthorized")
@@ -100,3 +103,31 @@ def test_review_shows_approval_not_publish_now(tmp_path, monkeypatch):
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().get("/review")
     assert r.status_code == 200 and b"Approve selected" in r.data and b"Publish now" not in r.data
+
+
+# ---- T10: publish preflight fail-fast on an unhealthy real backend probe ----
+
+def test_publish_now_blocks_when_postiz_probe_unhealthy(tmp_path, monkeypatch):
+    # The nginx health-check LIES; Postiz is crash-looping (502 on the real /integrations probe). A publish
+    # must FAIL FAST with a POSTIZ_OPS pointer BEFORE submitting — never submit-then-park in needs_reconcile.
+    import fanops.post.postiz as postiz
+    from fanops.post.postiz import PostizHealth
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path); _seed(cfg, media=["file://x.mp4"])
+    down = PostizHealth(False, 502, "Postiz backend unreachable (502) — see docs/POSTIZ_OPS.md.")
+    monkeypatch.setattr(postiz, "postiz_health_probe", lambda c: down)
+    res = actions.publish_now(cfg, "p1", confirmed=True)
+    assert res.ok is False and "POSTIZ_OPS" in res.error
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued           # NOT submitted-then-parked
+
+
+def test_publish_guard_passes_when_postiz_probe_healthy(tmp_path, monkeypatch):
+    # A HEALTHY real probe must NOT block — the guard is fail-fast on down, transparent when up. Assert at the
+    # guard seam directly (network-free): a healthy probe -> _studio_publish_guard returns None (no block).
+    import fanops.post.postiz as postiz
+    from fanops.post.postiz import PostizHealth
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path); _seed(cfg, media=["file://x.mp4"])
+    monkeypatch.setattr(postiz, "postiz_health_probe", lambda c: PostizHealth(True, 200, ""))
+    post = Ledger.load(cfg).posts["p1"]
+    assert actions._studio_publish_guard(cfg, post) is None                   # healthy probe -> not blocked

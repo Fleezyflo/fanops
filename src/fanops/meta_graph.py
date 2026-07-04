@@ -70,6 +70,67 @@ def resolve_meta_creds(cfg: Config, *, handle: Optional[str] = None) -> MetaCred
                 tok = v.strip()                                  # per-handle access token wins
     return MetaCreds(ig_user_id=ig, token=tok)
 
+
+def resolvable_meta_tokens(cfg: Config) -> list[tuple[str, str]]:
+    """T9: every DISTINCT Meta Graph access token the deployment can resolve, as (label, token) — the GLOBAL
+    META_GRAPH_TOKEN (label 'global') plus each active IG-carrying account's per-handle META_GRAPH_TOKEN__<SLUG>
+    (label the handle). Deduped by token VALUE so a handle inheriting the global (no per-handle key) is not
+    introspected twice. NEVER raises: a torn accounts.json degrades to just the global (mirrors
+    load_accounts_safe). The token is a SECRET — callers pass it straight to debug_token, never log it; this
+    returns it only so the expiry preflight can introspect each distinct credential exactly once."""
+    from fanops.accounts import load_accounts_safe
+    from fanops.models import Platform
+    out: list[tuple[str, str]] = []; seen: set[str] = set()
+    g = cfg.meta_graph_token
+    if g and g not in seen: seen.add(g); out.append(("global", g))
+    accts, _err = load_accounts_safe(cfg)
+    for a in accts.active():
+        if Platform.instagram not in a.platforms: continue
+        key = per_account_token_env_key(a.handle)
+        v = os.getenv(key) if key else None
+        v = v.strip() if v and v.strip() else None
+        if v and v not in seen: seen.add(v); out.append((a.handle, v))
+    return out
+
+
+def debug_token_expiry(cfg: Config, token: str, *, get=None) -> tuple[str, object]:
+    """T9: introspect ONE Meta access token via the Graph debug_token endpoint and return (status, detail):
+      ("ok",       expires_at_epoch_int)   - a valid future expiry (or 0 == a never-expiring long-lived token)
+      ("expired",  expires_at_epoch_int)   - expires_at is in the PAST
+      ("unknown",  reason_str)             - introspection FAILED (no creds/transport/non-200/bad shape/invalid)
+    FAIL-CLOSED by construction: any failure returns 'unknown' (the caller treats it as a check FAILURE, never a
+    silent pass). The token rides the debug_token params (input_token + access_token) exactly like every other
+    Graph read here; it is NEVER placed in a logged/returned string (only the epoch or a generic reason).
+    debug_token is Meta's own token-introspection edge; expires_at=0 is Meta's sentinel for 'does not expire'."""
+    import requests as _rq
+    get = get or _rq.get
+    if not token:
+        return ("unknown", "no token")
+    try:
+        resp = get(f"{cfg.meta_graph_url}/debug_token",
+                   params={"input_token": token, "access_token": token}, timeout=20)
+    except _rq.exceptions.RequestException:
+        return ("unknown", "transport error")
+    if getattr(resp, "status_code", None) != 200:
+        return ("unknown", f"debug_token HTTP {getattr(resp, 'status_code', '?')}")
+    try:
+        data = resp.json().get("data")
+    except (ValueError, AttributeError):
+        return ("unknown", "non-JSON debug_token response")
+    if not isinstance(data, dict):
+        return ("unknown", "debug_token response missing data")
+    if data.get("is_valid") is False:
+        return ("expired", data.get("expires_at") if isinstance(data.get("expires_at"), (int, float)) else 0)
+    exp = data.get("expires_at")
+    if not isinstance(exp, (int, float)) or isinstance(exp, bool):
+        return ("unknown", "debug_token response missing expires_at")
+    exp = int(exp)
+    if exp == 0:
+        return ("ok", 0)                                 # Meta sentinel: a long-lived token that does not expire
+    now = int(_now().timestamp())
+    return (("expired", exp) if exp <= now else ("ok", exp))
+
+
 _BUDGET_LIMIT = 30                  # Meta: 30 UNIQUE hashtags per IG user per rolling 7 days
 _BUDGET_WINDOW_DAYS = 7
 _TAG_RE = re.compile(r"#[0-9A-Za-z_؀-ۿ]+")   # a hashtag in a caption: Latin + Arabic-block letters
