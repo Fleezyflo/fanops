@@ -21,7 +21,8 @@ The two coordinated enforcement points:
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
-from fanops.reconcile import reconcile_posts, resolve_media_ids, _UNVERIFIED_PREFIX
+from fanops.reconcile import (reconcile_posts, resolve_media_ids, _UNVERIFIED_PREFIX,
+                              _IG_MEDIA_ENRICH_UNRESOLVED)
 
 
 def _post(led, pid, state, *, platform=Platform.instagram, sub=None, url=None, media_id=None,
@@ -46,38 +47,40 @@ def _enumerate_returns(media):
     return _patch
 
 
-def test_ig_public_url_without_media_id_quarantines_when_enumerated_unmatched(tmp_path, mocker):
-    # The phantom shape: an IG post rests `analyzed` with a public_url but NO media_id. resolve_media_ids
-    # enumerates live media, the permalink is NOT among them -> media_id is PROVEN absent -> the post is
-    # QUARANTINED to needs_reconcile (out of the terminal-positive rest), carrying a clear error_reason.
+def test_ig_enumerated_unmatched_rests_with_enrichment_breadcrumb(tmp_path, mocker):
+    # THE 6-STUCK-POSTS FIX. An IG post reached `analyzed` on a Postiz-confirmed releaseURL, but its
+    # permalink is NOT in the (single-credential) enumerated Graph media — perca.late/cisumwolfhom reels
+    # can never appear in markmakmouly's feed. That is an ENRICHMENT miss (this account's media isn't
+    # enumerable), NOT a liveness failure: the post STAYS RESTING (analyzed), media_id stays None, and only
+    # a NON-fatal enrichment breadcrumb is set. Liveness stands on Postiz; the Graph match is opportunistic.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "phantom", PostState.analyzed, url="https://www.instagram.com/reel/PHANTOM/")
+    _post(led, "stuck", PostState.analyzed, url="https://www.instagram.com/reel/STUCK/")
     _enumerate_returns([{"id": "M_other", "permalink": "https://www.instagram.com/reel/OTHER/",
                          "media_product_type": "REELS"}])(mocker)
     led = resolve_media_ids(led, cfg)
-    p = led.posts["phantom"]
-    assert p.state is PostState.needs_reconcile          # quarantined OUT of analyzed (no longer rests)
-    assert p.media_id is None                            # never fabricated
-    assert (p.error_reason or "").startswith(_UNVERIFIED_PREFIX)
-    assert "media_id" in (p.error_reason or "")
+    p = led.posts["stuck"]
+    assert p.state is PostState.analyzed                 # RESTS — never knocked out of the terminal-positive state
+    assert p.media_id is None                            # enrichment unavailable -> never fabricated
+    assert p.error_reason == _IG_MEDIA_ENRICH_UNRESOLVED # a NON-fatal enrichment note, NOT the quarantine sentinel
+    assert not (p.error_reason or "").startswith(_UNVERIFIED_PREFIX)   # NOT a quarantine reason
 
 
-def test_ig_phantom_quarantine_is_stable_across_two_passes(tmp_path, mocker):
-    # Idempotent / non-thrash: once quarantined to needs_reconcile the post is NO LONGER in the
-    # published/analyzed target set, so a SECOND resolve_media_ids pass leaves it in the SAME parked state
-    # (same error_reason) — it does not flip back to analyzed and re-park (that would be thrash).
+def test_ig_enrichment_breadcrumb_is_stable_across_two_passes(tmp_path, mocker):
+    # Idempotent / non-thrash: an unmatched-but-resting post keeps the SAME state + SAME enrichment reason
+    # across two resolve_media_ids passes (it stays in the published/analyzed target set because media_id is
+    # still None, but the second pass re-stamps the identical breadcrumb -> no churn, no demotion).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "phantom", PostState.analyzed, url="https://www.instagram.com/reel/PHANTOM/")
+    _post(led, "stuck", PostState.analyzed, url="https://www.instagram.com/reel/STUCK/")
     patch = _enumerate_returns([{"id": "M_other", "permalink": "https://www.instagram.com/reel/OTHER/",
                                  "media_product_type": "REELS"}])
     patch(mocker)
-    led = resolve_media_ids(led, cfg)                    # pass 1: quarantine
-    first = led.posts["phantom"]
-    assert first.state is PostState.needs_reconcile
-    led = resolve_media_ids(led, cfg)                    # pass 2: must be a no-op (stable park)
-    second = led.posts["phantom"]
-    assert second.state is PostState.needs_reconcile     # SAME parked state
-    assert second.error_reason == first.error_reason     # byte-identical reason -> no re-stamp churn
+    led = resolve_media_ids(led, cfg)                    # pass 1
+    first = led.posts["stuck"]
+    assert first.state is PostState.analyzed
+    led = resolve_media_ids(led, cfg)                    # pass 2: still resting, same note
+    second = led.posts["stuck"]
+    assert second.state is PostState.analyzed            # SAME resting state (never demoted)
+    assert second.error_reason == first.error_reason     # identical enrichment reason -> no churn
 
 
 def test_ig_with_media_id_rests(tmp_path, mocker):
@@ -108,21 +111,46 @@ def test_ig_not_enumerable_does_not_quarantine(tmp_path, mocker):
     assert p.error_reason is None                        # no false quarantine breadcrumb
 
 
-# ---------------------------------------------------------------- IG: re-poll of a quarantined phantom ----
-def test_reconcile_does_not_repromote_quarantined_ig_phantom(tmp_path):
-    # Non-thrash across the two functions: after resolve_media_ids parks a phantom to needs_reconcile, the
-    # next reconcile_due re-polls it (it's reconcilable) and the backend still reports "published" + the SAME
-    # url. reconcile_posts must NOT re-promote it to published (that would thrash with resolve_media_ids
-    # re-parking it) — an IG post carrying the unverified sentinel with STILL no media_id stays parked.
+# ------------------------------------- IG: reconcile liveness now stands on Postiz-confirmation --------
+def test_reconcile_promotes_postiz_confirmed_ig_even_without_media_id(tmp_path):
+    # THE 6-STUCK-POSTS FIX, reconcile side. An IG post parked in needs_reconcile whose Postiz get_status
+    # returns status==published + a real releaseURL RESTS published — even though its permalink is not
+    # matchable in the single-credential Graph feed (media_id stays None). Liveness authority is Postiz's
+    # published-confirmation, NOT a Graph media_id match. media_id enrichment stays opportunistic.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "phantom", PostState.needs_reconcile, sub="fanops_tok",
-          url="https://www.instagram.com/reel/PHANTOM/", media_id=None,
-          error_reason=_UNVERIFIED_PREFIX + " IG media_id not matched")
+    _post(led, "confirmed", PostState.needs_reconcile, sub="postiz_real_1",
+          url="https://www.instagram.com/reel/CONFIRMED/", media_id=None, error_reason=None)
     led = reconcile_posts(led, cfg, get_status=lambda sid: {
-        "status": "published", "publicUrl": "https://www.instagram.com/reel/PHANTOM/"})
+        "status": "published", "publicUrl": "https://www.instagram.com/reel/CONFIRMED/"})
+    p = led.posts["confirmed"]
+    assert p.state is PostState.published                # rests on the Postiz-confirmed releaseURL
+    assert p.media_id is None                            # Graph enrichment absent -> never fabricated
+    assert p.error_reason is None                        # a clean promotion (no stale reason survives)
+
+
+def test_reconcile_parks_ig_not_confirmed_by_postiz(tmp_path):
+    # PHANTOM PROTECTION intact (the hole must NOT reopen): an IG post whose Postiz get_status does NOT
+    # confirm published — here status 'unknown' (the row is absent / not published) — does NOT rest. A
+    # stored public_url alone is never liveness proof; only a Postiz published-confirmation is.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "phantom", PostState.needs_reconcile, sub="postiz_real_1",
+          url="https://www.instagram.com/reel/PHANTOM/", media_id=None, error_reason=None)
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown"})
     p = led.posts["phantom"]
-    assert p.state is PostState.needs_reconcile          # NOT re-promoted -> stable
-    assert (p.error_reason or "").startswith(_UNVERIFIED_PREFIX)
+    assert p.state is PostState.needs_reconcile          # NOT rested — Postiz never confirmed it published
+    assert p.state is not PostState.published
+
+
+def test_reconcile_parks_ig_published_but_no_releaseurl(tmp_path):
+    # PHANTOM PROTECTION, the no-releaseURL shape: Postiz get_status returns status==published but NO
+    # publicUrl (releaseURL absent -> get_status omits it), and the post has no prior url. That is NOT a
+    # confirmed liveness signal (a published row must carry a real releaseURL) -> parked, never a ghost row.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "norel", PostState.needs_reconcile, sub="postiz_real_1", media_id=None, error_reason=None)
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": None})
+    p = led.posts["norel"]
+    assert p.state is PostState.needs_reconcile          # published-with-no-url stays parked (R1 fail-closed)
+    assert p.state is not PostState.published
 
 
 def test_reconcile_promotes_fresh_ig_post_so_media_id_can_resolve(tmp_path):
@@ -204,21 +232,23 @@ def test_tiktok_park_is_stable_across_two_passes(tmp_path):
 
 
 # ---------------------------------------------------------------- prod-shaped ledger fixture ----
-def test_prod_shaped_ledger_only_phantoms_park_matched_rests(tmp_path, mocker):
-    # ACCEPT: on the current-prod-shaped ledger (several phantom IG reels resting `analyzed` on a
-    # media_id_unmatched shape + ONE genuinely matched post), resolve_media_ids parks EXACTLY the phantoms
-    # and the matched post RESTS.
+def test_prod_shaped_ledger_unmatched_rest_matched_stamps(tmp_path, mocker):
+    # ACCEPT (the real 6-stuck shape): on a prod-shaped ledger — several IG reels from OTHER accounts
+    # resting `analyzed` whose permalinks aren't in the single enumerable feed + ONE genuinely matched
+    # post — resolve_media_ids leaves the unmatched ones RESTING (enrichment breadcrumb, media_id None)
+    # and stamps the matched one. NOTHING is demoted out of the terminal-positive state.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for i in range(1, 4):
-        _post(led, f"ph{i}", PostState.analyzed, url=f"https://www.instagram.com/reel/PH{i}/", media_id=None)
+        _post(led, f"other{i}", PostState.analyzed, url=f"https://www.instagram.com/reel/OTH{i}/", media_id=None)
     _post(led, "ok", PostState.analyzed, url="https://www.instagram.com/reel/OK/", media_id="M_ok",
           product_type="REELS")   # already matched -> resolve_media_ids skips it (fully resolved)
-    # live media contains ONLY the matched permalink; the phantoms are absent -> proven-unmatched.
+    # live media contains ONLY the matched permalink (markmakmouly's); the others belong to feeds we can't enumerate.
     _enumerate_returns([{"id": "M_ok", "permalink": "https://www.instagram.com/reel/OK/",
                          "media_product_type": "REELS"}])(mocker)
     led = resolve_media_ids(led, cfg)
     for i in range(1, 4):
-        assert led.posts[f"ph{i}"].state is PostState.needs_reconcile, f"phantom ph{i} must park"
-        assert (led.posts[f"ph{i}"].error_reason or "").startswith(_UNVERIFIED_PREFIX)
+        assert led.posts[f"other{i}"].state is PostState.analyzed, f"unmatched other{i} must REST"
+        assert led.posts[f"other{i}"].media_id is None                        # never fabricated
+        assert led.posts[f"other{i}"].error_reason == _IG_MEDIA_ENRICH_UNRESOLVED   # non-fatal enrichment note
     assert led.posts["ok"].state is PostState.analyzed   # the matched post rests untouched
     assert led.posts["ok"].media_id == "M_ok"
