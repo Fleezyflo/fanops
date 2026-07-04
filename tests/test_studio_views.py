@@ -388,6 +388,28 @@ def test_lift_page_renders_delta_arrow_glyphs(tmp_path):
     assert "▲" in h and "▼" in h
 
 
+def test_lift_compound_row_demotes_delta_vs_best_when_arrow_shows(tmp_path):
+    # MOL-111 item 1: a row with BOTH the T-15 delta-arrow (vs account median) AND a lineage Δ-vs-best
+    # must not render two parallel visible comparatives. The T-15 arrow stays visible; the Δ-vs-best
+    # figure is demoted into a title= attribute (no visible "vs best" text on that row).
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    with Ledger.transaction(cfg) as led:
+        _lineage(led)
+        # 3 posts of the SAME clip -> a lineage (sibling_count > 1) so lineage_delta's Δ-vs-best applies,
+        # AND 3 lift scores on one account so the T-15 arrow applies. Both fire on the non-best rows.
+        for i, (pid, hook, lift) in enumerate([("p_lo", "CALM", 10.0), ("p_mid", "MID", 30.0), ("p_hi", "HYPE", 50.0)]):
+            led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+                              caption=hook, state=PostState.analyzed, variant_key="vk_%d" % i, variant_hook=hook,
+                              metrics={"lift_score": lift}, public_url="dryrun://%s" % pid))
+    from fanops.studio.app import create_app
+    app = create_app(cfg); app.config.update(TESTING=True)
+    h = app.test_client().get("/lift").data.decode()
+    assert "delta-arrow" in h                                  # the T-15 arrow still renders (visible comparative)
+    assert "delta-best" not in h                               # the Δ-vs-best figure is NOT a visible cell span
+    assert "vs best" in h                                      # ...but its value survives, in a title= attribute
+
+
 def test_golive_status_reports_learning_validated(tmp_path):
     # M3: the Go-Live read-model exposes whether the loop is unfrozen (cutover.json metrics_confirmed).
     from fanops.studio.views import golive_status
