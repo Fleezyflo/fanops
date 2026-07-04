@@ -133,7 +133,7 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 .surface-editor summary { font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.08em; color:var(--accent-bright); cursor:pointer; padding:.2rem 0; -webkit-user-select:none; user-select:none; }
 .surface-editor[open] summary { margin-bottom:.4rem; }
 .surface-editor { border:none; background:none; }
-.surface-edit { display:grid; gap:var(--s-3); margin-top:var(--s-2); padding:var(--s-3); background:oklch(16% 0.012 280 / .5);
+.surface-edit { display:grid; gap:var(--s-3); margin-top:var(--s-2); padding:var(--s-3); background:var(--surface-2);   /* T-18: was raw dark literal — slab on paper; recessed-panel token per the details/readonly precedent */
   border:1px solid var(--line); border-radius:var(--r-md); }
 .surface-edit form { display:grid; gap:.4rem; margin:0; }
 .surface-edit label { font-size:var(--t-meta); color:var(--muted); font-weight:500; }
@@ -201,7 +201,7 @@ select:not([multiple]) { -webkit-appearance:none; appearance:none; padding-right
   background-repeat:no-repeat; background-position:right .75rem center; background-size:11px 8px; }
 select:not([multiple]):disabled { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23a69c95' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 label { display:block; }
-fieldset { border:1px solid var(--line); border-radius:var(--r-md); padding:var(--s-3); margin:var(--s-2) 0; background:oklch(16% 0.012 280 / .4); display:grid; gap:.5rem; }
+fieldset { border:1px solid var(--line); border-radius:var(--r-md); padding:var(--s-3); margin:var(--s-2) 0; background:var(--surface-2); display:grid; gap:.5rem; }   /* T-18: raw dark literal → recessed-panel token */
 legend { font:600 var(--t-meta) var(--sans); padding:0 .5rem; color:var(--ink); }
 legend em { color:var(--ink); font-weight:600; font-style:normal; font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.08em; }   /* MOL-41: static eyebrow — weight, not accent */
 
@@ -219,7 +219,7 @@ button.danger:hover { background:var(--danger-dim); border-color:var(--danger); 
 button.primary.danger { background:linear-gradient(180deg,var(--danger),color-mix(in oklch, var(--danger) 80%, black)); color:oklch(98% 0.01 25); border-color:transparent; }
 button:disabled, .button:disabled { background:var(--surface-2); color:var(--muted); border-color:var(--line); opacity:.5; cursor:not-allowed; box-shadow:none; }   /* MOL-52: inert bulk-action — flat muted fill OVERRIDES .primary gradient, dimmed, no-op cursor */
 button:disabled:hover, .button:disabled:hover { background:var(--surface-2); border-color:var(--line); color:var(--muted); transform:none; box-shadow:none; }   /* MOL-52: a disabled control never lifts on hover */
-input[type=file] { border:1px dashed var(--line-bright); background:oklch(16% 0.012 280 / .5); cursor:pointer; padding:.45rem; }
+input[type=file] { border:1px dashed var(--line-bright); background:var(--surface-2); cursor:pointer; padding:.45rem; }   /* T-18: raw dark literal → recessed-panel token */
 input[type=file]::file-selector-button { margin-right:.7rem; background:var(--surface-3); color:var(--ink); border:1px solid var(--line-bright);
   border-radius:var(--r-sm); padding:.4rem .8rem; font:600 var(--t-meta) var(--sans); cursor:pointer; transition:border-color var(--dur) var(--ease); }
 input[type=file]::file-selector-button:hover { border-color:var(--accent); color:var(--accent-bright); }
@@ -357,7 +357,7 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
   .stage-busy.htmx-request::before { animation:none; background-position:50% 0; }
   .stage-busy.htmx-request button[type=submit]::before { animation:none; border-top-color:var(--accent-dim); }
 }
-.run-advanced { border:1px solid var(--line); border-radius:var(--r-md); background:oklch(16% 0.012 280 / .4); margin-top:var(--s-4); }
+.run-advanced { border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface-2); margin-top:var(--s-4); }   /* T-18: raw dark literal → recessed-panel token */
 .run-advanced > summary { padding:.6rem .85rem; font-size:var(--t-meta); color:var(--muted); cursor:pointer; -webkit-user-select:none; user-select:none; }
 .run-advanced > summary:hover { color:var(--ink); }
 .run-advanced-body { display:grid; gap:var(--s-3); padding:var(--s-3); border-top:1px solid var(--line); }
@@ -425,7 +425,7 @@ td input { width:auto; min-width:9rem; }
 
 /* ── Empty states ───────────────────────────────────────────────────────── */
 .empty { color:var(--muted); padding:var(--s-5); border:1px dashed var(--line-bright); border-radius:var(--r-lg);
-  text-align:center; background:oklch(16% 0.012 280 / .4); font-size:var(--t-base); }
+  text-align:center; background:var(--surface-2); font-size:var(--t-base); }   /* T-18: raw dark literal → recessed-panel token */
 .empty code { font-size:var(--t-meta); }
 
 /* ── Forms: generic spacing ─────────────────────────────────────────────── */
@@ -438,7 +438,7 @@ form + form { margin-top:var(--s-2); }
    (block summary keeps it) as the collapse affordance. */
 details.batch { background:linear-gradient(180deg,var(--surface-2),var(--surface-1)); margin:var(--s-4) 0; box-shadow:var(--elev-1); }
 details.batch > summary { font:600 var(--t-lg) var(--sans); letter-spacing:-.01em; color:var(--ink); padding:.7rem .9rem; border-left:3px solid var(--accent); }
-details.batch > summary:hover { color:var(--ink); background:oklch(100% 0 0 / .03); }
+details.batch > summary:hover { color:var(--ink); background:var(--surface-2); }   /* T-18: was white-alpha .03 — a no-op on light ground; T-11 hover convention (shift to the recessed tone, visible over the batch gradient) */
 details.batch[open] > summary { border-bottom:1px solid var(--line); }
 details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .batch-targets { color:var(--ink); font-weight:600; }   /* MOL-41: static target label — weight, not accent */
@@ -491,11 +491,11 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .warn { color:var(--warn); }
 /* Review approve action bar — sticky just under the nav so the approve/reject actions stay reachable while
    scrolling a long worklist. Translucent backdrop masks rows scrolling underneath. */
-.approve-bar { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; padding:.6rem .8rem; background:oklch(24% 0.016 280 / .92);
+.approve-bar { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; padding:.6rem .8rem; background:color-mix(in oklch, var(--surface-1) 96%, transparent);   /* T-18: was raw dark .92-alpha; near-opaque light surface keeps the sticky/blur mask. NOTE: no template consumer (live docks use .approve-bar-sticky) — dead-code removal candidate for a follow-up */
   -webkit-backdrop-filter:blur(8px) saturate(1.2); backdrop-filter:blur(8px) saturate(1.2);
   border:1px solid var(--line); border-radius:var(--r-md); margin:0 0 var(--s-3); position:sticky; top:var(--sticky-top); z-index:30; box-shadow:var(--elev-1); }
 /* Go-Live: cohesive routing / persona / demoted blocks */
-.account-hooks { margin-top:var(--s-3); padding:var(--s-3); background:oklch(16% 0.012 280 / .4); border:1px solid var(--line); border-radius:var(--r-md); }
+.account-hooks { margin-top:var(--s-3); padding:var(--s-3); background:var(--surface-2); border:1px solid var(--line); border-radius:var(--r-md); }   /* T-18: raw dark literal → recessed-panel token */
 .account-hooks > p { margin-top:0; }
 .persona-edit { display:grid; gap:.4rem; }
 .persona-pick, .lean-pick { font-size:var(--t-meta); color:var(--muted); }
@@ -605,7 +605,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 
 /* ── Zernio slice 4: second-scheduler connect + per-channel backend routing ─ */
 .scheduler-zernio { margin-top:var(--s-3); padding-top:var(--s-3); border-top:1px solid var(--line); }
-.channel-backends { margin:var(--s-3) 0; padding:var(--s-3); background:oklch(16% 0.012 280 / .4); border:1px solid var(--line); border-radius:var(--r-md); }
+.channel-backends { margin:var(--s-3) 0; padding:var(--s-3); background:var(--surface-2); border:1px solid var(--line); border-radius:var(--r-md); }   /* T-18: raw dark literal → recessed-panel token */
 .channel-backend-row { display:flex; align-items:center; flex-wrap:wrap; gap:.6rem; margin:.35rem 0; }
 .channel-backend-row .backend-pick select { width:auto; min-width:9rem; }
 .channel-backend-row .confirm { font-size:var(--t-eyebrow); }
@@ -668,7 +668,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .row-reason { display:block; margin-top:.15rem; font-size:var(--t-eyebrow); }
 .col-approve, .row-approve { display:block; margin-top:.4rem; font-size:var(--t-eyebrow); padding:.2rem .5rem; }
 .matrix-cell { position:relative; background:var(--surface-1); min-width:11rem; }
-.matrix-cell.empty { color:var(--faint); text-align:center; font-size:var(--t-lg); background:oklch(17% 0.012 280); }
+.matrix-cell.empty { color:var(--faint); text-align:center; font-size:var(--t-lg); background:var(--surface-2); }   /* T-18: raw dark literal → recessed token. Matrix view unexercised by current data — defect class proven, visually unverified */
 .cell-pick { position:absolute; top:.25rem; right:.25rem; width:1.5rem; height:1.5rem; display:flex; align-items:center; justify-content:center; cursor:pointer; }   /* >=24px hit target (WCAG 2.5.8) */
 .cell-hook { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; color:var(--ink); text-decoration:none; line-height:1.3; padding-right:1.3rem; }
 .cell-hook:hover, .cell-hook:focus-visible { color:var(--accent-bright); text-decoration:underline; }
@@ -780,8 +780,12 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 
 /* ── Production redesign: system strip, state badges, schedule/posted scan rows ── */
 :root { --strip-h:2.4rem; --r-card:var(--r-md);
-  --state-live:oklch(76% 0.16 152); --state-inflight:oklch(70% 0.15 250); --state-dryrun:oklch(70% 0.02 280);
-  --state-failed:oklch(70% 0.21 25); --state-queued:oklch(83% 0.13 78); }
+  /* T-18: the --state-* family was dark-ground-bright (70-83% L) — as badge/stat TEXT on the ~99% L paper it
+     failed WCAG AA (--state-live was 1.96:1 on --surface-1). Re-derived to the T-01 light-hue band (~46-51% L,
+     chroma/hue preserved); every value ≥4.5:1 as text on --surface-1 AND --surface-2 (worst measured pair:
+     queued on surface-2 = 4.68:1). The .posted-accent stripe fills still read as mid-tone colored bars. */
+  --state-live:oklch(46% 0.13 152); --state-inflight:oklch(48% 0.15 250); --state-dryrun:oklch(46% 0.02 280);
+  --state-failed:oklch(48% 0.19 25); --state-queued:oklch(51% 0.13 78); }
 .lever-manifest { background:var(--surface-2); }
 .system-strip { position:sticky; top:0; z-index:20; display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem;
   min-height:var(--strip-h); margin:0 0 var(--s-3); padding:.45rem .65rem; background:var(--surface-1);
@@ -818,7 +822,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .schedule-row:hover { background:var(--surface-2); }
 .sched-row-main,.posted-main { display:flex; gap:var(--s-2); padding:var(--s-2); align-items:flex-start; }
 .sched-thumb { width:3rem; height:5.3rem; object-fit:cover; border-radius:var(--r-sm); flex:none; }
-.clamp-1 { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+.clamp-1 { display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; max-width:100%; }   /* C3.2/MOL-104: the old white-space:nowrap gave a long caption its FULL unwrapped intrinsic width — main (margin:0 auto) sizes from content max-content → page-wide scrollbar (78px @1024 measured). -webkit-box wraps for intrinsic sizing and clamps to 1 line with its own ellipsis (the .cell-hook idiom). Consumers: _schedule_panel, _posted_panel, publish, _live_library_panel */
 .sched-caption,.posted-row p { margin:.2rem 0; color:var(--muted); font-size:var(--t-meta); }
 .row-actions summary { cursor:pointer; font-size:var(--t-meta); color:var(--accent-bright); }
 .row-actions-menu { padding:.4rem 0; display:flex; flex-direction:column; gap:.35rem; font-size:var(--t-meta); }
@@ -861,8 +865,9 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .schedule-account-head h3::before { display:none; }
 .schedule-account-tools { display:flex; flex-wrap:wrap; gap:.35rem; align-items:center; border-left:2px solid var(--line); padding-left:.65rem; }   /* MOL-64: block-scope tools sit in a SEPARATED band — a leading rule + gap marks "these mutate the whole account, not one row" without demoting them (MOL-44 kept them secondary) */
 .schedule-account-tools .inline-shift { display:inline; margin:0; }
+.sched-row-main { flex-wrap:wrap; }   /* C3.2/MOL-104: scoped ONLY here (NOT the shared .sched-row-main,.posted-main rule — Posted untouched) — lets the controls cluster drop below the caption as its own line when it can't fit; inert (single line) at wide widths */
 .sched-row-text { flex:1; min-width:0; }   /* MOL-63: the caption column absorbs the row's slack and its clamp-1 truncates — a long caption no longer pushes the control cluster into a 2nd line */
-.sched-row-controls { display:flex; flex-wrap:nowrap; flex:none; gap:.35rem; align-items:center; margin-left:auto; }   /* MOL-63: fixed no-wrap cluster — every editable row's actions start at the same x with uniform height regardless of caption length */
+.sched-row-controls { display:flex; flex-wrap:wrap; flex:0 1 auto; min-width:0; gap:.35rem; align-items:center; margin-left:auto; }   /* MOL-63: caption-push is handled by .sched-row-text min-width:0, not by nowrap. C3.2/MOL-104: the 738px live cluster (input+Move+Clear+Use suggested+chip+confirm+Publish+←Review) overflowed 97px @1024 / 221px @900 → page-wide scrollbar (grid main min-width:auto). flex-wrap:wrap alone was INERT — a flex:none item sits at its max-content basis so its box is never narrower than its content and the wrap never engages; flex:0 1 auto + min-width:0 make the item shrinkable (arming the wrap) and .sched-row-main's flex-wrap:wrap (above) lets it drop below the caption instead of starving .sched-row-text to 0. Browser-verified: 0px overflow @1024+@900, byte-identical single right-aligned line at wide widths */
 .sched-move { display:flex; flex-wrap:wrap; gap:.3rem; align-items:center; margin:0; }
 .sched-move input[type=datetime-local] { width:auto; min-width:11rem; font-size:var(--t-meta); }
 .sched-suggest { margin:0; }

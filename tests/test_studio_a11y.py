@@ -660,14 +660,59 @@ def test_sched_row_text_absorbs_and_truncates_not_pushes():
         f".sched-row-text needs min-width:0 so the clamp-1 caption can actually shrink, got {d.get('min-width')!r}"
 
 
-def test_sched_row_controls_do_not_wrap():
-    # The control cluster must be a fixed-width column that never reflows to a 2nd line — uniform x + height.
+# ── C3.2 (MOL-104): the cluster must be ABLE to wrap so it can't blow out the page ───────────────────
+# MOL-63 set flex-wrap:nowrap to stop a long caption pushing the cluster onto a 2nd line. That job is now
+# done by .sched-row-text {flex:1;min-width:0} (above) — the caption column absorbs slack + clamp-1
+# truncates. But nowrap + flex:none made the LIVE-mode editable cluster (datetime input + Move + Clear time
+# + Use suggested + ready chip + live-confirm + Publish + ← Review) un-shrinkable: MEASURED at 738px against
+# only ~720px available @1024 and ~596px @900 (15rem rail + 2rem main padding each side) — 97px overflow
+# @1024, 221px @900; grid `main` has min-width:auto so the overflow blows out the grid track → whole-page
+# horizontal scrollbar. The fix is a THREE-declaration mechanism — one alone is inert (browser-verified):
+#   • flex-wrap:wrap on .sched-row-controls ALONE did nothing: as a flex:none item its flex-basis is auto →
+#     it is always laid out at its one-line max-content width (738px), the item box is never narrower than
+#     its content, so its internal wrap never engaged.
+#   • flex:0 1 auto + min-width:0 make the controls ITEM shrinkable below max-content, arming its internal
+#     wrap. (Shrinkable WITHOUT the row-level wrap starved .sched-row-text to 0 width — the controls'
+#     max-content basis wins the shrink fight — hence the next piece.)
+#   • flex-wrap:wrap on .sched-row-main — the SCOPED rule only, NOT the shared .sched-row-main,.posted-main
+#     rule (Posted rows are out of C3.2's scope) — lets the controls drop below the caption as their own
+#     line at narrow widths. Browser-verified: 0px overflow @1024 + @900 (caption keeps 641px/517px);
+#     byte-identical single-line right-aligned layout at wide widths (wrap is inert when everything fits).
+
+def test_sched_row_controls_wrap_to_avoid_page_overflow():
     css = _CSS.read_text()
     d = _decls(_rule_body(css, ".sched-row-controls"))
-    assert d.get("flex-wrap") == "nowrap", \
-        f".sched-row-controls must be flex-wrap:nowrap (MOL-63) so the cluster never wraps caption-dependently, got {d.get('flex-wrap')!r}"
-    assert d.get("flex") == "none", \
-        f".sched-row-controls must be flex:none so the caption column (not the cluster) absorbs slack, got {d.get('flex')!r}"
+    assert d.get("flex-wrap") == "wrap", \
+        f".sched-row-controls must be flex-wrap:wrap (C3.2/MOL-104) so the 738px live cluster can reflow internally, got {d.get('flex-wrap')!r}"
+    assert d.get("flex") == "0 1 auto", \
+        f".sched-row-controls must be flex:0 1 auto — flex:none pinned it at its max-content basis so wrap NEVER engaged (inert as first shipped); shrinkability is what arms the wrap, got {d.get('flex')!r}"
+    assert d.get("min-width") == "0", \
+        f".sched-row-controls needs min-width:0 so the item can actually shrink below its 738px max-content width, got {d.get('min-width')!r}"
+    # Row-level wrap must live on a rule scoped to .sched-row-main ALONE — never the shared
+    # .sched-row-main,.posted-main rule — so Posted rows keep their current layout.
+    row = _decls(_rule_body(css, ".sched-row-main"))
+    assert row.get("flex-wrap") == "wrap", \
+        f".sched-row-main (scoped rule) must be flex-wrap:wrap so the controls drop below the caption instead of overflowing the page (97px @1024, 221px @900), got {row.get('flex-wrap')!r}"
+    shared = _decls(_rule_body(css, ".sched-row-main,.posted-main"))
+    assert "flex-wrap" not in shared, \
+        f"the SHARED .sched-row-main,.posted-main rule must NOT gain flex-wrap — Posted rows are out of C3.2's scope, got {shared.get('flex-wrap')!r}"
+
+
+def test_clamp_1_line_clamps_without_nowrap_intrinsic_blowout():
+    # C3.2/MOL-104 deeper root: .clamp-1's white-space:nowrap gave a long caption its FULL unwrapped width
+    # as intrinsic (min/max-content) size. `main` is margin:0 auto (grid stretch disabled) so its width
+    # resolves from content max-content — one long hashtag caption blew the page out to a horizontal
+    # scrollbar (measured 78px page overflow @1024 even AFTER the controls fix; max-width:100% does NOT cap
+    # intrinsic contribution). Fix: the -webkit-box line-clamp idiom .cell-hook already uses (studio.css
+    # -webkit-line-clamp:2) — text WRAPS for intrinsic sizing (min/max-content = longest word, killing the
+    # blowout class) and -webkit-line-clamp renders its own single-line ellipsis. Guards all 4 consumers:
+    # _schedule_panel.html, _posted_panel.html, publish.html, _live_library_panel.html.
+    css = _CSS.read_text()
+    d = _decls(_rule_body(css, ".clamp-1"))
+    assert d.get("-webkit-line-clamp") == "1", \
+        f".clamp-1 must use -webkit-line-clamp:1 (the .cell-hook idiom) so it truncates WITHOUT nowrap's intrinsic-width blowout, got {d.get('-webkit-line-clamp')!r}"
+    assert "white-space" not in d, \
+        f".clamp-1 must NOT carry white-space:nowrap — it gives long captions full unwrapped intrinsic width → page blowout (78px @1024 measured), got {d.get('white-space')!r}"
 
 
 # ── MOL-64: block-scope tools legible from row-scope actions ────────────────────────────────────────
@@ -941,3 +986,95 @@ def test_generic_details_disclosure_uses_light_ground_token_not_raw_dark_literal
         f"generic details ground must be var(--surface-2) (was raw dark oklch slab), got {d.get('background')!r}"
     assert not _RAW_OKLCH.search(d.get("background", "")), \
         "the generic details ground must not keep a raw oklch literal (it won't follow the token flip)"
+
+
+# ── T-18 (MOL-105): remaining-surface sweep — the last raw dark-theme literals the ticket-set grep audit
+# missed. Same defect class as the T-16 <details> slab / T-09 readonly inputs: a raw `oklch(16% .012 280 / .N)`
+# (plus the `.approve-bar` `oklch(24% .016 280 / .92)` and `.matrix-cell.empty` `oklch(17% .012 280)`) is a
+# dark-theme holdover that composites as a wrong-hue gray SLAB on the paper ground — it does NOT follow the
+# T-01 token flip. Each recessed panel becomes --surface-2 (the recessed-panel token, cf readonly inputs +
+# details). These sit on Go-Live (fieldset / file-input / account-hooks / channel-backends), Run (surface-edit
+# / run-advanced), empty-states (.empty), Review (.approve-bar dock + .matrix-cell.empty).
+_T18_SURFACE2_SELECTORS = [
+    ".surface-edit",          # Run: per-surface variant editor panel
+    "fieldset",               # Go-Live + forms: grouped-field ground
+    "input[type=file]",       # Go-Live/Run: upload dropzone ground
+    ".run-advanced",          # Run: collapsed advanced-options disclosure
+    ".empty",                 # every list zero-state card
+    ".account-hooks",         # Go-Live: per-account routing panel
+    ".channel-backends",      # Go-Live: per-channel backend map panel
+]
+
+
+def test_t18_recessed_panels_use_surface2_not_raw_dark_literal():
+    css = _CSS.read_text()
+    for sel in _T18_SURFACE2_SELECTORS:
+        d = _decls(_rule_body(css, sel))
+        assert d.get("background") == "var(--surface-2)", \
+            f"{sel} background must be var(--surface-2) (was raw dark oklch slab), got {d.get('background')!r}"
+        assert not _RAW_OKLCH.search(d.get("background", "")), \
+            f"{sel} background must carry no raw oklch literal (it won't follow the token flip)"
+
+
+def test_t18_matrix_empty_cell_uses_surface_token_not_raw_dark_literal():
+    # Review-matrix-only, unexercisable with current data — literal fixed (defect class proven), visually unverified.
+    d = _decls(_rule_body(_CSS.read_text(), ".matrix-cell.empty"))
+    assert d.get("background") == "var(--surface-2)", \
+        f".matrix-cell.empty background must be var(--surface-2), got {d.get('background')!r}"
+    assert not _RAW_OKLCH.search(d.get("background", "")), \
+        ".matrix-cell.empty background must carry no raw oklch literal"
+
+
+def test_t18_approve_bar_dock_is_light_ground_not_raw_dark_literal():
+    # `.approve-bar` (bare) has NO template consumer — the live docks use `.approve-bar-sticky` (already
+    # --surface-1). Fixed anyway: leaving a raw dark literal is a latent regression if the class is reused. It
+    # becomes a near-opaque light surface (color-mix on --surface-1 96%, keeping the sticky/blur distinction)
+    # with a --line border; contents inherit --ink text + themed buttons, legible on the light ground.
+    d = _decls(_rule_body(_CSS.read_text(), ".approve-bar"))
+    bg = d.get("background", "")
+    assert not _RAW_OKLCH.search(bg), \
+        f".approve-bar must not keep the raw dark oklch literal, got {bg!r}"
+    assert "var(--surface-1)" in bg, \
+        f".approve-bar ground must be a --surface-1-based light surface, got {bg!r}"
+
+
+def test_t18_batch_summary_hover_tracks_a_token_not_white_alpha_noop():
+    # `details.batch > summary:hover` was raw oklch(100% 0 0 / .03) white-alpha — a near-invisible no-op on the
+    # light ground. It becomes a token-tracking hover tint (T-11 convention: shift to a surface tone).
+    d = _decls(_rule_body(_CSS.read_text(), "details.batch > summary:hover"))
+    bg = d.get("background", "")
+    assert not _RAW_OKLCH.search(bg), \
+        f"details.batch > summary:hover must not keep the raw white-alpha no-op, got {bg!r}"
+    assert "var(--surface" in bg, \
+        f"details.batch > summary:hover must resolve to a real surface tone, got {bg!r}"
+
+
+def test_t18_no_raw_dark_theme_surface_literal_family_survives():
+    # Sweep-level guard: the whole `oklch(16%/17%/24% .012-.016 280 ...)` dark-theme surface-literal family
+    # (the details-slab class) must be GONE from studio.css. One named survivor is allowed: the .drawer-backdrop
+    # scrim `oklch(0% 0 0 / .55)` and the .review-action-dock lift-shadow `oklch(0% 0 0 / .35)` are pure-black
+    # alpha (a real light-mode scrim/shadow IS black-alpha), NOT the dark-purple 280-hue surface family.
+    css = _COMMENT.sub(' ', _CSS.read_text())
+    dark_surface = re.compile(r'oklch\(\s*(?:1[0-9]|2[0-9])(?:\.\d+)?%\s+0?\.\d+\s+280\b')
+    hits = dark_surface.findall(css)
+    assert hits == [], \
+        f"raw dark-theme 280-hue surface literals must all be token-swapped, found {len(hits)}: {hits}"
+
+
+# ── T-18 --state-* re-derivation: the delivery/schedule badge hue family (studio.css :root L783-784) was NOT
+# re-derived by T-01 (which flipped only the primary --ok/--warn/--danger/--info). These stayed dark-theme-
+# bright (70-83% L) and are used BOTH as outlined-badge/stat TEXT on the near-white --surface-1 (.state-live,
+# .cockpit-stat--due, .reconcile-age, .daemon-ok, ...) AND as small .posted-accent stripe FILLS. As text on a
+# ~99% L ground the bright hues FAIL WCAG AA. Re-derived to the T-01 light-hue band (~46-52% L, chroma/hue
+# preserved) so text clears 4.5:1 on --surface-1 AND --surface-2; the decorative accent stripe still reads as a
+# mid-tone colored bar. No ticket claimed this block — orchestrator judgment call, noted in the PR.
+_T18_STATE_TEXT_HUES = ["state-live", "state-inflight", "state-dryrun", "state-failed", "state-queued"]
+
+
+def test_t18_state_tokens_clear_wcag_aa_as_text_on_light_surfaces():
+    css = _CSS.read_text()
+    for hue in _T18_STATE_TEXT_HUES:
+        for ground in ("surface-1", "surface-2"):
+            c = _contrast(css, ground, hue)
+            assert c >= 4.5, \
+                f"--{hue} as text on --{ground} is {c:.2f}:1 (< 4.5:1 WCAG AA) — badge/stat text illegible on paper"
