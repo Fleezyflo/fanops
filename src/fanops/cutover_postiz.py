@@ -56,8 +56,8 @@ def postiz_post(cfg: Config, integration_id: str, *, confirmed: bool, post=None)
         raise CutoverError(f"postiz post failed ({resp.status_code}) — check your Postiz instance (response body withheld).")
     try:
         body = resp.json()
-    except ValueError:
-        raise CutoverError(f"postiz post returned {resp.status_code} but a non-JSON body — cannot capture the post id.")
+    except ValueError as err:
+        raise CutoverError(f"postiz post returned {resp.status_code} but a non-JSON body — cannot capture the post id.") from err
     sub = _extract_postiz_id(body)
     if not sub:
         raise CutoverError("postiz 2xx but no recognizable post id in the response — cannot track the cutover post.")

@@ -29,8 +29,8 @@ def _json_or_raise(resp, label: str, cfg=None):
     # already handle as a per-step failure. requests' JSONDecodeError subclasses ValueError.
     try:
         return resp.json()
-    except ValueError:
-        raise RuntimeError(f"{label}: non-JSON {resp.status_code} response: {_safe(cfg, resp.text)}")
+    except ValueError as err:
+        raise RuntimeError(f"{label}: non-JSON {resp.status_code} response: {_safe(cfg, resp.text)}") from err
 
 
 # ---- Postiz metrics (M2) — the FREE backend's read client. Postiz analytics is PER-POST
