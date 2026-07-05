@@ -21,6 +21,28 @@ _SCOPE_CLAUSE = _levers.clause_map("selection_scope")
 _ANGLE_CLAUSE = _levers.clause_map("hook_angle")
 
 
+
+class Directive:
+    """MOL-171: structured directive VIEW over existing levers with a string-preserving façade.
+    Every pipeline consumer that treated the directive as a str keeps working via __str__."""
+    __slots__ = ("select_rule", "scope_lens", "mechanism_lean", "register", "demos", "ban_additions", "_rendered")
+
+    def __init__(self, *, select_rule: str = "", scope_lens: str = "", mechanism_lean: str = "",
+                 register: str = "", demos: list | None = None, ban_additions: list | None = None,
+                 _rendered: str = ""):
+        self.select_rule = select_rule
+        self.scope_lens = scope_lens
+        self.mechanism_lean = mechanism_lean
+        self.register = register
+        self.demos = list(demos or [])
+        self.ban_additions = list(ban_additions or [])
+        self._rendered = _rendered
+
+    def __str__(self) -> str: return self._rendered
+    def __bool__(self) -> bool: return bool(self._rendered)
+    def __repr__(self) -> str: return f"Directive({self._rendered!r})"
+
+
 # P2: DERIVE a per-account CUT default (length tier + framing) from the persona's content_focus, so DEFINING a
 # distinct persona IS defining a distinct CLIP — no hand-set clip_profile needed. content_focus -> length (a
 # punchline is a quick rewatchable unit; a story needs room) + framing (intensity/framing keys on each focus).
@@ -62,29 +84,31 @@ def _join(voice: str, body: str) -> str:
     return voice or body
 
 
-def casting_directive(p) -> str:
+def casting_directive(p) -> Directive:
     """WHICH MOMENTS this account clips for — the substantive instruction injected into the casting prompt's
     per-account slot. Compiled from content_focus + selection_scope into real selection language; else the bare voice.
     THE FIREWALL: no levers -> the bare voice, byte-identical to today. Duck-typed (Persona or hydrated
-    Account). (M3e: the freeform casting_directive OVERRIDE was retired — an invisible duplicate of the
-    structured levers; the voice carries any freeform register.)"""
-    parts: list[str] = []
-    foc = [_FOCUS_CLAUSE[c] for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
-    if foc: parts.append("Clip for this account: " + "; ".join(foc) + ".")
-    sc = _SCOPE_CLAUSE.get((getattr(p, "selection_scope", None) or "").strip().lower(), "")
-    if sc: parts.append(sc)
-    return _join(_base_voice(p), " ".join(parts).strip())
+    Account). Returns a Directive (str(d) == today's string)."""
+    voice = _base_voice(p)
+    foc_clauses = [_FOCUS_CLAUSE[c] for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
+    select_rule = ("Clip for this account: " + "; ".join(foc_clauses) + ".") if foc_clauses else ""
+    scope_lens = _SCOPE_CLAUSE.get((getattr(p, "selection_scope", None) or "").strip().lower(), "")
+    body_parts = [x for x in (select_rule, scope_lens) if x]
+    rendered = _join(voice, " ".join(body_parts).strip())
+    return Directive(select_rule=select_rule, scope_lens=scope_lens, register=voice, _rendered=rendered)
 
 
-def hook_directive(p) -> str:
+def hook_directive(p) -> Directive:
     """The ON-SCREEN HOOK brief for this account — injected into the hook prompt's per-account slot. Compiled
-    from hook_angle (the strategy); else the bare voice (firewall). The hook's REGISTER comes from the voice
-    (which leads this directive), so there is no separate tone lever. Duck-typed. (M3e: the freeform
-    hook_directive OVERRIDE was retired.)"""
-    parts: list[str] = []
-    a = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
-    if a: parts.append("For the on-screen hook, " + a + ".")
-    return _join(_base_voice(p), " ".join(parts).strip())
+    from hook_angle (the strategy); else the bare voice (firewall). Persona-supplied demos/ban_additions ride
+    as optional duck-typed attrs (hook_demos, hook_ban_additions). Returns Directive (str(d) == today's string)."""
+    voice = _base_voice(p)
+    lean = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
+    body = ("For the on-screen hook, " + lean + ".") if lean else ""
+    rendered = _join(voice, body.strip())
+    demos = list(getattr(p, "hook_demos", None) or [])
+    bans = list(getattr(p, "hook_ban_additions", None) or [])
+    return Directive(mechanism_lean=lean, register=voice, demos=demos, ban_additions=bans, _rendered=rendered)
 
 
 def hook_author_slot(p) -> str:
@@ -92,7 +116,7 @@ def hook_author_slot(p) -> str:
     frame-seeing author writes hooks_by_persona for EVERY handle (not only accounts whose levers compile a
     hook_directive). Falls back: hook_directive -> inline persona voice -> tag_lean hint -> handle floor."""
     instr = hook_directive(p)
-    if instr: return instr
+    if instr: return str(instr)
     voice = _base_voice(p)
     if voice: return voice
     lean = (getattr(p, "tag_lean", None) or "").strip()
@@ -112,7 +136,7 @@ def compose_persona_instruction(p) -> str:
     """Back-compat alias + the human-facing 'what the AI reads' summary: the CASTING directive (the primary
     'which moments' instruction). The hook/caption surfaces read their own directive (hook_directive /
     caption_directive); this stays the headline for the card + the strategy check. Firewall floor: bare voice."""
-    return casting_directive(p)
+    return str(casting_directive(p))
 
 
 def lever_catalog() -> list[dict]:
@@ -181,9 +205,9 @@ def compose_breakdown(cfg: Config, p) -> dict:
     surface remains; every dimension is the structured-lever compile.) (M3d: a persona never pins the cut — the
     `persona` cut source is reachable only via an Account carrier pin.)"""
     from fanops.bands import band_for
-    casting = {"text": casting_directive(p), "override": False,
+    casting = {"text": str(casting_directive(p)), "override": False,
                "fragments": _casting_fragments(p), "shadowed": []}
-    hook = {"text": hook_directive(p), "override": False,
+    hook = {"text": str(hook_directive(p)), "override": False,
             "fragments": _hook_fragments(p), "shadowed": [],
             "angle": (getattr(p, "hook_angle", None) or None)}    # S7: the EFFECTIVE structured angle
     caption = {"text": caption_directive(p), "override": False, "fragments": _caption_fragments(p)}

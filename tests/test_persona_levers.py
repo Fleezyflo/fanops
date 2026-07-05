@@ -29,18 +29,18 @@ def test_compose_empty_is_empty():
 def test_compose_levers_only_renders_substantive_body():
     # M3: the casting directive (compose alias) compiles content_focus+energy into REAL selection language,
     # NOT a glued adjective. hook_angle/hook_tone belong to hook_directive, not this casting text.
-    out = compose_persona_instruction(Persona(id="p", content_focus=["punchlines", "emotional"]))
+    out = str(compose_persona_instruction(Persona(id="p", content_focus=["punchlines", "emotional"])))
     assert "punchline" in out and "emotion" in out                  # substantive clauses, not "favors moments: punchlines"
     
     assert "favors moments" not in out                              # the trivial phrasing is gone
 
 def test_compose_both_body_then_voice():
-    out = compose_persona_instruction(Persona(id="p", voice="a devoted fan", content_focus=["punchlines", "hype"]))
+    out = str(compose_persona_instruction(Persona(id="p", voice="a devoted fan", content_focus=["punchlines", "hype"])))
     assert out.startswith("a devoted fan") and "hype moments" in out   # voice leads, then the substantive clip-for clause
 
 def test_compose_ignores_cut_levers_in_text():
     # clip_profile/framing drive the deterministic CUT, NOT the prompt text
-    out = compose_persona_instruction(Persona(id="p", voice="v", clip_profile="short", framing="top"))
+    out = str(compose_persona_instruction(Persona(id="p", voice="v", clip_profile="short", framing="top")))
     assert out == "v"
 
 
@@ -216,12 +216,12 @@ def test_personas_panel_renders_transparency_facts(tmp_path):
 from fanops.personas import casting_directive, hook_directive, caption_directive
 
 def test_casting_directive_is_substantive_not_adjective():
-    out = casting_directive(Persona(id="p", content_focus=["punchlines", "hype"]))
+    out = str(casting_directive(Persona(id="p", content_focus=["punchlines", "hype"])))
     assert "punchline" in out and ("punchline" in out)
     assert "favors moments" not in out and "energy high" not in out      # the trivial phrasing is GONE
 
 def test_hook_directive_compiles_angle():
-    out = hook_directive(Persona(id="p", voice="bold fan", hook_angle="curiosity"))
+    out = str(hook_directive(Persona(id="p", voice="bold fan", hook_angle="curiosity")))
     assert "curiosity gap" in out                                         # the angle compiles into real hook language
     assert "hook angle" not in out                                        # substantive, not "hook angle curiosity"
     assert out.startswith("bold fan")                                     # the voice leads (it carries the register)
@@ -229,15 +229,15 @@ def test_hook_directive_compiles_angle():
 def test_hook_directive_is_separate_from_casting():
     # the on-screen hook levers shape the HOOK prompt, NOT the casting prompt (per-dimension split)
     p = Persona(id="p", content_focus=["hype"], hook_angle="curiosity")
-    assert "curiosity gap" in hook_directive(p) and "curiosity gap" not in casting_directive(p)
-    assert "hype moments" in casting_directive(p) and "hype moments" not in hook_directive(p)
+    assert "curiosity gap" in str(hook_directive(p)) and "curiosity gap" not in str(casting_directive(p))
+    assert "hype moments" in str(casting_directive(p)) and "hype moments" not in str(hook_directive(p))
 
 # (M3e: the freeform directive OVERRIDE tests were removed — the per-dimension overrides were retired as
 # invisible shadow-duplicates of the structured levers. The compile FUNCTIONS remain; their firewall + bare-
 # voice behavior is covered below and the structured-lever compile is covered above.)
 def test_directives_firewall_to_bare_voice():
     p = Persona(id="p", voice="bold fan")                                 # no levers set
-    assert casting_directive(p) == "bold fan" and hook_directive(p) == "bold fan" and caption_directive(p) == "bold fan"
+    assert str(casting_directive(p)) == "bold fan" and str(hook_directive(p)) == "bold fan" and caption_directive(p) == "bold fan"
 
 def test_caption_directive_is_the_voice():
     assert caption_directive(Persona(id="p", voice="v")) == "v"   # hashtags stay deterministic, not in the text
@@ -310,7 +310,7 @@ def test_energy_to_scope_migration_parity(tmp_path):
     assert not hasattr(p, "energy") or getattr(p, "energy", None) is None
     assert resolved_cut_spec(p) == ("long", "top")
     from fanops.personas import casting_directive, compose_breakdown
-    assert "introspective" not in casting_directive(p)          # old energy=low clause gone; framing from focus
+    assert "introspective" not in str(casting_directive(p))          # old energy=low clause gone; framing from focus
     d = compose_breakdown(cfg, p)
     assert d["cut"]["framing"] == "top" and "28-45s" in d["cut"]["band"]
 
