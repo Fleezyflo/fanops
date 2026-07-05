@@ -582,7 +582,8 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
             src_batch = source.batch_id if source is not None else None   # AUDIT M2: inherit the clip's ingest-batch
             # lineage (like repost_post) so the reuse post groups + approves with its batched siblings — a None-batch
             # post showed in the ?batch= drill-in (card derives bid from a sibling) but approve_account silently skipped it.
-            clip_dur = (m.end - m.start) if m is not None else None
+            from fanops.clip import realized_clip_seconds
+            clip_dur = realized_clip_seconds(clip, m)
             max_secs = PLATFORM_MAX_SECONDS.get(plat)
             if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
                 return ActionResult(ok=False, error=f"clip duration {clip_dur:.0f}s exceeds {platform} cap {max_secs}s")

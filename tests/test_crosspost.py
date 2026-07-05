@@ -749,6 +749,51 @@ def test_crosspost_stamps_variation_axis_from_caption(tmp_path, mocker, monkeypa
     assert post.variation_axis == "hook_string"
 
 
+def _seed_cap_clip(led, cfg, *, window, cut_seconds, mocker):
+    """Captioned clip with a controllable moment envelope + optional realized cut_seconds."""
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-120", start=window[0], end=window[1],
+                          reason="r", state=MomentState.clipped))
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
+                state=ClipState.captioned, cut_seconds=cut_seconds)
+    clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": ["#x"]}}
+    led.add_clip(clip)
+    real_run = subprocess.run
+    def fake_run(cmd, **kw):
+        if not (isinstance(cmd, (list, tuple)) and cmd and cmd[0] == "ffmpeg"): return real_run(cmd, **kw)
+        out = Path(cmd[-1])
+        if not str(cmd[-1]).startswith("-"):
+            out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+
+
+def test_cap_reads_realized_not_envelope(tmp_path, mocker):
+    # MOL-179: envelope (120s) exceeds IG cap (90s) but realized cut_seconds (60s) is under cap -> ADMIT.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _seed_cap_clip(led, cfg, window=(0.0, 120.0), cut_seconds=60.0, mocker=mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    posts = [p for p in led.posts.values() if p.platform.value == "instagram"]
+    assert len(posts) == 1                                        # admitted (not over-cap skipped)
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "over_cap" not in log
+
+
+def test_cap_old_clip_falls_back_to_envelope(tmp_path, mocker):
+    # MOL-179: legacy clip with cut_seconds=None -> envelope is the duration truth; 120s > IG 90s -> SKIP.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _seed_cap_clip(led, cfg, window=(0.0, 120.0), cut_seconds=None, mocker=mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert not [p for p in led.posts.values() if p.platform.value == "instagram"]
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "over_cap" in log
+
+
 def test_stitch_draft_clip_never_crossposts(tmp_path, mocker):
     # M4 structural operator-gate: a stitch_draft clip in EVERY pre-release state is absent from the
     # crosspost selection predicate -> crosspost_clips creates ZERO posts for it (the M3 guarantee, asserted
