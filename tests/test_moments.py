@@ -5,7 +5,8 @@ from fanops.models import (Source, Clip, Post, Moment, MomentState, SourceState,
                            MomentDecision, MomentPick, MomentHookDecision, PostState)
 from fanops.agentstep import response_path, request_path, latest_request_id, pending
 from fanops.moments import (request_moments, ingest_moments, request_moment_hooks,
-                            ingest_moment_hooks, validate_pick, _drop_overlaps)
+                            ingest_moment_hooks, validate_pick, _drop_overlaps, _owned_moment_id)
+from fanops.ids import child_id
 
 # M1b (frame-seeing two-pass): the moment gate is split. PASS 1 (request_moments/ingest_moments) picks
 # the WINDOWS -> moments are born `picked` (NOT renderable) and the source lands `picks_decided`. PASS 2
@@ -131,6 +132,19 @@ def test_validate_pick_rejects_bad_bounds():
     assert validate_pick(MomentPick(start=-1, end=3, reason="r"), duration=20.0) is not None # start<0
     assert validate_pick(MomentPick(start=15, end=25, reason="r"), duration=20.0) is not None# end>dur
     assert validate_pick(MomentPick(start=0, end=5, reason="r"), duration=20.0) is None      # ok
+
+def test_owned_moment_id_includes_handle():
+    # P3: two owners at the same timecode yield distinct moment ids; both differ from the bare-token id.
+    src, token = "src_1", "14.00-18.00"
+    bare = child_id("moment", src, token)
+    id_a = _owned_moment_id(src, "@a", token)
+    id_b = _owned_moment_id(src, "@b", token)
+    assert id_a != id_b and id_a != bare and id_b != bare
+
+def test_persona_blind_id_is_bare_token():
+    # P3 firewall: personas==[] -> bare-token id (byte-identical to today's construction).
+    src, token = "src_1", "14.00-18.00"
+    assert _owned_moment_id(src, None, token) == child_id("moment", src, token)
 
 def test_ingest_moments_creates_content_addressed_units(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)

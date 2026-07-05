@@ -62,6 +62,13 @@ def _window_frames(cfg: Config, src, start: float, end: float) -> list[str]:
 def _token(pick: MomentPick) -> str:
     return f"{pick.start:.2f}-{pick.end:.2f}"
 
+def _owned_moment_id(source_id: str, owner: str | None, token: str) -> str:
+    """P3: owner handle in the id so two personas at the same timecode yield two moments. owner=None
+    -> bare-token id (persona-blind picks stay byte-identical to the pre-P3 construction)."""
+    if owner is None:
+        return child_id("moment", source_id, token)
+    return child_id("moment", source_id, f"{owner}\x1f{token}")
+
 def _peak_in_window(p, cs: float, ce: float) -> bool:
     """True iff a signal peak's timecode falls in [cs,ce]. Fail-open PER PEAK: a malformed peak (not a
     dict, missing/non-numeric `t`) is simply excluded, never an exception — a bad peak must not error the
@@ -182,7 +189,8 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
     for pick in deduped:
         token = _token(pick)
-        mid = child_id("moment", source_id, token)
+        owner = (pick.personas or [None])[0]          # P3: single-owner handle at ingest (None when blind)
+        mid = _owned_moment_id(source_id, owner, token)
         # Born `picked` with NO hook — the hook is authored in pass 2 (ingest_moment_hooks), seeing this
         # window's frames. hook/hook_removed/hooks_by_persona stay at their empty defaults until then.
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.picked,
