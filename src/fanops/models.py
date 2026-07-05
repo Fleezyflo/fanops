@@ -541,7 +541,11 @@ class MomentRequest(BaseModel):
     guidance: str = ""
     clip_profile: str = "talk"      # content-type band selector (bands.band_for); "talk" -> today's behavior
     frames: list[str] = Field(default_factory=list)   # Phase 1: source stills the vision author SEES while picking + hooking (fail-open [] when no source)
-    personas: list[dict] = Field(default_factory=list)   # [{handle, persona}] active fan accounts -> per-handle hooks_by_persona. Absent/[] -> no per-account hooks (byte-identical to today).
+    personas: list[dict] = Field(default_factory=list)   # P1: per-active-persona FULL spec dicts (handle+directive+band+
+                                                         # framing+selection_scope+hook_angle+corpus). [] -> persona-blind.
+
+# P1 (MOL-142): the keys each MomentRequest.personas[] entry carries once _pick_personas resolves (P4a).
+PERSONA_PICK_SPEC_KEYS = frozenset({"handle", "directive", "band", "framing", "selection_scope", "hook_angle", "corpus"})
 
 class MomentPick(BaseModel):
     # M1b (frame-seeing two-pass): the PICK pass chooses WINDOWS only. Hook authoring moved to the
@@ -553,12 +557,21 @@ class MomentPick(BaseModel):
     reason: str
     transcript_excerpt: str = ""
     signal_score: float = 0.0
+    personas: list[str] = Field(default_factory=list)   # P1: owner handle(s); single-owner convention (len<=1).
+                                                         # 0 = persona-blind; 1 -> Moment.affinities at birth.
 
     @field_validator("start", "end")
     @classmethod
     def _finite(cls, v: float) -> float:
         if not math.isfinite(v):
             raise ValueError("timestamp must be a finite number (no NaN/Infinity)")
+        return v
+
+    @field_validator("personas")
+    @classmethod
+    def _single_owner(cls, v: list[str]) -> list[str]:
+        if len(v) > 1:
+            raise ValueError("MomentPick.personas must have at most one owner handle")
         return v
 
 class MomentDecision(BaseModel):

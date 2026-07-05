@@ -96,6 +96,15 @@ def test_ingest_sanitizes_em_dash_in_reason(tmp_path):
                         [MomentPick(start=10, end=28, reason="punchline — then the beat drops")])
     assert "—" not in led.moments_of("src_1")[0].reason
 
+def test_affinity_birth_path_intact(tmp_path):
+    # MOL-142: ingest_moments stamps Moment.affinities from pick.personas at birth (single-owner convention).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=10, end=28, reason="punchline", personas=["@a"])])
+    m = led.moments_of("src_1")[0]
+    assert m.affinities == ["@a"]
+
 def test_request_moments_writes_pick_request_with_transcript_signals_language(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
