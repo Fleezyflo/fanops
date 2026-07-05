@@ -1,4 +1,4 @@
-# tests/test_persona_cut_derivation.py — P2: a persona's content_focus + energy DERIVE a default CUT spec
+# tests/test_persona_cut_derivation.py — P2: a persona's content_focus DERIVE a default CUT spec
 # (length band + framing) so a distinct persona produces a distinct CLIP with NO hand-set clip_profile. The
 # wire (hydrate -> resolve -> wants_cut -> render_account_cut) is already built; this only supplies its inputs.
 # Pin always wins; derivation is the floor; identical signals derive identically (dedup-safe); empty -> global.
@@ -6,7 +6,7 @@ import json
 from types import SimpleNamespace
 from fanops.config import Config, FRAMING_NAMES
 from fanops.personas import (Persona, derive_cut_spec, resolved_cut_spec, compose_breakdown,
-                             _FOCUS_PROFILE, _ENERGY_FRAMING, add_persona)
+                             _FOCUS_PROFILE, _FRAMING_MAP, add_persona)
 from fanops.accounts import Accounts, link_persona
 from fanops.bands import PROFILE_NAMES
 
@@ -24,17 +24,17 @@ def _acct(handle="@a"):
 # ---- derivation table: every emitted value is a valid engine name (a typo would silently kill the cut) ----
 def test_derivation_values_are_valid_names():
     assert set(_FOCUS_PROFILE.values()) <= PROFILE_NAMES
-    assert set(_ENERGY_FRAMING.values()) <= FRAMING_NAMES
+    assert set(_FRAMING_MAP.values()) <= FRAMING_NAMES
 
 def test_focus_maps_to_length():
     assert derive_cut_spec(_p(content_focus=["storytelling"]))[0] == "long"
     assert derive_cut_spec(_p(content_focus=["punchlines"]))[0] == "short"
     assert derive_cut_spec(_p(content_focus=["emotional"]))[0] == "medium"
 
-def test_energy_maps_to_framing():
-    assert derive_cut_spec(_p(energy="high"))[1] == "center"
-    assert derive_cut_spec(_p(energy="low"))[1] == "top"
-    assert derive_cut_spec(_p(energy="medium"))[1] is None        # medium = no opinion -> global
+def test_content_focus_maps_to_framing():
+    assert derive_cut_spec(_p(content_focus=["punchlines"]))[1] == "center"
+    assert derive_cut_spec(_p(content_focus=["storytelling"]))[1] == "top"
+    assert derive_cut_spec(_p(content_focus=[]))[1] is None
 
 def test_multi_focus_is_deterministic_longer_bias_first():
     assert derive_cut_spec(_p(content_focus=["punchlines", "storytelling"]))[0] == "long"
@@ -49,16 +49,16 @@ def test_empty_persona_derives_nothing():
 # typed, so an Account-shaped object's clip_profile/framing still wins over the derived spec. ----
 def test_account_carrier_pin_beats_derived():
     # the Account carrier (a SimpleNamespace stand-in) keeps the explicit pin; it wins over the derived spec.
-    acc = SimpleNamespace(content_focus=["storytelling"], energy="high", clip_profile="medium", framing="top")
+    acc = SimpleNamespace(content_focus=["punchlines", "hype"], clip_profile="medium", framing="top")
     assert resolved_cut_spec(acc) == ("medium", "top")           # explicit carrier pin wins over derived long/center
 
 def test_persona_can_no_longer_pin_only_derives():
     # a Persona has no clip_profile/framing field (M3d) — a stray pin value is ignored; it DERIVES from levers.
-    p = _p(content_focus=["storytelling"], energy="high", clip_profile="medium", framing="top")
-    assert resolved_cut_spec(p) == ("long", "center")            # derived (storytelling->long, high->center); pin ignored
+    p = _p(content_focus=["punchlines", "hype"], clip_profile="medium", framing="top")
+    assert resolved_cut_spec(p) == ("short", "center")            # derived (punchlines+hype->short/center); pin ignored
 
 def test_derived_when_unpinned():
-    assert resolved_cut_spec(_p(content_focus=["punchlines"], energy="high")) == ("short", "center")
+    assert resolved_cut_spec(_p(content_focus=["punchlines", "hype"])) == ("short", "center")
 
 def test_global_when_bare():
     assert resolved_cut_spec(_p(voice="v")) == (None, None)
@@ -67,10 +67,10 @@ def test_global_when_bare():
 # ---- hydration: a linked signal-bearing persona drives the account's cut; unlinked is unchanged ----
 def test_hydration_applies_derived_spec(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
-    pid = add_persona(cfg, name="Storyteller", voice="v", content_focus=["storytelling"], energy="low")
+    pid = add_persona(cfg, name="Storyteller", voice="v", content_focus=["storytelling", "emotional"])
     link_persona(cfg, "@a", pid)
     acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
-    assert acc.clip_profile == "long" and acc.framing == "top"    # derived from content_focus/energy
+    assert acc.clip_profile == "long" and acc.framing == "top"    # derived from content_focus
 
 # (M3d: test_hydration_pin_wins removed — a Persona can no longer pin clip_profile; only the DERIVED spec
 # hydrates onto the account, covered by test_hydration_applies_derived_spec above. The Account carrier's own
@@ -86,7 +86,7 @@ def test_unlinked_account_unchanged(tmp_path):
 def test_compose_breakdown_cut_source_three_way(tmp_path):
     cfg = Config(root=tmp_path)
     # "persona"/pinned source is reachable only via an explicit carrier pin now (M3d) — a Persona never pins.
-    pinned = SimpleNamespace(clip_profile="short", content_focus=[], energy=None, hook_angle=None,
+    pinned = SimpleNamespace(clip_profile="short", content_focus=[], selection_scope=None, hook_angle=None,
                              hashtag_corpus=[], voice="v")
     assert compose_breakdown(cfg, pinned)["cut"]["source"] == "persona"
     assert compose_breakdown(cfg, _p(content_focus=["storytelling"]))["cut"]["source"] == "derived"
@@ -97,7 +97,7 @@ def test_voice_match_hydrates_without_persona_id(tmp_path):
     cfg = Config(root=tmp_path)
     voice = "music-blogger curator who champions craft."
     _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": voice}])
-    add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling"], energy="low")
+    add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling", "emotional"])
     acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
     assert acc.persona_id is None and acc.clip_profile == "long" and acc.framing == "top"   # voice match, no persisted link
 
@@ -113,8 +113,8 @@ def test_linked_persona_accounts_want_cut_when_derived_differs(tmp_path, monkeyp
     from fanops.crosspost import account_render_spec
     cfg = Config(root=tmp_path)
     _accounts(cfg, [_acct("@story"), _acct("@punch"), _acct("@bare")])
-    link_persona(cfg, "@story", add_persona(cfg, name="Story", voice="v1", content_focus=["storytelling"], energy="low"))
-    link_persona(cfg, "@punch", add_persona(cfg, name="Punch", voice="v2", content_focus=["punchlines"], energy="high"))
+    link_persona(cfg, "@story", add_persona(cfg, name="Story", voice="v1", content_focus=["storytelling", "emotional"]))
+    link_persona(cfg, "@punch", add_persona(cfg, name="Punch", voice="v2", content_focus=["punchlines", "hype"]))
     link_persona(cfg, "@bare", add_persona(cfg, name="Bare", voice="v3"))                  # no levers -> global cut
     clip = _clip_stub()
     for acct in Accounts.load(cfg).active():
@@ -130,7 +130,7 @@ def test_voice_matched_account_wants_cut_without_persona_id(tmp_path, monkeypatc
     cfg = Config(root=tmp_path)
     voice = "curator voice for craft clips."
     _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": voice}])
-    add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling"], energy="low")
+    add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling", "emotional"])
     acct = next(a for a in Accounts.load(cfg).active())
     _, wants_cut, profile, top_bias = account_render_spec(cfg, clip=_clip_stub(), hook="H", acct=acct)
     assert wants_cut is True and profile == "long" and top_bias is True                    # hydrated derived spec
@@ -173,7 +173,7 @@ def test_persona_derived_approve_sets_is_account_cut(tmp_path, monkeypatch, mock
     cut_calls, burn_calls = _patch_cut_burn(mocker)
     cfg = Config(root=tmp_path)
     _accounts(cfg, [_acct("@story")])                                                        # no hand-set clip_profile
-    link_persona(cfg, "@story", add_persona(cfg, name="Story", voice="v", content_focus=["storytelling"], energy="low"))
+    link_persona(cfg, "@story", add_persona(cfg, name="Story", voice="v", content_focus=["storytelling", "emotional"]))
     led = Ledger.load(cfg)
     _seed_clip_for_approve(led, cfg, hooks_by_persona={"@story": "H"}, surfaces=("@story/instagram",)); led.save()
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z"); led.save()

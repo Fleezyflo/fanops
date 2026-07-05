@@ -23,16 +23,16 @@ def test_caption_fragments_empty_when_no_voice(tmp_path):
 
 def test_cut_dimension_names_the_lever_that_produced_it(tmp_path):
     cfg = Config(root=tmp_path)
-    # content_focus DERIVES the length, energy DERIVES the framing — the cut fragments name those levers.
-    d = compose_breakdown(cfg, Persona(id="p", content_focus=["storytelling"], energy="low"))
+    # content_focus DERIVES the length, content_focus DERIVES the framing — the cut fragments name those levers.
+    d = compose_breakdown(cfg, Persona(id="p", content_focus=["storytelling", "emotional"]))
     srcs = {f["source"] for f in d["cut"]["fragments"]}
-    assert "content_focus" in srcs and "energy" in srcs    # length<-content_focus, framing<-energy
+    assert "content_focus" in srcs and "content_focus" in srcs    # length<-content_focus, framing<-content_focus
     d2 = compose_breakdown(cfg, Persona(id="q", voice="v"))
     assert d2["cut"]["fragments"] == []                    # global cut -> no per-lever fragment
 
 def test_no_produced_fragment_is_sourceless(tmp_path):
     cfg = Config(root=tmp_path)
-    p = Persona(id="p", voice="v", content_focus=["punchlines"], energy="high", hook_angle="curiosity",
+    p = Persona(id="p", voice="v", content_focus=["punchlines", "hype"], hook_angle="curiosity",
                 hashtag_corpus=["#a"])
     d = compose_breakdown(cfg, p)
     for dim in ("casting", "hook", "caption", "cut"):
@@ -52,7 +52,7 @@ def test_channels_and_owner_of_are_consistent():
 # ---- Task 2: the manifest — every editable lever, derived from the resolvers (no-drift) ----
 def test_manifest_covers_every_editable_lever(tmp_path):
     cfg = Config(root=tmp_path)
-    m = manifest(cfg, Persona(id="p", voice="v", content_focus=["punchlines"], energy="high",
+    m = manifest(cfg, Persona(id="p", voice="v", content_focus=["punchlines", "hype"],
                               hook_angle="curiosity", hashtag_corpus=["#a"]))
     keys = {row["key"] for row in m}
     assert keys == set(pl.editable_fields())               # one manifest row per editable lever, no orphans
@@ -63,7 +63,7 @@ def test_manifest_covers_every_editable_lever(tmp_path):
 def test_manifest_is_derived_no_drift(tmp_path):
     # the manifest's produced values EQUAL compose_breakdown's (same resolver) — a hand-copy would drift.
     cfg = Config(root=tmp_path)
-    p = Persona(id="p", voice="v", content_focus=["storytelling"], energy="low", hook_angle="fomo",
+    p = Persona(id="p", voice="v", content_focus=["storytelling", "emotional"], hook_angle="fomo",
                 hashtag_corpus=["#myscene"])
     d = compose_breakdown(cfg, p)
     m = {row["key"]: row for row in manifest(cfg, p)}
@@ -93,11 +93,11 @@ def test_drawer_renders_cut_and_caption_provenance(tmp_path):
     from fanops.studio.app import create_app
     from fanops.personas import add_persona
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="a devoted fan", content_focus=["storytelling"], energy="low")
+    add_persona(cfg, name="P", voice="a devoted fan", content_focus=["storytelling", "emotional"])
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().post("/personas/compose", data={
-        "voice": "a devoted fan", "content_focus": "storytelling", "energy": "low"}).get_data(as_text=True)
-    assert "content_focus" in html and "energy" in html     # the cut provenance names the levers
+        "voice": "a devoted fan", "content_focus": "storytelling"}).get_data(as_text=True)
+    assert "content_focus" in html and "selection_scope" in html     # the cut provenance names the levers
 
 
 def test_drawer_renders_lever_health_panel(tmp_path):

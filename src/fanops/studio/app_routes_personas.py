@@ -42,14 +42,14 @@ def register_personas_routes(app, cfg):
     def do_personas_add():
         return _personas_panel(studio_personas.create_persona(
             cfg, request.form.get("name", ""), request.form.get("voice", ""),
-            content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
+            content_focus=request.form.getlist("content_focus"), selection_scope=request.form.get("selection_scope", ""),
             hook_angle=request.form.get("hook_angle", "")))
 
     @app.post("/personas/edit")
     def do_personas_edit():
         return _personas_panel(studio_personas.edit_persona(
             cfg, request.form.get("id", ""), request.form.get("name", ""), request.form.get("voice", ""),
-            content_focus=request.form.getlist("content_focus"), energy=request.form.get("energy", ""),
+            content_focus=request.form.getlist("content_focus"), selection_scope=request.form.get("selection_scope", ""),
             hook_angle=request.form.get("hook_angle", "")))
 
     @app.post("/personas/delete")

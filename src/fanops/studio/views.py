@@ -283,7 +283,7 @@ class PersonaCard:
     # Lever engine: the per-characteristic levers + the COMPOSED instruction the pipeline will read
     # ("what the AI will read") — so the operator sees their config's exact downstream effect on the card.
     content_focus: list = field(default_factory=list)
-    energy: Optional[str] = None
+    selection_scope: Optional[str] = None
     hook_angle: Optional[str] = None
     clip_profile: Optional[str] = None
     framing: Optional[str] = None
@@ -351,7 +351,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          linked_handles=by_pid.get(p.id, []),
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],   # MOL-59: measured-reach-gated, not store-present
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
-                         content_focus=list(p.content_focus), energy=p.energy, hook_angle=p.hook_angle,
+                         content_focus=list(p.content_focus), selection_scope=p.selection_scope, hook_angle=p.hook_angle,
                          clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],   # M3: the DERIVED tier (the per-persona pin is retired)
                          instruction=compose_persona_instruction(p),
                          length_band=facts["length_band"], lead_tags=facts["lead_tags"],

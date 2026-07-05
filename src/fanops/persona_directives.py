@@ -11,35 +11,32 @@ from fanops import persona_levers as _levers
 
 # THE DIRECTIVE ENGINE (M3). Each structured lever value compiles into a SUBSTANTIVE instruction CLAUSE the
 # pipeline's prompt actually acts on — real selection/hook language, NOT a glued adjective ("favors moments:
-# punchlines"). content_focus + energy -> the CASTING directive; hook_angle -> the HOOK directive.
+# punchlines"). content_focus + selection_scope -> the CASTING directive; hook_angle -> the HOOK directive.
 # These clauses are the curated DEFAULT; a persona may OVERRIDE the compiled text per dimension (the operator
 # owns the words). clip_profile/framing/tag_lean/corpus stay deterministic (cut + hashtags), NOT in this text.
 # M1: the clause maps are PROJECTIONS of the single lever registry (fanops.persona_levers) — the SAME
 # declaration personas' vocabularies + lever_catalog() derive from, so the three can no longer drift.
 _FOCUS_CLAUSE = _levers.clause_map("content_focus")
-_ENERGY_CLAUSE = _levers.clause_map("energy")
+_SCOPE_CLAUSE = _levers.clause_map("selection_scope")
 _ANGLE_CLAUSE = _levers.clause_map("hook_angle")
 
 
-# P2: DERIVE a per-account CUT default (length tier + framing) from the persona's already-set content_focus +
-# energy, so DEFINING a distinct persona IS defining a distinct CLIP — no hand-set clip_profile needed. The
-# wire (hydrate -> resolve_clip_profile/top_bias -> account_render_spec.wants_cut -> render_account_cut) is
-# already whole; this only supplies its inputs. content_focus -> length (a punchline is a quick rewatchable
-# unit; a story needs room), energy -> framing (high=center action, low=top head-safe). M1: both maps are
-# registry projections; _FOCUS_PROFILE is ordered LONGER-bias-first (the registry sorts by tier), so a
-# multi-focus persona derives deterministically via next() (story+punchlines -> long).
+# P2: DERIVE a per-account CUT default (length tier + framing) from the persona's content_focus, so DEFINING a
+# distinct persona IS defining a distinct CLIP — no hand-set clip_profile needed. content_focus -> length (a
+# punchline is a quick rewatchable unit; a story needs room) + framing (intensity/framing keys on each focus).
+# M1: both maps are registry projections; _FOCUS_PROFILE is ordered LONGER-bias-first; _FRAMING_MAP is ordered
+# HIGHEST-intensity-first (MOL-170 — framing moved off the retired energy lever).
 _FOCUS_PROFILE = dict(_levers.focus_profile_map())
-_ENERGY_FRAMING = _levers.energy_framing_map()        # medium -> absent -> None (no opinion -> global crop)
+_FRAMING_MAP = dict(_levers.framing_map())
 
 
 def derive_cut_spec(p):
-    """The CUT default a persona implies from its content_focus + energy — (clip_profile|None, framing|None).
-    content_focus picks the LENGTH (first match in _FOCUS_PROFILE's longer-bias-first order, so a multi-select
-    is deterministic); energy picks the FRAMING. Unmapped/empty on a dimension -> None (the account/global
-    default stands -> firewall-safe, byte-identical). Pure, duck-typed (Persona OR hydrated Account)."""
+    """The CUT default a persona implies from its content_focus — (clip_profile|None, framing|None).
+    content_focus picks the LENGTH (first match in _FOCUS_PROFILE's longer-bias-first order) and the FRAMING
+    (first match in _FRAMING_MAP's highest-intensity-first order). Unmapped/empty -> None (global stands)."""
     foc = list(getattr(p, "content_focus", None) or [])
-    profile = next((v for k, v in _FOCUS_PROFILE.items() if k in foc), None)   # longer-bias-first, order-independent
-    framing = _ENERGY_FRAMING.get((getattr(p, "energy", None) or "").strip().lower())
+    profile = next((v for k, v in _FOCUS_PROFILE.items() if k in foc), None)
+    framing = next((v for k, v in _FRAMING_MAP.items() if k in foc), None)
     return profile, framing
 
 
@@ -67,15 +64,15 @@ def _join(voice: str, body: str) -> str:
 
 def casting_directive(p) -> str:
     """WHICH MOMENTS this account clips for — the substantive instruction injected into the casting prompt's
-    per-account slot. Compiled from content_focus + energy into real selection language; else the bare voice.
+    per-account slot. Compiled from content_focus + selection_scope into real selection language; else the bare voice.
     THE FIREWALL: no levers -> the bare voice, byte-identical to today. Duck-typed (Persona or hydrated
     Account). (M3e: the freeform casting_directive OVERRIDE was retired — an invisible duplicate of the
     structured levers; the voice carries any freeform register.)"""
     parts: list[str] = []
     foc = [_FOCUS_CLAUSE[c] for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
     if foc: parts.append("Clip for this account: " + "; ".join(foc) + ".")
-    e = _ENERGY_CLAUSE.get((getattr(p, "energy", None) or "").strip().lower(), "")
-    if e: parts.append(e)
+    sc = _SCOPE_CLAUSE.get((getattr(p, "selection_scope", None) or "").strip().lower(), "")
+    if sc: parts.append(sc)
     return _join(_base_voice(p), " ".join(parts).strip())
 
 
@@ -139,8 +136,8 @@ def _casting_fragments(p) -> list[dict]:
     if voice: frags.append({"source": "voice", "text": voice})
     foc = [c for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
     if foc: frags.append({"source": "content_focus", "text": "Clip for this account: " + "; ".join(_FOCUS_CLAUSE[c] for c in foc) + "."})
-    e = _ENERGY_CLAUSE.get((getattr(p, "energy", None) or "").strip().lower(), "")
-    if e: frags.append({"source": "energy", "text": e})
+    sc = _SCOPE_CLAUSE.get((getattr(p, "selection_scope", None) or "").strip().lower(), "")
+    if sc: frags.append({"source": "selection_scope", "text": sc})
     return frags
 
 
@@ -162,8 +159,7 @@ def _caption_fragments(p) -> list[dict]:
 
 def _cut_fragments(p) -> list[dict]:
     """The CUT's pieces (M4 provenance), each tagged with the lever that DERIVES it: content_focus -> the
-    length band, energy -> the framing. Empty when neither derives (a global cut, or a carrier-pin-only cut
-    with no levers). Reuses derive_cut_spec + band_for — the SAME resolvers the cut band itself uses."""
+    length band + framing. Empty when neither derives (a global cut, or a carrier-pin-only cut with no levers)."""
     frags: list[dict] = []
     d_prof, d_fr = derive_cut_spec(p)
     if d_prof:
@@ -171,14 +167,14 @@ def _cut_fragments(p) -> list[dict]:
         b = band_for(d_prof)
         frags.append({"source": "content_focus", "text": f"{b.lo:g}-{b.hi:g}s ({d_prof}, derived from content_focus)"})
     if d_fr:
-        frags.append({"source": "energy", "text": f"{d_fr} crop (derived from energy)"})
+        frags.append({"source": "content_focus", "text": f"{d_fr} crop (derived from content_focus)"})
     return frags
 
 
 def compose_breakdown(cfg: Config, p) -> dict:
     """THE LIVE COMPOSED TRANSLATION — what this persona compiles to RIGHT NOW: the exact casting/hook/caption
     directives the pipeline will read, the deterministic cut band + framing, and the lead hashtags, each
-    decomposed to the lever that produced it (energy=medium is a no-op, surfaced). The `text` of each dimension
+    decomposed to the lever that produced it (selection_scope=open is a no-op, surfaced). The `text` of each dimension
     is the compiler's own output (parity — the panel can't drift); the fragments reconstruct the assembly for
     provenance. Pure read; the cut/tags reuse the same band_for / persona_facts resolvers the pipeline runs.
     Duck-typed (Persona/Account). (M3e: the freeform directive OVERRIDES were retired — no `override`/`shadowed`
@@ -196,13 +192,13 @@ def compose_breakdown(cfg: Config, p) -> dict:
     band = band_for(res_prof or "")
     cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": res_fr,
            "source": ("persona" if pin_prof else ("derived" if res_prof else "global")),
-           "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (content_focus/energy)
+           "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (content_focus)
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
     tags = {"lead": facts["lead_tags"],
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
     noops: list[str] = []
-    if (getattr(p, "energy", None) or "").strip().lower() == "medium":
-        noops.append("energy=medium has no effect on selection")
+    if (getattr(p, "selection_scope", None) or "").strip().lower() in ("", "open"):
+        noops.append("selection_scope=open has no effect on selection")
     bd = {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
     bd["produces"] = produces_summary(bd)                 # S7: the operator-facing OUTPUT lead, from this same detail
     return bd
@@ -224,8 +220,8 @@ def manifest(cfg: Config, p) -> list[dict]:
             return next((f["text"] for f in bd["caption"]["fragments"] if f["source"] == "voice"), "")
         if key == "content_focus":
             return next((f["text"] for f in bd["cut"]["fragments"] if f["source"] == "content_focus"), bd["cut"]["band"])
-        if key == "energy":
-            return next((f["text"] for f in bd["cut"]["fragments"] if f["source"] == "energy"), (bd["cut"]["framing"] or "—"))
+        if key == "selection_scope":
+            return next((f["text"] for f in bd["casting"]["fragments"] if f["source"] == "selection_scope"), "—")
         if key == "hook_angle":
             return bd["hook"]["text"]
         if key == "hashtag_corpus":
@@ -241,7 +237,7 @@ def manifest(cfg: Config, p) -> list[dict]:
         return "ok"
 
     out: list[dict] = []
-    for key in levers.PERSONA_EDITABLE_CHANNELS:        # declaration order: voice, content_focus, energy, hook_angle, hashtag_corpus
+    for key in levers.PERSONA_EDITABLE_CHANNELS:        # declaration order: voice, content_focus, selection_scope, hook_angle, hashtag_corpus
         out.append({"key": key, "label": labels.get(key, key.replace("_", " ").title()),
                     "channels": list(levers.channels_of(key)), "value": getattr(p, key, None),
                     "produces": _produces(key), "source": key, "health": _health(key)})
@@ -280,7 +276,7 @@ def persona_facts(cfg: Config, p) -> dict:
     from fanops.bands import band_for
     from fanops.hashtags import vet_hashtags, load_store
     from fanops.models import Platform
-    prof, fr = resolved_cut_spec(p)          # the EFFECTIVE cut — pin OR derived from content_focus/energy (the
+    prof, fr = resolved_cut_spec(p)          # the EFFECTIVE cut — pin OR derived from content_focus (the
     band = band_for(prof)                    # SAME spec hydration applies), so the card shows the REAL length, not
     try:                                     # the raw-unset value (which made every persona read as one global band)
         store = load_store(cfg)

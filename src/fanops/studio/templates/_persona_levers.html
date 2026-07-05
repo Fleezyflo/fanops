@@ -21,9 +21,9 @@
             {{ 'checked' if p and c in p.content_focus else '' }}> {{ c }} <span class="lever-effect muted">— {{ effects.content_focus[c] }}</span></label>
         {% endfor %}
       </div>
-      <label>Energy
-        <select name="energy"><option value="">— any —</option>
-          {% for e in levers.energy %}<option value="{{ e }}" title="{{ effects.energy[e] }}" {{ 'selected' if p and p.energy == e else '' }}>{{ e }} — {{ effects.energy[e] }}</option>{% endfor %}
+      <label>Selection scope
+        <select name="selection_scope"><option value="">— open —</option>
+          {% for s in levers.selection_scope %}<option value="{{ s }}" title="{{ effects.selection_scope[s] }}" {{ 'selected' if p and p.selection_scope == s else '' }}>{{ s }} — {{ effects.selection_scope[s] }}</option>{% endfor %}
         </select></label>
       <label>Hook angle
         <select name="hook_angle"><option value="">— any —</option>

@@ -50,7 +50,7 @@
       <summary class="step-summary">+ Add a persona</summary>
       <p class="muted persona-levers-intro">Each persona's levers{{ term('lever') }} shape its clips, hooks and captions.</p>
       {{ levers_reference(lever_ref) }}
-      <p class="muted">Name it, write its voice, and set its levers — which moments it clips, its energy, and
+      <p class="muted">Name it, write its voice, and set its levers — which moments it clips, its selection scope, and
         its hook angle. Hashtags (and genre for research) are curated per-card after it exists.</p>
       <form hx-post="{{ url_for('do_personas_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
         <label>Name <input type="text" name="name" placeholder="e.g. Music Blogger" size="22" required></label>
@@ -81,7 +81,7 @@
         <div class="persona-spec" title="how this voice's output differs from the others — the cut length is DERIVED from content focus">
           {% if p.length_band %}<span class="spec-chip">~{{ p.length_band }} clips</span>{% endif %}
           {% for c in p.content_focus %}<span class="spec-chip">{{ c }}</span>{% endfor %}
-          {% if p.energy %}<span class="spec-chip">{{ p.energy }} energy</span>{% endif %}
+          {% if p.selection_scope %}<span class="spec-chip">{{ p.selection_scope }} scope</span>{% endif %}
           {% if p.hook_angle %}<span class="spec-chip">{{ p.hook_angle }} hook</span>{% endif %}
         </div>
 

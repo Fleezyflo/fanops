@@ -9,7 +9,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState
 from fanops.accounts import Accounts, Account
 from fanops.personas import (Persona, compose_persona_instruction, add_persona, update_persona, Personas,
-                             resolved_cut_spec, CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES)
+                             resolved_cut_spec, CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES)
 from fanops.agentstep import request_path
 from fanops.casting import request_moment_casting
 import pytest
@@ -29,13 +29,13 @@ def test_compose_empty_is_empty():
 def test_compose_levers_only_renders_substantive_body():
     # M3: the casting directive (compose alias) compiles content_focus+energy into REAL selection language,
     # NOT a glued adjective. hook_angle/hook_tone belong to hook_directive, not this casting text.
-    out = compose_persona_instruction(Persona(id="p", content_focus=["punchlines", "emotional"], energy="high"))
+    out = compose_persona_instruction(Persona(id="p", content_focus=["punchlines", "emotional"]))
     assert "punchline" in out and "emotion" in out                  # substantive clauses, not "favors moments: punchlines"
-    assert "peak-intensity" in out or "skip calm" in out            # energy=high -> a real instruction
+    
     assert "favors moments" not in out                              # the trivial phrasing is gone
 
 def test_compose_both_body_then_voice():
-    out = compose_persona_instruction(Persona(id="p", voice="a devoted fan", content_focus=["hype"], energy="high"))
+    out = compose_persona_instruction(Persona(id="p", voice="a devoted fan", content_focus=["punchlines", "hype"]))
     assert out.startswith("a devoted fan") and "hype moments" in out   # voice leads, then the substantive clip-for clause
 
 def test_compose_ignores_cut_levers_in_text():
@@ -47,30 +47,28 @@ def test_compose_ignores_cut_levers_in_text():
 # ---- write boundary: levers validate + round-trip ----
 def test_add_persona_persists_levers(tmp_path):
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="Curator", voice="tasteful crate-digger", content_focus=["storytelling", "visual"],
-                energy="low", hook_angle="emotional")
+    add_persona(cfg, name="Curator", voice="tasteful crate-digger", content_focus=["storytelling", "emotional"], hook_angle="emotional")
     p = Personas.load(cfg).get("curator")
-    assert p.content_focus == ["storytelling", "visual"] and p.energy == "low"
+    assert p.content_focus == ["storytelling", "emotional"] and p.selection_scope is None
     assert p.hook_angle == "emotional"
-    # M3d: clip_profile/framing are no longer per-persona pins — the cut DERIVES from content_focus/energy
-    assert resolved_cut_spec(p) == ("long", "top")               # storytelling -> long, low -> top
+    assert resolved_cut_spec(p) == ("long", "top")
 
 def test_add_persona_rejects_unknown_lever(tmp_path):
     cfg = Config(root=tmp_path)
     with pytest.raises(ValueError):
-        add_persona(cfg, name="Bad", energy="ludicrous")
+        add_persona(cfg, name="Bad", selection_scope="ludicrous")
     with pytest.raises(ValueError):
         add_persona(cfg, name="Bad2", content_focus=["punchlines", "not-a-thing"])
 
 def test_update_persona_changes_levers_only_when_passed(tmp_path):
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", energy="low")
+    add_persona(cfg, name="P", voice="v", content_focus=["storytelling"])
     update_persona(cfg, "p", hook_angle="challenge")          # voice/energy untouched
     p = Personas.load(cfg).get("p")
-    assert p.voice == "v" and p.energy == "low" and p.hook_angle == "challenge"
+    assert p.voice == "v" and p.selection_scope is None and p.hook_angle == "challenge"
 
 def test_lever_vocabularies_are_frozensets():
-    for v in (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES):
+    for v in (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES):
         assert isinstance(v, frozenset) and v
 
 
@@ -84,10 +82,10 @@ def test_hydrate_levers_onto_linked_account(tmp_path):
     cfg = Config(root=tmp_path)
     _write(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
                   "persona_id": "curator"}],
-           [{"id": "curator", "voice": "tasteful", "content_focus": ["storytelling"], "energy": "low",
-             "hook_angle": "emotional"}])
+           [{"id": "curator", "voice": "tasteful", "content_focus": ["storytelling"],
+             "hook_angle": "emotional", "selection_scope": "open"}])
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
-    assert a.persona == "tasteful" and a.content_focus == ["storytelling"] and a.energy == "low"
+    assert a.persona == "tasteful" and a.content_focus == ["storytelling"] and a.selection_scope == "open"
     # M3d: clip_profile/framing DERIVE from content_focus/energy onto the account (no per-persona pin)
     assert a.hook_angle == "emotional" and a.clip_profile == "long" and a.framing == "top"
 
@@ -97,7 +95,7 @@ def test_unlinked_account_levers_stay_empty(tmp_path):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": "x"}]}))
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
-    assert a.content_focus == [] and a.energy is None and compose_persona_instruction(a) == "x"
+    assert a.content_focus == [] and a.selection_scope is None and compose_persona_instruction(a) == "x"
 
 
 # ---- payload firewall: the casting request carries the composed instruction; only-voice == byte-identical ----
@@ -124,37 +122,36 @@ def test_casting_payload_carries_lever_direction(tmp_path):
     led = _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
                        "persona": "bold fan", "persona_id": "p"}])
     cfg.personas_path.write_text(json.dumps({"personas": [
-        {"id": "p", "voice": "bold fan", "content_focus": ["punchlines"], "energy": "high"}]}))
+        {"id": "p", "voice": "bold fan", "content_focus": ["punchlines", "hype"]}]}))
     request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     payload = json.loads(request_path(cfg, "moment_casting", "src_1").read_text())
     persona_str = payload["personas"][0]["persona"]
-    assert "punchline" in persona_str and ("peak-intensity" in persona_str or "skip calm" in persona_str)  # substantive, not adjectives
+    assert "punchline" in persona_str and "hype moments" in persona_str  # substantive, not adjectives
 
 
 # ---- Studio surface (Task 5): set levers in the browser; the card shows "what the AI reads" ----
 def test_studio_create_persona_persists_levers(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines", "hype"],
-                          energy="high", hook_angle="curiosity")
+    r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines", "hype"], hook_angle="curiosity")
     assert r.ok
     p = Personas.load(cfg).get(r.detail["created"])
-    assert p.content_focus == ["punchlines", "hype"] and p.energy == "high"
+    assert p.content_focus == ["punchlines", "hype"] and p.selection_scope is None or p.selection_scope == "open"
     assert p.hook_angle == "curiosity"                   # cut (length/framing) is DERIVED, not a settable knob
 
 def test_studio_create_persona_bad_lever_is_clean_error(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="X", energy="ludicrous")
+    r = sp.create_persona(cfg, name="X", selection_scope="ludicrous")
     assert r.ok is False and r.error                     # no raise -> the panel renders the ✗
 
 def test_personas_page_exposes_composed_instruction(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="a devoted fan", content_focus=["hype"], energy="high")
+    add_persona(cfg, name="P", voice="a devoted fan", content_focus=["hype"])
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
     assert card.instruction.startswith("a devoted fan") and "hype moments" in card.instruction   # voice + substantive clip-for
-    assert card.content_focus == ["hype"] and card.energy == "high"
+    assert card.content_focus == ["hype"] and card.selection_scope is None
 
 def test_personas_panel_renders_lever_controls(tmp_path):
     from fanops.studio.app import create_app
@@ -181,10 +178,10 @@ def test_compose_empty_brief_is_byte_identical():
 def test_persona_facts_resolve_from_real_resolvers(tmp_path):
     from fanops.personas import persona_facts
     cfg = Config(root=tmp_path)
-    f = persona_facts(cfg, Persona(id="p", content_focus=["punchlines"], energy="low",
-                                   hashtag_corpus=["#myscene"]))   # M3d: cut DERIVES (punchlines->short, low->top)
-    assert f["length_band"] == "8-15s"          # bands.band_for(short) == SHORT(8,15) — the SAME resolver the pipeline uses
-    assert f["framing"] == "top"
+    f = persona_facts(cfg, Persona(id="p", content_focus=["punchlines", "emotional"],
+                                   hashtag_corpus=["#myscene"]))
+    assert f["length_band"] == "16-26s"          # emotional wins medium tier over punchlines short
+    assert f["framing"] == "center"
     assert "#myscene" in f["lead_tags"]         # vet_hashtags floats the curated corpus to the lead
 
 def test_persona_facts_default_length_when_unset(tmp_path):
@@ -219,8 +216,8 @@ def test_personas_panel_renders_transparency_facts(tmp_path):
 from fanops.personas import casting_directive, hook_directive, caption_directive
 
 def test_casting_directive_is_substantive_not_adjective():
-    out = casting_directive(Persona(id="p", content_focus=["punchlines"], energy="high"))
-    assert "punchline" in out and ("peak-intensity" in out or "skip calm" in out)
+    out = casting_directive(Persona(id="p", content_focus=["punchlines", "hype"]))
+    assert "punchline" in out and ("punchline" in out)
     assert "favors moments" not in out and "energy high" not in out      # the trivial phrasing is GONE
 
 def test_hook_directive_compiles_angle():
@@ -264,3 +261,82 @@ def test_studio_edit_persona_persists_levers(tmp_path):
     assert r.ok
     p = Personas.load(cfg).get("p")
     assert p.content_focus == ["punchlines"] and p.hook_angle == "curiosity"
+
+
+# ======================================================================================
+# MOL-170 (A1) — consolidate energy→content_focus (framing+intensity); repurpose the energy
+# lever slot as selection_scope. Still 5 levers; resolve_top_bias stays on account.framing.
+# ======================================================================================
+import json as _json
+from pathlib import Path as _Path
+import fanops.persona_levers as _pl
+from fanops.config import Config as _Cfg
+
+
+def test_selection_scope_replaces_energy_in_registry():
+    keys = [lv["key"] for lv in _pl.LEVER_REGISTRY]
+    assert "energy" not in keys and "selection_scope" in keys
+    assert keys == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "hashtag_corpus"]
+    assert set(_pl.vocab("selection_scope")) == {"open", "subject_locked", "source_briefed", "credibility_first", "controversy_seeking"}
+    assert "energy" not in _pl.editable_fields()
+    assert "selection_scope" in _pl.editable_fields()
+
+
+def test_content_focus_derives_framing():
+    assert _pl.framing_map()["storytelling"] == "top"
+    assert _pl.framing_map()["punchlines"] == "center"
+    assert resolved_cut_spec(Persona(id="p", content_focus=["storytelling"])) == ("long", "top")
+    assert resolved_cut_spec(Persona(id="p", content_focus=["punchlines"])) == ("short", "center")
+    assert resolved_cut_spec(Persona(id="p", content_focus=["punchlines", "storytelling"])) == ("long", "center")
+
+
+def test_resolve_top_bias_still_reads_account_framing(tmp_path):
+    cfg = _Cfg(root=tmp_path)
+    top = Account(handle="@top", framing="top")
+    center = Account(handle="@ctr", framing="center")
+    assert cfg.resolve_top_bias(top) is True
+    assert cfg.resolve_top_bias(center) is False
+    assert cfg.resolve_top_bias(Account(handle="@bare")) == cfg.aware_reframe
+
+
+def test_energy_to_scope_migration_parity(tmp_path):
+    cfg = _Cfg(root=tmp_path)
+    legacy = {"personas": [{"id": "curator", "name": "Curator", "voice": "tasteful",
+                            "content_focus": ["storytelling"], "energy": "low", "hook_angle": "emotional"}]}
+    cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.personas_path.write_text(_json.dumps(legacy))
+    p = Personas.load(cfg).get("curator")
+    assert p.selection_scope == "open"
+    assert not hasattr(p, "energy") or getattr(p, "energy", None) is None
+    assert resolved_cut_spec(p) == ("long", "top")
+    from fanops.personas import casting_directive, compose_breakdown
+    assert "introspective" not in casting_directive(p)          # old energy=low clause gone; framing from focus
+    d = compose_breakdown(cfg, p)
+    assert d["cut"]["framing"] == "top" and "28-45s" in d["cut"]["band"]
+
+
+def test_all_ten_archetypes_map():
+    archetypes = _json.loads((_Path(__file__).resolve().parents[1] / "clipping_account_archetypes.json").read_text())
+    ids = {t["id"] for t in archetypes["types"]}
+    assert len(ids) == 10
+    mapped = _pl.archetype_selection_scope_map()
+    assert set(mapped) == ids
+    assert mapped["single_source_briefed"] == "source_briefed"
+    assert mapped["single_subject_fan"] == "subject_locked"
+    assert mapped["manufactured_controversy"] == "controversy_seeking"
+    assert mapped["credibility_first"] == "credibility_first"
+    assert mapped["opportunistic_broad_curator"] == "open"
+
+
+def test_no_new_lever_family():
+    assert len(_pl.LEVER_REGISTRY) == 5
+    persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "hashtag_corpus")}
+    assert persona_levers == set(_pl.editable_fields()) - {"voice", "hashtag_corpus"}
+
+
+def test_no_surviving_account_energy_selection_reader():
+    import inspect
+    import fanops.accounts as accts_mod
+    src = inspect.getsource(accts_mod)
+    assert "acc.energy" not in src and "per.energy" not in src
+    assert "selection_scope" in src

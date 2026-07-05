@@ -10,7 +10,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.hashtags import _norm
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
-from fanops.personas import (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES, Personas, _slug)
+from fanops.personas import (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES, Personas, _slug)
 
 _CORPUS_CAP = 40                # max curated tags per persona — keeps captions/budget bounded (cap, not a target)
 
@@ -60,12 +60,12 @@ _UNSET = object()
 
 def add_persona(cfg: Config, name: str, voice: str = "",
                 intake: Optional[dict] = None, id: str = "", *, content_focus=None,
-                energy: str = "", hook_angle: str = "") -> str:
+                selection_scope: str = "", hook_angle: str = "") -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
     duplicate id and a blank name (never write a record that won't reload). Validates every lever-engine
     field against its vocabulary. Returns the id; raises ValueError on bad input. (M3: tag_lean retired —
     hashtag_corpus is the hashtag differentiator; the per-persona clip_profile/framing PINS retired — the
-    cut LENGTH derives from content_focus and FRAMING from energy.)"""
+    cut LENGTH + FRAMING derive from content_focus.)"""
     nm = (name or "").strip()
     if not nm:
         raise ValueError("persona name is required")
@@ -73,7 +73,7 @@ def add_persona(cfg: Config, name: str, voice: str = "",
     if not pid:
         raise ValueError(f"could not derive a persona id from name {name!r}")
     focus = _norm_focus(content_focus)
-    energy_v = _enum_or_none(energy, ENERGY_LEVELS, "energy")
+    scope_v = _enum_or_none(selection_scope, SELECTION_SCOPE_LEVELS, "selection_scope")
     angle_v = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle")
     p = cfg.personas_path
     with _personas_txn(cfg):
@@ -82,18 +82,18 @@ def add_persona(cfg: Config, name: str, voice: str = "",
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""),
                       "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
-                      "energy": energy_v, "hook_angle": angle_v})
+                      "selection_scope": scope_v, "hook_angle": angle_v})
         write_json_atomic(p, raw)
     return pid
 
 
 def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_UNSET,
-                   content_focus=_UNSET, energy=_UNSET, hook_angle=_UNSET) -> str:
+                   content_focus=_UNSET, selection_scope=_UNSET, hook_angle=_UNSET) -> str:
     """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; each lever
     clears on "". Validates every passed lever against its vocabulary BEFORE the lock (never write a typo).
     Unknown id -> KeyError. (M3: tag_lean, the clip_profile/framing pins, and the directive overrides retired.)"""
     _focus = _norm_focus(content_focus) if content_focus is not _UNSET else _UNSET
-    _energy = _enum_or_none(energy, ENERGY_LEVELS, "energy") if energy is not _UNSET else _UNSET
+    _scope = _enum_or_none(selection_scope, SELECTION_SCOPE_LEVELS, "selection_scope") if selection_scope is not _UNSET else _UNSET
     _angle = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle") if hook_angle is not _UNSET else _UNSET
     p = cfg.personas_path
     with _personas_txn(cfg):
@@ -108,7 +108,7 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_
                 if voice is not _UNSET: d["voice"] = str(voice or "")
                 if intake is not _UNSET: d["intake"] = dict(intake or {})
                 if _focus is not _UNSET: d["content_focus"] = _focus
-                if _energy is not _UNSET: d["energy"] = _energy
+                if _scope is not _UNSET: d["selection_scope"] = _scope
                 if _angle is not _UNSET: d["hook_angle"] = _angle
                 found = True
         if not found:
