@@ -11,7 +11,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import ClipState, PostState, StitchState
+from fanops.models import ClipState, PostState, StitchState, SourceState
 from fanops.timeutil import parse_iso
 # Facade re-exports: the names consumers reach via `fanops.studio.views` / `views.X` (templates / app.py /
 # tests). Dead re-exports (no facade consumer AND no internal use here) were trimmed — every trimmed symbol
@@ -167,7 +167,26 @@ def pipeline_status(cfg: Config) -> dict:
         # publishes live, which is the correct behavior (a live publish_now needs a confirm).
         "backend": _publish_mode_label(cfg),
         "accounts": [a.handle for a in Accounts.load(cfg).active()],   # Account-First: Run-form batch-target options
+        "errored": errored_sources(led),   # MOL-123: recoverable sources (error / moments_empty) for the Run-tab list
     }
+
+
+_RECOVERABLE_SOURCE_STATES = (SourceState.error, SourceState.moments_empty)
+def errored_sources(led: Ledger) -> list[dict]:
+    """MOL-123: the recoverable-source rows for the Run tab — every source in error / moments_empty, with the
+    FULL error_reason (the operator needs the exact failure, not a truncation) + filename + batch. Pure read;
+    fail-open to [] on a torn row so it never 500s the panel."""
+    out: list[dict] = []
+    for s in led.sources.values():
+        if s.state not in _RECOVERABLE_SOURCE_STATES:
+            continue
+        try:
+            out.append({"id": s.id, "state": s.state.value, "error_reason": s.error_reason or "",
+                        "batch_id": s.batch_id, "created_at": s.created_at,
+                        "name": Path(s.source_path).name if s.source_path else s.id})
+        except Exception:
+            continue
+    return out
 
 
 def run_next_step(status: dict) -> dict:
@@ -437,6 +456,15 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "failed_scan_error", err=str(exc)[:160])
         failed = 0
+    # MOL-123: errored sources must be LOUD — a source parked in error/moments_empty means clip production
+    # silently stalled (the 2026-07-05 TimeoutExpired sat invisible while the strip read "idle"). Same
+    # fail-open-with-breadcrumb discipline as the failed-post scan; the count links to the Run tab's list.
+    errored = 0
+    try:
+        errored = sum(1 for s in Ledger.load(cfg).sources.values() if s.state in _RECOVERABLE_SOURCE_STATES)
+    except Exception as exc:
+        get_logger(cfg)("system_strip", "-", "errored_scan_error", err=str(exc)[:160])
+        errored = 0
     # Leg 2 (Insight): the one external gate — a persisted breadcrumb means Graph media-insights was refused
     # for lack of instagram_manage_insights, so IG performance is frozen at its last snapshot until granted.
     try:
@@ -469,7 +497,7 @@ def build_system_strip(cfg: Config) -> dict:
         get_logger(cfg)("system_strip", "-", "postiz_down_error", err=str(exc)[:160])
         postiz_down = {"show": False}
     return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
-            "failed": failed, "insights_blocked": insights_blocked,
+            "failed": failed, "insights_blocked": insights_blocked, "errored_sources": errored,
             "half_live": half_live, "half_live_hint": half_live_hint, "postiz_down": postiz_down}
 
 

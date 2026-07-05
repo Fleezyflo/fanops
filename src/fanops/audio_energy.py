@@ -25,9 +25,9 @@ _RMS_CEIL_DB = -5.0
 
 def energy_cmd(src: str) -> list[str]:
     """Build the ffmpeg astats RMS pass (per-window RMS to the metadata channel, null sink)."""
-    return ["ffmpeg", "-hide_banner", "-i", src, "-af",
+    return ["ffmpeg", "-hide_banner", "-vn", "-i", src, "-af",
             "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level",
-            "-f", "null", "-"]
+            "-f", "null", "-"]   # -vn (MOL-119): astats is audio-only — decoding video was pure waste + timeout risk
 
 def parse_energy(text: str) -> list[dict]:
     """Pair each `pts_time:T` line with the NEXT RMS_level reading -> [{"t": float, "rms": float}].

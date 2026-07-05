@@ -1007,6 +1007,21 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
     return ActionResult(ok=True, detail=detail)
 
 
+def resume_source_studio(cfg: Config, source_id: str) -> ActionResult:
+    """MOL-123: the Studio Resume button for an errored / moments_empty source. Delegates to the SAME
+    stage-aware helper the CLI verb uses (pipeline.resume_source, MOL-121) — no parallel implementation —
+    so an errored source with a good transcript resumes at `transcribed` (re-enters at signals) instead of
+    a full re-transcribe. Rejects an unknown / non-recoverable source (resume_source returns False)."""
+    from fanops.pipeline import resume_source
+    with Ledger.transaction(cfg) as led:
+        if source_id not in led.sources:
+            return ActionResult(ok=False, error=f"no such source: {source_id}")
+        if not resume_source(led, source_id):
+            return ActionResult(ok=False, error=f"source {source_id} is not recoverable (state={led.sources[source_id].state.value})")
+    write_audit(cfg, "resume_source", [source_id], reason="studio_resume")
+    return ActionResult(ok=True, detail={"source_id": source_id})
+
+
 def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
     """Clear a brand-risk hold from the browser — the UI twin of `fanops unhold`. Reuses the canonical
     transition (cli.py unhold): held->captions_requested so the next advance re-runs the caption gate.

@@ -548,6 +548,7 @@ def main(argv: list[str] | None = None) -> int:
     p_res.add_argument("status", choices=["published", "failed", "analyzed", "retired"]); p_res.add_argument("--url", default=None)
     p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
     p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
+    p_rs.add_argument("--from-stage", choices=["auto", "catalogued", "transcribed"], default="auto")   # MOL-121: AUTO preserves a good transcript
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
     p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
     sub.add_parser("intake")
@@ -803,14 +804,11 @@ def _dispatch(cfg: Config, args) -> int:
             c.state = ClipState.captions_requested      # re-enter the caption gate
         print(f"unheld {args.clip_id}"); return 0
     if args.cmd == "retry-source":
-        from fanops.models import SourceState
+        from fanops.pipeline import resume_source
         with Ledger.transaction(cfg) as led:
             if args.source_id not in led.sources:
                 print(f"no such source: {args.source_id}", file=sys.stderr); return 2
-            s = led.sources[args.source_id]
-            s.state = SourceState.catalogued      # re-enter from the top (transcribe retries)
-            s.error_reason = None
-            s.meta["transcribed"] = False         # force a real re-transcribe
+            resume_source(led, args.source_id, from_stage=args.from_stage)   # MOL-121: AUTO keeps a good transcript
         print(f"retry-source {args.source_id}"); return 0
     if args.cmd == "retry-metrics":
         from fanops.models import PostState

@@ -50,6 +50,32 @@ def _parse(ts):
     except Exception:
         return None
 
+# MOL-121: stage-aware recovery. `retry-source` used to blanket-reset an errored source to `catalogued`
+# + force a re-transcribe — throwing away a proven transcript to redo a stage that never failed (the
+# 13GB source died at SIGNALS, not transcription). resume_source is the SINGLE owner of the recovery
+# transition, called by the CLI verb and the Studio Resume button (MOL-123) so there's no parallel
+# implementation. AUTO keys on the actual transcript, not the meta flag: a real transcript (non-empty
+# list) resumes at `transcribed` (re-enters at signals, transcript + flag preserved); anything else
+# (None, [], or an explicit from_stage='catalogued') is the legacy full retry. Refuses a healthy source
+# (only error / moments_empty are recoverable) so an in-flight source is never silently rewound.
+_RESUMABLE = (SourceState.error, SourceState.moments_empty)
+def resume_source(led: Ledger, source_id: str, *, from_stage: str = "auto") -> bool:
+    """Transition an errored/empty source back into the pipeline. Returns True iff a transition was
+    applied. Caller owns the ledger transaction. `from_stage`: 'auto' (default) preserves a good
+    transcript; 'catalogued' forces a full re-transcribe; 'transcribed' forces resume-at-signals."""
+    s = led.sources.get(source_id)
+    if s is None or s.state not in _RESUMABLE:
+        return False
+    has_transcript = bool(s.transcript)                     # None or [] -> nothing to preserve
+    resume_at_signals = from_stage == "transcribed" or (from_stage == "auto" and has_transcript)
+    if resume_at_signals:
+        s.state = SourceState.transcribed                   # re-enter at signals; keep transcript + meta.transcribed
+    else:
+        s.state = SourceState.catalogued                    # full retry: re-transcribe from the top
+        s.meta["transcribed"] = False
+    s.error_reason = None
+    return True
+
 # M3 — _prewarm + _prewarm_sequential + _prewarm_concurrent + _produce_source + the
 # in-pipeline SourceResult dataclass are deleted. Their replacement is fanops.produce.run_all,
 # imported at the top — one entry point, one module owning lock-free side-effect-only artifact
@@ -82,7 +108,7 @@ def _stage_source_to_moments(led: Ledger, cfg: Config, accts: Accounts, log) -> 
             if s.state is SourceState.catalogued:
                 led = transcribe_source(led, cfg, s.id)
             if led.sources[s.id].state is SourceState.transcribed:
-                led = detect_signals(led, cfg, s.id)
+                led = detect_signals(led, cfg, s.id, in_lock=True)   # MOL-122: adopt-or-defer; never shell slow ffmpeg under the flock
             if led.sources[s.id].state is SourceState.signalled:
                 led = request_moments(led, cfg, s.id, accounts=accts)   # P4(c): proven-hook STYLE block
         except Exception as e:
