@@ -159,7 +159,7 @@ def test_moment_casting_prompt_builds():
     out = moment_casting_prompt({"moments": [{"moment_id": "m0", "reason": "guitar solo", "start": 0, "end": 7,
                                               "signal_score": 1.0, "hook": "watch this"}],
                                  "personas": [{"handle": "@a", "persona": "guitar nerd"}], "language": "en"})
-    assert "@a" in out and "m0" in out and "GENEROUS" in out.upper()
+    assert "@a" in out and "m0" in out and "DIFFERENTIATION FIRST" in out.upper()   # MOL-129: differentiation-first, not the old GENEROUS/overlap framing
 
 
 def _req_path(cfg, source_id):
