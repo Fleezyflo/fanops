@@ -108,7 +108,7 @@ def _stage_source_to_moments(led: Ledger, cfg: Config, accts: Accounts, log) -> 
             if s.state is SourceState.catalogued:
                 led = transcribe_source(led, cfg, s.id)
             if led.sources[s.id].state is SourceState.transcribed:
-                led = detect_signals(led, cfg, s.id)
+                led = detect_signals(led, cfg, s.id, in_lock=True)   # MOL-122: adopt-or-defer; never shell slow ffmpeg under the flock
             if led.sources[s.id].state is SourceState.signalled:
                 led = request_moments(led, cfg, s.id, accounts=accts)   # P4(c): proven-hook STYLE block
         except Exception as e:

@@ -4,13 +4,14 @@ scdet prints lavfi.scd.score/time on stderr at -loglevel info — showinfo does 
 scene score (the v1 bug). Optional loudness (ebur128) can be added later; silence+scene
 cover beat drops and visual cuts."""
 from __future__ import annotations
-import json, re, subprocess
+import json, re, shutil, subprocess
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import SourceState
 from fanops.ingest import probe_dimensions
 from fanops.errors import ToolchainMissingError
 from fanops.audio_energy import energy_cmd, parse_energy, rms_to_strength
+from fanops.log import get_logger
 
 _SIL_END = re.compile(r"silence_end:\s*([0-9.]+)")
 _SCD = re.compile(r"lavfi\.scd\.score:\s*([0-9.]+),\s*lavfi\.scd\.time:\s*([0-9.]+)")
@@ -116,7 +117,7 @@ def _run_ffmpeg(cmd: list[str], timeout: float = _FFMPEG_TIMEOUT) -> subprocess.
         raise ToolchainMissingError(
             f"ffmpeg not found on PATH — install ffmpeg to detect signals ({type(e).__name__})") from e
 
-def detect_signals(led: Ledger, cfg: Config, source_id: str) -> Ledger:
+def detect_signals(led: Ledger, cfg: Config, source_id: str, *, in_lock: bool = False) -> Ledger:
     src = led.sources[source_id]
     # Phase D (out-of-lock): signal detection is DETERMINISTIC per (content-addressed) source. A
     # lock-free pre-warm pass writes the per-source sidecar BEFORE the ledger transaction; if it's
@@ -134,6 +135,18 @@ def detect_signals(led: Ledger, cfg: Config, source_id: str) -> Ledger:
             return led
         except (OSError, json.JSONDecodeError, KeyError, TypeError):
             pass                                       # corrupt/stale sidecar -> fall through to a real run
+    # MOL-122: the reducer calls this INSIDE the ledger flock only to ADOPT the producer's warm sidecar. On a
+    # cold/stale sidecar (producer failed), running the SLOW ffmpeg passes here would hold the flock for up to
+    # the duration-scaled scene timeout — an hour on a long source, starving Studio + concurrent ticks. DEFER
+    # that: leave the source `transcribed`; the next producer tick re-warms it, next reduce adopts (one tick of
+    # latency vs a flock-length outage). BUT a genuinely-absent toolchain fails in microseconds and must still
+    # quarantine (never spin transcribed forever) — so probe PATH cheaply first (a filesystem stat, no flock
+    # risk) and raise the typed error in-lock exactly as a real run would. Log first (house norm).
+    if in_lock:
+        if shutil.which("ffmpeg") is None:
+            raise ToolchainMissingError("ffmpeg not found on PATH — install ffmpeg to detect signals (in-lock probe)")
+        get_logger(cfg)("signals", source_id, "defer", reason="cold sidecar in-lock; deferring slow ffmpeg to producer")
+        return led
     sil = _run_ffmpeg(_silence_cmd(src.source_path))
     sc = _run_ffmpeg(_scene_cmd(src.source_path), timeout=_scene_timeout(src.duration))   # MOL-120: video pass scaled to duration
     peaks = parse_silences(sil.stderr) + parse_scene_changes(sc.stderr)

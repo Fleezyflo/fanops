@@ -157,6 +157,9 @@ def test_signals_toolchain_absent_is_quarantined_not_a_crash(tmp_path, monkeypat
     def absent(cmd, **kw):
         raise FileNotFoundError(2, "No such file or directory", cmd[0])
     mocker.patch("fanops.signals.subprocess.run", side_effect=absent)
+    mocker.patch("fanops.signals.shutil.which", return_value=None)   # MOL-122: model absence at PATH too, so the
+                                                                     # in-lock probe raises (a real absent toolchain
+                                                                     # has ffmpeg off PATH) -> quarantine preserved.
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")        # must NOT raise
     assert Ledger.load(cfg).sources["src_1"].state is SourceState.error
     assert "ffmpeg" in (Ledger.load(cfg).sources["src_1"].error_reason or "")
