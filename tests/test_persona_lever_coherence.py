@@ -36,7 +36,7 @@ _KNOWN_INCOHERENT = set(_ORIGINAL_SIX)
 _MUTATIONS = {
     "voice": ("a devoted fan", "a blunt critic"),
     "content_focus": (["punchlines"], ["hype"]),
-    "energy": ("high", "low"),
+    "selection_scope": ("open", "subject_locked"),
     "hook_angle": ("curiosity", "fomo"),
     "hashtag_corpus": (["#aaa"], ["#bbb"]),
 }
@@ -77,7 +77,7 @@ def test_every_field_is_exempt_quarantined_or_fully_coherent():
 
 def test_distinctness_no_channel_has_two_owners():
     # DISTINCT: no output channel is silently owned by more than one editable lever. content_focus owns TWO
-    # channels (casting-selection, cut-length) and energy owns TWO (casting-energy, cut-framing) — that is ONE
+    # channels (casting-selection, cut-length) and selection_scope owns casting-selection-scope — that is ONE
     # owner per channel, which is allowed; two DIFFERENT levers owning the SAME channel is the duplicate we ban.
     owner = {}
     for f in pl.editable_fields():
@@ -114,12 +114,12 @@ def test_runtime_is_fail_open_on_malformed_fields():
     # RESILIENCE: a Persona carrying out-of-vocab lever values (the model itself does not enum-validate; only
     # the write boundary does) compiles to the documented DEFAULT and NEVER raises through any compile path.
     cfg = Config(root="/tmp/fanops_failopen_probe_unused")  # cfg only used for store load; compose tolerates absent store
-    bad = Persona(id="p", voice="v", energy="ludicrous", hook_angle="not-an-angle", content_focus=["not-a-focus"])
+    bad = Persona(id="p", voice="v", selection_scope="ludicrous", hook_angle="not-an-angle", content_focus=["not-a-focus"])
     # none of these raise; each degrades to the firewall default
-    assert casting_directive(bad) == "v"                  # unknown focus/energy -> bare voice
+    assert casting_directive(bad) == "v"                  # unknown focus/scope -> bare voice
     assert hook_directive(bad) == "v"                     # unknown angle -> bare voice
     assert caption_directive(bad) == "v"
-    prof, fr = resolved_cut_spec(bad)                     # unknown focus/energy -> no derived cut
+    prof, fr = resolved_cut_spec(bad)                     # unknown focus/scope -> no derived cut
     assert prof is None and fr is None
     d = compose_breakdown(cfg, bad)                       # the whole breakdown composes without raising
     assert d["casting"]["text"] == "v"

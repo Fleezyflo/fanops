@@ -27,9 +27,9 @@ def preview_compose(cfg: Config, form) -> ActionResult:
     persisting writers, so personas.json is untouched. An existing persona's curated corpus (not a form field)
     is merged in by `id` so the lead tags are accurate. A bad lever value -> a clean one-line error, never a
     500. `form` is a Werkzeug MultiDict (or any object with .get/.getlist). The five clean levers only:
-    voice, content_focus, energy, hook_angle (+ the saved corpus); the cut is DERIVED from content_focus."""
+    voice, content_focus, selection_scope, hook_angle (+ the saved corpus); the cut is DERIVED from content_focus."""
     try:
-        from fanops.personas import CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES
+        from fanops.personas import CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES
 
         def _enum(value, allowed, label):
             v = (value or "").strip()
@@ -49,7 +49,7 @@ def preview_compose(cfg: Config, form) -> ActionResult:
             if c not in CONTENT_FOCUS: raise ValueError(f"unknown content_focus: {c}")
         per = core.Persona(
             id=(pid or "preview"), voice=form.get("voice", ""), hashtag_corpus=corpus,
-            content_focus=focus, energy=_enum(form.get("energy"), ENERGY_LEVELS, "energy"),
+            content_focus=focus, selection_scope=_enum(form.get("selection_scope"), SELECTION_SCOPE_LEVELS, "selection_scope"),
             hook_angle=_enum(form.get("hook_angle"), HOOK_ANGLES, "hook_angle"))
     except ValueError as exc:
         return ActionResult(ok=False, error=str(exc))
@@ -59,14 +59,14 @@ def preview_compose(cfg: Config, form) -> ActionResult:
 
 
 def create_persona(cfg: Config, name: str, voice: str = "",
-                   content_focus=None, energy: str = "", hook_angle: str = "") -> ActionResult:
-    """Create a NEW persona from the five clean levers (voice + content_focus/energy/hook_angle; the corpus is
+                   content_focus=None, selection_scope: str = "", hook_angle: str = "") -> ActionResult:
+    """Create a NEW persona from the five clean levers (voice + content_focus/selection_scope/hook_angle; the corpus is
     curated on the card, genre via Research). Validates a non-blank name + each lever value at the A1 write
     boundary; a duplicate id / unknown lever / blank name -> a clean one-line error, never a 500. The cut
     (length) is DERIVED from content_focus."""
     try:
         pid = core.add_persona(cfg, name=name, voice=voice,
-                               content_focus=content_focus, energy=energy, hook_angle=hook_angle)
+                               content_focus=content_focus, selection_scope=selection_scope, hook_angle=hook_angle)
     except ValueError as exc:                            # blank name / unknown lean or lever / duplicate id
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
@@ -75,8 +75,8 @@ def create_persona(cfg: Config, name: str, voice: str = "",
 
 
 def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "",
-                 content_focus=None, energy: str = "", hook_angle: str = "") -> ActionResult:
-    """Save edits to a persona's five clean levers (name/voice + content_focus/energy/hook_angle). The edit
+                 content_focus=None, selection_scope: str = "", hook_angle: str = "") -> ActionResult:
+    """Save edits to a persona's five clean levers (name/voice + content_focus/selection_scope/hook_angle). The edit
     form is AUTHORITATIVE: an unchecked/blank lever CLEARS it. The cut (length) is DERIVED from content_focus,
     so there is no length/framing knob. Unknown id / unknown lever / blank name -> a clean one-line error."""
     pid = (pid or "").strip()
@@ -84,7 +84,7 @@ def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "",
         return ActionResult(ok=False, error="no persona selected")
     try:
         core.update_persona(cfg, pid, name=name, voice=voice,
-                            content_focus=(content_focus or []), energy=energy, hook_angle=hook_angle)
+                            content_focus=(content_focus or []), selection_scope=selection_scope, hook_angle=hook_angle)
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
     except ValueError as exc:                            # unknown lean or lever / blank name

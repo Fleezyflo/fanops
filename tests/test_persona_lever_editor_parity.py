@@ -17,13 +17,13 @@ def test_every_editable_field_persists_through_the_save_route(tmp_path):
     # behavioral proof, field by field: set it via the real writer, reload from disk, assert it stuck.
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="champions craft", content_focus=["punchlines", "hype"],
-                energy="high", hook_angle="curiosity")
+                selection_scope="controversy_seeking", hook_angle="curiosity")
     add_corpus_tag(cfg, "p", "#myscene")
     p = Personas.load(cfg).get("p")
     persisted = {
         "voice": p.voice == "champions craft",
         "content_focus": p.content_focus == ["punchlines", "hype"],
-        "energy": p.energy == "high",
+        "selection_scope": p.selection_scope == "controversy_seeking",
         "hook_angle": p.hook_angle == "curiosity",
         "hashtag_corpus": "#myscene" in p.hashtag_corpus,
     }
@@ -34,10 +34,10 @@ def test_every_editable_field_persists_through_the_save_route(tmp_path):
 def test_update_route_also_persists_each_editable_field(tmp_path):
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v")
-    update_persona(cfg, "p", voice="changed", content_focus=["storytelling"], energy="low", hook_angle="fomo")
+    update_persona(cfg, "p", voice="changed", content_focus=["storytelling"], selection_scope="subject_locked", hook_angle="fomo")
     p = Personas.load(cfg).get("p")
     assert p.voice == "changed" and p.content_focus == ["storytelling"]
-    assert p.energy == "low" and p.hook_angle == "fomo"
+    assert p.selection_scope == "subject_locked" and p.hook_angle == "fomo"
 
 
 def test_no_model_field_escapes_the_editable_exempt_or_quarantine_partition():
@@ -54,4 +54,4 @@ def test_quarantined_fields_are_not_in_the_editable_set():
 
 def test_editable_set_is_exactly_the_five_clean_levers():
     # pin the editable set so an accidental widening (e.g. re-admitting tag_lean as "editable") reds here.
-    assert set(pl.editable_fields()) == {"voice", "content_focus", "energy", "hook_angle", "hashtag_corpus"}
+    assert set(pl.editable_fields()) == {"voice", "content_focus", "selection_scope", "hook_angle", "hashtag_corpus"}

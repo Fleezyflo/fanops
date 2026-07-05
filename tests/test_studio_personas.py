@@ -25,11 +25,11 @@ def _client(cfg):
 # --- action layer ------------------------------------------------------------------------------
 
 def test_create_persona_is_the_clean_lever_set(tmp_path):
-    # create takes the five clean levers only (voice + content_focus/energy/hook_angle); tag_lean and genre are
+    # create takes the five clean levers only (voice + content_focus/selection_scope/hook_angle); tag_lean and genre are
     # NOT create params — hashtags come from the card corpus, genre is set via the Research control.
     cfg = Config(root=tmp_path)
     r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines"],
-                          energy="high", hook_angle="curiosity")
+                          selection_scope="controversy_seeking", hook_angle="curiosity")
     assert r.ok
     p = core.Personas.load(cfg).get(r.detail["created"])
     assert p.voice == "champions craft" and p.content_focus == ["punchlines"] and p.hook_angle == "curiosity"
@@ -201,14 +201,14 @@ def test_personas_route_renders(tmp_path):
 
 
 def test_edit_drawer_is_the_clean_five_lever_set(tmp_path):
-    # The edit sidebar collapses to DISTINCT, non-overlapping levers: voice, content_focus, energy, hook_angle
+    # The edit sidebar collapses to DISTINCT, non-overlapping levers: voice, content_focus, selection_scope, hook_angle
     # (the corpus is managed on the card). Everything that repeated another field is gone from the drawer AND
     # the compose-preview path: tag_lean (corpus owns hashtags), the 3 directive overrides (voice + structured
     # levers cover them), genre (-> Research), framing (-> smart framing), hook_tone/clip_profile/clip_count/brief.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
     drawer = _client(cfg).get(f"/personas/drawer/{pid}").get_data(as_text=True)
-    for keep in ('name="voice"', 'name="content_focus"', 'name="energy"', 'name="hook_angle"'):
+    for keep in ('name="voice"', 'name="content_focus"', 'name="selection_scope"', 'name="hook_angle"'):
         assert keep in drawer, f"missing lever {keep}"
     for gone in ('name="tag_lean"', 'name="casting_directive"', 'name="hook_directive"',
                  'name="caption_directive"', 'name="genre"', 'name="framing"', 'name="clip_count"',

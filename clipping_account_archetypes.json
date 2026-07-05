@@ -1,0 +1,269 @@
+{
+  "taxonomy_id": "clipping_account_archetypes",
+  "description": "Behavioral archetypes of clipping/aggregator social accounts. Each archetype defines a distinct content-selection logic and retention mechanism, derived from creator-economy research.",
+  "identity_constraint_axis": "Archetypes range from tightly-constrained (one subject, one emotional register, one credibility posture) to unconstrained (opportunistic, taste-only). Tighter constraint correlates with predictable selection_logic and a retention_mechanism native to the content type itself. Looser constraint means retention depends almost entirely on production_signature execution.",
+  "types": [
+    {
+      "id": "single_source_briefed",
+      "label": "Single-source, briefed distribution",
+      "identity_constraint": "external_brief",
+      "examples": [
+        {
+          "name": "Gaming/stream clip campaigns (e.g. marketplace briefs built around a single streamer)",
+          "descriptor": "Twitch/gaming clips distributed via paid campaign briefs"
+        }
+      ],
+      "selection_logic": {
+        "rule": "Whatever the campaign brief specifies",
+        "rationale": "Selection isn't made by the account operator; a client defines footage, narrative angle, and guidelines up front."
+      },
+      "retention_mechanism": {
+        "primary": "execution_only",
+        "description": "No independent account identity to build loyalty around; relies entirely on generic short-form execution (hook, pacing, captions)."
+      },
+      "classification_signals": [
+        "Nearly all clips trace to a single named creator, show, or brand",
+        "Captions/bio reference sponsorship or campaign partnership",
+        "Consistent promotional CTA pointing back to the source"
+      ],
+      "production_signature_dependency": "low"
+    },
+    {
+      "id": "single_subject_fan",
+      "label": "Single-subject fan/tribute account",
+      "identity_constraint": "single_subject",
+      "examples": [
+        {
+          "name": "David Goggins Motivations",
+          "descriptor": "Instagram account branded as top fan page for one individual"
+        }
+      ],
+      "selection_logic": {
+        "rule": "Subject presence is the only filter",
+        "rationale": "Any appearance by the one named individual qualifies, regardless of source or topic."
+      },
+      "retention_mechanism": {
+        "primary": "parasocial_habit",
+        "description": "Viewers return for a stable relationship with one recognizable person, not for any specific clip's content."
+      },
+      "classification_signals": [
+        "100% of content features one named individual across many unrelated original sources",
+        "Account name/handle/bio explicitly names that individual",
+        "No consistent topic beyond the subject's presence"
+      ],
+      "production_signature_dependency": "low"
+    },
+    {
+      "id": "multi_source_vibe_compilation",
+      "label": "Multi-source vibe/emotion compilation",
+      "identity_constraint": "single_emotional_register",
+      "examples": [
+        {
+          "name": "Motiversity",
+          "descriptor": "Combines unrelated speakers (Goggins, Peterson, Eric Thomas, etc.) under cinematic scoring"
+        }
+      ],
+      "selection_logic": {
+        "rule": "Does the moment deliver the target emotion",
+        "rationale": "Subject and source are irrelevant; emotional register (e.g. grind/discipline catharsis) is the only filter."
+      },
+      "retention_mechanism": {
+        "primary": "emotional_catharsis_arc",
+        "description": "Cinematic scoring and edit structure build a narrative arc across unrelated source material toward a climax."
+      },
+      "classification_signals": [
+        "Many different, unrelated named speakers with no single subject in common",
+        "Consistent non-diegetic music score, often cinematic/orchestral",
+        "Longer-than-typical runtime, structured as a build rather than a single punchline"
+      ],
+      "production_signature_dependency": "high"
+    },
+    {
+      "id": "structural_cliffhanger",
+      "label": "Structural cliffhanger / advice",
+      "identity_constraint": "narrative_format",
+      "examples": [
+        {
+          "name": "The Girl's Bathroom podcast clips",
+          "descriptor": "Relationship-advice clips that cut before the resolution"
+        },
+        {
+          "name": "Shameless podcast",
+          "descriptor": "Same cliffhanger structure"
+        }
+      ],
+      "selection_logic": {
+        "rule": "Stories with a clear dilemma that can be cut mid-story",
+        "rationale": "The moment needs a natural incompleteness point to exploit."
+      },
+      "retention_mechanism": {
+        "primary": "curiosity_gap_conversion",
+        "description": "The clip is deliberately incomplete; retention is measured off-platform (podcast listens), not within the clip."
+      },
+      "classification_signals": [
+        "Clip ends before a stated question, story, or dilemma resolves",
+        "Caption/on-screen text directs viewers elsewhere for the resolution",
+        "Source content is advice/relationship/dilemma-format audio"
+      ],
+      "production_signature_dependency": "medium"
+    },
+    {
+      "id": "edutainment_niche",
+      "label": "Edutainment / niche knowledge",
+      "identity_constraint": "subject_matter_expertise",
+      "examples": [
+        {
+          "name": "Dissect",
+          "descriptor": "Music analysis clips, 500k+ followers"
+        }
+      ],
+      "selection_logic": {
+        "rule": "A genuinely teachable insight",
+        "rationale": "Content must be interesting on factual merit, not just emotional charge."
+      },
+      "retention_mechanism": {
+        "primary": "production_polish_plus_substance",
+        "description": "Visual production (animation, graphics) compensates for what pure audio can't show, while the underlying insight still has to earn attention."
+      },
+      "classification_signals": [
+        "Content centers on a specific factual claim, analysis, or teachable insight",
+        "Heavy use of on-screen graphics/animation beyond basic captions",
+        "Consistent single subject-matter domain across posts"
+      ],
+      "production_signature_dependency": "high"
+    },
+    {
+      "id": "personality_banter",
+      "label": "Personality banter",
+      "identity_constraint": "host_personality",
+      "examples": [
+        {
+          "name": "Round Table (William Hanson & Jordan North)",
+          "descriptor": "Banter/entertainment clips from the hosts' own podcast"
+        }
+      ],
+      "selection_logic": {
+        "rule": "Whatever's funny between the hosts",
+        "rationale": "Low information density is acceptable; chemistry is the content."
+      },
+      "retention_mechanism": {
+        "primary": "host_familiarity",
+        "description": "Retention is a function of liking the people on screen, largely independent of topic."
+      },
+      "classification_signals": [
+        "Low information density per clip",
+        "Same 2+ recurring people across most/all posts",
+        "Captions/comments reference the hosts as personalities, not the topic"
+      ],
+      "production_signature_dependency": "low"
+    },
+    {
+      "id": "manufactured_controversy",
+      "label": "Manufactured controversy / debate",
+      "identity_constraint": "rivalry_structure",
+      "examples": [
+        {
+          "name": "First Take-style sports debate clips (e.g. Skip Bayless / Stephen A. Smith)",
+          "descriptor": "Hot-take and rivalry moments, not game footage"
+        }
+      ],
+      "selection_logic": {
+        "rule": "The most inflammatory or rivalry-coded statement in the source",
+        "rationale": "Explicitly avoids game highlights, which run into tighter league copyright enforcement."
+      },
+      "retention_mechanism": {
+        "primary": "tribal_engagement",
+        "description": "Audience investment in a side/rivalry converts into comments and repeat viewing of the ongoing conflict."
+      },
+      "classification_signals": [
+        "Clipped moments center on strong opinions, insults, or disagreement between named figures",
+        "Absence of actual game/event footage despite a sports/competitive topic",
+        "Comment sections show visible 'sides' or camp-based argument"
+      ],
+      "production_signature_dependency": "low"
+    },
+    {
+      "id": "credibility_first",
+      "label": "Credibility-first / restrained",
+      "identity_constraint": "credibility_posture",
+      "examples": [
+        {
+          "name": "Health/longevity-science podcast clip campaigns",
+          "descriptor": "Briefs explicitly instruct 'reach and trust, not hype'"
+        }
+      ],
+      "selection_logic": {
+        "rule": "Deliberately passes on the most sensational cut if it would misrepresent the source",
+        "rationale": "Favors clear and accurate over shocking; sensationalism is a cost, not a benefit, in this category."
+      },
+      "retention_mechanism": {
+        "primary": "authority_compounding",
+        "description": "Slow-building trust relationship rather than single-clip virality."
+      },
+      "classification_signals": [
+        "Source domain is health, science, finance, or another claims-sensitive category",
+        "Selection favors clear explanation over the most dramatic possible moment",
+        "Bio/caption tone avoids hype language and superlatives"
+      ],
+      "production_signature_dependency": "low"
+    },
+    {
+      "id": "gossip_drama_aggregator",
+      "label": "Gossip / drama aggregator",
+      "identity_constraint": "social_proof_worthiness",
+      "examples": [
+        {
+          "name": "Deuxmoi",
+          "descriptor": "Crowdsourced celebrity gossip from follower DMs"
+        },
+        {
+          "name": "TheShadeRoom",
+          "descriptor": "22M+ followers, celebrity gossip"
+        },
+        {
+          "name": "DramaAlert",
+          "descriptor": "Millions of subscribers, influencer/YouTuber drama"
+        }
+      ],
+      "selection_logic": {
+        "rule": "Is it juicy and about someone recognizable",
+        "rationale": "Platform or clip format barely matters; a large share of content is crowdsourced screenshots/DMs, not edited footage at all."
+      },
+      "retention_mechanism": {
+        "primary": "social_belonging_and_serialization",
+        "description": "Retention comes from feeling 'in the know' plus ongoing storylines that reward regular check-ins."
+      },
+      "classification_signals": [
+        "Content mixes screenshots/text posts with video, not exclusively edited clips",
+        "Recurring subjects are public figures' interpersonal conflicts or controversies",
+        "Bio/posts reference audience tip submission as a content source"
+      ],
+      "production_signature_dependency": "low"
+    },
+    {
+      "id": "opportunistic_broad_curator",
+      "label": "Opportunistic broad curator",
+      "identity_constraint": "none",
+      "examples": [
+        {
+          "name": "Generic 'find anything engaging' clip briefs",
+          "descriptor": "Explicitly instructed to pull funny, informative, controversial, or inspiring moments from any livestream, podcast, interview, or Twitter Spaces recording"
+        }
+      ],
+      "selection_logic": {
+        "rule": "No fixed category",
+        "rationale": "The operator's own taste is the entire selection algorithm."
+      },
+      "retention_mechanism": {
+        "primary": "execution_only",
+        "description": "Nothing but production execution drives retention; there's no subject, vibe, or credibility posture to build a habit around."
+      },
+      "classification_signals": [
+        "Source content spans unrelated domains/topics/people with no consistent thread",
+        "Only consistent element across posts is the production treatment itself (hook style, caption font, zoom pattern)",
+        "No recurring named individual, brand, or topic across a sample of posts"
+      ],
+      "production_signature_dependency": "high"
+    }
+  ]
+}

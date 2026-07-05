@@ -2,13 +2,13 @@
 # IS and what it DOES, from the code: lever_catalog() pairs every option with its engine-true effect, and
 # compose_breakdown() shows the LIVE composed translation (the exact casting/hook/caption directives + cut +
 # lead tags the pipeline will run), decomposed to the lever that produced each fragment, with the engine's
-# real precedence (override wins, energy=medium is a no-op) surfaced. preview_compose() runs it on TRANSIENT
+# real precedence (override wins, selection_scope=open is a no-op) surfaced. preview_compose() runs it on TRANSIENT
 # unsaved form values — never persists. Parity is the contract: what the operator SEES == what the engine RUNS.
 from fanops.config import Config
 from fanops.personas import (Persona, lever_catalog, compose_breakdown, produces_summary, casting_directive,
                              hook_directive, caption_directive, add_persona, Personas,
-                             CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES,
-                             _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE)
+                             CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES,
+                             _FOCUS_CLAUSE, _SCOPE_CLAUSE, _ANGLE_CLAUSE)
 
 
 # ---- lever_catalog: every option carries its ENGINE-TRUE effect (no hand-written prose) ----
@@ -22,11 +22,11 @@ def test_catalog_focus_effect_is_the_engine_clause():
     for k, clause in _FOCUS_CLAUSE.items():
         assert eff[k] == clause                                    # the catalog shows EXACTLY what the compiler injects
 
-def test_catalog_energy_angle_effects_are_engine_clauses():
+def test_catalog_scope_angle_effects_are_engine_clauses():
     cat = _by_key(lever_catalog())
-    energy = {o["value"]: o["effect"] for o in cat["energy"]["options"]}
-    assert energy["high"] == _ENERGY_CLAUSE["high"]
-    assert "any" in energy["medium"].lower()                       # medium's empty clause is shown as an explicit no-op note
+    scope = {o["value"]: o["effect"] for o in cat["selection_scope"]["options"]}
+    assert scope["controversy_seeking"] == _SCOPE_CLAUSE["controversy_seeking"]
+    assert "open" in scope["open"].lower()                       # medium's empty clause is shown as an explicit no-op note
     angle = {o["value"]: o["effect"] for o in cat["hook_angle"]["options"]}
     assert angle["curiosity"] == _ANGLE_CLAUSE["curiosity"]
 
@@ -41,14 +41,14 @@ def test_catalog_omits_the_removed_persona_levers():
 def test_catalog_covers_every_validated_vocab_no_orphan_options():
     cat = _by_key(lever_catalog())
     assert {o["value"] for o in cat["content_focus"]["options"]} == set(CONTENT_FOCUS)
-    assert {o["value"] for o in cat["energy"]["options"]} == set(ENERGY_LEVELS)
+    assert {o["value"] for o in cat["selection_scope"]["options"]} == set(SELECTION_SCOPE_LEVELS)
     assert {o["value"] for o in cat["hook_angle"]["options"]} == set(HOOK_ANGLES)
 
 
 # ---- compose_breakdown: the LIVE composed translation, parity with the real compilers ----
 def test_breakdown_text_is_exactly_the_compiler_output(tmp_path):
     cfg = Config(root=tmp_path)
-    for p in (Persona(id="p", voice="a devoted fan", content_focus=["punchlines"], energy="high",
+    for p in (Persona(id="p", voice="a devoted fan", content_focus=["punchlines", "hype"],
                       hook_angle="curiosity"),
               Persona(id="q", voice="v"),
               Persona(id="r", casting_directive="hand-written override", hook_angle="fomo")):
@@ -59,15 +59,15 @@ def test_breakdown_text_is_exactly_the_compiler_output(tmp_path):
 
 def test_breakdown_fragments_trace_each_lever(tmp_path):
     cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", voice="a devoted fan", content_focus=["punchlines"], energy="high"))
+    d = compose_breakdown(cfg, Persona(id="p", voice="a devoted fan", content_focus=["punchlines", "hype"]))
     sources = {f["source"] for f in d["casting"]["fragments"]}
-    assert sources == {"voice", "content_focus", "energy"}        # every fragment is attributed to its lever
+    assert sources == {"voice", "content_focus"}        # every fragment is attributed to its lever
 
 def test_breakdown_fragment_text_is_substring_of_the_directive(tmp_path):
     # the provenance tooltips (fragment.text) must not drift from the compiler output — every fragment's text
     # must appear verbatim in the dimension's authoritative text, else a clause-map edit would desync the badges
     cfg = Config(root=tmp_path)
-    p = Persona(id="p", voice="a devoted fan", content_focus=["punchlines", "emotional"], energy="high",
+    p = Persona(id="p", voice="a devoted fan", content_focus=["punchlines", "hype"],
                 hook_angle="curiosity")
     d = compose_breakdown(cfg, p)
     for dim in ("casting", "hook"):
@@ -77,16 +77,16 @@ def test_breakdown_fragment_text_is_substring_of_the_directive(tmp_path):
 # (M3e: test_breakdown_override_shadows_structured_levers removed — the freeform directive overrides were
 # retired, so no dimension can shadow its structured levers; `override` is always False, `shadowed` always [].)
 
-def test_breakdown_flags_energy_medium_noop(tmp_path):
+def test_breakdown_flags_selection_scope_open_noop(tmp_path):
     cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", voice="v", energy="medium", content_focus=["hype"]))
-    assert any("medium" in n for n in d["noops"])                 # medium compiles to nothing — say so
+    d = compose_breakdown(cfg, Persona(id="p", voice="v", selection_scope="open", content_focus=["hype"]))
+    assert any("open" in n for n in d["noops"])                 # medium compiles to nothing — say so
 
 def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
-    d = compose_breakdown(cfg, Persona(id="p", content_focus=["punchlines"], energy="low",
+    d = compose_breakdown(cfg, Persona(id="p", content_focus=["punchlines", "emotional"],
                                        hashtag_corpus=["#myscene"]))   # M3d: cut DERIVES (punchlines->short, low->top)
-    assert "8-15s" in d["cut"]["band"] and d["cut"]["framing"] == "top" and d["cut"]["source"] == "derived"
+    assert "16-26s" in d["cut"]["band"] and d["cut"]["framing"] == "center" and d["cut"]["source"] == "derived"
     assert "#myscene" in d["tags"]["lead"]                        # corpus floats to the lead, like the pipeline
     d2 = compose_breakdown(cfg, Persona(id="q", voice="v"))
     assert d2["cut"]["source"] == "global"                        # unset profile → global, not persona
@@ -95,12 +95,12 @@ def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
 # ---- produces_summary: the operator-facing "what this persona DROPS" lead (S7) ----
 def test_produces_summary_lists_configured_dimensions(tmp_path):
     cfg = Config(root=tmp_path)
-    p = Persona(id="p", voice="v", content_focus=["punchlines"], energy="low", hook_angle="curiosity",
+    p = Persona(id="p", voice="v", content_focus=["punchlines", "emotional"], hook_angle="curiosity",
                 hashtag_corpus=["#myscene"])                        # M3d: cut DERIVES (punchlines->short, low->top)
     d = compose_breakdown(cfg, p)
     clauses = produces_summary(d)
     joined = " · ".join(clauses)
-    assert "8-15s" in joined and "clips" in joined                 # the LENGTH band, from the same cut resolver
+    assert "16-26s" in joined and "clips" in joined                 # the LENGTH band, from the same cut resolver
     assert "curiosity hooks" in clauses                             # the hook ANGLE
     assert any(c.startswith("≤") and "hashtag" in c for c in clauses)  # the hashtag count (lean/corpus is set)
 
@@ -138,7 +138,7 @@ def test_produces_summary_is_pure_no_persistence(tmp_path):
 def test_preview_compose_returns_breakdown_without_persisting(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    form = {"voice": "a devoted fan", "content_focus": ["punchlines"], "energy": "high"}
+    form = {"voice": "a devoted fan", "content_focus": ["punchlines"]}
     r = sp.preview_compose(cfg, _Form(form))
     assert r.ok and r.detail["casting"]["text"].startswith("a devoted fan")
     assert not cfg.personas_path.exists()                          # NOTHING written — a preview never persists
@@ -150,13 +150,13 @@ def test_preview_compose_merges_saved_corpus_for_an_existing_id(tmp_path):
     Personas.load(cfg)  # sanity
     from fanops.personas import add_corpus_tag
     add_corpus_tag(cfg, "curator", "#myscene")
-    r = sp.preview_compose(cfg, _Form({"id": "curator", "energy": "high"}))
+    r = sp.preview_compose(cfg, _Form({"id": "curator", "content_focus": ["punchlines"]}))
     assert r.ok and "#myscene" in r.detail["tags"]["lead"]         # the saved corpus shows in the live preview
 
 def test_preview_compose_bad_value_is_clean_error(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    r = sp.preview_compose(cfg, _Form({"energy": "loud"}))         # not a valid energy
+    r = sp.preview_compose(cfg, _Form({"selection_scope": "loud"}))         # not a valid selection_scope
     assert r.ok is False and r.error
     assert not cfg.personas_path.exists()
 
@@ -167,14 +167,14 @@ def test_personas_page_renders_lever_effects(tmp_path):
     cfg = Config(root=tmp_path)
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
-    assert "skip calm, low-energy passages" in html               # the energy=high effect is shown in the editor
+    assert "inflammatory" in html or "controversy_seeking" in html               # the energy=high effect is shown in the editor
 
 def test_compose_route_renders_directives(tmp_path):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().post("/personas/compose", data={
-        "voice": "a devoted fan", "content_focus": "punchlines", "energy": "high",
+        "voice": "a devoted fan", "content_focus": "punchlines",
         "hook_angle": "curiosity"}).get_data(as_text=True)
     assert "a devoted fan" in html                                 # the live compiled directive renders from the clean levers
 

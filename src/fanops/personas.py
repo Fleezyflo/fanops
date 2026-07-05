@@ -30,7 +30,7 @@ from fanops.persona_levers import vocab as _lever_vocab
 # three can no longer drift. clip_profile/framing reuse the Account validators (bands.PROFILE_NAMES /
 # config.FRAMING_NAMES) so a persona pins the SAME deterministic CUT an account can.
 CONTENT_FOCUS = _lever_vocab("content_focus")
-ENERGY_LEVELS = _lever_vocab("energy")
+SELECTION_SCOPE_LEVELS = _lever_vocab("selection_scope")
 HOOK_ANGLES = _lever_vocab("hook_angle")
 
 
@@ -44,15 +44,15 @@ class Persona(BaseModel):
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
     # compose returns the bare `voice` (byte-identical). Validated at the write boundary (add/update_persona).
     content_focus: list[str] = Field(default_factory=list)   # which moment KINDS to favor (casting): CONTENT_FOCUS
-    energy: Optional[str] = None                  # clip energy: low|medium|high (ENERGY_LEVELS)
+    selection_scope: Optional[str] = None         # selection constraint: open|subject_locked|... (SELECTION_SCOPE_LEVELS)
     hook_angle: Optional[str] = None              # on-screen hook strategy: curiosity|challenge|... (HOOK_ANGLES)
     # M3 (2026-06-27): the per-persona clip_profile/framing PINS were RETIRED — invisible (no editor) + duplicate
-    # of the content_focus/energy-DERIVED cut (derive_cut_spec). A persona's cut LENGTH now derives from
-    # content_focus and FRAMING from energy; the Account.clip_profile/framing carriers + the global
+    # of the content_focus-DERIVED cut (derive_cut_spec). A persona's cut LENGTH + FRAMING now derive from
+    # content_focus; the Account.clip_profile/framing carriers + the global FANOPS_CLIP_PROFILE lever stay.
     # FANOPS_CLIP_PROFILE lever stay. resolved_cut_spec is duck-typed, so an absent Persona pin -> derived.
     # M3e (2026-06-27): the 3 freeform per-dimension OVERRIDES (casting/hook/caption_directive) were RETIRED —
     # invisible (no editor) + shadow-duplicates of the structured levers, an unaudited verbatim-injection
-    # surface. The structured levers (content_focus/energy/hook_angle) now ALWAYS compile the directives; the
+    # surface. The structured levers (content_focus/selection_scope/hook_angle) now ALWAYS compile the directives; the
     # voice carries any freeform register. The compile FUNCTIONS persona_directives.casting_directive/
     # hook_directive/caption_directive stay (they are the compile, not the override).
 
@@ -69,7 +69,15 @@ class Personas:
         if p.exists():
             try:
                 raw = json.loads(p.read_text())
-                r.personas = [Persona(**x) for x in raw.get("personas", []) if isinstance(x, dict)]
+                personas: list[Persona] = []
+                for x in raw.get("personas", []):
+                    if not isinstance(x, dict): continue
+                    d = dict(x)
+                    if "energy" in d:                          # MOL-170: legacy energy -> selection_scope=open
+                        d.pop("energy")
+                        d.setdefault("selection_scope", "open")
+                    personas.append(Persona(**d))
+                r.personas = personas
             except Exception as e:                 # a hand-edit typo: clear one-liner, not a raw traceback
                 raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
         return r
@@ -94,7 +102,7 @@ def _slug(s: str) -> str:
 from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; after foundation by design)
     derive_cut_spec, resolved_cut_spec, casting_directive, hook_directive, hook_author_slot, caption_directive,
     compose_persona_instruction, lever_catalog, compose_breakdown, produces_summary, persona_facts, manifest,
-    _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _ENERGY_FRAMING)
+    _FOCUS_CLAUSE, _SCOPE_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP)
 from fanops.persona_store import (   # noqa: E402,F401
     add_persona, update_persona, add_corpus_tag, remove_corpus_tag,
     delete_persona, migrate_from_accounts, link_personas_by_voice)

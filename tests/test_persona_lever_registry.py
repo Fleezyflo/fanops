@@ -10,8 +10,8 @@
 import itertools
 
 from fanops.config import Config
-from fanops.personas import (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES,
-                             _FOCUS_CLAUSE, _ENERGY_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _ENERGY_FRAMING,
+from fanops.personas import (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES,
+                             _FOCUS_CLAUSE, _SCOPE_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP,
                              derive_cut_spec, lever_catalog, compose_breakdown, Persona)
 
 
@@ -21,7 +21,7 @@ from fanops.personas import (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES,
 # (that would defeat the net) — hand-frozen here on purpose.
 # ---------------------------------------------------------------------------------------------------------
 _GOLD_CONTENT_FOCUS = {"punchlines", "emotional", "hype", "storytelling", "visual", "bold-statement"}
-_GOLD_ENERGY = {"low", "medium", "high"}
+_GOLD_SCOPE = {"open", "subject_locked", "source_briefed", "credibility_first", "controversy_seeking"}
 _GOLD_ANGLES = {"curiosity", "challenge", "emotional", "result-first", "fomo"}
 
 _GOLD_FOCUS_CLAUSE = {
@@ -33,8 +33,10 @@ _GOLD_FOCUS_CLAUSE = {
     "bold-statement": "a bold or contrarian statement that stops the scroll",
 }
 _GOLD_FOCUS_ORDER = ["punchlines", "emotional", "hype", "storytelling", "visual", "bold-statement"]
-_GOLD_ENERGY_CLAUSE = {"low": "Favor calmer, more introspective moments over loud ones.", "medium": "",
-                       "high": "Strongly prefer peak-intensity moments; skip calm, low-energy passages."}
+_GOLD_SCOPE_CLAUSE = {"open": "", "subject_locked": "Only moments featuring the account's named subject qualify — subject presence is the filter.",
+                       "source_briefed": "Select only moments matching the campaign brief — the brief defines footage and angle.",
+                       "credibility_first": "Favor clear and accurate over sensational; pass on cuts that misrepresent the source.",
+                       "controversy_seeking": "Prefer the most inflammatory or rivalry-coded statement in the source."}
 _GOLD_ANGLE_CLAUSE = {"curiosity": "open a curiosity gap the viewer has to close",
                       "challenge": "dare or challenge the viewer to react",
                       "emotional": "name the high-arousal feeling the clip gives the viewer",
@@ -43,29 +45,29 @@ _GOLD_ANGLE_CLAUSE = {"curiosity": "open a curiosity gap the viewer has to close
 # longer-bias-first; the ORDER is load-bearing (next() picks the first/highest tier present)
 _GOLD_FOCUS_PROFILE = {"storytelling": "long", "emotional": "medium", "visual": "medium",
                        "punchlines": "short", "hype": "short", "bold-statement": "short"}
-_GOLD_ENERGY_FRAMING = {"high": "center", "low": "top"}
+_GOLD_FRAMING_MAP = {"punchlines": "center", "hype": "center", "bold-statement": "center", "visual": "center", "emotional": "top", "storytelling": "top"}
 
 
 # ---- the live exports equal the golden literals (value-exact, order-exact where it matters) ----
 def test_vocabularies_byte_identical():
     assert set(CONTENT_FOCUS) == _GOLD_CONTENT_FOCUS
-    assert set(ENERGY_LEVELS) == _GOLD_ENERGY
+    assert set(SELECTION_SCOPE_LEVELS) == _GOLD_SCOPE
     assert set(HOOK_ANGLES) == _GOLD_ANGLES
-    for v in (CONTENT_FOCUS, ENERGY_LEVELS, HOOK_ANGLES):
+    for v in (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES):
         assert isinstance(v, frozenset)
 
 
 def test_clause_maps_byte_identical():
     assert dict(_FOCUS_CLAUSE) == _GOLD_FOCUS_CLAUSE
     assert list(_FOCUS_CLAUSE.keys()) == _GOLD_FOCUS_ORDER          # join order matters for the casting text
-    assert dict(_ENERGY_CLAUSE) == _GOLD_ENERGY_CLAUSE
+    assert dict(_SCOPE_CLAUSE) == _GOLD_SCOPE_CLAUSE
     assert dict(_ANGLE_CLAUSE) == _GOLD_ANGLE_CLAUSE
 
 
 def test_derived_cut_maps_byte_identical():
     assert dict(_FOCUS_PROFILE) == _GOLD_FOCUS_PROFILE
     assert list(_FOCUS_PROFILE.items()) == list(_GOLD_FOCUS_PROFILE.items())   # tier-descending order is the selection
-    assert dict(_ENERGY_FRAMING) == _GOLD_ENERGY_FRAMING
+    assert dict(_FRAMING_MAP) == _GOLD_FRAMING_MAP
 
 
 # ---- derive_cut_spec over ALL 64 content_focus subsets == an INDEPENDENT reference (the GOTCHA proof) ----
@@ -79,28 +81,29 @@ def test_derive_cut_spec_identical_over_all_focus_subsets():
     foci = sorted(_GOLD_CONTENT_FOCUS)
     for r in range(len(foci) + 1):
         for combo in itertools.combinations(foci, r):
-            got_prof, got_fr = derive_cut_spec(Persona(id="x", content_focus=list(combo), energy=None))
+            got_prof, got_fr = derive_cut_spec(Persona(id="x", content_focus=list(combo)))
             assert got_prof == _ref_profile(set(combo)), f"derive drift for content_focus={combo}"
-            assert got_fr is None                                   # energy=None -> no framing opinion
+            if not combo:
+                assert got_fr is None
 
 
-def test_derive_cut_spec_framing_from_energy():
-    for energy, exp in (("high", "center"), ("low", "top"), ("medium", None), (None, None)):
-        _prof, fr = derive_cut_spec(Persona(id="x", energy=energy))
+def test_derive_cut_spec_framing_from_content_focus():
+    for focus, exp in ((["punchlines"], "center"), (["storytelling"], "top"), ([], None)):
+        _prof, fr = derive_cut_spec(Persona(id="x", content_focus=focus))
         assert fr == exp
 
 
 # ---- lever_catalog() full shape characterization ----
 def test_lever_catalog_shape_byte_identical():
     cat = {lev["key"]: lev for lev in lever_catalog()}
-    assert list(cat) == ["content_focus", "energy", "hook_angle", "clip_profile", "hashtag_corpus"]
+    assert list(cat) == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "hashtag_corpus"]
     # content_focus options == the focus clause map, value+effect exact, in clause order
     cf = cat["content_focus"]
     assert [(o["value"], o["effect"]) for o in cf["options"]] == list(_GOLD_FOCUS_CLAUSE.items())
     assert cf["kind"] == "multi" and cf["stage"] == "casting"
-    # energy: medium's empty clause is shown as an explicit no-op note
-    en = {o["value"]: o["effect"] for o in cat["energy"]["options"]}
-    assert en["high"] == _GOLD_ENERGY_CLAUSE["high"] and "any" in en["medium"].lower()
+    # selection_scope: open's empty clause is shown as an explicit no-op note
+    sc = {o["value"]: o["effect"] for o in cat["selection_scope"]["options"]}
+    assert sc["controversy_seeking"] == _GOLD_SCOPE_CLAUSE["controversy_seeking"] and "open" in sc["open"].lower()
     # hook_angle options == the angle clause map
     assert {o["value"]: o["effect"] for o in cat["hook_angle"]["options"]} == _GOLD_ANGLE_CLAUSE
     # clip_profile stays the GLOBAL band lever (5 bands), hashtag_corpus has no enumerated options
@@ -120,8 +123,8 @@ def test_compose_fingerprint_for_live_shaped_personas(tmp_path):
     cfg = Config(root=tmp_path)
     personas = [
         Persona(id="craft-curator", voice="", content_focus=["punchlines", "emotional"], hook_angle="curiosity"),
-        Persona(id="underground-zine", voice="", content_focus=["punchlines", "hype"], energy="high", hook_angle="curiosity"),
-        Persona(id="burner-bold", voice="", content_focus=["bold-statement", "hype"], energy="high", hook_angle="challenge"),
+        Persona(id="underground-zine", voice="", content_focus=["punchlines", "hype"], hook_angle="curiosity"),
+        Persona(id="burner-bold", voice="", content_focus=["bold-statement", "hype"], hook_angle="challenge"),
     ]
     fps = {p.id: _fp(cfg, p) for p in personas}
     # the 3 are distinct on the casting text (different content_focus) — the differentiation is live
@@ -147,15 +150,15 @@ def test_projections_derive_from_the_registry():
     import fanops.persona_levers as pl
     # the live personas vocab IS the registry projection
     assert set(CONTENT_FOCUS) == set(pl.vocab("content_focus"))
-    assert set(ENERGY_LEVELS) == set(pl.vocab("energy"))
+    assert set(SELECTION_SCOPE_LEVELS) == set(pl.vocab("selection_scope"))
     assert set(HOOK_ANGLES) == set(pl.vocab("hook_angle"))
     # the live clause maps ARE the registry projection
     assert dict(_FOCUS_CLAUSE) == pl.clause_map("content_focus")
-    assert dict(_ENERGY_CLAUSE) == pl.clause_map("energy")
+    assert dict(_SCOPE_CLAUSE) == pl.clause_map("selection_scope")
     assert dict(_ANGLE_CLAUSE) == pl.clause_map("hook_angle")
     assert dict(_FOCUS_PROFILE) == dict(pl.focus_profile_map())
     assert list(_FOCUS_PROFILE.items()) == list(pl.focus_profile_map().items())   # tier-descending order preserved
-    assert dict(_ENERGY_FRAMING) == pl.energy_framing_map()
+    assert dict(_FRAMING_MAP) == pl.framing_map()
     # the live catalog IS the registry projection
     assert lever_catalog() == pl.build_catalog()
 

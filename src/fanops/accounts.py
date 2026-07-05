@@ -52,9 +52,9 @@ class Account(BaseModel):
     # Lever engine (M-levers): explicit per-characteristic direction HYDRATED from the linked Persona at load,
     # which personas.compose_persona_instruction renders into the surface `persona` the casting/hook/caption
     # payloads carry. ADDITIVE — empty on every legacy/unlinked account, so compose returns the bare persona
-    # voice (byte-identical). content_focus/energy -> casting; hook_angle -> the on-screen hook.
+    # voice (byte-identical). content_focus/selection_scope -> casting; hook_angle -> the on-screen hook.
     content_focus: list[str] = Field(default_factory=list)
-    energy: Optional[str] = None
+    selection_scope: Optional[str] = None
     hook_angle: Optional[str] = None
     # M3e: the 3 per-dimension OVERRIDE carriers (casting/hook/caption_directive) were RETIRED with the Persona
     # overrides — the structured levers always compile the directives now; the voice carries freeform register.
@@ -263,7 +263,7 @@ def _persona_for_account(acc: Account, reg) -> "object | None":
 
 
 def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
-    """A1: override each LINKED account's persona voice, corpus, levers (content_focus/energy/hook_angle), cut spec (clip_profile/framing), and per-dimension directives IN MEMORY from its Persona (the source of truth
+    """A1: override each LINKED account's persona voice, corpus, levers (content_focus/selection_scope/hook_angle), cut spec (clip_profile/framing), and per-dimension directives IN MEMORY from its Persona (the source of truth
     once linked), so every consumer reading a.persona sees the persona's value and an operator edit takes
     effect on the next load — with ZERO consumer rewiring. FAIL-OPEN: no personas.json, a dangling persona_id,
     or any error leaves the account's inline values exactly as today (byte-identical when unlinked). The
@@ -284,13 +284,13 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         # Lever engine: the persona owns each lever (empty -> compose ignores it -> byte-identical). clip_profile/
         # framing override the account's own ONLY when the persona pins them (else the account/global default stands).
         acc.content_focus = list(per.content_focus)
-        acc.energy = per.energy
+        acc.selection_scope = per.selection_scope
         acc.hook_angle = per.hook_angle
-        _prof, _fr = resolved_cut_spec(per)   # P2: derived from content_focus/energy; else None (global stands)
+        _prof, _fr = resolved_cut_spec(per)   # P2: derived from content_focus; else None (global stands)
         if _prof: acc.clip_profile = _prof; acc.persona_owns_profile = True   # S2 provenance: the persona TRULY owns the length
         if _fr: acc.framing = _fr
         # M3e: the per-dimension directive OVERRIDES were retired — nothing to hydrate; the structured levers
-        # (content_focus/energy/hook_angle) above always compile the directives, the voice carries the register.
+        # (content_focus/selection_scope/hook_angle) above always compile the directives, the voice carries the register.
 
 
 def link_persona(cfg: Config, handle: str, persona_id: str) -> str:

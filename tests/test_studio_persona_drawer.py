@@ -47,7 +47,7 @@ def test_drawer_route_renders_levers_visible(tmp_path):
     assert 'role="dialog"' in html and 'aria-modal="true"' in html
     assert 'id="persona-drawer-heading"' in html         # the labelled, focusable heading drawer.js focuses
     # the five clean levers are PRESENT and not gated behind a second <details> collapse
-    assert 'name="content_focus"' in html and 'name="energy"' in html and 'name="hook_angle"' in html
+    assert 'name="content_focus"' in html and 'name="selection_scope"' in html and 'name="hook_angle"' in html
     assert '<details' not in html                         # nothing in the drawer is hidden behind an expand
     assert "Curator" in html
 
@@ -120,8 +120,8 @@ def test_drawer_lever_fields_persist_via_edit(tmp_path):
     pid = core.add_persona(cfg, name="Lever Test")
     r = _client(cfg).post("/personas/edit", data={
         "id": pid, "name": "Lever Test", "voice": "v",
-        "content_focus": ["storytelling", "emotional"], "energy": "low", "hook_angle": "curiosity"})
+        "content_focus": ["storytelling", "emotional"], "selection_scope": "subject_locked", "hook_angle": "curiosity"})
     assert r.status_code == 200
     p = core.Personas.load(cfg).get(pid)
     assert set(p.content_focus) == {"storytelling", "emotional"}
-    assert p.energy == "low" and p.hook_angle == "curiosity"
+    assert p.selection_scope == "subject_locked" and p.hook_angle == "curiosity"
