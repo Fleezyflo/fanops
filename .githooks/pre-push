@@ -6,6 +6,31 @@ set -euo pipefail
 # NOTE: opting in re-points core.hooksPath, which would DISABLE the global pre-commit secret scanner —
 # so anyone who opts in MUST also copy ~/.codex/git-hooks/pre-commit into .githooks/pre-commit. See README.md.
 [[ "${FANOPS_SKIP_PREPUSH:-0}" == "1" ]] && exit 0
+
+# --- HARD GUARD: block direct pushes to main + force-pushes to main (AGENTS.md guardrail #1) ----
+# Enforced here because a markdown rule can't stop an unattended agent. A push updating
+# refs/heads/main directly, or a NON-fast-forward (force) update to it, is refused outright.
+# Deliberate main merges land via the GitHub PR flow (remote-side), not a local `git push origin main`.
+# Bypass (human, deliberate only): FANOPS_ALLOW_MAIN_PUSH=1 git push ...
+# git feeds ref specs on stdin exactly ONCE (local_ref local_sha remote_ref remote_sha). The test
+# logic below does NOT read stdin, so consuming it here is safe.
+while read -r _lref _lsha rref rsha; do
+  [[ -z "${rref:-}" ]] && continue
+  [[ "$rref" != "refs/heads/main" ]] && continue
+  if [[ "${FANOPS_ALLOW_MAIN_PUSH:-0}" != "1" ]]; then
+    echo "[fanops pre-push] REFUSED: direct push to main is blocked. Open a PR and merge on green CI." >&2
+    echo "[fanops pre-push] (deliberate human override: FANOPS_ALLOW_MAIN_PUSH=1 git push ...)" >&2
+    exit 1
+  fi
+  # override in effect: still forbid a force (non-fast-forward) to main
+  if [[ "${rsha:-}" != "0000000000000000000000000000000000000000" && -n "${_lsha:-}" ]]; then
+    if ! git merge-base --is-ancestor "$rsha" "$_lsha" 2>/dev/null; then
+      echo "[fanops pre-push] REFUSED: force-push to main (non-fast-forward) is blocked." >&2
+      exit 1
+    fi
+  fi
+done
+
 ROOT="$(git rev-parse --show-toplevel)"
 PY="$ROOT/.venv/bin/python"
 if [[ ! -x "$PY" ]]; then echo "[fanops pre-push] .venv missing — activate it (pip install -e '.[dev,studio]'); refusing to run under a deps-less python"; exit 1; fi
