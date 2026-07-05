@@ -59,6 +59,13 @@ def register_run_routes(app, cfg):
                                                            target_accounts=request.form.getlist("target_accounts"),
                                                            burn_subs=burn_subs))
 
+    @app.post("/run/resume")
+    def do_run_resume():
+        # MOL-123: Resume an errored / moments_empty source from the Run tab. Goes through the same
+        # stage-aware helper as the CLI (pipeline.resume_source via actions.resume_source_studio), then
+        # re-renders the panel so the recovered source drops off the errored list in place.
+        return _run_panel(actions.resume_source_studio(cfg, request.form.get("source_id", "")))
+
     @app.post("/run/advance")
     def do_run_advance():
         # confirm derived from the checkbox the template shows ONLY on a live backend (Track C guard).

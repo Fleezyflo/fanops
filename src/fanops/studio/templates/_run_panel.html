@@ -88,6 +88,34 @@
     </details>
   </section>
 
+  {# ── ⚠ ERRORED SOURCES (MOL-123) ───────────────────────────────────────────────────────────────────
+     A source parked in error/moments_empty stalled clip production silently. Surface each with the FULL
+     reason + a Resume button (stage-aware: keeps a good transcript). Hidden entirely when none exist. #}
+  {% if status.errored %}
+  <section class="stage-card stage-card-error" aria-label="Errored sources">
+    <header class="stage-card-head">
+      <span class="stage-card-num">⚠</span>
+      <h3>{{ status.errored|length }} source{{ 's' if status.errored|length != 1 else '' }} need{{ '' if status.errored|length != 1 else 's' }} attention</h3>
+      <span class="stage-card-hint">A source failed mid-pipeline. Read the reason, fix the cause if needed, then Resume — a good transcript is kept.</span>
+    </header>
+    <ul class="errored-list">
+      {% for e in status.errored %}
+      <li class="errored-row">
+        <div class="errored-meta">
+          <strong>{{ e.name }}</strong> <span class="muted">· {{ e.state }}{% if e.batch_id %} · batch {{ e.batch_id }}{% endif %}</span>
+          <pre class="errored-reason">{{ e.error_reason or 'no reason recorded' }}</pre>
+        </div>
+        <form hx-post="{{ url_for('do_run_resume') }}" hx-target="#run-panel" hx-swap="outerHTML"
+              hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-form-inline stage-busy">
+          <input type="hidden" name="source_id" value="{{ e.id }}">
+          <button type="submit" data-busy-label="Resuming…">Resume</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {# ── ② MAKE CLIPS ──────────────────────────────────────────────────────────────────────────────── #}
   <section class="stage-card stage-card-primary">
     <header class="stage-card-head">
