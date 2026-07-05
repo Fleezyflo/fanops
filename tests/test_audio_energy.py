@@ -47,6 +47,7 @@ def test_energy_cmd_builds_the_astats_rms_pass():
     cmd = energy_cmd("/x/in.mp4")
     j = " ".join(cmd)
     assert cmd[0] == "ffmpeg" and "/x/in.mp4" in cmd
+    assert "-vn" in cmd                                  # MOL-119: audio-only — never decode video
     assert "astats=metadata=1:reset=1" in j               # per-window RMS
     assert "ametadata=print:key=lavfi.astats.Overall.RMS_level" in j   # the metadata channel (NOT ebur128 M:)
     assert "-f" in cmd and "null" in cmd                  # null sink (analysis only)

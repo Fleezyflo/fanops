@@ -77,7 +77,10 @@ def apply_energy(peaks: list[dict], windows: list[dict]) -> list[dict]:
     return out
 
 def _silence_cmd(src: str) -> list[str]:
-    return ["ffmpeg", "-hide_banner", "-i", src, "-af",
+    # -vn: silencedetect is a pure AUDIO filter — without it ffmpeg decodes the whole video stream to the
+    # null sink (MOL-119: a 13GB/1728x3072 source blew the 600s cap doing exactly that). Audio-only decode
+    # of a 24-min source is seconds, so the timeout stops being reachable here.
+    return ["ffmpeg", "-hide_banner", "-vn", "-i", src, "-af",
             "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"]
 
 def _scene_cmd(src: str) -> list[str]:
@@ -90,8 +93,16 @@ def _scene_cmd(src: str) -> list[str]:
 # TimeoutExpired, which propagates BY DESIGN to the per-source quarantine (same retriable
 # SourceState.error treatment as ToolchainMissingError below).
 _FFMPEG_TIMEOUT = 600.0
+# MOL-120: the scene (video) pass MUST decode the whole stream, so its ffmpeg time is proportional to
+# source duration — a fixed 600s cap trips on any heavy source (the 1455s DJI file would die at scdet
+# right after MOL-119 fixes the audio passes). _scene_timeout scales the cap to ~4x realtime (ample
+# software-decode headroom) with the 600s value as a floor. It is a HANG guardrail, not a perf budget;
+# it runs LOCK-FREE in the producer, so a long ceiling holds no flock (the in-lock hazard is MOL-122).
+_SCENE_TIMEOUT_X = 4.0
+def _scene_timeout(duration: float | None) -> float:
+    return max(_FFMPEG_TIMEOUT, (duration or 0.0) * _SCENE_TIMEOUT_X)
 
-def _run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess:
+def _run_ffmpeg(cmd: list[str], timeout: float = _FFMPEG_TIMEOUT) -> subprocess.CompletedProcess:
     """Run an ffmpeg signal-detection command, translating a PRE-LAUNCH FileNotFoundError/OSError
     (ffmpeg absent from PATH) into a typed ToolchainMissingError. detect_signals runs INSIDE the
     pipeline's per-source quarantine, so this typed error is caught there and the source goes to
@@ -100,7 +111,7 @@ def _run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess:
     TimeoutExpired propagates to that same quarantine. check=False semantics otherwise: a nonzero
     RETURNCODE is fine (we parse stderr regardless)."""
     try:
-        return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT)
+        return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
     except (FileNotFoundError, OSError) as e:
         raise ToolchainMissingError(
             f"ffmpeg not found on PATH — install ffmpeg to detect signals ({type(e).__name__})") from e
@@ -124,7 +135,7 @@ def detect_signals(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         except (OSError, json.JSONDecodeError, KeyError, TypeError):
             pass                                       # corrupt/stale sidecar -> fall through to a real run
     sil = _run_ffmpeg(_silence_cmd(src.source_path))
-    sc = _run_ffmpeg(_scene_cmd(src.source_path))
+    sc = _run_ffmpeg(_scene_cmd(src.source_path), timeout=_scene_timeout(src.duration))   # MOL-120: video pass scaled to duration
     peaks = parse_silences(sil.stderr) + parse_scene_changes(sc.stderr)
     # Theme 1 energy pass: a real loudness signal so peaks rank on impact, not a constant. It is an
     # ENHANCEMENT — it MUST fail soft (degrade to today's scoring), never quarantine a source. ffmpeg
