@@ -88,10 +88,14 @@ def _adopt_render(led: Ledger, cfg: Config, post, plan, accts: Accounts) -> None
                               batch_id=plan.batch_id, source_id=plan.source_id, is_account_cut=plan.produced,
                               hook_source=plan.hook_source, cut_seconds=plan.realized))   # first-write-wins (race-safe)
     r = led.get_render(rid)                                          # authoritative (a racing writer may have added it)
-    cap = PLATFORM_MAX_SECONDS.get(post.platform)                    # CULM-5: a per-account CUT can widen past the cap even
-    if r.is_account_cut and r.cut_seconds is not None and cap is not None and r.cut_seconds > cap:
-        post.error_reason = f"realized cut {round(r.cut_seconds, 1)}s exceeds {post.platform.value} cap {cap}s"
-        get_logger(cfg)("approve", post.id, "cut_over_cap", realized=round(r.cut_seconds, 1), cap=cap)
+    cap = PLATFORM_MAX_SECONDS.get(post.platform)
+    from fanops.clip import realized_clip_seconds
+    m = led.moments.get(clip.parent_id)
+    cap_clip = clip.model_copy(update={"cut_seconds": r.cut_seconds}) if r.cut_seconds is not None else clip
+    clip_dur = realized_clip_seconds(cap_clip, m)
+    if cap is not None and clip_dur is not None and clip_dur > 0 and clip_dur > cap:
+        post.error_reason = f"realized cut {round(clip_dur, 1)}s exceeds {post.platform.value} cap {cap}s"
+        get_logger(cfg)("approve", post.id, "cut_over_cap", realized=round(clip_dur, 1), cap=cap)
         return                                                       # leave media EMPTY -> spine's no-media guard skips approval
     post.render_id = rid
     post.media_urls = [f"file://{r.path}"]

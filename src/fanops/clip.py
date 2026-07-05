@@ -30,6 +30,13 @@ _FFMPEG_TIMEOUT = 600.0
 # render whole. The subtitle overlay uses the SAME fitted window. Band lives in fanops.bands (one home).
 _MIN_CLIP_S, _MAX_CLIP_S = TALK.lo, TALK.hi
 
+def realized_clip_seconds(clip: Clip | None, moment) -> float | None:
+    """Playable duration for platform-cap checks: rendered cut_seconds when set, else moment envelope."""
+    if clip is None: return None
+    if clip.cut_seconds is not None: return clip.cut_seconds
+    if moment is not None: return moment.end - moment.start
+    return None
+
 # How far (seconds) snap_window may move a cut edge to land on a transcript-line boundary. A small
 # nudge: it polishes mid-word starts / mid-phrase ends without overriding the band (fit_window's job).
 _SNAP_MAX_SHIFT_S = 1.5

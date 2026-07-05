@@ -15,7 +15,7 @@ from fanops.bands import band_for
 from fanops.models import (Post, PostState, ClipState, MomentState, Fmt, HookSource,
                            PLATFORM_ASPECT, PLATFORM_MAX_SECONDS)
 from fanops.ids import child_id, surface_key, _hash
-from fanops.clip import render_moment, render_account_cut
+from fanops.clip import render_moment, render_account_cut, realized_clip_seconds
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 from fanops.timeutil import parse_iso as _parse, iso_z, _operator_zone
 from fanops.casting import account_selection_admits, casting_gate_pending, casting_gate_failed_to_open, repair_casting_selections   # RF1 durable-selection gate + P1 casting-pending wait + xc-2 failed-gate defer
@@ -308,7 +308,7 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         # — not the full source length — is the right value. Guard a missing moment defensively
         # (treat as UNKNOWN -> fail-open, never skip). dur is None/<=0 => unknown.
         m = led.moments.get(clip.parent_id)
-        clip_dur = (m.end - m.start) if m is not None else None
+        clip_dur = realized_clip_seconds(clip, m)
         # Account-First Studio: resolve the named-batch account target ONCE per clip via the
         # moment->source lineage (m.parent_id == source id). A non-empty target_accounts HARD-bounds
         # which surfaces a post is born for (the casting-OFF enforcement path); empty/missing => no skip.

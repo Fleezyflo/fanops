@@ -121,6 +121,103 @@ def test_publish_now_blocks_when_postiz_probe_unhealthy(tmp_path, monkeypatch):
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued           # NOT submitted-then-parked
 
 
+# ---- MOL-179: platform cap reads realized clip duration (not moment envelope alone) ----
+
+def _seed_cap_reuse(cfg, *, window, cut_seconds):
+    import json
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]}))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-120",
+                              start=window[0], end=window[1], reason="r", state=MomentState.clipped))
+        cpath = cfg.clips / "c.mp4"; cpath.write_bytes(b"\x00")
+        clip = Clip(id="clip_0", parent_id="mom_1", path=str(cpath), aspect=Fmt.r9x16,
+                    state=ClipState.queued, cut_seconds=cut_seconds)
+        clip.meta_captions = {"@b/instagram": {"caption": "reuse me", "hashtags": ["#x"]}}
+        led.add_clip(clip)
+
+
+def test_cap_reads_realized_not_envelope(tmp_path):
+    # envelope 120s > IG 90s cap, but cut_seconds 60s -> reuse ADMITS (MOL-179).
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path); _seed_cap_reuse(cfg, window=(0.0, 120.0), cut_seconds=60.0)
+    r = crosspost_to_account(cfg, "clip_0", "@b", "instagram")
+    assert r.ok and r.detail.get("already_exists") is False
+
+
+def test_cap_old_clip_falls_back_to_envelope(tmp_path):
+    # cut_seconds=None -> envelope 120s > IG 90s -> reuse REJECTED (MOL-179).
+    from fanops.studio.actions import crosspost_to_account
+    cfg = Config(root=tmp_path); _seed_cap_reuse(cfg, window=(0.0, 120.0), cut_seconds=None)
+    r = crosspost_to_account(cfg, "clip_0", "@b", "instagram")
+    assert not r.ok and "exceeds" in (r.error or "")
+    assert not Ledger.load(cfg).posts
+
+
+def test_three_cap_sites_agree(tmp_path, mocker, monkeypatch):
+    # All three cap gates (crosspost, reuse, approve) route through realized_clip_seconds and agree.
+    import json, subprocess
+    from pathlib import Path as P
+    from fanops import clip as clip_mod
+    from fanops.crosspost import crosspost_clips, account_render_spec
+    from fanops.studio.actions import crosspost_to_account
+    from fanops.studio.actions_approve import approve_posts, _acct_for
+    from fanops.models import Render, RenderState
+    from fanops.accounts import Accounts
+    cross_spy = mocker.patch("fanops.crosspost.realized_clip_seconds", wraps=clip_mod.realized_clip_seconds)
+    clip_spy = mocker.spy(clip_mod, "realized_clip_seconds")
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@b", "account_id": "ig_b", "platforms": ["instagram"], "status": "active"}]}))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    real_run = subprocess.run
+    def fake_run(cmd, **kw):
+        if not (isinstance(cmd, (list, tuple)) and cmd and cmd[0] == "ffmpeg"): return real_run(cmd, **kw)
+        out = P(cmd[-1])
+        if not str(cmd[-1]).startswith("-"):
+            out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    def burn(base, out, hook, **kw):
+        P(out).parent.mkdir(parents=True, exist_ok=True); P(out).write_bytes(b"V"); return True
+    mocker.patch("fanops.overlay.burn_hook_only", side_effect=burn)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-120", start=0, end=120,
+                          reason="r", state=MomentState.clipped, hooks_by_persona={"@a": "hook A"}))
+    base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
+    clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16,
+                state=ClipState.captioned, cut_seconds=60.0)
+    clip.meta_captions = {"@a/instagram": {"caption": "cap", "hashtags": []}, "@b/instagram": {"caption": "cap", "hashtags": []}}
+    led.add_clip(clip); led.save()
+    led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    led.save()
+    assert any(p.account == "@a" for p in led.posts.values())
+    assert cross_spy.call_count >= 1
+    n_after_cross = clip_spy.call_count
+    r = crosspost_to_account(cfg, "clip_1", "@b", "instagram")
+    assert r.ok and clip_spy.call_count > n_after_cross
+    n_after_reuse = clip_spy.call_count
+    p = next(pp for pp in Ledger.load(cfg).posts.values() if pp.account == "@a")
+    accts = Accounts.load(cfg)
+    rid, *_ = account_render_spec(cfg, clip=clip, hook=p.variant_hook, acct=_acct_for(accts, "@a"))
+    vf = cfg.clips / "ok.mp4"; vf.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led2:
+        led2.add_render(Render(id=rid, clip_id="clip_1", account="@a", surface_key="@a|instagram",
+                               hook_text=p.variant_hook, path=str(vf), state=RenderState.rendered,
+                               is_account_cut=True, cut_seconds=60.0))
+    approve_posts(cfg, [p.id])
+    p2 = Ledger.load(cfg).posts[p.id]
+    assert p2.state is PostState.queued and clip_spy.call_count > n_after_reuse
+
+
 def test_publish_guard_passes_when_postiz_probe_healthy(tmp_path, monkeypatch):
     # A HEALTHY real probe must NOT block — the guard is fail-fast on down, transparent when up. Assert at the
     # guard seam directly (network-free): a healthy probe -> _studio_publish_guard returns None (no block).
