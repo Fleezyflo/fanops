@@ -6,8 +6,42 @@ from __future__ import annotations
 import json, math
 from enum import Enum
 from typing import Optional, Literal
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from fanops.ids import content_id, child_id
+
+# Same threshold as moments._MIN_MOMENT_S — a segment shorter than this is noise.
+_MIN_MOMENT_S = 0.5
+
+def _validate_segments(segments: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Finite, each ≥ _MIN_MOMENT_S, strictly ascending + non-overlapping (same-source-order rule)."""
+    out: list[tuple[float, float]] = []
+    prev_end = -math.inf
+    for seg in segments:
+        if not (isinstance(seg, (tuple, list)) and len(seg) == 2):
+            raise ValueError(f"segment must be a (start, end) pair, got {seg!r}")
+        s, e = float(seg[0]), float(seg[1])
+        if not (math.isfinite(s) and math.isfinite(e)):
+            raise ValueError(f"segment timestamps must be finite, got ({s}, {e})")
+        if e <= s:
+            raise ValueError(f"segment end<=start ({s}->{e})")
+        if (e - s) < _MIN_MOMENT_S:
+            raise ValueError(f"segment too short ({e - s:.2f}s)")
+        if s < prev_end:
+            raise ValueError(f"segments must be ascending and non-overlapping ({s} < {prev_end})")
+        out.append((s, e))
+        prev_end = e
+    return out
+
+
+def _segments_dump(segs: list[tuple[float, float]]) -> list[list[float]]:
+    return [[s, e] for s, e in segs]
+
+def realized_seconds(pick: "MomentPick | Moment") -> float:
+    """Playable duration: sum of segment spans when segments present, else envelope width."""
+    segs = getattr(pick, "segments", None) or []
+    if segs:
+        return sum(e - s for s, e in segs)
+    return pick.end - pick.start
 
 
 class SourceState(str, Enum):
@@ -192,6 +226,20 @@ class Moment(BaseModel):
                                                 # Additive (default False; old ledgers load fine); counted in
                                                 # RunSummary.frames_unread so the degraded hook is VISIBLE.
     error_reason: Optional[str] = None
+    segments: list[tuple[float, float]] = Field(default_factory=list)   # S1 supercut: ordered non-overlapping spans; [] = single-window (old ledgers load fine)
+
+    @model_validator(mode="after")
+    def _apply_segments_envelope(self) -> "Moment":
+        if self.segments:
+            segs = _validate_segments(self.segments)
+            object.__setattr__(self, "segments", segs)
+            object.__setattr__(self, "start", segs[0][0])
+            object.__setattr__(self, "end", segs[-1][1])
+        return self
+
+    @field_serializer("segments")
+    def _dump_segments(self, segs: list[tuple[float, float]]) -> list[list[float]]:
+        return _segments_dump(segs)
 
 class Clip(BaseModel):
     id: str
@@ -559,6 +607,7 @@ class MomentPick(BaseModel):
     signal_score: float = 0.0
     personas: list[str] = Field(default_factory=list)   # P1: owner handle(s); single-owner convention (len<=1).
                                                          # 0 = persona-blind; 1 -> Moment.affinities at birth.
+    segments: list[tuple[float, float]] = Field(default_factory=list)   # S1 supercut: ordered non-overlapping spans; [] = single-window (byte-identical)
 
     @field_validator("start", "end")
     @classmethod
@@ -573,6 +622,19 @@ class MomentPick(BaseModel):
         if len(v) > 1:
             raise ValueError("MomentPick.personas must have at most one owner handle")
         return v
+
+    @model_validator(mode="after")
+    def _apply_segments_envelope(self) -> "MomentPick":
+        if self.segments:
+            segs = _validate_segments(self.segments)
+            self.segments = segs
+            self.start = segs[0][0]
+            self.end = segs[-1][1]
+        return self
+
+    @field_serializer("segments")
+    def _dump_segments(self, segs: list[tuple[float, float]]) -> list[list[float]]:
+        return _segments_dump(segs)
 
 class MomentDecision(BaseModel):
     source_id: str

@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 from fanops.models import (
     Source, Moment, Clip, Post, Platform, SourceState, MomentState, ClipState, PostState,
-    MomentRequest, MomentDecision, MomentPick,
+    MomentRequest, MomentDecision, MomentPick, realized_seconds,
     CaptionSet, CaptionItem,
 )
 
@@ -186,3 +186,41 @@ def test_source_post_created_at_round_trip():
              caption="x", created_at="2026-06-19T11:00:00Z", published_at="2026-06-19T12:00:00Z")
     assert s.created_at == "2026-06-19T10:00:00Z"
     assert p.created_at == "2026-06-19T11:00:00Z" and p.published_at == "2026-06-19T12:00:00Z"
+
+# ---- MOL-176 (S1): segments schema + envelope + realized duration ----
+def test_pick_segments_default_empty():
+    # empty segments -> byte-identical single-window pick (no supercut)
+    p = MomentPick(start=14.0, end=21.0, reason="bar lands, beat drops")
+    assert p.segments == [] and p.start == 14.0 and p.end == 21.0
+    assert realized_seconds(p) == pytest.approx(7.0)
+
+def test_pick_segments_envelope_and_realized():
+    # non-empty segments -> start/end are the envelope; realized = sum of spans (not envelope width)
+    p = MomentPick(start=99.0, end=99.0, reason="supercut",
+                   segments=[(10.0, 12.0), (20.0, 23.5), (40.0, 41.0)])
+    assert p.start == 10.0 and p.end == 41.0                          # envelope, not caller's 99
+    assert realized_seconds(p) == pytest.approx(6.5)                  # 2+3.5+1, not 31
+
+def test_pick_segments_reject_out_of_order():
+    with pytest.raises(ValidationError):
+        MomentPick(start=0.0, end=10.0, reason="r", segments=[(5.0, 7.0), (2.0, 4.0)])
+
+def test_pick_segments_reject_overlapping():
+    with pytest.raises(ValidationError):
+        MomentPick(start=0.0, end=10.0, reason="r", segments=[(1.0, 5.0), (4.0, 8.0)])
+
+def test_pick_segments_reject_too_short():
+    with pytest.raises(ValidationError):
+        MomentPick(start=0.0, end=10.0, reason="r", segments=[(1.0, 1.3)])   # < _MIN_MOMENT_S
+
+def test_moment_segments_additive_old_ledger_loads():
+    # old ledgers (no segments key) load with default []
+    m = Moment.model_validate({"id": "m1", "parent_id": "src_1", "start": 1.0, "end": 8.0, "reason": "x"})
+    assert m.segments == [] and m.start == 1.0 and m.end == 8.0
+
+def test_segments_tuple_json_roundtrip():
+    p = MomentPick(start=0.0, end=0.0, reason="r", segments=[(1.0, 3.0), (5.0, 7.0)])
+    raw = p.model_dump()
+    assert raw["segments"] == [[1.0, 3.0], [5.0, 7.0]]                # JSON lists
+    p2 = MomentPick.model_validate(raw)
+    assert p2.segments == [(1.0, 3.0), (5.0, 7.0)] and p2 == p
