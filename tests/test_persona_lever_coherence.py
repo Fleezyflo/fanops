@@ -116,8 +116,8 @@ def test_runtime_is_fail_open_on_malformed_fields():
     cfg = Config(root="/tmp/fanops_failopen_probe_unused")  # cfg only used for store load; compose tolerates absent store
     bad = Persona(id="p", voice="v", selection_scope="ludicrous", hook_angle="not-an-angle", content_focus=["not-a-focus"])
     # none of these raise; each degrades to the firewall default
-    assert casting_directive(bad) == "v"                  # unknown focus/scope -> bare voice
-    assert hook_directive(bad) == "v"                     # unknown angle -> bare voice
+    assert str(casting_directive(bad)) == "v"                  # unknown focus/scope -> bare voice
+    assert str(hook_directive(bad)) == "v"                     # unknown angle -> bare voice
     assert caption_directive(bad) == "v"
     prof, fr = resolved_cut_spec(bad)                     # unknown focus/scope -> no derived cut
     assert prof is None and fr is None

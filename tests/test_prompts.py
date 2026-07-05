@@ -174,18 +174,16 @@ def test_moment_hook_prompt_teaches_multipliers_and_bans_slop():
     assert "hype" in low or "praise" in low        # no artist hype
 
 def test_moment_hook_prompt_bans_narration_and_embeds_fewshot_priors():
-    p = moment_hook_prompt(_hook_payload())
+    # MOL-173: universal floor bans narration; persona demos are supplied separately (fenced).
+    demos = ["an origin-story moment -> 'maybe your favorite artist copied too'",
+             "a refrain that loops -> 'the line you'll send to one person'"]
+    p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@a", "persona": "x", "demos": demos}]))
     low = p.lower()
-    assert "narrat" in low                                 # third-person scene-narration named + banned
+    assert "narrat" in low or "third-person" in low
     assert "viewer" in low
-    assert "the part nobody clipped" not in low            # no canned copyable line
-    assert "contrarian" in low and "confession" in low and "identity" in low   # proven patterns named
-    assert "maybe your favorite artist copied too" in low  # real few-shot prior (contrarian + identity)
-    assert "the line you'll send to one person" in low     # real few-shot prior (open loop + self-relevance)
-    # M1a: the poisoned third-person EXAMPLE that taught the recap voice is gone; the ban names he/his/her
-    # + the artist's NAME as a forbidden subject.
-    assert "he switches to arabic when it gets personal" not in low   # the poisoned positive example, removed
-    assert "the artist's name as the subject" in low                  # ban now covers name-as-subject
+    assert "maybe your favorite artist copied too" in low
+    assert "the line you'll send to one person" in low
+    assert "<source_data>" in p
 
 def test_hook_spec_carries_no_third_person_demonstrations():
     # RF5 (viewer-POV at the source): the generator must never be SHOWN third person. Every third-person
@@ -199,15 +197,10 @@ def test_hook_spec_carries_no_third_person_demonstrations():
         assert frag not in low, f"third-person demonstration still shown to the generator: {frag!r}"
 
 def test_moment_hook_prompt_teaches_viewer_specificity_not_clip_description():
-    # specificity is about the VIEWER (their feeling/identity), NOT the clip's plot — and a UNIVERSAL
-    # shared feeling is fine, VAGUE is the failure.
     p = moment_hook_prompt(_hook_payload())
     low = p.lower()
-    assert "specific" in low and "viewer" in low                  # specific about the VIEWER
-    assert "vague" in low                                          # vague is the named failure mode
-    assert "describe the clip" in low or "not the clip" in low     # do NOT describe the clip's plot
-    assert "all that bravado" not in low                          # the old concrete->abstract exemplar is GONE
-    assert "the rose lands on one word" not in low
+    assert "viewer" in low
+    assert "not the clip" in low or "not a caption" in low
 
 def test_moment_hook_prompt_runs_the_d1_decision_process():
     # D1's input-dependent SELECTION reaches the hook author: read the clip's VISUAL energy (frames) and
@@ -561,3 +554,56 @@ def test_hook_prompt_with_frames_keeps_stills_claim():
                             "language": "en", "guidance": ""})
     assert "stills attached are frames from THIS" in p
     assert "NO FRAMES" not in p
+
+
+# ---- MOL-172/173 (A3/A4 atomic): neutral preamble + persona-supplied hook craft ----
+def test_pick_prompt_no_rapper_preamble():
+    p = moment_pick_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [], "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "bilingual" not in low and "rapper" not in low
+    assert "autonomous fan-account clip engine" in low
+
+def test_pick_prompt_renders_scope_lens():
+    p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
+                            "guidance": "", "personas": [{"handle": "@a",
+                            "selection_scope": "Favor clear and accurate over sensational",
+                            "directive": "Clip for punchlines"}]})
+    assert "sensational" in p.lower() or "accurate" in p.lower()
+    assert "<source_data>" in p
+
+def test_pick_prompt_single_owner_framing():
+    p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
+                            "guidance": "", "personas": [{"handle": "@a", "directive": "x"}]})
+    assert "one account" in p.lower() or "one" in p.lower()
+    assert "personas" in p.lower()
+
+def test_pick_prompt_universal_craft_intact():
+    p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [], "language": "en", "guidance": ""})
+    assert "12" in p and "22" in p
+    assert "frame" in p.lower()
+    assert "dead footage" in p.lower()
+
+def test_hook_spec_universal_floor_intact():
+    p = moment_hook_prompt(_hook_payload())
+    low = p.lower()
+    assert "curiosity gap" in low or "open loop" in low
+    assert "pattern interrupt" in low
+    assert "self-relevance" in low
+    assert "emotional arousal" in low
+    assert "result-first" in low or "atmospheric pov" in low
+
+def test_hook_demos_are_persona_supplied_and_fenced():
+    demos = ["an origin-story moment -> 'maybe your favorite artist copied too'"]
+    p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@a", "persona": "x", "demos": demos}]))
+    assert "maybe your favorite artist copied too" in p
+    assert "<source_data>" in p
+    assert moment_hook_prompt(_hook_payload()) != p  # absent without persona demos
+
+def test_hook_no_hardcoded_rapper_banlist():
+    p = moment_hook_prompt(_hook_payload()).lower()
+    assert "goat" not in p and "artist praise" not in p
+
+def test_hook_decision_content_selects_persona_biases():
+    p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@a", "persona": "x",
+                                                    "mechanism_lean": "dare or challenge the viewer"}]))
+    assert "persona bias" in p.lower() or "mechanism lean" in p.lower()

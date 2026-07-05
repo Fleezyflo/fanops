@@ -230,6 +230,17 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     led.set_source_state(source_id, SourceState.picks_decided)   # M1b: picks reconciled; hook gates next
     return led
 
+
+def _hook_persona_entry(a):
+    """Per-account hook gate payload — voice string + optional structured directive fields (MOL-173)."""
+    from fanops.personas import hook_directive
+    hd = hook_directive(a)
+    entry = {"handle": a.handle, "persona": hook_author_slot(a)}
+    if hd.demos: entry["demos"] = hd.demos
+    if hd.ban_additions: entry["ban_additions"] = hd.ban_additions
+    if hd.mechanism_lean: entry["mechanism_lean"] = hd.mechanism_lean
+    return entry
+
 def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     """M1b PASS 2 request — open ONE frame-seeing hook gate per `picked` moment of this source. Each
     request carries the picked WINDOW + stills extracted over that window (fit_window — the same cut the
@@ -241,8 +252,7 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     # Per-account voices reach the frame-seeing hook author so IT writes each handle's on-screen hook
     # (the root fix). EVERY active account rides along — hook_author_slot fail-opens to a handle floor so
     # empty-inline personas (common on TikTok rows) still get hooks_by_persona instead of shared_fallback.
-    personas = ([{"handle": a.handle, "persona": hook_author_slot(a)}
-                 for a in accounts.accounts if a.status is AccountStatus.active]
+    personas = ([_hook_persona_entry(a) for a in accounts.accounts if a.status is AccountStatus.active]
                 if accounts is not None else [])
     # P4(c): cross-surface union of gated winning hook STYLES (the SAME signal caption uses). [] when the
     # flag is off / accounts is None / on any scorer error (fail-open).

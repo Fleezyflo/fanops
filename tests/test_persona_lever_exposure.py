@@ -53,8 +53,8 @@ def test_breakdown_text_is_exactly_the_compiler_output(tmp_path):
               Persona(id="q", voice="v"),
               Persona(id="r", casting_directive="hand-written override", hook_angle="fomo")):
         d = compose_breakdown(cfg, p)
-        assert d["casting"]["text"] == casting_directive(p)        # the panel can't lie — text IS the compiler
-        assert d["hook"]["text"] == hook_directive(p)
+        assert d["casting"]["text"] == str(casting_directive(p))        # the panel can't lie — text IS the compiler
+        assert d["hook"]["text"] == str(hook_directive(p))
         assert d["caption"]["text"] == caption_directive(p)
 
 def test_breakdown_fragments_trace_each_lever(tmp_path):
