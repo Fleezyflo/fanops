@@ -111,6 +111,24 @@ def test_moment_hook_decision_carries_hook_and_personas():
     d2 = MomentHookDecision(request_id="r2")
     assert d2.hook is None and d2.hooks_by_persona == {}
 
+# ---- MOL-142 (P1 schema): MomentPick.personas owner + MomentRequest full spec ----
+def test_pick_personas_field_retained():
+    assert "personas" in MomentPick.model_fields
+    p = MomentPick(start=1.0, end=5.0, reason="r", personas=["@a"])
+    assert p.personas == ["@a"]
+
+def test_pick_validator_rejects_multi_owner():
+    with pytest.raises(ValidationError):
+        MomentPick(start=1.0, end=5.0, reason="r", personas=["@a", "@b"])
+
+def test_request_personas_carries_full_spec():
+    spec = {"handle": "@a", "directive": "champions punchlines", "band": "7-21s",
+            "framing": "top", "selection_scope": "subject_locked",
+            "hook_angle": "curiosity", "corpus": ["#tag1"]}
+    req = MomentRequest(source_id="src_1", request_id="r1", duration=42.0, personas=[spec])
+    assert set(req.personas[0].keys()) == {"handle", "directive", "band", "framing",
+                                            "selection_scope", "hook_angle", "corpus"}
+
 def test_moment_hook_request_carries_window_and_frames():
     from fanops.models import MomentHookRequest
     r = MomentHookRequest(source_id="src_1", moment_id="moment_x", token="14.00-21.00",

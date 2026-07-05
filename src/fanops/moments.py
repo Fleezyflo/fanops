@@ -189,7 +189,8 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                            content_token=token, start=pick.start, end=pick.end,
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
                            transcript_excerpt=pick.transcript_excerpt,
-                           signal_score=pick.signal_score)
+                           signal_score=pick.signal_score,
+                           affinities=list(pick.personas))   # P1: owner stamped at birth; [] when persona-blind
     if not keep:
         if dec.picks:
             # a wholly-INVALID new decision quarantines the source but does NOT reconcile — prior
