@@ -177,6 +177,66 @@ def caption_events(seg: dict, clip_start: float, clip_end: float, *, max_words: 
     return out
 
 
+def supercut_caption_events(seg: dict, span_start: float, span_end: float, assembled_offset: float, *, max_words: int = _CAPTION_MAX_WORDS):
+    """Rebase ONE transcript segment onto the ASSEMBLED supercut timeline for span [span_start, span_end].
+    Returns (start, end, text) tuples in assembled clip time; lines outside the span return []."""
+    local = caption_events(seg, span_start, span_end, max_words=max_words)
+    return [(assembled_offset + s, assembled_offset + e, t) for s, e, t in local]
+
+
+def build_supercut_ass(transcript, *, spans: list[tuple[float, float]], hook: str | None = None,
+                       width: int = 1080, height: int = 1920, font: str = "Arial Unicode MS",
+                       max_words: int = _CAPTION_MAX_WORDS) -> str:
+    """ASS for a supercut: transcript rebased onto the ASSEMBLED timeline (sum of span lengths).
+    Lines in the GAPS between spans are dropped. The HOOK (t=0) is unchanged from build_ass."""
+    assembled_len = max(0.0, sum(float(e) - float(s) for s, e in spans))
+    lines: list[str] = []
+    lines += [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "WrapStyle: 0",
+        "ScaledBorderAndShadow: yes",
+        f"PlayResX: {width}",
+        f"PlayResY: {height}",
+        "",
+    ]
+    cap_fontsize = max(48, int(round(height * 0.075)))
+    cap_margin_v = max(10, int(round(height * 0.16)))
+    hook_fontsize = _hook_fontsize(hook, width, height)
+    hook_margin_v = max(10, int(round(height * 0.14)))
+    lines += [
+        "[V4+ Styles]",
+        ("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"),
+        (f"Style: CAPTION,{font},{cap_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
+         f"-1,0,0,0,100,100,0,0,1,4,2,2,80,80,{cap_margin_v},1"),
+        (f"Style: HOOK,{font},{hook_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
+         f"-1,0,0,0,100,100,0,0,1,4,2,8,60,60,{hook_margin_v},1"),
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    events: list[str] = []
+    if hook and hook.strip():
+        hook_end = min(2.5, assembled_len)
+        fade = f"{{\fad({_HOOK_FADE_MS},{_HOOK_FADE_MS})}}"
+        events.append(f"Dialogue: 0,{_fmt_ts(0.0)},{_fmt_ts(hook_end)},HOOK,,0,0,0,,{fade}{_escape_text(hook)}")
+    cap_fade = f"{{\fad({_CAP_FADE_IN_MS},{_CAP_FADE_OUT_MS})}}"
+    offset = 0.0
+    for span_start, span_end in spans:
+        s, e = float(span_start), float(span_end)
+        for seg in (transcript or []):
+            for ev_start, ev_end, txt in supercut_caption_events(seg, s, e, offset, max_words=max_words):
+                events.append(
+                    f"Dialogue: 0,{_fmt_ts(ev_start)},{_fmt_ts(ev_end)},CAPTION,,0,0,0,,{cap_fade}{_escape_text(txt)}")
+        offset += e - s
+    if not events:
+        return ""
+    lines += events
+    return "\n".join(lines) + "\n"
+
+
 def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end: float,
               width: int = 1080, height: int = 1920, font: str = "Arial Unicode MS",
               max_words: int = _CAPTION_MAX_WORDS) -> str:

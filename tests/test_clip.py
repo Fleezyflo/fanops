@@ -818,6 +818,143 @@ def test_render_reruns_when_visual_start_changes_fingerprint(tmp_path, mocker, m
     ss2 = float(cap2["cmd"][cap2["cmd"].index("-ss") + 1])
     assert abs(ss2 - b) < 1e-3 and ss1 != ss2
 
+
+# ---- MOL-178 (S3): supercut render branch — absolute-seek concat, postable, fail-open ----
+
+def _supercut_moment_led(tmp_path, *, segments, duration=120.0, transcript=None, hook=None):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=duration, transcript=transcript))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="sc",
+                          start=segments[0][0], end=segments[-1][1], reason="supercut",
+                          state=MomentState.decided, segments=list(segments), hook=hook))
+    return cfg, led
+
+def test_supercut_concats_absolute_spans_in_order(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    spans = [(10.0, 15.0), (30.0, 33.0), (50.0, 52.0)]   # 5 + 3 + 2 = 10s assembled
+    cfg, led = _supercut_moment_led(tmp_path, segments=spans)
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    cmd = captured["cmd"]
+    assert "-filter_complex" in cmd
+    sss = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-ss"]
+    assert sss == ["10.000", "30.000", "50.000"]          # ABSOLUTE seeks, source order
+    ts = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-t"]
+    assert ts == ["5.000", "3.000", "2.000"]
+    assert cmd.count("-i") == 3
+    assert "concat=n=3:v=1:a=1" in cmd[cmd.index("-filter_complex") + 1]
+
+def test_supercut_is_postable_and_advances_moment(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg, led = _supercut_moment_led(tmp_path, segments=[(10.0, 15.0), (30.0, 35.0)])
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered                    # postable — NOT stitch_draft
+    assert led.moments["mom_1"].state is MomentState.clipped   # advances moment (anti-stitch guard)
+
+def test_supercut_cut_seconds_is_sum_of_spans(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    spans = [(10.0, 15.0), (30.0, 33.5), (50.0, 51.5)]
+    cfg, led = _supercut_moment_led(tmp_path, segments=spans)
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    _, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.cut_seconds == round(5.0 + 3.5 + 1.5, 3)
+
+def test_supercut_first_frame_kind_none_ok(tmp_path, mocker, monkeypatch):
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)   # visual_start ON by default
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg, led = _supercut_moment_led(tmp_path, segments=[(10.0, 22.0), (40.0, 50.0)])
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    _, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.first_frame_kind is None                       # visual_start bypassed on supercut
+
+def test_supercut_subtitles_rebased_to_assembled_timeline(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    spans = [(10.0, 15.0), (30.0, 35.0)]                      # span2 offset = 5s in assembled timeline
+    tr = [{"start": 31.0, "end": 34.0, "text": "span two line"},
+          {"start": 20.0, "end": 25.0, "text": "gap line"},    # in the GAP between spans -> dropped
+          {"start": 11.0, "end": 13.0, "text": "span one"}]
+    cfg, led = _supercut_moment_led(tmp_path, segments=spans, transcript=tr, hook="hook")
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    ass = list(cfg.clips.glob("*.ass"))
+    assert ass, "expected supercut .ass"
+    text = ass[0].read_text(encoding="utf-8")
+    assert "gap line" not in text                              # gap transcript dropped
+    assert "span two line" in text
+    # span-2 line at source 31s -> assembled 31-30+5 = 6s (within the 5-10s assembled window)
+    assert ",0:00:06." in text or ",0:00:05." in text        # rebased onto assembled timeline
+
+def test_supercut_fail_open_to_envelope(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    spans = [(10.0, 14.0), (30.0, 34.0)]
+    cfg, led = _supercut_moment_led(tmp_path, segments=spans, duration=120.0)
+    calls = []
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if "-filter_complex" in cmd:
+            return type("R", (), {"returncode": 1, "stderr": "supercut failed", "stdout": ""})()
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        return type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    assert any("-filter_complex" in c for c in calls)         # supercut tried first
+    fallback = [c for c in calls if "-vf" in c][-1]           # envelope single-window fallback
+    assert "-filter_complex" not in fallback
+    ss = float(fallback[fallback.index("-ss") + 1])
+    assert 10.0 <= ss <= 14.0                                 # envelope window, not absolute span seek
+
+def test_supercut_subtitle_fail_open_to_hook_only(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    spans = [(10.0, 22.0), (30.0, 40.0)]
+    cfg, led = _supercut_moment_led(tmp_path, segments=spans,
+                                    transcript=[{"start": 11.0, "end": 13.0, "text": "hi"}], hook="keep hook")
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
+    monkeypatch.setattr(overlay, "build_supercut_ass", lambda *a, **k: (_ for _ in ()).throw(ValueError("rebase fail")))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    ass = list(cfg.clips.glob("*.ass"))
+    assert ass and "keep hook" in ass[0].read_text(encoding="utf-8")   # hook-only fallback
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "supercut" in log.lower() or "rebase" in log.lower()
+
+def test_single_window_render_byte_identical(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="10-28",
+                          start=10, end=28, reason="r", state=MomentState.decided, segments=[]))
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    cmd = captured["cmd"]
+    assert "-filter_complex" not in cmd
+    assert float(cmd[cmd.index("-ss") + 1]) == 10.0           # fit_window in-band pick unchanged start
+
+
 def test_native_default_render_has_no_template_overlay(tmp_path, mocker, monkeypatch):
     # P1 T5: the default render is the base REFRAMED clip — no burned template card, no compose layer
     # (the produced MoviePy layer stays opt-in via `fanops compose`). vf is exactly the reframe filter.
