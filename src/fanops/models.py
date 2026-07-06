@@ -367,14 +367,9 @@ def is_real_submission_id(sid: Optional[str]) -> bool:
 
 
 class HookSource(str, Enum):
-<<<<<<< HEAD
-    shared_fallback = "shared_fallback"  # the owner moment's on-screen hook (m.hook)
-    none = "none"                        # no hook at all (hookless clip)
-=======
     per_account = "per_account"          # legacy provenance label (pre-P7 per-handle map); retained for old Render rows
     shared_fallback = "shared_fallback"  # the moment's single on-screen hook (m.hook)
     none = "none"                        # no hook at all (variation OFF, or no hook resolved)
->>>>>>> origin/main
 
 
 class Render(BaseModel):
