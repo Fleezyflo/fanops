@@ -34,10 +34,11 @@ git fetch origin
 git worktree add ../fanops-<mol-id> -b <ticket-branch> origin/main
 cd ../fanops-<mol-id>
 python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'   # each worktree needs its OWN venv
-git config --local core.hooksPath .githooks                          # opt into the scoped pre-push gate
+git config --local core.hooksPath .githooks                          # wire the repo policy hooks
 ```
-If `.githooks/pre-commit` is absent, copy it per `README.md` so the secret scanner stays on
-(opting into `core.hooksPath` disables the global one).
+The hooks enforce POLICY only: `pre-commit` = secret scan + staged ruff; `pre-push` = block main/force-push.
+Neither runs tests. Keep `.githooks/pre-commit` (it carries the secret scanner; `core.hooksPath` disables
+the global one). Tests run via `./scripts/check.sh` (below) and CI — never at push time.
 
 **B. Read first** — the full ticket body (exact `file:line` anchors + its "Tests" list);
 every blocker it names (if a blocker is NOT merged to `origin/main`, STOP: "blocked on MOL-x");
@@ -51,17 +52,18 @@ reason, paste the failure.
 
 **E. REFACTOR** — tidy without behavior change; keep the one-liner style.
 
-**F. Verify locally (minimal tests, every push)**
+**F. Verify locally — run `./scripts/check.sh` before EVERY commit**
 ```bash
-./.venv/bin/ruff check <changed .py>
-./.venv/bin/python -m pytest -q -m "not integration" <ticket test files + tests for changed modules>
+./scripts/check.sh          # scoped ruff + pytest on changed modules vs origin/main merge-base — seconds
 ```
-Both green or you're not done. Do NOT push red.
+Green or you're not done. This is the local gate; it is NOT enforced by a hook, so actually run it.
+(Broad refactor that scoping can't cover? `./scripts/check-full.sh` for full CI parity — minutes.)
 
-**G. Commit + push** — the repo `.githooks/pre-push` auto-runs ruff + the SCOPED test set
-(changed-module tests, diffed against the `origin/main` merge-base, behind a cross-worktree lock).
-Let it run; do NOT set `FANOPS_SKIP_PREPUSH`. Conventional commit `fix(scope): … (MOL-xxx)`,
-one logical change per commit.
+**G. Commit + push — push freely; CI is the gate.** The `pre-commit` hook runs the secret scan +
+staged ruff; `pre-push` only blocks main/force-push. **No test runs at push time and there is no
+`FANOPS_SKIP_PREPUSH` to set** — you already proved the change in step F, and CI proves it fully on the
+PR. Do NOT rely on any push-time test gate; it doesn't exist. Conventional commit `fix(scope): …
+(MOL-xxx)`, one logical change per commit.
 
 **H. PR** — open to `main`, summarize change + test plan, wait for CI (the definitive unit + e2e gate)
 to go GREEN, merge only on green. Never merge over red or conflicts — rebase onto fresh `origin/main`,
@@ -89,8 +91,9 @@ This machine has **crashed under stacked sessions** and **parallel orchestrators
 
 - **Hard-enforced (git `.githooks/pre-push`, cannot be ignored by an agent):** direct push to
   `main` is REFUSED; force-push (non-fast-forward) to `main` is REFUSED. Override is a deliberate
-  human env var (`FANOPS_ALLOW_MAIN_PUSH=1`), never something an agent sets. The scoped ruff+test
-  gate also runs on every push.
+  human env var (`FANOPS_ALLOW_MAIN_PUSH=1`), never something an agent sets. The pre-push hook runs
+  NO tests — it is a policy guard only. Correctness is proven by `./scripts/check.sh` (local, step F)
+  and by CI (authoritative, every PR), not at push time.
 - **Advisory (this file — no git hook exists to enforce it):** `git reset --hard`, force-push to a
   FEATURE branch, and "commit only staged files". Git has no `pre-reset` hook, so these rely on the
   agent obeying the guardrails above. Treat them as absolute anyway; they are the exact operations
