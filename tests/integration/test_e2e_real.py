@@ -131,8 +131,8 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     clip_id = clip.id
     rid2 = latest_request_id(cfg, "captions", clip_id)
     response_path(cfg, "captions", clip_id).write_text(CaptionSet(request_id=rid2, items=[
-        {"surface": "@mohflow.edits/instagram", "caption": "no warning. just impact."},
-        {"surface": "@mohflow.edits/tiktok", "caption": "wait for it."}]).model_dump_json())
+        {"surface": "mohflow.edits/instagram", "caption": "no warning. just impact."},
+        {"surface": "mohflow.edits/tiktok", "caption": "wait for it."}]).model_dump_json())
     s = advance(cfg, base_time="2020-01-01T00:00:00Z")
     # post-approval gate: the 2 posts are born awaiting_approval -> an unattended advance publishes none.
     assert s["posts"] == 2 and s["published"] == 0

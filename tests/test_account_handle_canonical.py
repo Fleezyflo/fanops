@@ -1,6 +1,5 @@
 # MOL-164: Account.handle canonical at the write boundary — one root guarantee retires ~15 downstream patches.
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -33,12 +32,10 @@ def test_stored_handle_is_canonical(tmp_path):
 
 def test_downstream_normalize_calls_removed():
     root = Path(__file__).resolve().parents[1] / "src" / "fanops"
-    out = subprocess.run(
-        ["rg", "-c", "normalize_account_handle", str(root)],
-        capture_output=True, text=True, check=True,
-    )
-    total = sum(int(line.split(":")[-1]) for line in out.stdout.strip().splitlines() if line)
-    assert total <= 2, f"expected definition + at most one safety-net caller, got {total}:\n{out.stdout}"
+    total = 0
+    for path in root.rglob("*.py"):
+        total += path.read_text().count("normalize_account_handle")
+    assert total <= 2, f"expected definition + at most one safety-net caller, got {total}"
 
 
 def test_legacy_handle_migrates(tmp_path):
