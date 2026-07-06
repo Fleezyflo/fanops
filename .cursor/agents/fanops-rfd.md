@@ -25,7 +25,8 @@ git config --local core.hooksPath .githooks
 ```
 
 Skip tickets already merged to `origin/main`. Verify every anchor in code before editing.
-If blocked or anchor mismatch: STOP and report. Never push red.
+If blocked or anchor mismatch: STOP and report. Never push red. Push after every green check.
+On drift: AGENTS.md re-sync only — NEVER `git reset --hard` or `git checkout -B … origin/main`.
 
 
 ## RF-D lane — read `.agents/rfd-agent.md`

@@ -66,24 +66,64 @@ PR. Do NOT rely on any push-time test gate; it doesn't exist. Conventional commi
 (MOL-xxx)`, one logical change per commit.
 
 **H. PR** — open to `main`, summarize change + test plan, wait for CI (the definitive unit + e2e gate)
-to go GREEN, merge only on green. Never merge over red or conflicts — rebase onto fresh `origin/main`,
-re-run F, re-push.
+to go GREEN, merge only on green. Never merge over red or conflicts — re-sync onto fresh `origin/main`
+per **Re-syncing a drifted branch** below (merge, never reset/re-cut), re-run F, re-push.
 
 **I. Cleanup** — after merge: `git worktree remove ../fanops-<mol-id>`.
 
+## Re-syncing a drifted branch — NON-DESTRUCTIVE, MANDATORY
+
+If `origin/main` advanced under your branch (siblings merged), you MUST re-sync **WITHOUT ever
+discarding your own work**. The ONLY permitted sequence:
+
+1. **COMMIT or STASH your work first** — NEVER re-sync a dirty tree.
+   ```bash
+   git add -A && git commit -m "wip(MOL-xxx): checkpoint before resync"
+   # (or: git stash push -u -m "MOL-xxx wip")
+   ```
+2. **Fetch and MERGE main in** (never reset, never re-cut):
+   ```bash
+   git fetch origin && git merge origin/main
+   ```
+3. Resolve conflicts by hand, keeping **BOTH** your work and the incoming work.
+4. If you stashed: `git stash pop`, resolve, continue.
+5. `./scripts/check.sh` → push.
+
+**ABSOLUTELY FORBIDDEN as drift recovery** (these caused work-loss incidents):
+- `git reset --hard <anything>` — discards uncommitted work (has wiped live `accounts.json`)
+- `git checkout -B <branch> origin/main` — re-cut throws away unpushed commits
+- Deleting/abandoning the worktree and starting a fresh one for the **same ticket**
+- `git push --force` / `--force-with-lease` over your own branch to "clean" it
+
+A drift warning is **NORMAL and SAFE**. It means "siblings merged; merge them in." It is NEVER a
+reason to reset. If you cannot reconcile a conflict, STOP and report
+`blocked: conflict on <file> between MOL-xxx and merged main` — do NOT reset to escape it.
+
+**PUSH EARLY, PUSH OFTEN:** commit and push every green step. Unpushed work is the only work that
+can be lost. If it's on `origin`, no drift or reset can destroy it.
+
+**Recovery before redoing:** if work was lost, try `git reflog`, `git stash list`, and
+`git fsck --lost-found` in the abandoned worktree **before** rewriting. Dangling commits from a
+bad reset often survive ~90 days in the reflog.
+
 ## Parallelism — allowed ONLY when 100% safe; default is SERIAL
 
-This machine has **crashed under stacked sessions** and **parallel orchestrators have collided**
-(same wave landed into each other's worktrees). Therefore:
+Stacked parallel branches on **shared hot files** cause constant drift → agents panic-reset →
+work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync protocol above.
 
-- **HARD CAP: at most 2 worktrees active**, and only if BOTH hold:
+- **HARD CAP: at most 2 agent branches active at once**, and only if BOTH hold:
   1. **No blocker edge** between the two tickets (neither blocks the other, transitively), and
   2. **Disjoint file sets** — no common file. If both touch a shared hot file
      (`models.py`, `moments.py`, `crosspost.py`, `ledger.py`, `prompts.py`, `config.py`,
      `casting.py`, `clip.py`), they are NOT parallel-safe → run serially.
-- Each parallel worktree = own branch, own venv, own PR. NEVER two agents in one working tree.
-- Before landing ANY branch: `git fetch origin`, confirm no sibling moved the files —
-  reconcile, never force-push over foreign commits.
+- Every branch is cut fresh off `git fetch origin` + `origin/main` at setup (step A).
+- Do NOT start a ticket whose blocker is unmerged (e.g. RF-D MOL-164/MOL-169 need MOL-146 on
+  `origin/main`).
+- **Land branches SERIALLY in dependency order**; after each merge, the next open branch runs the
+  re-sync protocol BEFORE continuing.
+- Each parallel branch = own clone/worktree, own venv, own PR. NEVER two agents in one tree.
+- Cloud agents get isolated VMs — the RAM/worktree crash story is local. **Git file collisions still
+  apply on the shared repo**; the cap and disjoint-file rule are about merge safety, not machine RAM.
 - Do NOT parallelize to hit a deadline. If only one thing is safe, do one thing and say so:
   "running serially — no 2 ready tickets are file-disjoint + blocker-free."
 
