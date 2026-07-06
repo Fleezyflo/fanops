@@ -382,6 +382,16 @@ def _hook_persona_entry(a):
     if hd.mechanism_lean: entry["mechanism_lean"] = hd.mechanism_lean
     return entry
 
+def _hook_personas_for_moment(m, accounts) -> list:
+    """P6: send ONLY the moment's owner to the hook author; persona-blind -> [] (shared hook)."""
+    if accounts is None or not m.affinities:
+        return []
+    owner = m.affinities[0]
+    for a in accounts.accounts:
+        if a.status is AccountStatus.active and a.handle == owner:
+            return [_hook_persona_entry(a)]
+    return []
+
 def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     """M1b PASS 2 request — open ONE frame-seeing hook gate per `picked` moment of this source. Each
     request carries the picked WINDOW + stills extracted over that window (fit_window — the same cut the
@@ -390,11 +400,8 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     re-stamped, so an in-flight answer is never invalidated). The source stays `picks_decided`;
     ingest_moment_hooks promotes it once every pick's hook has landed."""
     src = led.sources[source_id]
-    # Per-account voices reach the frame-seeing hook author so IT writes each handle's on-screen hook
-    # (the root fix). EVERY active account rides along — hook_author_slot fail-opens to a handle floor so
-    # empty-inline personas (common on TikTok rows) still get hooks_by_persona instead of shared_fallback.
-    personas = ([_hook_persona_entry(a) for a in accounts.accounts if a.status is AccountStatus.active]
-                if accounts is not None else [])
+    # P6: each moment's hook author sees ONLY its owner (m.affinities[0]); persona-blind moments get no
+    # personas key content -> the shared hook path (byte-identical fallback).
     # P4(c): cross-surface union of gated winning hook STYLES (the SAME signal caption uses). [] when the
     # flag is off / accounts is None / on any scorer error (fail-open).
     styles = proven_hook_styles(led, cfg, accounts)
@@ -414,6 +421,7 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         else:
             peaks = env_peaks
         segs = list(m.segments) if m.segments else None
+        personas = _hook_personas_for_moment(m, accounts)
         payload = MomentHookRequest(source_id=source_id, moment_id=m.id, token=m.content_token,
                                     request_id="", start=m.start, end=m.end, reason=m.reason,
                                     transcript_excerpt=m.transcript_excerpt, signal_score=m.signal_score,
@@ -472,35 +480,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
             hook = None                             # ...the clip still ships CLEAN by default
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
-        # per-account hooks: sanitize each (em-dash/quote burn-safety) + drop an off-BRAND one; a dropped
-        # handle falls back to the shared `hook` at crosspost. RF5: NO perspective strip here either — the
-        # generator authors these viewer-POV (each account's voice is its own stance), so a third-person
-        # per-account hook is KEPT, not dropped. No cross-clip dedup (these are per-account variants of ONE clip).
-        raw_hbp = dec.hooks_by_persona or {}
-        # AGENT-5: crosspost reads m.hooks_by_persona.get(surf.account) by EXACT handle, so an author-echoed
-        # key matching no real account (a near-miss like @MohFlow vs @mohflow, or a hallucinated handle)
-        # would silently fall back to the shared hook with no trace -- the per-account hook just vanishes.
-        # When the active accounts are known, intersect the returned keys with the REAL handles and DROP +
-        # LOG each unmatched one (a VISIBLE breadcrumb, not a silent collapse). accounts=None (legacy/test)
-        # keeps every key -- byte-identical to before.
-        if accounts is not None:
-            valid = {a.handle for a in accounts.accounts}
-            unknown = [hh for hh in raw_hbp if hh not in valid]
-            if unknown:
-                get_logger(cfg)("source", source_id, "hook_persona_unknown_handle",
-                                moment=m.id, handles=",".join(sorted(unknown)))
-            raw_hbp = {hh: ph for hh, ph in raw_hbp.items() if hh in valid}
-        hbp: dict[str, str] = {}
-        hbp_removed: dict[str, str] = {}
-        for hh, ph in raw_hbp.items():
-            s = sanitize_generated_text(ph) if ph else ""
-            if s and not brand_risk_flag(s, cfg):
-                hbp[hh] = s
-            elif (ph or "").strip():
-                hbp_removed[hh] = s or (ph or "").strip()
-                get_logger(cfg)("source", source_id, "hook_persona_stripped", moment=m.id, account=hh)
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
-                                                 "hooks_by_persona": hbp, "hooks_by_persona_removed": hbp_removed,
                                                  "hook_frames_unread": bool(getattr(dec, "hook_frames_unread", False)),  # AGENT-9
                                                  "state": MomentState.decided})
     led.set_source_state(source_id, SourceState.moments_decided)   # every pick's hook landed atomically
