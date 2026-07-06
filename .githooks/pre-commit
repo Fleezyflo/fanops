@@ -74,4 +74,18 @@ EOF
   exit 1
 fi
 
+# --- Staged ruff: lint ONLY the staged .py files, fast (<10s). Not the whole tree — that's CI's job.
+# Runs under the project venv (correct interpreter); silently skips if the venv is absent (the secret
+# scan above already ran, so a missing venv degrades lint, never secret-blocking). No test execution.
+ROOT="$(git rev-parse --show-toplevel)"
+PY="$ROOT/.venv/bin/python"
+staged_py="$(git diff --cached --name-only --diff-filter=ACMR -- '*.py' || true)"
+if [[ -n "$staged_py" && -x "$PY" ]]; then
+  # shellcheck disable=SC2086
+  if ! "$PY" -m ruff check $staged_py; then
+    echo "[fanops pre-commit] ruff failed on staged files — fix, re-stage, commit again." >&2
+    exit 1
+  fi
+fi
+
 exit 0
