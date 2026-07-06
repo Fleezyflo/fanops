@@ -25,7 +25,7 @@ Explore-guard (crux #6 — load-bearing, prevents reach-monoculture):
 from __future__ import annotations
 from fanops.ledger import Ledger
 from fanops.config import Config
-from fanops.models import PostState, normalize_account_handle
+from fanops.models import PostState
 from fanops.validation_gate import learning_validated, _MIN_ATTRIBUTED_N
 from fanops.log import get_logger
 
@@ -66,13 +66,13 @@ def casting_reach_prior(led: Ledger, cfg: Config, handles: list[str]) -> dict:
     try:
         if not learning_validated(cfg):
             return {}                                          # validation-frozen: byte-identical until proven
-        wanted = {normalize_account_handle(h): h for h in handles}
+        wanted = set(handles)
         agg = reach_by_account_type(led)
         proven = {(a, prof): row for (a, prof), row in agg.items()
-                  if normalize_account_handle(a) in wanted and row.get("n", 0) >= _MIN_ATTRIBUTED_N}
+                  if a in wanted and row.get("n", 0) >= _MIN_ATTRIBUTED_N}
         out: dict = {}
         for (a, prof), row in proven.items():
-            out.setdefault(wanted[normalize_account_handle(a)], {})[prof] = row["reach_mean"]
+            out.setdefault(a, {})[prof] = row["reach_mean"]
         return out
     except Exception as e:                                      # FAIL-SAFE: the prior is best-effort, never fatal
         get_logger(cfg)("casting_bias", "-", "error", err=str(e)[:120])   # logged once; caller gets {}

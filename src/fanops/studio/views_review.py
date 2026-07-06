@@ -11,7 +11,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger, selection_index_for_source
-from fanops.models import PostState, SelectionMethod, MomentState, normalize_account_handle
+from fanops.models import PostState, SelectionMethod, MomentState
 from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
@@ -20,11 +20,11 @@ from fanops.studio.actions_common import RENDER_PENDING_REASON
 
 
 def _handle_display_map(acct_by_handle: dict) -> dict[str, str]:
-    return {normalize_account_handle(k): k for k in acct_by_handle}
+    return dict(acct_by_handle)
 
 
 def _display_handle(handle: str, by_norm: dict[str, str]) -> str:
-    return by_norm.get(normalize_account_handle(handle), handle)
+    return by_norm.get(handle, handle)
 
 
 def _display_handles(handles: list[str], by_norm: dict[str, str]) -> list[str]:

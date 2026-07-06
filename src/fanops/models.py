@@ -3,7 +3,7 @@
 Separate state enums per unit (no shared linear enum). failed (Post) is distinct from
 analyzed. Every unit has an `error` state for per-unit quarantine."""
 from __future__ import annotations
-import json, math
+import json, math, re
 from enum import Enum
 from typing import Optional, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
@@ -313,8 +313,7 @@ class Post(BaseModel):
     variation_axis: Optional[str] = None    # P2 (one writer = crosspost): the cheap-text axis this variant moved
     # Leg 3 (Culmination) — the two varied-but-previously-unstamped dims, so aggregate_by_dim can rank
     # them like any P4 dim. All None on old ledgers -> skipped by aggregate_by_dim (back-compat).
-    top_bias: Optional[bool] = None     # framing (one writer = crosspost): the PER-ACCOUNT resolve_top_bias at
-                                        # mint (top vs centered crop) — a per-account creative choice, joins _P4_DIMS.
+    top_bias: Optional[bool] = None     # framing (one writer = crosspost): moment.framing at mint; joins _P4_DIMS.
     publish_hour: Optional[int] = None  # timing (one writer = run.py/reconcile published transition): the operator-
                                         # local HOUR of the TRUE publish time (published_at bucketed in operator_tz).
     publish_dow: Optional[int] = None   # timing: the operator-local weekday (0=Mon..6=Sun) of the true publish time.
@@ -370,9 +369,8 @@ def is_real_submission_id(sid: Optional[str]) -> bool:
 
 
 class HookSource(str, Enum):
-    per_account = "per_account"          # this account's OWN persona-authored hook (m.hooks_by_persona[handle])
-    shared_fallback = "shared_fallback"  # fell back to the shared moment hook (m.hook)
-    none = "none"                        # no hook at all (variation OFF, or no hook resolved)
+    shared_fallback = "shared_fallback"  # the owner moment's on-screen hook (m.hook)
+    none = "none"                        # no hook at all (hookless clip)
 
 
 class Render(BaseModel):
@@ -492,10 +490,23 @@ class AccountSelection(BaseModel):
         copied = super().model_copy(update=update, deep=deep)
         return type(self).model_validate(copied.model_dump())
 
+_ACCOUNT_HANDLE_RE = re.compile(r"^[a-z0-9._-]+$")
+
 def normalize_account_handle(handle: str) -> str:
-    """Canonical account handle for selection keys — strip whitespace and a leading '@' so '@a' and 'a' are
-    one-per-(source, account) (accounts.json uses bare handles; tests/LLM responses may carry '@')."""
-    return (handle or "").strip().lstrip("@")
+    """Canonical account handle — strip whitespace, drop a leading '@', lowercase. Identity on an already-
+    canonical accounts.json value; the ONE read-side safety net for legacy ledger rows that still carry '@'."""
+    return (handle or "").strip().lstrip("@").lower()
+
+
+def validate_account_handle(handle: str) -> str:
+    """Strict WRITE-boundary canonicalizer — lowercase, no '@', charset [a-z0-9._-]. Raises ValueError on
+    blank or illegal characters (mirrors persona_store's _norm_focus validator at the control-file edge)."""
+    h = (handle or "").strip().lstrip("@").lower()
+    if not h:
+        raise ValueError("handle is required")
+    if not _ACCOUNT_HANDLE_RE.fullmatch(h):
+        raise ValueError(f"invalid handle: {handle!r}")
+    return h
 
 
 def account_selection_id(source_id: str, account: str) -> str:
