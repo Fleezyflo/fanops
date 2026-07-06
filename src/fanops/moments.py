@@ -172,18 +172,35 @@ _TRANSCRIPT_CHAR_BUDGET = 60000   # generous: a real talk source fits; a patholo
 def _is_num(v) -> bool:
     try: float(v); return True
     except (TypeError, ValueError): return False
-def _bounded_transcript(transcript: list, peaks: list) -> tuple:
+def _corpus_hit(text, corpus) -> bool:
+    """True if text contains any corpus term (case-insensitive, '#' stripped). Fail-open."""
+    if not corpus: return False
+    try:
+        hay = str(text or "").lower()
+        for term in corpus:
+            if not term: continue
+            needle = str(term).lstrip("#").lower()
+            if needle and needle in hay: return True
+    except Exception: return False
+    return False
+def _bounded_transcript(transcript: list, peaks: list, *, corpus=None) -> tuple:
     """Return (segments_to_send, dropped_count). Keeps segments whose [start,end] midpoint is nearest a peak's
-    `t` until the char budget is spent; preserves chronological order. Empty/under-budget -> (transcript, 0)."""
+    `t` until the char budget is spent; preserves chronological order. Empty/under-budget -> (transcript, 0).
+    When corpus is non-empty, corpus-matching segments rank ahead of equidistant non-matches (bonus, not filter)."""
     segs = transcript or []
     if sum(len(str(s.get("text", ""))) for s in segs) <= _TRANSCRIPT_CHAR_BUDGET:
         return segs, 0
     pts = sorted({float(p.get("t")) for p in (peaks or []) if isinstance(p, dict) and _is_num(p.get("t"))})
+    corp = corpus or None
     def _near(s):
         try: mid = (float(s.get("start", 0)) + float(s.get("end", 0))) / 2
         except (TypeError, ValueError): return 1e9
         return min((abs(mid - t) for t in pts), default=0.0)
-    ranked = sorted(enumerate(segs), key=lambda it: _near(it[1]))   # nearest-peak first, stable on index (deterministic)
+    def _rank(it):
+        d = _near(it[1])
+        if corp: return (d, 0 if _corpus_hit(it[1].get("text", ""), corp) else 1)
+        return d
+    ranked = sorted(enumerate(segs), key=_rank)   # nearest-peak first, corpus tiebreak, stable on index
     spent, keep_idx = 0, set()
     for i, s in ranked:
         c = len(str(s.get("text", "")))
