@@ -11,7 +11,7 @@ from fanops.studio import views
 
 
 def _sp(**over):
-    base = dict(post_id="p", account="@a", platform="instagram", persona=None, caption="", hashtags=[],
+    base = dict(post_id="p", account="a", platform="instagram", persona=None, caption="", hashtags=[],
                 scheduled_time=None, media_url="/media/p", state="awaiting_approval", imminent=False, editable=True)
     base.update(over)
     return views.SurfacePost(**base)
@@ -78,15 +78,15 @@ def test_surface_stamps_attribution_via_persona(tmp_path):
     from fanops.accounts import Account
     from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
-    acct = Account(handle="@a", account_id="1", persona_id="hype", clip_profile="long", framing="center", persona_owns_profile=True)
+    acct = Account(handle="a", account_id="1", persona_id="hype", clip_profile="long", framing="center", persona_owns_profile=True)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
-        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped, affinities=["@a"]))
+        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped, affinities=["a"]))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
     led = Ledger.load(cfg); post = led.posts["p"]
-    sp = views._surface(post, persona="hype", now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=["@a"])
-    assert sp.length_cause == "persona long" and sp.framing_cause == "@a center" and sp.cast_cause == "picked for @a"
+    sp = views._surface(post, persona="hype", now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=["a"])
+    assert sp.length_cause == "persona long" and sp.framing_cause == "a center" and sp.cast_cause == "picked for a"
 
 
 def _seed_for_cast(cfg, *, method, moment_ids, affinities):
@@ -99,11 +99,11 @@ def _seed_for_cast(cfg, *, method, moment_ids, affinities):
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r",
                               state=MomentState.clipped, affinities=affinities))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, public_url="dryrun://p"))
         if method is not None:
-            led.add_account_selection(AccountSelection(id=account_selection_id("s", "@a"), source_id="s",
-                                                       account="@a", moment_ids=moment_ids, method=method))
+            led.add_account_selection(AccountSelection(id=account_selection_id("s", "a"), source_id="s",
+                                                       account="a", moment_ids=moment_ids, method=method))
     return Ledger.load(cfg)
 
 
@@ -111,10 +111,10 @@ def test_surface_cast_cause_reads_selection_method(tmp_path):
     # RF1: cast_cause reflects the DURABLE AccountSelection method (not just affinities / post-existence).
     from fanops.models import SelectionMethod
     cfg = Config(root=tmp_path)
-    led = _seed_for_cast(cfg, method=SelectionMethod.llm, moment_ids=["m"], affinities=["@a"])
+    led = _seed_for_cast(cfg, method=SelectionMethod.llm, moment_ids=["m"], affinities=["a"])
     sp = views._surface(led.posts["p"], persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc),
-                        cfg=cfg, led=led, acct=None, affinities=["@a"])
-    assert sp.cast_cause == "picked for @a (llm)"
+                        cfg=cfg, led=led, acct=None, affinities=["a"])
+    assert sp.cast_cause == "picked for a (llm)"
 
 
 def test_surface_cast_cause_flags_fan_all_default_visibly(tmp_path):
@@ -130,10 +130,10 @@ def test_surface_cast_cause_flags_fan_all_default_visibly(tmp_path):
 def test_surface_cast_cause_legacy_affinity_fallback_unchanged(tmp_path):
     # a pre-v9 source (NO AccountSelection) keeps the exact legacy string — byte-identical fallback.
     cfg = Config(root=tmp_path)
-    led = _seed_for_cast(cfg, method=None, moment_ids=[], affinities=["@a"])
+    led = _seed_for_cast(cfg, method=None, moment_ids=[], affinities=["a"])
     sp = views._surface(led.posts["p"], persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc),
-                        cfg=cfg, led=led, acct=None, affinities=["@a"])
-    assert sp.cast_cause == "picked for @a"
+                        cfg=cfg, led=led, acct=None, affinities=["a"])
+    assert sp.cast_cause == "picked for a"
 
 
 def test_surface_persona_link_without_owned_profile_names_account(tmp_path):
@@ -145,14 +145,14 @@ def test_surface_persona_link_without_owned_profile_names_account(tmp_path):
     from fanops.accounts import Account
     from fanops.models import Source, Clip, Post, Platform, PostState, ClipState, Fmt
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
-    acct = Account(handle="@a", account_id="1", persona_id="hype", clip_profile="long")   # linked, but persona didn't own the cut
+    acct = Account(handle="a", account_id="1", persona_id="hype", clip_profile="long")   # linked, but persona didn't own the cut
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
     led = Ledger.load(cfg); post = led.posts["p"]
     sp = views._surface(post, persona="hype", now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=())
-    assert sp.length_cause == "@a long"                                   # account-owned, not "persona long"
+    assert sp.length_cause == "a long"                                   # account-owned, not "persona long"
 
 
 def test_surface_mismatched_account_pin_yields_no_attribution(tmp_path):
@@ -163,11 +163,11 @@ def test_surface_mismatched_account_pin_yields_no_attribution(tmp_path):
     from fanops.accounts import Account
     from fanops.models import Source, Clip, Post, Platform, PostState, ClipState, Fmt
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
-    acct = Account(handle="@a", account_id="1", clip_profile="short")     # account pins SHORT; post stamped LONG
+    acct = Account(handle="a", account_id="1", clip_profile="short")     # account pins SHORT; post stamped LONG
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
     led = Ledger.load(cfg); post = led.posts["p"]
     sp = views._surface(post, persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=())
     assert sp.length_cause is None                                        # pin != stamped profile -> no false credit
@@ -180,14 +180,14 @@ def test_surface_attribution_is_account_when_no_persona(tmp_path):
     from fanops.accounts import Account
     from fanops.models import Source, Clip, Post, Platform, PostState, ClipState, Fmt
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
-    acct = Account(handle="@a", account_id="1", clip_profile="short")     # account pin, persona_id None
+    acct = Account(handle="a", account_id="1", clip_profile="short")     # account pin, persona_id None
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="short", public_url="dryrun://p"))
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="short", public_url="dryrun://p"))
     led = Ledger.load(cfg); post = led.posts["p"]
     sp = views._surface(post, persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=())
-    assert sp.length_cause == "@a short" and sp.cast_cause is None        # account-pinned; uncast → no cast cause
+    assert sp.length_cause == "a short" and sp.cast_cause is None        # account-pinned; uncast → no cast cause
 
 
 def test_macro_renders_value_and_cause(tmp_path):

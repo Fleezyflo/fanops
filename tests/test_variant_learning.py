@@ -5,59 +5,69 @@ so it is tested hardest: below-min-posts -> [], enough-posts-but-gap-too-small -
 clear-winner -> [hook], other-surface isolated, empty, deterministic."""
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
+from fanops.models import Post, Platform, PostState, Moment, Clip, Source, SourceState
 from fanops.variant_learning import best_hooks
 
 
+def _lineage(pid, acct, hook, lift, *, src_id="s1"):
+    clip_id, moment_id = f"c_{pid}", f"m_{pid}"
+    moment = Moment(id=moment_id, parent_id=src_id, start=0.0, end=4.0, reason="r", hook=hook)
+    clip = Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4")
+    post = Post(id=pid, parent_id=clip_id, account=acct, account_id="1", platform=Platform.instagram,
+                caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c1")
+    return moment, clip, post
+
+
 def _post(pid, acct, hook, lift):
-    return Post(id=pid, parent_id="c1", account=acct, account_id="1", platform=Platform.instagram,
-                caption="x", state=PostState.analyzed, variant_key=f"vk_{pid}", variant_hook=hook,
-                metrics={"lift_score": lift}, public_url="dryrun://c1")
+    return _lineage(pid, acct, hook, lift)
 
 
-def _led(cfg, posts):
+def _led(cfg, triples, *, src_id="s1"):
     led = Ledger.load(cfg)
-    for p in posts:
-        led.add_post(p)
+    if triples and not led.sources.get(src_id):
+        led.add_source(Source(id=src_id, source_path="x.mp4", state=SourceState.transcribed,
+                              duration=10.0, transcript=[], language="en"))
+    for m, c, p in triples:
+        led.add_moment(m); led.add_clip(c); led.add_post(p)
     return led
 
 
 def test_below_min_posts_returns_empty(tmp_path):
     cfg = Config(root=tmp_path)          # MIN_POSTS default 3
-    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0)])  # only 2
-    assert best_hooks(led, cfg, "@a", Platform.instagram) == []
+    led = _led(cfg, [_post("1", "a", "WIN", 90.0), _post("2", "a", "WIN", 90.0)])  # only 2
+    assert best_hooks(led, cfg, "a", Platform.instagram) == []
 
 
 def test_enough_posts_but_gap_too_small_returns_empty(tmp_path):
     cfg = Config(root=tmp_path)          # MIN_GAP default ~10
-    led = _led(cfg, [_post("1", "@a", "WIN", 51.0), _post("2", "@a", "WIN", 51.0), _post("3", "@a", "WIN", 51.0),
-                     _post("4", "@a", "LOSE", 50.0), _post("5", "@a", "LOSE", 50.0), _post("6", "@a", "LOSE", 50.0)])
-    assert best_hooks(led, cfg, "@a", Platform.instagram) == []   # 1.0 gap < MIN_GAP -> noise guard
+    led = _led(cfg, [_post("1", "a", "WIN", 51.0), _post("2", "a", "WIN", 51.0), _post("3", "a", "WIN", 51.0),
+                     _post("4", "a", "LOSE", 50.0), _post("5", "a", "LOSE", 50.0), _post("6", "a", "LOSE", 50.0)])
+    assert best_hooks(led, cfg, "a", Platform.instagram) == []   # 1.0 gap < MIN_GAP -> noise guard
 
 
 def test_clear_winner_over_threshold_returned(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0), _post("3", "@a", "WIN", 90.0),
-                     _post("4", "@a", "LOSE", 10.0), _post("5", "@a", "LOSE", 10.0), _post("6", "@a", "LOSE", 10.0)])
-    assert best_hooks(led, cfg, "@a", Platform.instagram) == ["WIN"]
+    led = _led(cfg, [_post("1", "a", "WIN", 90.0), _post("2", "a", "WIN", 90.0), _post("3", "a", "WIN", 90.0),
+                     _post("4", "a", "LOSE", 10.0), _post("5", "a", "LOSE", 10.0), _post("6", "a", "LOSE", 10.0)])
+    assert best_hooks(led, cfg, "a", Platform.instagram) == ["WIN"]
 
 
 def test_other_surface_isolated(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0), _post("3", "@a", "WIN", 90.0)])
-    assert best_hooks(led, cfg, "@b", Platform.instagram) == []   # no data for @b
+    led = _led(cfg, [_post("1", "a", "WIN", 90.0), _post("2", "a", "WIN", 90.0), _post("3", "a", "WIN", 90.0)])
+    assert best_hooks(led, cfg, "b", Platform.instagram) == []   # no data for @b
 
 
 def test_empty_and_no_variant_posts(tmp_path):
     cfg = Config(root=tmp_path)
-    assert best_hooks(Ledger.load(cfg), cfg, "@a", Platform.instagram) == []
+    assert best_hooks(Ledger.load(cfg), cfg, "a", Platform.instagram) == []
 
 
 def test_deterministic(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0), _post("3", "@a", "WIN", 90.0),
-                     _post("4", "@a", "LOSE", 10.0), _post("5", "@a", "LOSE", 10.0), _post("6", "@a", "LOSE", 10.0)])
-    assert best_hooks(led, cfg, "@a", Platform.instagram) == best_hooks(led, cfg, "@a", Platform.instagram)
+    led = _led(cfg, [_post("1", "a", "WIN", 90.0), _post("2", "a", "WIN", 90.0), _post("3", "a", "WIN", 90.0),
+                     _post("4", "a", "LOSE", 10.0), _post("5", "a", "LOSE", 10.0), _post("6", "a", "LOSE", 10.0)])
+    assert best_hooks(led, cfg, "a", Platform.instagram) == best_hooks(led, cfg, "a", Platform.instagram)
 
 
 # --- HARDENING (post-adversarial-review): a "winner" must be COMPARATIVE -----------------------
@@ -69,17 +79,17 @@ def test_deterministic(tmp_path):
 # conservative — the right direction for a noise guard. (Adversarial skeptic finding, 2026-06-04.)
 def test_single_variant_no_runner_up_returns_empty(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _led(cfg, [_post("1", "@a", "SOLO", 90.0), _post("2", "@a", "SOLO", 90.0),
-                     _post("3", "@a", "SOLO", 90.0)])   # enough posts, high lift, but NO competitor
-    assert best_hooks(led, cfg, "@a", Platform.instagram) == []   # not comparative -> no bias
+    led = _led(cfg, [_post("1", "a", "SOLO", 90.0), _post("2", "a", "SOLO", 90.0),
+                     _post("3", "a", "SOLO", 90.0)])   # enough posts, high lift, but NO competitor
+    assert best_hooks(led, cfg, "a", Platform.instagram) == []   # not comparative -> no bias
 
 
 def test_two_variants_clear_winner_still_returned(tmp_path):
     # Guard the fix doesn't over-correct: a genuine A/B with a real gap MUST still win.
     cfg = Config(root=tmp_path)
-    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0), _post("3", "@a", "WIN", 90.0),
-                     _post("4", "@a", "LOSE", 10.0)])   # a real runner-up exists
-    assert best_hooks(led, cfg, "@a", Platform.instagram) == ["WIN"]
+    led = _led(cfg, [_post("1", "a", "WIN", 90.0), _post("2", "a", "WIN", 90.0), _post("3", "a", "WIN", 90.0),
+                     _post("4", "a", "LOSE", 10.0)])   # a real runner-up exists
+    assert best_hooks(led, cfg, "a", Platform.instagram) == ["WIN"]
 
 
 # --- variation v2 (Task 5): amplify-isolation invariant (C1), mechanized -------------------------
@@ -200,75 +210,75 @@ from fanops.variant_learning import ucb_rank
 
 def test_ucb_exploits_clear_settled_winner(tmp_path):
     cfg = Config(root=tmp_path)              # c = sqrt(2)
-    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0), _post("3", "@a", "WIN", 90.0),
-                     _post("4", "@a", "LOSE", 10.0), _post("5", "@a", "LOSE", 10.0), _post("6", "@a", "LOSE", 10.0)])
-    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["WIN"]
+    led = _led(cfg, [_post("1", "a", "WIN", 90.0), _post("2", "a", "WIN", 90.0), _post("3", "a", "WIN", 90.0),
+                     _post("4", "a", "LOSE", 10.0), _post("5", "a", "LOSE", 10.0), _post("6", "a", "LOSE", 10.0)])
+    assert ucb_rank(led, cfg, "a", Platform.instagram) == ["WIN"]
 
 
 def test_ucb_explores_undersampled_challenger_over_thin_lead(tmp_path):
     # LEAD mean 60 over 8 posts; NEW mean 55 over 1. N=9. With c=sqrt2: s_LEAD≈60.741, s_NEW≈57.097
     # -> LEAD wins (a BIG mean gap is NOT overridden — guards over-exploration).
     cfg = Config(root=tmp_path)
-    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 55.0)]
+    posts = [_post(str(i), "a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "a", "NEW", 55.0)]
     led = _led(cfg, posts)
-    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["LEAD"]
+    assert ucb_rank(led, cfg, "a", Platform.instagram) == ["LEAD"]
 
 
 def test_ucb_challenger_wins_when_mean_gap_is_small(tmp_path):
     # LEAD mean 60 over 8; NEW mean 59 over 1. s_LEAD≈60.741, s_NEW≈61.097 -> NEW wins (lock-in fix).
     cfg = Config(root=tmp_path)
-    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 59.0)]
+    posts = [_post(str(i), "a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "a", "NEW", 59.0)]
     led = _led(cfg, posts)
-    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["NEW"]
+    assert ucb_rank(led, cfg, "a", Platform.instagram) == ["NEW"]
 
 
 def test_ucb_c_zero_is_pure_greedy(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "0")
     cfg = Config(root=tmp_path)
-    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 59.0)]
+    posts = [_post(str(i), "a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "a", "NEW", 59.0)]
     led = _led(cfg, posts)
-    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["LEAD"]   # no bonus -> mean decides
+    assert ucb_rank(led, cfg, "a", Platform.instagram) == ["LEAD"]   # no bonus -> mean decides
 
 
 def test_ucb_large_c_forces_exploration(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "50")
     cfg = Config(root=tmp_path)
-    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 55.0)]
+    posts = [_post(str(i), "a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "a", "NEW", 55.0)]
     led = _led(cfg, posts)
-    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["NEW"]    # huge bonus on n=1 arm
+    assert ucb_rank(led, cfg, "a", Platform.instagram) == ["NEW"]    # huge bonus on n=1 arm
 
 
 def test_ucb_single_post_surface_returns_that_hook(tmp_path):
     cfg = Config(root=tmp_path)              # N==1 -> ln1=0 -> bonus 0 -> bare mean -> that hook
-    led = _led(cfg, [_post("1", "@a", "SOLO", 42.0)])
-    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["SOLO"]
+    led = _led(cfg, [_post("1", "a", "SOLO", 42.0)])
+    assert ucb_rank(led, cfg, "a", Platform.instagram) == ["SOLO"]
 
 
 def test_ucb_single_hook_many_posts_returns_it(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _led(cfg, [_post("1", "@a", "SOLO", 70.0), _post("2", "@a", "SOLO", 70.0), _post("3", "@a", "SOLO", 70.0)])
-    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["SOLO"]
+    led = _led(cfg, [_post("1", "a", "SOLO", 70.0), _post("2", "a", "SOLO", 70.0), _post("3", "a", "SOLO", 70.0)])
+    assert ucb_rank(led, cfg, "a", Platform.instagram) == ["SOLO"]
 
 
 def test_ucb_empty_and_other_surface_and_no_variant(tmp_path):
     cfg = Config(root=tmp_path)
-    assert ucb_rank(Ledger.load(cfg), cfg, "@a", Platform.instagram) == []
-    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0)])
-    assert ucb_rank(led, cfg, "@b", Platform.instagram) == []
+    assert ucb_rank(Ledger.load(cfg), cfg, "a", Platform.instagram) == []
+    led = _led(cfg, [_post("1", "a", "WIN", 90.0), _post("2", "a", "WIN", 90.0)])
+    assert ucb_rank(led, cfg, "b", Platform.instagram) == []
 
 
 def test_ucb_tie_broken_by_sorted_hook_string(tmp_path):
     cfg = Config(root=tmp_path)              # identical (n,mean) -> identical score -> sorted-lower hook
-    led = _led(cfg, [_post("1", "@a", "ZZZ", 50.0), _post("2", "@a", "ZZZ", 50.0),
-                     _post("3", "@a", "AAA", 50.0), _post("4", "@a", "AAA", 50.0)])
-    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ["AAA"]
+    led = _led(cfg, [_post("1", "a", "ZZZ", 50.0), _post("2", "a", "ZZZ", 50.0),
+                     _post("3", "a", "AAA", 50.0), _post("4", "a", "AAA", 50.0)])
+    assert ucb_rank(led, cfg, "a", Platform.instagram) == ["AAA"]
 
 
 def test_ucb_deterministic_repeat(tmp_path):
     cfg = Config(root=tmp_path)
-    posts = [_post(str(i), "@a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "@a", "NEW", 59.0)]
+    posts = [_post(str(i), "a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "a", "NEW", 59.0)]
     led = _led(cfg, posts)
-    assert ucb_rank(led, cfg, "@a", Platform.instagram) == ucb_rank(led, cfg, "@a", Platform.instagram)
+    assert ucb_rank(led, cfg, "a", Platform.instagram) == ucb_rank(led, cfg, "a", Platform.instagram)
 
 
 def test_variant_learning_module_has_no_nondeterminism():

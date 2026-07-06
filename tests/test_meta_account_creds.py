@@ -47,7 +47,7 @@ def test_resolve_per_account_creds_win_over_global(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@stan", "account_id": "", "platforms": ["instagram"],
                            "status": "active", "ig_user_id": "ig-stan-99"}])
-    creds = meta_graph.resolve_meta_creds(cfg, handle="@stan")
+    creds = meta_graph.resolve_meta_creds(cfg, handle="stan")
     assert creds.ig_user_id == "ig-stan-99"
     assert creds.token == "pa-tok"
 
@@ -59,7 +59,7 @@ def test_resolve_falls_back_to_global_when_no_per_account(tmp_path, monkeypatch)
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@markmakmouly", "account_id": "", "platforms": ["instagram"],
                            "status": "active"}])
-    creds = meta_graph.resolve_meta_creds(cfg, handle="@markmakmouly")
+    creds = meta_graph.resolve_meta_creds(cfg, handle="markmakmouly")
     assert creds.ig_user_id == "ig-global-1"
     assert creds.token == "tok-global"
 
@@ -81,7 +81,7 @@ def test_resolve_partial_per_account_id_only_falls_back_token_to_global(tmp_path
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@stan", "account_id": "", "platforms": ["instagram"],
                            "status": "active", "ig_user_id": "ig-stan-99"}])
-    creds = meta_graph.resolve_meta_creds(cfg, handle="@stan")
+    creds = meta_graph.resolve_meta_creds(cfg, handle="stan")
     assert creds.ig_user_id == "ig-stan-99"
     assert creds.token == "tok-global"
 
@@ -92,7 +92,7 @@ def test_resolve_unknown_handle_is_global(tmp_path, monkeypatch):
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok-global")
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@stan", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    creds = meta_graph.resolve_meta_creds(cfg, handle="@nobody")
+    creds = meta_graph.resolve_meta_creds(cfg, handle="nobody")
     assert (creds.ig_user_id, creds.token) == ("ig-global-1", "tok-global")
 
 
@@ -169,10 +169,10 @@ def test_set_ig_user_id_persists_and_preserves_siblings(tmp_path, monkeypatch):
     set_ig_user_id(cfg, "@stan", "ig-stan-99")
     raw = json.loads(cfg.accounts_path.read_text())
     rows = {r["handle"]: r for r in raw["accounts"]}
-    assert rows["@stan"]["ig_user_id"] == "ig-stan-99"
-    assert rows["@stan"]["integrations"] == {"instagram": "ig_1"}   # sibling field preserved
-    assert rows["@stan"]["account_id"] == "acc-x"
-    assert "@other" in rows and rows["@other"]["account_id"] == "acc-y"  # sibling account untouched
+    assert rows["stan"]["ig_user_id"] == "ig-stan-99"
+    assert rows["stan"]["integrations"] == {"instagram": "ig_1"}   # sibling field preserved
+    assert rows["stan"]["account_id"] == "acc-x"
+    assert "other" in rows and rows["other"]["account_id"] == "acc-y"  # sibling account untouched
 
 
 def test_set_ig_user_id_blank_clears(tmp_path, monkeypatch):
@@ -186,5 +186,5 @@ def test_set_ig_user_id_blank_clears(tmp_path, monkeypatch):
 
 def test_account_model_ig_user_id_default_none(tmp_path):
     # Additive field: a legacy account row with no ig_user_id loads fine, default None (byte-identical).
-    a = Account(handle="@legacy", platforms=[Platform.instagram])
+    a = Account(handle="legacy", platforms=[Platform.instagram])
     assert a.ig_user_id is None

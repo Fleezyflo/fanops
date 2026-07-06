@@ -39,8 +39,8 @@ def _seed_clip(led: Ledger) -> Clip:
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "a", "hashtags": []},
-                          "@b/instagram": {"caption": "b", "hashtags": []}}
+    clip.meta_captions = {"a/instagram": {"caption": "a", "hashtags": []},
+                          "b/instagram": {"caption": "b", "hashtags": []}}
     led.add_clip(clip)
     return clip
 
@@ -63,7 +63,7 @@ def test_reschedule_respreads_past_due_posts(tmp_path, monkeypatch):
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
     yesterday = iso_z(FIXED_DT - timedelta(days=1))
-    ids = [_seed_queued(led, clip, post_id=f"p_{i}", account="@a", account_id="ia",
+    ids = [_seed_queued(led, clip, post_id=f"p_{i}", account="a", account_id="ia",
                         scheduled_iso=yesterday) for i in range(3)]
     led.save()
 
@@ -89,7 +89,7 @@ def test_reschedule_preserves_genuinely_imminent_posts(tmp_path, monkeypatch):
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
     seconds_away = iso_z(FIXED_DT + timedelta(seconds=30))     # < 60s window
-    pid = _seed_queued(led, clip, post_id="p_imm", account="@a", account_id="ia",
+    pid = _seed_queued(led, clip, post_id="p_imm", account="a", account_id="ia",
                        scheduled_iso=seconds_away)
     led.save()
 
@@ -108,14 +108,14 @@ def test_reschedule_account_scopes_to_one_handle(tmp_path, monkeypatch):
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
     yesterday = iso_z(FIXED_DT - timedelta(days=1))
-    pa = _seed_queued(led, clip, post_id="p_a", account="@a", account_id="ia",
+    pa = _seed_queued(led, clip, post_id="p_a", account="a", account_id="ia",
                       scheduled_iso=yesterday)
-    pb = _seed_queued(led, clip, post_id="p_b", account="@b", account_id="ib",
+    pb = _seed_queued(led, clip, post_id="p_b", account="b", account_id="ib",
                       scheduled_iso=yesterday)
     led.save()
 
     from fanops.studio.actions import reschedule_account
-    res = reschedule_account(cfg, "@a", now=FIXED_DT)
+    res = reschedule_account(cfg, "a", now=FIXED_DT)
     assert res.ok is True
     assert res.detail["rescheduled"] == 1, (
         f"per-account scope: expected 1 respread, got {res.detail['rescheduled']}")
@@ -138,7 +138,7 @@ def test_reschedule_respreads_anything_more_than_one_minute_out(tmp_path, monkey
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
     two_min_away = iso_z(FIXED_DT + timedelta(minutes=2))
-    _seed_queued(led, clip, post_id="p_2min", account="@a", account_id="ia",
+    _seed_queued(led, clip, post_id="p_2min", account="a", account_id="ia",
                  scheduled_iso=two_min_away)
     led.save()
 

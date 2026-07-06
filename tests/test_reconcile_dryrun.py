@@ -31,7 +31,7 @@ def test_reconcile_due_routes_zernio_when_global_dryrun(tmp_path, monkeypatch, m
     add_account(cfg, "@tt", [Platform.tiktok], status="active")
     set_backend(cfg, "@tt", "tiktok", "zernio")
     led = Ledger.load(cfg)
-    led.add_post(Post(id="tt", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
+    led.add_post(Post(id="tt", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
                       caption="x", state=PostState.needs_reconcile, submission_id="zsid",
                       public_url="dryrun://tt"))
     led.save()
@@ -61,7 +61,7 @@ def test_reconcile_post_without_provider_parks_not_blotato(tmp_path, monkeypatch
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="orphan_sid",
                       public_url="dryrun://p"))
     led.save()
@@ -83,7 +83,7 @@ def test_reconcile_inflight_live_dryrun_global_zernio(tmp_path, monkeypatch, moc
     add_account(cfg, "@tt", [Platform.tiktok], status="active")
     set_backend(cfg, "@tt", "tiktok", "zernio")
     led = Ledger.load(cfg)
-    led.add_post(Post(id="tt", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
+    led.add_post(Post(id="tt", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
                       caption="x", state=PostState.needs_reconcile, submission_id="zsid",
                       public_url="dryrun://tt"))
     led.save()

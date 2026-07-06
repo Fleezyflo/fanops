@@ -37,11 +37,11 @@ def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
     for m in [m for m in led.moments.values()
               if m.parent_id == source_id and m.state is MomentState.picked]:
         spec = hooks.get(m.content_token)
-        hook, hbp = spec if isinstance(spec, tuple) else (spec, {})
+        hook = spec[0] if isinstance(spec, tuple) else spec
         key = f"{source_id}.{m.content_token}"
         rid = latest_request_id(cfg, "moment_hooks", key)
         from fanops.responder import screen_model_text
-        dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hook, hooks_by_persona=hbp or {}))
+        dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hook))
         response_path(cfg, "moment_hooks", key).write_text(dec.model_dump_json())
     return ingest_moment_hooks(led, cfg, source_id, accounts=accounts)
 
@@ -110,9 +110,9 @@ def test_affinity_birth_path_intact(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=10, end=28, reason="punchline", personas=["@a"])])
+                        [MomentPick(start=10, end=28, reason="punchline", personas=["a"])])
     m = led.moments_of("src_1")[0]
-    assert m.affinities == ["@a"]
+    assert m.affinities == ["a"]
 
 # ---- MOL-146 (P5): atomic whole-source ingest + owner-stamped spec ----
 def _seed_owner_spec_accounts(cfg, specs):
@@ -134,22 +134,22 @@ def test_ingest_single_gate_reconciles_whole_source(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
     led = request_moments(led, cfg, "src_1")
-    picks = [MomentPick(start=10, end=28, reason="a window", personas=["@a"]),
-             MomentPick(start=40, end=58, reason="b window", personas=["@b"])]
+    picks = [MomentPick(start=10, end=28, reason="a window", personas=["a"]),
+             MomentPick(start=40, end=58, reason="b window", personas=["b"])]
     led = _ingest_picks(led, cfg, "src_1", picks)
     moms = led.moments_of("src_1")
     assert len(moms) == 2
     owners = {tuple(m.affinities) for m in moms}
-    assert owners == {("@a",), ("@b",)}
+    assert owners == {("a",), ("b",)}
 
 def test_ingest_owner_becomes_affinities_and_stamps_spec(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     _seed_owner_spec_accounts(cfg, [{"handle": "@a", "clip_profile": "short", "framing": "top"}])
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=10, end=28, reason="punchline", personas=["@a"])])
+                        [MomentPick(start=10, end=28, reason="punchline", personas=["a"])])
     m = led.moments_of("src_1")[0]
-    assert m.affinities == ["@a"] and m.clip_profile == "short" and m.framing == "top"
+    assert m.affinities == ["a"] and m.clip_profile == "short" and m.framing == "top"
 
 def test_ingest_pending_defers_whole_source(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
@@ -172,24 +172,23 @@ def test_hook_request_sends_only_owner(tmp_path):
     accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=10, end=28, reason="a window", personas=["@a"])])
+                        [MomentPick(start=10, end=28, reason="a window", personas=["a"])])
     led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
     req = json.loads(request_path(cfg, "moment_hooks", "src_1.10.00-28.00").read_text())
     assert len(req["personas"]) == 1
-    assert req["personas"][0]["handle"] == "@a"
-    assert "@b" not in {p["handle"] for p in req["personas"]}
+    assert req["personas"][0]["handle"] == "a"
+    assert "b" not in {p["handle"] for p in req["personas"]}
 
 def test_hook_applied_to_m_hook_single(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}])
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=10, end=28, reason="punchline", personas=["@a"])])
+                        [MomentPick(start=10, end=28, reason="punchline", personas=["a"])])
     led = _decide_hooks(led, cfg, "src_1", {"10.00-28.00": "the part you'll replay"}, accounts=accts)
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.decided
     assert m.hook == "the part you'll replay"
-    assert m.hooks_by_persona == {}
 
 def test_persona_blind_hook_falls_back_shared(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
@@ -201,21 +200,21 @@ def test_persona_blind_hook_falls_back_shared(tmp_path):
     assert req["personas"] == []
     led = _decide_hooks(led, cfg, "src_1", {"10.00-28.00": "wait for the switch"}, accounts=accts)
     m = led.moments_of("src_1")[0]
-    assert m.hook == "wait for the switch" and m.hooks_by_persona == {}
+    assert m.hook == "wait for the switch"
 
 def test_ingest_no_skip_state_fields(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=10, end=28, reason="a", personas=["@a"]),
-                         MomentPick(start=40, end=58, reason="b", personas=["@b"])])
+                        [MomentPick(start=10, end=28, reason="a", personas=["a"]),
+                         MomentPick(start=40, end=58, reason="b", personas=["b"])])
     src = led.sources["src_1"]
     forbidden = ("moments_wait_cycles", "moments_skipped_handles", "skip_state")
     assert not any(k in (src.meta or {}) for k in forbidden)
     assert not hasattr(src, "moments_wait_cycles")
 
-def _seed_pick_persona_accounts(cfg, handle="@a"):
+def _seed_pick_persona_accounts(cfg, handle="a"):
     from fanops.accounts import Accounts
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [{
@@ -236,11 +235,11 @@ def _seed_multi_pick_persona_accounts(cfg, handles):
     return Accounts.load(cfg)
 
 def test_pick_personas_returns_full_spec(tmp_path):
-    cfg = Config(root=tmp_path); accts = _seed_pick_persona_accounts(cfg, "@raw")
+    cfg = Config(root=tmp_path); accts = _seed_pick_persona_accounts(cfg, "raw")
     specs = _pick_personas(cfg, accts)
     assert len(specs) == 1
     assert set(specs[0]) == PERSONA_PICK_SPEC_KEYS
-    assert specs[0]["handle"] == "@raw"
+    assert specs[0]["handle"] == "raw"
     assert "punchline" in specs[0]["directive"].lower()
     assert "sensational" in specs[0]["selection_scope"].lower() or specs[0]["selection_scope"]
     assert specs[0]["band"] and "s" in specs[0]["band"]
@@ -259,7 +258,7 @@ def test_pick_personas_empty_when_casting_off(tmp_path, monkeypatch):
 
 def test_pick_request_carries_resolved_persona_spec(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
-    accts = _seed_pick_persona_accounts(cfg, "@a")
+    accts = _seed_pick_persona_accounts(cfg, "a")
     led = request_moments(led, cfg, "src_1", accounts=accts)
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
     assert len(payload["personas"]) == 1
@@ -269,7 +268,7 @@ def test_pick_request_carries_resolved_persona_spec(tmp_path):
 def test_request_writes_one_source_gate(tmp_path):
     # P4 (MOL-145): N personas ride ONE source-keyed gate — no per-handle fork, no '#' in the key.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
-    accts = _seed_multi_pick_persona_accounts(cfg, ["@a", "@b"])
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
     gate_dir = request_path(cfg, "moments", "src_1").parent
     moment_gates = [p.name for p in gate_dir.glob("moments__*.request.json")]
@@ -277,18 +276,18 @@ def test_request_writes_one_source_gate(tmp_path):
     assert "#" not in moment_gates[0]
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
     assert len(payload["personas"]) == 2
-    assert {p["handle"] for p in payload["personas"]} == {"@a", "@b"}
+    assert {p["handle"] for p in payload["personas"]} == {"a", "b"}
 
 def test_request_packs_full_persona_spec_list(tmp_path):
     # P4: each persona entry carries the full P4a resolved spec (handle through corpus).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
-    accts = _seed_multi_pick_persona_accounts(cfg, ["@x", "@y"])
+    accts = _seed_multi_pick_persona_accounts(cfg, ["x", "y"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
     for spec in payload["personas"]:
         assert PERSONA_PICK_SPEC_KEYS <= set(spec)
         assert "signal_peaks" in spec
-        assert spec["handle"] in ("@x", "@y")
+        assert spec["handle"] in ("x", "y")
         assert spec["directive"] and spec["band"] and spec["framing"]
         assert spec["selection_scope"] and spec["hook_angle"] == "curiosity"
         assert isinstance(spec["corpus"], list)
@@ -299,7 +298,7 @@ def test_request_reuses_frames_once(tmp_path, mocker):
     (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
     spy = mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/a.jpg"])
-    accts = _seed_multi_pick_persona_accounts(cfg, ["@a", "@b"])
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
     assert spy.call_count == 1
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
@@ -322,7 +321,7 @@ def test_request_zero_personas_drops_key(tmp_path, monkeypatch):
 def test_request_adds_no_skip_state(tmp_path):
     # P4: request_moments must NOT invent wait-cycle / skip-state machinery on the source.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
-    accts = _seed_multi_pick_persona_accounts(cfg, ["@a", "@b"])
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
     src = led.sources["src_1"]
     assert src.state is SourceState.moments_requested
@@ -338,7 +337,7 @@ def test_amplify_gate_still_read(tmp_path):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="14-21", start=14, end=21,
                           reason="punchline", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.analyzed))
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
                       metrics={"lift_score": 400}, public_url="dryrun://1"))
     led = amplify(led, cfg, ["p1"])
@@ -379,8 +378,8 @@ def test_owned_moment_id_includes_handle():
     # P3: two owners at the same timecode yield distinct moment ids; both differ from the bare-token id.
     src, token = "src_1", "14.00-18.00"
     bare = child_id("moment", src, token)
-    id_a = _owned_moment_id(src, "@a", token)
-    id_b = _owned_moment_id(src, "@b", token)
+    id_a = _owned_moment_id(src, "a", token)
+    id_b = _owned_moment_id(src, "b", token)
     assert id_a != id_b and id_a != bare and id_b != bare
 
 def test_persona_blind_id_is_bare_token():
@@ -411,7 +410,7 @@ def test_amplify_style_reingest_reconciles_not_noop(tmp_path):
     a = next(m for m in led.moments_of("src_1") if m.content_token == "0.00-2.00")
     led.add_clip(Clip(id="c_a", parent_id=a.id, path="/c"))
     # a REJECTED post (deletable) so A's lineage still cascade-deletes
-    led.add_post(Post(id="p_a", parent_id="c_a", account="@a", account_id="1",
+    led.add_post(Post(id="p_a", parent_id="c_a", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.rejected, public_url="dryrun://p_a"))
     # now a fresh request + a NEW decision dropping A, keeping B (updated), adding C
     led = request_moments(led, cfg, "src_1")
@@ -597,11 +596,10 @@ def test_decide_hooks_does_not_strip_perspective_from_per_account_hooks(tmp_path
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
     led = _decide_hooks(led, cfg, "src_1",
                         {"14.00-18.50": ("the part you'll replay",
-                                         {"@a": "you won't expect the switch",
-                                          "@b": "he flips the whole beat"})})
+                                         {"a": "you won't expect the switch",
+                                          "b": "he flips the whole beat"})})
     m = led.moments_of("src_1")[0]
     assert m.hook == "the part you'll replay"
-    assert m.hooks_by_persona == {}
 
 def test_brand_screen_runs_on_clean_text(tmp_path):
     # MOL-166: brand_risk_flag remains a semantic gate on ALREADY-sanitized hook text.
@@ -632,27 +630,25 @@ def test_decide_hooks_rejects_off_brand_per_account_hook_falls_back(tmp_path):
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
     led = _decide_hooks(led, cfg, "src_1",
                         {"14.00-18.50": ("the part you'll replay",
-                                         {"@a": "you won't expect the switch",
-                                          "@b": "please stream this, link in bio"})})
+                                         {"a": "you won't expect the switch",
+                                          "b": "please stream this, link in bio"})})
     m = led.moments_of("src_1")[0]
     assert m.hook == "the part you'll replay"
-    assert m.hooks_by_persona == {}
 
 def test_decide_hooks_drops_and_logs_unknown_persona_handle(tmp_path):
     # P6: decision hooks_by_persona is not ingested; unknown-handle intersection/logging deferred to P7.
     from fanops.accounts import Accounts, Account
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
-    accts = Accounts(cfg); accts.accounts = [Account(handle="@mohflow", platforms=["instagram"])]
+    accts = Accounts(cfg); accts.accounts = [Account(handle="mohflow", platforms=["instagram"])]
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
     led = _decide_hooks(led, cfg, "src_1",
                         {"14.00-18.50": ("the part you'll replay",
-                                         {"@mohflow": "you won't expect the switch",
+                                         {"mohflow": "you won't expect the switch",
                                           "@MohFlow": "you won't expect the switch"})},
                         accounts=accts)
     m = led.moments_of("src_1")[0]
     assert m.hook == "the part you'll replay"
-    assert m.hooks_by_persona == {}
 
 def test_decide_hooks_brand_risk_honors_tuning_override(tmp_path):
     # The hook gate honors the SAME tuning.json offbrand override as captions: clearing both lists

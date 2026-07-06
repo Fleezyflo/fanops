@@ -14,7 +14,7 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post, Render, SelectionFact, AccountSelection,
-                           SelectionMethod, account_selection_id, normalize_account_handle,
+                           SelectionMethod, account_selection_id, validate_account_handle,
                            StitchPlan, StitchState, Batch, ImportedMedia,
                            SourceState, MomentState, ClipState, PostState)
 
@@ -94,6 +94,38 @@ def _pick_account_selection(rows: list[dict]) -> dict:
     return max(rows, key=_key)
 
 
+def _ledger_canon_handle(h: str) -> str:
+    """Best-effort canonical account handle for on-disk ledger rows (legacy '@' prefixes)."""
+    try:
+        return validate_account_handle(h)
+    except ValueError:
+        return (h or "").strip()
+
+
+def _canonicalize_ledger_account_refs(raw: dict) -> dict:
+    """MOL-164: rewrite legacy non-canonical account handles across ledger maps on read."""
+    out = dict(raw)
+    for po in (out.get("posts") or {}).values():
+        if isinstance(po, dict) and po.get("account"):
+            po["account"] = _ledger_canon_handle(po["account"])
+    for f in (out.get("selection_facts") or {}).values():
+        if isinstance(f, dict) and f.get("account"):
+            f["account"] = _ledger_canon_handle(f["account"])
+    for m in (out.get("moments") or {}).values():
+        if isinstance(m, dict) and m.get("affinities"):
+            m["affinities"] = sorted({_ledger_canon_handle(h) for h in m["affinities"] if h})
+    sel: dict[str, dict] = {}
+    for _sid, s in (out.get("account_selections") or {}).items():
+        if not isinstance(s, dict): continue
+        src_id = s.get("source_id")
+        acct = _ledger_canon_handle(s.get("account") or "")
+        if not src_id or not acct: continue
+        norm = dict(s); norm["account"] = acct; norm["id"] = account_selection_id(src_id, acct)
+        sel[norm["id"]] = norm
+    out["account_selections"] = sel
+    return out
+
+
 def _dedupe_account_selections(raw: dict) -> dict:
     """Collapse @-alias duplicates to one canonical row per (source_id, account). Idempotent."""
     out = dict(raw)
@@ -103,7 +135,10 @@ def _dedupe_account_selections(raw: dict) -> dict:
     for sid, s in selections.items():
         if not isinstance(s, dict): continue
         src_id = s.get("source_id")
-        acct = normalize_account_handle(s.get("account") or "")
+        try:
+            acct = validate_account_handle(s.get("account") or "")
+        except ValueError:
+            continue
         if not src_id or not acct: continue
         norm = dict(s)
         norm["account"] = acct
@@ -160,7 +195,10 @@ def _migrate_v8_account_selections(raw: dict) -> dict:
         for handle in affs:
             groups.setdefault((sid, handle), []).append(mid)
     for (sid, handle), mids in groups.items():
-        acct = normalize_account_handle(handle)
+        try:
+            acct = validate_account_handle(handle)
+        except ValueError:
+            continue
         asid = account_selection_id(sid, acct)
         if asid in selections: continue                          # idempotent: never overwrite an existing row
         method = "llm" if (sid, handle) in llm_pairs else "migrated"
@@ -351,6 +389,7 @@ class Ledger:
                     raise _NewerSchema(on_disk)
                 if on_disk < SCHEMA_VERSION:
                     raw = _migrate(raw, on_disk)
+                raw = _canonicalize_ledger_account_refs(raw)
                 raw = _dedupe_account_selections(raw)
                 led.sources = {k: Source(**v) for k, v in raw.get("sources", {}).items()}
                 led.moments = {k: Moment(**v) for k, v in raw.get("moments", {}).items()}
@@ -488,13 +527,13 @@ class Ledger:
     def add_imported_media(self, im: ImportedMedia) -> None: self.imported_media[im.media_id] = im   # ledger-rebuild: UPSERT by media_id — a live re-pull carries fresher metrics that WIN (latest snapshot; NOT render's first-write dedup)
     def get_imported_media(self, media_id: str): return self.imported_media.get(media_id)
     def add_account_selection(self, s: AccountSelection) -> None:
-        acct = normalize_account_handle(s.account)
+        acct = validate_account_handle(s.account)
         canon_id = account_selection_id(s.source_id, acct)
         if acct != s.account or s.id != canon_id:
             s = s.model_copy(update={"id": canon_id, "account": acct})
         for stale_id, stale in list(self.account_selections.items()):
-            if stale_id != canon_id and stale.source_id == s.source_id and normalize_account_handle(stale.account) == acct:
-                del self.account_selections[stale_id]              # @-alias / legacy duplicate id
+            if stale_id != canon_id and stale.source_id == s.source_id and stale.account == acct:
+                del self.account_selections[stale_id]              # legacy duplicate id
         self.account_selections[canon_id] = s                      # RF1: OVERWRITE — one-per-(source, account)
     def account_selection_for(self, source_id: str, account: str):
         return self.account_selections.get(account_selection_id(source_id, account))

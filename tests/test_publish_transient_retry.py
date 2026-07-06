@@ -18,7 +18,7 @@ def _queued(cfg, pid="p1", cid="c1", *, sub=None):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id=cid, account="@tk", account_id="z1", platform=Platform.tiktok,
+        led.add_post(Post(id=pid, parent_id=cid, account="tk", account_id="z1", platform=Platform.tiktok,
                           caption="c", scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued,
                           media_urls=["https://cdn/v.mp4"], public_url="dryrun://p1",
                           submission_id=sub))
@@ -34,8 +34,8 @@ def test_is_transient_publish_error_classifies():
     assert _is_transient_publish_error(ZernioAuthError("401")) is False
 
 
-def test_transient_upload_retries_then_parks_needs_reconcile(tmp_path, monkeypatch, mocker):
-    # ConnectionError during media ensure → retry → exhausted → needs_reconcile, NOT failed.
+def test_transient_upload_retries_then_lands_failed_requeueable(tmp_path, monkeypatch, mocker):
+    # ConnectionError during media ensure → retry → exhausted → failed (re-queueable), NOT needs_reconcile.
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _queued(cfg)
@@ -48,8 +48,8 @@ def test_transient_upload_retries_then_parks_needs_reconcile(tmp_path, monkeypat
     mocker.patch("fanops.post.run.time.sleep", return_value=None)   # no real backoff in unit test
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
-    assert p.state is PostState.needs_reconcile, f"expected needs_reconcile, got {p.state}"
-    assert "transient" in (p.error_reason or "").lower() or "connection" in (p.error_reason or "").lower()
+    assert p.state is PostState.failed, f"expected failed (re-queueable), got {p.state}"
+    assert "connection" in (p.error_reason or "").lower() or "publish failed" in (p.error_reason or "").lower()
     assert calls["n"] == run._PUBLISH_TRANSIENT_MAX   # retried to exhaustion
 
 

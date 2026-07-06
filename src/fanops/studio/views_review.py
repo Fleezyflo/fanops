@@ -11,7 +11,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger, selection_index_for_source
-from fanops.models import PostState, SelectionMethod, MomentState, normalize_account_handle
+from fanops.models import PostState, SelectionMethod, MomentState
 from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
@@ -20,11 +20,11 @@ from fanops.studio.actions_common import RENDER_PENDING_REASON
 
 
 def _handle_display_map(acct_by_handle: dict) -> dict[str, str]:
-    return {normalize_account_handle(k): k for k in acct_by_handle}
+    return {k: k for k in acct_by_handle}
 
 
 def _display_handle(handle: str, by_norm: dict[str, str]) -> str:
-    return by_norm.get(normalize_account_handle(handle), handle)
+    return by_norm.get(handle, handle)
 
 
 def _display_handles(handles: list[str], by_norm: dict[str, str]) -> list[str]:
@@ -47,7 +47,7 @@ class SurfacePost:
     suggested_time: Optional[str] = None   # P1: ONE deterministic strictly-future suggestion (surface_time
                                            # index=0), set ONLY for editable surfaces; read-only rows carry None.
     hook_preburn: bool = False             # variant_hook set but not yet burned (preview is the base clip)
-    persona_hook_removed: Optional[str] = None  # Moment.hooks_by_persona_removed[account] — guard killed this hook
+    persona_hook_removed: Optional[str] = None  # Moment.hook_removed — guard killed the moment hook
     variant_hook: Optional[str] = None     # persona-differentiation: the per-account on-screen hook burned into
                                            # this surface's media (crosspost burn_hook_only). None when creative_variation is OFF.
     # M3a — "review at scale": surface the per-account differentiation so the operator SEES it on the card.
@@ -229,8 +229,8 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     # per-tag provenance for the surface-edit chip row: read the clip's stored caption entry (fail-open to
     # {} for a legacy entry / no caption yet -> the chip row simply doesn't render).
     _clip = led.clips.get(post.parent_id)
-    _mom = led.moments.get(post.parent_id) if _clip is not None else None
-    _phr = ((_mom.hooks_by_persona_removed or {}).get(post.account) if _mom is not None else None)
+    _mom = led.moments.get(_clip.parent_id) if _clip is not None else None
+    _phr = (_mom.hook_removed if _mom is not None else None)
     tag_sources = (_clip.meta_captions.get(f"{post.account}/{post.platform.value}", {}).get("tag_sources", {})
                    if _clip is not None else {})
     ready, ready_reason = (None, None)

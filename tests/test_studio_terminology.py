@@ -17,7 +17,7 @@ def _accounts(cfg, rows):
     cfg.accounts_path.write_text(json.dumps({"accounts": rows}))
 
 
-def _active(handle="@a"):
+def _active(handle="a"):
     return {"handle": handle, "account_id": "1", "platforms": ["instagram"], "status": "active"}
 
 
@@ -79,7 +79,7 @@ def test_home_defines_batch_once(tmp_path):
     from fanops.batches import create_batch
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     led = Ledger.load(cfg)
-    create_batch(led, name="B1", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    create_batch(led, name="B1", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
     html = _client(cfg).get("/").get_data(as_text=True)
     assert html.count('data-term="batch"') == 1
 
@@ -93,12 +93,13 @@ def test_cast_and_variant_absent_when_off(tmp_path, monkeypatch):
     assert 'data-term="variant"' not in html    # creative_variation OFF -> the variant explainer is gone
 
 
-def test_cast_and_variant_present_when_on(tmp_path, monkeypatch):
+def test_cast_present_when_on_variant_term_absent(tmp_path, monkeypatch):
+    # P9: creative_variation is no longer a Studio template flag (hardcoded False) — only cast rides ON/OFF.
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1"); monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     html = _client(cfg).get("/review").get_data(as_text=True)
     assert html.count('data-term="cast"') == 1
-    assert html.count('data-term="variant"') == 1
+    assert 'data-term="variant"' not in html
 
 
 # ── no surface 500s with the glossary wired in ─────────────────────────────────────────────────────

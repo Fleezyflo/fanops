@@ -40,8 +40,8 @@ def _signalled_source(led, sid="s1"):
 # ---- C1: proven_hook_styles — gated cross-surface union, dual-flag, fail-open ----
 def test_proven_hook_styles_unions_gated_winners(tmp_path, monkeypatch):
     _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _gated_winner(led, "@a", "WIN_A"); _gated_winner(led, "@b", "WIN_B")
-    accts = _accts(cfg, ("@a", [Platform.instagram]), ("@b", [Platform.instagram]))
+    _gated_winner(led, "a", "WIN_A"); _gated_winner(led, "b", "WIN_B")
+    accts = _accts(cfg, ("a", [Platform.instagram]), ("b", [Platform.instagram]))
     assert proven_hook_styles(led, cfg, accts) == ["WIN_A", "WIN_B"]   # ordered, de-duped union
 
 def test_proven_hook_styles_drops_third_person_winners(tmp_path, monkeypatch):
@@ -50,9 +50,9 @@ def test_proven_hook_styles_drops_third_person_winners(tmp_path, monkeypatch):
     # read-only viewer-POV METER (narration_signature) BEFORE injection: a third-person narration winner is
     # dropped, a viewer-POV winner survives. Both learning flags forced ON or the filter is never exercised.
     _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _gated_winner(led, "@a", "you don't expect this")               # viewer-POV winner -> survives
-    _gated_winner(led, "@b", "he stopped answering for a reason")   # third-person narration winner -> dropped
-    accts = _accts(cfg, ("@a", [Platform.instagram]), ("@b", [Platform.instagram]))
+    _gated_winner(led, "a", "you don't expect this")               # viewer-POV winner -> survives
+    _gated_winner(led, "b", "he stopped answering for a reason")   # third-person narration winner -> dropped
+    accts = _accts(cfg, ("a", [Platform.instagram]), ("b", [Platform.instagram]))
     out = proven_hook_styles(led, cfg, accts)
     assert "you don't expect this" in out                          # viewer-POV survives the filter
     assert "he stopped answering for a reason" not in out          # third-person winner starved from priming
@@ -60,23 +60,23 @@ def test_proven_hook_styles_drops_third_person_winners(tmp_path, monkeypatch):
 def test_proven_hook_styles_master_flag_off(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_VARIANT_LEARNING", raising=False)
     monkeypatch.setenv("FANOPS_MOMENT_HOOK_LEARNING", "on")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "@a", "WIN_A")
-    assert proven_hook_styles(led, cfg, _accts(cfg, ("@a", [Platform.instagram]))) == []
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "a", "WIN_A")
+    assert proven_hook_styles(led, cfg, _accts(cfg, ("a", [Platform.instagram]))) == []
 
 def test_proven_hook_styles_moment_flag_off(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "on")
     monkeypatch.delenv("FANOPS_MOMENT_HOOK_LEARNING", raising=False)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "@a", "WIN_A")
-    assert proven_hook_styles(led, cfg, _accts(cfg, ("@a", [Platform.instagram]))) == []
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "a", "WIN_A")
+    assert proven_hook_styles(led, cfg, _accts(cfg, ("a", [Platform.instagram]))) == []
 
 def test_proven_hook_styles_none_accounts(tmp_path, monkeypatch):
     _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     assert proven_hook_styles(led, cfg, None) == []
 
 def test_proven_hook_styles_fail_open(tmp_path, monkeypatch, mocker):
-    _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "@a", "WIN_A")
+    _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "a", "WIN_A")
     mocker.patch("fanops.moment_hook_learning.best_hooks", side_effect=RuntimeError("boom"))
-    assert proven_hook_styles(led, cfg, _accts(cfg, ("@a", [Platform.instagram]))) == []   # logged + []
+    assert proven_hook_styles(led, cfg, _accts(cfg, ("a", [Platform.instagram]))) == []   # logged + []
 
 def test_proven_hook_styles_uses_ucb_when_variant_ucb_on(tmp_path, monkeypatch, mocker):
     # reuses caption.py's scorer selection: variant_ucb on -> ucb_rank, off -> best_hooks.
@@ -84,7 +84,7 @@ def test_proven_hook_styles_uses_ucb_when_variant_ucb_on(tmp_path, monkeypatch, 
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     ucb = mocker.patch("fanops.moment_hook_learning.ucb_rank", return_value=["UCB_WIN"])
     bh = mocker.patch("fanops.moment_hook_learning.best_hooks", return_value=["GREEDY"])
-    out = proven_hook_styles(led, cfg, _accts(cfg, ("@a", [Platform.instagram])))
+    out = proven_hook_styles(led, cfg, _accts(cfg, ("a", [Platform.instagram])))
     assert out == ["UCB_WIN"] and ucb.called and not bh.called
 
 
@@ -117,16 +117,16 @@ def _pick_and_request_hooks(led, cfg, accounts=None, sid="s1"):
 
 def test_request_moment_hooks_injects_learned_hooks_key(tmp_path, monkeypatch):
     _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _gated_winner(led, "@a", "WIN_A"); _signalled_source(led)
-    led = _pick_and_request_hooks(led, cfg, accounts=_accts(cfg, ("@a", [Platform.instagram])))
+    _gated_winner(led, "a", "WIN_A"); _signalled_source(led)
+    led = _pick_and_request_hooks(led, cfg, accounts=_accts(cfg, ("a", [Platform.instagram])))
     payload = json.loads(request_path(cfg, "moment_hooks", "s1.10.00-28.00").read_text())
     assert payload["learned_hooks"] == ["WIN_A"]
     assert "guidance" in payload                            # base guidance key untouched (learned_hooks is separate)
 
 def test_request_moment_hooks_no_key_when_flag_off(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_MOMENT_HOOK_LEARNING", raising=False)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "@a", "WIN_A"); _signalled_source(led)
-    led = _pick_and_request_hooks(led, cfg, accounts=_accts(cfg, ("@a", [Platform.instagram])))
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "a", "WIN_A"); _signalled_source(led)
+    led = _pick_and_request_hooks(led, cfg, accounts=_accts(cfg, ("a", [Platform.instagram])))
     assert "learned_hooks" not in json.loads(request_path(cfg, "moment_hooks", "s1.10.00-28.00").read_text())
 
 def test_request_moment_hooks_no_key_when_accounts_none(tmp_path, monkeypatch):

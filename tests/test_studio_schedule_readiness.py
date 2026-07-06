@@ -21,16 +21,20 @@ def _client(cfg):
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
 
-def _led_with(cfg, *, render=None, clip_state=ClipState.queued, post_over=None):
+def _led_with(cfg, *, render=None, clip_state=ClipState.queued, post_over=None, moment_hook=None):
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
-        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        mom_kw = dict(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped)
+        if moment_hook is not None: mom_kw["hook"] = moment_hook
+        led.add_moment(Moment(**mom_kw))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=clip_state))
         if render is not None: led.add_render(render)
-        po = dict(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        po = dict(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                   caption="x", state=PostState.queued)
-        po.update(post_over or {})
+        post_over = dict(post_over or {})
+        post_over.pop("variant_hook", None)                         # P9: hook lives on moment, not Post
+        po.update(post_over)
         # R1: if a test overrides state to a terminal state, also override public_url. Default safe.
         from fanops.models import _POST_TERMINAL_REQUIRES_URL
         if po.get("state") in _POST_TERMINAL_REQUIRES_URL and not po.get("public_url"):
@@ -42,9 +46,9 @@ def _led_with(cfg, *, render=None, clip_state=ClipState.queued, post_over=None):
 # ── publish_readiness: (ready, reason) ─────────────────────────────────────────────────────────────
 def test_ready_when_render_shippable_and_hook_matches(tmp_path):
     cfg = Config(root=tmp_path)
-    r = Render(id="r1", clip_id="c", account="@a", surface_key="@a/instagram", hook_text="H",
+    r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="H",
                path=str(cfg.clips / "b.mp4"), state=RenderState.rendered, is_account_cut=True)
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="H")
     ready, reason = views.publish_readiness(led, led.posts["p"])
     assert ready is True and "cut" in reason
 
@@ -65,18 +69,18 @@ def test_not_ready_when_render_record_missing(tmp_path):
 
 def test_not_ready_when_render_not_finished(tmp_path):
     cfg = Config(root=tmp_path)
-    r = Render(id="r1", clip_id="c", account="@a", surface_key="@a/instagram", hook_text="H",
+    r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="H",
                path=str(cfg.clips / "b.mp4"), state=RenderState.retired)
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="H")
     ready, reason = views.publish_readiness(led, led.posts["p"])
     assert ready is False
 
 
 def test_not_ready_on_hook_drift(tmp_path):
     cfg = Config(root=tmp_path)
-    r = Render(id="r1", clip_id="c", account="@a", surface_key="@a/instagram", hook_text="BURNED",
+    r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="BURNED",
                path=str(cfg.clips / "b.mp4"), state=RenderState.rendered, is_account_cut=True)
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "SHOWN"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="SHOWN")
     ready, reason = views.publish_readiness(led, led.posts["p"])
     assert ready is False and "drift" in reason.lower()
 
@@ -91,9 +95,9 @@ def test_not_ready_when_clip_not_shippable(tmp_path):
 def test_ready_when_render_is_queued_state(tmp_path):
     # audit LOW: RenderState.queued is a legit pre-ship state (mirrors ClipState.queued) -> shippable, not a warn
     cfg = Config(root=tmp_path)
-    r = Render(id="r1", clip_id="c", account="@a", surface_key="@a/instagram", hook_text="H",
+    r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="H",
                path=str(cfg.clips / "b.mp4"), state=RenderState.queued, is_account_cut=True)
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="H")
     ready, _ = views.publish_readiness(led, led.posts["p"])
     assert ready is True
 
@@ -101,9 +105,9 @@ def test_ready_when_render_is_queued_state(tmp_path):
 def test_not_ready_when_render_file_absent(tmp_path):
     # audit LOW: the chip must not say "ready" when the artifact file is gone — the publish would fail downstream
     cfg = Config(root=tmp_path)
-    r = Render(id="r1", clip_id="c", account="@a", surface_key="@a/instagram", hook_text="H",
+    r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="H",
                path=str(cfg.clips / "GONE.mp4"), state=RenderState.rendered, is_account_cut=True)  # no such file
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="H")
     ready, reason = views.publish_readiness(led, led.posts["p"])
     assert ready is False and "disk" in reason.lower()
 
@@ -129,10 +133,10 @@ def test_publish_readiness_fail_open(tmp_path):
 def test_explain_suggested_time_names_account_platform_lead(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", "45")
     cfg = Config(root=tmp_path)
-    row = views.ScheduleRow(post_id="p", scheduled_time=None, account="@a", platform="instagram",
+    row = views.ScheduleRow(post_id="p", scheduled_time=None, account="a", platform="instagram",
                             clip_id="c", state="queued", imminent=False, editable=True)
     why = views.explain_suggested_time(cfg, row)
-    assert "@a" in why and "instagram" in why and "45" in why
+    assert "a" in why and "instagram" in why and "45" in why
 
 
 # ── rows carry readiness/why only on editable rows ─────────────────────────────────────────────────
@@ -141,7 +145,7 @@ def test_editable_row_carries_readiness_and_why(tmp_path):
     led = _led_with(cfg, clip_state=ClipState.queued, post_over={"scheduled_time": FUTURE})   # future -> editable
     rows = views.schedule_rows(led, cfg, now=NOW)
     row = next(r for r in rows if r.post_id == "p")
-    assert row.editable and row.ready is True and row.why_suggested and "@a" in row.why_suggested
+    assert row.editable and row.ready is True and row.why_suggested and "a" in row.why_suggested
 
 
 def test_readonly_past_row_has_no_readiness(tmp_path):
@@ -187,7 +191,7 @@ def test_not_ready_when_oversize_zernio_tiktok(tmp_path, monkeypatch):
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(big), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
+        led.add_post(Post(id="p", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
                           caption="x", state=PostState.awaiting_approval))
     led = Ledger.load(cfg)
     ready, reason = views.publish_readiness(led, led.posts["p"], cfg)
@@ -208,11 +212,11 @@ def test_review_surface_carries_oversize_readiness(tmp_path, monkeypatch):
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(big), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
+        led.add_post(Post(id="p", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
                           caption="x", state=PostState.awaiting_approval))
     led = Ledger.load(cfg)
     accts = Accounts.load(cfg)
     post = led.posts["p"]
-    acct = next(a for a in accts.accounts if a.handle == "@tt")
+    acct = next(a for a in accts.accounts if a.handle == "tt")
     surf = _surface(post, persona=None, now=NOW, cfg=cfg, led=led, acct=acct, affinities=[])
     assert surf.ready is False and surf.ready_reason and "too large" in surf.ready_reason.lower()

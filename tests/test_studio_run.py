@@ -39,12 +39,12 @@ def test_run_ingest_with_batch_name_mints_batch_and_stamps_source(tmp_path, mock
     # A non-blank batch_name mints a named, account-targeted Batch in the SAME transaction; the catalogued
     # source carries its id and the detail reports the batch.
     cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
-    res = actions.run_ingest(cfg, batch_name="  Launch week  ", target_accounts=["@a", "@a", ""])
+    res = actions.run_ingest(cfg, batch_name="  Launch week  ", target_accounts=["a", "a", ""])
     assert res.ok and res.detail["sources"] == 1
     led = Ledger.load(cfg)
     assert len(led.batches) == 1
     b = next(iter(led.batches.values()))
-    assert b.name == "Launch week" and b.target_accounts == ["@a"]    # stripped + deduped + blank-dropped
+    assert b.name == "Launch week" and b.target_accounts == ["a"]    # stripped + deduped + blank-dropped
     assert res.detail["batch"] == "Launch week" and res.detail["batch_id"] == b.id
     assert next(iter(led.sources.values())).batch_id == b.id          # source stamped under the batch
 
@@ -68,7 +68,7 @@ def _seed_accounts(cfg, handles):
 def test_run_ingest_zero_target_bubbles_warning(tmp_path, mocker):
     # Face 1-fu (T4): a batch targeting a handle that is NOT active still mints (advisory, not fatal) but
     # surfaces detail["warnings"] — so the operator isn't left with a silent zero-post run downstream.
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["@a"])
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["a"])
     res = actions.run_ingest(cfg, batch_name="Ghost run", target_accounts=["ghost"])
     assert res.ok and res.detail.get("warnings") and "ghost" in res.detail["warnings"][0]
     b = next(iter(Ledger.load(cfg).batches.values()))
@@ -76,14 +76,14 @@ def test_run_ingest_zero_target_bubbles_warning(tmp_path, mocker):
 
 def test_run_ingest_on_target_no_warnings_key(tmp_path, mocker):
     # A batch targeting an ACTIVE handle carries no warning (no false positive).
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["@a", "@b"])
-    res = actions.run_ingest(cfg, batch_name="Real", target_accounts=["@a"])
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["a", "b"])
+    res = actions.run_ingest(cfg, batch_name="Real", target_accounts=["a"])
     assert res.ok and "warnings" not in res.detail
 
 def test_run_ingest_single_account_mints_named_batch(tmp_path, mocker):
     # B1: with exactly ONE active account, a named batch with NO target is the []-ALL sentinel — never
     # flagged as zero-target (regression guard for T1's [] path on the production run_ingest path).
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["@solo"])
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["solo"])
     res = actions.run_ingest(cfg, batch_name="Solo")
     assert res.ok and res.detail["batch"] == "Solo" and "warnings" not in res.detail
     b = next(iter(Ledger.load(cfg).batches.values()))
@@ -135,7 +135,7 @@ def test_run_ingest_reports_added_delta_not_cumulative(tmp_path, mocker):
 # ---- WS-I1 Task 5 (ING-3/5): no orphan batch; deterministic id; native PII count ----
 def test_run_ingest_empty_inbox_mints_no_batch(tmp_path, mocker):
     cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)   # exists but empty
-    res = actions.run_ingest(cfg, batch_name="Ghost batch", target_accounts=["@a"])
+    res = actions.run_ingest(cfg, batch_name="Ghost batch", target_accounts=["a"])
     assert res.ok and res.detail["added"] == 0
     assert "batch" not in res.detail and res.detail.get("batch_skipped")        # no orphan; operator told why
     assert len(Ledger.load(cfg).batches) == 0
@@ -372,12 +372,12 @@ def test_run_ingest_route_passes_batch_fields(tmp_path, mocker):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
     app = create_app(cfg); app.config.update(TESTING=True)
-    r = app.test_client().post("/run/ingest", data={"batch_name": "Launch", "target_accounts": ["@a", "@b"]})
+    r = app.test_client().post("/run/ingest", data={"batch_name": "Launch", "target_accounts": ["a", "b"]})
     assert r.status_code == 200
     led = Ledger.load(cfg)
     assert len(led.batches) == 1
     b = next(iter(led.batches.values()))
-    assert b.name == "Launch" and b.target_accounts == ["@a", "@b"]
+    assert b.name == "Launch" and b.target_accounts == ["a", "b"]
     assert next(iter(led.sources.values())).batch_id == b.id
 
 def test_run_advance_route(tmp_path):

@@ -7,29 +7,45 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Source, Moment, Clip, SourceState
 from fanops.variant_amplify import update_streaks, amplify_candidates, apply_variant_amplify
+from fanops.variant_learning import _hook_for_post
 
 
-def _post(pid, acct, hook, lift, state=PostState.analyzed):
-    # R1: stamp a synthetic dryrun:// permalink so the analyzed-state invariant holds. The
-    # learning math only reads metrics + state + variant_hook; the URL is shape-only here.
+def _lineage(pid, acct, hook, lift, state=PostState.analyzed, *, src_id="s1"):
+    # P9: hook lives on the owner moment; each analyzed post needs its own moment/clip lineage.
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
+    clip_id, moment_id = f"c_{pid}", f"m_{pid}"
     url = f"dryrun://{pid}" if state in _POST_TERMINAL_REQUIRES_URL else None
-    return Post(id=pid, parent_id="c1", account=acct, account_id="1", platform=Platform.instagram,
-                caption="x", state=state, variant_key=f"vk_{pid}", variant_hook=hook,
-                metrics={"lift_score": lift}, public_url=url)
+    moment = Moment(id=moment_id, parent_id=src_id, start=0.0, end=4.0, reason="r", hook=hook,
+                    transcript_excerpt="ex")
+    clip = Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4")
+    post = Post(id=pid, parent_id=clip_id, account=acct, account_id="1", platform=Platform.instagram,
+                caption="x", state=state, metrics={"lift_score": lift}, public_url=url)
+    return moment, clip, post
 
 
-def _led(cfg, posts):
+def _post(pid, acct, hook, lift, state=PostState.analyzed, *, src_id="s1"):
+    return _lineage(pid, acct, hook, lift, state, src_id=src_id)
+
+
+def _add_lineage(led, triple, *, src_id="s1"):
+    m, c, p = triple
+    if not led.sources.get(src_id):
+        led.add_source(Source(id=src_id, source_path="x.mp4", state=SourceState.transcribed,
+                              duration=10.0, transcript=[], language="en"))
+    led.add_moment(m); led.add_clip(c); led.add_post(p)
+
+
+def _led(cfg, triples, *, src_id="s1"):
     led = Ledger.load(cfg)
-    for p in posts:
-        led.add_post(p)
+    for t in triples:
+        _add_lineage(led, t, src_id=src_id)
     return led
 
 
 def _winset(n, hook, lift, start=1):
     # n analyzed posts of `hook` at `lift` + a runner-up far below so best_hooks fires.
-    posts = [_post(str(start + i), "@a", hook, lift) for i in range(n)]
-    posts += [_post(str(start + n + i), "@a", "LOSE", 1.0) for i in range(3)]
+    posts = [_post(str(start + i), "a", hook, lift) for i in range(n)]
+    posts += [_post(str(start + n + i), "a", "LOSE", 1.0) for i in range(3)]
     return posts
 
 
@@ -47,7 +63,7 @@ def test_first_sighting_sets_streak_one(tmp_path):
     cfg = Config(root=tmp_path)            # AMPLIFY_MIN_POSTS default 8
     led = _led(cfg, _winset(8, "WIN", 90.0))
     update_streaks(led, cfg)
-    e = led.variant_streaks["@a|instagram"]
+    e = led.variant_streaks["a|instagram"]
     assert e["hook"] == "WIN" and e["streak"] == 1
 
 
@@ -55,19 +71,19 @@ def test_same_winner_new_evidence_increments(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     update_streaks(led, cfg)               # streak 1
-    led.add_post(_post("99", "@a", "WIN", 90.0))   # NEW analyzed evidence (new post id)
+    _add_lineage(led, _post("99", "a", "WIN", 90.0))   # NEW analyzed evidence (new post id)
     update_streaks(led, cfg)               # streak 2
-    assert led.variant_streaks["@a|instagram"]["streak"] == 2
+    assert led.variant_streaks["a|instagram"]["streak"] == 2
 
 
 def test_same_evidence_is_idempotent(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     update_streaks(led, cfg)
-    snap = dict(led.variant_streaks["@a|instagram"])
+    snap = dict(led.variant_streaks["a|instagram"])
     update_streaks(led, cfg)               # SAME evidence -> no change
     update_streaks(led, cfg)               # and again
-    assert led.variant_streaks["@a|instagram"] == snap
+    assert led.variant_streaks["a|instagram"] == snap
 
 
 def test_winner_change_resets_to_one(tmp_path):
@@ -78,9 +94,9 @@ def test_winner_change_resets_to_one(tmp_path):
     # WIN runner-up (mean 90) by >= variant_min_gap (10) — else best_hooks would see no comparative
     # winner and return []. 110 mean -> WIN2 leads WIN by 20 (clears the floor gate).
     for i in range(9):
-        led.add_post(_post(f"2{i}", "@a", "WIN2", 110.0))
+        _add_lineage(led, _post(f"2{i}", "a", "WIN2", 110.0))
     update_streaks(led, cfg)
-    e = led.variant_streaks["@a|instagram"]
+    e = led.variant_streaks["a|instagram"]
     assert e["hook"] == "WIN2" and e["streak"] == 1     # reset, not continued
 
 
@@ -90,20 +106,20 @@ def test_winner_disappears_resets_to_zero(tmp_path):
     update_streaks(led, cfg)               # streak 1
     # Drop below the floor: make the gap tiny so best_hooks now returns [] (raise the losers).
     for p in led.posts.values():
-        if p.variant_hook == "LOSE":
+        if _hook_for_post(led, p) == "LOSE":
             p.metrics["lift_score"] = 89.0
     update_streaks(led, cfg)
-    assert led.variant_streaks["@a|instagram"]["streak"] == 0
+    assert led.variant_streaks["a|instagram"]["streak"] == 0
 
 
 def test_update_streaks_deterministic(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     update_streaks(led, cfg)
-    a = dict(led.variant_streaks["@a|instagram"])
+    a = dict(led.variant_streaks["a|instagram"])
     led2 = _led(cfg, _winset(8, "WIN", 90.0))
     update_streaks(led2, cfg)
-    b = dict(led2.variant_streaks["@a|instagram"])
+    b = dict(led2.variant_streaks["a|instagram"])
     assert a == b                          # same ledger state -> identical streak entry
 
 
@@ -111,7 +127,7 @@ def test_update_streaks_deterministic(tmp_path):
 
 def test_below_floor_no_candidate(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _led(cfg, [_post("1", "@a", "WIN", 90.0), _post("2", "@a", "WIN", 90.0)])  # < floor min_posts
+    led = _led(cfg, [_post("1", "a", "WIN", 90.0), _post("2", "a", "WIN", 90.0)])  # < floor min_posts
     _seed_lineage(led)
     assert amplify_candidates(led, cfg) == []
 
@@ -121,17 +137,17 @@ def test_floor_met_but_below_min_posts(tmp_path):
     led = _led(cfg, _winset(5, "WIN", 90.0))   # 5 >= floor(3) but < amplify(8)
     _seed_lineage(led)
     # streak alone can't rescue it — posts < 8 must veto regardless of streak
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 9}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 9}
     assert amplify_candidates(led, cfg) == []
 
 
 def test_gap_too_small_no_candidate(tmp_path):
     cfg = Config(root=tmp_path)            # AMPLIFY_MIN_GAP=25
-    posts = [_post(str(i), "@a", "WIN", 60.0) for i in range(8)]
-    posts += [_post(str(20 + i), "@a", "LOSE", 50.0) for i in range(8)]   # gap 10 < 25
+    posts = [_post(str(i), "a", "WIN", 60.0) for i in range(8)]
+    posts += [_post(str(20 + i), "a", "LOSE", 50.0) for i in range(8)]   # gap 10 < 25
     led = _led(cfg, posts)
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 9}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 9}
     assert amplify_candidates(led, cfg) == []
 
 
@@ -141,7 +157,7 @@ def test_streak_too_small_no_candidate(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))   # 8 posts, gap 89 -> floor+posts+gap all met
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 2}  # < 3
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 2}  # < 3
     assert amplify_candidates(led, cfg) == []
 
 
@@ -149,12 +165,12 @@ def test_all_gates_met_returns_candidate(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     cands = amplify_candidates(led, cfg)
     assert len(cands) == 1
     c = cands[0]
     assert c["source_id"] == "s1" and c["winning_hook"] == "WIN"
-    assert c["post_id"] in {p.id for p in led.posts.values() if p.variant_hook == "WIN"}
+    assert c["post_id"] in {p.id for p in led.posts.values() if _hook_for_post(led, p) == "WIN"}
 
 
 def test_require_full_objective_excludes_degraded_winner(tmp_path, monkeypatch):
@@ -163,8 +179,8 @@ def test_require_full_objective_excludes_degraded_winner(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
-    win = next(p for p in led.posts.values() if p.variant_hook == "WIN")
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    win = next(p for p in led.posts.values() if _hook_for_post(led, p) == "WIN")
     win.metrics["lift_degraded"] = True                        # one winning post scored on a partial objective
     monkeypatch.delenv("FANOPS_REQUIRE_FULL_OBJECTIVE", raising=False)
     assert len(amplify_candidates(led, cfg)) == 1              # default OFF -> unchanged
@@ -176,7 +192,7 @@ def test_source_at_amplify_budget_skipped(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     led.sources["s1"].meta["amplify_count"] = 3        # E1 cap reached (max_amplify_per_source=3)
     assert amplify_candidates(led, cfg) == []
 
@@ -190,7 +206,7 @@ def test_amplify_candidates_deterministic(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     assert amplify_candidates(led, cfg) == amplify_candidates(led, cfg)
 
 
@@ -216,7 +232,7 @@ def test_apply_amplifies_when_fully_gated(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     _validate(cfg)                                   # Phase 2: live-validation precondition met
     apply_variant_amplify(led, cfg)
     # the source was amplified: state flipped + the moment-request carries the winning hook.
@@ -224,7 +240,7 @@ def test_apply_amplifies_when_fully_gated(tmp_path, monkeypatch):
     payload = json.loads(request_path(cfg, "moments", "s1").read_text())
     assert "WIN" in payload["guidance"]
     # G2: the winning analyzed post survives, state unchanged.
-    win_posts = [p for p in led.posts.values() if p.variant_hook == "WIN"]
+    win_posts = [p for p in led.posts.values() if _hook_for_post(led, p) == "WIN"]
     assert win_posts and all(p.state is PostState.analyzed for p in win_posts)
 
 
@@ -233,7 +249,7 @@ def test_apply_noop_when_gate_unmet(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 1}  # < 3
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 1}  # < 3
     _validate(cfg)                                   # Phase 2: isolate the STREAK gate, not validation
     before = _frozen(led)
     apply_variant_amplify(led, cfg)
@@ -246,7 +262,7 @@ def test_apply_inert_when_flag_off(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 9}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 9}
     before = _frozen(led)
     apply_variant_amplify(led, cfg)        # flag OFF -> kill switch, fully inert
     assert _frozen(led) == before
@@ -258,7 +274,7 @@ def test_apply_failsafe_on_internal_error(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     _validate(cfg)                                   # Phase 2: reach the try-body, not the validation gate
     # Make the candidate computation raise -> the whole pass must swallow it, no partial mutation.
     monkeypatch.setattr("fanops.variant_amplify.amplify_candidates",
@@ -284,7 +300,7 @@ def test_apply_amplify_inert_until_learning_validated(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     before = _frozen(led)
     apply_variant_amplify(led, cfg)                      # no cutover.json -> inert despite full gate
     assert _frozen(led) == before
@@ -299,7 +315,7 @@ def test_apply_amplifies_once_learning_validated(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     _validate(cfg)
     apply_variant_amplify(led, cfg)
     assert led.sources["s1"].state is SourceState.moments_requested   # amplified once validated
@@ -314,7 +330,7 @@ def test_apply_failsafe_logs_the_error_detail(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     _validate(cfg)                                   # Phase 2: reach the try-body, not the validation gate
     monkeypatch.setattr("fanops.variant_amplify.amplify_candidates",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("AMPLIFY-BOOM-SENTINEL")))
@@ -325,20 +341,13 @@ def test_apply_failsafe_logs_the_error_detail(tmp_path, monkeypatch):
 
 # ---- MOL-85: per-candidate isolation in the amplify loop (mirror p4_dim_bias's per-item guard) ----
 def _seed_gated_surface(led, cfg, acct):
-    """Build ONE fully-gated amplify surface on `acct` with its OWN source lineage (source_<acct>,
-    clip_<acct>, moment_<acct>). 8 analyzed WIN posts + 3 runner-ups, streak 3 — clears every gate,
-    so amplify_candidates emits exactly one candidate for this surface. Post ids are namespaced by
-    acct so the three surfaces' lineages never collide."""
-    sid, cid, mid = f"source_{acct}", f"clip_{acct}", f"moment_{acct}"
-    posts = ([_post(f"{acct}_w{i}", acct, "WIN", 90.0) for i in range(8)]
-             + [_post(f"{acct}_l{i}", acct, "LOSE", 1.0) for i in range(3)])
-    for p in posts:
-        led.add_post(p.model_copy(update={"parent_id": cid}))
-    led.add_source(Source(id=sid, source_path=f"{acct}.mp4", state=SourceState.transcribed,
-                          duration=10.0, transcript=[], language="en"))
-    led.add_moment(Moment(id=mid, parent_id=sid, start=0.0, end=4.0, reason="r",
-                          transcript_excerpt="ex"))
-    led.add_clip(Clip(id=cid, parent_id=mid, path=f"{cid}.mp4"))
+    """Build ONE fully-gated amplify surface on `acct` with its OWN source lineage (source_<acct>).
+    8 analyzed WIN posts + 3 runner-ups, streak 3 — clears every gate."""
+    sid = f"source_{acct}"
+    for i in range(8):
+        _add_lineage(led, _post(f"{acct}_w{i}", acct, "WIN", 90.0, src_id=sid), src_id=sid)
+    for i in range(3):
+        _add_lineage(led, _post(f"{acct}_l{i}", acct, "LOSE", 1.0, src_id=sid), src_id=sid)
     led.variant_streaks[f"{acct}|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
 
 
@@ -351,7 +360,7 @@ def test_apply_isolates_one_failing_candidate(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    for acct in ("@a", "@b", "@c"):
+    for acct in ("a", "b", "c"):
         _seed_gated_surface(led, cfg, acct)
     _validate(cfg)                                   # Phase 2: reach the try-body
 
@@ -360,8 +369,8 @@ def test_apply_isolates_one_failing_candidate(tmp_path, monkeypatch):
     from fanops import variant_amplify as va
     real_amplify = va.amplify
     b_pids = {c["post_id"] for c in va.amplify_candidates(led, cfg)
-              if c["source_id"] == "source_@b"}
-    assert b_pids, "fixture must produce a @b candidate"
+              if c["source_id"] == "source_b"}
+    assert b_pids, "fixture must produce a b candidate"
 
     def _amplify(led_, cfg_, post_ids, *a, **k):
         if set(post_ids) & b_pids:
@@ -372,11 +381,11 @@ def test_apply_isolates_one_failing_candidate(tmp_path, monkeypatch):
     apply_variant_amplify(led, cfg)                  # must NOT raise
 
     # @a and @c amplified (their mutations landed); @b did NOT (its amplify raised, isolated).
-    assert led.sources["source_@a"].state is SourceState.moments_requested
-    assert led.sources["source_@c"].state is SourceState.moments_requested
-    assert led.sources["source_@b"].state is SourceState.transcribed   # untouched — failure isolated
-    assert request_path(cfg, "moments", "source_@a").exists()
-    assert request_path(cfg, "moments", "source_@c").exists()
+    assert led.sources["source_a"].state is SourceState.moments_requested
+    assert led.sources["source_c"].state is SourceState.moments_requested
+    assert led.sources["source_b"].state is SourceState.transcribed   # untouched — failure isolated
+    assert request_path(cfg, "moments", "source_a").exists()
+    assert request_path(cfg, "moments", "source_c").exists()
     assert not request_path(cfg, "moments", "source_@b").exists()
 
     # Diagnosability: the log names WHICH candidate failed (its post_id), not a generic outer 'error'.
@@ -442,7 +451,7 @@ def test_single_window_signal_does_not_amplify(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(20, "WIN", 99.0))      # overwhelming evidence in ONE window
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 1}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 1}
     _validate(cfg)                                   # Phase 2: isolate the STREAK gate, not validation
     before = _frozen(led)
     apply_variant_amplify(led, cfg)
@@ -473,10 +482,10 @@ def test_ucb_flag_does_not_change_amplify_candidates(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
     posts = _winset(8, "WIN", 90.0)                       # 8 WIN@90 + 3 LOSE@1 -> clears amplify gate
-    posts.append(_post("90", "@a", "SPARSE", 5.0))        # 1 under-sampled challenger ucb would explore
+    posts.append(_post("90", "a", "SPARSE", 5.0))        # 1 under-sampled challenger ucb would explore
     led = _led(cfg, posts)
     _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     monkeypatch.delenv("FANOPS_VARIANT_UCB", raising=False)
     off = amplify_candidates(led, cfg)
     monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
@@ -495,7 +504,7 @@ def test_apply_amplify_postiz_inert_until_metrics_confirmed(tmp_path, monkeypatc
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0)); _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     before = _frozen(led)
     apply_variant_amplify(led, cfg)                      # no cutover.json -> inert despite full gate + live postiz
     assert _frozen(led) == before
@@ -509,7 +518,7 @@ def test_apply_amplify_postiz_amplifies_once_metrics_confirmed(tmp_path, monkeyp
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0)); _seed_lineage(led)
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     _validate(cfg)                                       # simulate M3: metrics_confirmed=True
     apply_variant_amplify(led, cfg)
     assert led.sources["s1"].state is SourceState.moments_requested   # amplified once validated, even on postiz
@@ -522,4 +531,4 @@ def test_update_streaks_returns_none_mutates_in_place(tmp_path):
     led = _led(cfg, _winset(8, "WIN", 90.0))
     out = update_streaks(led, cfg)
     assert out is None                                         # annotation honored, no dead return
-    assert led.variant_streaks["@a|instagram"]["hook"] == "WIN"   # mutation still propagates in place
+    assert led.variant_streaks["a|instagram"]["hook"] == "WIN"   # mutation still propagates in place

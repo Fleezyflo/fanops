@@ -59,14 +59,14 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
 
     # 2 · the caption request carries the corpus; ingest LEADS the vetted line with it + traces provenance
     _clip(led)
-    request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)], accounts=accts)
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="@a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+        CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
-    tags = led.clips["clip_1"].meta_captions["@a/instagram"]["hashtags"]
+    tags = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
     assert tags[0] == "#detroitrap"                            # B1: the curated corpus leads, even over #hiphop
-    sources = led.clips["clip_1"].meta_captions["@a/instagram"]["tag_sources"]
+    sources = led.clips["clip_1"].meta_captions["a/instagram"]["tag_sources"]
     assert set(sources) == set(tags) and all(sources.values())
     assert sources["#detroitrap"] == "corpus"                  # every shipped tag traces to a real signal
 
@@ -78,7 +78,7 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     assert store[0] == "#freshwave"                            # ranked by LIVE Graph reach — a tag we never named
 
     # 4 · SEVERANCE: an analyzed post with high OWN reach does NOT promote its hashtag in the store
-    led.add_post(Post(id="post_1", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="post_1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption=" ".join(tags), hashtags=tags,
                       state=PostState.analyzed, metrics={"reach": 8000}, public_url="dryrun://post_1"))
     refresh_store(cfg, get=get)                                # rebuild AFTER the analyzed post exists

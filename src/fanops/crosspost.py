@@ -18,7 +18,7 @@ from fanops.ids import child_id, surface_key, _hash
 from fanops.clip import render_moment, render_account_cut, realized_clip_seconds
 from fanops.tagging import decide_tag, ARTIST_HANDLE
 from fanops.timeutil import parse_iso as _parse, iso_z, _operator_zone
-from fanops.casting import account_selection_admits, casting_gate_pending, casting_gate_failed_to_open, repair_casting_selections   # RF1 durable-selection gate + P1 casting-pending wait + xc-2 failed-gate defer
+from fanops.casting import affinity_admits   # P8: crosspost gate = affinity check only (no casting defer/repair)
 from fanops.log import get_logger
 
 # Staggering constants. _STEP_MIN is the fixed per-index spacing; _JITTER_MAX is the bounded
@@ -163,12 +163,9 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
         get_logger(cfg)("crosspost", clip.id, "batch_target_skip",
                         surface=f"{surf.account}/{surf.platform.value}", batch=src_batch)
         return 1   # batch targets a specific account set; this surface isn't in it (no post born)
-    if not account_selection_admits(cfg, led, m, surf.account):
-        # RF1 durable-selection gate (Face 3), shared with caption-scoping so they can't drift: a cast source
-        # admits an account ONLY its AccountSelection's moments (or all, if its method is the LABELLED
-        # fan_all_default); a source with no selection falls back to the legacy affinities path; flag-OFF
-        # IGNORES selections (A2). See casting.account_selection_admits. Per-surface breadcrumb so a silent
-        # deny is diagnosable — else 18/20 dropped surfaces read as one generic no_post_born with no reason.
+    if not affinity_admits(cfg, m, surf.account):
+        # P8: owner-driven gate — admit iff account is in moment.affinities (single-owner moments always
+        # have affinities=[owner]; uncast [] fans to all; casting OFF ignores affinities — A2 firewall).
         get_logger(cfg)("crosspost", clip.id, "skipped_surface",
                         surface=f"{surf.account}/{surf.platform.value}", why="not_cast")
         return 0
@@ -191,6 +188,8 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
     skey = surface_key(surf.account, surf.platform.value)
     pid = child_id("post", target_clip.id, skey)        # stable, content-addressed
     cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
+    if cap is None:
+        cap = clip.meta_captions.get(f"@{surf.account}/{surf.platform.value}")   # legacy @-prefixed caption keys
     if cap is None:
         # No caption for THIS surface (clip captioned for some surfaces but not this one).
         # An autonomous run would otherwise drop a real post with zero trace — leave a
@@ -252,7 +251,6 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
     base = _parse(base_time)
     date_str = base.date().isoformat()
     surfaces = accounts.surfaces()
-    repaired_sources: set[str] = set()
     for clip in _seed_clips(led):   # captioned + not held + not retired
         # AUDIT (g): the clip's PLAYABLE duration is its MOMENT window (end - start). Clip has no
         # .duration field; the seed clip is rendered from [start,end] of the source, so the window
@@ -264,16 +262,6 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         # moment->source lineage (m.parent_id == source id). A non-empty target_accounts HARD-bounds
         # which surfaces a post is born for (the casting-OFF enforcement path); empty/missing => no skip.
         src = led.sources.get(m.parent_id) if m is not None else None
-        if src is not None and cfg.account_casting and src.id not in repaired_sources:
-            led = repair_casting_selections(led, cfg, accounts, src.id)
-            repaired_sources.add(src.id)
-        # P1 casting-pending wait + xc-2: defer when the casting answer hasn't landed (gate open, unanswered) OR
-        # when the gate SHOULD have opened but didn't (request_moment_casting I/O failure) — both mean "fan out
-        # NEXT pass," never silently fan-to-all this pass (mirror: a clip waits for its caption gate).
-        if src is not None and (casting_gate_pending(cfg, src.id, led=led)
-                                or casting_gate_failed_to_open(cfg, led, accounts, src.id)):
-            get_logger(cfg)("crosspost", clip.id, "casting_pending_skip", source=src.id)
-            continue
         src_batch = src.batch_id if src is not None else None
         tgt = led.get_batch(src_batch).target_accounts if (src_batch and led.get_batch(src_batch)) else []
         n_skipped = 0   # T5: per-CLIP tally of batch-target exclusions (reset each clip, never bled across clips)

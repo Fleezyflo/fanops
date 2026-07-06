@@ -15,7 +15,7 @@ _FUTURE = "2099-01-01T00:00:00Z"
 
 def _seed(cfg, pid, state=PostState.awaiting_approval, when=_FUTURE):
     with Ledger.transaction(cfg) as led:
-        led.add_post(Post(id=pid, parent_id="c1", account="@a", account_id="1",
+        led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="1",
                           platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="dryrun://c1"))
 
 
@@ -73,7 +73,7 @@ def _seed_review(cfg, *, state=PostState.awaiting_approval, pid="p1", when=_FUTU
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                               reason="drop", transcript_excerpt="go", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="1",
+        led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="EDIT ME", state=state, scheduled_time=when, public_url="dryrun://clip_1"))
 
 
@@ -82,7 +82,7 @@ def test_review_bucket_holds_awaiting_not_queued(tmp_path):
     # posts have moved on to the Schedule and must NOT appear here.
     cfg = Config(root=tmp_path); _seed_review(cfg, state=PostState.awaiting_approval, pid="p_await")
     with Ledger.transaction(cfg) as led:
-        led.add_post(Post(id="p_appr", parent_id="clip_1", account="@a", account_id="1",
+        led.add_post(Post(id="p_appr", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="approved", state=PostState.queued, scheduled_time=_FUTURE, public_url="dryrun://p_appr"))
     cards = views.review_buckets(Ledger.load(cfg), Accounts.load(cfg), cfg, now=_NOW)
     editable = [c for c in cards if c.bucket == "editable"]
@@ -116,7 +116,7 @@ def test_get_review_renders_ingest_day_header(tmp_path):
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                               reason="drop", transcript_excerpt="go", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+        led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
     html = _client(cfg).get("/review?view=list").data
     assert b'class="day-head">2026-06-03' in html
@@ -138,7 +138,7 @@ def test_review_day_header_re_emits_across_pagination_boundary(tmp_path):
             for i in range(n):
                 cid = f"clip_{sid}_{i}"
                 led.add_clip(Clip(id=cid, parent_id=f"mom_{sid}", path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-                led.add_post(Post(id=f"p_{sid}_{i}", parent_id=cid, account="@a", account_id="1",
+                led.add_post(Post(id=f"p_{sid}_{i}", parent_id=cid, account="a", account_id="1",
                                   platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://1"))
     p1 = _client(cfg).get("/review?view=list").data
     p2 = _client(cfg).get(f"/review?view=list&offset={views.GRID_PAGE_SIZE}").data
@@ -203,7 +203,7 @@ def test_approve_posts_untimed_gets_suggestion_not_now(tmp_path):
     _seed_review(cfg, pid="p_untimed", when=None)               # born with NO time
     far = iso_z(now + timedelta(hours=9))
     with Ledger.transaction(cfg) as led:                        # a sibling with a still-future operator time
-        led.add_post(Post(id="p_future", parent_id="clip_1", account="@a", account_id="1",
+        led.add_post(Post(id="p_future", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=far, public_url="dryrun://p_future"))
     r = actions.approve_posts(cfg, ["p_untimed", "p_future"], now=now)
     assert r.ok
@@ -240,7 +240,7 @@ def _seed_two_accounts(cfg):
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
         {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}]}))
 
-def _awaiting(led, pid, *, clip="clip_1", acct="@a", aid="1", batch=None, when=_FUTURE):
+def _awaiting(led, pid, *, clip="clip_1", acct="a", aid="1", batch=None, when=_FUTURE):
     led.add_post(Post(id=pid, parent_id=clip, account=acct, account_id=aid, platform=Platform.instagram,
                       caption="x", state=PostState.awaiting_approval, scheduled_time=when, batch_id=batch, public_url="dryrun://sweep"))
 
@@ -255,9 +255,9 @@ def _seed_review_lineage(cfg):     # two clips on one moment so the route tests 
 def test_approve_clip_approves_all_surfaces_of_one_moment(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
-        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
-        _awaiting(led, "p_other", clip="clip_2", acct="@a", aid="1")
+        _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="b", aid="2")
+        _awaiting(led, "p_other", clip="clip_2", acct="a", aid="1")
     r = actions.approve_clip(cfg, "clip_1", now=_NOW)
     assert r.ok and r.detail["approved"] == 2 and r.detail["clip_id"] == "clip_1"   # detail carries the scope
     led = Ledger.load(cfg)
@@ -272,10 +272,10 @@ def test_approve_clip_noop_when_no_awaiting(tmp_path):
 def test_approve_account_approves_one_account_across_clips(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a1", clip="clip_1", acct="@a", aid="1")
-        _awaiting(led, "p_a2", clip="clip_2", acct="@a", aid="1")
-        _awaiting(led, "p_b1", clip="clip_1", acct="@b", aid="2")
-    r = actions.approve_account(cfg, "@a", now=_NOW)
+        _awaiting(led, "p_a1", clip="clip_1", acct="a", aid="1")
+        _awaiting(led, "p_a2", clip="clip_2", acct="a", aid="1")
+        _awaiting(led, "p_b1", clip="clip_1", acct="b", aid="2")
+    r = actions.approve_account(cfg, "a", now=_NOW)
     assert r.ok and r.detail["approved"] == 2
     led = Ledger.load(cfg)
     assert led.posts["p_a1"].state is PostState.queued and led.posts["p_a2"].state is PostState.queued
@@ -284,9 +284,9 @@ def test_approve_account_approves_one_account_across_clips(tmp_path):
 def test_approve_account_scoped_to_batch(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_b1", clip="clip_1", acct="@a", aid="1", batch="B1")
-        _awaiting(led, "p_b2", clip="clip_2", acct="@a", aid="1", batch="B2")
-    r = actions.approve_account(cfg, "@a", batch="B1", now=_NOW)
+        _awaiting(led, "p_b1", clip="clip_1", acct="a", aid="1", batch="B1")
+        _awaiting(led, "p_b2", clip="clip_2", acct="a", aid="1", batch="B2")
+    r = actions.approve_account(cfg, "a", batch="B1", now=_NOW)
     assert r.ok and r.detail["approved"] == 1
     led = Ledger.load(cfg)
     assert led.posts["p_b1"].state is PostState.queued
@@ -301,8 +301,8 @@ def test_approve_account_untimed_gets_suggestion_not_now(tmp_path):
     from fanops.timeutil import iso_z, parse_iso
     cfg = Config(root=tmp_path); now = _approval_now(); now_iso = iso_z(now); _seed_two_accounts(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_u", acct="@a", aid="1", when=None)
-    r = actions.approve_account(cfg, "@a", now=now)
+        _awaiting(led, "p_u", acct="a", aid="1", when=None)
+    r = actions.approve_account(cfg, "a", now=now)
     assert r.ok
     pu = Ledger.load(cfg).posts["p_u"]
     assert pu.state is PostState.queued and parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso
@@ -310,8 +310,8 @@ def test_approve_account_untimed_gets_suggestion_not_now(tmp_path):
 def test_post_approve_clip_route_approves_all_accounts(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
-        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
+        _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="b", aid="2")
     r = _client(cfg).post("/posts/approve-clip/clip_1")
     assert r.status_code == 200
     led = Ledger.load(cfg)
@@ -320,9 +320,9 @@ def test_post_approve_clip_route_approves_all_accounts(tmp_path):
 def test_post_approve_account_route_scopes_to_filter(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a1", clip="clip_1", acct="@a", aid="1")
-        _awaiting(led, "p_a2", clip="clip_2", acct="@a", aid="1")
-        _awaiting(led, "p_b1", clip="clip_1", acct="@b", aid="2")
+        _awaiting(led, "p_a1", clip="clip_1", acct="a", aid="1")
+        _awaiting(led, "p_a2", clip="clip_2", acct="a", aid="1")
+        _awaiting(led, "p_b1", clip="clip_1", acct="b", aid="2")
     r = _client(cfg).post("/posts/approve-account?account=@a")
     assert r.status_code == 200
     led = Ledger.load(cfg)
@@ -332,21 +332,21 @@ def test_post_approve_account_route_scopes_to_filter(tmp_path):
 def test_review_renders_bulk_approve_buttons(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
-        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
+        _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="b", aid="2")
     html = _client(cfg).get("/review?view=list").data
     assert b"approve-clip/clip_1" in html                              # per-card "approve all accounts of this moment"
     # the one-account-across-the-video button appears only when an account filter is active
     html_a = _client(cfg).get("/review?view=list&account=@a").data
-    assert b"approve-account" in html_a and b"Approve all @a" in html_a
+    assert b"approve-account" in html_a and b"Approve all a" in html_a
 
 
 # ---- M3c: compact list mode — a dense, video-less worklist for scanning rich per-account sets ----
 def test_compact_view_omits_video_players(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
-        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
+        _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="b", aid="2")
     full = _client(cfg).get("/review").data
     compact = _client(cfg).get("/review?compact=1").data
     assert b"<video" in full                       # the default view shows the per-account video switcher
@@ -355,18 +355,18 @@ def test_compact_view_omits_video_players(tmp_path):
 def test_compact_view_keeps_bulk_approve(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
-        _awaiting(led, "p_b", clip="clip_1", acct="@b", aid="2")
+        _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
+        _awaiting(led, "p_b", clip="clip_1", acct="b", aid="2")
     html = _client(cfg).get("/review?view=list&compact=1").data
     assert b'name="ids"' in html and b"Approve selected" in html       # bulk approve still works in compact
     assert b"approve-clip/clip_1" in html                              # per-card approve-all still present
-    assert b'value="p_a"' in html and b"@a" in html and b"@b" in html  # every surface is still listed + selectable
+    assert b'value="p_a"' in html and b"a" in html and b"b" in html  # every surface is still listed + selectable
 
 def test_compact_action_urls_carry_compact(tmp_path):
     # the mode must PERSIST: action/pagination URLs carry compact=1 so a click doesn't bounce back to full.
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
     html = _client(cfg).get("/review?compact=1").data
     assert b"compact=1" in html                                        # carried into the body's action URLs
 
@@ -374,15 +374,15 @@ def test_compact_persists_across_approve_rerender(tmp_path):
     # the htmx re-render after an approve stays compact (the action URL carries compact -> _review_panel reads it)
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
-        _awaiting(led, "p_b", clip="clip_2", acct="@a", aid="1")       # a 2nd card survives after approving clip_1
+        _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
+        _awaiting(led, "p_b", clip="clip_2", acct="a", aid="1")       # a 2nd card survives after approving clip_1
     r = _client(cfg).post("/posts/approve-clip/clip_1?compact=1")
     assert r.status_code == 200 and b"<video" not in r.data           # the re-render stayed compact
 
 def test_compact_toggle_links_both_ways(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_a", clip="clip_1", acct="@a", aid="1")
+        _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
     full = _client(cfg).get("/review").data
     compact = _client(cfg).get("/review?compact=1").data
     assert b"compact=1" in full and b"Compact" in full                # the full view offers a way INTO compact
@@ -399,21 +399,21 @@ def _seed_removed_hook_review(cfg):
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                               reason="drop", state=MomentState.clipped, hook_removed="a stripped hook"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+        led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
 
-def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypatch):
-    # default ON: per-surface hooks own the burn + approve_with_hook refuses, so the moment-restore choice
-    # is HIDDEN; the generic 'Approve all accounts' is the approve path instead.
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+def test_review_shows_hook_choice_when_hook_removed(tmp_path):
+    # P9: creative_variation is no longer a runtime flag — the moment-hook RESTORE choice shows whenever
+    # hook_removed is set (the OFF-mode approve_with_hook flow).
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
-    assert b"Approve with hook" not in html and b"hook removed" not in html
-    assert b"Approve all accounts" in html
+    assert b"Approve with hook" in html and b"hook removed" in html
 
-def test_review_shows_hook_choice_when_creative_variation_off(tmp_path, monkeypatch):
-    # pinned OFF: the shared clip ships clean with the stripped hook, so the restore badge + choice show.
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
+
+def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypatch):
+    # Legacy name kept: FANOPS_CREATIVE_VARIATION no longer gates the template (golive hardcodes OFF), so the
+    # restore choice remains visible when hook_removed is set.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
     assert b"Approve with hook" in html and b"hook removed" in html
@@ -425,7 +425,7 @@ def test_approve_posts_large_batch_requires_confirm(tmp_path):
     ids = [f"p{i}" for i in range(BULK_APPROVE_CONFIRM_AT + 1)]
     with Ledger.transaction(cfg) as led:
         for i, pid in enumerate(ids):
-            led.add_post(Post(id=pid, parent_id="c1", account="@a", account_id="x",
+            led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="x",
                               platform=Platform.instagram, caption="c", state=PostState.awaiting_approval))
     res = actions.approve_posts(cfg, ids, confirmed=False)
     assert not res.ok and "approved" in (res.error or "").lower()

@@ -58,7 +58,7 @@ def test_accounts_load_schema_violation_skips_row_and_surfaces_in_validate(tmp_p
         {"handle": "@ok", "account_id": "1", "platforms": ["instagram"], "status": "active"},  # row 1: well-formed
     ]}))
     accts = Accounts.load(cfg)                                  # must NOT raise
-    assert [a.handle for a in accts.accounts] == ["@ok"]        # bad row skipped, good row loaded
+    assert [a.handle for a in accts.accounts] == ["ok"]        # bad row skipped, good row loaded
     problems = accts.validate()
     assert any("row 0" in p and "malformed, skipped" in p for p in problems)  # surfaced, names the row
 
@@ -98,4 +98,4 @@ def test_accounts_load_valid_still_works(tmp_path):
     _write(cfg.accounts_path, json.dumps(
         {"accounts": [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     accts = Accounts.load(cfg)                              # must not raise
-    assert [a.handle for a in accts.accounts] == ["@a"]
+    assert [a.handle for a in accts.accounts] == ["a"]

@@ -17,7 +17,7 @@ def _accounts(cfg, rows):
     cfg.accounts_path.write_text(json.dumps({"accounts": rows}))
 
 
-def _active(handle="@a"):
+def _active(handle="a"):
     return {"handle": handle, "account_id": "1", "platforms": ["instagram"], "status": "active"}
 
 
@@ -68,7 +68,7 @@ def test_zero_result_batch_flagged_prominently(tmp_path):
     from fanops.batches import create_batch
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     led = Ledger.load(cfg)
-    create_batch(led, name="Ghost", target_accounts=["@ghost"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
     html = _client(cfg).get("/").data.decode()
     assert 'data-warn="zero-result-summary"' in html          # the list-level prominent warning
     assert 'data-warn="zero-result"' in html                  # AND the per-row badge stays
@@ -78,9 +78,9 @@ def test_no_zero_result_summary_when_all_batches_match(tmp_path):
     from fanops.batches import create_batch
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     led = Ledger.load(cfg)
-    b = create_batch(led, name="Real", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000003Z")
+    b = create_batch(led, name="Real", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000003Z")
     led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.queued, batch_id=b.id, public_url="dryrun://p")); led.save()
     html = _client(cfg).get("/").data.decode()
     assert 'data-warn="zero-result-summary"' not in html      # no false alarm when targets match
@@ -91,7 +91,7 @@ def test_batches_summary_label_is_legible(tmp_path):
     from fanops.batches import create_batch
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     led = Ledger.load(cfg)
-    create_batch(led, name="Real", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000009Z"); led.save()
+    create_batch(led, name="Real", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000009Z"); led.save()
     html = _client(cfg).get("/").data.decode()
     assert "<summary>Batches" in html                          # the base word survives, fully formed
     assert ">es (" not in html                                 # never the term-mark-eats-the-word breakage
@@ -102,10 +102,10 @@ def test_inline_per_account_post_count(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.published, public_url="dryrun://p1"))
     html = _client(cfg).get("/").data.decode()
-    assert 'data-acct-count="@a"' in html                     # the count renders INLINE on the account row
+    assert 'data-acct-count="a"' in html                     # the count renders INLINE on the account row
     assert 'data-metric="by-account"' not in html             # no orphans -> the fallback table is absent
 
 
@@ -113,10 +113,10 @@ def test_orphan_handle_falls_back_to_metrics_table(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])   # @a active, but the post belongs to @ghost
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="c", account="@ghost", account_id="9", platform=Platform.instagram,
+        led.add_post(Post(id="p1", parent_id="c", account="ghost", account_id="9", platform=Platform.instagram,
                           caption="x", state=PostState.published, public_url="dryrun://p1"))
     html = _client(cfg).get("/").data.decode()
-    assert 'data-metric="by-account"' in html and "@ghost" in html   # a non-active handle with history -> fallback
+    assert 'data-metric="by-account"' in html and "ghost" in html   # a non-active handle with history -> fallback
 
 
 # ── the first page an operator sees must never 500 ─────────────────────────────────────────────────
@@ -133,7 +133,7 @@ def test_home_torn_ledger_still_200(tmp_path, monkeypatch):
 # carry real pending work → secondary weight PLUS an accent-border pending-work cue (.acct-cta-pending) and a
 # filled count badge (.cta-badge), so a scanning operator separates action-rows from browse-rows WITHOUT
 # reading numbers. Neither is .primary (Home's one primary is the .home-start-here handoff).
-def _b(handle="@b"):
+def _b(handle="b"):
     return {"handle": handle, "account_id": "2", "platforms": ["instagram"], "status": "active"}
 
 def _future_iso():
@@ -153,7 +153,7 @@ def test_review_cta_carries_pending_cue_and_badge(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
     html = _client(cfg).get("/").data.decode()
     assert "acct-cta-pending" in html and ">Review " in html   # needs-action cue on the Review CTA
@@ -165,7 +165,7 @@ def test_schedule_cta_carries_pending_cue_and_badge(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.queued, scheduled_time=_future_iso(), public_url="dryrun://p1"))
     html = _client(cfg).get("/").data.decode()
     assert "acct-cta-pending" in html and ">Schedule " in html

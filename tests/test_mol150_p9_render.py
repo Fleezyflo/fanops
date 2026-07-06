@@ -15,8 +15,7 @@ def _seed_accounts(cfg, accounts):
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
 
 def _surf(handle):
-    h = handle if handle.startswith("@") else f"@{handle.lstrip('@')}"
-    return f"{h}/instagram"
+    return f"{handle.lstrip('@')}/instagram"
 
 def _clip_stub():
     return Clip(id="clip_1", parent_id="mom_1", path="/x.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
@@ -29,7 +28,7 @@ def _moment(**kw):
 
 def _seed_captioned_clip(led, cfg, moment, surfaces=None):
     if surfaces is None:
-        surfaces = (_surf("@a"),)
+        surfaces = (_surf("a"),)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
     led.add_moment(moment)
     cfg.clips.mkdir(parents=True, exist_ok=True)
@@ -55,7 +54,7 @@ def test_post_stamp_from_moment_not_account(tmp_path, monkeypatch):
     monkeypatch.setattr("fanops.config.Config.resolve_clip_profile", lambda self, acct=None: "short")
     monkeypatch.setattr("fanops.config.Config.resolve_top_bias", lambda self, acct=None: True)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
     _seed_captioned_clip(led, cfg, _moment(clip_profile="long", framing="top", hook="SHARED"))
     led.save()
@@ -67,7 +66,7 @@ def test_post_stamp_from_moment_not_account(tmp_path, monkeypatch):
 def test_no_approval_reclip_stamp(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
     _seed_captioned_clip(led, cfg, _moment(clip_profile="long", framing="top", hook="H"))
     led.save()
@@ -102,10 +101,10 @@ def test_moment_renders_once_per_aspect(tmp_path, mocker, monkeypatch):
         return led, clip
     mocker.patch("fanops.crosspost.render_moment", side_effect=_render)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram", "twitter"], "status": "active"}])
+    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram", "twitter"], "status": "active"}])
     led = Ledger.load(cfg)
     _seed_captioned_clip(led, cfg, _moment(hook="H"),
-                         surfaces=(_surf("@a"), f"{_surf('@a').split('/')[0]}/twitter"))
+                         surfaces=(_surf("a"), f"{_surf('a').split('/')[0]}/twitter"))
     led.save()
     crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert len(calls) == 1 and calls[0] == ("mom_1", Fmt.r16x9)
@@ -114,7 +113,7 @@ def test_moment_renders_once_per_aspect(tmp_path, mocker, monkeypatch):
 def test_supercut_branch_survives_render_fork_deletion(tmp_path, monkeypatch):
     from fanops import clip as clipmod
     calls = []
-    def _sc(src, dst, spans, **kw):
+    def _sc(src, dst, spans, aspect_value, **kw):
         calls.append(1)
         Path(dst).parent.mkdir(parents=True, exist_ok=True)
         Path(dst).write_bytes(b"x")

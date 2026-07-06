@@ -29,7 +29,7 @@ def _cfg(tmp_path, monkeypatch):
 def _post(pid="p1", acct_id="intg_1"):
     # R1: state=submitting is non-terminal — no public_url required. Tests in this file exercise
     # the publish path that's MEANT to capture/keep public_url None on failure (D2 fail-closed).
-    return Post(id=pid, parent_id="c1", account="@a", account_id=acct_id, platform=Platform.instagram,
+    return Post(id=pid, parent_id="c1", account="a", account_id=acct_id, platform=Platform.instagram,
                 caption="fire", state=PostState.submitting,
                 media_urls=["https://uploads.postiz.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z")
 
@@ -169,7 +169,7 @@ def test_publish_leg_drives_real_postiz_poster_not_dryrun(tmp_path, monkeypatch,
     from fanops.post.run import _publish_one
     cfg = _cfg(tmp_path, monkeypatch)
     with Ledger.transaction(cfg) as led:
-        led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="intg_1", platform=Platform.instagram,
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="intg_1", platform=Platform.instagram,
                           caption="fire", media_urls=["https://uploads.postiz.com/x.mp4"],   # already uploaded -> no media network
                           state=PostState.queued, public_url="dryrun://p1"))
     mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_1"}))

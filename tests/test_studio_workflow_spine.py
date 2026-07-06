@@ -15,7 +15,7 @@ def _counts(sources=0, awaiting=0, scheduled=0, posted=0, batches=0, failed=0, l
             "posted": posted, "failed": failed, "live_trackable": live_trackable}
 
 
-def _client(cfg, handles=("@a",)):
+def _client(cfg, handles=("a",)):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     rows = [{"handle": h, "account_id": "1", "platforms": ["instagram"], "status": "active"} for h in handles]
     cfg.accounts_path.write_text(json.dumps({"accounts": rows}))

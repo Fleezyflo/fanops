@@ -11,7 +11,7 @@ def _seed_accounts(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
 
-def _seed_clip(led, cfg, *, moment_kw=None, surfaces=("@a/instagram",)):
+def _seed_clip(led, cfg, *, moment_kw=None, surfaces=("a/instagram",)):
     mkw = dict(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
                state=MomentState.clipped, hook="HOOK")
     if moment_kw:

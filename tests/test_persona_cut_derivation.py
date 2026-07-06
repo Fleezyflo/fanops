@@ -17,7 +17,7 @@ def _accounts(cfg, accts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": accts}))
 
-def _acct(handle="@a"):
+def _acct(handle="a"):
     return {"handle": handle, "account_id": "1", "platforms": ["instagram"], "status": "active"}
 
 
@@ -69,7 +69,7 @@ def test_hydration_applies_derived_spec(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
     pid = add_persona(cfg, name="Storyteller", voice="v", content_focus=["storytelling", "emotional"])
     link_persona(cfg, "@a", pid)
-    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.clip_profile == "long" and acc.framing == "top"    # derived from content_focus
 
 # (M3d: test_hydration_pin_wins removed — a Persona can no longer pin clip_profile; only the DERIVED spec
@@ -78,7 +78,7 @@ def test_hydration_applies_derived_spec(tmp_path):
 
 def test_unlinked_account_unchanged(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
-    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.clip_profile is None and acc.framing is None       # no link -> byte-identical (global stands)
 
 
@@ -98,7 +98,7 @@ def test_voice_match_hydrates_without_persona_id(tmp_path):
     voice = "music-blogger curator who champions craft."
     _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": voice}])
     add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling", "emotional"])
-    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.persona_id is None and acc.clip_profile == "long" and acc.framing == "top"   # voice match, no persisted link
 
 
@@ -125,7 +125,7 @@ def test_approve_does_not_materialize_render(tmp_path, monkeypatch, mocker):
     from fanops.models import Clip, Moment, Source, ClipState, MomentState, Fmt
     cut = mocker.patch("fanops.crosspost.render_account_cut")
     cfg = Config(root=tmp_path)
-    _accounts(cfg, [_acct("@story")])
+    _accounts(cfg, [_acct("story")])
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
@@ -133,7 +133,7 @@ def test_approve_does_not_materialize_render(tmp_path, monkeypatch, mocker):
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
-    clip.meta_captions = {"@story/instagram": {"caption": "cap", "hashtags": ["#x"]}}
+    clip.meta_captions = {"story/instagram": {"caption": "cap", "hashtags": ["#x"]}}
     led.add_clip(clip); led.save()
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z"); led.save()
     approve_posts(cfg, [p.id for p in led.posts.values()])

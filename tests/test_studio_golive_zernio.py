@@ -68,13 +68,13 @@ def test_set_zernio_config_unreachable_clean(tmp_path, monkeypatch):
 def test_set_account_backend_live_requires_confirm(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "sk_x")
     _seed(cfg, [{"handle": "@tk", "account_id": "acc", "platforms": ["tiktok"], "status": "active"}])
-    res = golive.set_account_backend(cfg, "@tk", "tiktok", "zernio", confirmed=False)
+    res = golive.set_account_backend(cfg, "tk", "tiktok", "zernio", confirmed=False)
     assert res.ok is False                                                     # live backend needs confirm
 
 def test_set_account_backend_live_requires_creds(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)                                        # no ZERNIO_API_KEY
     _seed(cfg, [{"handle": "@tk", "account_id": "acc", "platforms": ["tiktok"], "status": "active"}])
-    res = golive.set_account_backend(cfg, "@tk", "tiktok", "zernio", confirmed=True)
+    res = golive.set_account_backend(cfg, "tk", "tiktok", "zernio", confirmed=True)
     assert res.ok is False and "ZERNIO_API_KEY" in res.error                   # not ready: no creds
 
 def test_set_account_backend_live_writes_with_creds_and_confirm(tmp_path, monkeypatch):
@@ -82,25 +82,25 @@ def test_set_account_backend_live_writes_with_creds_and_confirm(tmp_path, monkey
     # H3: a live route requires a real per-platform integration id (not just the legacy shared account_id).
     _seed(cfg, [{"handle": "@tk", "account_id": "acc", "platforms": ["tiktok"], "status": "active",
                  "integrations": {"tiktok": "tk_x"}}])
-    res = golive.set_account_backend(cfg, "@tk", "tiktok", "zernio", confirmed=True)
+    res = golive.set_account_backend(cfg, "tk", "tiktok", "zernio", confirmed=True)
     assert res.ok is True
     from fanops.accounts import Accounts
     from fanops.models import Platform
-    assert Accounts.load(cfg).resolve_backend("@tk", Platform.tiktok) == "zernio"
+    assert Accounts.load(cfg).resolve_backend("tk", Platform.tiktok) == "zernio"
 
 def test_set_account_backend_default_clears_no_confirm(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed(cfg, [{"handle": "@tk", "account_id": "acc", "platforms": ["tiktok"],
                  "status": "active", "backends": {"tiktok": "zernio"}}])
-    res = golive.set_account_backend(cfg, "@tk", "tiktok", "default", confirmed=False)  # clearing needs no confirm
+    res = golive.set_account_backend(cfg, "tk", "tiktok", "default", confirmed=False)  # clearing needs no confirm
     assert res.ok is True
     from fanops.accounts import Accounts
     from fanops.models import Platform
-    assert Accounts.load(cfg).resolve_backend("@tk", Platform.tiktok) is None
+    assert Accounts.load(cfg).resolve_backend("tk", Platform.tiktok) is None
 
 def test_set_account_backend_unknown_handle_clean(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    res = golive.set_account_backend(cfg, "@ghost", "tiktok", "default", confirmed=False)
+    res = golive.set_account_backend(cfg, "ghost", "tiktok", "default", confirmed=False)
     assert res.ok is False
 
 

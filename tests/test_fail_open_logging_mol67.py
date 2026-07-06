@@ -110,39 +110,22 @@ def test_read_queries_logs_on_corrupt_budget(tmp_path, monkeypatch):
     assert "queries" in log_text or "budget" in log_text            # logged before swallow
 
 
-# ── 5+6. studio/preview_media — two bare excepts in the resolution ladder (cfg in scope) ──
-def _preview_setup(tmp_path, monkeypatch):
-    from fanops.config import Config
+# ── 5. studio/preview_media — returns None when no artifact exists (P9: no render ladder) ──
+def test_preview_media_returns_none_when_no_artifact(tmp_path):
+    from fanops.studio import preview_media
     cfg = Config(root=tmp_path)
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
 
     class _Clip:
-        id = "clip-1"; parent_id = "mom-1"; aspect = "9x16"; path = None
+        id = "clip-1"; parent_id = "mom-1"; path = None
     class _Post:
-        render_id = None; parent_id = "clip-1"; variant_hook = "a hook"
-        account = "handle"; media_urls = []
+        render_id = None; parent_id = "clip-1"; account = "handle"; media_urls = []
     class _Led:
         posts = {"post-1": _Post()}
         renders = {}
         clips = {"clip-1": _Clip()}
-        moments = {}
-        sources = {}
-    return cfg, _Led()
 
-
-def test_preview_media_logs_on_account_render_spec_error(tmp_path, monkeypatch):
-    from fanops.studio import preview_media
-    cfg, led = _preview_setup(tmp_path, monkeypatch)
-    monkeypatch.setattr(preview_media, "account_render_spec",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("spec boom")))
-    monkeypatch.setattr(preview_media, "render_account_file",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("file boom")))
-    # Accounts.load may hit disk; make it trivially return no match (falls to acct=None, still enters try)
-    monkeypatch.setattr("fanops.accounts.Accounts.load", lambda c: type("A", (), {"accounts": []})())
-    result = preview_media.preview_media_path(cfg, led, "post-1")
-    assert result is None                                           # fallback: no media_urls, no clip.path -> None
-    log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "preview" in log_text                                   # both ladder failures logged
+    result = preview_media.preview_media_path(cfg, _Led(), "post-1")
+    assert result is None
 
 
 # ── 7. studio/app._account_arg — except -> pass (cfg NOT reliably in scope: module logger) ──

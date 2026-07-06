@@ -24,7 +24,7 @@ def _cfg(tmp_path, monkeypatch):
 
 def _due_queued_post(pid="p1", *, plat=Platform.instagram):
     # An approved (queued) post whose schedule is already due (past), so publish_due considers it.
-    return Post(id=pid, parent_id="c1", account="@a", account_id="98432", platform=plat,
+    return Post(id=pid, parent_id="c1", account="a", account_id="98432", platform=plat,
                 caption="hello", media_urls=["file:///tmp/v.mp4"],
                 scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued)
 

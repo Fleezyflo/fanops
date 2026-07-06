@@ -15,10 +15,10 @@ def test_load_and_active(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [
         {"handle": "@a", "account_id": "98432", "platforms": ["instagram", "tiktok"], "status": "active"},
-        {"handle": "@b", "account_id": "", "platforms": ["instagram"], "status": "planned"},
+        {"handle": "b", "account_id": "", "platforms": ["instagram"], "status": "planned"},
     ])
     accts = Accounts.load(cfg)
-    assert [a.handle for a in accts.active()] == ["@a"]
+    assert [a.handle for a in accts.active()] == ["a"]
 
 def test_no_secret_fields(tmp_path):
     cfg = Config(root=tmp_path)
@@ -46,11 +46,11 @@ def test_surfaces_matrix_carries_id(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram", "tiktok"], "status": "active"},
-        {"handle": "@b", "account_id": "2", "platforms": ["tiktok"], "status": "active"},
+        {"handle": "b", "account_id": "2", "platforms": ["tiktok"], "status": "active"},
     ])
     accts = Accounts.load(cfg)
     pairs = {(s.account, s.account_id, s.platform.value) for s in accts.surfaces()}
-    assert pairs == {("@a", "1", "instagram"), ("@a", "1", "tiktok"), ("@b", "2", "tiktok")}
+    assert pairs == {("a", "1", "instagram"), ("a", "1", "tiktok"), ("b", "2", "tiktok")}
 
 def test_resolve_account_id_raises_on_empty_id(tmp_path):
     # A known handle with no Blotato id must fail loud, not return "".
@@ -84,7 +84,7 @@ def test_surfaces_excludes_planned_accounts(tmp_path):
     ])
     accts = Accounts.load(cfg)
     handles = {s.account for s in accts.surfaces()}
-    assert handles == {"@live"}            # @soon (planned) excluded entirely
+    assert handles == {"live"}            # @soon (planned) excluded entirely
 
 def test_load_missing_file_is_empty_registry(tmp_path):
     # No accounts.json -> empty registry, not a crash.
@@ -104,7 +104,7 @@ def test_surfaces_carry_per_platform_integration_id(tmp_path):
     _seed(cfg, [{"handle": "@a", "account_id": "fallback", "platforms": ["instagram", "tiktok"],
                  "status": "active", "integrations": {"instagram": "ig_1", "tiktok": "tk_9"}}])
     pairs = {(s.account, s.account_id, s.platform.value) for s in Accounts.load(cfg).surfaces()}
-    assert pairs == {("@a", "ig_1", "instagram"), ("@a", "tk_9", "tiktok")}
+    assert pairs == {("a", "ig_1", "instagram"), ("a", "tk_9", "tiktok")}
 
 def test_surfaces_fall_back_to_account_id_when_platform_unmapped(tmp_path):
     # instagram has a per-platform id; tiktok has none -> tiktok falls back to the shared account_id.
@@ -183,15 +183,15 @@ def test_write_integration_sets_nested_id_and_preserves_siblings(tmp_path):
     _seed(cfg, [
         {"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"], "status": "active",
          "integrations": {"instagram": "ig_old"}, "note": "keep me"},
-        {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"},
+        {"handle": "b", "account_id": "x", "platforms": ["tiktok"], "status": "active"},
     ])
-    assert write_integration(cfg, "@a", "tiktok", "tk_42") == "@a"
+    assert write_integration(cfg, "@a", "tiktok", "tk_42") == "a"
     raw = json.loads(cfg.accounts_path.read_text())
-    a = next(x for x in raw["accounts"] if x["handle"] == "@a")
-    b = next(x for x in raw["accounts"] if x["handle"] == "@b")
+    a = next(x for x in raw["accounts"] if x["handle"] == "a")
+    b = next(x for x in raw["accounts"] if x["handle"] == "b")
     assert a["integrations"] == {"instagram": "ig_old", "tiktok": "tk_42"}   # added, existing kept
     assert a["note"] == "keep me"                                            # unknown field preserved
-    assert b == {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"}  # sibling untouched
+    assert b == {"handle": "b", "account_id": "x", "platforms": ["tiktok"], "status": "active"}  # sibling untouched
 
 def test_write_integration_creates_map_when_absent(tmp_path):
     cfg = Config(root=tmp_path)
@@ -210,7 +210,7 @@ def test_write_integration_updates_every_duplicate_handle_row(tmp_path):
         {"handle": "@dup", "account_id": "1", "platforms": ["instagram"], "status": "active", "integrations": {}},
         {"handle": "@dup", "account_id": "2", "platforms": ["instagram"], "status": "active", "integrations": {}}])
     write_integration(cfg, "@dup", "instagram", "ig_123")
-    dups = [a for a in json.loads(cfg.accounts_path.read_text())["accounts"] if a["handle"] == "@dup"]
+    dups = [a for a in json.loads(cfg.accounts_path.read_text())["accounts"] if a["handle"] == "dup"]
     assert len(dups) == 2
     assert all(a.get("integrations", {}).get("instagram") == "ig_123" for a in dups)   # BOTH updated, no divergence
 
@@ -242,9 +242,9 @@ def test_write_integration_rejects_unknown_platform(tmp_path):
 def test_add_account_appends_with_defaults(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    assert add_account(cfg, "@b", ["instagram", "tiktok"], persona="raw studio") == "@b"
+    assert add_account(cfg, "@b", ["instagram", "tiktok"], persona="raw studio") == "b"
     raw = json.loads(cfg.accounts_path.read_text())
-    b = next(x for x in raw["accounts"] if x["handle"] == "@b")
+    b = next(x for x in raw["accounts"] if x["handle"] == "b")
     assert b["status"] == "active" and b["access"] == "postiz"   # UI-added defaults
     assert b["account_id"] == "" and b["integrations"] == {}     # mapped afterward
     assert b["platforms"] == ["instagram", "tiktok"] and b["persona"] == "raw studio"
@@ -254,7 +254,7 @@ def test_add_account_to_absent_file_creates_it(tmp_path):
     cfg = Config(root=tmp_path)                                  # nothing seeded
     add_account(cfg, "@new", ["youtube"])
     accts = Accounts.load(cfg)
-    assert [a.handle for a in accts.accounts] == ["@new"]
+    assert [a.handle for a in accts.accounts] == ["new"]
     assert accts.accounts[0].status.value == "active"
 
 def test_add_account_rejects_duplicate_handle(tmp_path):
@@ -281,15 +281,15 @@ def test_set_status_flips_and_preserves_siblings_and_unknown_fields(tmp_path):
     _seed(cfg, [
         {"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active",
          "integrations": {"instagram": "ig_1"}, "note": "keep me"},
-        {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"},
+        {"handle": "b", "account_id": "x", "platforms": ["tiktok"], "status": "active"},
     ])
-    assert set_status(cfg, "@a", "planned") == "@a"
+    assert set_status(cfg, "@a", "planned") == "a"
     raw = json.loads(cfg.accounts_path.read_text())
-    a = next(x for x in raw["accounts"] if x["handle"] == "@a")
-    b = next(x for x in raw["accounts"] if x["handle"] == "@b")
+    a = next(x for x in raw["accounts"] if x["handle"] == "a")
+    b = next(x for x in raw["accounts"] if x["handle"] == "b")
     assert a["status"] == "planned" and a["integrations"] == {"instagram": "ig_1"} and a["note"] == "keep me"
-    assert b == {"handle": "@b", "account_id": "x", "platforms": ["tiktok"], "status": "active"}  # sibling untouched
-    assert "@a" not in [x.handle for x in Accounts.load(cfg).active()]   # demoted -> no longer active
+    assert b == {"handle": "b", "account_id": "x", "platforms": ["tiktok"], "status": "active"}  # sibling untouched
+    assert "a" not in [x.handle for x in Accounts.load(cfg).active()]   # demoted -> no longer active
 
 def test_set_status_rejects_unknown_status(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
@@ -315,10 +315,10 @@ def test_remove_account_drops_only_target_preserves_siblings(tmp_path):
         {"handle": "@TBD-1", "account_id": "dryrun", "platforms": ["instagram"], "status": "active"},
         {"handle": "@keep", "account_id": "x", "platforms": ["tiktok"], "status": "active", "note": "keep me"},
     ])
-    assert remove_account(cfg, "@TBD-1") == "@TBD-1"
+    assert remove_account(cfg, "@TBD-1") == "tbd-1"
     raw = json.loads(cfg.accounts_path.read_text())
     handles = [x["handle"] for x in raw["accounts"]]
-    assert handles == ["@keep"]                            # only the target dropped
+    assert handles == ["keep"]                            # only the target dropped
     assert raw["accounts"][0]["note"] == "keep me"         # sibling + unknown field intact
 
 def test_remove_last_account_leaves_valid_empty_registry(tmp_path):
@@ -360,10 +360,10 @@ def test_concurrent_add_account_no_lost_update(tmp_path):
     # silently dropping the other. Looped so the unlocked failure is reliable, not a lucky pass.
     cfg = Config(root=tmp_path)
     for it in range(8):
-        a, b = f"@a{it}", f"@b{it}"
+        a, b = f"a{it}", f"b{it}"
         start = threading.Barrier(2)
         def w(h):
-            start.wait(); add_account(cfg, h, ["instagram"])
+            start.wait(); add_account(cfg, f"@{h}", ["instagram"])
         ts = [threading.Thread(target=w, args=(a,)), threading.Thread(target=w, args=(b,))]
         for t in ts: t.start()
         for t in ts: t.join()

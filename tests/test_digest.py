@@ -1,9 +1,38 @@
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Clip, Post, SourceState, ClipState, PostState, Platform
+from fanops.models import Source, Moment, Clip, Post, SourceState, ClipState, PostState, Platform
 from fanops.agentstep import write_request, response_path
 from fanops.digest import render_digest, write_digest
+
+
+def _arm_posts(led, arm_id, hook, lift, n, *, account="a", account_id="1", platform=Platform.instagram):
+    """P9: hook on owner moment — one moment+clip per hook arm; n posts share that arm."""
+    src = "src_v"
+    if not led.sources.get(src):
+        led.add_source(Source(id=src, source_path="/s.mp4"))
+    mid, cid = f"m_{arm_id}", f"c_{arm_id}"
+    if not led.moments.get(mid):
+        led.add_moment(Moment(id=mid, parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook=hook))
+        led.add_clip(Clip(id=cid, parent_id=mid, path=f"/{cid}.mp4"))
+    for i in range(n):
+        pid = f"{arm_id}_{i}"
+        led.add_post(Post(id=pid, parent_id=cid, account=account, account_id=account_id,
+                          platform=platform, caption="x", state=PostState.analyzed,
+                          metrics={"lift_score": lift}, public_url=f"dryrun://{pid}"))
+
+
+def _variant_post(led, pid, hook, lift, *, account="a", account_id="1", platform=Platform.instagram, metrics=None):
+    src = "src_v"
+    if not led.sources.get(src):
+        led.add_source(Source(id=src, source_path="/s.mp4"))
+    mid, cid = f"m_{pid}", f"c_{pid}"
+    led.add_moment(Moment(id=mid, parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook=hook))
+    led.add_clip(Clip(id=cid, parent_id=mid, path=f"/{cid}.mp4"))
+    led.add_post(Post(id=pid, parent_id=cid, account=account, account_id=account_id,
+                      platform=platform, caption="x", state=PostState.analyzed,
+                      metrics=(metrics if metrics is not None else {"lift_score": lift}),
+                      public_url=f"dryrun://{pid}"))
 
 
 def test_write_digest_failopen_on_oserror(tmp_path, monkeypatch):
@@ -20,7 +49,7 @@ def test_counts_holds_failures(tmp_path):
     led.add_source(Source(id="s1", source_path="/x", state=SourceState.transcribed))
     led.add_source(Source(id="s2", source_path="/y", state=SourceState.error, error_reason="bad codec"))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c", state=ClipState.held, held=True, held_reason="begging"))
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1",
+    led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
                       error_reason="blotato 422", public_url="dryrun://p1"))
     md = render_digest(led, cfg)
@@ -63,7 +92,7 @@ def test_empty_ledger_digest_has_no_sections(tmp_path):
 
 def test_none_reason_renders_fallback(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed, public_url="dryrun://pf"))  # error_reason None
     md = render_digest(led, cfg)
     assert "Failures" in md and "(no reason given)" in md and "None" not in md.split("Failures")[1]
@@ -71,9 +100,9 @@ def test_none_reason_renders_fallback(tmp_path):
 def test_published_unmeasured_surfaced(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     # a published post with NO metrics -> surfaced; a published post WITH metrics -> not
-    led.add_post(Post(id="pm", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="pm", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://pm"))  # no metrics
-    led.add_post(Post(id="pok", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="pok", parent_id="c", account="a", account_id="1",
                       platform=Platform.tiktok, caption="y", state=PostState.published,
                       metrics={"saves": 5, "lift_score": 20.0}, public_url="dryrun://pok"))
     md = render_digest(led, cfg)
@@ -116,7 +145,6 @@ def test_digest_surfaces_pending_gates(tmp_path):
 def test_digest_shows_lift_by_variant(tmp_path):
     from fanops.config import Config
     from fanops.ledger import Ledger
-    from fanops.models import Post, Platform, PostState
     from fanops.digest import render_digest
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     # Insert the LOSER (HOOK B, lift 30) FIRST and the winner (HOOK A, lift 80) SECOND. Python's
@@ -124,12 +152,8 @@ def test_digest_shows_lift_by_variant(tmp_path):
     # were inserted first, a silently-broken sort could still render A-above-B and pass. With the
     # loser inserted first, ONLY a genuine descending-by-lift sort yields HOOK A above HOOK B, so the
     # order assertion below kills BOTH a reverse-removal AND a constant-key (no-op) sort mutation.
-    led.add_post(Post(id="p2", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram,
-                      caption="y", state=PostState.analyzed, variant_key="vk_b", variant_hook="HOOK B",
-                      metrics={"lift_score": 30.0}, public_url="dryrun://p2"))
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, variant_key="vk_a", variant_hook="HOOK A",
-                      metrics={"lift_score": 80.0}, public_url="dryrun://p1"))
+    _variant_post(led, "p2", "HOOK B", 30.0, account="b", account_id="2")
+    _variant_post(led, "p1", "HOOK A", 80.0, account="a", account_id="1")
     out = render_digest(led, cfg)
     assert "Lift by variant" in out
     assert "HOOK A" in out and "80" in out          # the winning variant + its lift surface
@@ -145,12 +169,10 @@ def test_digest_flags_lift_degraded_variant(tmp_path):
     # number in the "Lift by variant" decision surface — never a write-only field the operator can't see.
     from fanops.config import Config
     from fanops.ledger import Ledger
-    from fanops.models import Post, Platform, PostState
     from fanops.digest import render_digest
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, variant_key="vk_a", variant_hook="HOOK A",
-                      metrics={"lift_score": 80.0, "lift_degraded": True, "lift_missing_keys": ["retention", "saves"]}, public_url="dryrun://p1"))
+    _variant_post(led, "p1", "HOOK A", 80.0, account="a", account_id="1",
+                  metrics={"lift_score": 80.0, "lift_degraded": True, "lift_missing_keys": ["retention", "saves"]})
     out = render_digest(led, cfg)
     assert "DEGRADED" in out                          # the partial-objective signal is surfaced
     assert "retention" in out and "saves" in out      # names which primary metrics were missing
@@ -171,27 +193,19 @@ def test_digest_variant_shows_gate_state(tmp_path):
     # gate logic — same scorer request_captions uses), proving the digest and the caption-bias agree.
     from fanops.config import Config
     from fanops.ledger import Ledger
-    from fanops.models import Post, Platform, PostState
     from fanops.digest import render_digest
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     # @a/instagram: PAST GATE — 3 WIN @ lift 90 + 3 LOSE @ lift 10 (gap 80 >= 10, leader has 3 >= 3).
-    for i, (hook, lift) in enumerate(
-        [("WIN", 90.0), ("WIN", 90.0), ("WIN", 90.0), ("LOSE", 10.0), ("LOSE", 10.0), ("LOSE", 10.0)]
-    ):
-        led.add_post(Post(id=f"a{i}", parent_id="c1", account="@a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_a{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://c1"))
-    # @b/instagram: BELOW GATE — a single analyzed post (too few to trust).
-    led.add_post(Post(id="b0", parent_id="c1", account="@b", account_id="2",
-                      platform=Platform.instagram, caption="y", state=PostState.analyzed,
-                      variant_key="vk_b0", variant_hook="LONE", metrics={"lift_score": 50.0}, public_url="dryrun://b0"))
+    _arm_posts(led, "a_win", "WIN", 90.0, 3, account="a", account_id="1")
+    _arm_posts(led, "a_lose", "LOSE", 10.0, 3, account="a", account_id="1")
+    _variant_post(led, "b0", "LONE", 50.0, account="b", account_id="2")
     out = render_digest(led, cfg)
     section = out.split("Lift by variant")[1]
     assert "learning ACTIVE" in section and "gathering data" in section   # both states render
     # bind each state to the RIGHT surface line (not just "both words appear somewhere"): the @a line
     # is ACTIVE, the @b line is gathering. A constant/no-op gate would put the same label on both.
-    a_line = [ln for ln in section.splitlines() if "@a/instagram" in ln][0]
-    b_line = [ln for ln in section.splitlines() if "@b/instagram" in ln][0]
+    a_line = [ln for ln in section.splitlines() if "a/instagram" in ln][0]
+    b_line = [ln for ln in section.splitlines() if "b/instagram" in ln][0]
     assert "learning ACTIVE" in a_line and "gathering data" not in a_line
     assert "gathering data" in b_line and "learning ACTIVE" not in b_line
 
@@ -201,12 +215,9 @@ def test_digest_variant_gate_state_failopen(tmp_path, monkeypatch):
     # gate-state annotation simply degrades to "gathering data" (the safe/closed default).
     from fanops.config import Config
     from fanops.ledger import Ledger
-    from fanops.models import Post, Platform, PostState
     from fanops.digest import render_digest
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="a0", parent_id="c1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_a0", variant_hook="HOOK A", metrics={"lift_score": 80.0}, public_url="dryrun://a0"))
+    _variant_post(led, "a0", "HOOK A", 80.0, account="a", account_id="1")
     monkeypatch.setattr("fanops.digest.best_hooks",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     out = render_digest(led, cfg)                       # must NOT raise
@@ -218,7 +229,7 @@ def test_needs_reconcile_surfaced(tmp_path):
     # platform) MUST surface so a human verifies via GET /v2/posts/:id before any resubmit. It is
     # NOT a plain failure (re-queueing it could double-post), so it gets its own section.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="prec", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="prec", parent_id="c", account="a", account_id="1",
                       platform=Platform.twitter, caption="x", state=PostState.needs_reconcile,
                       error_reason="blotato 503: ambiguous, may be live", public_url="dryrun://prec"))
     md = render_digest(led, cfg)
@@ -233,15 +244,9 @@ def test_digest_shows_variant_amplify_streak(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    for i in range(8):
-        led.add_post(Post(id=str(i), parent_id="c1", account="@a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"v{i}", variant_hook="WIN", metrics={"lift_score": 90.0}, public_url="dryrun://c1"))
-    for i in range(3):
-        led.add_post(Post(id=f"l{i}", parent_id="c1", account="@a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vl{i}", variant_hook="LOSE", metrics={"lift_score": 1.0}, public_url="dryrun://c1"))
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 2}
+    _arm_posts(led, "amp_win", "WIN", 90.0, 8, account="a", account_id="1")
+    _arm_posts(led, "amp_lose", "LOSE", 1.0, 3, account="a", account_id="1")
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 2}
     out = render_digest(led, cfg)
     assert "Variant amplification" in out
     assert "2/3" in out or "streak" in out.lower()      # building-streak state shown
@@ -262,19 +267,13 @@ def test_digest_variant_ucb_shows_pick(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
     from fanops.config import Config
     from fanops.ledger import Ledger
-    from fanops.models import Post, Platform, PostState
     from fanops.digest import render_digest
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    for i in range(1, 9):
-        led.add_post(Post(id=f"L{i}", parent_id="c1", account="@a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}, public_url="dryrun://c1"))
-    led.add_post(Post(id="N1", parent_id="c1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}, public_url="dryrun://N1"))
+    _arm_posts(led, "ucb_lead", "LEAD", 60.0, 8, account="a", account_id="1")
+    _variant_post(led, "N1", "NEW", 59.0, account="a", account_id="1")
     section = render_digest(led, cfg).split("Lift by variant")[1]
     assert "UCB" in section and "NEW" in section            # the bandit verdict is surfaced
-    a_line = [ln for ln in section.splitlines() if "@a/instagram" in ln][0]
+    a_line = [ln for ln in section.splitlines() if "a/instagram" in ln][0]
     assert "UCB" in a_line and "NEW" in a_line              # on the right surface line
 
 def test_digest_variant_ucb_failopen(tmp_path, monkeypatch):
@@ -286,12 +285,9 @@ def test_digest_variant_ucb_failopen(tmp_path, monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     from fanops.config import Config
     from fanops.ledger import Ledger
-    from fanops.models import Post, Platform, PostState
     from fanops.digest import render_digest
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="a0", parent_id="c1", account="@a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_a0", variant_hook="HOOK A", metrics={"lift_score": 80.0}, public_url="dryrun://a0"))
+    _variant_post(led, "a0", "HOOK A", 80.0, account="a", account_id="1")
     out = render_digest(led, cfg)                          # must NOT raise
     assert "Lift by variant" in out and "HOOK A" in out and "80" in out   # rows survive
     assert "gathering data" in out.split("Lift by variant")[1]            # safe default on error
@@ -301,15 +297,10 @@ def test_digest_variant_ucb_off_keeps_v2_wording(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_VARIANT_UCB", raising=False)
     from fanops.config import Config
     from fanops.ledger import Ledger
-    from fanops.models import Post, Platform, PostState
     from fanops.digest import render_digest
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    for i, (hook, lift) in enumerate(
-        [("WIN", 90.0), ("WIN", 90.0), ("WIN", 90.0), ("LOSE", 10.0), ("LOSE", 10.0), ("LOSE", 10.0)]
-    ):
-        led.add_post(Post(id=f"a{i}", parent_id="c1", account="@a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_a{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://c1"))
+    _arm_posts(led, "v2_win", "WIN", 90.0, 3, account="a", account_id="1")
+    _arm_posts(led, "v2_lose", "LOSE", 10.0, 3, account="a", account_id="1")
     section = render_digest(led, cfg).split("Lift by variant")[1]
     assert "learning ACTIVE" in section and "UCB ->" not in section
 
@@ -328,18 +319,13 @@ def test_digest_marks_cold_surface_borrowing(monkeypatch, tmp_path):
     # @a,@b win STYLE (2 donors); @c is a cold recipient with a single analyzed post (so it APPEARS
     # in the "Lift by variant" section) but no own winner.
     def win(acct, hook):
-        rows = [(hook, 90.0)] * 3 + [("LOSE", 10.0)] * 3
-        for i, (h, lift) in enumerate(rows):
-            led.add_post(Post(id=f"{acct}{i}", parent_id="clip_1", account=acct, account_id="x",
-                              platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                              variant_key=f"vk_{acct}{i}", variant_hook=h, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
-    win("@a", "STYLE"); win("@b", "STYLE")
-    led.add_post(Post(id="c0", parent_id="clip_1", account="@c", account_id="x",
-                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_c0", variant_hook="COLD", metrics={"lift_score": 50.0}, public_url="dryrun://c0"))
+        _arm_posts(led, f"{acct}_win", hook, 90.0, 3, account=acct)
+        _arm_posts(led, f"{acct}_lose", "LOSE", 10.0, 3, account=acct)
+    win("a", "STYLE"); win("b", "STYLE")
+    _variant_post(led, "c0", "COLD", 50.0, account="c")
     accts = Accounts(cfg)
     accts.accounts = [Account(handle=h, account_id="x", platforms=[Platform.instagram],
-                              status=AccountStatus.active, persona="hype") for h in ("@a", "@b", "@c")]
+                              status=AccountStatus.active, persona="hype") for h in ("a", "b", "c")]
     from fanops import cutover
     cutover._save_state(cfg, {"metrics_confirmed": True})    # transfer is VALIDATION-FROZEN — open the gate
     out = render_digest(led, cfg, accounts=accts)

@@ -42,7 +42,7 @@ def test_review_serves_real_h264_aac_mp4(tmp_path):
                           reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(clip_path), aspect=Fmt.r9x16,
                       state=ClipState.queued))
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="real", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(hours=3))))
     led.save()

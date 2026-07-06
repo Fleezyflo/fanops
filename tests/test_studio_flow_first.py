@@ -21,7 +21,7 @@ def _seed(cfg, n=2):
     for i in range(n):
         cid = f"c{i}"; (cdir / f"{cid}.mp4").write_bytes(b"V")
         led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id=f"p{i}", parent_id=cid, account="@a", account_id="ig1", platform=Platform.instagram,
+        led.add_post(Post(id=f"p{i}", parent_id=cid, account="a", account_id="ig1", platform=Platform.instagram,
                           caption="c", state=PostState.awaiting_approval))
     led.save()
 
@@ -43,7 +43,7 @@ def test_approve_in_focus_shows_next_clip_not_schedule(tmp_path):
 def test_review_handoff_picks_busiest_account(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n=3)
     h = views.review_handoff(cfg)
-    assert h["account"] == "@a" and h["awaiting"] == 3
+    assert h["account"] == "a" and h["awaiting"] == 3
 
 def test_schedule_auto_ship_false_without_daemon(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_LIVE", "1")
@@ -70,7 +70,7 @@ def test_review_handoff_includes_dominant_batch(tmp_path):
     (cdir / "c0.mp4").write_bytes(b"V")
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     for i, bid in enumerate(["b1", "b1", "b2"]):
-        led.add_post(Post(id=f"p{i}", parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram,
+        led.add_post(Post(id=f"p{i}", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                           caption="c", state=PostState.awaiting_approval, batch_id=bid))
     led.save()
     h = views.review_handoff(cfg)

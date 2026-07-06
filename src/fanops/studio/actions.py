@@ -844,7 +844,7 @@ def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] =
     mom = led.moments.get(clip.parent_id) if clip is not None else None
     if mom is None:
         return ActionResult(ok=False, error="no moment for post")
-    removed = ((mom.hooks_by_persona_removed or {}).get(p.account) or mom.hook_removed)
+    removed = mom.hook_removed
     if not removed:
         return ActionResult(ok=False, error="no stripped hook to restore")
     return reburn_hook(cfg, post_id, removed, now=now)
@@ -908,6 +908,36 @@ def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize
         write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
     return ActionResult(ok=True, detail={"retried": len(retried), "skipped": len(skipped), "post_ids": retried,
                                           "outcome": "retried_oversize", "stagger_min": stagger_min})
+
+
+def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transient", stagger_min: int = 2) -> ActionResult:
+    """Queue all failed posts whose error_reason is a transient network blip for daemon retry."""
+    from fanops.studio.views_common import is_transient_failure_reason
+    ids = [pid for pid, p in Ledger.load(cfg).posts.items()
+           if p.state in (PostState.failed, PostState.error) and is_transient_failure_reason(p.error_reason)]
+    if not ids:
+        return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
+    retried: list[str] = []
+    now = _now(None)
+    try:
+        with Ledger.transaction(cfg) as led:
+            for i, pid in enumerate(ids):
+                p = led.posts.get(pid)
+                if p is None or p.state not in (PostState.failed, PostState.error):
+                    continue
+                if not is_transient_failure_reason(p.error_reason):
+                    continue
+                p.state = PostState.queued
+                p.submission_id = None
+                p.error_reason = None
+                p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
+                retried.append(pid)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"retry_transient failed: {str(exc)[:160]}")
+    if retried:
+        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
+    return ActionResult(ok=True, detail={"retried": len(retried), "post_ids": retried, "outcome": "retried_transient",
+                                          "stagger_min": stagger_min})
 
 
 def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str = "") -> ActionResult:

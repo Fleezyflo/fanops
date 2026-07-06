@@ -41,7 +41,7 @@ def test_lift_ignores_unknown_and_nonnumeric_keys(tmp_path):
 
 def test_record_advances_published_to_analyzed(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://p1"))
     led = record_metrics(led, "p1", {"saves": 20, "shares": 12, "retention": 0.7})
     assert led.posts["p1"].metrics["saves"] == 20 and "lift_score" in led.posts["p1"].metrics
@@ -50,7 +50,7 @@ def test_record_advances_published_to_analyzed(tmp_path):
 # ---- T4: honest-lift marker — flag when the lift_score is computed without a high-weight metric ----
 
 def _pub(led, pid="p1"):
-    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://c"))
 
 def test_record_marks_lift_degraded_when_high_weight_metric_absent(tmp_path):
@@ -135,9 +135,9 @@ def test_reach_carry_forward_does_not_stamp_lift_degraded(tmp_path):
 
 def test_pull_matches_by_submission_id_and_skips_failed(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published, submission_id="s_A", public_url="dryrun://p1"))
-    led.add_post(Post(id="p2", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="p2", parent_id="c", account="a", account_id="1",
                       platform=Platform.tiktok, caption="y", state=PostState.failed, submission_id=None, public_url="dryrun://p2"))
     rows = [{"postSubmissionId": "s_A", "metrics": {"saves": 30, "shares": 25, "retention": 0.8}}]
     led = pull_metrics(led, cfg, list_posts=lambda w: rows)
@@ -150,7 +150,7 @@ def test_lift_score_empty_is_zero():
 def test_record_metrics_guards_non_published(tmp_path):
     # A failed post must NOT be advanced to analyzed by a direct record_metrics call.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed, public_url="dryrun://pf"))
     led = record_metrics(led, "pf", {"saves": 99})
     assert led.posts["pf"].state is PostState.failed          # unchanged
@@ -162,7 +162,7 @@ def test_record_metrics_analyzed_is_repollable_latest_updates_state_stays(tmp_pa
     # later series row, but NEVER reverts state and NEVER rewrites an earlier row. (A non-(published|
     # analyzed) post — failed/error/rejected/needs_reconcile — is still an absolute no-op; see below.)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pa", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="pa", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://pa"))
     led = record_metrics(led, "pa", {"saves": 10}, offset="4h", captured_at="t0")   # published -> analyzed
     assert led.posts["pa"].state is PostState.analyzed
@@ -177,9 +177,9 @@ def test_pull_leaves_unmatched_published_post(tmp_path):
     # A published post with NO matching metrics row stays published (documented stuck-state;
     # Task 23 digest will surface it). It is NOT analyzed and gets no lift_score.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pmatch", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="pmatch", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published, submission_id="s_HIT", public_url="dryrun://pmatch"))
-    led.add_post(Post(id="pmiss", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="pmiss", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="y", state=PostState.published, submission_id="s_NOROW", public_url="dryrun://pmiss"))
     rows = [{"postSubmissionId": "s_HIT", "metrics": {"saves": 5}}]
     led = pull_metrics(led, cfg, list_posts=lambda w: rows)
@@ -199,7 +199,7 @@ def test_pull_default_binding_requires_key(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     # Leg 2: a YOUTUBE post still routes to PostizMetricsClient (IG now reads Graph), so the Postiz key
     # is what's demanded here — the contract (a live Postiz channel with no key raises) is unchanged.
-    led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.youtube,
+    led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.youtube,
                       caption="x", state=PostState.published, submission_id="s1", public_url="dryrun://p1"))
     import pytest
     with pytest.raises(PostizAuthError, match="POSTIZ_API_KEY"):
@@ -243,7 +243,7 @@ def _published(pid, sid):
     # Leg 2: IG metrics now come from Meta Graph, so these Postiz-READER plumbing tests use YouTube — the
     # remaining Postiz-published platform whose metrics still route to PostizMetricsClient (IG-via-Postiz-
     # analytics is a dead path post-Leg-2). What they verify (id threading, lift compute) is reader-generic.
-    return Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.youtube,
+    return Post(id=pid, parent_id="c", account="a", account_id="1", platform=Platform.youtube,
                 caption="x", state=PostState.published, submission_id=sid, public_url="dryrun://c")
 
 def test_default_list_posts_postiz_backend_fetches_per_post(tmp_path, monkeypatch, mocker):
@@ -266,7 +266,7 @@ def test_default_list_posts_routes_ig_to_graph_not_postiz(tmp_path, monkeypatch,
     # GraphInsightsClient (media insights), NOT PostizMetricsClient — even though Postiz PUBLISHES it.
     from fanops.track import _default_list_posts
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
-    igp = Post(id="ig1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    igp = Post(id="ig1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                caption="x", state=PostState.published, submission_id="s_ig", media_id="M1",
                cut_seconds=20.0, public_url="https://www.instagram.com/reel/AAA/")
     # media insights injected; Postiz analytics endpoint must NOT be called for an IG post.
@@ -283,7 +283,7 @@ def test_default_list_posts_tiktok_still_routes_to_zernio(tmp_path, monkeypatch,
     from fanops.track import _default_list_posts
     monkeypatch.setenv("FANOPS_POSTER", "zernio"); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
     cfg = Config(root=tmp_path)
-    tk = Post(id="tk1", parent_id="c", account="@a", account_id="1", platform=Platform.tiktok,
+    tk = Post(id="tk1", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
               caption="x", state=PostState.published, submission_id="s_tk", public_url="dryrun://c")
     graph_spy = mocker.patch("fanops.meta_graph.media_insights")
     mocker.patch("fanops.post.metrics.ZernioMetricsClient.list_posts",
@@ -344,7 +344,7 @@ def _pub_at(led, pid="p1", sub="s_A", pub=_PUB, state=PostState.published, platf
     # if a specific test wants a different URL. `platform` defaults to IG (most callers inject list_posts
     # so routing is moot); a caller exercising the DEFAULT reader binding passes youtube (Leg 2: IG->Graph).
     kw.setdefault("public_url", f"dryrun://{pid}")
-    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=platform,
+    led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1", platform=platform,
                       caption="x", state=state, submission_id=sub,
                       published_at=(iso_z(pub) if pub else None), **kw))
 
@@ -384,7 +384,7 @@ def test_record_duplicate_offset_does_not_duplicate_row_but_updates_latest(tmp_p
 
 def test_record_failed_post_is_absolute_noop_no_row(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed, public_url="dryrun://pf"))
     led = record_metrics(led, "pf", {"saves": 99}, offset="4h", captured_at="t0")
     assert led.posts["pf"].state is PostState.failed
@@ -479,7 +479,7 @@ def test_cmd_track_threads_analyzed_post_ids_too(tmp_path, monkeypatch, mocker):
     with Ledger.transaction(cfg) as led:
         # Leg 2: YouTube still routes to the Postiz per-post reader (IG->Graph); the published|analyzed
         # id-threading contract this pins is reader-generic.
-        led.add_post(Post(id="pa", parent_id="c", account="@a", account_id="1", platform=Platform.youtube,
+        led.add_post(Post(id="pa", parent_id="c", account="a", account_id="1", platform=Platform.youtube,
                           caption="x", state=PostState.analyzed, submission_id="sidA",
                           published_at=iso_z(_PUB), metrics={"saves": 1, "lift_score": 4.0}, public_url="dryrun://pa"))
     spy = mocker.patch("fanops.post.metrics.requests.get",
@@ -490,7 +490,7 @@ def test_cmd_track_threads_analyzed_post_ids_too(tmp_path, monkeypatch, mocker):
 
 # ---- de-gated learning: real non-degraded live metrics auto-confirm the shape (NO operator cutover step) ----
 def _pub_post(led, sid="sub1"):
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, submission_id=sid, public_url="dryrun://p1"))
 
 _FULL = {"saves": 10, "shares": 5, "retention": 0.8, "reach": 1000, "likes": 3}   # all high-weight keys present
@@ -526,7 +526,7 @@ def test_pull_skips_post_with_fanops_token_submission_id(tmp_path):
     # CULM-3: a published post still carrying the fanops_ birth token must NOT be attributed (the analytics
     # endpoint 404s a fanops_ id) — it's a logged un-attributable outcome, never a silent freeze.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p1", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, submission_id="fanops_abc", public_url="dryrun://p1"))
     rows = [{"postSubmissionId": "fanops_abc", "metrics": {"saves": 9}}]
     led = pull_metrics(led, cfg, list_posts=lambda w: rows)

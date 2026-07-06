@@ -112,13 +112,11 @@ def _parse_gate_form(kind: str, form) -> dict:
             picks.append({"start": s, "end": e, "reason": r})
         return {"picks": picks}
     if kind == "moment_hooks":
-        # M1b: the manual frame-seeing hook answer — one shared hook (blank -> null -> clean clip) plus
-        # any per-account hooks the operator typed (persona_hook__<handle>). A blank persona field drops.
+        # M1b/P6: the manual frame-seeing hook answer — one shared hook (blank -> null -> clean clip).
         hook = (form.get("hook") or "").strip()
-        hbp = {k[len("persona_hook__"):]: v.strip() for k in form
-               if k.startswith("persona_hook__") and (v := (form.get(k) or "")).strip()}
-        return {"hook": hook or None, "hooks_by_persona": hbp}
+        return {"hook": hook or None}
     if kind == "moment_casting":
+        from fanops.models import validate_account_handle
         selections: dict[str, list[str]] = {}
         for k in form:
             if not k.startswith("cast__"):
@@ -127,6 +125,10 @@ def _parse_gate_form(kind: str, form) -> dict:
             if len(parts) != 3:
                 continue
             _, handle, mid = parts
+            try:
+                handle = validate_account_handle(handle)
+            except ValueError:
+                handle = (handle or "").strip().lstrip("@").lower()
             if form.get(k):
                 selections.setdefault(handle, []).append(mid)
         return {"selections": selections}

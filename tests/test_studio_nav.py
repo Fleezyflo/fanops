@@ -18,7 +18,7 @@ def _seed(cfg):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p_base", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram, caption="BASE", state=PostState.awaiting_approval, public_url="dryrun://p_base"))
+    led.add_post(Post(id="p_base", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram, caption="BASE", state=PostState.awaiting_approval, public_url="dryrun://p_base"))
     led.save()
 
 def _client(cfg):
@@ -66,7 +66,7 @@ def test_inactive_link_has_no_aria_current(tmp_path):
 def test_account_spine_threads_rail(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/review?account=@a").data
-    assert b"/personas?account=@a" in html and b"account-session-bar" in html and b"@a" in html  # the @a filter rides every rail link (@ is RFC-legal in a query, left unencoded)
+    assert b"/personas?account=a" in html and b"account-session-bar" in html and b"a" in html  # the a filter rides every rail link
 
 def test_full_pages_carry_rail(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)

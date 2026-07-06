@@ -95,9 +95,9 @@ def _seed_queued_post(cfg: Config, post_id: str = "p1", *,
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "x", "hashtags": []}}
+    clip.meta_captions = {"a/instagram": {"caption": "x", "hashtags": []}}
     led.add_clip(clip)
-    led.add_post(Post(id=post_id, parent_id="c1", account="@a", account_id="1",
+    led.add_post(Post(id=post_id, parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="c", state=state,
                       scheduled_time=scheduled_iso,
                       media_urls=["file:///c1.mp4"], public_url=public_url))

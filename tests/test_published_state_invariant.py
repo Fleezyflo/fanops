@@ -40,7 +40,7 @@ from fanops.models import (
 def _make_post(state: PostState, *, public_url: str | None = None, pid: str = "p_t") -> Post:
     """Construct a Post in the requested state. public_url is the field-under-test for R1."""
     return Post(
-        id=pid, parent_id="c_t", account="@a", account_id="ig_a",
+        id=pid, parent_id="c_t", account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=state,
         public_url=public_url,
     )
@@ -54,7 +54,7 @@ def _seed_minimal_ledger(cfg: Config) -> Clip:
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "c", "hashtags": []}}
+    clip.meta_captions = {"a/instagram": {"caption": "c", "hashtags": []}}
     led.add_clip(clip)
     return clip
 
@@ -180,7 +180,7 @@ def test_dryrun_poster_writes_preview_and_no_artifacts(tmp_path):
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
     led.add_post(Post(
-        id="post_t", parent_id=clip.id, account="@a", account_id="ig_a",
+        id="post_t", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
         media_urls=["file:///clip_1_9x16.mp4"],
     ))
@@ -220,7 +220,7 @@ def test_publish_one_parks_post_without_url_in_needs_reconcile(tmp_path, monkeyp
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
     led.add_post(Post(
-        id="post_g", parent_id=clip.id, account="@a", account_id="ig_a",
+        id="post_g", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
         media_urls=["file:///clip_1_9x16.mp4"],
     ))
@@ -285,7 +285,7 @@ def test_end_to_end_dryrun_publish_holds_queued_with_preview(tmp_path, monkeypat
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
     led.add_post(Post(
-        id="post_e2e", parent_id=clip.id, account="@a", account_id="ig_a",
+        id="post_e2e", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
         media_urls=["file:///clip_1_9x16.mp4"], scheduled_time="2020-01-01T00:00:00Z",   # due
     ))
@@ -317,7 +317,7 @@ def test_mark_published_rejects_empty_url(tmp_path):
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
     led.add_post(Post(
-        id="post_mp", parent_id=clip.id, account="@a", account_id="ig_a",
+        id="post_mp", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
     ))
     led.save()
@@ -342,7 +342,7 @@ def test_mark_published_rejects_none_url(tmp_path):
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
     led.add_post(Post(
-        id="post_mp2", parent_id=clip.id, account="@a", account_id="ig_a",
+        id="post_mp2", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
     ))
     led.save()
@@ -365,7 +365,7 @@ def test_mark_published_accepts_real_url(tmp_path):
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
     led.add_post(Post(
-        id="post_mp3", parent_id=clip.id, account="@a", account_id="ig_a",
+        id="post_mp3", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
     ))
     led.save()
@@ -394,7 +394,7 @@ def test_cli_resolve_published_requires_url_flag(tmp_path, capsys):
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
     led.add_post(Post(
-        id="post_r", parent_id=clip.id, account="@a", account_id="ig_a",
+        id="post_r", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
     ))
     led.save()
@@ -423,7 +423,7 @@ def test_cli_resolve_published_with_url_succeeds(tmp_path):
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
     led.add_post(Post(
-        id="post_r2", parent_id=clip.id, account="@a", account_id="ig_a",
+        id="post_r2", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
     ))
     led.save()
@@ -451,7 +451,7 @@ def test_cli_resolve_to_non_published_does_not_require_url(tmp_path):
     led = Ledger.load(cfg)
     clip = _seed_minimal_ledger(cfg)
     led.add_post(Post(
-        id="post_r3", parent_id=clip.id, account="@a", account_id="ig_a",
+        id="post_r3", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.submitting,
     ))
     led.save()

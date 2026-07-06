@@ -14,7 +14,7 @@ def _seed(tmp_path, post_state):
     led.add_source(Source(id="s", source_path="/x"))
     led.add_moment(Moment(id="m", parent_id="s", content_token="A", start=0, end=2, reason="a"))
     led.add_clip(Clip(id="c", parent_id="m", path="/c", state=ClipState.rendered))
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=post_state, public_url="dryrun://p"))
     return led
 

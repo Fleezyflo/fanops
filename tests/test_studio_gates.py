@@ -23,7 +23,7 @@ def _moment_hooks_req(cfg, key="s1.1.00-9.00"):
 def _captions_req(cfg, key="c1"):
     return write_request(cfg, kind="captions", key=key, payload={
         "clip_id": key, "transcript_excerpt": "yo", "language": "en", "guidance": "",
-        "surfaces": [{"surface": "@a|instagram", "platform": "instagram"}]})
+        "surfaces": [{"surface": "a|instagram", "platform": "instagram"}]})
 
 
 # ---- views.gate_rows (lock-free read of the pending request files) -------------------------------
@@ -35,7 +35,7 @@ def test_gate_rows_lists_pending_moments_with_context(tmp_path):
 def test_gate_rows_lists_pending_captions_with_surfaces(tmp_path):
     cfg = Config(root=tmp_path); _captions_req(cfg)
     c = [r for r in views.gate_rows(cfg) if r["kind"] == "captions"][0]
-    assert c["key"] == "c1" and c["surfaces"][0]["surface"] == "@a|instagram"
+    assert c["key"] == "c1" and c["surfaces"][0]["surface"] == "a|instagram"
 
 def test_gate_rows_skips_torn_request_file(tmp_path):
     # A torn/unreadable request file must be SKIPPED (as the docstring promises) — never rendered as an
@@ -63,7 +63,7 @@ def test_answer_moments_writes_valid_response_and_clears_gate(tmp_path):
 def test_answer_captions_writes_valid_response(tmp_path):
     cfg = Config(root=tmp_path); _captions_req(cfg)
     res = actions.answer_gate(cfg, "captions", "c1",
-                              {"items": [{"surface": "@a|instagram", "caption": "fire", "language": "en"}]})
+                              {"items": [{"surface": "a|instagram", "caption": "fire", "language": "en"}]})
     assert res.ok
     cs = read_response(cfg, "captions", "c1", CaptionSet)
     assert cs is not None and cs.items[0].caption == "fire"
@@ -113,16 +113,16 @@ def test_gate_rows_lists_pending_moment_hooks_with_window(tmp_path):
 def test_answer_moment_hooks_writes_valid_decision_and_clears_gate(tmp_path):
     cfg = Config(root=tmp_path); _moment_hooks_req(cfg)
     res = actions.answer_gate(cfg, "moment_hooks", "s1.1.00-9.00",
-                              {"hook": "the part you'll replay", "hooks_by_persona": {"@a": "raw bars"}})
+                              {"hook": "the part you'll replay"})
     assert res.ok
     dec = read_response(cfg, "moment_hooks", "s1.1.00-9.00", MomentHookDecision)
-    assert dec.hook == "the part you'll replay" and dec.hooks_by_persona["@a"] == "raw bars"
+    assert dec.hook == "the part you'll replay" 
     assert pending(cfg, kind="moment_hooks") == []       # gate cleared (response matches request_id)
 
 def test_answer_moment_hooks_blank_hook_is_a_valid_clean_decision(tmp_path):
     # A blank manual hook -> null -> a CLEAN clip (a valid decision, not an error).
     cfg = Config(root=tmp_path); _moment_hooks_req(cfg)
-    res = actions.answer_gate(cfg, "moment_hooks", "s1.1.00-9.00", {"hook": None, "hooks_by_persona": {}})
+    res = actions.answer_gate(cfg, "moment_hooks", "s1.1.00-9.00", {"hook": None})
     assert res.ok and read_response(cfg, "moment_hooks", "s1.1.00-9.00", MomentHookDecision).hook is None
 
 def test_gates_answer_moment_hooks_route_parses_form(tmp_path):
@@ -133,7 +133,7 @@ def test_gates_answer_moment_hooks_route_parses_form(tmp_path):
                                data={"hook": "wait for the switch", "persona_hook__@a": "raw bars"})
     assert r.status_code == 200
     dec = read_response(cfg, "moment_hooks", "s1.1.00-9.00", MomentHookDecision)
-    assert dec.hook == "wait for the switch" and dec.hooks_by_persona["@a"] == "raw bars"
+    assert dec.hook == "wait for the switch" 
 
 
 # ---- MOL-109 / PKT-3: a length-desynced pick form is a FORM-VALIDATION error, never a silent

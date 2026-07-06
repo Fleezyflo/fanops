@@ -21,12 +21,12 @@ def _seed(cfg):
         led.add_source(Source(id="s1", source_path="/v.mp4"))
         led.add_moment(Moment(id="mk", parent_id="s1", content_token="K", start=0, end=2, reason="k"))
         led.add_clip(Clip(id="ck", parent_id="mk", path="/ck.mp4", state=ClipState.analyzed))
-        led.add_post(Post(id="pk", parent_id="ck", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="pk", parent_id="ck", account="a", account_id="1", platform=Platform.instagram,
                           caption="kept", state=PostState.analyzed, public_url="https://ig/reel/k/",
                           metrics={LIFT_SCORE: 0.5}))
         led.add_moment(Moment(id="md", parent_id="s1", content_token="D", start=3, end=5, reason="d"))
         led.add_clip(Clip(id="cd", parent_id="md", path="/cd.mp4", state=ClipState.rendered))
-        led.add_post(Post(id="pd", parent_id="cd", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="pd", parent_id="cd", account="a", account_id="1", platform=Platform.instagram,
                           caption="never", state=PostState.awaiting_approval, public_url="dryrun://pd"))
 
 
@@ -111,7 +111,7 @@ def test_wipe_preview_empty_when_all_backed(tmp_path):
         led.add_source(Source(id="s1", source_path="/v.mp4"))
         led.add_moment(Moment(id="mk", parent_id="s1", content_token="K", start=0, end=2, reason="k"))
         led.add_clip(Clip(id="ck", parent_id="mk", path="/ck.mp4", state=ClipState.analyzed))
-        led.add_post(Post(id="pk", parent_id="ck", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="pk", parent_id="ck", account="a", account_id="1", platform=Platform.instagram,
                           caption="kept", state=PostState.analyzed, public_url="https://ig/reel/k/",
                           metrics={LIFT_SCORE: 0.5}))
     res = actions_wipe.preview_wipe(cfg)

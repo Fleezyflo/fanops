@@ -20,7 +20,7 @@ def _seed(led, cfg):
     cfg.clips.mkdir(parents=True, exist_ok=True)
     p = cfg.clips / "clip_1_9x16.mp4"; p.write_bytes(b"X")
     c = Clip(id="clip_1", parent_id="mom_1", path=str(p), aspect=Fmt.r9x16, state=ClipState.captioned)
-    c.meta_captions = {"@a/instagram": {"caption": "c", "hashtags": []}}
+    c.meta_captions = {"a/instagram": {"caption": "c", "hashtags": []}}
     led.add_clip(c)
 
 

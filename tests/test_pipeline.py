@@ -102,8 +102,8 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
     led = Ledger.load(cfg); clip_id = next(iter(led.clips))
     rid2 = latest_request_id(cfg, "captions", clip_id)
     response_path(cfg, "captions", clip_id).write_text(CaptionSet(request_id=rid2, items=[
-        CaptionItem(surface="@a/instagram", caption="no warning. just impact."),
-        CaptionItem(surface="@a/tiktok", caption="wait for it.")]).model_dump_json())
+        CaptionItem(surface="a/instagram", caption="no warning. just impact."),
+        CaptionItem(surface="a/tiktok", caption="wait for it.")]).model_dump_json())
 
     s = advance(cfg, base_time="2020-01-01T00:00:00Z")   # base in the PAST so posts are due
     # Post-approval gate: crosspost creates the 2 posts but they are BORN awaiting_approval, so an
@@ -353,7 +353,7 @@ def test_advance_reports_run_delta_and_last_post_age(tmp_path, monkeypatch, mock
     sched = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
     led = Ledger.load(cfg)
     led.add_post(Post(id="post_pre", parent_id="clip_x", state=PostState.published,
-                      account="@a", account_id="1", platform=Platform.instagram,
+                      account="a", account_id="1", platform=Platform.instagram,
                       caption="seeded", scheduled_time=sched, public_url="dryrun://post_pre"))
     led.save()
 
@@ -379,7 +379,7 @@ def test_advance_last_post_age_is_none_when_scheduled_time_absent(tmp_path, monk
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     led = Ledger.load(cfg)
     led.add_post(Post(id="post_pre", parent_id="clip_x", state=PostState.published,
-                      account="@a", account_id="1", platform=Platform.instagram,
+                      account="a", account_id="1", platform=Platform.instagram,
                       caption="seeded", scheduled_time=None, public_url="dryrun://post_pre"))   # no scheduled_time -> age None
     led.save()
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
@@ -423,7 +423,7 @@ def test_advance_halts_on_fatal_auth_error_from_crosspost(tmp_path, monkeypatch,
 # ---- M2 Task 5a: is_live_backend gate site #1 — the Blotato status reconciler stays Blotato-only ----
 def _needs_reconcile_post():
     from fanops.models import Post, PostState, Platform
-    return Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    return Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p")
 
 def test_advance_postiz_now_reconciles_its_parked_posts(tmp_path, monkeypatch, mocker):

@@ -23,7 +23,7 @@ def _accounts(cfg):
     a = Accounts(cfg)
     a.accounts = [Account(handle=h, account_id=h.strip("@"), platforms=[Platform.instagram],
                           status=AccountStatus.active, persona="hype cinematic")
-                  for h in ("@a", "@b", "@c")]
+                  for h in ("a", "b", "c")]
     return a
 
 
@@ -34,7 +34,7 @@ def _seed_on_disk(cfg: Config) -> None:
                           reason="r", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
     # @a and @b: STYLE (90 x3) vs LOSE (10 x3) -> each a trustworthy gated winner of STYLE.
-    for acct in ("@a", "@b"):
+    for acct in ("a", "b"):
         rows = [("STYLE", 90.0)] * 3 + [("LOSE", 10.0)] * 3
         for i, (hook, lift) in enumerate(rows):
             led.add_post(Post(id=f"{acct}{i}", parent_id="clip_1", account=acct, account_id=acct.strip("@"),
@@ -53,7 +53,7 @@ def test_transferred_prior_reaches_caption_request_on_disk(tmp_path, monkeypatch
     #                                                          so the borrowed prior actually reaches the caption
     led = Ledger.load(cfg)                                   # round-trip from disk
     assert led.posts and led.clips["clip_1"].state is ClipState.rendered
-    led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=_accounts(cfg))
+    led = request_captions(led, cfg, "clip_1", [("c", Platform.instagram)], accounts=_accounts(cfg))
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert payload.get("learned_hooks_transferred") == ["STYLE"], \
         f"the borrowed style must reach the on-disk request; got {payload.get('learned_hooks_transferred')!r}"
@@ -71,7 +71,7 @@ def test_stricter_min_donors_blocks_transfer_on_disk(tmp_path, monkeypatch):
     from fanops import cutover
     cutover._save_state(cfg, {"metrics_confirmed": True})    # validate so the MIN_DONORS gate (not the freeze) is what blocks
     led = Ledger.load(cfg)
-    led = request_captions(led, cfg, "clip_1", [("@c", Platform.instagram)], accounts=_accounts(cfg))
+    led = request_captions(led, cfg, "clip_1", [("c", Platform.instagram)], accounts=_accounts(cfg))
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "learned_hooks_transferred" not in payload        # stricter gate held
     assert "STYLE" not in json.dumps(payload)

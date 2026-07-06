@@ -28,28 +28,28 @@ def test_framing_names_exported():
     assert FRAMING_NAMES == {"top", "center"}                  # the validatable set the write boundary enforces
 
 def test_account_framing_defaults_none(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a")])
+    cfg = Config(root=tmp_path); _seed(cfg, [_acct("a")])
     assert Accounts.load(cfg).accounts[0].framing is None       # absent field -> None (additive, no migration)
 
 def test_account_framing_persists_when_set(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a", framing="top")])
+    cfg = Config(root=tmp_path); _seed(cfg, [_acct("a", framing="top")])
     assert Accounts.load(cfg).accounts[0].framing == "top"
 
 def test_load_unknown_framing_does_not_crash(tmp_path):
     # fail-open: a hand-edited/legacy unknown framing reloads (resolve_top_bias ignores it -> global).
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a", framing="weird")])
+    cfg = Config(root=tmp_path); _seed(cfg, [_acct("a", framing="weird")])
     assert Accounts.load(cfg).accounts[0].framing == "weird"    # persisted, inert downstream
 
 
 # ---------------------------------------------------------------- Config.resolve_top_bias ----
 def test_resolve_top_bias_top_account_true(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a", framing="top")])
+    cfg = Config(root=tmp_path); _seed(cfg, [_acct("a", framing="top")])
     a = Accounts.load(cfg).accounts[0]
     assert cfg.resolve_top_bias(a) is True                      # account pins head-safe top crop
 
 def test_resolve_top_bias_center_account_overrides_global(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")             # global ON...
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a", framing="center")])
+    cfg = Config(root=tmp_path); _seed(cfg, [_acct("a", framing="center")])
     a = Accounts.load(cfg).accounts[0]
     assert cfg.resolve_top_bias(a) is False                     # ...but the account pins center -> override wins
 
@@ -61,17 +61,17 @@ def test_resolve_top_bias_none_account_falls_back_to_global(tmp_path, monkeypatc
 
 def test_resolve_top_bias_unset_account_inherits_global(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a")])      # no per-account framing
+    cfg = Config(root=tmp_path); _seed(cfg, [_acct("a")])      # no per-account framing
     a = Accounts.load(cfg).accounts[0]
     assert cfg.resolve_top_bias(a) is True                      # inherits the global
 
 def test_resolve_top_bias_blank_falls_back(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a", framing="  ")])  # whitespace-only is no override
+    cfg = Config(root=tmp_path); _seed(cfg, [_acct("a", framing="  ")])  # whitespace-only is no override
     a = Accounts.load(cfg).accounts[0]
     assert cfg.resolve_top_bias(a) is False
 
 def test_resolve_top_bias_unknown_falls_back(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg, [_acct("@a", framing="weird")])
+    cfg = Config(root=tmp_path); _seed(cfg, [_acct("a", framing="weird")])
     a = Accounts.load(cfg).accounts[0]
     assert cfg.resolve_top_bias(a) is False                     # unknown is inert -> global (validate-or-default on read)
 
@@ -79,7 +79,7 @@ def test_resolve_top_bias_unknown_falls_back(tmp_path):
 # ---------------------------------------------------------------- add_account framing write path ----
 def test_add_account_with_framing_persists(tmp_path):
     cfg = Config(root=tmp_path)
-    assert add_account(cfg, "@a", ["instagram"], framing="top") == "@a"
+    assert add_account(cfg, "@a", ["instagram"], framing="top") == "a"
     assert Accounts.load(cfg).accounts[0].framing == "top"
 
 def test_add_account_rejects_unknown_framing(tmp_path):
@@ -89,10 +89,10 @@ def test_add_account_rejects_unknown_framing(tmp_path):
 
 
 # ---------------------------------------------------------------- crosspost wiring (integration) ----
-def _seed_clip(led, cfg, *, hooks_by_persona, surfaces):
+def _seed_clip(led, cfg, *, m_hook=None, surfaces):
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          state=MomentState.clipped, hooks_by_persona=hooks_by_persona))
+                          state=MomentState.clipped, hook=m_hook))
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
@@ -134,9 +134,9 @@ def test_framing_override_triggers_cut_with_top_bias(tmp_path, monkeypatch, mock
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed(cfg, [_acct("@top", framing="top")])
+    _seed(cfg, [_acct("top", framing="top")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@top": "H"}, surfaces=("@top/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="H", surfaces=("top/instagram",)); led.save()
     led = _run(cfg)
     assert len(cut_calls) == 1 and cut_calls[0]["top_bias"] is True
     assert cut_calls[0]["profile"] == "talk"                    # same global LENGTH; only framing diverges
@@ -147,9 +147,9 @@ def test_framing_none_account_no_cut_byte_identical(tmp_path, monkeypatch, mocke
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed(cfg, [_acct("@a")])
+    _seed(cfg, [_acct("a")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@a": "H"}, surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="H", surfaces=("a/instagram",)); led.save()
     led = _run(cfg)
     assert cut_calls == [] and len(burn_calls) == 1
     assert next(iter(led.posts.values())).render_id == child_id("render", "clip_1", "H")   # un-tagged
@@ -159,9 +159,9 @@ def test_framing_center_account_no_cut_when_global_off(tmp_path, monkeypatch, mo
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed(cfg, [_acct("@c", framing="center")])
+    _seed(cfg, [_acct("c", framing="center")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@c": "H"}, surfaces=("@c/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="H", surfaces=("c/instagram",)); led.save()
     led = _run(cfg)
     assert cut_calls == [] and len(burn_calls) == 1             # center == global-off -> no divergence
     assert next(iter(led.posts.values())).render_id == child_id("render", "clip_1", "H")
@@ -171,11 +171,11 @@ def test_same_hook_different_framing_distinct_renders(tmp_path, monkeypatch, moc
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     _patch_cut(mocker); _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed(cfg, [_acct("@top", framing="top"),
+    _seed(cfg, [_acct("top", framing="top"),
                 {"handle": "@c", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@top": "SAME", "@c": "SAME"},
-               surfaces=("@top/instagram", "@c/instagram")); led.save()
+    _seed_clip(led, cfg, m_hook="SAME",
+               surfaces=("top/instagram", "c/instagram")); led.save()
     led = _run(cfg)
     rids = {p.render_id for p in led.posts.values()}
     assert len(rids) == 2 and len(led.renders) == 2            # @top frame-tagged; @c un-tagged -> distinct
@@ -187,9 +187,9 @@ def test_framing_top_account_no_cut_when_global_on(tmp_path, monkeypatch, mocker
     monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")             # global ON
     cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed(cfg, [_acct("@top", framing="top")])
+    _seed(cfg, [_acct("top", framing="top")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@top": "H"}, surfaces=("@top/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="H", surfaces=("top/instagram",)); led.save()
     led = _run(cfg)
     assert cut_calls == [] and len(burn_calls) == 1            # top == global-on -> no divergence
     assert next(iter(led.posts.values())).render_id == child_id("render", "clip_1", "H")
@@ -201,9 +201,9 @@ def test_framing_center_account_cut_when_global_on(tmp_path, monkeypatch, mocker
     monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")             # global ON
     cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed(cfg, [_acct("@c", framing="center")])
+    _seed(cfg, [_acct("c", framing="center")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@c": "H"}, surfaces=("@c/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="H", surfaces=("c/instagram",)); led.save()
     led = _run(cfg)
     assert len(cut_calls) == 1 and cut_calls[0]["top_bias"] is False   # center overrides global-on top
     assert burn_calls == []
@@ -213,11 +213,11 @@ def test_band_and_framing_compose_in_render_id(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     _patch_cut(mocker); _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed(cfg, [_acct("@bandonly", clip_profile="long"),
-                _acct("@both", account_id="2", clip_profile="long", framing="top")])
+    _seed(cfg, [_acct("bandonly", clip_profile="long"),
+                _acct("both", account_id="2", clip_profile="long", framing="top")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@bandonly": "SAME", "@both": "SAME"},
-               surfaces=("@bandonly/instagram", "@both/instagram")); led.save()
+    _seed_clip(led, cfg, m_hook="SAME",
+               surfaces=("bandonly/instagram", "both/instagram")); led.save()
     led = _run(cfg)
     rids = {p.render_id for p in led.posts.values()}
     assert len(rids) == 2 and len(led.renders) == 2           # the frame tag composes on top of the band tag

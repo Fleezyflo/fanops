@@ -14,7 +14,7 @@ def test_dryrun_writes_payload_but_no_distribution_artifacts(tmp_path):
     # dryrun-boundary M2: DryRunPoster.publish is now a PREVIEW writer — it writes the would-send
     # sidecar and touches NOTHING else. A dry run does not distribute, so it fabricates no state/id/url.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="98432",
+    led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="98432",
                       platform=Platform.instagram, caption="hello", media_urls=["https://h/v.mp4"],
                       scheduled_time="2026-06-02T18:00:00Z", state=PostState.queued))
     led = DryRunPoster(cfg).publish(led, "p1")
@@ -35,7 +35,7 @@ def test_dryrun_stamps_no_synthetic_submission_id(tmp_path):
     # publish_due boundary and never reaches a distribution state, so it is never in track.py's pollable
     # set — the old `dryrun_` learning loop is dead. The preview writer therefore stamps NO submission_id.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p9", parent_id="c1", account="@a", account_id="1",
+    led.add_post(Post(id="p9", parent_id="c1", account="a", account_id="1",
                       platform=Platform.tiktok, caption="x", media_urls=["https://h/v.mp4"],
                       state=PostState.queued))
     led = DryRunPoster(cfg).publish(led, "p9")

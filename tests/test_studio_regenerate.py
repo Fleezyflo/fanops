@@ -21,12 +21,12 @@ def _seed(cfg, caption="OLD", lang="en", state=PostState.queued):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", transcript_excerpt="the beat drops here", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_edit", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption=caption, state=state,
                       scheduled_time=FUTURE, public_url="dryrun://p_edit"))
     led.save(); return led
 
-def _model(caption="A FRESH TAKE", hashtags=None, surface="@a/instagram"):
+def _model(caption="A FRESH TAKE", hashtags=None, surface="a/instagram"):
     """A fake caption model: returns a CaptionSet-shaped dict for the post's surface (no network)."""
     def m(prompt, schema):
         return {"items": [{"surface": surface, "caption": caption,
@@ -70,7 +70,7 @@ def test_regenerate_passes_operator_guidance_and_context_to_model(tmp_path):
     seen = {}
     def m(prompt, schema):
         seen["prompt"] = prompt
-        return {"items": [{"surface": "@a/instagram", "caption": "ok", "language": "en"}]}
+        return {"items": [{"surface": "a/instagram", "caption": "ok", "language": "en"}]}
     regenerate_caption(cfg, "p_edit", "mention the beat drop", model=m, now=NOW)
     assert "mention the beat drop" in seen["prompt"]            # operator hint reached the model
     assert "the beat drops here" in seen["prompt"]              # clip transcript excerpt is context
@@ -112,8 +112,8 @@ def test_regenerate_surfaces_missing_claude(tmp_path):
 def test_regenerate_picks_exact_surface_among_many(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     def m(prompt, schema):
-        return {"items": [{"surface": "@b/youtube", "caption": "WRONG", "language": "en"},
-                          {"surface": "@a/instagram", "caption": "RIGHT", "language": "en"}]}
+        return {"items": [{"surface": "b/youtube", "caption": "WRONG", "language": "en"},
+                          {"surface": "a/instagram", "caption": "RIGHT", "language": "en"}]}
     res = regenerate_caption(cfg, "p_edit", "", model=m, now=NOW)
     assert res.ok is True and res.detail["caption"] == "RIGHT"
 
@@ -127,7 +127,7 @@ def test_regenerate_accepts_lone_item_on_surface_mismatch(tmp_path):
 
 def test_regenerate_malformed_model_output_rejected(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, caption="KEEP")
-    def m(prompt, schema): return {"items": [{"surface": "@a/instagram"}]}   # missing required caption
+    def m(prompt, schema): return {"items": [{"surface": "a/instagram"}]}   # missing required caption
     res = regenerate_caption(cfg, "p_edit", "", model=m, now=NOW)
     assert res.ok is False
     assert Ledger.load(cfg).posts["p_edit"].caption == "KEEP"    # unchanged
@@ -141,7 +141,7 @@ def test_regenerate_route_swaps_edit_field(tmp_path, monkeypatch):
     # the route uses the default model (claude_json); patch it at its module so the lazy import binds
     # to the fake — proves the real HTTP path persists and re-renders the edit field with the new text.
     monkeypatch.setattr("fanops.llm.claude_json",
-                        lambda prompt, schema, **kw: {"items": [{"surface": "@a/instagram",
+                        lambda prompt, schema, **kw: {"items": [{"surface": "a/instagram",
                                                                  "caption": "ROUTED", "language": "en"}]})
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/regenerate/p_edit", data={"guidance": "punchier"})

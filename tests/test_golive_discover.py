@@ -46,7 +46,7 @@ def test_ensure_channel_creates_new_active_account(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
     assert ensure_channel(cfg, "@new", "instagram") is True
     a = Accounts.load(cfg).accounts[0]
-    assert a.handle == "@new" and a.status.value == "active" and Platform.instagram in a.platforms
+    assert a.handle == "new" and a.status.value == "active" and Platform.instagram in a.platforms
 
 
 def test_ensure_channel_appends_platform_to_existing(tmp_path, monkeypatch):
@@ -54,7 +54,7 @@ def test_ensure_channel_appends_platform_to_existing(tmp_path, monkeypatch):
     _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
                  "integrations": {"instagram": "ig_1"}}])
     assert ensure_channel(cfg, "@a", "tiktok") is True
-    a = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    a = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert {p.value for p in a.platforms} == {"instagram", "tiktok"}
     assert a.integrations.get("instagram") == "ig_1"             # existing field preserved
 
@@ -78,7 +78,7 @@ def test_ensure_channel_appends_to_every_duplicate_handle_copy(tmp_path, monkeyp
     _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
                 {"handle": "@a", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     assert ensure_channel(cfg, "@a", "tiktok") is True
-    rows = [r for r in _rows(cfg) if r["handle"] == "@a"]
+    rows = [r for r in _rows(cfg) if r["handle"] == "a"]
     assert all("tiktok" in r["platforms"] for r in rows)        # both copies gained the platform
 
 
@@ -87,7 +87,7 @@ def test_ensure_channel_does_not_clobber_existing_persona(tmp_path, monkeypatch)
     _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
                  "persona": "the archivist"}])
     ensure_channel(cfg, "@a", "tiktok", persona="SOMETHING ELSE")   # persona is creation-only -> ignored here
-    a = next(a for a in _rows(cfg) if a["handle"] == "@a")
+    a = next(a for a in _rows(cfg) if a["handle"] == "a")
     assert a["persona"] == "the archivist"
 
 
@@ -108,7 +108,7 @@ def test_discover_merges_both_providers(tmp_path, monkeypatch):
     provs = {c.provider for c in res.detail["channels"]}
     assert provs == {"postiz", "zernio"}
     ig = next(c for c in res.detail["channels"] if c.provider == "postiz")
-    assert ig.suggested_handle == "@markmakmouly" and ig.match is None and ig.already_mapped is False
+    assert ig.suggested_handle == "markmakmouly" and ig.match is None and ig.already_mapped is False
 
 
 def test_discover_matches_existing_handle_deterministically(tmp_path, monkeypatch):
@@ -116,7 +116,7 @@ def test_discover_matches_existing_handle_deterministically(tmp_path, monkeypatc
     _seed(cfg, [{"handle": "@markmakmouly", "account_id": "", "platforms": ["instagram"], "status": "active"}])
     _both_connected(monkeypatch)
     ig = next(c for c in golive.discover_channels(cfg).detail["channels"] if c.provider == "postiz")
-    assert ig.match == "@markmakmouly" and ig.already_mapped is False   # handle matches; this id not yet mapped
+    assert ig.match == "markmakmouly" and ig.already_mapped is False   # handle matches; this id not yet mapped
 
 
 def test_discover_flags_already_mapped_id(tmp_path, monkeypatch):
@@ -125,7 +125,7 @@ def test_discover_flags_already_mapped_id(tmp_path, monkeypatch):
                  "integrations": {"instagram": "ig_1"}}])
     _both_connected(monkeypatch)
     ig = next(c for c in golive.discover_channels(cfg).detail["channels"] if c.provider == "postiz")
-    assert ig.match == "@mark" and ig.already_mapped is True            # id already on an account
+    assert ig.match == "mark" and ig.already_mapped is True            # id already on an account
 
 
 def test_discover_fail_soft_one_provider_unconnected(tmp_path, monkeypatch):
@@ -165,9 +165,9 @@ def test_adopt_creates_and_maps_but_no_route_without_confirm(tmp_path, monkeypat
                                 confirmed=False)
     assert res.ok is True and res.detail["adopted"] == 1 and res.detail["routed"] == 0
     accts = Accounts.load(cfg)
-    a = next(a for a in accts.accounts if a.handle == "@new")
+    a = next(a for a in accts.accounts if a.handle == "new")
     assert a.integrations.get("instagram") == "ig_1"            # id mapped
-    assert accts.effective_provider("@new", Platform.instagram) is None   # NOT routed (no provider set)
+    assert accts.effective_provider("new", Platform.instagram) is None   # NOT routed (no provider set)
 
 
 def test_adopt_routes_when_confirmed_with_creds(tmp_path, monkeypatch):
@@ -176,8 +176,8 @@ def test_adopt_routes_when_confirmed_with_creds(tmp_path, monkeypatch):
                                 confirmed=True)
     assert res.ok is True and res.detail["adopted"] == 1 and res.detail["routed"] == 1
     accts = Accounts.load(cfg)
-    assert accts.effective_provider("@tk", Platform.tiktok) == "zernio"   # routed to its provider
-    assert accts.live_ready_channels() == [("@tk", "tiktok", "zernio")]   # now publishable once live
+    assert accts.effective_provider("tk", Platform.tiktok) == "zernio"   # routed to its provider
+    assert accts.live_ready_channels() == [("tk", "tiktok", "zernio")]   # now publishable once live
 
 
 def test_adopt_confirmed_without_creds_maps_but_does_not_route(tmp_path, monkeypatch):
@@ -185,7 +185,7 @@ def test_adopt_confirmed_without_creds_maps_but_does_not_route(tmp_path, monkeyp
     res = golive.adopt_channels(cfg, [{"provider": "zernio", "id": "tk_9", "platform": "tiktok", "handle": "@tk"}],
                                 confirmed=True)
     assert res.detail["adopted"] == 1 and res.detail["routed"] == 0
-    assert Accounts.load(cfg).effective_provider("@tk", Platform.tiktok) is None
+    assert Accounts.load(cfg).effective_provider("tk", Platform.tiktok) is None
 
 
 def test_adopt_per_row_isolated_bad_row_does_not_abort(tmp_path, monkeypatch):
@@ -196,7 +196,7 @@ def test_adopt_per_row_isolated_bad_row_does_not_abort(tmp_path, monkeypatch):
     ], confirmed=True)
     assert res.detail["adopted"] == 1                          # the good row still adopted
     handles = {a.handle for a in Accounts.load(cfg).accounts}
-    assert "@good" in handles and "@bad" not in handles
+    assert "good" in handles and "bad" not in handles
     assert any(r["ok"] is False for r in res.detail["rows"])
 
 
@@ -207,7 +207,7 @@ def test_adopt_existing_handle_new_platform(tmp_path, monkeypatch):
     res = golive.adopt_channels(cfg, [{"provider": "zernio", "id": "tk_9", "platform": "tiktok", "handle": "@a"}],
                                 confirmed=True)
     assert res.detail["adopted"] == 1 and res.detail["routed"] == 1
-    a = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    a = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert {p.value for p in a.platforms} == {"instagram", "tiktok"}
     assert a.integrations.get("tiktok") == "tk_9" and a.integrations.get("instagram") == "ig_1"
     assert len(_rows(cfg)) == 1                                 # appended to the SAME account, not a duplicate
@@ -269,7 +269,7 @@ def test_set_account_backend_refuses_live_route_without_integration_id(tmp_path,
     # publish is mis-targeted or burnt. The bare shared account_id is NOT a valid per-channel id.
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
     _seed(cfg, [{"handle": "@tk", "account_id": "", "platforms": ["tiktok"], "status": "active"}])  # no integrations.tiktok
-    res = golive.set_account_backend(cfg, "@tk", "tiktok", "zernio", confirmed=True)
+    res = golive.set_account_backend(cfg, "tk", "tiktok", "zernio", confirmed=True)
     assert res.ok is False and "integration" in res.error.lower()
 
 
@@ -277,8 +277,8 @@ def test_set_account_backend_allows_live_route_with_integration_id(tmp_path, mon
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
     _seed(cfg, [{"handle": "@tk", "account_id": "", "platforms": ["tiktok"], "status": "active",
                  "integrations": {"tiktok": "tk_9"}}])
-    res = golive.set_account_backend(cfg, "@tk", "tiktok", "zernio", confirmed=True)
-    assert res.ok is True and Accounts.load(cfg).effective_provider("@tk", Platform.tiktok) == "zernio"
+    res = golive.set_account_backend(cfg, "tk", "tiktok", "zernio", confirmed=True)
+    assert res.ok is True and Accounts.load(cfg).effective_provider("tk", Platform.tiktok) == "zernio"
 
 
 # ------------------------------------------------------------------ M4: route only a platform the account carries ----
@@ -287,7 +287,7 @@ def test_set_account_backend_refuses_platform_not_carried(tmp_path, monkeypatch)
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
     _seed(cfg, [{"handle": "@ig", "platforms": ["instagram"], "status": "active",
                  "integrations": {"instagram": "ig_1", "tiktok": "tk_9"}}])   # has a tiktok id but NOT the platform
-    res = golive.set_account_backend(cfg, "@ig", "tiktok", "zernio", confirmed=True)
+    res = golive.set_account_backend(cfg, "ig", "tiktok", "zernio", confirmed=True)
     assert res.ok is False
 
 
@@ -303,7 +303,7 @@ def test_go_live_refuses_bridge_only_channel(tmp_path, monkeypatch):
                  "integrations": {"instagram": "ig_1"}}])        # no explicit backends -> drift
     res = golive.go_live(cfg, confirmed=True)
     assert res.ok is False, f"R2 must refuse the bridge-only drift state, got: {res}"
-    assert "@ig" in res.error and "instagram" in res.error and "backend" in res.error.lower()
+    assert "ig" in res.error and "instagram" in res.error and "backend" in res.error.lower()
     # FANOPS_LIVE itself must NOT have been written (the legacy FANOPS_POSTER=postiz still derives
     # is_live=True via back-compat, but that's pre-R2 ambient state, not a flip from this call).
     assert os.environ.get("FANOPS_LIVE") in (None, "", "0"), \

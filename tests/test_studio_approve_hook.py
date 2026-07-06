@@ -33,8 +33,8 @@ def _seed(cfg, *, hook_removed=REMOVED, captions=None, post_state=PostState.awai
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", state=MomentState.clipped, hook=None, hook_removed=hook_removed))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16,
-                      state=ClipState.queued, meta_captions=(captions or {"@a/instagram": {"caption": "cap"}})))
-    led.add_post(Post(id="p_1", parent_id="clip_1", account="@a", account_id="1",
+                      state=ClipState.queued, meta_captions=(captions or {"a/instagram": {"caption": "cap"}})))
+    led.add_post(Post(id="p_1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="CAP", state=post_state,
                       scheduled_time=None, public_url="dryrun://p_1"))
     led.save()
@@ -71,7 +71,7 @@ def test_approve_with_hook_restores_renders_and_approves(tmp_path, mocker):
     assert led.moments["mom_1"].hook_removed is None            # cleared once live
     assert led.posts["p_1"].state is PostState.queued           # approved
     assert seen["hook_at_render"] == REMOVED                    # burned with the restored hook
-    assert led.clips["clip_1"].meta_captions == {"@a/instagram": {"caption": "cap"}}  # captions PRESERVED across re-render
+    assert led.clips["clip_1"].meta_captions == {"a/instagram": {"caption": "cap"}}  # captions PRESERVED across re-render
     assert led.clips["clip_1"].state is ClipState.queued        # captioned/queued state PRESERVED
 
 
@@ -142,15 +142,15 @@ def test_approve_with_hook_no_removed_hook_just_approves(tmp_path, mocker):
     r.assert_not_called()                                       # nothing to restore -> no re-render
 
 
-def test_approve_with_hook_blocked_under_creative_variation(tmp_path, mocker, monkeypatch):
-    # creative_variation suppresses the moment-hook burn (per-surface owns it) — never silently ship clean.
+def test_approve_with_hook_works_regardless_of_creative_variation_env(tmp_path, mocker, monkeypatch):
+    # P9: approve_with_hook no longer refuses when FANOPS_CREATIVE_VARIATION=1 — owner-moment restore always runs.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed(cfg)
     r = mocker.patch("fanops.clip.render_moment", side_effect=_fake_render)
     res = approve_with_hook(cfg, "clip_1", now=NOW)
-    assert res.ok is False and "variation" in res.error.lower()
-    assert Ledger.load(cfg).posts["p_1"].state is PostState.awaiting_approval  # untouched
-    r.assert_not_called()
+    assert res.ok is True and res.detail["approved"] == 1
+    assert Ledger.load(cfg).posts["p_1"].state is PostState.queued
+    assert r.call_count >= 1                                        # warm + in-lock burn both call render_moment
 
 
 def test_approve_with_hook_unknown_clip(tmp_path):

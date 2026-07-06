@@ -24,7 +24,7 @@ from fanops.accounts import Accounts, set_backend
 
 # ---------- D5/D15: validator must catch (integration set, backend unset) ----------
 
-def _seed_accounts(cfg: Config, *, handle: str = "@a", integrations: dict | None = None,
+def _seed_accounts(cfg: Config, *, handle: str = "a", integrations: dict | None = None,
                    backends: dict | None = None, platforms: list | None = None) -> None:
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [{
@@ -42,7 +42,7 @@ def test_accounts_validate_rejects_integration_without_backend(tmp_path):
     accts = Accounts.load(cfg)
     problems = accts.validate()
 
-    assert any("integration" in p.lower() and "backend" in p.lower() and "@a" in p
+    assert any("integration" in p.lower() and "backend" in p.lower() and "a" in p
                for p in problems), (
         f"validate() did not catch the integration-without-backend drift (problems={problems}). "
         f"R2/D5/D15: this combo silently fell back to FANOPS_POSTER=dryrun on a 'live' config.")
@@ -153,12 +153,12 @@ def test_doctor_fix_routing_lists_drift_in_dryrun_mode(tmp_path, monkeypatch, ca
 
     out = capsys.readouterr().out
     assert rc == 0
-    assert "@a" in out and "instagram" in out, (
+    assert "a" in out and "instagram" in out, (
         f"doctor --fix-routing did not name the drifted channel; output={out!r}")
     assert "postiz" in out.lower() or "propose" in out.lower(), (
         f"doctor --fix-routing did not propose a fix; output={out!r}")
     # And the file is UNCHANGED — read-only.
     after = Accounts.load(cfg)
-    a = next(x for x in after.accounts if x.handle == "@a")
+    a = next(x for x in after.accounts if x.handle == "a")
     assert a.backends == {}, (
         f"doctor --fix-routing wrote to accounts.json in dry-run/read-only mode: {a.backends!r}")

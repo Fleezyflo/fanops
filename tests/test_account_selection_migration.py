@@ -29,23 +29,23 @@ def _mom(mid, affinities):
 
 def test_migration_v8_to_v9_nonempty_affinities_mints_migrated(tmp_path):
     cfg = Config(root=tmp_path)
-    _write(cfg, _v8({"m1": _mom("m1", ["@a"]), "m2": _mom("m2", ["@a", "@b"])}))
+    _write(cfg, _v8({"m1": _mom("m1", ["a"]), "m2": _mom("m2", ["a", "b"])}))
     led = Ledger.load(cfg)
-    sa = led.account_selection_for("src_1", "@a")
+    sa = led.account_selection_for("src_1", "a")
     assert sa is not None and sa.moment_ids == ["m1", "m2"] and sa.method == SelectionMethod.migrated
-    sb = led.account_selection_for("src_1", "@b")
+    sb = led.account_selection_for("src_1", "b")
     assert sb is not None and sb.moment_ids == ["m2"] and sb.method == SelectionMethod.migrated
 
 
 def test_migration_v8_to_v9_llm_only_when_a_fact_corroborates(tmp_path):
     # a durable SelectionFact (source, @a, llm) corroborates -> @a labelled llm; @b has no fact -> migrated.
     cfg = Config(root=tmp_path)
-    facts = {"selfact_x": {"id": "selfact_x", "moment_id": "m1", "account": "@a", "method": "llm",
+    facts = {"selfact_x": {"id": "selfact_x", "moment_id": "m1", "account": "a", "method": "llm",
                            "source_id": "src_1"}}
-    _write(cfg, _v8({"m1": _mom("m1", ["@a", "@b"])}, selection_facts=facts))
+    _write(cfg, _v8({"m1": _mom("m1", ["a", "b"])}, selection_facts=facts))
     led = Ledger.load(cfg)
-    assert led.account_selection_for("src_1", "@a").method == SelectionMethod.llm
-    assert led.account_selection_for("src_1", "@b").method == SelectionMethod.migrated
+    assert led.account_selection_for("src_1", "a").method == SelectionMethod.llm
+    assert led.account_selection_for("src_1", "b").method == SelectionMethod.migrated
 
 
 def test_migration_v8_to_v9_empty_affinities_mints_no_record(tmp_path):
@@ -54,12 +54,12 @@ def test_migration_v8_to_v9_empty_affinities_mints_no_record(tmp_path):
     _write(cfg, _v8({"m1": _mom("m1", [])}))
     led = Ledger.load(cfg)
     assert led.selections_of_source("src_1") == []
-    assert led.account_selection_for("src_1", "@a") is None
+    assert led.account_selection_for("src_1", "a") is None
 
 
 def test_migration_v8_to_v9_round_trip_loses_no_row_and_stamps_version(tmp_path):
     cfg = Config(root=tmp_path)
-    _write(cfg, _v8({"m1": _mom("m1", ["@a"])}))
+    _write(cfg, _v8({"m1": _mom("m1", ["a"])}))
     led = Ledger.load(cfg)
     assert set(led.moments) == {"m1"} and "src_1" in led.sources       # no row lost
     with Ledger.transaction(cfg):
@@ -69,14 +69,14 @@ def test_migration_v8_to_v9_round_trip_loses_no_row_and_stamps_version(tmp_path)
 
 def test_migration_v8_to_v9_is_idempotent(tmp_path):
     cfg = Config(root=tmp_path)
-    _write(cfg, _v8({"m1": _mom("m1", ["@a"])}))
+    _write(cfg, _v8({"m1": _mom("m1", ["a"])}))
     led1 = Ledger.load(cfg)
     with Ledger.transaction(cfg):                                       # save at v9
         pass
     led2 = Ledger.load(cfg)                                             # reload (no re-migration at v9)
     assert {k: v.model_dump() for k, v in led1.account_selections.items()} == \
            {k: v.model_dump() for k, v in led2.account_selections.items()}
-    assert account_selection_id("src_1", "@a") in led2.account_selections
+    assert account_selection_id("src_1", "a") in led2.account_selections
 
 
 def test_migration_step_never_raises_on_torn_row():
@@ -84,12 +84,12 @@ def test_migration_step_never_raises_on_torn_row():
     # torn raw shape (non-dict moment, None affinities, missing parent_id) regardless of load's later
     # validation. Tested at the function boundary (mirrors _migrate_v4's never-raise guarantee).
     from fanops.ledger import _migrate_v8_account_selections
-    raw = {"moments": {"m1": _mom("m1", ["@a"]), "m_bad": "not-a-dict",
+    raw = {"moments": {"m1": _mom("m1", ["a"]), "m_bad": "not-a-dict",
                        "m_none": {"id": "m_none", "parent_id": "src_1", "affinities": None},
-                       "m_noparent": {"id": "m_np", "affinities": ["@z"]}},
+                       "m_noparent": {"id": "m_np", "affinities": ["z"]}},
            "selection_facts": {}}
     out = _migrate_v8_account_selections(raw)                           # must not raise
     sel = out["account_selections"]
-    asid = account_selection_id("src_1", "@a")
+    asid = account_selection_id("src_1", "a")
     assert asid in sel and sel[asid]["moment_ids"] == ["m1"]
-    assert account_selection_id("src_1", "@z") not in sel              # missing parent_id -> skipped
+    assert account_selection_id("src_1", "z") not in sel              # missing parent_id -> skipped

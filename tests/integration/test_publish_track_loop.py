@@ -34,7 +34,7 @@ def test_live_published_post_reaches_analyzed(tmp_path, monkeypatch, mocker):
         {"handle": "@a", "account_id": "42", "platforms": ["instagram"], "status": "active"}]}))
     # A due (past-scheduled) queued post with already-http media, so publish_due needs no ffmpeg/upload
     # — it exercises exactly the publish->state path under test.
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="42",
+    led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="42",
                       platform=Platform.instagram, caption="hello", media_urls=["https://h/v.mp4"],
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued))
     led.save()                                                  # persist for the self-loading publish_due

@@ -11,7 +11,7 @@ from fanops.digest import aggregate_by_dim
 
 def _analyzed(pid, *, first_frame_kind=None, reach=0.0, saves=0.0, platform=Platform.instagram,
               clip_profile=None, state=PostState.analyzed):
-    return Post(id=pid, parent_id="c1", account="@a", account_id="1", platform=platform,
+    return Post(id=pid, parent_id="c1", account="a", account_id="1", platform=platform,
                 caption="x", state=state, first_frame_kind=first_frame_kind, clip_profile=clip_profile,
                 metrics={"reach": reach, "saves": saves, "lift_score": saves * 4.0 + reach * 0.001}, public_url="dryrun://c1")
 

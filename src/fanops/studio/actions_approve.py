@@ -5,7 +5,7 @@ from typing import Callable, Optional, Sequence
 
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import ClipState, PostState, PLATFORM_MAX_SECONDS
+from fanops.models import ClipState, PostState, PLATFORM_MAX_SECONDS, validate_account_handle
 from fanops.audit import write_audit
 from fanops.log import get_logger
 from fanops.timeutil import iso_z
@@ -158,6 +158,10 @@ def approve_account(cfg: Config, handle: str, *, batch: Optional[str] = None, so
     handle = (handle or "").strip()
     if not handle:
         return ActionResult(ok=True, detail={"account": None, "approved": 0})
+    try:
+        handle = validate_account_handle(handle)
+    except ValueError:
+        return ActionResult(ok=True, detail={"account": handle, "approved": 0})
     det = {"account": handle, "batch": batch, "source": source, "platform": platform}
     def _chan(p) -> bool: return platform is None or p.platform.value == platform
     if source is None:

@@ -28,9 +28,9 @@ def _seed(cfg):
         led.add_moment(Moment(id="m1", parent_id="src1", content_token="8-15", start=8, end=15, reason="late", state=MomentState.decided))
         led.add_clip(Clip(id="c0", parent_id="m0", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         # @a is cast on m0 (llm); @b has no selection (fans to all)
-        led.add_account_selection(AccountSelection(id=account_selection_id("src1", "@a"), source_id="src1",
-                                                   account="@a", moment_ids=["m0"], method=SelectionMethod.llm))
-        led.add_post(Post(id="p_a_m0", parent_id="c0", account="@a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="dryrun://p_a_m0"))
+        led.add_account_selection(AccountSelection(id=account_selection_id("src1", "a"), source_id="src1",
+                                                   account="a", moment_ids=["m0"], method=SelectionMethod.llm))
+        led.add_post(Post(id="p_a_m0", parent_id="c0", account="a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="dryrun://p_a_m0"))
 
 def _seed_with_post(cfg):
     # like _seed but @a's m0 post carries clip_profile="long" so its lane row renders the length-band spec chip.
@@ -65,7 +65,7 @@ def test_lanes_view_renders_a_lane_per_account(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/review?view=lanes&source=src1").data.decode()
     assert "account-lanes" in html                              # the lanes container rendered
-    assert "@a" in html and "@b" in html                        # both active accounts get a lane (incl. zero-post @b)
+    assert "a" in html and "b" in html                        # both active accounts get a lane (incl. zero-post @b)
 
 def test_lanes_view_shows_cast_and_uncast_controls(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
@@ -74,7 +74,7 @@ def test_lanes_view_shows_cast_and_uncast_controls(tmp_path):
     assert "/cast/remove/m0" in html and "/cast/add/" in html
     assert "view=lanes" in html                                 # the buttons carry view=lanes (scope-stable re-render)
     # #3: the account rides a DISTINCT cast_account arg, NOT the global ?account= filter (no scope bleed).
-    assert "cast_account=@a" in html                            # @a's lane buttons target @a via the distinct arg
+    assert "cast_account=a" in html                            # a's lane buttons target a via the distinct arg
     assert "&amp;account=@" not in html                         # clicking must not set the global account filter
 
 def test_lanes_row_shows_spec_chips_for_a_cast_post(tmp_path):

@@ -19,13 +19,13 @@ def _accounts_json(tmp_path, rows):
 
 # ---- model: additive `backends` field, legacy files load ----
 def test_account_backends_defaults_empty():
-    assert Account(handle="@a").backends == {}
+    assert Account(handle="a").backends == {}
 
 def test_legacy_accounts_json_loads_without_backends(tmp_path):
     # a file written before this slice (no `backends` key) must load unchanged (additive field)
     _accounts_json(tmp_path, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     accts = Accounts.load(Config(root=tmp_path))
-    assert accts.accounts[0].backends == {} and accts.resolve_backend("@a", Platform.instagram) is None
+    assert accts.accounts[0].backends == {} and accts.resolve_backend("a", Platform.instagram) is None
 
 
 # ---- resolve_backend: override else None (publish falls back to global) ----
@@ -33,13 +33,13 @@ def test_resolve_backend_returns_override(tmp_path):
     _accounts_json(tmp_path, [{"handle": "@tk", "account_id": "acc", "platforms": ["tiktok"],
                                "status": "active", "backends": {"tiktok": "zernio"}}])
     accts = Accounts.load(Config(root=tmp_path))
-    assert accts.resolve_backend("@tk", Platform.tiktok) == "zernio"
+    assert accts.resolve_backend("tk", Platform.tiktok) == "zernio"
 
 def test_resolve_backend_none_when_unset(tmp_path):
     _accounts_json(tmp_path, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     accts = Accounts.load(Config(root=tmp_path))
-    assert accts.resolve_backend("@a", Platform.instagram) is None
-    assert accts.resolve_backend("@nope", Platform.instagram) is None
+    assert accts.resolve_backend("a", Platform.instagram) is None
+    assert accts.resolve_backend("nope", Platform.instagram) is None
 
 
 # ---- set_backend: atomic write, clears on blank/default, validates ----
@@ -47,16 +47,16 @@ def test_set_backend_writes_and_clears(tmp_path):
     cfg = Config(root=tmp_path)
     _accounts_json(tmp_path, [{"handle": "@tk", "account_id": "acc", "platforms": ["tiktok"], "status": "active"}])
     set_backend(cfg, "@tk", "tiktok", "zernio")
-    assert Accounts.load(cfg).resolve_backend("@tk", Platform.tiktok) == "zernio"
+    assert Accounts.load(cfg).resolve_backend("tk", Platform.tiktok) == "zernio"
     set_backend(cfg, "@tk", "tiktok", "")                         # blank clears -> back to global
-    assert Accounts.load(cfg).resolve_backend("@tk", Platform.tiktok) is None
+    assert Accounts.load(cfg).resolve_backend("tk", Platform.tiktok) is None
 
 def test_set_backend_default_keyword_clears(tmp_path):
     cfg = Config(root=tmp_path)
     _accounts_json(tmp_path, [{"handle": "@tk", "account_id": "acc", "platforms": ["tiktok"],
                                "status": "active", "backends": {"tiktok": "zernio"}}])
     set_backend(cfg, "@tk", "tiktok", "default")
-    assert Accounts.load(cfg).resolve_backend("@tk", Platform.tiktok) is None
+    assert Accounts.load(cfg).resolve_backend("tk", Platform.tiktok) is None
 
 def test_set_backend_validates(tmp_path):
     cfg = Config(root=tmp_path)
@@ -77,7 +77,7 @@ def test_set_backend_preserves_siblings_and_integrations(tmp_path):
     accts = Accounts.load(cfg)
     assert accts.resolve_account_id("@tk", Platform.tiktok) == "acc_abc"      # id untouched
     assert accts.resolve_account_id("@a", Platform.instagram) == "ig_1"       # sibling untouched
-    assert accts.resolve_backend("@a", Platform.instagram) is None            # sibling has no override
+    assert accts.resolve_backend("a", Platform.instagram) is None            # sibling has no override
 
 
 # ---- factory: explicit backend overrides the global ----
@@ -109,9 +109,9 @@ def test_publish_due_routes_per_account(tmp_path, monkeypatch, mocker):
         {"handle": "@tk", "account_id": "acc_abc", "platforms": ["tiktok"], "status": "active",
          "backends": {"tiktok": "zernio"}}])
     with Ledger.transaction(cfg) as led:
-        led.add_post(Post(id="pig", parent_id="c1", account="@ig", account_id="ig_1", platform=Platform.instagram,
+        led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
                           caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
-        led.add_post(Post(id="ptk", parent_id="c2", account="@tk", account_id="acc_abc", platform=Platform.tiktok,
+        led.add_post(Post(id="ptk", parent_id="c2", account="tk", account_id="acc_abc", platform=Platform.tiktok,
                           caption="c", state=PostState.queued, media_urls=["https://x/tk.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://ptk"))
 
     seen = {}
@@ -137,7 +137,7 @@ def test_publish_due_no_overrides_uses_global(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _accounts_json(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
-        led.add_post(Post(id="pig", parent_id="c1", account="@ig", account_id="ig_1", platform=Platform.instagram,
+        led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
                           caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
     seen = {}
     class _FakePoster:

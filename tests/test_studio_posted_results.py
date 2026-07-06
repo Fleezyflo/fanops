@@ -13,7 +13,7 @@ import pytest
 pytest.importorskip("flask")
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState, Clip, ClipState, LIFT_SCORE
+from fanops.models import Post, Platform, PostState, Clip, ClipState, LIFT_SCORE, Source, Moment
 from fanops.studio import views
 
 
@@ -24,24 +24,32 @@ def _client(cfg):
 
 def _row(post_id, clip_id, lift, **over):
     """A bare PostedRow with the fields lineage_stats/metric_peaks read (no ledger needed for unit tests)."""
-    return views.PostedRow(post_id=post_id, clip_id=clip_id, account=over.get("account", "@a"),
+    return views.PostedRow(post_id=post_id, clip_id=clip_id, account=over.get("account", "a"),
                            platform="instagram", caption="x", public_url=None, scheduled_time=None,
                            lift_score=lift, saves=over.get("saves"), shares=over.get("shares"),
                            retention=over.get("retention"), reach=over.get("reach"),
                            variant_hook=over.get("variant_hook"))
 
 
-def _seed_published(cfg, *, pid, clip="clip_1", lift=None, account="@a", hook=None, state=PostState.published,
-                    variant_key=None, metrics_extra=None, when="2026-06-01T00:00:00Z"):
+def _seed_published(cfg, *, pid, clip="clip_1", lift=None, account="a", hook=None, state=PostState.published,
+                    metrics_extra=None, when="2026-06-01T00:00:00Z"):
     with Ledger.transaction(cfg) as led:
         if clip not in led.clips:
-            led.add_clip(Clip(id=clip, parent_id="m1", path=f"/c/{clip}.mp4", state=ClipState.published))
+            mid = f"m_{clip}"
+            if not led.moments.get(mid):
+                led.add_source(Source(id="src_p", source_path="/s.mp4"))
+                led.add_moment(Moment(id=mid, parent_id="src_p", content_token="0-7", start=0, end=7, reason="r", hook=hook))
+            led.add_clip(Clip(id=clip, parent_id=mid, path=f"/c/{clip}.mp4", state=ClipState.published))
+        elif hook is not None:
+            c = led.clips[clip]; mom = led.moments.get(c.parent_id)
+            if mom is not None and not (mom.hook or "").strip():
+                led.moments[c.parent_id] = mom.model_copy(update={"hook": hook})
         metrics = {} if lift is None else {LIFT_SCORE: lift}
         metrics.update(metrics_extra or {})
         led.add_post(Post(id=pid, parent_id=clip, account=account, account_id="ig_1",
                           platform=Platform.instagram, caption="fire", state=state,
                           scheduled_time=when, public_url=f"https://insta/{pid}",
-                          variant_key=variant_key, variant_hook=hook, metrics=metrics))
+                          metrics=metrics))
 
 
 # ── lineage_stats: rank siblings by lift within a clip ─────────────────────────────────────────────
@@ -147,8 +155,8 @@ def test_bar_pct_fail_safe():
 # ── routes render the winner star, lineage chip, delta and micro-bars ──────────────────────────────
 def test_posted_panel_renders_lineage_and_bars(tmp_path):
     cfg = Config(root=tmp_path)
-    _seed_published(cfg, pid="win", clip="clip_1", lift=0.90, hook="A wins", metrics_extra={"saves": 50})
-    _seed_published(cfg, pid="lose", clip="clip_1", lift=0.40, hook="B loses", metrics_extra={"saves": 10})
+    _seed_published(cfg, pid="win", clip="clip_1", lift=0.90, hook="SHARED", metrics_extra={"saves": 50})
+    _seed_published(cfg, pid="lose", clip="clip_1", lift=0.40, hook="SHARED", metrics_extra={"saves": 10})
     html = _client(cfg).get("/posted").data.decode()
     assert "★" in html                                   # winner star (sibling_count>1 & rank 1)
     assert "lineage" in html.lower()                     # the "N in lineage" chip
@@ -159,9 +167,9 @@ def test_posted_panel_renders_lineage_and_bars(tmp_path):
 def test_lift_route_carries_clip_id_and_bars(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_published(cfg, pid="v1", clip="clip_1", lift=0.80, hook="H1", state=PostState.analyzed,
-                    variant_key="k1", metrics_extra={"saves": 30})
+                    metrics_extra={"saves": 30})
     _seed_published(cfg, pid="v2", clip="clip_1", lift=0.30, hook="H2", state=PostState.analyzed,
-                    variant_key="k2", metrics_extra={"saves": 10})
+                    metrics_extra={"saves": 10})
     led = Ledger.load(cfg)
     view = views.lift_rows(led, cfg)
     assert all(getattr(r, "clip_id", None) == "clip_1" for r in view.variant_rows)  # LiftRow now carries it
@@ -176,7 +184,7 @@ def test_lift_all_degraded_emits_table_note_and_quiet_marker(tmp_path):
     cfg = Config(root=tmp_path)
     for i in range(3):
         _seed_published(cfg, pid=f"d{i}", clip=f"clip_{i}", lift=0.1 * i, hook=f"H{i}",
-                        state=PostState.analyzed, variant_key=f"k{i}",
+                        state=PostState.analyzed,
                         metrics_extra={"lift_degraded": True, "lift_missing_keys": ["retention"]})
     html = _client(cfg).get("/lift").data.decode()
     assert "retention data missing" in html.lower()        # table-level note emitted once...
@@ -188,11 +196,11 @@ def test_lift_all_degraded_emits_table_note_and_quiet_marker(tmp_path):
 def test_lift_minority_degraded_keeps_loud_badge_no_note(tmp_path):
     # 1 of 4 degraded (25%) -> the exception: loud per-row badge stays, NO table-level note.
     _seed_published(cfg := Config(root=tmp_path), pid="deg", clip="clip_d", lift=0.1, hook="DEG",
-                    state=PostState.analyzed, variant_key="kd",
+                    state=PostState.analyzed,
                     metrics_extra={"lift_degraded": True, "lift_missing_keys": ["retention"]})
     for i in range(3):
         _seed_published(cfg, pid=f"ok{i}", clip=f"clip_ok{i}", lift=0.2 + i, hook=f"OK{i}",
-                        state=PostState.analyzed, variant_key=f"kok{i}")
+                        state=PostState.analyzed)
     html = _client(cfg).get("/lift").data.decode()
     assert "retention data missing" not in html.lower()    # no table-level note for a minority
     assert 'class="badge degraded"' in html                # the loud per-row badge stays (exception-signal)
@@ -202,7 +210,7 @@ def test_lift_minority_degraded_keeps_loud_badge_no_note(tmp_path):
 def test_lift_number_uses_dominant_class(tmp_path):
     # MOL-50: the Lift number is the answer to "which variant won" -> it carries the dominant .lift-num class.
     _seed_published(cfg := Config(root=tmp_path), pid="v", clip="clip_1", lift=0.3, hook="H",
-                    state=PostState.analyzed, variant_key="k")
+                    state=PostState.analyzed)
     html = _client(cfg).get("/lift").data.decode()
     assert 'class="lift-num"' in html
 
@@ -253,7 +261,7 @@ def test_posted_link_dryrun_row_labels_no_link_not_pending(tmp_path):
         led.add_clip(Clip(id="clip_np", parent_id="m1", path="/c/clip_np.mp4", state=ClipState.published))
         # R1: a published row MUST carry a public_url; the dryrun:// scheme is the M5 dryrun-signature
         # marker (channel chip labels 'dryrun'). The old contract (public_url=None) is now unconstructable.
-        led.add_post(Post(id="p_nourl", parent_id="clip_np", account="@a", account_id="ig_1",
+        led.add_post(Post(id="p_nourl", parent_id="clip_np", account="a", account_id="ig_1",
                           platform=Platform.instagram, caption="fire", state=PostState.published,
                           scheduled_time="2026-06-01T00:00:00Z", public_url="dryrun://p_nourl",
                           metrics={LIFT_SCORE: 0.5}))

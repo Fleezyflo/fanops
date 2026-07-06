@@ -15,7 +15,7 @@ from __future__ import annotations
 import contextlib
 from datetime import datetime, timezone
 from fanops.models import (MomentState, MomentCastingRequest, MomentCastingDecision, SelectionFact,
-                           SelectionMethod, AccountSelection, account_selection_id, normalize_account_handle)
+                           SelectionMethod, AccountSelection, account_selection_id, validate_account_handle)
 from fanops.personas import casting_directive
 from fanops.keyframes import extract_keyframes          # AGENT-4: the casting eyes (same helper the hook gate uses); fail-open []
 from fanops.agentstep import write_request, read_response, latest_request_id
@@ -49,7 +49,7 @@ def _learned_account_signal(led, handles: list[str]) -> dict:
     out: dict = {}
     for h in handles:
         prior = [s for s in led.account_selections.values()
-                   if normalize_account_handle(getattr(s, "account", "") or "") == normalize_account_handle(h)]
+                   if (getattr(s, "account", "") or "") == h]
         reasons = [led.moments[mid].reason for s in prior for mid in s.moment_ids
                    if mid in led.moments and led.moments[mid].reason][:5]
         if reasons: out[h] = reasons
@@ -117,10 +117,12 @@ def ingest_moment_casting(led, cfg, source_id, accounts):
         dec = read_response(cfg, "moment_casting", source_id, MomentCastingDecision)
         if dec is None: return led                    # still pending -> leave affinities as-is
         active = {a.handle for a in accounts.active()}
-        active_by_norm = {normalize_account_handle(a.handle): a.handle for a in accounts.active()}
         add: dict = {}
         for handle, mids in (dec.selections or {}).items():
-            handle = active_by_norm.get(normalize_account_handle(handle), handle)
+            try:
+                handle = validate_account_handle(handle)
+            except ValueError:
+                continue
             if handle not in active: continue          # an inactive/unknown handle never casts
             # AGENT-10 (characterized): casting correlates by source_id + rid (the gate key + read_response's
             # request_id check), NOT a pool fingerprint. A re-pick discards this gate (moments.discard_gate),
@@ -214,7 +216,7 @@ def _affinity_moments_by_account(led, source_id: str) -> dict[str, list[str]]:
     for m in led.moments.values():
         if m.parent_id != source_id: continue
         for h in m.affinities or []:
-            per.setdefault(normalize_account_handle(h), []).append(m.id)
+            per.setdefault(h, []).append(m.id)
     return {h: sorted(set(mids)) for h, mids in per.items()}
 
 
@@ -222,7 +224,7 @@ def _persona_donor_moments(led, accounts, source_id: str) -> dict[str, list[str]
     """Map persona_id -> moment_ids from CHOSEN AccountSelections and/or affinity tags (persona-parity repair)."""
     out: dict[str, list[str]] = {}
     aff = _affinity_moments_by_account(led, source_id)
-    active_by_norm = {normalize_account_handle(a.handle): a for a in accounts.active()}
+    active_by_handle = {a.handle: a for a in accounts.active()}
     for sel in led.selections_of_source(source_id):
         if sel.method not in (SelectionMethod.llm, SelectionMethod.operator, SelectionMethod.migrated,
                               SelectionMethod.heuristic) or not sel.moment_ids:
@@ -230,8 +232,8 @@ def _persona_donor_moments(led, accounts, source_id: str) -> dict[str, list[str]
         pid = next(((a.persona_id or "").strip() for a in accounts.active() if a.handle == sel.account), "")
         if pid and pid not in out:
             out[pid] = list(sel.moment_ids)
-    for norm, mids in aff.items():
-        a = active_by_norm.get(norm)
+    for h, mids in aff.items():
+        a = active_by_handle.get(h)
         if a is None: continue
         pid = (a.persona_id or "").strip()
         if pid and pid not in out:
@@ -279,14 +281,12 @@ def repair_casting_selections(led, cfg, accounts, source_id: str):
         src = led.sources.get(source_id)
         bid = getattr(src, "batch_id", None) if src else None
         now = iso_z(datetime.now(timezone.utc))
-        active_by_norm = {normalize_account_handle(a.handle): a.handle for a in accounts.active()}
-        active = set(active_by_norm.values())
+        active = {a.handle for a in accounts.active()}
         for h, mids in aff.items():
-            handle = active_by_norm.get(h, h)
-            if handle not in active or led.account_selection_for(source_id, handle) is not None:
+            if h not in active or led.account_selection_for(source_id, h) is not None:
                 continue
             led.add_account_selection(AccountSelection(
-                id=account_selection_id(source_id, handle), source_id=source_id, account=handle,
+                id=account_selection_id(source_id, h), source_id=source_id, account=h,
                 moment_ids=mids, method=SelectionMethod.migrated, batch_id=bid, created_at=now))
         _upgrade_stale_fan_all_defaults(led, cfg, accounts, source_id)
         return led
@@ -294,26 +294,24 @@ def repair_casting_selections(led, cfg, accounts, source_id: str):
     per_account: dict[str, list[str]] = {}
     for m in moms:
         for h in m.affinities or []:
-            per_account.setdefault(normalize_account_handle(h), []).append(m.id)
+            per_account.setdefault(h, []).append(m.id)
     if not per_account:
         return led
     src = led.sources.get(source_id)
     bid = getattr(src, "batch_id", None) if src else None
     now = iso_z(datetime.now(timezone.utc))
     active = {a.handle for a in accounts.active()}
-    active_by_norm = {normalize_account_handle(a.handle): a.handle for a in accounts.active()}
     for h, mids in per_account.items():
-        handle = active_by_norm.get(h, h)
-        if handle not in active or led.account_selection_for(source_id, handle) is not None:
+        if h not in active or led.account_selection_for(source_id, h) is not None:
             continue
         led.add_account_selection(AccountSelection(
-            id=account_selection_id(source_id, handle), source_id=source_id, account=handle,
+            id=account_selection_id(source_id, h), source_id=source_id, account=h,
             moment_ids=sorted(set(mids)), method=SelectionMethod.migrated, batch_id=bid, created_at=now))
     candidates = {a.handle for a in accounts.active() if casting_directive(a)}
     if not candidates:
         return led   # legacy affinities-only tags (no persona/casting brief) — migrate picks, never fan_all_default
     for a in accounts.active():
-        if a.handle in {active_by_norm.get(h, h) for h in per_account} or a.handle in candidates:
+        if a.handle in per_account or a.handle in candidates:
             continue
         if led.account_selection_for(source_id, a.handle) is not None:
             continue

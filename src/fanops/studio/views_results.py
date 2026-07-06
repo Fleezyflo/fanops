@@ -422,12 +422,12 @@ class PostedRow:
     failure_kind: Optional[str] = None      # failed rows: rate_limit | oversize | bad_payload | poll_error | unknown
 
 
-_FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "poll_error", "unknown")
-_RETRYABLE_FAILURES = frozenset({"rate_limit", "oversize", "bad_payload", "unknown"})
+_FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "poll_error", "transient", "unknown")
+_RETRYABLE_FAILURES = frozenset({"rate_limit", "oversize", "bad_payload", "transient", "unknown"})
 
 
 _FAILURE_LABELS = {"rate_limit": "Rate limited", "oversize": "Too large", "bad_payload": "Bad upload",
-                   "poll_error": "Link pending", "unknown": "Failed"}
+                   "poll_error": "Link pending", "transient": "Network blip", "unknown": "Failed"}
 
 
 def failure_label(kind: str | None) -> str:
@@ -468,6 +468,7 @@ def operator_error(msg: str | None, *, kind: str | None = None) -> str:
 
 def classify_failure(post) -> str:
     """Bucket a failed/error post's error_reason for the Posted recovery cockpit."""
+    from fanops.studio.views_common import is_transient_failure_reason
     er = (getattr(post, "error_reason", None) or "").lower()
     if not er:
         return "unknown"
@@ -479,6 +480,8 @@ def classify_failure(post) -> str:
         return "poll_error"
     if "400" in er or "bad request" in er or "bad media" in er or "invalid" in er:
         return "bad_payload"
+    if is_transient_failure_reason(getattr(post, "error_reason", None)):
+        return "transient"
     return "unknown"
 
 

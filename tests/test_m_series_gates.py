@@ -31,7 +31,7 @@ def _seed_one(cfg, *, pid, state=PostState.queued, when):
                                   reason="r", state=MomentState.clipped))
             led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4",
                               aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="ig_integ_1",
+        led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="ig_integ_1",
                           platform=Platform.instagram, caption="x", state=state,
                           scheduled_time=when, public_url=f"dryrun://{pid}"))
 

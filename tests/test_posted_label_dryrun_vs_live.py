@@ -39,7 +39,7 @@ def _seed_clip(led: Ledger) -> Clip:
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "a", "hashtags": []}}
+    clip.meta_captions = {"a/instagram": {"caption": "a", "hashtags": []}}
     led.add_clip(clip)
     return clip
 
@@ -57,7 +57,7 @@ def test_dryrun_never_reaches_posted_via_publish_due(tmp_path, monkeypatch):
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
     # an approved (queued), DUE dryrun post with no fabricated distribution artifacts
-    led.add_post(Post(id="p_dry", parent_id=clip.id, account="@a", account_id="ia",
+    led.add_post(Post(id="p_dry", parent_id=clip.id, account="a", account_id="ia",
                       platform=Platform.instagram, caption="c", state=PostState.queued,
                       scheduled_time="2020-01-01T00:00:00Z", media_urls=["file:///clip_1_9x16.mp4"]))
     led.save()

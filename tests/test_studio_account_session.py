@@ -19,7 +19,7 @@ def _seed(cfg, n=2):
     for i in range(n):
         cid = f"c{i}"; (cdir / f"{cid}.mp4").write_bytes(b"V")
         led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id=f"p{i}", parent_id=cid, account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id=f"p{i}", parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
                           caption="c", state=PostState.awaiting_approval, public_url="dryrun://p"))
     led.save()
 
@@ -31,12 +31,12 @@ def test_home_account_launcher_shows_work_counts(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 2)
     html = _client(cfg).get("/").data.decode()
     assert ">Review " in html and '<span class="cta-badge">2</span>' in html   # MOL-55: count in the pending badge (was "Review (2)")
-    assert 'data-acct-awaiting="@a"' in html
+    assert 'data-acct-awaiting="a"' in html
 
 def test_session_bar_on_scoped_pages(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 1)
     html = _client(cfg).get("/review?account=@a").data.decode()
-    assert "account-session-bar" in html and "@a" in html and "Review" in html and "Clear filter" in html
+    assert "account-session-bar" in html and "a" in html and "Review" in html and "Clear filter" in html
 
 def test_review_defaults_to_focus_with_video(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 1)

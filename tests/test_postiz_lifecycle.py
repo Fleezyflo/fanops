@@ -34,7 +34,7 @@ def test_backend_is_postiz_true_for_per_channel_routing(tmp_path, monkeypatch):
                                  '"integrations":{"instagram":"ig1"},"backends":{"instagram":"postiz"}}]}')
     assert cfg.poster_backend == "dryrun"
     assert cfg.is_live is True
-    assert Accounts.load(cfg).live_ready_channels() == [("@a", "instagram", "postiz")]
+    assert Accounts.load(cfg).live_ready_channels() == [("a", "instagram", "postiz")]
     assert pl._backend_is_postiz(cfg) is True
 
 

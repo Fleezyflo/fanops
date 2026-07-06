@@ -12,13 +12,13 @@ _NOW = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
 _FUTURE = "2099-06-06T12:00:00Z"
 _PAST = "2020-06-06T12:00:00Z"
 
-def _accounts(cfg, handle="@a"):
+def _accounts(cfg, handle="a"):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": handle, "account_id": "ig1", "platforms": ["instagram"], "status": "active",
          "integrations": {"instagram": "ig1"}}]}))
 
-def _seed(cfg, *, pid="p1", state=PostState.awaiting_approval, when=_FUTURE, handle="@a"):
+def _seed(cfg, *, pid="p1", state=PostState.awaiting_approval, when=_FUTURE, handle="a"):
     cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
     (cdir / "clip_1.mp4").write_bytes(b"V")
     led = Ledger.load(cfg)
@@ -76,14 +76,14 @@ def test_inflight_watch_strip_on_schedule(tmp_path):
 def test_accept_suggested_account(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.queued, when=_PAST)
     before = Ledger.load(cfg).posts["p1"].scheduled_time
-    res = actions.accept_suggested_account(cfg, "@a", now=_NOW)
+    res = actions.accept_suggested_account(cfg, "a", now=_NOW)
     assert res.ok and res.detail.get("rescheduled", 0) >= 1
     assert Ledger.load(cfg).posts["p1"].scheduled_time != before
 
 def test_account_work_counts_includes_inflight(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.needs_reconcile, when=_PAST)
     wc = views.account_work_counts(cfg)
-    assert wc["@a"]["inflight"] == 1 and wc["@a"]["awaiting"] == 0
+    assert wc["a"]["inflight"] == 1 and wc["a"]["awaiting"] == 0
 
 def test_reconcile_strip_partial_route(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.needs_reconcile, when=_PAST)
@@ -122,19 +122,19 @@ def test_accept_suggested_spreads_multiple_posts(tmp_path):
     for i in range(2):
         cid = f"c{i}"; (cdir / f"{cid}.mp4").write_bytes(b"V")
         led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id=f"p{i}", parent_id=cid, account="@a", account_id="ig1", platform=Platform.instagram,
+        led.add_post(Post(id=f"p{i}", parent_id=cid, account="a", account_id="ig1", platform=Platform.instagram,
                           caption="c", state=PostState.queued, scheduled_time=_PAST, public_url="dryrun://p"))
     led.save()
-    res = actions.accept_suggested_account(cfg, "@a", now=_NOW)
+    res = actions.accept_suggested_account(cfg, "a", now=_NOW)
     assert res.ok and res.detail["rescheduled"] == 2
     times = {Ledger.load(cfg).posts[f"p{i}"].scheduled_time for i in range(2)}
     assert len(times) == 2 and times.pop() != times.pop()
 
 def test_cockpit_off_suggestion_zero_after_accept(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.queued, when=_PAST)
-    actions.accept_suggested_account(cfg, "@a", now=_NOW)
+    actions.accept_suggested_account(cfg, "a", now=_NOW)
     led = Ledger.load(cfg)
-    cockpit = views.schedule_cockpit(led, cfg, "@a", now=_NOW + timedelta(hours=1))
+    cockpit = views.schedule_cockpit(led, cfg, "a", now=_NOW + timedelta(hours=1))
     assert cockpit.off_suggestion == 0
 
 def test_reconcile_inflight_blocked_when_not_live(tmp_path, monkeypatch):
@@ -151,10 +151,10 @@ def test_account_work_counts_skips_timeless_queued(tmp_path):
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     (cdir / "c0.mp4").write_bytes(b"V")
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p0", parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram,
+    led.add_post(Post(id="p0", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                       caption="c", state=PostState.queued, scheduled_time=None, public_url="dryrun://p"))
     led.save()
-    assert views.account_work_counts(cfg).get("@a", {}).get("scheduled", 0) == 0
+    assert views.account_work_counts(cfg).get("a", {}).get("scheduled", 0) == 0
 
 def test_posted_failure_chip_uses_label(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg)
@@ -164,7 +164,7 @@ def test_posted_failure_chip_uses_label(tmp_path):
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     (cdir / "c0.mp4").write_bytes(b"V")
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p0", parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram,
+    led.add_post(Post(id="p0", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                       caption="c", state=PostState.failed, error_reason="postiz 429", public_url="dryrun://p"))
     led.save()
     html = _client(cfg).get("/posted?delivery=failed").data.decode()
