@@ -121,12 +121,9 @@ class LlmResponder:
                 log("responder", f"{kind}:{key}", "stale",
                     err=f"gate re-seeded mid-call ({rid_before}->{rid_after}); dropping stale answer")
                 return False                    # do not write a stale-payload answer
-            echoed = out.get("request_id")            # AGENT-1: the model is ASKED to echo the rid — VERIFY it
-            if echoed is not None and echoed != rid_before:   # a stale/garbage echo is a real signal, not noise
-                log("responder", f"{kind}:{key}", "rid_mismatch", err=f"model echoed {echoed!r} != {rid_before!r}")
-            out = {**out, "request_id": rid_before}   # responder self-stamps the authoritative rid (== rid_after)
-            if kind == "moments":           # MomentDecision requires source_id; the GATE is
-                out["source_id"] = payload.get("source_id")   # authoritative (review Issue A) — gate wins, not the model
+            out = {**out, "request_id": rid_before}   # gate self-stamps the authoritative rid (== rid_after)
+            if kind == "moments":           # MomentDecision.source_id is gate-populated; the GATE wins, not the model
+                out["source_id"] = payload.get("source_id")
             obj = model_cls(**out)          # decision (a): validate; ValidationError -> pending + log
             obj = screen_model_text(obj)    # MOL-166: screen model-authored text once at the responder boundary
             write_response(cfg, kind, key, obj.model_dump_json(indent=2))   # ATOMIC (audit): no torn-read window for a concurrent reader

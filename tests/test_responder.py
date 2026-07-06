@@ -145,7 +145,14 @@ def test_responder_forces_gate_source_id_over_model_value(tmp_path, monkeypatch)
     assert written["source_id"] == "real_src"   # the GATE wins, not the model's hallucination
 
 
+def test_toctou_guard_intact(tmp_path, monkeypatch):
+    # MOL-167: the rid_before/rid_after staleness guard is untouched — mid-call re-seed drops the stale answer.
+    _assert_toctou_stale_answer_dropped(tmp_path, monkeypatch)
+
 def test_responder_drops_stale_answer_when_gate_reseeded_mid_model_call(tmp_path, monkeypatch):
+    _assert_toctou_stale_answer_dropped(tmp_path, monkeypatch)
+
+def _assert_toctou_stale_answer_dropped(tmp_path, monkeypatch):
     # AUDIT A3 (answer-stale TOCTOU): answer_pending reads payload P1 (under rid R1), runs the SLOW
     # model call, then reads the rid. If an overlapping `fanops run` re-seeds the gate (new rid R2 +
     # new payload P2) DURING the model call, the OLD code read R2 AFTER the call and stamped the
@@ -321,28 +328,40 @@ def test_context_limit_failure_marks_source_degraded_not_infinite_pending(tmp_pa
     assert src.degraded_reason and "context limit" in src.degraded_reason.lower()   # LABELLED, not silent-pending
 
 
-# ---- AGENT-1: the responder VERIFIES the model's rid echo (logs a mismatch) and self-stamps the authoritative rid ----
-def test_rid_mismatch_logged_and_authoritative_rid_stamped(tmp_path, monkeypatch):
-    from fanops.ledger import Ledger
-    from fanops.models import Source, SourceState
+def test_schema_request_id_gate_populated(tmp_path, monkeypatch):
+    # MOL-167: a MomentDecision built WITHOUT request_id/source_id from the model validates; the gate injects both.
+    from fanops.models import MomentDecision, MomentPick
+    from fanops.agentstep import write_request, response_path, latest_request_id
+    from fanops.responder import LlmResponder
+    dec = MomentDecision(picks=[MomentPick(start=1.0, end=4.0, reason="r")])
+    assert not dec.request_id and not dec.source_id
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 9.0, "transcript": [], "signal_peaks": []})
+    rid = latest_request_id(cfg, "moments", "src_1")
+    n = LlmResponder(cfg, model=lambda kind, payload: {"picks": [{"start": 0.0, "end": 7.0, "reason": "drop"}]}).answer_pending(cfg)
+    assert n == 1
+    data = json.loads(response_path(cfg, "moments", "src_1").read_text())
+    assert data["request_id"] == rid and data["source_id"] == "src_1"
+
+def test_gate_stamps_authoritative_rid_ignores_model_echo(tmp_path, monkeypatch):
+    # MOL-167: no echo-verify — a garbage model request_id is discarded unconditionally.
     from fanops.agentstep import write_request, response_path, latest_request_id
     from fanops.responder import LlmResponder
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
     write_request(cfg, kind="moments", key="src_1",
                   payload={"source_id": "src_1", "duration": 9.0, "transcript": [], "signal_peaks": []})
     rid = latest_request_id(cfg, "moments", "src_1")
-    def wrong_echo(kind, payload):                                    # the model echoes a STALE/garbage rid
-        return {"request_id": "garbage-rid", "source_id": "src_1",
-                "picks": [{"start": 0.0, "end": 7.0, "reason": "drop"}]}
     events = []
     monkeypatch.setattr("fanops.responder.get_logger", lambda cfg: (lambda *a, **k: events.append(a)))
-    n = LlmResponder(cfg, model=wrong_echo).answer_pending(cfg)
-    assert n == 1                                                     # the answer is still applied (responder is authoritative)
+    n = LlmResponder(cfg, model=lambda kind, payload: {"request_id": "garbage-rid", "source_id": "wrong",
+                "picks": [{"start": 0.0, "end": 7.0, "reason": "drop"}]}).answer_pending(cfg)
+    assert n == 1
     data = json.loads(response_path(cfg, "moments", "src_1").read_text())
-    assert data["request_id"] == rid                                 # stamped with the AUTHORITATIVE rid, not "garbage-rid"
-    assert any("rid_mismatch" in ev for ev in events)                # the mismatch is now a VISIBLE breadcrumb
+    assert data["request_id"] == rid and data["source_id"] == "src_1"
+    assert not any("rid_mismatch" in ev for ev in events)
 
 
 def test_context_limit_marks_source_degraded_for_captions_gate(tmp_path):

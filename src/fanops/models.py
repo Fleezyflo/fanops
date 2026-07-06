@@ -579,8 +579,8 @@ class ImportedMedia(BaseModel):
     imported_at: Optional[str] = None           # wall-clock ISO-Z when first mirrored into the ledger (audit)
 
 
-# ---- agent-step contracts (all carry request_id for correlation — FIX F21; the LLM responder self-stamps the
-# authoritative rid and VERIFIES the model's echo, logging rid_mismatch on divergence — AGENT-1, not silently trusted) ----
+# ---- agent-step contracts (all carry request_id for correlation — FIX F21; the GATE stamps the
+# authoritative rid + (for moments) source_id AFTER validation — MOL-167: decision schemas do NOT ask the model to echo them) ----
 class MomentRequest(BaseModel):
     source_id: str
     request_id: str
@@ -641,8 +641,8 @@ class MomentPick(BaseModel):
         return _segments_dump(segs)
 
 class MomentDecision(BaseModel):
-    source_id: str
-    request_id: str
+    source_id: Optional[str] = None             # gate-populated (moments kind); not model-authored
+    request_id: Optional[str] = None            # gate-populated; not model-authored
     picks: list[MomentPick] = Field(default_factory=list)
 
 # M1b pass-2: ONE per-pick frame-seeing hook gate. The request carries the PICKED WINDOW + frames
@@ -667,7 +667,7 @@ class MomentHookRequest(BaseModel):
     personas: list[dict] = Field(default_factory=list)      # [{handle, persona}] owner voice for P6; [] -> shared hook
 
 class MomentHookDecision(BaseModel):
-    request_id: str
+    request_id: Optional[str] = None            # gate-populated; not model-authored
     hook: Optional[str] = None      # the window-grounded on-screen RETENTION hook; None/"" -> this pick ships CLEAN (valid)
     hook_frames_unread: bool = False   # AGENT-9: NOT a model field — the responder STAMPS it (like request_id) when
                                        # claude_json_meta proves the attached frames were never read; ingest lifts it
@@ -691,7 +691,7 @@ class MomentCastingRequest(BaseModel):
                                                   # {} -> none (byte-identical, the OFF/frozen path). READ-ONLY, validation-frozen, bias-only.
 
 class MomentCastingDecision(BaseModel):
-    request_id: str
+    request_id: Optional[str] = None            # gate-populated; not model-authored
     selections: dict[str, list[str]] = Field(default_factory=dict)   # handle -> [moment_id,...] that account's OWN moments
 
 class CaptionRequest(BaseModel):
@@ -714,7 +714,7 @@ class CaptionItem(BaseModel):
     # is untouched. Old on-disk responses carrying these keys still parse (pydantic extra="ignore").
 
 class CaptionSet(BaseModel):
-    request_id: str
+    request_id: Optional[str] = None            # gate-populated; not model-authored
     items: list[CaptionItem] = Field(default_factory=list)
 
 # M6 intro-tease: the LLM-vision pairing matcher (intro_match.py). The matcher sees a clean clip's context
