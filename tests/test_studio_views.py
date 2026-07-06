@@ -880,7 +880,8 @@ def test_classify_failure_buckets():
     assert classify_failure(_fail_post("r2", "zernio upload 413 entity too large")) == "oversize"
     assert classify_failure(_fail_post("r3", "postiz 400 bad media url")) == "bad_payload"
     assert classify_failure(_fail_post("r4", "reconcile poll error: connection refused")) == "poll_error"
-    assert classify_failure(_fail_post("r5", "something weird")) == "unknown"
+    assert classify_failure(_fail_post("r5", "publish failed: zernio.com Read timed out (read timeout=30)")) == "transient"
+    assert classify_failure(_fail_post("r6", "something weird")) == "unknown"
 
 
 def test_failure_rollup_counts_failed_posts(tmp_path):
