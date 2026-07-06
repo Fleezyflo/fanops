@@ -8,6 +8,7 @@ cheap GET, cached ~30s) — the Postiz backend health probe the Studio banner de
 new module) because it's a global-strip read like the others, and it imports only fanops.post.postiz."""
 from __future__ import annotations
 import logging
+import re as _re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -291,3 +292,52 @@ def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict
             "hint": (f"Postiz API unhealthy{where} — publishes via Postiz are stalled. The container's "
                      "health check is nginx-only and can lie; check `docker logs postiz` (see "
                      "docs/POSTIZ_OPS.md).")}
+
+
+# MOL-125: shared transient-network failure classifier for publish error_reason strings (Studio recovery +
+# daemon re-queue). Distinct from run._is_transient_publish_error (Exception-typed publish path).
+
+_TRANSIENT_DAEMON_PREFIX = _re.compile(r"^transient_daemon_retry=(\d+)/(\d+)\|", _re.I)
+
+def transient_daemon_retry_count(error_reason: str | None) -> int:
+    """How many daemon-level transient re-queue cycles this post has consumed (0 when unset)."""
+    m = _TRANSIENT_DAEMON_PREFIX.match((error_reason or "").strip())
+    return int(m.group(1)) if m else 0
+
+
+def strip_transient_daemon_prefix(error_reason: str | None) -> str:
+    er = (error_reason or "").strip()
+    return _TRANSIENT_DAEMON_PREFIX.sub("", er, count=1) if er else ""
+
+
+def is_transient_failure_reason(error_reason: str | None) -> bool:
+    """True for DNS/read-timeout/connection blips in a stored error_reason (failed-tab recovery + daemon).
+    Permanent 4xx/auth/validation -> False. Poll errors are reconcile-column, not publish transients."""
+    er = strip_transient_daemon_prefix(error_reason).lower()
+    if not er:
+        return False
+    if "publish transient error" in er:
+        return True
+    if "reconcile poll error" in er or "poll error" in er:
+        return False
+    if any(x in er for x in ("401", "403", "unauthorized", "auth rejected", "credentials rejected")):
+        return False
+    if any(x in er for x in ("413", "oversize", "too large", "entity too large")):
+        return False
+    if any(x in er for x in ("400", "bad request", "bad media", "invalid media", "422")):
+        return False
+    if "429" in er or "rate limit" in er or "too many requests" in er:
+        return False
+    if any(x in er for x in ("nameresolution", "name resolution", "failed to resolve",
+                             "read timed out", "timed out", "timeout", "connection refused",
+                             "connection error", "connection reset", "max retries exceeded",
+                             "network error", "unreachable", "connection aborted")):
+        return True
+    m = _re.search(r'\((\d{3})\)', er)
+    if m:
+        code = int(m.group(1))
+        if 500 <= code < 600:
+            return True
+        if 400 <= code < 500:
+            return False
+    return False
