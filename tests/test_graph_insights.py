@@ -186,7 +186,7 @@ from fanops.post.metrics import GraphInsightsClient
 
 
 def _ig_post(pid, media_id, *, cut_seconds=None, sub=None, product_type="REELS"):
-    return Post(id=pid, parent_id="c", account="@a", account_id="acc1", platform=Platform.instagram,
+    return Post(id=pid, parent_id="c", account="a", account_id="acc1", platform=Platform.instagram,
                 caption="x", state=PostState.published, media_id=media_id, cut_seconds=cut_seconds,
                 product_type=product_type, submission_id=sub or f"real_{pid}",
                 public_url=f"https://www.instagram.com/reel/{pid}/")   # R1: a published post has a permalink

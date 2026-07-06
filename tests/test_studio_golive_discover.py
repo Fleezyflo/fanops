@@ -71,9 +71,9 @@ def test_adopt_route_creates_and_maps_ticked_row(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
     r = _client(cfg).post("/golive/adopt", data={
         "adopt": "0", "provider__0": "zernio", "id__0": "z_1",
-        "platform__0": "tiktok", "handle__0": "@newtt", "persona__0": "bold burner"})
+        "platform__0": "tiktok", "handle__0": "newtt", "persona__0": "bold burner"})
     assert r.status_code == 200
-    a = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "@newtt")
+    a = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "newtt")
     assert a["integrations"]["tiktok"] == "z_1"           # mapped
     assert a["persona"] == "bold burner"                  # persona seeded on creation
     assert "tiktok" not in a.get("backends", {})          # no confirm -> mapped but NOT routed (can't publish)
@@ -84,9 +84,9 @@ def test_adopt_route_routes_when_confirmed_with_creds(tmp_path, monkeypatch):
     monkeypatch.setenv("ZERNIO_API_KEY", "zk")            # creds present -> confirm can route
     r = _client(cfg).post("/golive/adopt", data={
         "adopt": "0", "provider__0": "zernio", "id__0": "z_1",
-        "platform__0": "tiktok", "handle__0": "@newtt", "confirm": "1"})
+        "platform__0": "tiktok", "handle__0": "newtt", "confirm": "1"})
     assert r.status_code == 200
-    a = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "@newtt")
+    a = next(x for x in json.loads(cfg.accounts_path.read_text())["accounts"] if x["handle"] == "newtt")
     assert a["integrations"]["tiktok"] == "z_1"
     assert a["backends"]["tiktok"] == "zernio"            # confirmed + creds -> routed
 
@@ -95,7 +95,7 @@ def test_adopt_route_ignores_unticked_rows(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
     # the row's hidden fields are present but the checkbox value 'adopt' is NOT submitted -> nothing adopted
     r = _client(cfg).post("/golive/adopt", data={
-        "provider__0": "zernio", "id__0": "z_1", "platform__0": "tiktok", "handle__0": "@skip"})
+        "provider__0": "zernio", "id__0": "z_1", "platform__0": "tiktok", "handle__0": "skip"})
     assert r.status_code == 200
     assert json.loads(cfg.accounts_path.read_text())["accounts"] == []
 

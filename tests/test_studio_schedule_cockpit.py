@@ -30,7 +30,7 @@ def _seed(cfg, *, pid="p1", state=PostState.queued, account_id="ig_integ_1", whe
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                               reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id=account_id,
+        led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id=account_id,
                           platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="dryrun://clip_1"))
 
 
@@ -47,7 +47,7 @@ def test_reschedule_bucket_respreads_queued_skips_imminent(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, pid="far", state=PostState.queued, when=_z(_NOW + timedelta(hours=9)))
     with Ledger.transaction(cfg) as led:
-        led.add_post(Post(id="imm", parent_id="clip_1", account="@a", account_id="ig_integ_1",
+        led.add_post(Post(id="imm", parent_id="clip_1", account="a", account_id="ig_integ_1",
                           platform=Platform.instagram, caption="x", state=PostState.queued,
                           scheduled_time=_z(_NOW + timedelta(seconds=30))))   # imminent
     r = actions.reschedule_bucket(cfg, now=_NOW)
@@ -113,7 +113,7 @@ def test_due_publish_plan_estimates_postiz_rate(tmp_path, monkeypatch):
     _seed(cfg, pid="p0", when=past)
     with Ledger.transaction(cfg) as led:
         for i in range(1, 8):
-            led.add_post(Post(id=f"p{i}", parent_id="clip_1", account="@a", account_id="ig_integ_1",
+            led.add_post(Post(id=f"p{i}", parent_id="clip_1", account="a", account_id="ig_integ_1",
                               platform=Platform.instagram, caption="fire", state=PostState.queued,
                               scheduled_time=past, public_url="dryrun://clip_1"))
     plan = views.due_publish_plan(cfg, now=_NOW)

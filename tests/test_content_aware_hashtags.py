@@ -142,7 +142,7 @@ def _seed(led, *, clip_id, mom_id, transcript):
 
 def _ingest_empty(led, cfg, clip_id):
     # the 83% case: the model soft-refuses (items:[]) -> seed fallback. Content must STILL reach the line.
-    led = request_captions(led, cfg, clip_id, [("@a", Platform.instagram)])
+    led = request_captions(led, cfg, clip_id, [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", clip_id)
     response_path(cfg, "captions", clip_id).write_text(CaptionSet(request_id=rid, items=[]).model_dump_json())
     return ingest_captions(led, cfg, clip_id)
@@ -155,8 +155,8 @@ def test_two_clips_one_persona_diverge_on_content(tmp_path):
     _seed(led, clip_id="clip_b", mom_id="mom_b", transcript="a tender lullaby about devotion")
     led = _ingest_empty(led, cfg, "clip_a")
     led = _ingest_empty(led, cfg, "clip_b")
-    a = led.clips["clip_a"].meta_captions["@a/instagram"]["hashtags"]
-    b = led.clips["clip_b"].meta_captions["@a/instagram"]["hashtags"]
+    a = led.clips["clip_a"].meta_captions["a/instagram"]["hashtags"]
+    b = led.clips["clip_b"].meta_captions["a/instagram"]["hashtags"]
     assert a != b                                              # THE CRUX: different content -> different tags
     assert any(t in ("#diss", "#fiery", "#track", "#betrayal") for t in a)
     assert any(t in ("#tender", "#lullaby", "#devotion") for t in b)
@@ -167,7 +167,7 @@ def test_seed_fallback_entry_carries_tag_sources(tmp_path):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     _seed(led, clip_id="clip_a", mom_id="mom_a", transcript="a fiery diss track about betrayal")
     led = _ingest_empty(led, cfg, "clip_a")
-    entry = led.clips["clip_a"].meta_captions["@a/instagram"]
+    entry = led.clips["clip_a"].meta_captions["a/instagram"]
     assert set(entry["tag_sources"]) == set(entry["hashtags"])  # one source per shipped tag
     assert all(entry["tag_sources"].values())                  # none empty/sourceless
     assert "content" in entry["tag_sources"].values()          # the clip's content reached the line
@@ -176,7 +176,7 @@ def test_seed_fallback_entry_carries_tag_sources(tmp_path):
 # ---- Task 5: the prompt offers the clip's content tags (byte-identical without) ----------------------
 from fanops.prompts import caption_prompt
 
-_BASE_PAYLOAD = {"surfaces": [{"surface": "@a/instagram", "platform": "instagram"}], "language": "en"}
+_BASE_PAYLOAD = {"surfaces": [{"surface": "a/instagram", "platform": "instagram"}], "language": "en"}
 
 
 def test_prompt_includes_content_block_when_present():
@@ -197,14 +197,14 @@ def test_contentless_clip_is_byte_identical(tmp_path):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     _seed(led, clip_id="clip_a", mom_id="mom_a", transcript="")
     led = _ingest_empty(led, cfg, "clip_a")
-    tags = led.clips["clip_a"].meta_captions["@a/instagram"]["hashtags"]
+    tags = led.clips["clip_a"].meta_captions["a/instagram"]["hashtags"]
     assert tags == vet_hashtags(None, Platform.instagram, "en")
 
 
 # ---- Task 6: Review surfaces the per-tag provenance (read-only) ---------------------------------------
 def _surface_post(**kw):
     from fanops.studio.views_review import SurfacePost
-    base = dict(post_id="p1", account="@a", platform="instagram", persona=None, caption="#diss #fyp",
+    base = dict(post_id="p1", account="a", platform="instagram", persona=None, caption="#diss #fyp",
                 hashtags=["#diss", "#fyp"], scheduled_time=None, media_url="/m", state="awaiting_approval",
                 imminent=False, editable=True)
     return SurfacePost(**{**base, **kw})

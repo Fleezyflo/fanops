@@ -23,7 +23,7 @@ def _moment_hooks_req(cfg, key="s1.1.00-9.00"):
 def _captions_req(cfg, key="c1"):
     return write_request(cfg, kind="captions", key=key, payload={
         "clip_id": key, "transcript_excerpt": "yo", "language": "en", "guidance": "",
-        "surfaces": [{"surface": "@a|instagram", "platform": "instagram"}]})
+        "surfaces": [{"surface": "a|instagram", "platform": "instagram"}]})
 
 
 # ---- views.gate_rows (lock-free read of the pending request files) -------------------------------
@@ -35,7 +35,7 @@ def test_gate_rows_lists_pending_moments_with_context(tmp_path):
 def test_gate_rows_lists_pending_captions_with_surfaces(tmp_path):
     cfg = Config(root=tmp_path); _captions_req(cfg)
     c = [r for r in views.gate_rows(cfg) if r["kind"] == "captions"][0]
-    assert c["key"] == "c1" and c["surfaces"][0]["surface"] == "@a|instagram"
+    assert c["key"] == "c1" and c["surfaces"][0]["surface"] == "a|instagram"
 
 def test_gate_rows_skips_torn_request_file(tmp_path):
     # A torn/unreadable request file must be SKIPPED (as the docstring promises) — never rendered as an
@@ -63,7 +63,7 @@ def test_answer_moments_writes_valid_response_and_clears_gate(tmp_path):
 def test_answer_captions_writes_valid_response(tmp_path):
     cfg = Config(root=tmp_path); _captions_req(cfg)
     res = actions.answer_gate(cfg, "captions", "c1",
-                              {"items": [{"surface": "@a|instagram", "caption": "fire", "language": "en"}]})
+                              {"items": [{"surface": "a|instagram", "caption": "fire", "language": "en"}]})
     assert res.ok
     cs = read_response(cfg, "captions", "c1", CaptionSet)
     assert cs is not None and cs.items[0].caption == "fire"

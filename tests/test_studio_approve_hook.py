@@ -33,8 +33,8 @@ def _seed(cfg, *, hook_removed=REMOVED, captions=None, post_state=PostState.awai
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", state=MomentState.clipped, hook=None, hook_removed=hook_removed))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16,
-                      state=ClipState.queued, meta_captions=(captions or {"@a/instagram": {"caption": "cap"}})))
-    led.add_post(Post(id="p_1", parent_id="clip_1", account="@a", account_id="1",
+                      state=ClipState.queued, meta_captions=(captions or {"a/instagram": {"caption": "cap"}})))
+    led.add_post(Post(id="p_1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="CAP", state=post_state,
                       scheduled_time=None, public_url="dryrun://p_1"))
     led.save()
@@ -71,7 +71,7 @@ def test_approve_with_hook_restores_renders_and_approves(tmp_path, mocker):
     assert led.moments["mom_1"].hook_removed is None            # cleared once live
     assert led.posts["p_1"].state is PostState.queued           # approved
     assert seen["hook_at_render"] == REMOVED                    # burned with the restored hook
-    assert led.clips["clip_1"].meta_captions == {"@a/instagram": {"caption": "cap"}}  # captions PRESERVED across re-render
+    assert led.clips["clip_1"].meta_captions == {"a/instagram": {"caption": "cap"}}  # captions PRESERVED across re-render
     assert led.clips["clip_1"].state is ClipState.queued        # captioned/queued state PRESERVED
 
 

@@ -18,7 +18,7 @@ def _seed_clip(cfg, *, moment_hook=None):
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
+    clip.meta_captions = {"a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
     led.add_clip(clip); led.save(); return led
 
 def test_hook_source_shared_fallback(tmp_path, monkeypatch, mocker):
@@ -37,8 +37,8 @@ def test_hook_source_shared_fallback(tmp_path, monkeypatch, mocker):
 def test_pre_p3_ledger_migrates_clean(tmp_path):
     cfg = Config(root=tmp_path)
     raw = {"schema_version": 7, "sources": {}, "moments": {}, "clips": {}, "posts": {},
-           "renders": {"render_x": {"id": "render_x", "clip_id": "c", "account": "@a",
-                                    "surface_key": "@a/instagram", "path": "/p.mp4"}},
+           "renders": {"render_x": {"id": "render_x", "clip_id": "c", "account": "a",
+                                    "surface_key": "a/instagram", "path": "/p.mp4"}},
            "selection_facts": {}, "batches": {}, "stitch_plans": {}}
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.ledger_path.write_text(json.dumps(raw))

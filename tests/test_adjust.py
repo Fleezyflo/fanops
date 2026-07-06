@@ -19,17 +19,17 @@ def _analyzed_post(led, lift, pid, cid, mid, sid):
                           reason="punchline + beat drop", transcript_excerpt="they slept on me",
                           state=MomentState.clipped))
     led.add_clip(Clip(id=cid, parent_id=mid, path="/c.mp4", state=ClipState.analyzed))
-    led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://1"))
 
 def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
     led = Ledger.load(Config(root=tmp_path))
     for pid, lift in [("p1", 300), ("p2", 5), ("p3", 250), ("p4", 1)]:
-        led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
                           state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
     # a failed post with no lift_score must NOT be classified (FIX F22)
-    led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
                       metrics={"error": "boom"}, public_url="dryrun://pf"))
     # winner_pct=0.5 -> top 2 winners; retire_pct=0.5 + floor 20 -> bottom 2 that are <20
@@ -42,7 +42,7 @@ def test_classify_floor_protects_good_clips_from_retirement(tmp_path):
     # A bottom-ranked post that still clears the lift_floor is NOT retired (conservative policy).
     led = Ledger.load(Config(root=tmp_path))
     for pid, lift in [("hi", 500), ("mid", 100), ("ok", 60)]:   # all >= floor 20
-        led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
                           state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
     r = classify_outcomes(led, winner_pct=0.34, retire_pct=0.34, lift_floor=20.0)
@@ -106,7 +106,7 @@ def test_amplify_respects_per_source_budget(tmp_path):
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="14.00-18.00", start=14, end=18,
                           reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.analyzed, metrics={"lift_score": 400.0}, public_url="dryrun://p1"))
     led = amplify(led, cfg, ["p1"], max_amplify_per_source=3)
     # at the cap, the source is neither re-requested nor state-flipped
@@ -123,7 +123,7 @@ def test_amplify_preserves_winners_published_lineage(tmp_path):
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="14.00-18.00", start=14, end=18,
                           reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, submission_id="SUB123", metrics={"lift_score":400.0}, public_url="dryrun://p1"))
     led = amplify(led, cfg, ["p1"])
     rid = latest_request_id(cfg, "moments", "s1")
@@ -169,7 +169,7 @@ def test_classify_winner_never_also_a_loser(tmp_path):
     # suppressed). A winner must be excluded from the loser pool regardless of pcts.
     led = Ledger.load(Config(root=tmp_path))
     for pid, lift in [("top", 300), ("mid", 5), ("low", 1)]:   # mid is below floor 20
-        led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
                           state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
     r = classify_outcomes(led, winner_pct=0.67, retire_pct=0.67, lift_floor=20.0)
@@ -179,7 +179,7 @@ def test_classify_winner_never_also_a_loser(tmp_path):
 
 
 # ======================= P4(a): account-aware (per-surface) WINNER ranking =======================
-def _ap(led, pid, lift, account="@a", platform=Platform.instagram):
+def _ap(led, pid, lift, account="a", platform=Platform.instagram):
     led.add_post(Post(id=pid, parent_id="c", account=account, account_id="1", platform=platform,
                       caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
 
@@ -189,8 +189,8 @@ def test_per_surface_lets_a_small_accounts_best_win(tmp_path):
     # though it never wins globally.
     led = Ledger.load(Config(root=tmp_path))
     for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150)]:
-        _ap(led, pid, lift, account="@big")
-    _ap(led, "s1", 40, account="@small"); _ap(led, "s2", 5, account="@small")
+        _ap(led, pid, lift, account="big")
+    _ap(led, "s1", 40, account="small"); _ap(led, "s2", 5, account="small")
     glob = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0)
     assert "s1" not in glob["winners"]                                   # globally crowded out
     surf = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0, per_surface=True)
@@ -202,8 +202,8 @@ def test_per_surface_false_is_byte_identical_to_default(tmp_path):
     # same winners AND same losers.
     led = Ledger.load(Config(root=tmp_path))
     for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150)]:
-        _ap(led, pid, lift, account="@big")
-    _ap(led, "s1", 40, account="@small"); _ap(led, "s2", 5, account="@small")
+        _ap(led, pid, lift, account="big")
+    _ap(led, "s1", 40, account="small"); _ap(led, "s2", 5, account="small")
     assert classify_outcomes(led) == classify_outcomes(led, per_surface=False)
     r = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0, per_surface=False)
     assert set(r["winners"]) == {"b1", "b2"} and r["losers"] == ["s2"]   # global top-2; global bottom-1 <floor
@@ -216,8 +216,8 @@ def test_per_surface_winner_is_protected_from_global_retire_D1(tmp_path):
     # genuinely-worst post (lift 3) is still retired. The bottom slice itself is unchanged (global).
     led = Ledger.load(Config(root=tmp_path))
     for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200)]:
-        _ap(led, pid, lift, account="@big")
-    _ap(led, "s_best", 15, account="@small"); _ap(led, "s_worst", 3, account="@small")
+        _ap(led, pid, lift, account="big")
+    _ap(led, "s_best", 15, account="small"); _ap(led, "s_worst", 3, account="small")
     off = classify_outcomes(led, winner_pct=0.3, retire_pct=0.5, lift_floor=20.0, per_surface=False)
     on = classify_outcomes(led, winner_pct=0.3, retire_pct=0.5, lift_floor=20.0, per_surface=True)
     assert "s_best" in off["losers"]                       # globally it WOULD be retired (bottom + <floor)
@@ -229,8 +229,8 @@ def test_per_surface_single_post_surface_wins_and_is_never_a_loser(tmp_path):
     # its bucket's winner (its own best) and, being a winner, can never be forced into the global losers.
     led = Ledger.load(Config(root=tmp_path))
     for pid, lift in [("b1", 300), ("b2", 250)]:
-        _ap(led, pid, lift, account="@big")
-    _ap(led, "solo", 2, account="@solo")                   # one post, below floor, globally the worst
+        _ap(led, pid, lift, account="big")
+    _ap(led, "solo", 2, account="solo")                   # one post, below floor, globally the worst
     on = classify_outcomes(led, winner_pct=0.3, retire_pct=0.5, lift_floor=20.0, per_surface=True)
     assert "solo" in on["winners"] and "solo" not in on["losers"]
 
@@ -238,10 +238,10 @@ def test_per_surface_buckets_by_platform_not_just_account(tmp_path):
     # the bucket key is (account, platform): the same handle's IG and TikTok are distinct surfaces, so
     # each platform's best wins independently (matches the per-platform integration model).
     led = Ledger.load(Config(root=tmp_path))
-    _ap(led, "ig1", 300, account="@a", platform=Platform.instagram)
-    _ap(led, "ig2", 250, account="@a", platform=Platform.instagram)
-    _ap(led, "tk1", 40, account="@a", platform=Platform.tiktok)        # @a's best on TikTok (globally low)
-    _ap(led, "tk2", 5, account="@a", platform=Platform.tiktok)
+    _ap(led, "ig1", 300, account="a", platform=Platform.instagram)
+    _ap(led, "ig2", 250, account="a", platform=Platform.instagram)
+    _ap(led, "tk1", 40, account="a", platform=Platform.tiktok)        # @a's best on TikTok (globally low)
+    _ap(led, "tk2", 5, account="a", platform=Platform.tiktok)
     on = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0, per_surface=True)
     assert "ig1" in on["winners"] and "tk1" in on["winners"]            # each platform's best wins
 

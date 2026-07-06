@@ -27,7 +27,7 @@ def _seed(cfg, *, awaiting=1):
     for i in range(awaiting):
         cid = f"clip_{i}"
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=f"/clips/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id=f"p_{i}", parent_id=cid, account="@a", account_id="1",
+        led.add_post(Post(id=f"p_{i}", parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption=f"C{i}", state=PostState.awaiting_approval,
                           scheduled_time=_z(NOW + timedelta(hours=3))))
     led.save()

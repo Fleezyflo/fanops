@@ -104,14 +104,14 @@ def _clip(led):
 
 def _accounts_with_corpus(cfg, corpus):
     a = Accounts(cfg)
-    a.accounts = [Account(handle="@a", platforms=[Platform.instagram], hashtag_corpus=corpus)]
+    a.accounts = [Account(handle="a", platforms=[Platform.instagram], hashtag_corpus=corpus)]
     return a
 
 
 def test_request_captions_carries_corpus_per_surface(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
     accts = _accounts_with_corpus(cfg, ["#detroitrap"])
-    request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)], accounts=accts)
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert payload["surfaces"][0]["corpus"] == ["#detroitrap"]
 
@@ -119,7 +119,7 @@ def test_request_captions_carries_corpus_per_surface(tmp_path):
 def test_request_captions_omits_corpus_when_empty(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
     accts = _accounts_with_corpus(cfg, [])
-    request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)], accounts=accts)
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "corpus" not in payload["surfaces"][0]          # empty corpus -> no key (byte-identical)
 
@@ -127,12 +127,12 @@ def test_request_captions_omits_corpus_when_empty(tmp_path):
 def test_ingest_uses_corpus_to_lead_hashtags(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
     accts = _accounts_with_corpus(cfg, ["#detroitrap"])
-    request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)], accounts=accts)
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="@a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+        CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
-    mc = led.clips["clip_1"].meta_captions["@a/instagram"]
+    mc = led.clips["clip_1"].meta_captions["a/instagram"]
     assert mc["hashtags"][0] == "#detroitrap"               # the corpus leads the vetted line
     assert len(mc["hashtags"]) <= 4
 
@@ -140,7 +140,7 @@ def test_ingest_uses_corpus_to_lead_hashtags(tmp_path):
 # --- the prompt surfaces the corpus rule -------------------------------------------------------
 
 def test_caption_prompt_has_corpus_rule_and_shows_tags():
-    payload = {"language": "en", "surfaces": [{"surface": "@a/instagram", "platform": "instagram",
+    payload = {"language": "en", "surfaces": [{"surface": "a/instagram", "platform": "instagram",
                                                "corpus": ["#detroitrap"]}]}
     out = caption_prompt(payload)
     assert "prefer the tags in that surface's `corpus`" in out.lower()   # the explicit rule (not just the JSON key leaking)

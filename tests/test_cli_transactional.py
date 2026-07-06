@@ -62,7 +62,7 @@ def test_cmd_track_uses_a_transaction(tmp_path, monkeypatch, mocker):
 def test_cmd_reconcile_uses_a_transaction(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
     led.save()
     # inject a status poll so no real network; report still in-progress (no state change needed)
@@ -115,7 +115,7 @@ def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker)
     monkeypatch.setenv("FANOPS_POSTER", "zernio")
     monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
     led.save()
     seen = {}
@@ -139,7 +139,7 @@ def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_POSTER", "zernio")
     monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.twitter,
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.twitter,
                       caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
     led.save()
     mocker.patch("fanops.reconcile._default_get_status",
@@ -160,7 +160,7 @@ def test_cmd_reconcile_postiz_date_windows_each_post(tmp_path, monkeypatch, mock
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="postiz_9",
                       scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://p")); led.save()
     seen = {}

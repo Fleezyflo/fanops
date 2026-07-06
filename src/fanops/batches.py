@@ -4,7 +4,7 @@
 # the ledger), mirroring the approve_post now_iso precedent.
 from __future__ import annotations
 from datetime import datetime, timezone
-from fanops.models import Batch, batch_id
+from fanops.models import Batch, batch_id, validate_account_handle
 from fanops.timeutil import iso_z
 
 
@@ -45,7 +45,10 @@ def create_batch(led, *, name: str, target_accounts, now_iso: str, active_handle
     if not name: raise ValueError("batch name must be non-blank")
     seen, tgt = set(), []
     for h in target_accounts or []:
-        h = (h or "").strip()
+        try:
+            h = validate_account_handle(h)
+        except ValueError:
+            h = (h or "").strip()
         if h and h not in seen: seen.add(h); tgt.append(h)
     err = None
     if active_handles is not None and tgt and not (set(tgt) & active_handles):

@@ -24,32 +24,32 @@ def _client(cfg):
 
 # ── the empty-cell reason helper: off-target > budget > no-platform, else None ─────────────────────
 def test_empty_cell_reason_off_target_wins():
-    acct = Account(handle="@a", account_id="1", platforms=[Platform.instagram])
+    acct = Account(handle="a", account_id="1", platforms=[Platform.instagram])
     # off-target AND uncast AND on-platform -> off-target is the highest-precedence reason
-    r = views._empty_cell_reason("@a", "instagram", targets=["@b"], affinities=["@b"], acct=acct)
+    r = views._empty_cell_reason("a", "instagram", targets=["b"], affinities=["b"], acct=acct)
     assert r == "off-target"
 
 
 def test_empty_cell_reason_budget_when_in_target_but_uncast():
-    acct = Account(handle="@a", account_id="1", platforms=[Platform.instagram])
-    r = views._empty_cell_reason("@a", "instagram", targets=["@a", "@b"], affinities=["@b"], acct=acct)
+    acct = Account(handle="a", account_id="1", platforms=[Platform.instagram])
+    r = views._empty_cell_reason("a", "instagram", targets=["a", "b"], affinities=["b"], acct=acct)
     assert r == "budget"                                   # in the batch target, but the cast didn't pick it
 
 
 def test_empty_cell_reason_no_platform_when_in_scope_and_cast():
-    acct = Account(handle="@a", account_id="1", platforms=[Platform.instagram])
-    r = views._empty_cell_reason("@a", "tiktok", targets=["@a"], affinities=["@a"], acct=acct)
+    acct = Account(handle="a", account_id="1", platforms=[Platform.instagram])
+    r = views._empty_cell_reason("a", "tiktok", targets=["a"], affinities=["a"], acct=acct)
     assert r == "no tiktok"                                # in target + cast, but the account has no TikTok
 
 
 def test_empty_cell_reason_none_when_in_scope_on_platform_cast():
-    acct = Account(handle="@a", account_id="1", platforms=[Platform.instagram])
-    assert views._empty_cell_reason("@a", "instagram", targets=[], affinities=[], acct=acct) is None
-    assert views._empty_cell_reason("@a", "instagram", targets=["@a"], affinities=["@a"], acct=acct) is None
+    acct = Account(handle="a", account_id="1", platforms=[Platform.instagram])
+    assert views._empty_cell_reason("a", "instagram", targets=[], affinities=[], acct=acct) is None
+    assert views._empty_cell_reason("a", "instagram", targets=["a"], affinities=["a"], acct=acct) is None
 
 
 def test_empty_cell_reason_never_raises_on_odd_acct():
-    assert views._empty_cell_reason("@a", "instagram", targets=[], affinities=[], acct=None) is None
+    assert views._empty_cell_reason("a", "instagram", targets=[], affinities=[], acct=None) is None
 
 
 # ── the card names the excluded accounts (not just a count) ─────────────────────────────────────────
@@ -61,11 +61,11 @@ def _seed_batch_excluded(cfg):
         {"handle": "@c", "account_id": "3", "platforms": ["instagram"], "status": "active"}]}))
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
     with Ledger.transaction(cfg) as led:
-        led.add_batch(Batch(id="bat_1", name="Launch", target_accounts=["@a"]))   # only @a targeted -> @b,@c excluded
+        led.add_batch(Batch(id="bat_1", name="Launch", target_accounts=["a"]))   # only @a targeted -> @b,@c excluded
         led.add_source(Source(id="s", source_path="/v.mp4", batch_id="bat_1"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, batch_id="bat_1", public_url="dryrun://p"))
 
 
@@ -74,14 +74,14 @@ def test_card_carries_excluded_names(tmp_path):
     led = Ledger.load(cfg); accounts = Accounts.load(cfg)
     cards = views.review_buckets(led, accounts, cfg, now=NOW)
     card = next(c for c in cards if c.bucket == "editable")
-    assert card.batch_excluded_names == ["@b", "@c"]        # NAMED + sorted, not a bare count
+    assert card.batch_excluded_names == ["b", "c"]        # NAMED + sorted, not a bare count
     assert card.batch_excluded == 2                         # the legacy count is preserved
 
 
 def test_review_html_names_excluded_accounts(tmp_path):
     cfg = Config(root=tmp_path); _seed_batch_excluded(cfg)
     html = _client(cfg).get("/review?view=list").data.decode()
-    assert "@b" in html and "@c" in html and "excluded" in html   # the names reach the worklist, not just "2"
+    assert "b" in html and "c" in html and "excluded" in html   # the names reach the worklist, not just "2"
 
 
 # ── the card surface-spec consumes the _prov cause_chip macro (not a parallel hand-rolled chip) ─────
@@ -98,11 +98,11 @@ def _seed_persona_cut(cfg):
     cfg.clips.mkdir(parents=True, exist_ok=True); r = cfg.clips / "r.mp4"; r.write_bytes(b"\x00ftypmp42")
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
-        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped, affinities=["@long"]))
+        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped, affinities=["long"]))
         led.add_clip(Clip(id="c", parent_id="m", path=str(r), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_render(Render(id="r1", clip_id="c", account="@long", surface_key="@long/instagram",
+        led.add_render(Render(id="r1", clip_id="c", account="long", surface_key="long/instagram",
                               hook_text="H", path=str(r), state=RenderState.rendered, is_account_cut=True))
-        led.add_post(Post(id="p", parent_id="c", account="@long", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p", parent_id="c", account="long", account_id="1", platform=Platform.instagram,
                           caption="c", state=PostState.awaiting_approval, render_id="r1", clip_profile="long", public_url="dryrun://p"))
 
 
@@ -125,7 +125,7 @@ def _seed_legacy(cfg):
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, public_url="dryrun://p"))
 
 
@@ -148,7 +148,7 @@ def _seed_pin_only(cfg):
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
 
 
@@ -160,7 +160,7 @@ def test_off_with_pin_shows_cause_additively(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _seed_pin_only(cfg)
     html = _client(cfg).get("/review?view=list").data.decode()
     assert "28–45s" in html                                # the length chip is still visible (existing behavior)
-    assert "@a long" in html and 'class="cause"' in html   # S4's additive attribution: the account pins long
+    assert "a long" in html and 'class="cause"' in html   # S4's additive attribution: the account pins long
     assert "shared-cut" not in html                        # but no per-account-cut WARN under OFF (firewall holds)
 
 
@@ -173,7 +173,7 @@ def _seed_recent_no_cut(cfg):
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.published, clip_profile="long",
                           scheduled_time=datetime.now(timezone.utc).isoformat(), public_url="dryrun://p"))   # recent-bucket card: seed relative to REAL now (the /review route uses datetime.now), not the fixed NOW — else it ages out of RECENT_WINDOW_HOURS and the test time-bombs
 
@@ -196,7 +196,7 @@ def _seed_editable_no_cut(cfg):
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
 
 

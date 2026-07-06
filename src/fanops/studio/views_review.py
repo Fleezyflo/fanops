@@ -20,7 +20,7 @@ from fanops.studio.actions_common import RENDER_PENDING_REASON
 
 
 def _handle_display_map(acct_by_handle: dict) -> dict[str, str]:
-    return dict(acct_by_handle)
+    return {k: k for k in acct_by_handle}
 
 
 def _display_handle(handle: str, by_norm: dict[str, str]) -> str:

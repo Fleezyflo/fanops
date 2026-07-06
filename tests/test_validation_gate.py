@@ -34,7 +34,7 @@ def test_postiz_shaped_live_metrics_auto_validate_learning(tmp_path, monkeypatch
     # shape is proven once reach + a primary engagement key reconcile (learn_doctor gates on reach).
     monkeypatch.setenv("FANOPS_LIVE", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, submission_id="sub1", public_url="https://x"))
     assert learning_validated(cfg) is False
     postiz = {"shares": 30, "reach": 50000, "likes": 200}   # no saves/retention — Postiz-shaped
@@ -95,7 +95,7 @@ def test_tiktok_row_not_marked_retention_degraded(tmp_path):
     # MOL-18b: a TikTok row is NOT permanently lift_degraded for `retention` — a metric TikTok can never
     # emit. saves/reach present -> the row is a full primary set FOR TIKTOK -> no degraded marker at all.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="tk1", parent_id="c", account="@t", account_id="1", platform=Platform.tiktok,
+    led.add_post(Post(id="tk1", parent_id="c", account="t", account_id="1", platform=Platform.tiktok,
                       caption="x", state=PostState.published, public_url="dryrun://tk1"))
     record_metrics(led, "tk1", {"reach": 5000, "saves": 40, "shares": 12})
     m = led.posts["tk1"].metrics
@@ -105,7 +105,7 @@ def test_tiktok_missing_key_list_excludes_retention_but_keeps_saves(tmp_path):
     # MOL-18b (finer): a TikTok row missing saves IS degraded on saves (TikTok delivers saves), but
     # retention NEVER appears in lift_missing_keys for TikTok even though _W weights it primary.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="tk2", parent_id="c", account="@t", account_id="1", platform=Platform.tiktok,
+    led.add_post(Post(id="tk2", parent_id="c", account="t", account_id="1", platform=Platform.tiktok,
                       caption="x", state=PostState.published, public_url="dryrun://tk2"))
     record_metrics(led, "tk2", {"reach": 5000, "shares": 12, "likes": 3})   # no saves
     m = led.posts["tk2"].metrics
@@ -154,7 +154,7 @@ def test_present_but_null_primary_fails_closed_with_platform(tmp_path, monkeypat
     from fanops.validation_gate import learning_validated
     monkeypatch.setenv("FANOPS_LIVE", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="tk3", parent_id="c", account="@t", account_id="1", platform=Platform.tiktok,
+    led.add_post(Post(id="tk3", parent_id="c", account="t", account_id="1", platform=Platform.tiktok,
                       caption="x", state=PostState.published, public_url="https://x", submission_id="s3"))
     record_metrics(led, "tk3", {"saves": None, "shares": 12, "reach": 1000})
     from fanops.track import _auto_validate_metrics_shape
@@ -167,7 +167,7 @@ def test_tiktok_only_account_auto_unfreezes_on_delivered_signals(tmp_path, monke
     from fanops.track import pull_metrics
     monkeypatch.setenv("FANOPS_LIVE", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="tk4", parent_id="c1", account="@t", account_id="1", platform=Platform.tiktok,
+    led.add_post(Post(id="tk4", parent_id="c1", account="t", account_id="1", platform=Platform.tiktok,
                       caption="x", state=PostState.published, submission_id="sub4", public_url="https://x"))
     assert learning_validated(cfg) is False
     zernio = {"reach": 5000, "saves": 40, "shares": 12}       # Zernio-shaped, no retention

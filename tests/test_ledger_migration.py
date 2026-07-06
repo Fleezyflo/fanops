@@ -34,10 +34,10 @@ def test_migration_v2_to_v3_round_trip(tmp_path):
                        "src_bbbbbbbbbbbb": {"id": "src_bbbbbbbbbbbb", "source_path": "/nope/missing.mp4",
                                             "state": "catalogued"}},
            "moments": {}, "clips": {},
-           "posts": {"p_sched": {"id": "p_sched", "parent_id": "c1", "account": "@a", "account_id": "1",
+           "posts": {"p_sched": {"id": "p_sched", "parent_id": "c1", "account": "a", "account_id": "1",
                                  "platform": "instagram", "caption": "x", "state": "awaiting_approval",
                                  "scheduled_time": "2026-04-15T09:00:00Z"},
-                     "p_nosched": {"id": "p_nosched", "parent_id": "c1", "account": "@a", "account_id": "1",
+                     "p_nosched": {"id": "p_nosched", "parent_id": "c1", "account": "a", "account_id": "1",
                                    "platform": "instagram", "caption": "y", "state": "awaiting_approval"}},
            "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
     _write(cfg, raw)
@@ -72,7 +72,7 @@ def test_migration_v0_to_v5_full_chain(tmp_path):
     raw = {"sources": {"src_cccccccccccc": {"id": "src_cccccccccccc", "source_path": "/gone.mp4",
                                             "state": "catalogued"}},
            "moments": {}, "clips": {},
-           "posts": {"p1": {"id": "p1", "parent_id": "c1", "account": "@a", "account_id": "1",
+           "posts": {"p1": {"id": "p1", "parent_id": "c1", "account": "a", "account_id": "1",
                             "platform": "tiktok", "caption": "z", "state": "queued"}},
            "tag_log": {}}
     _write(cfg, raw)
@@ -106,7 +106,7 @@ def test_migration_naive_scheduled_time_uses_stamp_not_local_guess(tmp_path):
     # A post with a NAIVE scheduled_time (no tz) must NOT be turned into a local-tz guess -> created_at == stamp.
     cfg = Config(root=tmp_path)
     raw = {"schema_version": 2, "sources": {}, "moments": {}, "clips": {},
-           "posts": {"p_naive": {"id": "p_naive", "parent_id": "c1", "account": "@a", "account_id": "1",
+           "posts": {"p_naive": {"id": "p_naive", "parent_id": "c1", "account": "a", "account_id": "1",
                                  "platform": "instagram", "caption": "x", "state": "queued",
                                  "scheduled_time": "2026-04-15T09:00:00"}},   # NAIVE (no Z/offset)
            "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
@@ -122,7 +122,7 @@ def test_migration_null_and_integer_scheduled_time_no_crash(tmp_path):
     # scheduled_time: null and an integer (hand-edit corruption) must not crash the migration -> stamp.
     cfg = Config(root=tmp_path)
     raw = {"schema_version": 2, "sources": {}, "moments": {}, "clips": {},
-           "posts": {"p_null": {"id": "p_null", "parent_id": "c1", "account": "@a", "account_id": "1",
+           "posts": {"p_null": {"id": "p_null", "parent_id": "c1", "account": "a", "account_id": "1",
                                 "platform": "instagram", "caption": "x", "state": "queued",
                                 "scheduled_time": None}},
            "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
@@ -138,7 +138,7 @@ def test_migration_idempotent_keeps_existing_created_at(tmp_path):
            "sources": {"src_eeeeeeeeeeee": {"id": "src_eeeeeeeeeeee", "source_path": "/x.mp4",
                                             "state": "catalogued", "created_at": "2020-01-01T00:00:00Z"}},
            "moments": {}, "clips": {},
-           "posts": {"p_keep": {"id": "p_keep", "parent_id": "c1", "account": "@a", "account_id": "1",
+           "posts": {"p_keep": {"id": "p_keep", "parent_id": "c1", "account": "a", "account_id": "1",
                                 "platform": "instagram", "caption": "x", "state": "queued",
                                 "created_at": "2019-12-31T00:00:00Z"}},
            "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}}
@@ -159,7 +159,7 @@ def test_newer_schema_still_refused(tmp_path):
 
 # ---- P3: v3->v4 metrics_series back-fill (a single `legacy` row for pre-P3 analyzed posts) ----
 def _v3_post(pid, state, **extra):
-    return {"id": pid, "parent_id": "c1", "account": "@a", "account_id": "1", "platform": "instagram",
+    return {"id": pid, "parent_id": "c1", "account": "a", "account_id": "1", "platform": "instagram",
             "caption": "x", "state": state, "created_at": "2026-01-01T00:00:00Z", **extra}
 
 def test_migration_v3_to_v4_backfills_one_legacy_row_for_analyzed_post(tmp_path):

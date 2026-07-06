@@ -90,14 +90,14 @@ def test_card_shows_per_account_length_cut_and_framing(tmp_path):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(r), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_render(Render(id="r1", clip_id="clip_1", account="@long", surface_key="@long/instagram",
+    led.add_render(Render(id="r1", clip_id="clip_1", account="long", surface_key="long/instagram",
                           hook_text="H", path=str(r), state=RenderState.rendered, is_account_cut=True))
-    led.add_post(Post(id="p_long", parent_id="clip_1", account="@long", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p_long", parent_id="clip_1", account="long", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.awaiting_approval, render_id="r1", clip_profile="long",
                       scheduled_time=_z(NOW + timedelta(hours=5)))); led.save()
     html = _client(cfg).get("/review?view=list").data.decode()
     # S4: the surface-spec now renders via the shared _prov cause_chip macro — each chip carries its WHY.
     assert "28–45s" in html                                    # the long band length label (value)
-    assert "@long long" in html                                # length cause — the account pins long
-    assert "@long&#39;s own cut" in html                       # the cut chip's cause (genuine per-account render)
-    assert ">top " in html and "@long top" in html             # framing chip value + its cause
+    assert "long long" in html                                # length cause — the account pins long
+    assert "long&#39;s own cut" in html                       # the cut chip's cause (genuine per-account render)
+    assert ">top " in html and "long top" in html             # framing chip value + its cause

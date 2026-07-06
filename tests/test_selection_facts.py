@@ -15,18 +15,18 @@ def _fact(moment_id, account, **extra):
 
 
 def test_selection_fact_defaults():
-    f = _fact("m1", "@a")
+    f = _fact("m1", "a")
     assert f.method == "heuristic" and f.reason == "" and f.overlap is None and f.rank is None
     assert f.source_id is None and f.batch_id is None and f.created_at is None
 
 def test_add_get_selection_fact_round_trips(tmp_path):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
-        led.add_selection_fact(_fact("m1", "@a", method="llm", overlap=3, signal=2.0, rank=0,
+        led.add_selection_fact(_fact("m1", "a", method="llm", overlap=3, signal=2.0, rank=0,
                                      reason="guitar solo", source_id="src_1", batch_id="b1"))
     led = Ledger.load(cfg)
-    f = led.get_selection_fact(child_id("selfact", "m1", "@a"))
-    assert f is not None and f.account == "@a" and f.overlap == 3 and f.reason == "guitar solo"
+    f = led.get_selection_fact(child_id("selfact", "m1", "a"))
+    assert f is not None and f.account == "a" and f.overlap == 3 and f.reason == "guitar solo"
     assert f.source_id == "src_1" and f.batch_id == "b1" and f.rank == 0
     assert f.method == "llm"                                    # the SelectionMethod enum round-trips through save/load
 
@@ -34,33 +34,33 @@ def test_add_selection_fact_overwrites_on_recast(tmp_path):
     # one fact per (moment, account); a re-cast UPDATES the why (latest selection wins), NOT a growing history
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
-        led.add_selection_fact(_fact("m1", "@a", rank=2))
-        led.add_selection_fact(_fact("m1", "@a", rank=0))      # same content-addressed id -> overwrite
+        led.add_selection_fact(_fact("m1", "a", rank=2))
+        led.add_selection_fact(_fact("m1", "a", rank=0))      # same content-addressed id -> overwrite
     led = Ledger.load(cfg)
     assert len(led.selection_facts) == 1
-    assert led.get_selection_fact(child_id("selfact", "m1", "@a")).rank == 0
+    assert led.get_selection_fact(child_id("selfact", "m1", "a")).rank == 0
 
 def test_selection_facts_of_account_and_moment(tmp_path):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
-        led.add_selection_fact(_fact("m1", "@a"))
-        led.add_selection_fact(_fact("m1", "@b"))
-        led.add_selection_fact(_fact("m2", "@a"))
+        led.add_selection_fact(_fact("m1", "a"))
+        led.add_selection_fact(_fact("m1", "b"))
+        led.add_selection_fact(_fact("m2", "a"))
     led = Ledger.load(cfg)
-    assert {f.moment_id for f in led.selection_facts_of_account("@a")} == {"m1", "m2"}   # account-keyed lookup
-    assert {f.account for f in led.selection_facts_of_moment("m1")} == {"@a", "@b"}      # moment-keyed lookup
+    assert {f.moment_id for f in led.selection_facts_of_account("a")} == {"m1", "m2"}   # account-keyed lookup
+    assert {f.account for f in led.selection_facts_of_moment("m1")} == {"a", "b"}      # moment-keyed lookup
 
 def test_posts_of_account(tmp_path):
     # the account-keyed accessor the plan calls the 'account index' — direct per-account lookup (a scan today).
     # (renders_of_account was removed — zero callers + under-reported cross-account-reused renders.)
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
-        led.add_post(Post(id="p_a", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p_a", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, public_url="dryrun://p_a"))
-        led.add_post(Post(id="p_b", parent_id="c1", account="@b", account_id="2", platform=Platform.instagram,
+        led.add_post(Post(id="p_b", parent_id="c1", account="b", account_id="2", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, public_url="dryrun://p_b"))
     led = Ledger.load(cfg)
-    assert {p.id for p in led.posts_of_account("@a")} == {"p_a"}
+    assert {p.id for p in led.posts_of_account("a")} == {"p_a"}
 
 def test_v6_ledger_migrates_to_v7_injecting_selection_facts(tmp_path):
     # additive v6->v7: a v6 ledger (no selection_facts key) loads with an empty map, no row lost, idempotent

@@ -29,10 +29,10 @@ def _seed(cfg, tmp_path):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p_base", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_base", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="BASE", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(hours=3))))
-    led.add_post(Post(id="p_var", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_var", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="VAR", state=PostState.queued,
                       media_urls=[f"file://{variant}"], scheduled_time=_z(NOW + timedelta(hours=4))))
     led.save()
@@ -125,7 +125,7 @@ def test_home_metrics_per_account(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)       # _seed births @a posts (@a is an active account)
     html = _client(cfg).get("/").data.decode()
     assert 'data-slot="metrics"' in html                   # the section still exists (orphan fallback)
-    assert 'data-acct-count="@a"' in html                  # @a's count is inline on its account row
+    assert 'data-acct-count="a"' in html                  # @a's count is inline on its account row
     assert 'data-metric="by-account"' not in html          # no orphans -> no fallback table
 
 def test_home_term_glossary_is_phrasing_content(tmp_path):
@@ -133,7 +133,7 @@ def test_home_term_glossary_is_phrasing_content(tmp_path):
     from fanops.batches import create_batch
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     led = Ledger.load(cfg)
-    create_batch(led, name="B1", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    create_batch(led, name="B1", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
     html = _client(cfg).get("/").data.decode()
     assert '<span class="term"' in html
     assert '<details class="term"' not in html
@@ -142,7 +142,7 @@ def test_home_batch_deep_link_and_zero_result(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     from fanops.batches import create_batch
     led = Ledger.load(cfg)
-    create_batch(led, name="Ghost", target_accounts=["@ghost"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
     html = _client(cfg).get("/").data.decode()
     assert "/review?batch=" in html and 'data-warn="zero-result"' in html   # deep-link + the silent-fail badge
 
@@ -150,8 +150,8 @@ def test_home_no_zero_result_for_matched_batch(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     from fanops.batches import create_batch
     led = Ledger.load(cfg)
-    b = create_batch(led, name="Real", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000003Z")
-    led.add_post(Post(id="p_rb", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    b = create_batch(led, name="Real", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000003Z")
+    led.add_post(Post(id="p_rb", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.queued, batch_id=b.id, public_url="dryrun://p_rb")); led.save()
     assert b'data-warn="zero-result"' not in _client(cfg).get("/").data   # matched target -> no false alarm
 
@@ -353,30 +353,30 @@ def _seed_xacct_route(cfg):
         cfg.clips.mkdir(parents=True, exist_ok=True)
         cpath = cfg.clips / "c.mp4"; cpath.write_bytes(b"\x00")          # real render file — #10 guard checks existence
         c = Clip(id="clip_1", parent_id="mom_1", path=str(cpath), aspect=Fmt.r9x16, state=ClipState.queued)
-        c.meta_captions = {"@b/instagram": {"caption": "reuse", "hashtags": []}}
+        c.meta_captions = {"b/instagram": {"caption": "reuse", "hashtags": []}}
         led.add_clip(c)
-        led.add_post(Post(id="p_a", parent_id="clip_1", account="@a", account_id="ig_a",
+        led.add_post(Post(id="p_a", parent_id="clip_1", account="a", account_id="ig_a",
                           platform=Platform.instagram, caption="on A", state=PostState.published,
                           scheduled_time="2026-06-01T00:00:00Z", public_url="dryrun://p_a"))
 
 def test_crosspost_route_mints_on_target(tmp_path):
     cfg = Config(root=tmp_path); _seed_xacct_route(cfg)
-    r = _client(cfg).post("/posts/crosspost/clip_1", data={"target_account": "@b", "platform": "instagram"})
+    r = _client(cfg).post("/posts/crosspost/clip_1", data={"target_account": "b", "platform": "instagram"})
     assert r.status_code == 200
-    awaiting = [p for p in Ledger.load(cfg).posts.values() if p.state is PostState.awaiting_approval and p.account == "@b"]
+    awaiting = [p for p in Ledger.load(cfg).posts.values() if p.state is PostState.awaiting_approval and p.account == "b"]
     assert len(awaiting) == 1
 
 def test_crosspost_route_bad_target_is_banner_not_500(tmp_path):
     cfg = Config(root=tmp_path); _seed_xacct_route(cfg)
-    r = _client(cfg).post("/posts/crosspost/clip_1", data={"target_account": "@nope", "platform": "instagram"})
+    r = _client(cfg).post("/posts/crosspost/clip_1", data={"target_account": "nope", "platform": "instagram"})
     assert r.status_code == 200                                # fail-open: a result banner, never a 500
     assert b"no active surface" in r.data
 
 def test_crosspost_all_route_bulk(tmp_path):
     cfg = Config(root=tmp_path); _seed_xacct_route(cfg)
-    r = _client(cfg).post("/posts/crosspost-all", data={"source_account": "@a", "target_account": "@b", "platform": "instagram"})
+    r = _client(cfg).post("/posts/crosspost-all", data={"source_account": "a", "target_account": "b", "platform": "instagram"})
     assert r.status_code == 200
-    awaiting = [p for p in Ledger.load(cfg).posts.values() if p.state is PostState.awaiting_approval and p.account == "@b"]
+    awaiting = [p for p in Ledger.load(cfg).posts.values() if p.state is PostState.awaiting_approval and p.account == "b"]
     assert len(awaiting) == 1
 
 def test_review_renders_removed_hook_badge(tmp_path, monkeypatch):
@@ -392,7 +392,7 @@ def test_review_renders_removed_hook_badge(tmp_path, monkeypatch):
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                               reason="r", state=MomentState.clipped, hook_removed="made it and lost everything"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+        led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
     r = _client(cfg).get("/review?view=list")
     assert r.status_code == 200
@@ -409,7 +409,7 @@ def _seed_removed_hook(cfg):
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                               reason="r", state=MomentState.clipped, hook_removed="made it and lost everything"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+        led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
 
 
@@ -451,7 +451,7 @@ def _seed_awaiting(cfg, tmp_path, *, pid="p_aw"):
     # an awaiting_approval post on the SAME clip as _seed, so /review shows it in the editable bucket.
     _seed(cfg, tmp_path)
     led = Ledger.load(cfg)
-    led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="AWAIT", state=PostState.awaiting_approval,
                       scheduled_time=_z(NOW + timedelta(hours=5))))
     led.save()

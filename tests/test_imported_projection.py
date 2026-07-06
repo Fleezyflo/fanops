@@ -35,7 +35,7 @@ def _media_get(pages):
 
 
 def _post(pid, url, *, plat=Platform.instagram, state=PostState.published):
-    return Post(id=pid, parent_id="clip1", account="@a", account_id="acc1", platform=plat,
+    return Post(id=pid, parent_id="clip1", account="a", account_id="acc1", platform=plat,
                 caption="c", state=state, public_url=url, submission_id=f"real_{pid}")
 
 

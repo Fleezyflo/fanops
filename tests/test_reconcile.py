@@ -23,7 +23,7 @@ def _post(led, pid, state, sub=None):
     # holds. Reconcile tests then exercise the reconciler's URL back-fill (real https) on top.
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
     url = f"dryrun://{pid}" if state in _POST_TERMINAL_REQUIRES_URL else None
-    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=state, submission_id=sub,
                       public_url=url))
 
@@ -57,7 +57,7 @@ def test_reconcile_stamps_stuck_breadcrumb_past_schedule(tmp_path):
     # it surfaces (instead of silently looping). State is NOT changed — the post's fate is never guessed.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="ps", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="ps", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="s1",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
@@ -68,7 +68,7 @@ def test_reconcile_stamps_stuck_breadcrumb_past_schedule(tmp_path):
 def test_reconcile_no_stuck_breadcrumb_when_recent(tmp_path):
     from datetime import datetime, timezone
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pr", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pr", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="s1",
                       scheduled_time=datetime.now(timezone.utc).isoformat(), public_url="dryrun://pr"))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
@@ -397,7 +397,7 @@ def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tm
     # needs_reconcile (the digest reconcile column owns it). State CHANGES; never to a re-queueable `failed`.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="ps", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="ps", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
@@ -410,7 +410,7 @@ def test_submitting_not_escalated_when_fresh(tmp_path):
     # A submitting post only a few hours past schedule is left untouched (slow submit, not crash-stranded).
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pf", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
@@ -421,7 +421,7 @@ def test_submitting_not_escalated_with_real_token(tmp_path):
     # A submitting post >24h past schedule but carrying a REAL backend id is NOT escalated — its poll resolves.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pr", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pr", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="blotato_REAL_1",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
@@ -434,7 +434,7 @@ def test_needs_reconcile_terminal_giveup_past_long_bound(tmp_path):
     # post) but is labeled terminal and no longer polled.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pg", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown"})
@@ -446,7 +446,7 @@ def test_needs_reconcile_terminal_giveup_past_long_bound(tmp_path):
 def test_giveup_post_is_not_polled_again(tmp_path):
     # A give-up post is a labeled terminal: the next pass must NOT poll it (dead token) nor re-stamp it.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pg", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       error_reason="GAVE UP: unresolved 80h past schedule on a never-real token — ...", public_url="dryrun://pg"))
     calls = []
@@ -463,7 +463,7 @@ def test_needs_reconcile_real_token_keeps_polling_past_long_bound(tmp_path):
     # A REAL-token needs_reconcile post is NEVER given up — a real id can still resolve at a later pass.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pr", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pr", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="blotato_REAL_1",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
@@ -474,7 +474,7 @@ def test_breadcrumb_dedup_logged_once_not_every_pass(tmp_path, mocker):
     # XC-6: a permanently-parked post stamps its stuck breadcrumb + logs "left:" ONCE, not on every pass.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pk", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pk", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()))
     spy = []
@@ -499,7 +499,7 @@ def test_heal_stranded_submitting_no_sid_back_to_queued(tmp_path):
     from fanops.timeutil import iso_z
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     old = iso_z(datetime.now(timezone.utc) - timedelta(hours=2))
-    led.add_post(Post(id="stuck", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="stuck", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, scheduled_time=old, submission_id=None))
     led.save()
     assert heal_stranded_submitting(cfg) == 1
@@ -512,7 +512,7 @@ def test_heal_submitting_with_real_sid_unchanged(tmp_path):
     from fanops.timeutil import iso_z
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     old = iso_z(datetime.now(timezone.utc) - timedelta(hours=2))
-    led.add_post(Post(id="real", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="real", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, scheduled_time=old, submission_id="cmqz_real_abc"))
     led.save()
     assert heal_stranded_submitting(cfg) == 0

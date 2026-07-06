@@ -15,7 +15,7 @@ def test_unknown_field_is_ignored(tmp_path):
 
 def test_frozen_config_model_also_ignores_unknown_fields():
     # AccountSelection sets ConfigDict(frozen=True) but NOT extra= — so it must still inherit extra="ignore".
-    sel = AccountSelection(id="as1", source_id="s1", account="@a", moment_ids=["m1"],
+    sel = AccountSelection(id="as1", source_id="s1", account="a", moment_ids=["m1"],
                            method=SelectionMethod.llm, brand_new_key=123)
     assert not hasattr(sel, "brand_new_key")
-    assert sel.account == "@a" and sel.moment_ids == ["m1"]
+    assert sel.account == "a" and sel.moment_ids == ["m1"]

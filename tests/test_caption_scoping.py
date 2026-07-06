@@ -54,55 +54,55 @@ def test_caption_request_stale_when_surface_set_drifts(tmp_path):
 def test_affinity_admits_off_ignores_affinities(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path)
-    m = _moment(affinities=["@a"])
-    assert affinity_admits(cfg, m, "@a") is True and affinity_admits(cfg, m, "@b") is True   # OFF -> admit all
+    m = _moment(affinities=["a"])
+    assert affinity_admits(cfg, m, "a") is True and affinity_admits(cfg, m, "b") is True   # OFF -> admit all
 
 def test_affinity_admits_on_matrix(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
-    assert affinity_admits(cfg, _moment(affinities=[]), "@b") is True       # uncast -> fan to all
-    assert affinity_admits(cfg, None, "@a") is True                          # defensive: no moment -> admit
-    assert affinity_admits(cfg, _moment(affinities=["@a"]), "@a") is True    # cast & member
-    assert affinity_admits(cfg, _moment(affinities=["@a"]), "@b") is False   # cast & NOT member -> skip
+    assert affinity_admits(cfg, _moment(affinities=[]), "b") is True       # uncast -> fan to all
+    assert affinity_admits(cfg, None, "a") is True                          # defensive: no moment -> admit
+    assert affinity_admits(cfg, _moment(affinities=["a"]), "a") is True    # cast & member
+    assert affinity_admits(cfg, _moment(affinities=["a"]), "b") is False   # cast & NOT member -> skip
 
 
 # ---- Task 2 + 5: scoped_caption_surfaces (the filter the pipeline calls) ----
 def test_scoped_caption_surfaces_scopes_when_cast(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
     surfaces = Accounts.load(cfg).surfaces()
-    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=["@a"]), surfaces)
-    assert {acct for acct, _ in scoped} == {"@a"}                            # only the cast account's surfaces (legacy fallback: no selection)
+    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=["a"]), surfaces)
+    assert {acct for acct, _ in scoped} == {"a"}                            # only the cast account's surfaces (legacy fallback: no selection)
 
 def test_scoped_caption_surfaces_full_when_off(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
     surfaces = Accounts.load(cfg).surfaces()
-    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=["@a"]), surfaces)
+    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=["a"]), surfaces)
     assert list(scoped) == [(s.account, s.platform) for s in surfaces]       # OFF -> byte-identical (all)
 
 def test_scoped_caption_surfaces_full_when_uncast(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
     surfaces = Accounts.load(cfg).surfaces()
     scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=[]), surfaces)
-    assert {acct for acct, _ in scoped} == {"@a", "@b"}                      # uncast -> all surfaces
+    assert {acct for acct, _ in scoped} == {"a", "b"}                      # uncast -> all surfaces
 
 
 # ---- Task 5b: composed casting-ON — scoped request THEN zero post loss for cast surfaces ----
 def test_casting_on_scopes_request_and_loses_no_post(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, language="en"))
-    led.add_moment(_moment(affinities=["@a"]))                               # cast to @a only
+    led.add_moment(_moment(affinities=["a"]))                               # cast to @a only
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
     accts = Accounts.load(cfg)
     # the scoped request the pipeline would build (Task 3 wiring uses this exact call)
     led = request_captions(led, cfg, "clip_1", scoped_caption_surfaces(cfg, led, led.moments["mom_1"], accts.surfaces()),
                            accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
-    assert {s["surface"].split("/")[0] for s in payload["surfaces"]} == {"@a"}   # request SCOPED to @a
+    assert {s["surface"].split("/")[0] for s in payload["surfaces"]} == {"a"}   # request SCOPED to @a
     # answer the request for @a's surfaces, ingest, then crosspost — every cast surface must mint a post
     rid = latest_request_id(cfg, "captions", "clip_1")
     items = [CaptionItem(surface=s["surface"], caption="impact.", hashtags=["#x"]) for s in payload["surfaces"]]
@@ -110,20 +110,20 @@ def test_casting_on_scopes_request_and_loses_no_post(tmp_path, monkeypatch, mock
     led = ingest_captions(led, cfg, "clip_1")
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
-    assert {p.account for p in led.posts.values()} == {"@a"}                 # cast surfaces all posted (zero loss)
+    assert {p.account for p in led.posts.values()} == {"a"}                 # cast surfaces all posted (zero loss)
     assert len(led.posts) == 2                                              # @a/instagram + @a/youtube
 
 
 # ---- Task 5c: swap edge — re-cast after captioning degrades safely (no crash, no silent drop) ----
 def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
-    led.add_moment(_moment(affinities=["@b"]))                              # the SWAPPED-IN cast (was @a)
+    led.add_moment(_moment(affinities=["b"]))                              # the SWAPPED-IN cast (was @a)
     clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "a", "hashtags": []},   # captioned for the OLD cast set only
-                          "@a/youtube": {"caption": "a", "hashtags": []}}
+    clip.meta_captions = {"a/instagram": {"caption": "a", "hashtags": []},   # captioned for the OLD cast set only
+                          "a/youtube": {"caption": "a", "hashtags": []}}
     led.add_clip(clip)
     _fake_ffmpeg(mocker)
     logfn = mocker.patch("fanops.crosspost.get_logger").return_value       # capture the run-log breadcrumbs
@@ -135,4 +135,4 @@ def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, m
     # S6 (silent-post-drop breadcrumbs): EVERY skip now traces — @a's selection-deny (why=not_cast) AND @b's
     # missing-caption skip. Previously the selection-deny was silent, so only @b appeared; now the swap is
     # FULLY traced, never partially silent.
-    assert skipped == {"@a/instagram", "@a/youtube", "@b/instagram", "@b/youtube"}
+    assert skipped == {"a/instagram", "a/youtube", "b/instagram", "b/youtube"}

@@ -915,9 +915,18 @@ class Config:
         Config rebuild; fail-open on parse error (no posting window known -> 24h open, never 500)."""
         try:
             import json
+            from fanops.models import validate_account_handle
+            try:
+                handle = validate_account_handle(handle)
+            except ValueError:
+                pass
             data = json.loads(self.accounts_path.read_text())
             for a in data.get("accounts", []):
-                if a.get("handle") == handle:
+                try:
+                    ah = validate_account_handle(a.get("handle") or "")
+                except ValueError:
+                    ah = (a.get("handle") or "").strip()
+                if ah == handle:
                     win = a.get("daily_window")
                     if isinstance(win, (list, tuple)) and len(win) == 2:
                         try:

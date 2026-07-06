@@ -17,7 +17,7 @@ FAR = "2099-06-01T00:00:00Z"
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone.utc)
 GPS = views.GRID_PAGE_SIZE
 
-def _accounts(cfg, handles=("@a0",)):
+def _accounts(cfg, handles=("a0",)):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": h, "account_id": "0", "platforms": ["instagram"], "status": "active"} for h in handles]}))
@@ -25,7 +25,7 @@ def _accounts(cfg, handles=("@a0",)):
 def _client(cfg):
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
-def _seed(cfg, n, *, state=PostState.queued, batch_id=None, batch_name=None, lifts=None, account="@a0"):
+def _seed(cfg, n, *, state=PostState.queued, batch_id=None, batch_name=None, lifts=None, account="a0"):
     # n posts p0..p{n-1} (each its own clip) on `account`; optionally stamp batch_id + register the Batch;
     # optional per-index lift_score in metrics. state: queued -> Schedule, published -> Posted.
     cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
@@ -48,7 +48,7 @@ def test_schedule_rows_batch_filter_and_label(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg)
     _seed(cfg, 2, batch_id="bx", batch_name="Drop")                      # p0,p1 in bx
     led = Ledger.load(cfg)
-    led.add_post(Post(id="p_u", parent_id="clip_0", account="@a0", account_id="0",
+    led.add_post(Post(id="p_u", parent_id="clip_0", account="a0", account_id="0",
                       platform=Platform.instagram, caption="c", state=PostState.queued, scheduled_time=FAR, public_url="dryrun://p_u")); led.save()
     led = Ledger.load(cfg)
     assert len(views.schedule_rows(led, cfg, now=NOW)) == 3              # all rows unfiltered
@@ -146,7 +146,7 @@ def test_schedule_action_urls_carry_batch(tmp_path, monkeypatch):
 
 def test_posted_action_urls_carry_batch(tmp_path):
     # D2: same contract on Posted — repost / crosspost-one / backfill keep the ?batch= scope.
-    cfg = Config(root=tmp_path); _accounts(cfg, handles=("@a0", "@a1"))  # >1 account -> backfill form renders
+    cfg = Config(root=tmp_path); _accounts(cfg, handles=("a0", "a1"))  # >1 account -> backfill form renders
     _seed(cfg, 1, state=PostState.published, batch_id="bx", batch_name="Drop")
     html = _client(cfg).get("/posted?batch=bx").data.decode()
     assert "/posts/repost/p0?batch=bx" in html

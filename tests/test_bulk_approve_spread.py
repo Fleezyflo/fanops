@@ -49,8 +49,8 @@ def _seed_clip(led: Ledger) -> Clip:
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
     clip.meta_captions = {
-        "@a/instagram": {"caption": "a", "hashtags": []},
-        "@b/instagram": {"caption": "b", "hashtags": []},
+        "a/instagram": {"caption": "a", "hashtags": []},
+        "b/instagram": {"caption": "b", "hashtags": []},
     }
     led.add_clip(clip)
     return clip
@@ -62,7 +62,7 @@ def _born_posts(led: Ledger, clip: Clip, *, n_per_account: int = 3,
     same stale/missing scheduled_time. Returns the post-ids in deterministic order. This mirrors
     the operator scenario: a backlog of past-due posts the operator selects for bulk Approve."""
     ids: list[str] = []
-    for handle, account_id in (("@a", "ia"), ("@b", "ib")):
+    for handle, account_id in (("a", "ia"), ("b", "ib")):
         for k in range(n_per_account):
             pid = f"p_{handle.strip('@')}_{k}"
             p = Post(id=pid, parent_id=clip.id, account=handle, account_id=account_id,

@@ -20,8 +20,8 @@ def _captioned(led, cfg, mocker):
     # a 16:9 surface like twitter renders 16:9 on demand)
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": ["#x"]},
-                          "@a/youtube": {"caption": "yt cap", "hashtags": ["#y"]}}
+    clip.meta_captions = {"a/instagram": {"caption": "ig cap", "hashtags": ["#x"]},
+                          "a/youtube": {"caption": "yt cap", "hashtags": ["#y"]}}
     led.add_clip(clip)
     # NOTE: mocker.patch("fanops.clip.subprocess.run", ...) patches the SHARED subprocess
     # module singleton, so the patch also intercepts the real interpreter spawns the
@@ -43,9 +43,9 @@ def _captioned(led, cfg, mocker):
 
 def test_surface_time_reproducible_ordered_and_future():
     base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
-    t0 = surface_time(base, "@a", "instagram", "2026-06-02", index=0)
-    t0b = surface_time(base, "@a", "instagram", "2026-06-02", index=0)
-    t1 = surface_time(base, "@a", "instagram", "2026-06-02", index=1)
+    t0 = surface_time(base, "a", "instagram", "2026-06-02", index=0)
+    t0b = surface_time(base, "a", "instagram", "2026-06-02", index=0)
+    t1 = surface_time(base, "a", "instagram", "2026-06-02", index=1)
     assert t0 == t0b                                  # reproducible (no hash() seed)
     assert t0 < t1                                    # later index => later time (ordered)
     assert t0 > base.isoformat().replace("+00:00", "Z")  # in the future vs base
@@ -58,7 +58,7 @@ def test_surface_time_is_monotonic_across_many_indices():
     # lower index — non-monotonic. The old test only checked index 0 vs 1. Assert strict monotonic
     # ordering across a full run of indices.
     base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
-    times = [surface_time(base, "@a", "instagram", "2026-06-02", index=i) for i in range(12)]
+    times = [surface_time(base, "a", "instagram", "2026-06-02", index=i) for i in range(12)]
     assert times == sorted(times) and len(set(times)) == len(times)   # strictly increasing, no dupes
 
 
@@ -87,18 +87,18 @@ def test_surface_time_differs_per_clip_no_minute_collision():
     # SAME surface (same account/platform/index) got the IDENTICAL timestamp — a lockstep, exact-
     # minute collision and a fingerprint. Threading clip_id must separate them.
     base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
-    a = surface_time(base, "@a", "instagram", "2026-06-02", index=0, clip_id="clip_1")
-    b = surface_time(base, "@a", "instagram", "2026-06-02", index=0, clip_id="clip_2")
+    a = surface_time(base, "a", "instagram", "2026-06-02", index=0, clip_id="clip_1")
+    b = surface_time(base, "a", "instagram", "2026-06-02", index=0, clip_id="clip_2")
     assert a != b                                     # distinct clips -> distinct times on a surface
     # still deterministic per (clip, surface, index)
-    assert a == surface_time(base, "@a", "instagram", "2026-06-02", index=0, clip_id="clip_1")
+    assert a == surface_time(base, "a", "instagram", "2026-06-02", index=0, clip_id="clip_1")
 
 def test_surface_time_stable_across_processes():
     code = textwrap.dedent("""
         from datetime import datetime, timezone
         from fanops.crosspost import surface_time
         base = datetime(2026,6,2,18,0,tzinfo=timezone.utc)
-        print(surface_time(base, "@a", "tiktok", "2026-06-02", index=2))
+        print(surface_time(base, "a", "tiktok", "2026-06-02", index=2))
     """)
     r1 = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     r2 = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -117,7 +117,7 @@ def test_crosspost_fans_out_with_right_aspect_and_account_id(tmp_path, mocker):
     assert by_plat[Platform.youtube].caption == "yt cap"
     # account_id is the resolved NUMERIC id, not the handle (FIX F06)
     assert all(p.account_id == "98432" for p in posts)
-    assert all(p.account == "@a" for p in posts)
+    assert all(p.account == "a" for p in posts)
     # right aspect per platform (FIX F20): IG 9:16, YouTube 9:16 (Shorts — was 16:9 long-form)
     assert by_plat[Platform.instagram].aspect is Fmt.r9x16
     assert by_plat[Platform.youtube].aspect is Fmt.r9x16
@@ -211,8 +211,8 @@ def test_crosspost_multi_account_fans_out_n_times_m(tmp_path, mocker):
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {
-        "@a/instagram": {"caption": "a ig", "hashtags": []}, "@a/youtube": {"caption": "a yt", "hashtags": []},
-        "@b/instagram": {"caption": "b ig", "hashtags": []}, "@b/youtube": {"caption": "b yt", "hashtags": []},
+        "a/instagram": {"caption": "a ig", "hashtags": []}, "a/youtube": {"caption": "a yt", "hashtags": []},
+        "b/instagram": {"caption": "b ig", "hashtags": []}, "b/youtube": {"caption": "b yt", "hashtags": []},
     }
     led.add_clip(clip)
     def fake_run(cmd, **kw):
@@ -249,8 +249,8 @@ def _two_accounts_clip(cfg, *, source_batch_id=None):
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {
-        "@a/instagram": {"caption": "a ig", "hashtags": []}, "@a/youtube": {"caption": "a yt", "hashtags": []},
-        "@b/instagram": {"caption": "b ig", "hashtags": []}, "@b/youtube": {"caption": "b yt", "hashtags": []},
+        "a/instagram": {"caption": "a ig", "hashtags": []}, "a/youtube": {"caption": "a yt", "hashtags": []},
+        "b/instagram": {"caption": "b ig", "hashtags": []}, "b/youtube": {"caption": "b yt", "hashtags": []},
     }
     led.add_clip(clip)
     return led
@@ -260,21 +260,21 @@ def test_crosspost_batch_target_skips_off_target_surfaces(tmp_path, mocker):
     # casting-OFF enforcement path) and each carries the denormalized batch_id; @b is skipped, not posted.
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id="batch_x")
-    led.add_batch(Batch(id="batch_x", name="launch", target_accounts=["@a"]))
+    led.add_batch(Batch(id="batch_x", name="launch", target_accounts=["a"]))
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert {p.account for p in led.posts.values()} == {"@a"}          # @b surfaces skipped (not in target)
+    assert {p.account for p in led.posts.values()} == {"a"}          # @b surfaces skipped (not in target)
     assert len(led.posts) == 2                                        # @a x {instagram, youtube}
     assert all(p.batch_id == "batch_x" for p in led.posts.values())  # denormalized onto the Post
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "batch_target_skip" in log and "@b" in log                # off-target skip left a breadcrumb (mirrors skipped_surface)
+    assert "batch_target_skip" in log and "b" in log                # off-target skip left a breadcrumb (mirrors skipped_surface)
 
 def test_crosspost_emits_batch_target_summary_count(tmp_path, mocker):
     # Face 1-fu (T5): a batched clip emits ONE structured exclusion summary the surfaces can read. The
     # excluded surfaces become no Post, so this run-log line is the ONLY persistent record of "N excluded".
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id="batch_x")            # 4 surfaces: @a/@b x ig/yt
-    led.add_batch(Batch(id="batch_x", name="launch", target_accounts=["@a"]))   # targets @a -> @b's 2 skip
+    led.add_batch(Batch(id="batch_x", name="launch", target_accounts=["a"]))   # targets @a -> @b's 2 skip
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
@@ -313,10 +313,10 @@ def test_crosspost_affinity_skips_off_affinity_surfaces(tmp_path, mocker, monkey
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id=None)
-    led.moments["mom_1"].affinities = ["@a"]
+    led.moments["mom_1"].affinities = ["a"]
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
+    assert {p.account for p in led.posts.values()} == {"a"} and len(led.posts) == 2
 
 def test_crosspost_affinity_ignored_when_casting_off(tmp_path, mocker, monkeypatch):
     # A2 (kill-switch): casting OFF (now an EXPLICIT off-word — the flag DEFAULTS ON) IGNORES persisted
@@ -325,20 +325,20 @@ def test_crosspost_affinity_ignored_when_casting_off(tmp_path, mocker, monkeypat
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id=None)
-    led.moments["mom_1"].affinities = ["@a"]          # a prior cast pass stamped this
+    led.moments["mom_1"].affinities = ["a"]          # a prior cast pass stamped this
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert {p.account for p in led.posts.values()} == {"@a", "@b"} and len(led.posts) == 4   # cast ignored when OFF
+    assert {p.account for p in led.posts.values()} == {"a", "b"} and len(led.posts) == 4   # cast ignored when OFF
 
 def test_crosspost_cast_moment_fans_only_to_its_account(tmp_path, mocker, monkeypatch):
     # The affinity gate (Face 3): a CAST moment (affinities==['@a']) fans ONLY to @a, never to @b.
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id=None)
-    led.moments["mom_1"].affinities = ["@a"]
+    led.moments["mom_1"].affinities = ["a"]
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
+    assert {p.account for p in led.posts.values()} == {"a"} and len(led.posts) == 2
 
 def test_crosspost_uncast_moment_fans_to_all(tmp_path, mocker, monkeypatch):
     # An UNCAST moment (affinities==[]) — casting evaluated it but assigned no one — falls through and fans to
@@ -357,11 +357,11 @@ def test_crosspost_admits_only_owner(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id=None)
-    led.moments["mom_1"].affinities = ["@a"]
+    led.moments["mom_1"].affinities = ["a"]
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
-    assert not any(p.account == "@b" for p in led.posts.values())
+    assert {p.account for p in led.posts.values()} == {"a"} and len(led.posts) == 2
+    assert not any(p.account == "b" for p in led.posts.values())
 
 
 def test_crosspost_no_casting_defer(tmp_path, mocker, monkeypatch):
@@ -372,13 +372,13 @@ def test_crosspost_no_casting_defer(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
     led = _two_accounts_clip(cfg, source_batch_id=None)
-    led.moments["mom_1"].affinities = ["@a"]          # owner stamped — gate can admit without waiting on casting
+    led.moments["mom_1"].affinities = ["a"]          # owner stamped — gate can admit without waiting on casting
     accts = Accounts.load(cfg)
     write_request(cfg, kind="moment_casting", key="src_1", payload={"source_id": "src_1", "moments": [], "personas": []})
     led = request_moment_casting(led, cfg, "src_1", accts)   # gate OPEN, unanswered — must NOT defer crosspost
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
-    assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
+    assert {p.account for p in led.posts.values()} == {"a"} and len(led.posts) == 2
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "casting_pending_skip" not in log
 
@@ -395,7 +395,7 @@ def test_crosspost_two_clips_same_surface_do_not_collide_on_time(tmp_path, mocke
         led.add_moment(Moment(id=mid, parent_id="src_1", content_token=cid, start=0, end=7,
                               reason="r", state=MomentState.clipped))
         c = Clip(id=cid, parent_id=mid, path=f"/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
-        c.meta_captions = {"@a/instagram": {"caption": f"{cid} cap", "hashtags": []}}
+        c.meta_captions = {"a/instagram": {"caption": f"{cid} cap", "hashtags": []}}
         led.add_clip(c)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     ig_posts = [p for p in led.posts.values() if p.platform is Platform.instagram]
@@ -409,7 +409,7 @@ def test_crosspost_renders_missing_aspect_on_demand(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["twitter"], "status": "active"}])
     led = Ledger.load(cfg); _captioned(led, cfg, mocker)   # seeds one 9:16 clip
-    led.clips["clip_1"].meta_captions["@a/twitter"] = {"caption": "tw cap", "hashtags": []}
+    led.clips["clip_1"].meta_captions["a/twitter"] = {"caption": "tw cap", "hashtags": []}
     assert len(led.clips) == 1
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     # a 16:9 clip was rendered on demand
@@ -429,7 +429,7 @@ def test_crosspost_does_not_reuse_error_clip_and_no_post_for_failed_render(tmp_p
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/c_9x16.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
-    clip.meta_captions = {"@a/twitter": {"caption": "tw", "hashtags": []}}    # twitter=16:9 -> on-demand render
+    clip.meta_captions = {"a/twitter": {"caption": "tw", "hashtags": []}}    # twitter=16:9 -> on-demand render
     led.add_clip(clip)
     # ffmpeg FAILS for the on-demand 16:9 render (returncode 1, no output file written)
     def failing_run(cmd, **kw):
@@ -474,8 +474,8 @@ def test_crosspost_skips_surface_when_clip_exceeds_platform_max(tmp_path, mocker
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
     # captions present for BOTH surfaces so a post would otherwise be created for each
-    clip.meta_captions = {"@a/tiktok": {"caption": "tt cap", "hashtags": []},
-                          "@a/instagram": {"caption": "ig cap", "hashtags": []}}
+    clip.meta_captions = {"a/tiktok": {"caption": "tt cap", "hashtags": []},
+                          "a/instagram": {"caption": "ig cap", "hashtags": []}}
     led.add_clip(clip)
     def fake_run(cmd, **kw):   # both surfaces are 9:16 (reuse the clip); harmless render stub
         from pathlib import Path
@@ -506,8 +506,8 @@ def test_crosspost_posts_when_duration_unknown(tmp_path, mocker):
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/tiktok": {"caption": "tt cap", "hashtags": []},
-                          "@a/youtube": {"caption": "yt cap", "hashtags": []}}
+    clip.meta_captions = {"a/tiktok": {"caption": "tt cap", "hashtags": []},
+                          "a/youtube": {"caption": "yt cap", "hashtags": []}}
     led.add_clip(clip)
     def fake_run(cmd, **kw):
         from pathlib import Path
@@ -550,8 +550,8 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     # two active accounts, same platform -> same aspect, so they'd share a clip today
     accts = Accounts(cfg); accts.accounts = [
-        Account(handle="@a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active),
-        Account(handle="@b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active)]
+        Account(handle="a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active),
+        Account(handle="b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active)]
     led.add_source(Source(id="s1", source_path=str(tmp_path/"s.mp4"), width=1080, height=1920))
     # ROOT FIX: the per-account on-screen hooks are the FRAME-SEEING moment author's, keyed by handle
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
@@ -560,8 +560,8 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
     clip = Clip(id="c1", parent_id="m1", path=str(tmp_path/"c1.mp4"), aspect=Fmt.r9x16,
                 state=ClipState.captioned)
     Path(clip.path).write_bytes(b"BASECLIP")
-    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": [], "hook": "CAPHOOK_IGNORED"},
-                          "@b/instagram": {"caption": "B cap", "hashtags": [], "hook": "CAPHOOK_IGNORED"}}
+    clip.meta_captions = {"a/instagram": {"caption": "A cap", "hashtags": [], "hook": "CAPHOOK_IGNORED"},
+                          "b/instagram": {"caption": "B cap", "hashtags": [], "hook": "CAPHOOK_IGNORED"}}
     led.add_clip(clip)
     # make burn_hook_only deterministic + observable (write a distinct file per call)
     calls = []
@@ -575,8 +575,8 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
     by_acct = {p.account: p for p in posts}
     # each account got a DIFFERENT variant_hook + variant_key; slice 2 (burn on approval) DEFERS the ffmpeg
     # burn to approval, so the mint RECORDS the per-account intent but runs NO burn and mints no Render.
-    assert by_acct["@a"].variant_hook == "SHARED MOMENT HOOK" and by_acct["@b"].variant_hook == "SHARED MOMENT HOOK"
-    assert by_acct["@a"].variant_key and by_acct["@a"].variant_key != by_acct["@b"].variant_key
+    assert by_acct["a"].variant_hook == "SHARED MOMENT HOOK" and by_acct["b"].variant_hook == "SHARED MOMENT HOOK"
+    assert by_acct["a"].variant_key and by_acct["a"].variant_key != by_acct["b"].variant_key
     assert calls == [] and led.renders == {}                          # mint defers the burn (no ffmpeg, no Render)
     assert all(p.render_id is None and p.media_urls == [] for p in posts)
     # DETERMINISM (pinned in-test, not only by construction): variant_key MUST be the
@@ -584,8 +584,8 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
     # the #1 v1 duplicate-post bug) would still pass the distinctness check above, so assert the
     # exact content-addressed value here.
     from fanops.ids import surface_key
-    assert by_acct["@a"].variant_key == surface_key("@a", "instagram")
-    assert by_acct["@b"].variant_key == surface_key("@b", "instagram")
+    assert by_acct["a"].variant_key == surface_key("a", "instagram")
+    assert by_acct["b"].variant_key == surface_key("b", "instagram")
 
 
 def test_recrosspost_rewrites_stale_hook_on_awaiting_post_only(tmp_path, monkeypatch, mocker):
@@ -603,7 +603,7 @@ def test_recrosspost_rewrites_stale_hook_on_awaiting_post_only(tmp_path, monkeyp
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "c.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
+    clip.meta_captions = {"a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
     led.add_clip(clip); led.save()
 
     def _burn(base, out, hook, **kw):
@@ -643,13 +643,13 @@ def test_crosspost_no_variant_when_disabled(tmp_path, monkeypatch, mocker):
     from fanops.models import Source, Moment, Clip, MomentState, ClipState, Fmt, Platform
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     accts = Accounts(cfg); accts.accounts = [
-        Account(handle="@a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active)]
+        Account(handle="a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active)]
     led.add_source(Source(id="s1", source_path=str(tmp_path/"s.mp4"), width=1080, height=1920))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
                           state=MomentState.clipped))
     clip = Clip(id="c1", parent_id="m1", path=str(tmp_path/"c1.mp4"), aspect=Fmt.r9x16, state=ClipState.captioned)
     Path(clip.path).write_bytes(b"BASECLIP")
-    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": [], "hook": "HOOK A"}}
+    clip.meta_captions = {"a/instagram": {"caption": "A cap", "hashtags": [], "hook": "HOOK A"}}
     led.add_clip(clip)
     burn = mocker.patch("fanops.crosspost.overlay.burn_hook_only")
     from fanops.crosspost import crosspost_clips
@@ -666,21 +666,21 @@ def test_surface_time_lead_zero_is_byte_identical_to_no_lead():
     # The default lead=0 must produce the EXACT same string as today (determinism regression guard).
     base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
     for i in range(6):
-        a = surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1")
-        b = surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1", lead_minutes=0)
+        a = surface_time(base, "a", "instagram", "2026-06-02", index=i, clip_id="clip_1")
+        b = surface_time(base, "a", "instagram", "2026-06-02", index=i, clip_id="clip_1", lead_minutes=0)
         assert a == b
 
 def test_surface_time_lead_shifts_every_time_by_exactly_the_constant():
     base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
     lead = 120
     for i in range(6):
-        t0 = parse_iso(surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1"))
-        tl = parse_iso(surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1", lead_minutes=lead))
+        t0 = parse_iso(surface_time(base, "a", "instagram", "2026-06-02", index=i, clip_id="clip_1"))
+        tl = parse_iso(surface_time(base, "a", "instagram", "2026-06-02", index=i, clip_id="clip_1", lead_minutes=lead))
         assert tl - t0 == timedelta(minutes=lead)   # constant shift, identical per index
 
 def test_surface_time_lead_preserves_monotonicity():
     base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
-    times = [surface_time(base, "@a", "instagram", "2026-06-02", index=i, clip_id="clip_1", lead_minutes=200)
+    times = [surface_time(base, "a", "instagram", "2026-06-02", index=i, clip_id="clip_1", lead_minutes=200)
              for i in range(12)]
     assert times == sorted(times) and len(set(times)) == len(times)
 
@@ -717,7 +717,7 @@ def test_crosspost_logs_skipped_surface_missing_caption(tmp_path, mocker):
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": []}}   # NO youtube caption
+    clip.meta_captions = {"a/instagram": {"caption": "ig cap", "hashtags": []}}   # NO youtube caption
     led.add_clip(clip)
     real_run = subprocess.run
     def fake_run(cmd, **kw):
@@ -749,7 +749,7 @@ def test_crosspost_stamps_creative_provenance_onto_post(tmp_path, mocker, monkey
                           reason="r", state=MomentState.clipped, hook="wait for the drop"))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned, first_frame_kind="visual", cut_seconds=18.0)
-    clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": ["#x"]}}
+    clip.meta_captions = {"a/instagram": {"caption": "ig cap", "hashtags": ["#x"]}}
     led.add_clip(clip)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     post = list(led.posts.values())[0]
@@ -770,7 +770,7 @@ def test_crosspost_stamps_variation_axis_from_caption(tmp_path, mocker, monkeypa
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": ["#x"],
+    clip.meta_captions = {"a/instagram": {"caption": "ig cap", "hashtags": ["#x"],
                                            "hook": "wait for the drop", "axis": "hook_string",
                                            "rationale": "different opening words"}}
     led.add_clip(clip)
@@ -786,7 +786,7 @@ def _seed_cap_clip(led, cfg, *, window, cut_seconds, mocker):
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned, cut_seconds=cut_seconds)
-    clip.meta_captions = {"@a/instagram": {"caption": "ig cap", "hashtags": ["#x"]}}
+    clip.meta_captions = {"a/instagram": {"caption": "ig cap", "hashtags": ["#x"]}}
     led.add_clip(clip)
     real_run = subprocess.run
     def fake_run(cmd, **kw):
@@ -835,7 +835,7 @@ def test_stitch_draft_clip_never_crossposts(tmp_path, mocker):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", state=MomentState.clipped))
     stitch = Clip(id="stitch_x", parent_id="mom_1", path="/stitch_x.mp4", aspect=Fmt.r9x16,
                   state=ClipState.stitch_draft)
-    stitch.meta_captions = {"@a/instagram": {"caption": "c", "hashtags": ["#x"]}}   # even WITH captions
+    stitch.meta_captions = {"a/instagram": {"caption": "c", "hashtags": ["#x"]}}   # even WITH captions
     led.add_clip(stitch)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert not any(p.parent_id == "stitch_x" for p in led.posts.values())           # structurally unpostable

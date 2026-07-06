@@ -12,7 +12,7 @@ from fanops.post.postiz import build_postiz_payload, PostizPoster
 
 
 def _yt_post(**kw):
-    base = dict(id="p1", parent_id="clip_1", account="@a", account_id="yt_intg",
+    base = dict(id="p1", parent_id="clip_1", account="a", account_id="yt_intg",
                 platform=Platform.youtube, caption="full description here",
                 media_urls=["m1|http://x/m.mp4"])
     base.update(kw)

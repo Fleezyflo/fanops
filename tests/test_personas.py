@@ -153,7 +153,7 @@ def test_migrate_from_accounts_creates_and_links(tmp_path):
         assert a.persona_id                       # every account with an inline persona is now linked
     # voice carried over via the link hydration
     by_handle = {a.handle: a for a in accts.accounts}
-    assert by_handle["@mark"].persona == "music blogger curator"
+    assert by_handle["mark"].persona == "music blogger curator"
     # idempotent: a second run creates nothing new and re-links nothing
     P.migrate_from_accounts(cfg)
     assert len(P.Personas.load(cfg).all()) == 2

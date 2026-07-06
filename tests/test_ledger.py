@@ -24,7 +24,7 @@ def test_roundtrip(tmp_path):
     led.add_source(Source(id="src_1", source_path="/x.mp4", sha256="d"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-5", start=0, end=5, reason="r"))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4"))
-    led.add_post(Post(id="post_1", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="post_1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x"))
     led.save()
     again = Ledger.load(cfg)
@@ -59,7 +59,7 @@ def test_reconcile_moments_upserts_and_deletes_cascade(tmp_path):
     led.add_clip(Clip(id="c_a", parent_id="m_a", path="/c"))
     # a REJECTED post (a deletable state — NOT a protected awaiting/queued/retired worklist) so the
     # cascade still deletes A's lineage; protected-state survival is covered in test_ledger_cascade_protect.
-    led.add_post(Post(id="p_a", parent_id="c_a", account="@a", account_id="1",
+    led.add_post(Post(id="p_a", parent_id="c_a", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.rejected, public_url="dryrun://p_a"))
     # new decision keeps B, drops A, adds C
     keep = {"m_b": Moment(id="m_b", parent_id="s", content_token="B", start=3, end=5, reason="b2"),
@@ -123,7 +123,7 @@ def test_cascade_preserves_needs_reconcile_post(tmp_path):
     led.add_source(Source(id="s", source_path="/x"))
     led.add_moment(Moment(id="m_r", parent_id="s", content_token="R", start=0, end=2, reason="r"))
     led.add_clip(Clip(id="c_r", parent_id="m_r", path="/c", state=ClipState.queued))
-    led.add_post(Post(id="p_r", parent_id="c_r", account="@a", account_id="1",
+    led.add_post(Post(id="p_r", parent_id="c_r", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.needs_reconcile, public_url="dryrun://p_r"))
     led._delete_moment_cascade("m_r")
     assert "p_r" in led.posts, "a possibly-live needs_reconcile post must survive the cascade"
@@ -177,10 +177,10 @@ def test_variant_streaks_roundtrips_and_defaults_empty(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     assert led.variant_streaks == {}                      # default empty on a fresh ledger
-    led.variant_streaks["@a|instagram"] = {"hook": "WIN", "fingerprint": "abc", "streak": 2}
+    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "abc", "streak": 2}
     led.save()
     led2 = Ledger.load(cfg)
-    assert led2.variant_streaks == {"@a|instagram": {"hook": "WIN", "fingerprint": "abc", "streak": 2}}
+    assert led2.variant_streaks == {"a|instagram": {"hook": "WIN", "fingerprint": "abc", "streak": 2}}
 
 
 def test_old_ledger_without_variant_streaks_loads(tmp_path):
@@ -208,7 +208,7 @@ def test_retire_source_preserves_live_descendants(tmp_path):
     led.add_source(Source(id="src_y", source_path="/y.mp4", sha256="e"))
     led.add_moment(Moment(id="m", parent_id="src_y", content_token="A", start=0, end=2, reason="a"))
     led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.published))
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1",
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://p"))
     led.retire_source("src_y")
     assert led.is_retired_source("src_y")
@@ -274,7 +274,7 @@ def test_rebuild_discovered_has_created_at(tmp_path):
 # ---- P1: approve_post strictly-future fallback + optional suggestion (per-account operator scheduling) ----
 def _awaiting(led, pid="p", sched=None):
     from fanops.models import Post, PostState, Platform
-    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.awaiting_approval, scheduled_time=sched, public_url="dryrun://c"))
     return pid
 

@@ -50,22 +50,22 @@ def test_account_first_batch_to_queued_only_targeted_account(tmp_path, mocker, m
 
     # 1) a named batch targeting ONLY @a (the lever: this ingest is for @a, not "everything for everything")
     led = Ledger.load(cfg)
-    b = create_batch(led, name="Launch", target_accounts=["@a"], now_iso=FIXED)
-    assert led.get_batch(b.id) is b and b.target_accounts == ["@a"] and b.state is BatchState.open
+    b = create_batch(led, name="Launch", target_accounts=["a"], now_iso=FIXED)
+    assert led.get_batch(b.id) is b and b.target_accounts == ["a"] and b.state is BatchState.open
 
     # 2) batch-stamped source -> moment -> captioned clip (BOTH @a and @b captions, so @b is a REAL surface)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, batch_id=b.id))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "a", "hashtags": []},
-                          "@b/instagram": {"caption": "b", "hashtags": []}}
+    clip.meta_captions = {"a/instagram": {"caption": "a", "hashtags": []},
+                          "b/instagram": {"caption": "b", "hashtags": []}}
     led.add_clip(clip); led.save()
 
     # 3) crosspost (casting OFF) -> posts born ONLY for @a; @b's surface is batch-target-SKIPPED (enforced, not a no-op)
     led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time=FIXED)
     led.save()                                                     # persist so approve_posts (own txn) sees the born posts
-    assert {p.account for p in led.posts.values()} == {"@a"}        # @b dropped by the batch target
+    assert {p.account for p in led.posts.values()} == {"a"}        # @b dropped by the batch target
     assert led.posts, "at least one post born for @a"
     for p in led.posts.values():
         assert p.batch_id == b.id                                  # denormalized through crosspost (carried by repost_post too)

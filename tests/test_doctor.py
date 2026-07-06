@@ -163,13 +163,13 @@ def test_doctor_requires_distinct_ig_user_id_per_active_account(tmp_path, monkey
     # (i) CURRENT PROD STATE: 3 active IG accts, all ig_user_id=None, one global id -> all 3 borrow the
     # global (markmakmouly's) -> FAIL, naming the two SILENT borrowers (perca.late + cisumwolfhom).
     monkeypatch.setenv("META_IG_USER_ID", "17841400000000001")   # the single global id (markmakmouly's, historically)
-    cfg = _ig_accts_cfg(tmp_path, [("@markmakmouly", None), ("@perca.late", None), ("@cisumwolfhom", None)])
+    cfg = _ig_accts_cfg(tmp_path, [("markmakmouly", None), ("@perca.late", None), ("cisumwolfhom", None)])
     c = _igid_check(doctor.doctor_report(cfg))
     assert c is not None and c["ok"] is False
     assert "perca.late" in c["hint"] and "cisumwolfhom" in c["hint"]
 
     # (ii) 3 DISTINCT non-null ids -> every account is verified against its OWN media -> OK.
-    cfg2 = _ig_accts_cfg(tmp_path, [("@markmakmouly", "111"), ("@perca.late", "222"), ("@cisumwolfhom", "333")])
+    cfg2 = _ig_accts_cfg(tmp_path, [("markmakmouly", "111"), ("@perca.late", "222"), ("cisumwolfhom", "333")])
     c2 = _igid_check(doctor.doctor_report(cfg2))
     assert c2 is not None and c2["ok"] is True
 
@@ -181,12 +181,12 @@ def test_doctor_requires_distinct_ig_user_id_per_active_account(tmp_path, monkey
     assert c3 is not None and c3["ok"] is False
 
     # (iv) a SINGLE active IG account legitimately using the global -> NOT a violation (no false positive).
-    cfg4 = _ig_accts_cfg(tmp_path, [("@markmakmouly", None)])
+    cfg4 = _ig_accts_cfg(tmp_path, [("markmakmouly", None)])
     c4 = _igid_check(doctor.doctor_report(cfg4))
     assert c4 is not None and c4["ok"] is True
 
     # (v) explicit DUPLICATE: two active handles resolve to the SAME non-None id -> FAIL naming both.
-    cfg5 = _ig_accts_cfg(tmp_path, [("@markmakmouly", "999"), ("@perca.late", "999"), ("@cisumwolfhom", "333")])
+    cfg5 = _ig_accts_cfg(tmp_path, [("markmakmouly", "999"), ("@perca.late", "999"), ("cisumwolfhom", "333")])
     c5 = _igid_check(doctor.doctor_report(cfg5))
     assert c5 is not None and c5["ok"] is False
     assert "markmakmouly" in c5["hint"] and "perca.late" in c5["hint"]
@@ -327,7 +327,7 @@ def _seed_queued_post(cfg, *, when):
     led.add_source(Source(id="s1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="pq", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pq", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.queued, scheduled_time=when))
     led.save()
 

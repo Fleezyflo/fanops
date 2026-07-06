@@ -14,7 +14,7 @@ def _persist_parked(cfg, pid="p1", cid="c1"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
+        led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
                           platform=Platform.instagram, caption="x", submission_id="zernio_sid_1",
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url="dryrun://98432"))
 

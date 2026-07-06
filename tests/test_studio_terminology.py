@@ -17,7 +17,7 @@ def _accounts(cfg, rows):
     cfg.accounts_path.write_text(json.dumps({"accounts": rows}))
 
 
-def _active(handle="@a"):
+def _active(handle="a"):
     return {"handle": handle, "account_id": "1", "platforms": ["instagram"], "status": "active"}
 
 
@@ -79,7 +79,7 @@ def test_home_defines_batch_once(tmp_path):
     from fanops.batches import create_batch
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     led = Ledger.load(cfg)
-    create_batch(led, name="B1", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    create_batch(led, name="B1", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
     html = _client(cfg).get("/").get_data(as_text=True)
     assert html.count('data-term="batch"') == 1
 

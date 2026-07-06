@@ -46,7 +46,7 @@ def test_caller_supplied_batch_is_honoured(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put_video(cfg.inbox / "a.mp4", mocker)
     led = Ledger.load(cfg)
     from fanops.batches import create_batch
-    b = create_batch(led, name="Launch week", target_accounts=["@markmakmouly"],
+    b = create_batch(led, name="Launch week", target_accounts=["markmakmouly"],
                      now_iso="2026-06-28T00:00:00.000001Z")
     led, _ = ingest_drops(led, cfg, batch_id=b.id)
     src = next(iter(led.sources.values()))

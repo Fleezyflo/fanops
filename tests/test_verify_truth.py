@@ -26,7 +26,7 @@ from fanops.reconcile import (reconcile_posts, resolve_media_ids, _UNVERIFIED_PR
 
 
 def _post(led, pid, state, *, platform=Platform.instagram, sub=None, url=None, media_id=None,
-          product_type=None, account="@a", published_at=None, error_reason=None):
+          product_type=None, account="a", published_at=None, error_reason=None):
     # a terminal-with-URL state needs a public_url to satisfy the R1 model invariant; callers pass a real
     # https url when the test is about the rest-gate, else a synthetic dryrun:// only to construct the row.
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
@@ -171,7 +171,7 @@ def test_tiktok_fake_token_quarantines(tmp_path):
     # TikTok with a fanops_ (fake) submission_id can NEVER attribute a real post -> NOT confirmed -> the post
     # QUARANTINES (needs_reconcile) even though the backend claims published with a url. FAIL CLOSED.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="fanops_fake", account="@tt")
+    _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="fanops_fake", account="tt")
     led = reconcile_posts(led, cfg, get_status=lambda sid: {
         "status": "published", "publicUrl": "https://www.tiktok.com/@tt/video/7"})
     p = led.posts["tt"]
@@ -186,7 +186,7 @@ def test_tiktok_real_id_but_no_url_quarantines(tmp_path, monkeypatch, mocker):
     # requests.get is mocked so the fallback + any verify are network-free and deterministic.
     monkeypatch.setenv("FANOPS_POSTER", "zernio"); monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="zreal_1", account="@tt")
+    _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="zreal_1", account="tt")
     class _OE:
         def __init__(s, c, b): s.status_code = c; s._b = b; s.text = str(b)
         def json(s): return s._b
@@ -205,7 +205,7 @@ def test_tiktok_real_id_and_url_rests_when_oembed_verifies(tmp_path, mocker):
     # network. (Pre-T8 this asserted real-id+url alone; T8 added oEmbed; the username fix keys the compare off the
     # username Zernio reports — surfaced in the status dict as tiktokUsername — not the internal handle.)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="zreal_1", account="@tt")
+    _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="zreal_1", account="tt")
     class _OE:
         def __init__(s, c, b): s.status_code = c; s._b = b; s.text = str(b)
         def json(s): return s._b
@@ -221,7 +221,7 @@ def test_tiktok_park_is_stable_across_two_passes(tmp_path):
     # reconcile passes leave it in the SAME needs_reconcile state with the SAME error_reason. That proves the
     # interim SIT-PARKED is a deterministic park, NOT a published<->parked thrash every tick.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="fanops_fake", account="@tt")
+    _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="fanops_fake", account="tt")
     def gs(sid): return {"status": "published", "publicUrl": "https://www.tiktok.com/@tt/video/7"}
     led = reconcile_posts(led, cfg, get_status=gs)       # pass 1
     first = led.posts["tt"]

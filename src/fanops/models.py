@@ -33,6 +33,34 @@ def _validate_segments(segments: list[tuple[float, float]]) -> list[tuple[float,
     return out
 
 
+def _canon_affinity_list(handles) -> list[str]:
+    """Canonical account-handle list for Moment.affinities (strip '@', lowercase)."""
+    if not handles: return []
+    out = []
+    for h in handles:
+        s = str(h or "").strip().lstrip("@").lower()
+        if s: out.append(s)
+    return sorted(set(out))
+
+
+def _canon_account_str(h) -> str:
+    return str(h or "").strip().lstrip("@").lower()
+
+
+def _canon_affinity_list(handles) -> list[str]:
+    """Canonical account-handle list for Moment.affinities (strip '@', lowercase)."""
+    if not handles: return []
+    out = []
+    for h in handles:
+        s = str(h or "").strip().lstrip("@").lower()
+        if s: out.append(s)
+    return sorted(set(out))
+
+
+def _canon_account_str(h) -> str:
+    return str(h or "").strip().lstrip("@").lower()
+
+
 def _segments_dump(segs: list[tuple[float, float]]) -> list[list[float]]:
     return [[s, e] for s, e in segs]
 
@@ -186,6 +214,7 @@ class Source(BaseModel):
                                                 # day-anchor ("clips I dropped in").
 
 class Moment(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
     id: str
     parent_id: str                              # source id
     state: MomentState = MomentState.decided
@@ -227,6 +256,11 @@ class Moment(BaseModel):
     segments: list[tuple[float, float]] = Field(default_factory=list)   # S1 supercut: ordered non-overlapping spans; [] = single-window (old ledgers load fine)
     clip_profile: Optional[str] = None          # P5: owner persona's resolved length band at pick birth
                                                 # (config.resolve_clip_profile(owner)); None = persona-blind
+
+    @field_validator("affinities", mode="before")
+    @classmethod
+    def _canon_affinities(cls, v):
+        return _canon_affinity_list(v or [])
                                                 # -> P9 falls back to global (byte-identical).
     framing: Optional[str] = None               # P5: owner persona's crop bias at pick birth ("top"/"center");
                                                 # None = persona-blind -> P9 falls back to global.
@@ -271,7 +305,7 @@ class Post(BaseModel):
     state: PostState = PostState.awaiting_approval   # RF1: BORN awaiting_approval (no-auto-publish invariant);
                                                 # the prior `queued` default inverted the human gate — a Post()
                                                 # with no explicit state was publishable on the next publish_due.
-    account: str                                # human handle, e.g. "@a"
+    account: str                                # canonical handle, e.g. "a"
     account_id: str                             # hosted-backend id (FIX F06)
     platform: Platform
     caption: str
@@ -325,6 +359,11 @@ class Post(BaseModel):
                                         # run.py published transition. The Posted-archive day-anchor ("what shipped
                                         # Tuesday") — scheduled_time is INTENT day, not publish day. None until
                                         # published; old/in-flight rows fall back to scheduled_time in the grouper.
+
+    @field_validator("account", mode="before")
+    @classmethod
+    def _canon_post_account(cls, v):
+        return _canon_account_str(v) if v else v
 
     @model_validator(mode="after")
     def _enforce_published_url_invariant(self) -> "Post":

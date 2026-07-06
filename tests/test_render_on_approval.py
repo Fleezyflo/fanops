@@ -27,7 +27,7 @@ def _mock_burn(mocker):
         Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_bytes(b"V"); return True
     mocker.patch("fanops.overlay.burn_hook_only", side_effect=burn)
 
-def _seed_clip(led, cfg, *, m_hook=None, surfaces=("@a/instagram",), batch_id=None):
+def _seed_clip(led, cfg, *, m_hook=None, surfaces=("a/instagram",), batch_id=None):
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, batch_id=batch_id))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
                           state=MomentState.clipped, hook=m_hook))
@@ -52,7 +52,7 @@ def test_approve_materializes_render_and_points_post(tmp_path, monkeypatch, mock
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active", "clip_profile": "long"}])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="shared hook",
-               surfaces=("@a/instagram", "@b/instagram")); led.save()
+               surfaces=("a/instagram", "b/instagram")); led.save()
     led = _crosspost(cfg)
     assert led.renders == {}                                          # NOTHING rendered at crosspost (slice 2)
     assert all(p.render_id is None and p.media_urls == [] for p in led.posts.values())
@@ -60,14 +60,14 @@ def test_approve_materializes_render_and_points_post(tmp_path, monkeypatch, mock
     led = Ledger.load(cfg)
     assert len(led.renders) == 2                                      # two distinct hooks -> two renders, AT APPROVAL
     posts = {p.account: p for p in led.posts.values()}
-    for h in ("@a", "@b"):
+    for h in ("a", "b"):
         p = posts[h]
         assert p.state is PostState.queued                           # approved
         r = led.get_render(p.render_id)
         assert r is not None and p.media_urls == [f"file://{r.path}"]
         assert Path(r.path).exists()                                 # publish-needs-media: the burned file is on disk
-    assert posts["@a"].render_id != posts["@b"].render_id
-    assert led.get_render(posts["@a"].render_id).hook_text == "shared hook"
+    assert posts["a"].render_id != posts["b"].render_id
+    assert led.get_render(posts["a"].render_id).hook_text == "shared hook"
 
 def test_approve_dedups_same_hook_to_one_render(tmp_path, monkeypatch, mocker):
     # one account on TWO 9:16 platforms (ig+tiktok) with the SAME per-account hook -> ONE content-addressed
@@ -78,7 +78,7 @@ def test_approve_dedups_same_hook_to_one_render(tmp_path, monkeypatch, mocker):
                           "status": "active"}])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="one hook",
-               surfaces=("@a/instagram", "@a/tiktok")); led.save()
+               surfaces=("a/instagram", "a/tiktok")); led.save()
     led = _crosspost(cfg)
     approve_posts(cfg, [p.id for p in led.posts.values()])
     led = Ledger.load(cfg)
@@ -91,7 +91,7 @@ def test_approve_files_render_under_batch_source_dirs(tmp_path, monkeypatch, moc
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="h", surfaces=("@a/instagram",), batch_id="batch_xy"); led.save()
+    _seed_clip(led, cfg, m_hook="h", surfaces=("a/instagram",), batch_id="batch_xy"); led.save()
     led = _crosspost(cfg)
     approve_posts(cfg, [p.id for p in led.posts.values()])
     led = Ledger.load(cfg)
@@ -109,7 +109,7 @@ def test_approve_clip_bulk_materializes_all_surfaces(tmp_path, monkeypatch, mock
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active", "clip_profile": "long"}])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="shared hook",
-               surfaces=("@a/instagram", "@b/instagram")); led.save()
+               surfaces=("a/instagram", "b/instagram")); led.save()
     _crosspost(cfg)
     approve_clip(cfg, "clip_1")                                       # bulk: every surface of the clip
     led = Ledger.load(cfg)
@@ -125,12 +125,12 @@ def test_approve_burn_failure_emits_breadcrumb(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="h", surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="h", surfaces=("a/instagram",)); led.save()
     led = _crosspost(cfg)
     mocker.patch("fanops.overlay.burn_hook_only", return_value=False)   # burn fails AT APPROVAL (no libass)
     approve_posts(cfg, [p.id for p in led.posts.values()])
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "hook_burn_failed" in log and "@a/instagram" in log
+    assert "hook_burn_failed" in log and "a/instagram" in log
 
 def test_approve_skips_variant_post_when_render_cannot_materialize(tmp_path, monkeypatch, mocker):
     # publish-needs-media guard: a variant post whose clip is gone at approval (corrupt / GC'd ledger) cannot
@@ -139,7 +139,7 @@ def test_approve_skips_variant_post_when_render_cannot_materialize(tmp_path, mon
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="h", surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="h", surfaces=("a/instagram",)); led.save()
     led = _crosspost(cfg)
     pid = next(iter(led.posts.values())).id
     drop = Ledger.load(cfg); drop.clips.pop("clip_1", None); drop.save()   # simulate a vanished clip
@@ -162,7 +162,7 @@ def test_warm_miss_skips_approve_and_never_burns_under_the_flock(tmp_path, monke
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="h", surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="h", surfaces=("a/instagram",)); led.save()
     led = _crosspost(cfg)
     pid = next(iter(led.posts.values())).id
     # the off-flock warm produces NO usable plan (simulate an ffmpeg/transport failure in the warm pass)
@@ -185,7 +185,7 @@ def test_warm_miss_surfaces_render_pending_in_review_matrix(tmp_path, monkeypatc
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="h", surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="h", surfaces=("a/instagram",)); led.save()
     _crosspost(cfg)
     pid = next(iter(Ledger.load(cfg).posts.values())).id
     mocker.patch("fanops.studio.actions_approve.render_account_file", side_effect=RuntimeError("warm boom"))
@@ -200,7 +200,7 @@ def test_off_mode_approval_mints_no_render(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="h", surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="h", surfaces=("a/instagram",)); led.save()
     led = _crosspost(cfg)
     approve_posts(cfg, [p.id for p in led.posts.values()])
     led = Ledger.load(cfg)
@@ -216,16 +216,16 @@ def test_realized_cut_over_platform_cap_is_not_queued(tmp_path, monkeypatch, moc
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="hook A", surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="hook A", surfaces=("a/instagram",)); led.save()
     led = _crosspost(cfg)
-    p = next(pp for pp in led.posts.values() if pp.account == "@a")
+    p = next(pp for pp in led.posts.values() if pp.account == "a")
     from fanops.crosspost import account_render_spec
     from fanops.models import Render, RenderState
     from fanops.studio.actions_approve import _acct_for
     accts = Accounts.load(cfg); clip = led.clips["clip_1"]
-    rid, *_ = account_render_spec(cfg, clip=clip, hook=p.variant_hook, acct=_acct_for(accts, "@a"))
+    rid, *_ = account_render_spec(cfg, clip=clip, hook=p.variant_hook, acct=_acct_for(accts, "a"))
     vf = cfg.clips / "over.mp4"; vf.write_bytes(b"V")
-    led.add_render(Render(id=rid, clip_id="clip_1", account="@a", surface_key="@a|instagram",
+    led.add_render(Render(id=rid, clip_id="clip_1", account="a", surface_key="a|instagram",
                           hook_text=p.variant_hook, path=str(vf), state=RenderState.rendered,
                           is_account_cut=True, cut_seconds=120.0))   # IG cap is 90 -> over-cap
     led.save()

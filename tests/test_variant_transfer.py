@@ -45,14 +45,14 @@ def test_transfer_is_validation_frozen_until_learning_validated(tmp_path, monkey
     from fanops import caption
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _accounts(cfg, [("@a", [Platform.instagram], "hype"),
-                            ("@b", [Platform.instagram], "hype"),
-                            ("@c", [Platform.instagram], "hype")])
-    _win_surface(led, "@a", Platform.instagram, "STYLE")     # two donors prove a transferable style
-    _win_surface(led, "@b", Platform.instagram, "STYLE")
-    surfaces = [("@c", Platform.instagram)]                  # @c is cold (no own winner)
+    accts = _accounts(cfg, [("a", [Platform.instagram], "hype"),
+                            ("b", [Platform.instagram], "hype"),
+                            ("c", [Platform.instagram], "hype")])
+    _win_surface(led, "a", Platform.instagram, "STYLE")     # two donors prove a transferable style
+    _win_surface(led, "b", Platform.instagram, "STYLE")
+    surfaces = [("c", Platform.instagram)]                  # @c is cold (no own winner)
     # the pure scorer still computes the borrowable style (validation-agnostic by design)...
-    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == ["STYLE"]
+    assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == ["STYLE"]
     # ...but the CAPTION consumer must withhold it until learning is validated.
     assert caption._transferred_hooks(led, cfg, accts, surfaces) == []      # FROZEN
     _validate(cfg)
@@ -62,78 +62,78 @@ def test_transfer_is_validation_frozen_until_learning_validated(tmp_path, monkey
 def test_recipient_with_own_winner_gets_nothing(tmp_path, monkeypatch):
     # own-wins rule: a surface that already has its own gated winner borrows nothing.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _accounts(cfg, [("@a", [Platform.instagram], "hype"),
-                            ("@b", [Platform.instagram], "hype"),
-                            ("@c", [Platform.instagram], "hype")])
-    _win_surface(led, "@a", Platform.instagram, "STYLE")     # donor 1
-    _win_surface(led, "@b", Platform.instagram, "STYLE")     # donor 2
-    _win_surface(led, "@c", Platform.instagram, "OWN")       # recipient HAS its own winner
-    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == []
+    accts = _accounts(cfg, [("a", [Platform.instagram], "hype"),
+                            ("b", [Platform.instagram], "hype"),
+                            ("c", [Platform.instagram], "hype")])
+    _win_surface(led, "a", Platform.instagram, "STYLE")     # donor 1
+    _win_surface(led, "b", Platform.instagram, "STYLE")     # donor 2
+    _win_surface(led, "c", Platform.instagram, "OWN")       # recipient HAS its own winner
+    assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == []
 
 
 def test_single_donor_below_min_donors_returns_empty(tmp_path):
     # one donor wins STYLE but TRANSFER_MIN_DONORS default is 2 -> nothing transfers.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _accounts(cfg, [("@a", [Platform.instagram], "hype"),
-                            ("@c", [Platform.instagram], "hype")])
-    _win_surface(led, "@a", Platform.instagram, "STYLE")     # only ONE donor
+    accts = _accounts(cfg, [("a", [Platform.instagram], "hype"),
+                            ("c", [Platform.instagram], "hype")])
+    _win_surface(led, "a", Platform.instagram, "STYLE")     # only ONE donor
     # @c is cold (no posts) -> recipient. Only 1 donor won STYLE < 2 -> [].
-    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == []
+    assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == []
 
 
 def test_two_donors_same_style_transfers(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _accounts(cfg, [("@a", [Platform.instagram], "hype"),
-                            ("@b", [Platform.instagram], "hype"),
-                            ("@c", [Platform.instagram], "hype")])
-    _win_surface(led, "@a", Platform.instagram, "STYLE")
-    _win_surface(led, "@b", Platform.instagram, "STYLE")     # 2 distinct donors won STYLE
+    accts = _accounts(cfg, [("a", [Platform.instagram], "hype"),
+                            ("b", [Platform.instagram], "hype"),
+                            ("c", [Platform.instagram], "hype")])
+    _win_surface(led, "a", Platform.instagram, "STYLE")
+    _win_surface(led, "b", Platform.instagram, "STYLE")     # 2 distinct donors won STYLE
     # @c cold -> receives STYLE.
-    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == ["STYLE"]
+    assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == ["STYLE"]
 
 
 def test_other_platform_donor_does_not_contribute(tmp_path):
     # same-platform HARD gate: a tiktok winner must not inform an instagram recipient.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _accounts(cfg, [("@a", [Platform.tiktok], "hype"),
-                            ("@b", [Platform.tiktok], "hype"),
-                            ("@c", [Platform.instagram], "hype")])
-    _win_surface(led, "@a", Platform.tiktok, "STYLE")
-    _win_surface(led, "@b", Platform.tiktok, "STYLE")        # both donors are TIKTOK
-    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == []
+    accts = _accounts(cfg, [("a", [Platform.tiktok], "hype"),
+                            ("b", [Platform.tiktok], "hype"),
+                            ("c", [Platform.instagram], "hype")])
+    _win_surface(led, "a", Platform.tiktok, "STYLE")
+    _win_surface(led, "b", Platform.tiktok, "STYLE")        # both donors are TIKTOK
+    assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == []
 
 
 def test_donor_below_v2_gate_contributes_nothing(tmp_path):
     # a donor whose surface fails v2's own gate (lone variant, no comparative runner-up) is not a
     # winner -> best_hooks returns [] for it -> it cannot seed transfer.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _accounts(cfg, [("@a", [Platform.instagram], "hype"),
-                            ("@b", [Platform.instagram], "hype"),
-                            ("@c", [Platform.instagram], "hype")])
+    accts = _accounts(cfg, [("a", [Platform.instagram], "hype"),
+                            ("b", [Platform.instagram], "hype"),
+                            ("c", [Platform.instagram], "hype")])
     # @a and @b each have ONLY a single "STYLE" variant (no runner-up) -> best_hooks -> [].
-    for acct in ("@a", "@b"):
+    for acct in ("a", "b"):
         for i in range(3):
             led.add_post(Post(id=f"{acct}{i}", parent_id="clip_1", account=acct, account_id="x",
                               platform=Platform.instagram, caption="x", state=PostState.analyzed,
                               variant_key=f"vk_{acct}{i}", variant_hook="STYLE",
                               metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
-    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == []
+    assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == []
 
 
 def test_cap_limits_returned_styles(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER_MAX_HOOKS", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     # two distinct winning styles, each on 2 donors -> both qualify, but cap=1 -> only one returned.
-    accts = _accounts(cfg, [("@a", [Platform.instagram], "hype"),
-                            ("@b", [Platform.instagram], "hype"),
-                            ("@d", [Platform.instagram], "hype"),
-                            ("@e", [Platform.instagram], "hype"),
-                            ("@c", [Platform.instagram], "hype")])
-    _win_surface(led, "@a", Platform.instagram, "ALPHA")
-    _win_surface(led, "@b", Platform.instagram, "ALPHA")
-    _win_surface(led, "@d", Platform.instagram, "BETA")
-    _win_surface(led, "@e", Platform.instagram, "BETA")
-    out = transferred_hooks(led, cfg, accts, "@c", Platform.instagram)
+    accts = _accounts(cfg, [("a", [Platform.instagram], "hype"),
+                            ("b", [Platform.instagram], "hype"),
+                            ("d", [Platform.instagram], "hype"),
+                            ("e", [Platform.instagram], "hype"),
+                            ("c", [Platform.instagram], "hype")])
+    _win_surface(led, "a", Platform.instagram, "ALPHA")
+    _win_surface(led, "b", Platform.instagram, "ALPHA")
+    _win_surface(led, "d", Platform.instagram, "BETA")
+    _win_surface(led, "e", Platform.instagram, "BETA")
+    out = transferred_hooks(led, cfg, accts, "c", Platform.instagram)
     assert len(out) == 1
 
 
@@ -142,40 +142,40 @@ def test_persona_ranking_is_deterministic_and_prefers_overlap(tmp_path, monkeypa
     # recipient's. ALPHA donors share the recipient's "hype cinematic" words; BETA donors don't.
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER_MAX_HOOKS", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _accounts(cfg, [("@a", [Platform.instagram], "hype cinematic edits"),
-                            ("@b", [Platform.instagram], "hype cinematic energy"),
-                            ("@d", [Platform.instagram], "calm lyric reading"),
-                            ("@e", [Platform.instagram], "calm lyric reading"),
-                            ("@c", [Platform.instagram], "hype cinematic")])   # recipient
-    _win_surface(led, "@a", Platform.instagram, "ALPHA")
-    _win_surface(led, "@b", Platform.instagram, "ALPHA")
-    _win_surface(led, "@d", Platform.instagram, "BETA")
-    _win_surface(led, "@e", Platform.instagram, "BETA")
-    out = transferred_hooks(led, cfg, accts, "@c", Platform.instagram)
+    accts = _accounts(cfg, [("a", [Platform.instagram], "hype cinematic edits"),
+                            ("b", [Platform.instagram], "hype cinematic energy"),
+                            ("d", [Platform.instagram], "calm lyric reading"),
+                            ("e", [Platform.instagram], "calm lyric reading"),
+                            ("c", [Platform.instagram], "hype cinematic")])   # recipient
+    _win_surface(led, "a", Platform.instagram, "ALPHA")
+    _win_surface(led, "b", Platform.instagram, "ALPHA")
+    _win_surface(led, "d", Platform.instagram, "BETA")
+    _win_surface(led, "e", Platform.instagram, "BETA")
+    out = transferred_hooks(led, cfg, accts, "c", Platform.instagram)
     assert out == ["ALPHA"]                                  # persona-closer style wins the single slot
     # determinism: identical inputs -> identical output.
-    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == out
+    assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == out
 
 
 def test_no_accounts_or_empty_ledger_returns_empty(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _accounts(cfg, [("@c", [Platform.instagram], "hype")])
-    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == []   # cold + no donors
+    accts = _accounts(cfg, [("c", [Platform.instagram], "hype")])
+    assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == []   # cold + no donors
 
 
 def test_recipient_excluded_from_its_own_donor_pool(tmp_path):
     # The recipient surface must never count itself as a donor. @c has a (losing-runner-up) winner
     # of its own -> own-wins short-circuit returns [] anyway; this asserts no self-donation path.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _accounts(cfg, [("@a", [Platform.instagram], "hype"),
-                            ("@c", [Platform.instagram], "hype")])
-    _win_surface(led, "@a", Platform.instagram, "STYLE")     # 1 donor
-    _win_surface(led, "@c", Platform.instagram, "STYLE")     # @c also "won" STYLE itself
+    accts = _accounts(cfg, [("a", [Platform.instagram], "hype"),
+                            ("c", [Platform.instagram], "hype")])
+    _win_surface(led, "a", Platform.instagram, "STYLE")     # 1 donor
+    _win_surface(led, "c", Platform.instagram, "STYLE")     # @c also "won" STYLE itself
     # @c has its own winner -> own-wins rule returns []; STYLE is NOT double-counted via @c.
-    assert transferred_hooks(led, cfg, accts, "@c", Platform.instagram) == []
+    assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == []
 
 
 def test_none_accounts_returns_empty(tmp_path):
     # accounts=None (backward-compat / no registry) -> [] (nothing to borrow), never a crash.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    assert transferred_hooks(led, cfg, None, "@c", Platform.instagram) == []
+    assert transferred_hooks(led, cfg, None, "c", Platform.instagram) == []

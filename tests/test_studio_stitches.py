@@ -66,7 +66,7 @@ def test_dismiss_selected(tmp_path):
 
 # ---- Task 5: operator RELEASE of a rendered stitch_draft clip -> captioned (inherits base captions) ----
 def _seed_stitch_draft(cfg, *, base_state=ClipState.captioned, caps=None):
-    caps = caps if caps is not None else {"@a/instagram": {"caption": "c", "hashtags": ["#x"]}}
+    caps = caps if caps is not None else {"a/instagram": {"caption": "c", "hashtags": ["#x"]}}
     with Ledger.transaction(cfg) as led:
         led.clips["clip_base"] = Clip(id="clip_base", parent_id="m1", path="/x/clip_base.mp4",
                                       aspect=Fmt.r9x16, state=base_state, meta_captions=caps)
@@ -85,7 +85,7 @@ def test_release_promotes_stitch_draft_and_inherits_captions(tmp_path):
     led = Ledger.load(cfg)
     c = led.clips["stitch_x"]
     assert c.state is ClipState.captioned                      # now crosspost-eligible
-    assert c.meta_captions == {"@a/instagram": {"caption": "c", "hashtags": ["#x"]}}  # inherited from base
+    assert c.meta_captions == {"a/instagram": {"caption": "c", "hashtags": ["#x"]}}  # inherited from base
 
 def test_release_only_touches_stitch_draft(tmp_path):
     # a non-stitch_draft clip id is never promoted by release (re-checked in-lock)
@@ -124,8 +124,8 @@ def test_inherit_captions_deep_copies(tmp_path):
     # release_stitches / approve_with_hook inherit a sibling's captions. The copy MUST be deep so a later
     # in-place edit to the source's inner {caption,hashtags} dict can't silently corrupt the other clip
     # (dict()/model_copy share the inner dicts — latent today, defended here).
-    src = {"@a/instagram": {"caption": "c", "hashtags": ["#x"]}}
+    src = {"a/instagram": {"caption": "c", "hashtags": ["#x"]}}
     out = actions._inherit_captions(src)
-    out["@a/instagram"]["caption"] = "MUTATED"; out["@a/instagram"]["hashtags"].append("#y")
-    assert src["@a/instagram"] == {"caption": "c", "hashtags": ["#x"]}    # source untouched -> deep copy
+    out["a/instagram"]["caption"] = "MUTATED"; out["a/instagram"]["hashtags"].append("#y")
+    assert src["a/instagram"] == {"caption": "c", "hashtags": ["#x"]}    # source untouched -> deep copy
     assert actions._inherit_captions(None) == {}                         # None -> empty, never crashes

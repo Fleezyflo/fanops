@@ -11,7 +11,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.ids import surface_key
-from fanops.models import ClipState, PostState, Render, RenderState, PLATFORM_MAX_SECONDS
+from fanops.models import ClipState, PostState, Render, RenderState, PLATFORM_MAX_SECONDS, validate_account_handle
 from fanops.crosspost import account_render_spec, render_account_file
 from fanops.audit import write_audit
 from fanops.log import get_logger
@@ -317,6 +317,10 @@ def approve_account(cfg: Config, handle: str, *, batch: Optional[str] = None, so
     handle = (handle or "").strip()
     if not handle:
         return ActionResult(ok=True, detail={"account": None, "approved": 0})
+    try:
+        handle = validate_account_handle(handle)
+    except ValueError:
+        return ActionResult(ok=True, detail={"account": handle, "approved": 0})
     det = {"account": handle, "batch": batch, "source": source, "platform": platform}
     def _chan(p) -> bool: return platform is None or p.platform.value == platform   # column = handle × platform
     if source is None:                          # legacy path (post-only predicate, no lineage walk); platform=None -> byte-identical

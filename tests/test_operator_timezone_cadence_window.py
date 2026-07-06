@@ -97,7 +97,7 @@ def _seed_clip(led: Ledger) -> Clip:
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "a", "hashtags": []}}
+    clip.meta_captions = {"a/instagram": {"caption": "a", "hashtags": []}}
     led.add_clip(clip)
     return clip
 
@@ -106,7 +106,7 @@ def _seed_queued_posts(led: Ledger, clip: Clip, *, n: int, base_iso: str) -> lis
     ids: list[str] = []
     for k in range(n):
         pid = f"p_{k}"
-        led.add_post(Post(id=pid, parent_id=clip.id, account="@a", account_id="ia",
+        led.add_post(Post(id=pid, parent_id=clip.id, account="a", account_id="ia",
                           platform=Platform.instagram, caption="c", state=PostState.queued,
                           scheduled_time=base_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://ia"))
         ids.append(pid)
@@ -159,7 +159,7 @@ def test_cfg_account_window_default_is_none(tmp_path, monkeypatch):
     None == 24h open (PRD: 'default open, populated later')."""
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     assert hasattr(cfg, "account_window"), "cfg.account_window not built — M7 seam missing"
-    win = cfg.account_window("@a")
+    win = cfg.account_window("a")
     assert win is None, f"unset daily_window should be None (24h open), got {win!r}"
 
 
@@ -171,7 +171,7 @@ def test_cfg_account_window_reads_accounts_json(tmp_path, monkeypatch):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "ia", "platforms": ["instagram"], "status": "active",
          "daily_window": [9, 23]}]}))
-    win = cfg.account_window("@a")
+    win = cfg.account_window("a")
     assert win == (9, 23), f"daily_window=[9,23] should read as (9, 23), got {win!r}"
 
 
@@ -180,4 +180,4 @@ def test_cfg_account_window_unknown_handle_returns_none(tmp_path, monkeypatch):
     seam: an analytics surface that names a handle the cadence engine doesn't recognise gets a
     24h-open answer, not a 500."""
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
-    assert cfg.account_window("@nope") is None
+    assert cfg.account_window("nope") is None

@@ -13,7 +13,7 @@ def _parked(led, pid="p"):
     # R1 note: state=needs_reconcile is NON-terminal, so the public_url invariant does NOT apply
     # here. The test deliberately starts with public_url=None to exercise the backend-URL CAPTURE
     # path; do not inject a synthetic URL.
-    led.add_post(Post(id=pid, parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="s"))
 
 
@@ -53,7 +53,7 @@ def test_reconcile_keeps_a_valid_https_public_url(tmp_path):
 def test_reconcile_bad_url_does_not_clobber_an_existing_valid_url(tmp_path):
     # a later poll returning a malformed url must not erase a previously-captured good permalink.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="s",
                       public_url="https://insta/p/good"))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "not-a-url"})

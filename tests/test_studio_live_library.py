@@ -51,7 +51,7 @@ def test_live_library_excludes_authored_posts(tmp_path):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c1", parent_id="m1", path="/c/c1.mp4", state=ClipState.published))
-        led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="ig_1",
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="ig_1",
                           platform=Platform.instagram, caption="mine", state=PostState.published,
                           public_url="https://ig/reel/mine/"))
         led.add_imported_media(ImportedMedia(media_id="M1", permalink="https://ig/reel/A/", product_type="REELS"))

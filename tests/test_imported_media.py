@@ -41,7 +41,7 @@ def test_v9_ledger_migrates_to_v10_with_empty_imported_media(tmp_path):
            "sources": {"src_aaaaaaaaaaaa": {"id": "src_aaaaaaaaaaaa", "source_path": "/x.mp4",
                                             "state": "catalogued", "created_at": "2026-05-01T00:00:00Z"}},
            "moments": {}, "clips": {},
-           "posts": {"p_keep": {"id": "p_keep", "parent_id": "c1", "account": "@a", "account_id": "1",
+           "posts": {"p_keep": {"id": "p_keep", "parent_id": "c1", "account": "a", "account_id": "1",
                                 "platform": "instagram", "caption": "x", "state": "awaiting_approval",
                                 "created_at": "2026-05-01T00:00:00Z"}},
            "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {}, "renders": {},
