@@ -4,8 +4,10 @@
 # the vetted line with it (provenance traces every shipped tag) -> the STORE is rebuilt from LIVE Meta Graph
 # reach (harvest co-occurring -> measure -> rank), NOT from any post. SEVERANCE: an analyzed post's own reach
 # plays ZERO role in the store ranking (a post's outcome attributes to the hook/clip/account, never the tag).
-# Slow UNIT (no marker).
+# Slow UNIT (`@pytest.mark.slow` — deselect locally with `-m "not integration and not slow"`).
 import json
+import pytest
+pytestmark = pytest.mark.slow
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Clip, Moment, Source, MomentState, ClipState, Platform,

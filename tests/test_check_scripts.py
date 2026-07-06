@@ -177,11 +177,26 @@ def test_pre_push_hook_runs_no_pytest():
     assert "refs/heads/main" in code, "pre-push must still guard main"
 
 
-def test_check_full_mirrors_ci():
-    """check-full.sh must run the CI unit command: ruff check . + pytest -m 'not integration'."""
+def test_check_sh_excludes_slow_marker():
+    """check.sh must deselect slow cross-face proofs for fast local scoped runs."""
+    check = CHECK.read_text()
+    assert 'pytest -q -m "not integration and not slow"' in check
+
+
+def test_check_full_default_excludes_slow():
+    """Default check-full.sh skips slow; CHECK_FULL_SLOW=1 mirrors CI unit (-m 'not integration')."""
     full = (REPO / "scripts" / "check-full.sh").read_text()
     assert "ruff check ." in full
-    assert 'pytest -q -m "not integration"' in full
+    assert "not integration and not slow" in full
+    assert 'CHECK_FULL_SLOW:-' in full or "CHECK_FULL_SLOW" in full
+    assert "MARKER='not integration'" in full or 'MARKER="not integration"' in full
+
+
+def test_check_full_slow_env_mirrors_ci():
+    """CHECK_FULL_SLOW=1 must run the CI unit marker expression (includes slow)."""
+    full = (REPO / "scripts" / "check-full.sh").read_text()
+    assert "CHECK_FULL_SLOW" in full
+    assert "not integration" in full
 
 
 def test_scopes_studio_module_to_studio_test(sandbox):

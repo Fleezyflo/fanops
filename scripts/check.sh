@@ -73,6 +73,6 @@ if [[ ${#TESTS[@]} -eq 0 ]]; then
 fi
 echo "[check] pytest (scoped): ${#TESTS[@]} file(s)"
 printf '        %s\n' "${TESTS[@]}"
-"$PY" -m pytest -q -m "not integration" "${TESTS[@]}"
+"$PY" -m pytest -q -m "not integration and not slow" "${TESTS[@]}"
 
 echo "[check] OK — scoped ruff + tests green. Push freely; CI is the authoritative full gate."
