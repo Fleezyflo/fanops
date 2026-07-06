@@ -3,13 +3,13 @@
 
 ## Run it right
 
-- Fast UNIT suite (hermetic, no ffmpeg/whisper/network): `python -m pytest -q -m "not integration"`.
-- Integration (`@pytest.mark.integration`, the only declared marker): `python -m pytest -q -m integration -rs`
-  — needs real ffmpeg/whisper/TTS; skips cleanly when tooling is absent locally. `FANOPS_REQUIRE_E2E=1` (CI)
-  turns that skip into a FAILURE, so the real-tooling path can't silently vanish.
+- Fast UNIT suite (hermetic, no ffmpeg/whisper/network): `python -m pytest -q -m "not integration and not slow"`.
+- Integration (`@pytest.mark.integration`): `python -m pytest -q -m integration -rs` — needs real ffmpeg/whisper/TTS;
+  skips cleanly when tooling is absent locally. `FANOPS_REQUIRE_E2E=1` (CI) turns that skip into a FAILURE.
 - **Run under the venv** (`source .venv/bin/activate`) — bare `pytest` mis-reports the `mocker` fixture.
-- Big cross-face proofs are slow UNITs with NO marker (they run in the fast job): `test_account_first_e2e.py`,
-  `test_hashtag_lifecycle_e2e.py`, `test_review_lanes_e2e.py`, `test_e2e_transcript_assertion.py`.
+- Slow cross-face UNIT proofs (`@pytest.mark.slow`): `test_account_first_e2e.py`, `test_hashtag_lifecycle_e2e.py`,
+  `test_review_lanes_e2e.py` — excluded by local `check.sh` / default `check-full.sh`; CI `unit` still runs them
+  (`pytest -m "not integration"`). Full local parity: `CHECK_FULL_SLOW=1 ./scripts/check-full.sh`.
 
 ## Hard rules
 

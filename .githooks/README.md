@@ -40,8 +40,8 @@ is the human-only `FANOPS_ALLOW_MAIN_PUSH=1` for a deliberate main push.
 
 | Gate | What | When |
 |------|------|------|
-| `./scripts/check.sh` | **scoped** ruff + pytest on changed modules (vs `origin/main` merge-base) | you run it **before every commit** — seconds |
-| `./scripts/check-full.sh` | **full** `ruff check .` + `pytest -q -m "not integration"` (CI parity) | optionally, before a big PR — minutes; never git-hooked |
-| **CI** (`.github/workflows/ci.yml`) | `unit` (ruff + full fast suite) + `e2e` (real ffmpeg/whisper integration) | **every PR to `main`** — the sole authoritative gate |
+| `./scripts/check.sh` | **scoped** ruff + pytest (`-m "not integration and not slow"`) on changed modules | you run it **before every commit** — seconds |
+| `./scripts/check-full.sh` | **full** `ruff check .` + pytest (`-m "not integration and not slow"`; `CHECK_FULL_SLOW=1` for CI unit parity) | optionally, before a big PR — minutes; never git-hooked |
+| **CI** (`.github/workflows/ci.yml`) | `unit` (`pytest -m "not integration"` — includes slow) + `e2e` (real ffmpeg/whisper integration) | **every PR to `main`** — the sole authoritative gate |
 
 Push freely. If CI is green, the change is proven. `check.sh` just keeps CI from coming back red.
