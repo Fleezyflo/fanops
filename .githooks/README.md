@@ -2,10 +2,10 @@
 
 **Hooks enforce policy. Scripts run tests. CI proves everything.**
 
-These hooks do **not** run tests. Not the full suite, not a scoped subset, not `ruff check .`. Test
-execution lives in explicit scripts you run by hand and in CI — never at push time. This is deliberate:
-a push-time test gate is slow, is routinely bypassed (and a bypass culture rots the gate), and once
-crashed a 16 GB host by running the codebase-wide suite under the wrong interpreter. So it's gone.
+`pre-push` does **not** run tests — guards only. `pre-commit` runs **scoped** tests via
+`./scripts/check.sh` when you stage `src/` or `tests/` `.py` (not the full suite, not `ruff check .`).
+Push-time test gates are deliberately gone: slow, routinely bypassed, and once crashed a 16 GB host by
+running the codebase-wide suite under the wrong interpreter.
 
 ## Wire the hooks (per repo)
 
@@ -17,14 +17,17 @@ git config --local core.hooksPath .githooks
 machine-global `pre-commit` secret scanner stops firing. This repo's `.githooks/pre-commit` already
 includes secret scanning, so opting in keeps you covered — just don't delete it.
 
-## `pre-commit` — secrets + staged lint (fast, <10s)
+## `pre-commit` — secrets + staged lint + scoped check (seconds, not minutes)
 
 1. **Secret scan** on staged diffs — blocks OpenAI / GitHub / AWS keys, private-key blocks, and
    generic `api_key=/secret=/password=/token=` assignments in *added* lines.
 2. **Staged ruff** — lints only the `.py` files you staged, under the project `.venv`. Not the whole
    tree (that's CI). Skips lint if the venv is absent; the secret scan still runs.
+3. **Scoped `check.sh`** — when any staged file is under `src/` or `tests/` and ends in `.py`, runs
+   `BASE=HEAD ./scripts/check.sh` (scoped ruff + pytest on changed modules vs `HEAD`). Skips when
+   only docs / scripts / other `.py` are staged. Requires `.venv`; failure blocks the commit.
 
-No test execution. Bypass the secret scan only in a real emergency: `ECC_SKIP_PRECOMMIT=1 git commit`.
+Bypass the whole hook only in a real emergency: `ECC_SKIP_PRECOMMIT=1 git commit`.
 
 ## `pre-push` — policy guards ONLY (no tests, ever)
 
@@ -40,7 +43,7 @@ is the human-only `FANOPS_ALLOW_MAIN_PUSH=1` for a deliberate main push.
 
 | Gate | What | When |
 |------|------|------|
-| `./scripts/check.sh` | **scoped** ruff + pytest (`-m "not integration and not slow"`) on changed modules | you run it **before every commit** — seconds |
+| `./scripts/check.sh` | **scoped** ruff + pytest (`-m "not integration and not slow"`) on changed modules | **pre-commit** when `src/`/`tests/` `.py` staged (`BASE=HEAD`); also run by hand — seconds |
 | `./scripts/check-full.sh` | **full** `ruff check .` + pytest (`-m "not integration and not slow"`; `CHECK_FULL_SLOW=1` for CI unit parity) | optionally, before a big PR — minutes; never git-hooked |
 | **CI** (`.github/workflows/ci.yml`) | `unit` (`pytest -m "not integration"` — includes slow) + `e2e` (real ffmpeg/whisper integration) | **every PR to `main`** — the sole authoritative gate |
 

@@ -161,6 +161,19 @@ def test_scoped_pytest_failure_propagates_nonzero(sandbox):
     assert r.returncode != 0, "check.sh must exit non-zero when a scoped check fails"
 
 
+def test_pre_commit_hook_runs_check_sh_for_src_tests():
+    """pre-commit runs BASE=HEAD check.sh when staged paths touch src/ or tests/ .py (enhancement #6).
+
+    Asserts on executable INVOCATION, not word occurrence — comments may document the policy.
+    """
+    hook = (REPO / ".githooks" / "pre-commit").read_text()
+    code = "\n".join(ln for ln in hook.splitlines() if ln.strip() and not ln.lstrip().startswith("#"))
+    assert "check.sh" in code or "scripts/check.sh" in code, "pre-commit must invoke check.sh for src/tests"
+    assert "BASE=HEAD" in code, "pre-commit must scope check.sh to HEAD (staged commit)"
+    assert "rg -q" in code and "src|tests" in code, "pre-commit must gate check.sh on src/ or tests/ .py"
+    assert "ECC_SKIP_PRECOMMIT" in code, "pre-commit must honor the existing whole-hook bypass"
+
+
 def test_pre_push_hook_runs_no_pytest():
     """The real pre-push hook must INVOKE zero test tooling (spec: guards only).
 
