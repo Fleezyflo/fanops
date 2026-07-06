@@ -179,7 +179,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     per-account hook text; this re-burns it via ffmpeg (overlay.burn_hook_only) onto the SAME deterministic
     variant path /media serves, then a SHORT transaction flips post.variant_hook + post.media_urls ONLY.
     Both survive repost_post (the real 'Post again' reuse path). It NEVER writes clip.meta_captions['hook']
-    — that key is dead (the on-screen-hook source of truth is Moment.hooks_by_persona, read at crosspost).
+    — that key is dead (the on-screen-hook source of truth is Moment.hook, read at crosspost).
     Gated on cfg.creative_variation (per-surface variant burns only exist then). The 600s ffmpeg runs
     LOCK-FREE (the 60s flock guard forbids holding the lock across it — mirror regenerate_caption); the
     field flip is re-guarded inside a short transaction. hook_burn_failed (burn returns False — no libass /
@@ -872,7 +872,7 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
 
 
 def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> ActionResult:
-    """Restore a guard-stripped per-account hook onto this surface and re-burn preview media."""
+    """Restore a guard-stripped moment hook onto this surface and re-burn preview media."""
     if not cfg.creative_variation:
         return ActionResult(ok=False, error="per-account hook restore needs FANOPS_CREATIVE_VARIATION")
     led = Ledger.load(cfg)
@@ -883,7 +883,7 @@ def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] =
     mom = led.moments.get(clip.parent_id) if clip is not None else None
     if mom is None:
         return ActionResult(ok=False, error="no moment for post")
-    removed = (mom.hooks_by_persona_removed or {}).get(p.account)
+    removed = mom.hook_removed
     if not removed:
         return ActionResult(ok=False, error="no stripped hook to restore for this account")
     try:
@@ -891,10 +891,7 @@ def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] =
             m = led2.moments.get(mom.id)
             if m is None:
                 return ActionResult(ok=False, error="moment gone")
-            hbp = dict(m.hooks_by_persona or {})
-            hbp[p.account] = removed
-            hbr = {k: v for k, v in (m.hooks_by_persona_removed or {}).items() if k != p.account}
-            led2.moments[mom.id] = m.model_copy(update={"hooks_by_persona": hbp, "hooks_by_persona_removed": hbr})
+            led2.moments[mom.id] = m.model_copy(update={"hook": removed, "hook_removed": None})
             post = led2.posts.get(post_id)
             if post is not None:
                 post.variant_hook = removed

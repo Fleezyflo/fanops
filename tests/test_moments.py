@@ -37,11 +37,11 @@ def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
     for m in [m for m in led.moments.values()
               if m.parent_id == source_id and m.state is MomentState.picked]:
         spec = hooks.get(m.content_token)
-        hook, hbp = spec if isinstance(spec, tuple) else (spec, {})
+        hook = spec[0] if isinstance(spec, tuple) else spec
         key = f"{source_id}.{m.content_token}"
         rid = latest_request_id(cfg, "moment_hooks", key)
         from fanops.responder import screen_model_text
-        dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hook, hooks_by_persona=hbp or {}))
+        dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hook))
         response_path(cfg, "moment_hooks", key).write_text(dec.model_dump_json())
     return ingest_moment_hooks(led, cfg, source_id, accounts=accounts)
 
@@ -189,7 +189,6 @@ def test_hook_applied_to_m_hook_single(tmp_path):
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.decided
     assert m.hook == "the part you'll replay"
-    assert m.hooks_by_persona == {}
 
 def test_persona_blind_hook_falls_back_shared(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
@@ -201,7 +200,7 @@ def test_persona_blind_hook_falls_back_shared(tmp_path):
     assert req["personas"] == []
     led = _decide_hooks(led, cfg, "src_1", {"10.00-28.00": "wait for the switch"}, accounts=accts)
     m = led.moments_of("src_1")[0]
-    assert m.hook == "wait for the switch" and m.hooks_by_persona == {}
+    assert m.hook == "wait for the switch"
 
 def test_ingest_no_skip_state_fields(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
@@ -601,7 +600,6 @@ def test_decide_hooks_does_not_strip_perspective_from_per_account_hooks(tmp_path
                                           "@b": "he flips the whole beat"})})
     m = led.moments_of("src_1")[0]
     assert m.hook == "the part you'll replay"
-    assert m.hooks_by_persona == {}
 
 def test_brand_screen_runs_on_clean_text(tmp_path):
     # MOL-166: brand_risk_flag remains a semantic gate on ALREADY-sanitized hook text.
@@ -636,7 +634,6 @@ def test_decide_hooks_rejects_off_brand_per_account_hook_falls_back(tmp_path):
                                           "@b": "please stream this, link in bio"})})
     m = led.moments_of("src_1")[0]
     assert m.hook == "the part you'll replay"
-    assert m.hooks_by_persona == {}
 
 def test_decide_hooks_drops_and_logs_unknown_persona_handle(tmp_path):
     # P6: decision hooks_by_persona is not ingested; unknown-handle intersection/logging deferred to P7.
@@ -652,7 +649,6 @@ def test_decide_hooks_drops_and_logs_unknown_persona_handle(tmp_path):
                         accounts=accts)
     m = led.moments_of("src_1")[0]
     assert m.hook == "the part you'll replay"
-    assert m.hooks_by_persona == {}
 
 def test_decide_hooks_brand_risk_honors_tuning_override(tmp_path):
     # The hook gate honors the SAME tuning.json offbrand override as captions: clearing both lists

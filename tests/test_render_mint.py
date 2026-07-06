@@ -24,10 +24,10 @@ def _mock_burn(mocker):
         Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_bytes(b"V"); return True
     return mocker.patch("fanops.overlay.burn_hook_only", side_effect=burn)
 
-def _seed_clip(led, cfg, *, hooks_by_persona=None, m_hook=None, surfaces=("@a/instagram",), batch_id=None):
+def _seed_clip(led, cfg, *, m_hook=None, surfaces=("@a/instagram",), batch_id=None):
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, batch_id=batch_id))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          state=MomentState.clipped, hook=m_hook, hooks_by_persona=hooks_by_persona or {}))
+                          state=MomentState.clipped, hook=m_hook))
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
@@ -46,13 +46,13 @@ def test_mint_records_variant_hooks_and_defers_render(tmp_path, monkeypatch, moc
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@a": "hook A", "@b": "hook B"},
+    _seed_clip(led, cfg, m_hook="shared hook",
                surfaces=("@a/instagram", "@b/instagram")); led.save()
     led = _run(cfg)
     assert led.renders == {}                                          # nothing rendered at the mint
     assert burn.call_count == 0                                       # the mint ran NO ffmpeg (burn deferred to approval)
     posts = {p.account: p for p in led.posts.values()}
-    assert posts["@a"].variant_hook == "hook A" and posts["@b"].variant_hook == "hook B"
+    assert posts["@a"].variant_hook == "shared hook" and posts["@b"].variant_hook == "shared hook"
     assert all(p.render_id is None and p.media_urls == [] for p in posts.values())
     assert posts["@a"].variant_key == "@a|instagram"                 # the surface intent (surface_key) is recorded
 
@@ -62,7 +62,7 @@ def test_mint_same_hook_records_both_no_render(tmp_path, monkeypatch, mocker):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram", "tiktok"],
                           "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@a": "one hook"},
+    _seed_clip(led, cfg, m_hook="one hook",
                surfaces=("@a/instagram", "@a/tiktok")); led.save()
     led = _run(cfg)
     assert led.renders == {}
@@ -75,7 +75,7 @@ def test_mint_empty_persona_hook_records_shared_fallback(tmp_path, monkeypatch, 
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@a": "a only"}, m_hook="SHARED",
+    _seed_clip(led, cfg, m_hook="SHARED",
                surfaces=("@b/instagram",)); led.save()
     led = _run(cfg)
     assert led.renders == {}
@@ -89,7 +89,7 @@ def test_cv_off_mints_no_renders(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={"@a": "h"}, surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="h", surfaces=("@a/instagram",)); led.save()
     led = _run(cfg)
     assert led.renders == {}
     p = next(iter(led.posts.values()))
@@ -100,7 +100,7 @@ def test_hookless_moment_mints_no_render(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, hooks_by_persona={}, m_hook=None, surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook=None, surfaces=("@a/instagram",)); led.save()
     led = _run(cfg)
     assert led.renders == {}
     p = next(iter(led.posts.values()))

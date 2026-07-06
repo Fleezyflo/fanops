@@ -105,11 +105,12 @@ def test_moment_pick_is_pick_only_no_hook_fields():
 def test_moment_hook_decision_carries_hook_and_personas():
     from fanops.models import MomentHookDecision
     d = MomentHookDecision(request_id="r1", hook="the line you replay",
-                           hooks_by_persona={"@a": "for who you can't get over"})
-    assert d.hook == "the line you replay" and d.hooks_by_persona["@a"]
+                           )
+    assert d.hook == "the line you replay"
+    assert "hooks_by_persona" not in MomentHookDecision.model_fields
     # a CLEAN pick: the author legitimately returns no hook (better clean than slop) — still valid.
     d2 = MomentHookDecision(request_id="r2")
-    assert d2.hook is None and d2.hooks_by_persona == {}
+    assert d2.hook is None
 
 # ---- MOL-142 (P1 schema): MomentPick.personas owner + MomentRequest full spec ----
 def test_pick_personas_field_retained():
