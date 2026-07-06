@@ -170,6 +170,27 @@ def framing_map() -> "OrderedDict[str, str]":
     return out
 
 
+def intensity_map() -> "OrderedDict[str, str]":
+    """{content_focus: intensity tier}, ordered HIGHEST-intensity-first (P4b peak filter reads this)."""
+    opts = lever("content_focus")["options"]
+    out: "OrderedDict[str, str]" = OrderedDict()
+    for tier in INTENSITY_TIERS:
+        for o in opts:
+            if o.get("intensity") == tier:
+                out[o["value"]] = tier
+    return out
+
+
+def derive_intensity_from_focus(content_focus: list[str] | None) -> str | None:
+    """The peak-filter intensity for a persona's content_focus — highest-intensity present wins; []/unknown -> None."""
+    im = intensity_map()
+    for tier in INTENSITY_TIERS:
+        for f in (content_focus or []):
+            if im.get(f) == tier:
+                return tier
+    return None
+
+
 def archetype_selection_scope_map() -> dict:
     """The 10 clipping_account_archetypes.json type ids -> selection_scope lever value (MOL-170)."""
     return dict(_ARCHETYPE_SELECTION_SCOPE)

@@ -593,7 +593,8 @@ class MomentRequest(BaseModel):
                                                          # framing+selection_scope+hook_angle+corpus). [] -> persona-blind.
 
 # P1 (MOL-142): the keys each MomentRequest.personas[] entry carries once _pick_personas resolves (P4a).
-PERSONA_PICK_SPEC_KEYS = frozenset({"handle", "directive", "band", "framing", "selection_scope", "hook_angle", "corpus"})
+PERSONA_PICK_SPEC_KEYS = frozenset({"handle", "directive", "band", "framing", "selection_scope",
+                                    "content_focus", "intensity", "hook_angle", "corpus"})
 
 class MomentPick(BaseModel):
     # M1b (frame-seeing two-pass): the PICK pass chooses WINDOWS only. Hook authoring moved to the
