@@ -227,6 +227,11 @@ class Moment(BaseModel):
                                                 # RunSummary.frames_unread so the degraded hook is VISIBLE.
     error_reason: Optional[str] = None
     segments: list[tuple[float, float]] = Field(default_factory=list)   # S1 supercut: ordered non-overlapping spans; [] = single-window (old ledgers load fine)
+    clip_profile: Optional[str] = None          # P5: owner persona's resolved length band at pick birth
+                                                # (config.resolve_clip_profile(owner)); None = persona-blind
+                                                # -> P9 falls back to global (byte-identical).
+    framing: Optional[str] = None               # P5: owner persona's crop bias at pick birth ("top"/"center");
+                                                # None = persona-blind -> P9 falls back to global.
 
     @model_validator(mode="after")
     def _apply_segments_envelope(self) -> "Moment":

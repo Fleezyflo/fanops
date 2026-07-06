@@ -275,6 +275,21 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> 
     led.set_source_state(source_id, SourceState.moments_requested)
     return led
 
+def _stamp_owner_spec(cfg: Config, owner: str | None, by_handle: dict) -> tuple[str | None, str | None]:
+    """P5: resolve clip_profile + framing from the pick's single owner Account. persona-blind -> (None, None)."""
+    if not owner:
+        return None, None
+    acct = by_handle.get(owner)
+    if acct is None:
+        return None, None
+    prof = cfg.resolve_clip_profile(acct)
+    pin_fr = (getattr(acct, "framing", None) or "").strip().lower()
+    if pin_fr in ("top", "center"):
+        fr = pin_fr
+    else:
+        fr = "top" if cfg.resolve_top_bias(acct) else "center"
+    return prof, fr
+
 def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     """M1b PASS 1 ingest — validate + reconcile the picks into `picked` moments (window chosen, hook NOT
     yet authored). The source lands `picks_decided`; request_moment_hooks then opens a per-pick hook gate,
@@ -287,6 +302,11 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     rejected = 0
     reasons: list[str] = []
     valid: list[MomentPick] = []
+    try:
+        from fanops.accounts import Accounts
+        by_handle = {a.handle: a for a in Accounts.load(cfg).accounts}
+    except Exception:
+        by_handle = {}
     for pick in dec.picks:
         bad = validate_pick(pick, duration=src.duration or 0.0)
         if bad:
@@ -301,6 +321,7 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         token = _token(pick)
         owner = (pick.personas or [None])[0]          # P3: single-owner handle at ingest (None when blind)
         mid = _owned_moment_id(source_id, owner, token)
+        clip_prof, framing = _stamp_owner_spec(cfg, owner, by_handle)
         # Born `picked` with NO hook — the hook is authored in pass 2 (ingest_moment_hooks), seeing this
         # window's frames. hook/hook_removed/hooks_by_persona stay at their empty defaults until then.
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.picked,
@@ -309,6 +330,7 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                            transcript_excerpt=pick.transcript_excerpt,
                            signal_score=pick.signal_score,
                            affinities=list(pick.personas),   # P1: owner stamped at birth; [] when persona-blind
+                           clip_profile=clip_prof, framing=framing,
                            segments=list(pick.segments))     # S2: supercut spans ride the moment
     if not keep:
         if dec.picks:

@@ -218,6 +218,14 @@ def test_moment_segments_additive_old_ledger_loads():
     m = Moment.model_validate({"id": "m1", "parent_id": "src_1", "start": 1.0, "end": 8.0, "reason": "x"})
     assert m.segments == [] and m.start == 1.0 and m.end == 8.0
 
+# ---- MOL-146 (P5): Moment owner-stamped cut spec at pick birth ----
+def test_moment_has_clip_profile_and_framing_fields():
+    assert "clip_profile" in Moment.model_fields and "framing" in Moment.model_fields
+    m = Moment(id="m1", parent_id="src_1", start=1.0, end=8.0, reason="x")
+    assert m.clip_profile is None and m.framing is None
+    m2 = Moment.model_validate({"id": "m1", "parent_id": "src_1", "start": 1.0, "end": 8.0, "reason": "x"})
+    assert m2.clip_profile is None and m2.framing is None   # old ledgers load
+
 def test_segments_tuple_json_roundtrip():
     p = MomentPick(start=0.0, end=0.0, reason="r", segments=[(1.0, 3.0), (5.0, 7.0)])
     raw = p.model_dump()
