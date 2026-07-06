@@ -37,11 +37,11 @@ def _seed_on_disk_ledger(cfg: Config) -> None:
     for i, (hook, lift) in enumerate(
         [("WIN", 90.0), ("WIN", 90.0), ("WIN", 90.0), ("LOSE", 10.0), ("LOSE", 10.0), ("LOSE", 10.0)]
     ):
-        led.add_post(Post(id=f"a{i}", parent_id="clip_1", account="@a", account_id="1",
+        led.add_post(Post(id=f"a{i}", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
                           variant_key=f"vk_a{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
     # @b/instagram: a different surface with its own (losing) hook — proves per-surface isolation.
-    led.add_post(Post(id="b0", parent_id="clip_1", account="@b", account_id="2",
+    led.add_post(Post(id="b0", parent_id="clip_1", account="b", account_id="2",
                       platform=Platform.instagram, caption="y", state=PostState.analyzed,
                       variant_key="vk_b0", variant_hook="LOSE", metrics={"lift_score": 10.0}, public_url="dryrun://b0"))
     led.save()                                            # the ledger now lives on disk
@@ -57,7 +57,7 @@ def test_learned_hook_reaches_caption_request_on_disk(tmp_path, monkeypatch):
     assert led.posts and led.clips["clip_1"].state is ClipState.rendered   # disk round-trip sanity
 
     # The loop closes: request captions for the winning surface.
-    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
 
     # Read the ACTUAL request file written to 04_agent_io/requests/ — not a mock, not the return value.
     req_file = request_path(cfg, "captions", "clip_1")
@@ -85,7 +85,7 @@ def test_off_flag_writes_no_hint_to_disk(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     _seed_on_disk_ledger(cfg)
     led = Ledger.load(cfg)
-    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "learned_hooks" not in payload                 # OFF -> no hint reaches disk
     assert "WIN" not in caption_prompt(payload)           # and none reaches the agent prompt

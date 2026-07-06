@@ -27,7 +27,7 @@ def _cfg(tmp_path, monkeypatch):
     return Config(root=tmp_path)
 
 def _post(pid="p1", acct_id="acc_abc"):
-    return Post(id=pid, parent_id="c1", account="@tk", account_id=acct_id, platform=Platform.tiktok,
+    return Post(id=pid, parent_id="c1", account="tk", account_id=acct_id, platform=Platform.tiktok,
                 caption="fire", state=PostState.submitting,
                 media_urls=["https://media.zernio.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://c1")
 

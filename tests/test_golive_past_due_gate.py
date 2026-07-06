@@ -58,9 +58,9 @@ def _seed_clip_and_queued_post(cfg: Config, *, post_id: str, scheduled_iso: str)
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "a", "hashtags": []}}
+    clip.meta_captions = {"a/instagram": {"caption": "a", "hashtags": []}}
     led.add_clip(clip)
-    led.add_post(Post(id=post_id, parent_id=clip.id, account="@a", account_id="1",
+    led.add_post(Post(id=post_id, parent_id=clip.id, account="a", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.queued,
                       scheduled_time=scheduled_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://1"))
     led.save()
@@ -110,9 +110,9 @@ def test_go_live_ignores_unapproved_posts(tmp_path, monkeypatch):
                           reason="r", state=MomentState.clipped))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/clip_1_9x16.mp4", aspect=Fmt.r9x16,
                 state=ClipState.captioned)
-    clip.meta_captions = {"@a/instagram": {"caption": "a", "hashtags": []}}
+    clip.meta_captions = {"a/instagram": {"caption": "a", "hashtags": []}}
     led.add_clip(clip)
-    led.add_post(Post(id="p_unapproved", parent_id=clip.id, account="@a", account_id="1",
+    led.add_post(Post(id="p_unapproved", parent_id=clip.id, account="a", account_id="1",
                       platform=Platform.instagram, caption="c",
                       state=PostState.awaiting_approval, scheduled_time=yesterday_iso,
                       media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://p_unapproved"))

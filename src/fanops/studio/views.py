@@ -508,12 +508,15 @@ def resolve_account_handle(raw: str, cfg: Config) -> str:
     raw = (raw or "").strip()
     if not raw:
         return raw
-    bare = raw.lstrip("@")
+    from fanops.models import validate_account_handle
+    try:
+        bare = validate_account_handle(raw)
+    except ValueError:
+        bare = raw.lstrip("@").lower()
     try:
         for a in Accounts.load(cfg).active():
-            h, hb = a.handle, a.handle.lstrip("@")
-            if raw == h or raw == hb or bare == hb:
-                return h
+            if a.handle == bare:
+                return a.handle
     except Exception:
         pass
     return raw  # unknown handle — preserve operator input for empty-state copy

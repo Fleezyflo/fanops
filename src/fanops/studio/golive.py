@@ -208,7 +208,7 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "") ->
     if not platforms:
         return ActionResult(ok=False, error=f"pick at least one platform for {handle}")
     try:
-        _accounts_add_account(cfg, handle, platforms, persona=(persona or "").strip())
+        handle = _accounts_add_account(cfg, handle, platforms, persona=(persona or "").strip())
     except ValueError as exc:                            # duplicate handle / unknown platform / blank
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
@@ -416,12 +416,17 @@ class DiscoveredChannel(NamedTuple):
 
 
 def _norm_handle(name: str) -> str:
-    """The deterministic handle proposed for a discovered channel: '@' + the name lowercased with every
-    non-alphanumeric stripped (so 'Mark Makmouly' -> '@markmakmouly', matching an existing '@markmakmouly').
-    A name that normalizes to empty (all punctuation/emoji) falls back to '@channel' — never a bare '@' —
+    """The deterministic handle proposed for a discovered channel: the name lowercased with every
+    non-alphanumeric stripped (so 'Mark Makmouly' -> 'markmakmouly', matching an existing 'markmakmouly').
+    A name that normalizes to empty (all punctuation/emoji) falls back to 'channel' — never blank —
     and the operator edits it before adopting."""
+    from fanops.models import validate_account_handle
     body = re.sub(r"[^a-z0-9]", "", (name or "").lower())
-    return "@" + (body or "channel")
+    h = body or "channel"
+    try:
+        return validate_account_handle(h)
+    except ValueError:
+        return h
 
 
 def _match_channel(accts: Accounts, cid: str, platform: str, suggested: str) -> tuple[Optional[str], bool]:

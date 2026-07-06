@@ -26,7 +26,7 @@ def test_null_row_skipped_valid_rows_kept(tmp_path):
         {"handle": "@c", "account_id": "3", "platforms": ["tiktok"], "status": "active"},
     ])
     accts = Accounts.load(cfg)
-    assert [a.handle for a in accts.accounts] == ["@a", "@c"]
+    assert [a.handle for a in accts.accounts] == ["a", "c"]
 
 
 def test_missing_required_field_row_skipped_valid_rows_kept(tmp_path):
@@ -39,7 +39,7 @@ def test_missing_required_field_row_skipped_valid_rows_kept(tmp_path):
         {"handle": "@c", "account_id": "3", "platforms": ["tiktok"], "status": "active"},
     ])
     accts = Accounts.load(cfg)
-    assert [a.handle for a in accts.accounts] == ["@a", "@c"]
+    assert [a.handle for a in accts.accounts] == ["a", "c"]
 
 
 def test_skipped_row_surfaced_in_doctor_naming_the_bad_row(tmp_path):
@@ -70,7 +70,7 @@ def test_happy_path_all_valid_unchanged(tmp_path):
     ]
     _seed(cfg, rows)
     accts = Accounts.load(cfg)
-    assert [a.handle for a in accts.accounts] == ["@a", "@b"]
+    assert [a.handle for a in accts.accounts] == ["a", "b"]
     report = doctor_report(cfg)
     acct_check = next(c for c in report["checks"] if c["label"].startswith("accounts.json valid"))
     # No malformed-row problem on an all-valid file (the check may still flag OTHER validate()

@@ -11,7 +11,7 @@ from fanops.post.run import publish_due
 def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-    led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
+    led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
                       platform=Platform.instagram, caption="ship it",
                       scheduled_time=when, state=PostState.queued, public_url="dryrun://98432"))
     led.save()                                          # persist so the self-loading publish_due sees it
@@ -107,7 +107,7 @@ def test_publish_writes_06_published_archive(tmp_path, monkeypatch, mocker):
     assert rec_path.exists()
     rec = json.loads(rec_path.read_text())
     assert rec["post_id"] == "pa" and rec["clip_id"] == "c_pa" and rec["published_at"]
-    assert rec["account"] == "@a" and rec["caption"] == "ship it"   # the network-phase post carried real fields
+    assert rec["account"] == "a" and rec["caption"] == "ship it"   # the network-phase post carried real fields
 
 def test_archive_fail_open_write(tmp_path, monkeypatch, mocker):
     # A write_text failure on the archive record must NOT strand the live post: it still reaches published
@@ -233,7 +233,7 @@ def test_publish_failure_redacts_api_key_from_error_reason(tmp_path, monkeypatch
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_k.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c_k", parent_id="mom_1", path=str(f), state=ClipState.queued))
-    led.add_post(Post(id="pk", parent_id="c_k", account="@a", account_id="1",
+    led.add_post(Post(id="pk", parent_id="c_k", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pk"))
     led.save()
@@ -253,7 +253,7 @@ def test_publish_no_schedule_parks_not_publishes(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_ns.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c_ns", parent_id="mom_1", path=str(f), state=ClipState.queued))
-    led.add_post(Post(id="pns", parent_id="c_ns", account="@a", account_id="1",
+    led.add_post(Post(id="pns", parent_id="c_ns", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://pns"))  # no scheduled_time
     led.save()
     publish_due(cfg, now="2026-06-02T18:00:00Z")
@@ -272,7 +272,7 @@ def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch
          "integrations": {"instagram": "NEW_IG_ID"}}]}))
     f = cfg.clips / "c_a.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c_a", parent_id="mom_1", path=str(f), state=ClipState.queued))
-    led.add_post(Post(id="pa", parent_id="c_a", account="@a", account_id="OLD_STALE_ID",   # frozen-at-crosspost id
+    led.add_post(Post(id="pa", parent_id="c_a", account="a", account_id="OLD_STALE_ID",   # frozen-at-crosspost id
                       platform=Platform.instagram, caption="x", media_urls=["https://h/v.mp4"],  # http -> no live upload
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pa"))
     led.save()
@@ -295,7 +295,7 @@ def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_sub.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c_sub", parent_id="mom_1", path=str(f), state=ClipState.queued))
-    led.add_post(Post(id="psub", parent_id="c_sub", account="@a", account_id="1",
+    led.add_post(Post(id="psub", parent_id="c_sub", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url="dryrun://psub"))
     led.save()
@@ -312,7 +312,7 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
     for pid, cid in [("pa", "c_a"), ("pb", "c_b")]:
         f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1",
+        led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
     led.save()
@@ -346,7 +346,7 @@ def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocke
     for pid, cid in [("prec", "c_rec"), ("pok", "c_ok")]:
         f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1",
+        led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
     led.save()
@@ -378,7 +378,7 @@ def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_auth.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c_auth", parent_id="mom_1", path=str(f), state=ClipState.queued))
-    led.add_post(Post(id="pauth", parent_id="c_auth", account="@a", account_id="1",
+    led.add_post(Post(id="pauth", parent_id="c_auth", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pauth"))
     led.save()
@@ -404,7 +404,7 @@ def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeyp
     for pid, cid in [("pbad", "c_bad"), ("pok", "c_ok2")]:
         f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="1",
+        led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
     led.save()
@@ -436,7 +436,7 @@ def test_publish_due_no_deadlock_self_manages_its_lock(tmp_path, monkeypatch, mo
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"x")
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="1",
+    led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued, media_urls=["https://h/v.mp4"],
                       scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://p1"))
     led.save()
@@ -454,7 +454,7 @@ def test_publish_due_malformed_scheduled_time_is_per_post_failure_not_escape(tmp
     led = Ledger.load(cfg)
     f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
-    led.add_post(Post(id="bad", parent_id="c1", account="@a", account_id="1",
+    led.add_post(Post(id="bad", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
                       scheduled_time="2026-06-01 09:00", public_url="dryrun://bad"))   # naive: no 'T', no tz -> _parse trips
     led.save()
@@ -471,7 +471,7 @@ def test_publish_due_garbage_scheduled_time_does_not_escape(tmp_path, monkeypatc
     led = Ledger.load(cfg)
     f = cfg.clips / "c2.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c2", parent_id="m1", path=str(f), state=ClipState.captioned))
-    led.add_post(Post(id="garbage", parent_id="c2", account="@a", account_id="1",
+    led.add_post(Post(id="garbage", parent_id="c2", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
                       scheduled_time="not-a-timestamp", public_url="dryrun://garbage"))
     led.save()
@@ -491,7 +491,7 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     vfile = cfg.clips / "clip_1_vhash.mp4"; vfile.parent.mkdir(parents=True, exist_ok=True); vfile.write_bytes(b"V")
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(cfg.clips / "clip_1.mp4"), state=ClipState.queued))
-    led.add_post(Post(id="pv", parent_id="clip_1", account="@a", account_id="98432",
+    led.add_post(Post(id="pv", parent_id="clip_1", account="a", account_id="98432",
                       platform=Platform.instagram, caption="x", scheduled_time="2020-01-01T00:00:00Z",
                       state=PostState.queued, media_urls=[f"file://{vfile}"], public_url="dryrun://pv"))
     led.save()
@@ -532,9 +532,9 @@ def test_materialize_reburns_when_hook_changed_since_render(tmp_path, mocker):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
                           state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.queued))
-    led.add_render(Render(id="rid_A", clip_id="clip_1", account="@a", surface_key=surface_key("@a", "instagram"),
+    led.add_render(Render(id="rid_A", clip_id="clip_1", account="a", surface_key=surface_key("a", "instagram"),
                           hook_text="OLD HOOK A", path=str(cfg.clips / "rid_A.mp4")))   # burned for the OLD hook
-    post = Post(id="pv", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    post = Post(id="pv", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                 caption="x", state=PostState.queued, variant_hook="NEW HOOK B",         # hook CHANGED since the render
                 render_id="rid_A", media_urls=["file:///clips/rid_A.mp4"], public_url="dryrun://pv")
     led.add_post(post)
@@ -553,7 +553,7 @@ def test_archive_published_is_owner_only_with_no_world_readable_window(tmp_path)
     import stat
     from fanops.post.run import _archive_published
     cfg = Config(root=tmp_path)
-    post = Post(id="p_arch", parent_id="clip_1", account="@a", account_id="98432",
+    post = Post(id="p_arch", parent_id="clip_1", account="a", account_id="98432",
                 platform=Platform.instagram, caption="c", state=PostState.published,
                 created_at="2026-06-02T18:00:00Z", public_url="https://example/p")
     _archive_published(cfg, post)

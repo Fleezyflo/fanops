@@ -10,7 +10,7 @@ from fanops.models import (Post, Platform, PostState, Source, Moment, Clip, Sour
 
 
 def _post(led, pid, *, reach=0.0, state=PostState.analyzed, **kw):
-    led.add_post(Post(id=pid, parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=state, metrics={"reach": reach}, public_url="dryrun://c1", **kw))
 
 
@@ -56,9 +56,9 @@ def test_crosspost_stamps_per_account_top_bias_seam(tmp_path, monkeypatch):
     # NOT the global cfg.aware_reframe — framing is a per-account choice, so the global would mis-attribute.
     # Assert the exact seam the mint reads (resolve_top_bias per handle), decoupled from a full-mint fixture.
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr(Config, "resolve_top_bias", lambda self, acct: acct == "@a", raising=True)
-    assert cfg.resolve_top_bias("@a") is True             # the per-account value the mint stamps
-    assert cfg.resolve_top_bias("@b") is False            # a different account resolves differently
+    monkeypatch.setattr(Config, "resolve_top_bias", lambda self, acct: acct == "a", raising=True)
+    assert cfg.resolve_top_bias("a") is True             # the per-account value the mint stamps
+    assert cfg.resolve_top_bias("b") is False            # a different account resolves differently
 
 
 # ======================================================================================
@@ -150,7 +150,7 @@ def test_timing_window_clamp_skips_out_of_window_hour(tmp_path, monkeypatch):
     from fanops.timing_bias import timing_bias_hour_for
     cfg = Config(root=tmp_path); led = _timing_led(cfg, hot_hour=3); _validate(cfg)   # winner = 03:00
     monkeypatch.setattr(Config, "account_window", lambda self, h: (9, 23), raising=True)  # window 09–23
-    assert timing_bias_hour_for(led, cfg, "@a") is None    # 03:00 outside 09–23 -> no bias
+    assert timing_bias_hour_for(led, cfg, "a") is None    # 03:00 outside 09–23 -> no bias
 
 
 def _frozen(led):
@@ -168,12 +168,12 @@ def test_surface_time_leans_the_hinted_hour(tmp_path):
     from fanops.crosspost import surface_time
     from fanops.timeutil import parse_iso
     base = parse_iso("2026-06-02T00:00:00Z")
-    plain = surface_time(base, "@a", "instagram", "2026-06-02", 0, clip_id="c1")
-    hinted = surface_time(base, "@a", "instagram", "2026-06-02", 0, clip_id="c1", hour_hint=18)
+    plain = surface_time(base, "a", "instagram", "2026-06-02", 0, clip_id="c1")
+    hinted = surface_time(base, "a", "instagram", "2026-06-02", 0, clip_id="c1", hour_hint=18)
     assert parse_iso(plain).hour != 18 or plain == hinted     # (sanity; plain is unconstrained)
     assert parse_iso(hinted).hour == 18                        # the hint lands the hour
     # None hint is byte-identical to the no-arg call (fail-safe default).
-    assert surface_time(base, "@a", "instagram", "2026-06-02", 0, clip_id="c1", hour_hint=None) == plain
+    assert surface_time(base, "a", "instagram", "2026-06-02", 0, clip_id="c1", hour_hint=None) == plain
 
 
 def test_run_fires_timing_bias_when_flag_on_and_live(tmp_path, monkeypatch, mocker):

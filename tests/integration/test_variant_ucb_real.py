@@ -25,10 +25,10 @@ def _seed_on_disk_ledger(cfg: Config) -> None:
     # @a/instagram THIN LEAD: 8x LEAD@60 + 1x NEW@59 -> greedy gap 1 < MIN_GAP 10 (emits nothing);
     # UCB explores the under-sampled NEW. So UCB-on puts "NEW" in the request; greedy would put none.
     for i in range(1, 9):
-        led.add_post(Post(id=f"L{i}", parent_id="clip_1", account="@a", account_id="1",
+        led.add_post(Post(id=f"L{i}", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
                           variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}, public_url="dryrun://clip_1"))
-    led.add_post(Post(id="N1", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="N1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
                       variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}, public_url="dryrun://N1"))
     led.save()
@@ -42,7 +42,7 @@ def test_ucb_real_request_carries_bandit_pick_and_is_deterministic(tmp_path, mon
     led = Ledger.load(cfg)                                # round-trip from disk
     assert led.posts and led.clips["clip_1"].state is ClipState.rendered
     import json
-    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     path = request_path(cfg, "captions", "clip_1")
     first = path.read_text()
     payload = json.loads(first)
@@ -57,5 +57,5 @@ def test_ucb_real_request_carries_bandit_pick_and_is_deterministic(tmp_path, mon
     cfg2 = Config(root=tmp_path / "rerun")
     _seed_on_disk_ledger(cfg2)
     led2 = Ledger.load(cfg2)
-    request_captions(led2, cfg2, "clip_1", [("@a", Platform.instagram)])
+    request_captions(led2, cfg2, "clip_1", [("a", Platform.instagram)])
     assert request_path(cfg2, "captions", "clip_1").read_text() == first   # byte-identical from identical state

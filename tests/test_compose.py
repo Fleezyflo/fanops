@@ -17,7 +17,7 @@ def test_template_spec_is_empty():
     assert TemplateSpec().is_empty() is True
     assert TemplateSpec(title="x").is_empty() is False
     assert TemplateSpec(intro_text="MOH FLOW").is_empty() is False
-    assert TemplateSpec(outro_text="@h").is_empty() is False
+    assert TemplateSpec(outro_text="h").is_empty() is False
 
 def test_empty_spec_failopens_to_base_copy(tmp_path):
     base = _basefile(tmp_path); out = tmp_path / "out.mp4"

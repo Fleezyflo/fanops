@@ -11,7 +11,7 @@ from fanops.studio import actions, views
 _NOW = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
 _PAST = "2020-06-06T12:00:00Z"
 
-def _accounts(cfg, handle="@a", *, integrations=None):
+def _accounts(cfg, handle="a", *, integrations=None):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     integ = integrations if integrations is not None else {"instagram": "ig1"}
     cfg.accounts_path.write_text(json.dumps({"accounts": [
@@ -25,7 +25,7 @@ def _seed_inflight(cfg, pid="p1"):
     led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id=pid, parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram,
+    led.add_post(Post(id=pid, parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                       caption="c", state=PostState.needs_reconcile, scheduled_time=_PAST,
                       submission_id="sub-1", public_url=""))
     led.save()
@@ -78,7 +78,7 @@ def test_bulk_send_to_review_skips_needs_reconcile(tmp_path):
     led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p1", parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                       caption="c", state=PostState.needs_reconcile, scheduled_time=_PAST, submission_id="x"))
     led.save()
     res = actions.bulk_send_to_review(cfg, ["p1"], reason="test")
@@ -96,7 +96,7 @@ def test_studio_publish_guard_blocks_unmapped_channel(tmp_path, monkeypatch):
     led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p1", parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                       caption="c", state=PostState.queued, scheduled_time=_PAST))
     led.save()
     err = actions._studio_publish_guard(cfg, Ledger.load(cfg).posts["p1"])

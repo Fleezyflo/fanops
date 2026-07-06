@@ -16,7 +16,7 @@ from fanops.studio.views import ReviewCard, review_buckets, group_review_by_batc
 NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-def _seed_accounts(cfg, handles=("@a", "@b")):
+def _seed_accounts(cfg, handles=("a", "b")):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": h, "account_id": "1", "platforms": ["instagram"], "status": "active"} for h in handles]}))
@@ -37,15 +37,15 @@ def _await(led, pid, cid, account, *, batch_id=None, hours=3):
 def test_review_card_carries_batch_field(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg)
     _lineage(led, batch_id="batch_x")
-    led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["@a"]))
-    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["a"]))
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_x")
     card = next(c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable")
     assert card.batch_id == "batch_x"               # = Post.batch_id (NOT Source.id)
     assert card.batch_title == "Launch Week"        # = Batch.name via led.get_batch
 
 def test_review_card_unbatched_batch_field_none(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    _await(led, "p_a", "clip_1", "@a")              # no batch_id stamped
+    _await(led, "p_a", "clip_1", "a")              # no batch_id stamped
     card = next(c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable")
     assert card.batch_id is None and card.batch_title is None   # byte-identical: nothing batched
 
@@ -60,8 +60,8 @@ def test_review_card_batch_fields_default_none():
 # ---- T2: dedup a clip across editable + recent ----
 def test_clip_in_editable_and_recent_dedups_to_editable(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    _await(led, "p_aw", "clip_1", "@a")             # awaiting -> editable card
-    led.add_post(Post(id="p_pub", parent_id="clip_1", account="@a", account_id="1",   # same clip, shipped
+    _await(led, "p_aw", "clip_1", "a")             # awaiting -> editable card
+    led.add_post(Post(id="p_pub", parent_id="clip_1", account="a", account_id="1",   # same clip, shipped
                       platform=Platform.instagram, caption="c", state=PostState.published,
                       scheduled_time=_z(NOW - timedelta(hours=1)), public_url="dryrun://p_pub"))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
@@ -103,14 +103,14 @@ def _client(cfg):
 def test_review_renders_collapsible_batch_section(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg)
     _lineage(led, batch_id="batch_x")
-    led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["@a"]))
-    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x"); led.save()
+    led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["a"]))
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_x"); led.save()
     html = _client(cfg).get("/review?view=list").data.decode()
     assert "<details" in html and "Launch Week" in html         # batch name in a collapsible <summary>
 
 def test_review_unbatched_renders_ungrouped_section(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    _await(led, "p_a", "clip_1", "@a"); led.save()
+    _await(led, "p_a", "clip_1", "a"); led.save()
     html = _client(cfg).get("/review?view=list").data.decode()
     assert "Ungrouped" in html and b"c" in _client(cfg).get("/review?view=list").data   # card still renders
 
@@ -120,31 +120,31 @@ def _editable(led, cfg):
     return next(c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable")
 
 def test_header_card_carries_targets_state_created(tmp_path):   # B3
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("a", "b")); led = Ledger.load(cfg)
     _lineage(led, batch_id="batch_x")
-    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["@a"], created_at="2026-06-22T00:00:00Z"))
-    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["a"], created_at="2026-06-22T00:00:00Z"))
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_x")
     card = _editable(led, cfg)
-    assert card.batch_targets == ["@a"] and card.batch_state == "open" and card.batch_created == "2026-06-22T00:00:00Z"
+    assert card.batch_targets == ["a"] and card.batch_state == "open" and card.batch_created == "2026-06-22T00:00:00Z"
 
 def test_header_unbatched_fields_empty(tmp_path):               # B3 byte-identity
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    _await(led, "p_a", "clip_1", "@a")
+    _await(led, "p_a", "clip_1", "a")
     card = _editable(led, cfg)
     assert card.batch_targets == [] and card.batch_state is None and card.batch_created is None and card.batch_excluded == 0
 
 def test_excluded_counts_active_accounts_outside_target(tmp_path):   # B4
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("a", "b")); led = Ledger.load(cfg)
     _lineage(led, batch_id="batch_x")
-    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["@a"]))   # active {@a,@b}, target {@a} -> 1 excluded
-    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["a"]))   # active {@a,@b}, target {@a} -> 1 excluded
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_x")
     assert _editable(led, cfg).batch_excluded == 1
 
 def test_excluded_all_sentinel_is_zero(tmp_path):              # B4 ALL-sentinel
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("a", "b")); led = Ledger.load(cfg)
     _lineage(led, batch_id="batch_all")
     led.add_batch(Batch(id="batch_all", name="Everyone", target_accounts=[]))   # [] == ALL -> excludes nobody
-    _await(led, "p_a", "clip_1", "@a", batch_id="batch_all")
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_all")
     assert _editable(led, cfg).batch_excluded == 0
 
 def test_affinity_from_moment(tmp_path):                       # C3 — affinities now DERIVED from durable AccountSelection
@@ -152,54 +152,54 @@ def test_affinity_from_moment(tmp_path):                       # C3 — affiniti
     # writes), not the legacy Moment.affinities tag. Seed a chosen selection casting mom_1 to @a and @b.
     from fanops.models import AccountSelection, SelectionMethod, account_selection_id
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    for h in ("@a", "@b"):
+    for h in ("a", "b"):
         led.add_account_selection(AccountSelection(id=account_selection_id("src_1", h), source_id="src_1",
                                                    account=h, moment_ids=["mom_1"], method=SelectionMethod.operator))
-    _await(led, "p_a", "clip_1", "@a")
-    assert _editable(led, cfg).affinities == ["@a", "@b"]
+    _await(led, "p_a", "clip_1", "a")
+    assert _editable(led, cfg).affinities == ["a", "b"]
 
 def test_affinity_default_empty_when_uncast(tmp_path):         # C3 byte-identity (casting OFF)
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    _await(led, "p_a", "clip_1", "@a")
+    _await(led, "p_a", "clip_1", "a")
     assert _editable(led, cfg).affinities == []
 
 def test_batch_filter_keeps_only_that_batch(tmp_path):         # B2
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("a", "b")); led = Ledger.load(cfg)
     _lineage(led, cid="clip_x", mid="mom_x", sid="src_x", batch_id="bx")
     _lineage(led, cid="clip_y", mid="mom_y", sid="src_y", batch_id="by")
     led.add_batch(Batch(id="bx", name="X", target_accounts=[])); led.add_batch(Batch(id="by", name="Y", target_accounts=[]))
-    _await(led, "p_x", "clip_x", "@a", batch_id="bx"); _await(led, "p_y", "clip_y", "@a", batch_id="by")
+    _await(led, "p_x", "clip_x", "a", batch_id="bx"); _await(led, "p_y", "clip_y", "a", batch_id="by")
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW, batch="bx")
     assert {c.clip_id for c in cards} == {"clip_x"}            # only bx's card; by dropped
 
 def test_batch_filter_composes_with_account(tmp_path):         # B2 + P5
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("a", "b")); led = Ledger.load(cfg)
     _lineage(led, cid="clip_x", mid="mom_x", sid="src_x", batch_id="bx")
     led.add_batch(Batch(id="bx", name="X", target_accounts=[]))
-    _await(led, "p_xa", "clip_x", "@a", batch_id="bx"); _await(led, "p_xb", "clip_x", "@b", batch_id="bx")
-    assert {c.clip_id for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW, account="@a", batch="bx")} == {"clip_x"}
-    assert review_buckets(led, Accounts.load(cfg), cfg, now=NOW, account="@a", batch="by") == []   # wrong batch -> none
+    _await(led, "p_xa", "clip_x", "a", batch_id="bx"); _await(led, "p_xb", "clip_x", "b", batch_id="bx")
+    assert {c.clip_id for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW, account="a", batch="bx")} == {"clip_x"}
+    assert review_buckets(led, Accounts.load(cfg), cfg, now=NOW, account="a", batch="by") == []   # wrong batch -> none
 
 def test_route_batch_filter_scope_preserved_and_header_rendered(tmp_path):   # B2 R1 + B3 render
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("a", "b")); led = Ledger.load(cfg)
     _lineage(led, batch_id="batch_x")
-    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["@a"], created_at="2026-06-22T00:00:00Z"))
-    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x"); led.save()
+    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["a"], created_at="2026-06-22T00:00:00Z"))
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_x"); led.save()
     html = _client(cfg).get("/review?view=list&batch=batch_x").data.decode()
     assert "batch=batch_x" in html                 # POST/pagination URLs carry the batch scope (R1)
-    assert "Launch" in html and "→ @a" in html and "1 account(s) excluded" in html   # B3 header + B4 line
+    assert "Launch" in html and "→ a" in html and "1 account(s) excluded" in html   # B3 header + B4 line
 
 def test_route_unknown_batch_is_recoverable(tmp_path):        # B2 stale id
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg)
     _lineage(led, batch_id="batch_x")
-    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["@a"]))
-    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x"); led.save()
+    led.add_batch(Batch(id="batch_x", name="Launch", target_accounts=["a"]))
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_x"); led.save()
     r = _client(cfg).get("/review?batch=ghost")
     assert r.status_code == 200 and b"show all batches" in r.data   # recoverable, never a 404
 
 def test_route_unbatched_has_no_batch_param_or_excluded(tmp_path):   # nonregression / byte-identity
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    _await(led, "p_a", "clip_1", "@a"); led.save()
+    _await(led, "p_a", "clip_1", "a"); led.save()
     html = _client(cfg).get("/review").data.decode()
     assert "batch=" not in html and "excluded by batch target" not in html and "show all batches" not in html
 
@@ -210,15 +210,15 @@ import fanops.studio                                                 # MOL-53
 _CSS = Path(fanops.studio.__file__).parent / "static" / "studio.css"  # MOL-53
 
 def _batch_header_html(tmp_path):
-    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("@a", "@b")); led = Ledger.load(cfg)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, ("a", "b")); led = Ledger.load(cfg)
     _lineage(led, batch_id="batch_x")
-    led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["@a"],
+    led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["a"],
                         created_at="2026-06-22T00:00:00Z"))
-    _await(led, "p_a", "clip_1", "@a", batch_id="batch_x"); led.save()
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_x"); led.save()
     # a SECOND batch so the header's "open just this batch" nav link is present (drill-in only shown off-scope)
     _lineage(led, cid="clip_2", mid="mom_2", sid="src_2", batch_id="batch_y")
-    led.add_batch(Batch(id="batch_y", name="Promo", target_accounts=["@a"]))
-    _await(led, "p_b", "clip_2", "@a", batch_id="batch_y"); led.save()
+    led.add_batch(Batch(id="batch_y", name="Promo", target_accounts=["a"]))
+    _await(led, "p_b", "clip_2", "a", batch_id="batch_y"); led.save()
     return _client(cfg).get("/review?view=list").data.decode()
 
 def test_batch_approve_is_not_a_second_gradient_primary(tmp_path):   # #2: demote — Review's only primary is the dock's "Approve selected"

@@ -30,7 +30,7 @@ def _fake_ffmpeg(mocker):
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
 
-def _captioned_clip(handles=("@a", "@b")):
+def _captioned_clip(handles=("a", "b")):
     clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {f"{h}/{p}": {"caption": "c", "hashtags": []}
                           for h in handles for p in ("instagram", "youtube")}
@@ -69,33 +69,33 @@ def _run_casting(cfg, picks):
 def test_personaless_active_account_gets_explicit_fan_all_default(tmp_path):
     # @a has a persona (a candidate); @b is persona-less (never in the brief). The LLM casts mom_1 to @a only.
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@a", persona="a devoted fan"), _acct("@b", persona="", aid="2")])
-    led, _ = _run_casting(cfg, {"@a": ["mom_1"]})
-    sel_b = led.account_selection_for("src_1", "@b")
+    _seed_accounts(cfg, [_acct("a", persona="a devoted fan"), _acct("b", persona="", aid="2")])
+    led, _ = _run_casting(cfg, {"a": ["mom_1"]})
+    sel_b = led.account_selection_for("src_1", "b")
     assert sel_b is not None, "persona-less active @b got NO AccountSelection -> silently denied on the cast source (the leak)"
     assert sel_b.method is SelectionMethod.fan_all_default, "@b must ship fan-to-all via the LABELLED branch, not a silent admit"
 
 def test_personaless_account_is_admitted_at_crosspost(tmp_path):
     # the consequence: account_selection_admits must ADMIT @b for the cast moment (fan-to-all), not DENY it.
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@a", persona="a devoted fan"), _acct("@b", persona="", aid="2")])
-    led, _ = _run_casting(cfg, {"@a": ["mom_1"]})
+    _seed_accounts(cfg, [_acct("a", persona="a devoted fan"), _acct("b", persona="", aid="2")])
+    led, _ = _run_casting(cfg, {"a": ["mom_1"]})
     mom = led.moments["mom_1"]
-    assert account_selection_admits(cfg, led, mom, "@b") is True, "persona-less @b denied on the cast moment — zero posts, silent"
+    assert account_selection_admits(cfg, led, mom, "b") is True, "persona-less @b denied on the cast moment — zero posts, silent"
     # @a's deliberate single-pick is unchanged (RF1 differentiation preserved)
-    assert account_selection_admits(cfg, led, mom, "@a") is True
+    assert account_selection_admits(cfg, led, mom, "a") is True
 
 def test_in_brief_unpicked_account_still_denies(tmp_path):
     # the RF1 contract MUST survive: an account that WAS in the brief (has a persona) but the LLM did not pick
     # for this moment is genuinely differentiated -> still DENY (we only rescue the NEVER-candidate case).
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@a", persona="a devoted fan"),
-                         _acct("@b", persona="a blunt critic", aid="2"),
-                         _acct("@c", persona="", aid="3")])
-    led, _ = _run_casting(cfg, {"@a": ["mom_1"]})        # @b in-brief but unpicked; @c never a candidate
+    _seed_accounts(cfg, [_acct("a", persona="a devoted fan"),
+                         _acct("b", persona="a blunt critic", aid="2"),
+                         _acct("c", persona="", aid="3")])
+    led, _ = _run_casting(cfg, {"a": ["mom_1"]})        # @b in-brief but unpicked; @c never a candidate
     mom = led.moments["mom_1"]
-    assert account_selection_admits(cfg, led, mom, "@b") is False, "in-brief-unpicked @b must still DENY (RF1 differentiation)"
-    assert account_selection_admits(cfg, led, mom, "@c") is True,  "never-candidate @c must fan-to-all"
+    assert account_selection_admits(cfg, led, mom, "b") is False, "in-brief-unpicked @b must still DENY (RF1 differentiation)"
+    assert account_selection_admits(cfg, led, mom, "c") is True,  "never-candidate @c must fan-to-all"
 
 
 # ---- c8-f2: a clip consumed to `queued` with ZERO posts born must leave a crosspost breadcrumb ----
@@ -103,10 +103,10 @@ def test_zero_post_clip_logs_no_post_born(tmp_path, mocker):
     # casting ON, unbatched source; both CANDIDATE accounts have selections that EXCLUDE this clip's moment
     # -> every surface DENIED -> zero posts. Today the clip flips to queued with no crosspost-stage trace.
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@a", persona="a devoted fan"), _acct("@b", persona="a blunt critic", aid="2")])
+    _seed_accounts(cfg, [_acct("a", persona="a devoted fan"), _acct("b", persona="a blunt critic", aid="2")])
     led = _src(cfg)
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          transcript_excerpt="x", state=MomentState.clipped, affinities=["@ghost"]))
+                          transcript_excerpt="x", state=MomentState.clipped, affinities=["ghost"]))
     led.add_clip(_captioned_clip())
     led.save(); led = Ledger.load(cfg); _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
@@ -122,16 +122,16 @@ def test_selection_denied_surface_leaves_per_surface_breadcrumb(tmp_path, mocker
     # no_post_born and cannot tell WHICH surfaces dropped or WHY (selection vs cap vs render). Each silent
     # skip must leave a skipped_surface breadcrumb naming the surface + reason.
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@a", persona="a devoted fan"), _acct("@b", persona="a blunt critic", aid="2")])
+    _seed_accounts(cfg, [_acct("a", persona="a devoted fan"), _acct("b", persona="a blunt critic", aid="2")])
     led = _src(cfg)
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          transcript_excerpt="x", state=MomentState.clipped, affinities=["@ghost"]))
+                          transcript_excerpt="x", state=MomentState.clipped, affinities=["ghost"]))
     led.add_clip(_captioned_clip())
     led.save(); led = Ledger.load(cfg); _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "skipped_surface" in log and "not_cast" in log          # each denied surface names itself + the reason
-    assert "@a/instagram" in log or "@b/instagram" in log          # the specific dropped surface is identified
+    assert "a/instagram" in log or "b/instagram" in log          # the specific dropped surface is identified
 
 
 # ---- MOL-149: crosspost no longer defers on failed-to-open casting gate — affinity gate fans per affinities ----
@@ -140,11 +140,11 @@ def test_crosspost_fans_per_affinities_when_gate_failed_to_open(tmp_path, mocker
     # affinity_admits only (no casting defer) -> uncast fans to all in one pass, no casting_pending_skip.
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@a", persona="a devoted fan")])
+    _seed_accounts(cfg, [_acct("a", persona="a devoted fan")])
     led = _src(cfg)
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
                           transcript_excerpt="x", state=MomentState.clipped, affinities=[]))
-    led.add_clip(_captioned_clip(handles=("@a",)))
+    led.add_clip(_captioned_clip(handles=("a",)))
     led.save(); led = Ledger.load(cfg); _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert len(led.posts) == 2, "uncast moment (affinities=[]) fans to all surfaces in one pass"

@@ -26,7 +26,7 @@ def _seed(cfg, pid, *, state=PostState.published, platform=Platform.tiktok, publ
         led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     if "c0" not in led.clips:
         led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id=pid, parent_id="c0", account="@tt", account_id="z1", platform=platform,
+    led.add_post(Post(id=pid, parent_id="c0", account="tt", account_id="z1", platform=platform,
                       caption="c", state=state, scheduled_time=_PAST, submission_id=submission_id,
                       public_url=public_url, published_at=published_at, metrics=metrics or {}))
     led.save()

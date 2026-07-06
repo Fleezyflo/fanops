@@ -22,7 +22,7 @@ def _seed_awaiting(cfg, hook="WAIT"):
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     (cdir / "c0.mp4").write_bytes(b"V" * 100)
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p0", parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram,
+    led.add_post(Post(id="p0", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                       caption="c", state=PostState.awaiting_approval, variant_hook=hook))
     led.save()
 
@@ -32,8 +32,8 @@ def _client(cfg):
 
 def test_review_nav_params_includes_focus(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg)
-    p = views.review_nav_params(cfg, "@a")
-    assert p["view"] == "account" and p["focus"] == 1 and p["account"] == "@a"
+    p = views.review_nav_params(cfg, "a")
+    assert p["view"] == "account" and p["focus"] == 1 and p["account"] == "a"
 
 def test_focus_uses_media_preview_url(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
@@ -86,7 +86,7 @@ def test_retry_rate_limit_staggers_schedule(tmp_path):
     led = Ledger.load(cfg)
     for i, pid in enumerate(["p0", "p1"]):
         if pid not in led.posts:
-            led.add_post(Post(id=pid, parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram,
+            led.add_post(Post(id=pid, parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                               caption="c", state=PostState.failed, error_reason="postiz 429"))
         else:
             led.posts[pid].state = PostState.failed; led.posts[pid].error_reason = "postiz 429"
@@ -140,16 +140,16 @@ def test_answer_casting_gate_from_studio(tmp_path):
     f = Form({"cast__@a__m1": "1"})
     from fanops.studio.app import _parse_gate_form
     data = _parse_gate_form("moment_casting", f)
-    assert data["selections"]["@a"] == ["m1"]
+    assert data["selections"]["a"] == ["m1"]
     res = actions.answer_gate(cfg, "moment_casting", "src1", {**data, "request_id": rid})
     assert res.ok
 
 def test_account_work_counts_includes_review_batch(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg)
     led = Ledger.load(cfg)
-    led.add_post(Post(id="p1", parent_id="c0", account="@a", account_id="ig1", platform=Platform.instagram, caption="c", state=PostState.awaiting_approval))
+    led.add_post(Post(id="p1", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram, caption="c", state=PostState.awaiting_approval))
     led.save()
     with Ledger.transaction(cfg) as led:
         for p in led.posts.values(): p.batch_id = "b1"
     wc = views.account_work_counts(cfg)
-    assert wc["@a"].get("review_batch") == "b1"
+    assert wc["a"].get("review_batch") == "b1"

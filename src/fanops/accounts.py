@@ -11,12 +11,26 @@ from typing import Optional, NamedTuple
 from pydantic import BaseModel, Field
 from fanops.config import Config, _VALID_BACKENDS, _LIVE_BACKENDS, _BACKEND_PLATFORMS, FRAMING_NAMES
 from fanops.errors import ControlFileError, reason as _reason
-from fanops.models import Platform
+from fanops.models import Platform, validate_account_handle
 from fanops.bands import PROFILE_NAMES                # the valid per-account clip_profile names (M2 length tier)
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 
 class AccountStatus(str, Enum):
     planned = "planned"; warming = "warming"; active = "active"; retired = "retired"
+
+def _canonicalize_accounts_raw(raw: dict) -> bool:
+    """Rewrite legacy non-canonical account handles in the raw accounts.json dict. Returns True iff changed."""
+    changed = False
+    for a in raw.get("accounts", []):
+        if not isinstance(a, dict): continue
+        old = a.get("handle") or ""
+        try:
+            canon = validate_account_handle(old)
+        except ValueError:
+            continue
+        if canon != old:
+            a["handle"] = canon; changed = True
+    return changed
 
 class Account(BaseModel):
     handle: str
@@ -118,6 +132,8 @@ class Accounts:
             # leaks an AttributeError. Per-row leniency (below) only applies inside a valid envelope.
             if not isinstance(raw, dict):
                 raise ControlFileError(f"{p.name} invalid: top-level must be an object with an 'accounts' list, got {type(raw).__name__}")
+            if _canonicalize_accounts_raw(raw):
+                write_json_atomic(p, raw)                    # MOL-164: one-time legacy handle upgrade on read
             # MOL-79: per-ROW leniency. Build each Account under its own guard so ONE bad row (a
             # null, a trailing-comma artifact, a dict missing a required field) is skipped + recorded
             # while every other account still loads — the whole pipeline/Studio no longer goes down
@@ -138,6 +154,10 @@ class Accounts:
         integrations[platform] id, else the shared account_id fallback (back-compat). A known handle whose
         chosen id is empty fails loud rather than returning "" — an empty id must never reach the poster
         (FIX F06). `platform=None` keeps the legacy handle-only behavior (returns account_id)."""
+        try:
+            handle = validate_account_handle(handle)
+        except ValueError as e:
+            raise KeyError(handle) from e
         for a in self.accounts:
             if a.handle == handle:
                 chosen = (a.integrations.get(platform.value) if platform else None) or a.account_id
@@ -152,6 +172,10 @@ class Accounts:
         uses the global FANOPS_POSTER — byte-identical to today). Unknown handle / no override -> None,
         never raises: a missing override is the NORMAL case, not an error. Mirrors resolve_account_id's
         per-platform lookup but with no fallback (the fallback is the GLOBAL backend, applied by the caller)."""
+        try:
+            handle = validate_account_handle(handle)
+        except ValueError:
+            return None
         for a in self.accounts:
             if a.handle == handle:
                 return a.backends.get(platform.value) if platform else None
@@ -299,10 +323,12 @@ def link_persona(cfg: Config, handle: str, persona_id: str) -> str:
     rows (dup-handle safety, mirrors set_status); preserves every sibling + unknown field. Unknown
     handle -> KeyError (caller -> clean ActionResult). Does NOT validate the id exists (a dangling link
     fails open at load) — the Studio resolves the id from the live registry before calling."""
+    handle = validate_account_handle(handle)
     pid = (persona_id or "").strip()
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         found = False
         for a in accounts:
             if isinstance(a, dict) and a.get("handle") == handle:
@@ -350,12 +376,14 @@ def write_integration(cfg: Config, handle: str, platform: str, integration_id: s
     sub-dict if absent; preserves every sibling account, unknown field, and other platform's id. The id
     is coerced to str. Unknown handle -> KeyError (caller -> clean ActionResult); unknown platform ->
     ValueError (defense-in-depth at the boundary: never write a key that can't match a Platform.value)."""
+    handle = validate_account_handle(handle)
     platform = getattr(platform, "value", platform)              # accept a Platform enum or its value string
     if platform not in {pf.value for pf in Platform}:
         raise ValueError(f"unknown platform: {platform!r}")
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         found = False
         for a in accounts:                                       # scan ALL rows (no break): mirror set_status/
             if isinstance(a, dict) and a.get("handle") == handle:  # remove_account so a hand-edited duplicate handle
@@ -377,6 +405,7 @@ def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
     backend (ValueError) — never write a key/value that won't reload. Scans ALL rows (dup-handle safety,
     mirrors write_integration); preserves every sibling, unknown field, and the account's other fields.
     Unknown handle -> KeyError (caller -> clean ActionResult). The id itself stays in integrations[platform]."""
+    handle = validate_account_handle(handle)
     platform = getattr(platform, "value", platform)              # accept a Platform enum or its value string
     if platform not in {pf.value for pf in Platform}:
         raise ValueError(f"unknown platform: {platform!r}")
@@ -387,6 +416,7 @@ def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         found = False
         for a in accounts:                                       # scan ALL rows (dup-handle safety)
             if isinstance(a, dict) and a.get("handle") == handle:
@@ -415,9 +445,7 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
     access=postiz; account_id stays empty — the per-platform ids are set afterward via write_integration /
     the mapping UI. Returns the handle; raises ValueError on bad input. (M3: tag_lean retired — a linked
     persona's curated hashtag_corpus is the per-account hashtag differentiator.)"""
-    handle = (handle or "").strip()
-    if not handle:
-        raise ValueError("handle is required")
+    handle = validate_account_handle(handle)
     plats = [getattr(x, "value", x) for x in platforms]      # accept Platform enums or value strings
     valid = {pf.value for pf in Platform}
     bad = [x for x in plats if x not in valid]
@@ -432,6 +460,7 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         if any(isinstance(a, dict) and a.get("handle") == handle for a in accounts):
             raise ValueError(f"duplicate handle {handle} (already exists)")
         accounts.append({"handle": handle, "account_id": "", "platforms": plats,
@@ -455,15 +484,14 @@ def ensure_channel(cfg: Config, handle: str, platform: str, persona: str = "") -
     platform a known Platform.value at the control-file boundary. Returns True iff it changed accounts.json.
     Unlike add_account it NEVER raises on a duplicate handle (idempotent by design); raises ValueError only on
     bad input. (M3: tag_lean retired.)"""
-    handle = (handle or "").strip()
-    if not handle:
-        raise ValueError("handle is required")
+    handle = validate_account_handle(handle)
     platform = getattr(platform, "value", platform)              # accept a Platform enum or its value string
     if platform not in {pf.value for pf in Platform}:
         raise ValueError(f"unknown platform: {platform!r}")
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         found = changed = False
         for a in accounts:                                       # scan ALL rows (dup-handle safety; mirrors write_integration)
             if isinstance(a, dict) and a.get("handle") == handle:
@@ -487,12 +515,14 @@ def set_status(cfg: Config, handle: str, status: str) -> str:
     planned, so it leaves active() and the publishing fan-out without losing its row). Validates status at
     the control-file boundary (must be an AccountStatus value — never write a status that won't reload);
     preserves every sibling, unknown field, and the account's own other fields. Unknown handle -> KeyError."""
+    handle = validate_account_handle(handle)
     status = getattr(status, "value", status)                    # accept an AccountStatus enum or its value
     if status not in {s.value for s in AccountStatus}:
         raise ValueError(f"unknown status: {status!r}")
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         found = False
         for a in accounts:                                       # scan ALL rows (no break): a hand-edited file with
             if isinstance(a, dict) and a.get("handle") == handle:  # duplicate handles must not leave a 2nd copy active —
@@ -510,12 +540,14 @@ def set_clip_profile(cfg: Config, handle: str, profile: str) -> str:
     — never write a profile that only band_for's default would catch); preserves every sibling, unknown
     field, and the account's own other fields; scans ALL rows (dup-handle safety, mirrors set_status).
     Unknown handle -> KeyError."""
+    handle = validate_account_handle(handle)
     profile = (profile or "").strip().lower()
     if profile and profile not in PROFILE_NAMES:
         raise ValueError(f"unknown clip_profile: {profile!r} (valid: {', '.join(sorted(PROFILE_NAMES))})")
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         found = False
         for a in accounts:
             if isinstance(a, dict) and a.get("handle") == handle:
@@ -534,10 +566,12 @@ def set_ig_user_id(cfg: Config, handle: str, ig_user_id: str) -> str:
     .env key (never here). Preserves every sibling, unknown field, and the account's own other fields; scans
     ALL rows (dup-handle safety, mirrors set_persona). Unknown handle -> KeyError (caller -> clean
     ActionResult)."""
+    handle = validate_account_handle(handle)
     ig_user_id = (ig_user_id or "").strip()
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         found = False
         for a in accounts:
             if isinstance(a, dict) and a.get("handle") == handle:
@@ -552,10 +586,12 @@ def set_persona(cfg: Config, handle: str, persona: str) -> str:
     """Set or clear ONE account's persona atomically (the Go-Live persona editor). A blank persona CLEARS it
     (-> ""). Preserves every sibling, unknown field, and the account's other fields; scans ALL rows (dup-handle
     safety, mirrors set_status). Unknown handle -> KeyError."""
+    handle = validate_account_handle(handle)
     persona = (persona or "").strip()
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         found = False
         for a in accounts:
             if isinstance(a, dict) and a.get("handle") == handle:
@@ -571,9 +607,11 @@ def remove_account(cfg: Config, handle: str) -> str:
     like @TBD-1 that the UI couldn't delete before, only hand-editing JSON could). Drops only the matching
     dict; preserves every sibling + unknown field; an empty registry stays valid. Unknown handle -> KeyError
     (caller -> clean ActionResult)."""
+    handle = validate_account_handle(handle)
     p = cfg.accounts_path
     with _accounts_txn(cfg):                                      # serialize: load INSIDE the lock (no lost update)
         raw, accounts = _load_raw_accounts(p)
+        _canonicalize_accounts_raw(raw)
         kept = [a for a in accounts if not (isinstance(a, dict) and a.get("handle") == handle)]
         if len(kept) == len(accounts):
             raise KeyError(handle)

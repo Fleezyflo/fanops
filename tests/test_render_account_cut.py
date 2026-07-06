@@ -166,9 +166,9 @@ def test_override_account_triggers_per_account_cut(tmp_path, monkeypatch, mocker
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")           # global stays default "talk"
     cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@long", "1", clip_profile="long")])
+    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="hook L", surfaces=("@long/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="hook L", surfaces=("long/instagram",)); led.save()
     led = _run(cfg)
     assert len(cut_calls) == 1 and cut_calls[0]["profile"] == "long" and cut_calls[0]["hook"] == "hook L"
     assert burn_calls == []                                        # the shared-clip burn path was NOT used
@@ -179,9 +179,9 @@ def test_override_account_render_id_is_band_tagged(tmp_path, monkeypatch, mocker
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     _patch_cut(mocker); _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@long", "1", clip_profile="long")])
+    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="H", surfaces=("@long/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="H", surfaces=("long/instagram",)); led.save()
     led = _run(cfg)
     rid = next(iter(led.posts.values())).render_id
     assert rid != child_id("render", "clip_1", "H")               # NOT the un-tagged (global-band) id
@@ -192,9 +192,9 @@ def test_default_account_uses_shared_clip_burn_byte_identical(tmp_path, monkeypa
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@a", "1")])                        # no clip_profile -> global band
+    _seed_accounts(cfg, [_acct("a", "1")])                        # no clip_profile -> global band
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="H", surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="H", surfaces=("a/instagram",)); led.save()
     led = _run(cfg)
     assert cut_calls == [] and len(burn_calls) == 1               # shared-clip burn, no per-account cut
     post = next(iter(led.posts.values()))
@@ -206,11 +206,11 @@ def test_same_hook_different_bands_distinct_renders(tmp_path, monkeypatch, mocke
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     _patch_cut(mocker); _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@short", "1", clip_profile="short"),
-                         _acct("@long", "2", clip_profile="long")])
+    _seed_accounts(cfg, [_acct("short", "1", clip_profile="short"),
+                         _acct("long", "2", clip_profile="long")])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="SAME",
-               surfaces=("@short/instagram", "@long/instagram")); led.save()
+               surfaces=("short/instagram", "long/instagram")); led.save()
     led = _run(cfg)
     rids = {p.render_id for p in led.posts.values()}
     assert len(rids) == 2 and len(led.renders) == 2               # band tag keeps them distinct despite one hook
@@ -220,9 +220,9 @@ def test_per_account_cut_fail_open_falls_back_to_shared_burn(tmp_path, monkeypat
     cut_calls = _patch_cut(mocker, returns=False)                 # the per-account cut FAILS
     burn_calls = _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@long", "1", clip_profile="long")])
+    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="H", surfaces=("@long/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="H", surfaces=("long/instagram",)); led.save()
     led = _run(cfg)
     assert len(cut_calls) == 1 and len(burn_calls) == 1           # tried the cut, fell back to the shared burn
     r = next(iter(led.renders.values()))
@@ -235,9 +235,9 @@ def test_successful_cut_records_is_account_cut(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     _patch_cut(mocker, returns=True); _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@long", "1", clip_profile="long")])
+    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="H", surfaces=("@long/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="H", surfaces=("long/instagram",)); led.save()
     led = _run(cfg)
     assert next(iter(led.renders.values())).is_account_cut is True
 
@@ -248,7 +248,7 @@ def test_dedup_hit_reads_truth_not_intent(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     _patch_cut(mocker, returns=False); _patch_burn(mocker)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("@long", "1", clip_profile="long")])
+    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
     led_obj = led
     led_obj.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
@@ -257,7 +257,7 @@ def test_dedup_hit_reads_truth_not_intent(tmp_path, monkeypatch, mocker):
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
-    clip.meta_captions = {s: {"caption": "c", "hashtags": []} for s in ("@long/instagram", "@long/tiktok")}
+    clip.meta_captions = {s: {"caption": "c", "hashtags": []} for s in ("long/instagram", "long/tiktok")}
     led_obj.add_clip(clip); led_obj.save()
     led = _run(cfg)
     assert len(led.renders) == 1                                  # both surfaces share the one (failed-cut) render

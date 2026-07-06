@@ -58,7 +58,7 @@ def _seed(cfg, accounts):
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
 
 
-def _seed_due_postiz_post(cfg, *, pid="due_p1", when="2020-01-01T12:00:00Z", account="@ig", account_id="1"):
+def _seed_due_postiz_post(cfg, *, pid="due_p1", when="2020-01-01T12:00:00Z", account="ig", account_id="1"):
     with Ledger.transaction(cfg) as led:
         if not led.sources:
             led.add_source(Source(id="src_1", source_path="/v/s.mp4", language="en"))

@@ -33,7 +33,7 @@ def _seed(cfg, *, platform=Platform.instagram, state=PostState.awaiting_approval
                           reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16,
                       state=ClipState.captioned, meta_captions=(meta or {})))
-    led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1", platform=platform,
+    led.add_post(Post(id="p_edit", parent_id="clip_1", account="a", account_id="1", platform=platform,
                       caption="c", state=state, variant_hook=hook, scheduled_time=FUTURE, public_url="dryrun://p_edit"))
     led.save(); return led
 
@@ -74,12 +74,12 @@ def test_reburn_path_is_deterministic_media_path_non_9x16(tmp_path, monkeypatch,
 def test_reburn_does_not_touch_meta_captions(tmp_path, monkeypatch, mocker):
     # the dead-key lock (A1): reburn writes post-level fields ONLY, never clip.meta_captions['hook'].
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    seeded = {"@a/instagram": {"caption": "c", "hashtags": ["#x"]}}
+    seeded = {"a/instagram": {"caption": "c", "hashtags": ["#x"]}}
     cfg = Config(root=tmp_path); _seed(cfg, meta=seeded)
     mocker.patch("fanops.overlay.burn_hook_only", return_value=True)
     reburn_hook(cfg, "p_edit", "NEW HOOK")
     mc = Ledger.load(cfg).clips["clip_1"].meta_captions
-    assert mc == seeded and "hook" not in mc.get("@a/instagram", {})   # untouched, no dead-key write
+    assert mc == seeded and "hook" not in mc.get("a/instagram", {})   # untouched, no dead-key write
 
 def test_reburn_hook_burn_failed_warns_not_rollback(tmp_path, monkeypatch, mocker):
     # burn returns False (no libass / nothing burnable) -> ok=True, detail.hook_burned=False, and the
@@ -131,7 +131,7 @@ def test_reburn_override_account_preserves_per_account_cut(tmp_path, monkeypatch
     assert res.ok is True
     led = Ledger.load(cfg); p = led.posts["p_edit"]
     from fanops.crosspost import account_render_spec
-    acct = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    acct = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     exp_rid, wants_cut, _, _ = account_render_spec(cfg, clip=led.clips["clip_1"], hook="NEW HOOK", acct=acct)
     assert wants_cut is True                                            # sanity: this account genuinely wants a cut
     assert p.render_id == exp_rid                                       # parity with the crosspost mint id (band-tagged)

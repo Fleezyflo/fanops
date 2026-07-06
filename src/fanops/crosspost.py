@@ -201,6 +201,8 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
     pid = child_id("post", target_clip.id, skey)        # stable, content-addressed
     cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
     if cap is None:
+        cap = clip.meta_captions.get(f"@{surf.account}/{surf.platform.value}")   # legacy @-prefixed caption keys
+    if cap is None:
         # No caption for THIS surface (clip captioned for some surfaces but not this one).
         # An autonomous run would otherwise drop a real post with zero trace — leave a
         # breadcrumb before skipping so the missing post is diagnosable in run.log.

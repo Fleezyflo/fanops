@@ -21,7 +21,7 @@ def test_compose_only_voice_is_verbatim_identity():
 
 def test_compose_reads_account_persona_field_too():
     # duck-typed: an Account carries the hydrated voice in `.persona`, not `.voice`
-    assert compose_persona_instruction(Account(handle="@a", persona="raw underground scene")) == "raw underground scene"
+    assert compose_persona_instruction(Account(handle="a", persona="raw underground scene")) == "raw underground scene"
 
 def test_compose_empty_is_empty():
     assert compose_persona_instruction(Persona(id="p")) == ""
@@ -84,7 +84,7 @@ def test_hydrate_levers_onto_linked_account(tmp_path):
                   "persona_id": "curator"}],
            [{"id": "curator", "voice": "tasteful", "content_focus": ["storytelling"],
              "hook_angle": "emotional", "selection_scope": "open"}])
-    a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
+    a = next(x for x in Accounts.load(cfg).accounts if x.handle == "a")
     assert a.persona == "tasteful" and a.content_focus == ["storytelling"] and a.selection_scope == "open"
     # M3d: clip_profile/framing DERIVE from content_focus/energy onto the account (no per-persona pin)
     assert a.hook_angle == "emotional" and a.clip_profile == "long" and a.framing == "top"
@@ -94,7 +94,7 @@ def test_unlinked_account_levers_stay_empty(tmp_path):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": "x"}]}))
-    a = next(x for x in Accounts.load(cfg).accounts if x.handle == "@a")
+    a = next(x for x in Accounts.load(cfg).accounts if x.handle == "a")
     assert a.content_focus == [] and a.selection_scope is None and compose_persona_instruction(a) == "x"
 
 
@@ -115,7 +115,7 @@ def test_casting_payload_only_voice_is_byte_identical(tmp_path):
     request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     payload = json.loads(request_path(cfg, "moment_casting", "src_1").read_text())
     p0 = payload["personas"][0]                                     # firewall: no levers -> the casting directive == raw voice
-    assert p0["handle"] == "@a" and p0["persona"] == "bold fan"
+    assert p0["handle"] == "a" and p0["persona"] == "bold fan"
 
 def test_casting_payload_carries_lever_direction(tmp_path):
     cfg = Config(root=tmp_path)
@@ -292,11 +292,11 @@ def test_content_focus_derives_framing():
 
 def test_resolve_top_bias_still_reads_account_framing(tmp_path):
     cfg = _Cfg(root=tmp_path)
-    top = Account(handle="@top", framing="top")
-    center = Account(handle="@ctr", framing="center")
+    top = Account(handle="top", framing="top")
+    center = Account(handle="ctr", framing="center")
     assert cfg.resolve_top_bias(top) is True
     assert cfg.resolve_top_bias(center) is False
-    assert cfg.resolve_top_bias(Account(handle="@bare")) == cfg.aware_reframe
+    assert cfg.resolve_top_bias(Account(handle="bare")) == cfg.aware_reframe
 
 
 def test_energy_to_scope_migration_parity(tmp_path):

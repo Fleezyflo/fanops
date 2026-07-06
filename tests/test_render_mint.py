@@ -24,7 +24,7 @@ def _mock_burn(mocker):
         Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_bytes(b"V"); return True
     return mocker.patch("fanops.overlay.burn_hook_only", side_effect=burn)
 
-def _seed_clip(led, cfg, *, m_hook=None, surfaces=("@a/instagram",), batch_id=None):
+def _seed_clip(led, cfg, *, m_hook=None, surfaces=("a/instagram",), batch_id=None):
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, batch_id=batch_id))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
                           state=MomentState.clipped, hook=m_hook))
@@ -47,14 +47,14 @@ def test_mint_records_variant_hooks_and_defers_render(tmp_path, monkeypatch, moc
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="shared hook",
-               surfaces=("@a/instagram", "@b/instagram")); led.save()
+               surfaces=("a/instagram", "b/instagram")); led.save()
     led = _run(cfg)
     assert led.renders == {}                                          # nothing rendered at the mint
     assert burn.call_count == 0                                       # the mint ran NO ffmpeg (burn deferred to approval)
     posts = {p.account: p for p in led.posts.values()}
-    assert posts["@a"].variant_hook == "shared hook" and posts["@b"].variant_hook == "shared hook"
+    assert posts["a"].variant_hook == "shared hook" and posts["b"].variant_hook == "shared hook"
     assert all(p.render_id is None and p.media_urls == [] for p in posts.values())
-    assert posts["@a"].variant_key == "@a|instagram"                 # the surface intent (surface_key) is recorded
+    assert posts["a"].variant_key == "a|instagram"                 # the surface intent (surface_key) is recorded
 
 def test_mint_same_hook_records_both_no_render(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1"); _mock_burn(mocker)
@@ -63,7 +63,7 @@ def test_mint_same_hook_records_both_no_render(tmp_path, monkeypatch, mocker):
                           "status": "active"}])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="one hook",
-               surfaces=("@a/instagram", "@a/tiktok")); led.save()
+               surfaces=("a/instagram", "a/tiktok")); led.save()
     led = _run(cfg)
     assert led.renders == {}
     assert all(p.variant_hook == "one hook" and p.render_id is None for p in led.posts.values())
@@ -76,7 +76,7 @@ def test_mint_empty_persona_hook_records_shared_fallback(tmp_path, monkeypatch, 
     _seed_accounts(cfg, [{"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="SHARED",
-               surfaces=("@b/instagram",)); led.save()
+               surfaces=("b/instagram",)); led.save()
     led = _run(cfg)
     assert led.renders == {}
     p = next(iter(led.posts.values()))
@@ -89,7 +89,7 @@ def test_cv_off_mints_no_renders(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="h", surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook="h", surfaces=("a/instagram",)); led.save()
     led = _run(cfg)
     assert led.renders == {}
     p = next(iter(led.posts.values()))
@@ -100,7 +100,7 @@ def test_hookless_moment_mints_no_render(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook=None, surfaces=("@a/instagram",)); led.save()
+    _seed_clip(led, cfg, m_hook=None, surfaces=("a/instagram",)); led.save()
     led = _run(cfg)
     assert led.renders == {}
     p = next(iter(led.posts.values()))
@@ -136,8 +136,8 @@ def test_account_render_spec_shared_focus_contract_same_id(tmp_path):
     from fanops.models import Clip, Fmt
     cfg = Config(root=tmp_path)
     clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16)
-    a = Account(handle="@a", account_id="1", platforms=["instagram"])
-    b = Account(handle="@b", account_id="2", platforms=["instagram"])
+    a = Account(handle="a", account_id="1", platforms=["instagram"])
+    b = Account(handle="b", account_id="2", platforms=["instagram"])
     rid_a, *_ = account_render_spec(cfg, clip=clip, hook="watch this", acct=a)
     rid_b, *_ = account_render_spec(cfg, clip=clip, hook="watch this", acct=b)
     assert rid_a == rid_b                                  # same spec -> one render id (shared source-derived focus)

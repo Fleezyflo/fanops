@@ -118,9 +118,9 @@ def test_add_account_appends_active_postiz(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     res = golive.add_account(cfg, "@new", ["instagram", "tiktok"], "hype edits")
-    assert res.ok is True and res.detail["added"] == "@new"
+    assert res.ok is True and res.detail["added"] == "new"
     raw = json.loads(cfg.accounts_path.read_text())
-    new = next(x for x in raw["accounts"] if x["handle"] == "@new")
+    new = next(x for x in raw["accounts"] if x["handle"] == "new")
     assert new["status"] == "active" and new["access"] == "postiz"
     assert new["platforms"] == ["instagram", "tiktok"] and new["persona"] == "hype edits"
 
@@ -145,8 +145,8 @@ def test_add_account_duplicate_handle_clean_error(tmp_path, monkeypatch):
 def test_map_account_writes_per_platform_id(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram", "tiktok"], "status": "active"}])
-    assert golive.map_account(cfg, "@a", "instagram", "ig_5").ok is True
-    assert golive.map_account(cfg, "@a", "tiktok", "tk_9").ok is True
+    assert golive.map_account(cfg, "a", "instagram", "ig_5").ok is True
+    assert golive.map_account(cfg, "a", "tiktok", "tk_9").ok is True
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0]["integrations"] == {"instagram": "ig_5", "tiktok": "tk_9"}
     assert raw["accounts"][0]["account_id"] == ""              # per-platform write does NOT touch the shared id
@@ -154,19 +154,19 @@ def test_map_account_writes_per_platform_id(tmp_path, monkeypatch):
 def test_map_account_unknown_handle_clean_error(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    res = golive.map_account(cfg, "@nope", "instagram", "x")
+    res = golive.map_account(cfg, "nope", "instagram", "x")
     assert res.ok is False and "no such account" in res.error.lower()
 
 def test_map_account_blank_id_rejected(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    res = golive.map_account(cfg, "@a", "instagram", "")
+    res = golive.map_account(cfg, "a", "instagram", "")
     assert res.ok is False
 
 def test_map_account_blank_platform_rejected(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    res = golive.map_account(cfg, "@a", "", "ig_1")
+    res = golive.map_account(cfg, "a", "", "ig_1")
     assert res.ok is False and "platform" in res.error.lower()
 
 
@@ -185,7 +185,7 @@ def test_go_live_blocked_active_account_missing_id(tmp_path, monkeypatch):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active",
                           "backends": {"instagram": "postiz"}}])
     res = golive.go_live(cfg, confirmed=True)
-    assert res.ok is False and "@a" in res.error
+    assert res.ok is False and "a" in res.error
     assert cfg.is_live is False
 
 def test_go_live_needs_confirm(tmp_path, monkeypatch):
@@ -257,7 +257,7 @@ def test_golive_status_reflects_config_and_per_platform_channels(tmp_path, monke
     st = views.golive_status(cfg)
     assert st.mode == "postiz" and st.is_live is True
     assert st.postiz_url == "https://p.example.com" and st.key_set is True
-    assert [a.handle for a in st.accounts] == ["@a"]          # active only; @soon (planned) excluded
+    assert [a.handle for a in st.accounts] == ["a"]          # active only; @soon (planned) excluded
     chans = {c.platform: c.integration_id for c in st.accounts[0].channels}
     assert chans == {"instagram": "ig_1", "tiktok": "tk_9"}   # each channel shows its OWN integration id
 
@@ -396,8 +396,8 @@ def test_post_golive_map_route_maps_only_picked_channel(tmp_path, monkeypatch):
                                                "map__@a__tiktok": "", "map__@b__tiktok": ""})
     assert r.status_code == 200
     by = {a["handle"]: a.get("integrations", {}) for a in json.loads(cfg.accounts_path.read_text())["accounts"]}
-    assert by["@a"] == {"instagram": "ig_9"}          # only the picked channel mapped
-    assert by["@b"] == {}                              # @b untouched
+    assert by["a"] == {"instagram": "ig_9"}          # only the picked channel mapped
+    assert by["b"] == {}                              # @b untouched
 
 def test_post_golive_account_add_route_appends(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -405,9 +405,9 @@ def test_post_golive_account_add_route_appends(tmp_path, monkeypatch):
                           data={"handle": "@fresh", "platform": ["instagram", "tiktok"], "persona": "raw"})
     assert r.status_code == 200
     accts = json.loads(cfg.accounts_path.read_text())["accounts"]
-    fresh = next(a for a in accts if a["handle"] == "@fresh")
+    fresh = next(a for a in accts if a["handle"] == "fresh")
     assert fresh["status"] == "active" and fresh["platforms"] == ["instagram", "tiktok"]
-    assert b"@fresh" in r.data                          # the new account shows in the refreshed panel
+    assert b"fresh" in r.data                          # the new account shows in the refreshed panel
 
 def test_post_golive_account_add_route_rejects_no_platform(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -545,7 +545,7 @@ def test_remove_account_action_drops_it(tmp_path, monkeypatch):
         {"handle": "@keep", "account_id": "1", "platforms": ["tiktok"], "status": "active"}])
     res = golive.remove_account(cfg, "@TBD-1")
     assert res.ok is True and res.detail["removed"] == "@TBD-1"
-    assert [x["handle"] for x in json.loads(cfg.accounts_path.read_text())["accounts"]] == ["@keep"]
+    assert [x["handle"] for x in json.loads(cfg.accounts_path.read_text())["accounts"]] == ["keep"]
 
 def test_remove_account_unknown_clean_error(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -556,8 +556,8 @@ def test_remove_account_unknown_clean_error(tmp_path, monkeypatch):
 def test_demote_account_action_sets_planned(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    res = golive.demote_account(cfg, "@a")
-    assert res.ok is True and res.detail["demoted"] == "@a"
+    res = golive.demote_account(cfg, "a")
+    assert res.ok is True and res.detail["demoted"] == "a"
     from fanops.accounts import Accounts
     assert Accounts.load(cfg).active() == []          # demoted -> leaves the active publishing fan-out
 
@@ -567,7 +567,7 @@ def test_post_golive_account_remove_route(tmp_path, monkeypatch):
         {"handle": "@TBD-1", "account_id": "dryrun", "platforms": ["instagram"], "status": "active"},
         {"handle": "@keep", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     r = _client(cfg).post("/golive/account/remove", data={"handle": "@TBD-1"})
-    assert r.status_code == 200 and b"@TBD-1" not in r.data and b"@keep" in r.data   # re-rendered panel, placeholder gone
+    assert r.status_code == 200 and b"@TBD-1" not in r.data and b"keep" in r.data   # re-rendered panel, placeholder gone
 
 def test_post_golive_account_demote_route(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -668,9 +668,9 @@ def test_set_persona_persists_and_clears(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     assert golive.set_persona(cfg, "@a", "  blunt underground zine voice  ").ok is True
-    assert _persona_of(cfg, "@a") == "blunt underground zine voice"           # trimmed + persisted
+    assert _persona_of(cfg, "a") == "blunt underground zine voice"           # trimmed + persisted
     assert golive.set_persona(cfg, "@a", "").ok is True
-    assert (_persona_of(cfg, "@a") or "") == ""                               # blank clears
+    assert (_persona_of(cfg, "a") or "") == ""                               # blank clears
 
 def test_set_persona_unknown_handle_clean_error(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -682,11 +682,11 @@ def test_promote_account_planned_to_active_and_demoted_in_status(tmp_path, monke
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "planned"}])
     s = views.golive_status(cfg)
-    assert all(x.handle != "@a" for x in s.accounts)                          # demoted -> not active
-    assert any(x.handle == "@a" for x in s.demoted)                           # ...but listed as demoted
-    assert golive.promote_account(cfg, "@a").ok is True
+    assert all(x.handle != "a" for x in s.accounts)                          # demoted -> not active
+    assert any(x.handle == "a" for x in s.demoted)                           # ...but listed as demoted
+    assert golive.promote_account(cfg, "a").ok is True
     s = views.golive_status(cfg)
-    assert any(x.handle == "@a" for x in s.accounts)                          # promoted -> active again
+    assert any(x.handle == "a" for x in s.accounts)                          # promoted -> active again
 
 def test_golive_panel_renders_persona_editor_and_promote(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -694,7 +694,7 @@ def test_golive_panel_renders_persona_editor_and_promote(tmp_path, monkeypatch):
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "planned"}])
     h = _client(cfg).get("/golive").data.decode()
     assert "/golive/account/persona" in h                                     # persona editor wired (active @a)
-    assert "/golive/account/promote" in h and "@b" in h                       # demoted @b shown with a Promote path
+    assert "/golive/account/promote" in h and "b" in h                       # demoted @b shown with a Promote path
 
 def test_post_golive_casting_route_swaps_panel(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -754,7 +754,7 @@ def test_golive_demoted_account_also_shows_persona_link(tmp_path, monkeypatch):
         {"handle": "@sleeper", "account_id": "2", "platforms": ["instagram"], "status": "planned", "persona_id": "curator"},
     ])
     html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "@sleeper" in html and "demoted" in html         # it shows in the demoted bucket
+    assert "sleeper" in html and "demoted" in html         # it shows in the demoted bucket
     assert "persona-linked" in html and "curator" in html   # AND names its persona link
     assert "no-persona" in html                              # the bare account is flagged unlinked
 

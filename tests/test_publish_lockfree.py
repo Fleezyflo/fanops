@@ -16,7 +16,7 @@ def _persist_queued(cfg, pid="p1", cid="c1", when="2020-01-01T00:00:00Z"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
+        led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
                           platform=Platform.instagram, caption="ship it",
                           # already-http media -> _ensure_media passes it through (no live upload to the fake
                           # POSTIZ_URL); the test proves the LOCK property, not the uploader.

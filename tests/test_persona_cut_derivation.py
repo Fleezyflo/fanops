@@ -17,7 +17,7 @@ def _accounts(cfg, accts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": accts}))
 
-def _acct(handle="@a"):
+def _acct(handle="a"):
     return {"handle": handle, "account_id": "1", "platforms": ["instagram"], "status": "active"}
 
 
@@ -69,7 +69,7 @@ def test_hydration_applies_derived_spec(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
     pid = add_persona(cfg, name="Storyteller", voice="v", content_focus=["storytelling", "emotional"])
     link_persona(cfg, "@a", pid)
-    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.clip_profile == "long" and acc.framing == "top"    # derived from content_focus
 
 # (M3d: test_hydration_pin_wins removed — a Persona can no longer pin clip_profile; only the DERIVED spec
@@ -78,7 +78,7 @@ def test_hydration_applies_derived_spec(tmp_path):
 
 def test_unlinked_account_unchanged(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
-    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.clip_profile is None and acc.framing is None       # no link -> byte-identical (global stands)
 
 
@@ -98,7 +98,7 @@ def test_voice_match_hydrates_without_persona_id(tmp_path):
     voice = "music-blogger curator who champions craft."
     _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": voice}])
     add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling", "emotional"])
-    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "@a")
+    acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.persona_id is None and acc.clip_profile == "long" and acc.framing == "top"   # voice match, no persisted link
 
 
@@ -112,14 +112,14 @@ def test_linked_persona_accounts_want_cut_when_derived_differs(tmp_path, monkeyp
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     from fanops.crosspost import account_render_spec
     cfg = Config(root=tmp_path)
-    _accounts(cfg, [_acct("@story"), _acct("@punch"), _acct("@bare")])
+    _accounts(cfg, [_acct("story"), _acct("punch"), _acct("bare")])
     link_persona(cfg, "@story", add_persona(cfg, name="Story", voice="v1", content_focus=["storytelling", "emotional"]))
     link_persona(cfg, "@punch", add_persona(cfg, name="Punch", voice="v2", content_focus=["punchlines", "hype"]))
     link_persona(cfg, "@bare", add_persona(cfg, name="Bare", voice="v3"))                  # no levers -> global cut
     clip = _clip_stub()
     for acct in Accounts.load(cfg).active():
         _, wants_cut, profile, _ = account_render_spec(cfg, clip=clip, hook="HOOK", acct=acct)
-        if acct.handle == "@bare":
+        if acct.handle == "bare":
             assert wants_cut is False and profile == cfg.clip_profile                    # voice-only persona -> shared cut
         else:
             assert wants_cut is True, f"{acct.handle} derived {profile}/{acct.framing} must diverge from global"
@@ -172,10 +172,10 @@ def test_persona_derived_approve_sets_is_account_cut(tmp_path, monkeypatch, mock
     from fanops.studio.actions_approve import approve_posts
     cut_calls, burn_calls = _patch_cut_burn(mocker)
     cfg = Config(root=tmp_path)
-    _accounts(cfg, [_acct("@story")])                                                        # no hand-set clip_profile
+    _accounts(cfg, [_acct("story")])                                                        # no hand-set clip_profile
     link_persona(cfg, "@story", add_persona(cfg, name="Story", voice="v", content_focus=["storytelling", "emotional"]))
     led = Ledger.load(cfg)
-    _seed_clip_for_approve(led, cfg, m_hook="H", surfaces=("@story/instagram",)); led.save()
+    _seed_clip_for_approve(led, cfg, m_hook="H", surfaces=("story/instagram",)); led.save()
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z"); led.save()
     approve_posts(cfg, [p.id for p in led.posts.values()])
     led = Ledger.load(cfg)

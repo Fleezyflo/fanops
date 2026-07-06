@@ -38,12 +38,12 @@ def test_create_batch_blank_name_raises(tmp_path):
 
 def test_create_batch_normalizes_and_is_idempotent(tmp_path):
     led = _led(tmp_path)
-    b = create_batch(led, name="  Launch  ", target_accounts=["@a", "@a", " @b ", ""],
+    b = create_batch(led, name="  Launch  ", target_accounts=["a", "a", " @b ", ""],
                      now_iso="2026-06-21T00:00:00.000001Z")
     assert b.name == "Launch"                        # stripped (canonical, so the content id is stable)
-    assert b.target_accounts == ["@a", "@b"]         # strip + drop-blank + dedup, first-occurrence order
+    assert b.target_accounts == ["a", "b"]         # strip + drop-blank + dedup, first-occurrence order
     assert led.get_batch(b.id) is b                  # idempotent-added (setdefault stored it)
-    b2 = create_batch(led, name="Launch", target_accounts=["@a", "@b"], now_iso="2026-06-21T00:00:00.000001Z")
+    b2 = create_batch(led, name="Launch", target_accounts=["a", "b"], now_iso="2026-06-21T00:00:00.000001Z")
     assert b2.id == b.id and len(led.batches) == 1   # same (name, now_iso) -> same id, no second entry
 
 
@@ -56,9 +56,9 @@ def test_create_batch_empty_target_is_all_sentinel(tmp_path):
 def test_batches_for_account(tmp_path):
     led = _led(tmp_path)
     all_b = create_batch(led, name="all", target_accounts=[], now_iso="2026-06-21T00:00:00.000001Z")
-    a_only = create_batch(led, name="a-only", target_accounts=["@a"], now_iso="2026-06-21T00:00:00.000002Z")
-    assert {b.id for b in led.batches_for_account("@a")} == {all_b.id, a_only.id}   # []==ALL + specific match
-    assert {b.id for b in led.batches_for_account("@b")} == {all_b.id}             # only the ALL-sentinel batch
+    a_only = create_batch(led, name="a-only", target_accounts=["a"], now_iso="2026-06-21T00:00:00.000002Z")
+    assert {b.id for b in led.batches_for_account("a")} == {all_b.id, a_only.id}   # []==ALL + specific match
+    assert {b.id for b in led.batches_for_account("b")} == {all_b.id}             # only the ALL-sentinel batch
 
 
 # ---- Face 1 follow-up (T1): create-time target validation — advisory error_reason, never a hard-fail ----
@@ -79,8 +79,8 @@ def test_create_batch_active_handles_none_is_byte_identical(tmp_path):
 
 def test_create_batch_target_intersects_active_no_error(tmp_path):
     led = _led(tmp_path)
-    b = create_batch(led, name="launch", target_accounts=["@a"],
-                     now_iso="2026-06-21T00:00:00.000001Z", active_handles={"@a", "@b"})
+    b = create_batch(led, name="launch", target_accounts=["a"],
+                     now_iso="2026-06-21T00:00:00.000001Z", active_handles={"a", "b"})
     assert b.error_reason is None
 
 def test_create_batch_empty_target_never_flagged(tmp_path):

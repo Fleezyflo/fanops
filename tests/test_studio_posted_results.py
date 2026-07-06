@@ -24,14 +24,14 @@ def _client(cfg):
 
 def _row(post_id, clip_id, lift, **over):
     """A bare PostedRow with the fields lineage_stats/metric_peaks read (no ledger needed for unit tests)."""
-    return views.PostedRow(post_id=post_id, clip_id=clip_id, account=over.get("account", "@a"),
+    return views.PostedRow(post_id=post_id, clip_id=clip_id, account=over.get("account", "a"),
                            platform="instagram", caption="x", public_url=None, scheduled_time=None,
                            lift_score=lift, saves=over.get("saves"), shares=over.get("shares"),
                            retention=over.get("retention"), reach=over.get("reach"),
                            variant_hook=over.get("variant_hook"))
 
 
-def _seed_published(cfg, *, pid, clip="clip_1", lift=None, account="@a", hook=None, state=PostState.published,
+def _seed_published(cfg, *, pid, clip="clip_1", lift=None, account="a", hook=None, state=PostState.published,
                     variant_key=None, metrics_extra=None, when="2026-06-01T00:00:00Z"):
     with Ledger.transaction(cfg) as led:
         if clip not in led.clips:
@@ -253,7 +253,7 @@ def test_posted_link_dryrun_row_labels_no_link_not_pending(tmp_path):
         led.add_clip(Clip(id="clip_np", parent_id="m1", path="/c/clip_np.mp4", state=ClipState.published))
         # R1: a published row MUST carry a public_url; the dryrun:// scheme is the M5 dryrun-signature
         # marker (channel chip labels 'dryrun'). The old contract (public_url=None) is now unconstructable.
-        led.add_post(Post(id="p_nourl", parent_id="clip_np", account="@a", account_id="ig_1",
+        led.add_post(Post(id="p_nourl", parent_id="clip_np", account="a", account_id="ig_1",
                           platform=Platform.instagram, caption="fire", state=PostState.published,
                           scheduled_time="2026-06-01T00:00:00Z", public_url="dryrun://p_nourl",
                           metrics={LIFT_SCORE: 0.5}))

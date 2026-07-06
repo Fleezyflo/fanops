@@ -28,7 +28,7 @@ def _seed(cfg):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_render(Render(id="render_x", clip_id="clip_1", account="@a", surface_key="@a|instagram",
+    led.add_render(Render(id="render_x", clip_id="clip_1", account="a", surface_key="a|instagram",
                           hook_text="H", path=str(render), state=RenderState.rendered))
     led.save()
     return base, render
@@ -38,7 +38,7 @@ def test_media_serves_the_per_account_render(tmp_path):
     cfg = Config(root=tmp_path); base, render = _seed(cfg)
     led = Ledger.load(cfg)
     # a post pointing at the render — even with media_urls ALSO set to the base, the render wins (priority).
-    led.add_post(Post(id="p_r", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p_r", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.queued, render_id="render_x",
                       media_urls=[f"file://{base}"], public_url="dryrun://p_r"))
     led.save()
@@ -48,7 +48,7 @@ def test_media_serves_the_per_account_render(tmp_path):
 def test_media_legacy_post_without_render_id_serves_base(tmp_path):
     cfg = Config(root=tmp_path); base, _ = _seed(cfg)
     led = Ledger.load(cfg)
-    led.add_post(Post(id="p_base", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_base", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.queued, public_url="dryrun://p_base"))   # render_id None
     led.save()
     r = _client(cfg).get("/media/p_base")
@@ -58,7 +58,7 @@ def test_media_render_id_set_but_entity_missing_falls_through(tmp_path):
     # resilient: render_id points at a swept Render, but media_urls still has the same file -> serve it.
     cfg = Config(root=tmp_path); base, render = _seed(cfg)
     led = Ledger.load(cfg)
-    led.add_post(Post(id="p_gone", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_gone", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.queued,
                       render_id="render_SWEPT", media_urls=[f"file://{render}"], public_url="dryrun://p_gone"))
     led.save()
@@ -71,7 +71,7 @@ def test_media_missing_render_file_404s(tmp_path):
     cfg = Config(root=tmp_path); base, render = _seed(cfg)
     render.unlink()                                                 # the render file is gone
     led = Ledger.load(cfg)
-    led.add_post(Post(id="p_nofile", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_nofile", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.queued, render_id="render_x", public_url="dryrun://p_nofile"))
     led.save()
     assert _client(cfg).get("/media/p_nofile").status_code == 404

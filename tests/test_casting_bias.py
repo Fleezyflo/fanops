@@ -13,7 +13,7 @@ from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState
 
 
-def _post(led, pid, *, account="@a", profile="talk", reach=0.0, state=PostState.analyzed):
+def _post(led, pid, *, account="a", profile="talk", reach=0.0, state=PostState.analyzed):
     led.add_post(Post(id=pid, parent_id="c1", account=account, account_id="1", platform=Platform.instagram,
                       caption="x", state=state, metrics={"reach": reach}, public_url="dryrun://c1",
                       clip_profile=profile))
@@ -25,7 +25,7 @@ def _validate(cfg):
     cutover._save_state(cfg, {"metrics_confirmed": True})
 
 
-def _seed_two_accounts(led, *, winner="@a", loser="@b", profile="talk"):
+def _seed_two_accounts(led, *, winner="a", loser="b", profile="talk"):
     # @winner has PROVEN high reach on `profile`; @loser is proven-low. Both clear the min attributed floor.
     for i in range(8):
         _post(led, f"w{i}", account=winner, profile=profile, reach=2000.0)
@@ -39,26 +39,26 @@ def _seed_two_accounts(led, *, winner="@a", loser="@b", profile="talk"):
 def test_reach_by_account_type_groups_by_account_and_profile(tmp_path):
     from fanops.casting_bias import reach_by_account_type
     led = Ledger.load(Config(root=tmp_path))
-    _post(led, "a1", account="@a", profile="talk", reach=1000.0)
-    _post(led, "a2", account="@a", profile="talk", reach=1000.0)
-    _post(led, "b1", account="@b", profile="song", reach=300.0)
+    _post(led, "a1", account="a", profile="talk", reach=1000.0)
+    _post(led, "a2", account="a", profile="talk", reach=1000.0)
+    _post(led, "b1", account="b", profile="song", reach=300.0)
     agg = reach_by_account_type(led)
-    assert agg[("@a", "talk")]["n"] == 2
-    assert agg[("@a", "talk")]["reach_mean"] == 1000.0
-    assert agg[("@b", "song")]["reach_mean"] == 300.0
+    assert agg[("a", "talk")]["n"] == 2
+    assert agg[("a", "talk")]["reach_mean"] == 1000.0
+    assert agg[("b", "song")]["reach_mean"] == 300.0
 
 
 def test_reach_by_account_type_skips_unanalyzed_and_missing(tmp_path):
     from fanops.casting_bias import reach_by_account_type
     led = Ledger.load(Config(root=tmp_path))
-    _post(led, "ok", account="@a", profile="talk", reach=500.0)
-    _post(led, "pending", account="@a", profile="talk", reach=999.0, state=PostState.queued)  # not analyzed
+    _post(led, "ok", account="a", profile="talk", reach=500.0)
+    _post(led, "pending", account="a", profile="talk", reach=999.0, state=PostState.queued)  # not analyzed
     # a post with clip_profile None is skipped (no cell)
-    led.add_post(Post(id="noprof", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="noprof", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.analyzed, metrics={"reach": 999.0}, public_url="dryrun://c1"))
     agg = reach_by_account_type(led)
-    assert set(agg.keys()) == {("@a", "talk")}
-    assert agg[("@a", "talk")]["n"] == 1
+    assert set(agg.keys()) == {("a", "talk")}
+    assert agg[("a", "talk")]["n"] == 1
 
 
 # ======================================================================================
@@ -69,10 +69,10 @@ def test_casting_reach_prior_emits_proven_cells_when_unlocked(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _seed_two_accounts(led)
     _validate(cfg)
-    prior = casting_reach_prior(led, cfg, ["@a", "@b"])
+    prior = casting_reach_prior(led, cfg, ["a", "b"])
     # both cells proven -> both present; @a's reach dominates @b's on 'talk'
-    assert prior["@a"]["talk"] == 2000.0
-    assert prior["@b"]["talk"] == 50.0
+    assert prior["a"]["talk"] == 2000.0
+    assert prior["b"]["talk"] == 50.0
 
 
 def test_casting_reach_prior_frozen_until_validated(tmp_path):
@@ -80,7 +80,7 @@ def test_casting_reach_prior_frozen_until_validated(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _seed_two_accounts(led)                                # plenty of signal ...
     # ... but learning NOT validated -> the prior is EMPTY (validation-frozen, exactly like p4_unlocked).
-    assert casting_reach_prior(led, cfg, ["@a", "@b"]) == {}
+    assert casting_reach_prior(led, cfg, ["a", "b"]) == {}
 
 
 def test_casting_reach_prior_explore_guard_omits_underexposed(tmp_path):
@@ -90,13 +90,13 @@ def test_casting_reach_prior_explore_guard_omits_underexposed(tmp_path):
     from fanops.casting_bias import casting_reach_prior
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for i in range(8):                                     # @a: proven on talk
-        _post(led, f"a{i}", account="@a", profile="talk", reach=1500.0)
+        _post(led, f"a{i}", account="a", profile="talk", reach=1500.0)
     for i in range(2):                                     # @new: only 2 posts -> under-exposed cell
-        _post(led, f"n{i}", account="@new", profile="talk", reach=1.0)
+        _post(led, f"n{i}", account="new", profile="talk", reach=1.0)
     _validate(cfg)
-    prior = casting_reach_prior(led, cfg, ["@a", "@new"])
-    assert "@a" in prior                                   # proven cell present
-    assert "@new" not in prior                             # under-exposed -> OMITTED (unproven, not starved)
+    prior = casting_reach_prior(led, cfg, ["a", "new"])
+    assert "a" in prior                                   # proven cell present
+    assert "new" not in prior                             # under-exposed -> OMITTED (unproven, not starved)
 
 
 def test_casting_reach_prior_emits_single_proven_account(tmp_path):
@@ -107,9 +107,9 @@ def test_casting_reach_prior_emits_single_proven_account(tmp_path):
     from fanops.casting_bias import casting_reach_prior
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for i in range(8):
-        _post(led, f"a{i}", account="@a", profile="talk", reach=1500.0)
+        _post(led, f"a{i}", account="a", profile="talk", reach=1500.0)
     _validate(cfg)
-    assert casting_reach_prior(led, cfg, ["@a"]) == {"@a": {"talk": 1500.0}}
+    assert casting_reach_prior(led, cfg, ["a"]) == {"a": {"talk": 1500.0}}
 
 
 def test_casting_reach_prior_fail_safe(tmp_path, monkeypatch):
@@ -119,7 +119,7 @@ def test_casting_reach_prior_fail_safe(tmp_path, monkeypatch):
     _seed_two_accounts(led); _validate(cfg)
     monkeypatch.setattr(casting_bias, "reach_by_account_type",
                         lambda led: (_ for _ in ()).throw(RuntimeError("boom")), raising=True)
-    assert casting_bias.casting_reach_prior(led, cfg, ["@a", "@b"]) == {}
+    assert casting_bias.casting_reach_prior(led, cfg, ["a", "b"]) == {}
 
 
 # ======================================================================================
@@ -160,20 +160,20 @@ def test_request_moment_casting_carries_reach_prior_when_on(tmp_path, monkeypatc
     from fanops import casting
     cfg, led, accts = _casting_fixture(tmp_path, monkeypatch)
     monkeypatch.setenv("FANOPS_CASTING_BIAS", "1")
-    _seed_two_accounts(led, winner="@a", loser="@b"); _validate(cfg)
+    _seed_two_accounts(led, winner="a", loser="b"); _validate(cfg)
     captured = {}
     monkeypatch.setattr(casting, "write_request",
                         lambda cfg, kind, key, payload: captured.update(payload), raising=True)
     casting.request_moment_casting(led, cfg, "s1", accts)
     assert "reach_prior" in captured                       # the prior rode into the brief
-    assert captured["reach_prior"]["@a"]["talk"] == 2000.0
+    assert captured["reach_prior"]["a"]["talk"] == 2000.0
 
 
 def test_request_moment_casting_omits_reach_prior_when_off(tmp_path, monkeypatch):
     from fanops import casting
     cfg, led, accts = _casting_fixture(tmp_path, monkeypatch)
     monkeypatch.delenv("FANOPS_CASTING_BIAS", raising=False)   # switch OFF (default)
-    _seed_two_accounts(led, winner="@a", loser="@b"); _validate(cfg)
+    _seed_two_accounts(led, winner="a", loser="b"); _validate(cfg)
     captured = {}
     monkeypatch.setattr(casting, "write_request",
                         lambda cfg, kind, key, payload: captured.update(payload), raising=True)
@@ -187,10 +187,10 @@ def test_request_moment_casting_keeps_all_accounts_when_prior_present(tmp_path, 
     from fanops import casting
     cfg, led, accts = _casting_fixture(tmp_path, monkeypatch)
     monkeypatch.setenv("FANOPS_CASTING_BIAS", "1")
-    _seed_two_accounts(led, winner="@a", loser="@b"); _validate(cfg)
+    _seed_two_accounts(led, winner="a", loser="b"); _validate(cfg)
     captured = {}
     monkeypatch.setattr(casting, "write_request",
                         lambda cfg, kind, key, payload: captured.update(payload), raising=True)
     casting.request_moment_casting(led, cfg, "s1", accts)
     handles = {p["handle"] for p in captured["personas"]}
-    assert handles == {"@a", "@b"}                          # loser NOT dropped — still cast, can still win
+    assert handles == {"a", "b"}                          # loser NOT dropped — still cast, can still win

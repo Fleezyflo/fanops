@@ -14,7 +14,7 @@ def test_zernio_max_upload_default_4mb(tmp_path, monkeypatch):
 
 def test_upload_cap_only_zernio_tiktok(tmp_path):
     cfg = Config(root=tmp_path)
-    p = Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.tiktok, caption="x")
+    p = Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.tiktok, caption="x")
     assert upload_cap_bytes(cfg, p, "zernio") == cfg.zernio_max_upload_bytes
     assert upload_cap_bytes(cfg, p, "postiz") is None
 
@@ -26,9 +26,9 @@ def test_media_path_for_post_prefers_render(tmp_path):
     thin = tmp_path / "thin.mp4"
     fat.write_bytes(b"x" * 100)
     thin.write_bytes(b"y")
-    led.add_render(Render(id="r1", clip_id="c", account="@a", surface_key="@a/tiktok",
+    led.add_render(Render(id="r1", clip_id="c", account="a", surface_key="a/tiktok",
                           hook_text="h", path=str(thin), state=RenderState.rendered))
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.tiktok,
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
                       caption="x", render_id="r1", media_urls=[f"file://{fat}"]))
     assert media_path_for_post(led, led.posts["p"]) == thin
 
@@ -42,7 +42,7 @@ def test_apply_shrink_persists_media_urls_when_mocked(tmp_path, monkeypatch, moc
     src.write_bytes(b"Z" * 8_000_000)
     shrunk = tmp_path / "small.mp4"
     shrunk.write_bytes(b"S" * 1000)
-    led.add_post(Post(id="p", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
+    led.add_post(Post(id="p", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
                       caption="x", state=PostState.queued, media_urls=[f"file://{src}"]))
     mocker.patch("fanops.post.compress.maybe_shrink_for_cap", return_value=shrunk)
     monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4")
@@ -58,9 +58,9 @@ def test_persist_post_shrink_writes_ledger(tmp_path):
     dst = tmp_path / "b.mp4"
     src.write_bytes(b"1")
     dst.write_bytes(b"2")
-    led.add_render(Render(id="r1", clip_id="c", account="@a", surface_key="@a/tiktok",
+    led.add_render(Render(id="r1", clip_id="c", account="a", surface_key="a/tiktok",
                           hook_text="h", path=str(src), state=RenderState.rendered))
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.tiktok,
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
                       caption="x", render_id="r1", media_urls=[f"file://{dst}"]))
     led.save()
     snap = Ledger.load(cfg)
@@ -77,7 +77,7 @@ def test_publish_backend_for_post_uses_channel_override(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     add_account(cfg, "@tt", [Platform.tiktok], status="active")
     set_backend(cfg, "@tt", "tiktok", "zernio")
-    p = Post(id="p", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok, caption="x")
+    p = Post(id="p", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok, caption="x")
     assert publish_backend_for_post(cfg, p) == "zernio"
 
 
@@ -96,9 +96,9 @@ def test_publish_due_persists_shrunk_render_path(tmp_path, monkeypatch, mocker):
     shrunk.write_bytes(b"S" * 1000)
     led = Ledger.load(cfg)
     led.add_clip(Clip(id="c", parent_id="m", path=str(src), state=ClipState.queued))
-    led.add_render(Render(id="r1", clip_id="c", account="@tt", surface_key="@tt/tiktok",
+    led.add_render(Render(id="r1", clip_id="c", account="tt", surface_key="tt/tiktok",
                           hook_text="h", path=str(src), state=RenderState.rendered))
-    led.add_post(Post(id="p", parent_id="c", account="@tt", account_id="z1", platform=Platform.tiktok,
+    led.add_post(Post(id="p", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
                       caption="x", state=PostState.queued, render_id="r1",
                       scheduled_time="2020-01-01T00:00:00Z", media_urls=[f"file://{src}"],
                       public_url="dryrun://p"))

@@ -27,19 +27,19 @@ def test_caption_item_schema_drops_dead_hook_axis_rationale():
 def test_caption_prompt_no_longer_asks_for_hook_variation():
     # ROOT FIX: the per-surface hook variation (hook/axis/rationale) was removed from the caption gate;
     # the frame-seeing moment gate owns hooks now, so the caption prompt is hashtags-only.
-    p = caption_prompt({"surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
+    p = caption_prompt({"surfaces": [{"surface": "a/instagram", "platform": "instagram"}]})
     assert "rationale" not in p and "hooks_by_persona" not in p
 
 def test_ingest_ignores_legacy_axis_and_rationale(tmp_path):
     # ROOT FIX: the caption gate no longer carries per-surface hook variation, so even a legacy response
     # with hook/axis/rationale is ignored -> stored None (the dormant machinery is a /ecc:prp-plan deeper fix).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="@a/instagram", caption="no warning. just impact.", hashtags=["#mohflow"],
+        CaptionItem(surface="a/instagram", caption="no warning. just impact.", hashtags=["#mohflow"],
                     hook="wait for the drop", axis="Hook String", rationale="different opening words")
     ]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
-    mc = led.clips["clip_1"].meta_captions["@a/instagram"]
+    mc = led.clips["clip_1"].meta_captions["a/instagram"]
     assert mc["hook"] is None and mc["axis"] is None and mc["rationale"] is None

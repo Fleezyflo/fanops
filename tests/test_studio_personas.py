@@ -77,7 +77,7 @@ def test_connect_account_links_persona(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active"}])
     pid = core.add_persona(cfg, name="P1", voice="v1")
-    r = sp.connect_account(cfg, "@a", pid)
+    r = sp.connect_account(cfg, "a", pid)
     assert r.ok
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0]["persona_id"] == pid
@@ -90,14 +90,14 @@ def test_connect_unknown_account_is_clean_error(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active"}])
     pid = core.add_persona(cfg, name="P1")
-    r = sp.connect_account(cfg, "@nope", pid)
+    r = sp.connect_account(cfg, "nope", pid)
     assert r.ok is False and r.error
 
 
 def test_connect_unknown_persona_is_clean_error(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active"}])
-    r = sp.connect_account(cfg, "@a", "ghost")          # refuse linking to a persona that doesn't exist
+    r = sp.connect_account(cfg, "a", "ghost")          # refuse linking to a persona that doesn't exist
     assert r.ok is False and r.error
 
 
@@ -105,7 +105,7 @@ def test_disconnect_account_with_blank(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active", "persona_id": pid}])
-    assert sp.connect_account(cfg, "@a", "").ok          # blank persona_id clears the link
+    assert sp.connect_account(cfg, "a", "").ok          # blank persona_id clears the link
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0].get("persona_id") in (None, "")
 
@@ -129,9 +129,9 @@ def test_personas_page_read_model(tmp_path):
                          {"handle": "@b", "platforms": ["instagram"], "status": "active"}])
     page = views.personas_page(cfg)
     card = next(c for c in page.personas if c.id == pid)
-    assert card.voice == "v1" and card.corpus == ["#detroitrap"] and card.linked_handles == ["@a"]
+    assert card.voice == "v1" and card.corpus == ["#detroitrap"] and card.linked_handles == ["a"]
     links = {lk.handle: lk.persona_id for lk in page.accounts}
-    assert links["@a"] == pid and links["@b"] is None
+    assert links["a"] == pid and links["b"] is None
 
 
 def test_personas_page_surfaces_live_graph_reach(tmp_path):
@@ -273,10 +273,10 @@ def test_account_assignment_is_folded_into_each_card(tmp_path):
     _seed_accounts(cfg, [{"handle": "@linked", "platforms": ["instagram"], "status": "active"},
                          {"handle": "@free", "platforms": ["tiktok"], "status": "active"}])
     pid = core.add_persona(cfg, name="Curator", voice="champions craft")
-    sp.connect_account(cfg, "@linked", pid)
+    sp.connect_account(cfg, "linked", pid)
     html = _client(cfg).get("/personas").get_data(as_text=True)
-    assert "persona-accounts" in html and "@linked" in html          # the driven handle shows on the card
-    assert "persona-assign" in html and "@free" in html              # the unassigned account is assignable inline
+    assert "persona-accounts" in html and "linked" in html          # the driven handle shows on the card
+    assert "persona-assign" in html and "free" in html              # the unassigned account is assignable inline
     assert "Connect accounts" not in html                            # the orphan page-foot section is removed
 
 

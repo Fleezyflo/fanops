@@ -5,7 +5,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from fanops.ledger import Ledger
-from fanops.models import AccountSelection, SelectionMethod, account_selection_id
+from fanops.models import AccountSelection, SelectionMethod, account_selection_id, validate_account_handle
 from fanops.timeutil import iso_z
 from fanops.studio.actions_common import ActionResult
 
@@ -14,6 +14,10 @@ def cast_add(cfg, source_id: str, account: str, moment_id: str) -> ActionResult:
     """Add `moment_id` to `account`'s selection for `source_id` (creating it if absent), method=operator.
     Rejects a moment that isn't a decided child of this source (a stale/hand-crafted POST must not mint a
     selection for a foreign moment). Idempotent on a re-add (sorted-set union)."""
+    try:
+        account = validate_account_handle(account)
+    except ValueError:
+        return ActionResult.failure(f"invalid account {account!r}")
     try:
         with Ledger.transaction(cfg) as led:
             m = led.moments.get(moment_id)
@@ -34,6 +38,10 @@ def cast_remove(cfg, source_id: str, account: str, moment_id: str) -> ActionResu
     """Remove `moment_id` from `account`'s selection. Removing the LAST moment DROPS the whole record (so the
     gate denies the account on this cast source) rather than leaving an illegal empty `operator` row. A missing
     selection is a clean no-op (nothing to remove)."""
+    try:
+        account = validate_account_handle(account)
+    except ValueError:
+        return ActionResult.failure(f"invalid account {account!r}")
     try:
         with Ledger.transaction(cfg) as led:
             sel = led.account_selection_for(source_id, account)

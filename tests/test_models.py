@@ -37,7 +37,7 @@ def test_unit_parent_chain():
     m = Moment(id="mom_1", parent_id=s.id, start=1.0, end=8.0,
                reason="punchline + beat drop", transcript_excerpt="they slept on me")
     c = Clip(id="clip_1", parent_id=m.id, path="/c/clip_1.mp4")
-    p = Post(id="post_1", parent_id=c.id, account="@a", account_id="98432",
+    p = Post(id="post_1", parent_id=c.id, account="a", account_id="98432",
              platform=Platform.instagram, caption="x")
     assert m.parent_id == s.id and c.parent_id == m.id and p.parent_id == c.id
 
@@ -56,7 +56,7 @@ def test_post_failed_is_distinct_from_analyzed():
     assert PostState.failed is not PostState.analyzed
 
 def test_post_carries_account_id_and_media():
-    p = Post(id="p", parent_id="c", account="@a", account_id="98432",
+    p = Post(id="p", parent_id="c", account="a", account_id="98432",
              platform=Platform.tiktok, caption="x", media_urls=["https://h/v.mp4"])
     assert p.account_id == "98432" and p.media_urls == ["https://h/v.mp4"]
 
@@ -74,9 +74,9 @@ def test_moment_request_carries_request_id():
     assert dec.request_id == "r1" and dec.picks[0].end == 21.0
 
 def test_caption_set_roundtrip():
-    cs = CaptionSet(request_id="rc1", items=[CaptionItem(surface="@a/instagram",
+    cs = CaptionSet(request_id="rc1", items=[CaptionItem(surface="a/instagram",
                     caption="no warning. just impact.", hashtags=["#mohflow"])])
-    assert cs.items[0].surface == "@a/instagram" and cs.request_id == "rc1"
+    assert cs.items[0].surface == "a/instagram" and cs.request_id == "rc1"
 
 def test_moment_pick_rejects_non_finite_timestamps():
     for bad in (float("nan"), float("inf"), float("-inf")):
@@ -115,12 +115,12 @@ def test_moment_hook_decision_carries_hook_and_personas():
 # ---- MOL-142 (P1 schema): MomentPick.personas owner + MomentRequest full spec ----
 def test_pick_personas_field_retained():
     assert "personas" in MomentPick.model_fields
-    p = MomentPick(start=1.0, end=5.0, reason="r", personas=["@a"])
-    assert p.personas == ["@a"]
+    p = MomentPick(start=1.0, end=5.0, reason="r", personas=["a"])
+    assert p.personas == ["a"]
 
 def test_pick_validator_rejects_multi_owner():
     with pytest.raises(ValidationError):
-        MomentPick(start=1.0, end=5.0, reason="r", personas=["@a", "@b"])
+        MomentPick(start=1.0, end=5.0, reason="r", personas=["a", "b"])
 
 def test_request_personas_carries_full_spec():
     spec = {"handle": "@a", "directive": "champions punchlines", "band": "7-21s",
@@ -141,11 +141,11 @@ def test_moment_hook_request_carries_window_and_frames():
 
 def test_post_has_optional_variant_fields():
     from fanops.models import Post, Platform, PostState
-    p = Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    p = Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
              caption="x", state=PostState.queued, variant_key="vk1", variant_hook="WATCH THIS", public_url="dryrun://p1")
     assert p.variant_key == "vk1" and p.variant_hook == "WATCH THIS"
     # old ledgers (no variant fields) still load
-    p2 = Post(id="p2", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    p2 = Post(id="p2", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
               caption="x", state=PostState.queued, public_url="dryrun://p2")
     assert p2.variant_key is None and p2.variant_hook is None
 
@@ -173,17 +173,17 @@ def test_source_post_created_at_default_none():
     # Optional[str]=None so an OLD-shape ledger row (no created_at/published_at) loads unchanged.
     s = Source(id="src_1", source_path="/s/x.mp4")
     assert s.created_at is None
-    p = Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x")
+    p = Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x")
     assert p.created_at is None and p.published_at is None
     # old-shape dicts (no new keys) validate
     s2 = Source.model_validate({"id": "src_2", "source_path": "/s/y.mp4"})
-    p2 = Post.model_validate({"id": "p2", "parent_id": "c", "account": "@a", "account_id": "1",
+    p2 = Post.model_validate({"id": "p2", "parent_id": "c", "account": "a", "account_id": "1",
                               "platform": "tiktok", "caption": "x"})
     assert s2.created_at is None and p2.created_at is None and p2.published_at is None
 
 def test_source_post_created_at_round_trip():
     s = Source(id="src_1", source_path="/s/x.mp4", created_at="2026-06-19T10:00:00Z")
-    p = Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
+    p = Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
              caption="x", created_at="2026-06-19T11:00:00Z", published_at="2026-06-19T12:00:00Z")
     assert s.created_at == "2026-06-19T10:00:00Z"
     assert p.created_at == "2026-06-19T11:00:00Z" and p.published_at == "2026-06-19T12:00:00Z"

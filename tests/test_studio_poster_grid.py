@@ -32,7 +32,7 @@ def _seed(cfg, n_clips=1, *, with_posts=True, state=PostState.queued):
         led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16,
                           state=ClipState.queued))
         if with_posts:
-            led.add_post(Post(id=f"p{i}", parent_id=cid, account="@a0", account_id="0",
+            led.add_post(Post(id=f"p{i}", parent_id=cid, account="a0", account_id="0",
                               platform=Platform.instagram, caption="c", state=state,
                               scheduled_time=FAR, public_url="dryrun://0"))
     led.save()

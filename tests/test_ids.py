@@ -18,9 +18,9 @@ def test_child_id_is_content_addressed_not_positional():
     assert a == child_id("moment", p, "14.00-21.00")
 
 def test_surface_key_stable_and_distinct():
-    assert surface_key("@a", "instagram") == surface_key("@a", "instagram")
-    assert surface_key("@a", "instagram") != surface_key("@a", "tiktok")
-    assert surface_key("@a", "instagram") == "@a|instagram"
+    assert surface_key("a", "instagram") == surface_key("a", "instagram")
+    assert surface_key("a", "instagram") != surface_key("a", "tiktok")
+    assert surface_key("a", "instagram") == "a|instagram"
 
 def test_content_id_stable_across_processes():
     # The crux: a child id derived from a surface key must be identical when computed

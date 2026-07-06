@@ -19,14 +19,14 @@ def _queued(cfg, pid="p1", cid="c1", *, sub=None):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-        led.add_post(Post(id=pid, parent_id=cid, account="@tk", account_id="z1", platform=Platform.tiktok,
+        led.add_post(Post(id=pid, parent_id=cid, account="tk", account_id="z1", platform=Platform.tiktok,
                           caption="c", scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued,
                           media_urls=["https://cdn/v.mp4"], public_url="dryrun://p1",
                           submission_id=sub))
 
 
 def _fail_post(pid, reason):
-    return Post(id=pid, parent_id="c1", account="@a", account_id="1", platform=Platform.tiktok,
+    return Post(id=pid, parent_id="c1", account="a", account_id="1", platform=Platform.tiktok,
                 caption="x", state=PostState.failed, error_reason=reason)
 
 

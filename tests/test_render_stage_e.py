@@ -28,7 +28,7 @@ def _base(cfg):
 def test_schedule_row_carries_variant_hook(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path); led = _base(cfg)
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.queued, scheduled_time=FUTURE,
                       render_id="render_x", variant_hook="watch his face", public_url="dryrun://p1"))
     led.save()
@@ -38,7 +38,7 @@ def test_schedule_row_carries_variant_hook(tmp_path):
 def test_posted_row_carries_variant_hook(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path); led = _base(cfg)
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.published, scheduled_time="2026-06-01T00:00:00Z",
                       public_url="http://x", variant_hook="the smile gives it away"))
     led.save()
@@ -50,7 +50,7 @@ def test_posted_row_carries_variant_hook(tmp_path):
 def test_archive_records_render_identity(tmp_path):
     from fanops.post.run import _archive_published
     cfg = Config(root=tmp_path)
-    p = Post(id="p_pub", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    p = Post(id="p_pub", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
              caption="c", state=PostState.published, published_at="2026-06-05T10:00:00Z",
              render_id="render_x", variant_hook="he wrote this for one person",
              media_urls=["file:///clips/batch/src/render_x.9x16.mp4"], public_url="http://ig/x")
@@ -70,12 +70,12 @@ def test_gc_sweeps_unreferenced_render_keeps_referenced(tmp_path):
     old = time.time() - 40 * 86400
     os.utime(orphan, (old, old)); os.utime(kept, (old, old))     # both old enough to age out
     led = _base(cfg)
-    led.add_render(Render(id="render_orphan", clip_id="clip_1", account="@a", surface_key="k",
+    led.add_render(Render(id="render_orphan", clip_id="clip_1", account="a", surface_key="k",
                           path=str(orphan), state=RenderState.rendered))
-    led.add_render(Render(id="render_kept", clip_id="clip_1", account="@a", surface_key="k",
+    led.add_render(Render(id="render_kept", clip_id="clip_1", account="a", surface_key="k",
                           path=str(kept), state=RenderState.rendered))
     # only render_kept is referenced by a live post; render_orphan is a reburn leftover
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.queued, render_id="render_kept", public_url="dryrun://p1"))
     led.save()
     cmd_gc(cfg, 30)
@@ -97,7 +97,7 @@ def test_schedule_panel_renders_hook_column(tmp_path):
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                               reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                           caption="c", state=PostState.queued, scheduled_time="2099-06-06T12:00:00Z",
                           variant_hook="watch his face", public_url="dryrun://p1"))
     app = create_app(cfg); app.config.update(TESTING=True)

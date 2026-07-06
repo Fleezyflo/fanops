@@ -35,7 +35,7 @@ def _seed(cfg, accounts):
 def test_set_meta_creds_writes_ig_id_to_accounts_and_token_write_only(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed(cfg, [{"handle": "@stan", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    res = golive.set_meta_creds(cfg, "@stan", "ig-stan-99", "pa-tok")
+    res = golive.set_meta_creds(cfg, "stan", "ig-stan-99", "pa-tok")
     assert res.ok is True
     # the ig id (non-secret) landed in accounts.json
     raw = json.loads(cfg.accounts_path.read_text())
@@ -55,19 +55,19 @@ def test_set_meta_creds_then_resolver_picks_per_account(tmp_path, monkeypatch):
     monkeypatch.setenv("META_IG_USER_ID", "ig-global-1")
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok-global")
     _seed(cfg, [{"handle": "@stan", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    golive.set_meta_creds(cfg, "@stan", "ig-stan-99", "pa-tok")
-    creds = meta_graph.resolve_meta_creds(cfg, handle="@stan")
+    golive.set_meta_creds(cfg, "stan", "ig-stan-99", "pa-tok")
+    creds = meta_graph.resolve_meta_creds(cfg, handle="stan")
     assert creds.ig_user_id == "ig-stan-99"
     assert creds.token == "pa-tok"
     # a DIFFERENT handle with no per-account creds still resolves the global (byte-identical)
-    assert meta_graph.resolve_meta_creds(cfg, handle="@markmakmouly").token == "tok-global"
+    assert meta_graph.resolve_meta_creds(cfg, handle="markmakmouly").token == "tok-global"
 
 
 def test_set_meta_creds_id_only_leaves_token_unchanged(tmp_path, monkeypatch):
     # A blank token updates only the ig id (mirrors set_postiz_config's blank-key = URL-only). No token write.
     cfg = _clean(monkeypatch, tmp_path)
     _seed(cfg, [{"handle": "@stan", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    res = golive.set_meta_creds(cfg, "@stan", "ig-stan-99", "")
+    res = golive.set_meta_creds(cfg, "stan", "ig-stan-99", "")
     assert res.ok is True
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0]["ig_user_id"] == "ig-stan-99"
@@ -79,9 +79,9 @@ def test_set_meta_creds_id_only_leaves_token_unchanged(tmp_path, monkeypatch):
 def test_set_meta_creds_unknown_handle_clean_error(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed(cfg, [{"handle": "@stan", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    res = golive.set_meta_creds(cfg, "@nobody", "ig-x", "T")
+    res = golive.set_meta_creds(cfg, "nobody", "ig-x", "T")
     assert res.ok is False
-    assert "@nobody" in res.error
+    assert "nobody" in res.error
     # and no token leaked into .env on the failed write
     env = (tmp_path / ".env").read_text() if (tmp_path / ".env").exists() else ""
     assert "T" not in env or "META_GRAPH_TOKEN__NOBODY" not in env

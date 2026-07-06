@@ -41,16 +41,16 @@ def _respond_and_ingest(led, cfg, selections, *, source_id="src_1"):
 # ---- request gate ----
 def test_request_writes_gate_with_moments_and_personas(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar"), _acct("@b", "drums", aid="2")])
+    led = _seed(cfg, [_acct("a", "guitar"), _acct("b", "drums", aid="2")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     assert latest_request_id(cfg, "moment_casting", "src_1") is not None
     payload = json.loads(_req_path(cfg, "src_1").read_text())
     assert {m["moment_id"] for m in payload["moments"]} == {"m0", "m1", "m2"}
-    assert {p["handle"] for p in payload["personas"]} == {"@a", "@b"}
+    assert {p["handle"] for p in payload["personas"]} == {"a", "b"}
 
 def test_request_is_write_once(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar")])
+    led = _seed(cfg, [_acct("a", "guitar")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     rid1 = latest_request_id(cfg, "moment_casting", "src_1")
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))   # never re-stamp an in-flight gate
@@ -59,7 +59,7 @@ def test_request_is_write_once(tmp_path):
 def test_request_skipped_when_no_personas(tmp_path):
     # selection needs personas to differentiate; no account carries a persona -> no gate (heuristic territory).
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", persona="")])
+    led = _seed(cfg, [_acct("a", persona="")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     assert not list(pending(cfg, kind="moment_casting"))
 
@@ -67,43 +67,43 @@ def test_request_skipped_when_no_personas(tmp_path):
 # ---- ingest -> generous affinities ----
 def test_ingest_stamps_per_account_selection(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar"), _acct("@b", "drums", aid="2")])
+    led = _seed(cfg, [_acct("a", "guitar"), _acct("b", "drums", aid="2")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    led = _respond_and_ingest(led, cfg, {"@a": ["m0", "m1"], "@b": ["m2"]})
-    assert led.moments["m0"].affinities == ["@a"]
-    assert led.moments["m1"].affinities == ["@a"]
-    assert led.moments["m2"].affinities == ["@b"]
+    led = _respond_and_ingest(led, cfg, {"a": ["m0", "m1"], "b": ["m2"]})
+    assert led.moments["m0"].affinities == ["a"]
+    assert led.moments["m1"].affinities == ["a"]
+    assert led.moments["m2"].affinities == ["b"]
 
 def test_ingest_overlap_is_sorted_union(tmp_path):
     # a moment selected by BOTH accounts -> both in affinities (overlap allowed), sorted + deduped.
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar"), _acct("@b", "drums", aid="2")])
+    led = _seed(cfg, [_acct("a", "guitar"), _acct("b", "drums", aid="2")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    led = _respond_and_ingest(led, cfg, {"@b": ["m0"], "@a": ["m0", "m0"]})   # dup + cross-account
-    assert led.moments["m0"].affinities == ["@a", "@b"]
+    led = _respond_and_ingest(led, cfg, {"b": ["m0"], "a": ["m0", "m0"]})   # dup + cross-account
+    assert led.moments["m0"].affinities == ["a", "b"]
 
 def test_ingest_is_generous_no_count_cap(tmp_path):
     # the wired LLM selection has NO count cap by design: an account gets ALL its picks (the operator does not
     # want output capped for cost). There is no per-account budget knob — the heuristic's own `budget` arg is
     # the only cap and it is unwired.
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar")], moments=tuple(f"m{i}" for i in range(7)))
+    led = _seed(cfg, [_acct("a", "guitar")], moments=tuple(f"m{i}" for i in range(7)))
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    led = _respond_and_ingest(led, cfg, {"@a": [f"m{i}" for i in range(7)]})
-    assert {m.id for m in led.moments.values() if m.affinities == ["@a"]} == {f"m{i}" for i in range(7)}
+    led = _respond_and_ingest(led, cfg, {"a": [f"m{i}" for i in range(7)]})
+    assert {m.id for m in led.moments.values() if m.affinities == ["a"]} == {f"m{i}" for i in range(7)}
 
 def test_ingest_ignores_unknown_moment_and_inactive_handle(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar")])
+    led = _seed(cfg, [_acct("a", "guitar")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    led = _respond_and_ingest(led, cfg, {"@a": ["m0", "nope"], "@ghost": ["m1"]})
-    assert led.moments["m0"].affinities == ["@a"]
+    led = _respond_and_ingest(led, cfg, {"a": ["m0", "nope"], "ghost": ["m1"]})
+    assert led.moments["m0"].affinities == ["a"]
     assert led.moments["m1"].affinities == []     # @ghost is not an active account -> ignored
     assert "nope" not in led.moments              # a moment id that doesn't exist is silently skipped
 
 def test_ingest_noop_without_response(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar")])
+    led = _seed(cfg, [_acct("a", "guitar")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
     led = ingest_moment_casting(led, cfg, "src_1", Accounts.load(cfg))   # no response written yet
     assert all(m.affinities == [] for m in led.moments.values())
@@ -111,10 +111,10 @@ def test_ingest_noop_without_response(tmp_path):
 def test_ingest_only_casts_decided_moments(tmp_path):
     # a still-picked (hookless) moment must not be cast — only decided moments are render/post candidates.
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar")])
+    led = _seed(cfg, [_acct("a", "guitar")])
     _moment(led, "m_picked", state=MomentState.picked); led.save(); led = Ledger.load(cfg)
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    led = _respond_and_ingest(led, cfg, {"@a": ["m_picked"]})
+    led = _respond_and_ingest(led, cfg, {"a": ["m_picked"]})
     assert led.moments["m_picked"].affinities == []
 
 
@@ -126,7 +126,7 @@ def test_re_decision_discards_casting_gate(tmp_path):
     from fanops.moments import request_moments, ingest_moments
     from fanops.models import MomentPick, MomentDecision
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar")])
+    led = _seed(cfg, [_acct("a", "guitar")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg)); led.save()
     assert latest_request_id(cfg, "moment_casting", "src_1") is not None
     led = request_moments(Ledger.load(cfg), cfg, "src_1")
@@ -144,22 +144,22 @@ def test_responder_answers_casting_gate(tmp_path):
     # ingest applies it — proving the gate validates against MomentCastingDecision end-to-end (no live LLM).
     from fanops.responder import LlmResponder
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar"), _acct("@b", "drums", aid="2")])
+    led = _seed(cfg, [_acct("a", "guitar"), _acct("b", "drums", aid="2")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg)); led.save()
     def fake_model(kind, payload):
-        assert kind == "moment_casting" and {p["handle"] for p in payload["personas"]} == {"@a", "@b"}
-        return {"selections": {"@a": ["m0"], "@b": ["m1", "m2"]}}
+        assert kind == "moment_casting" and {p["handle"] for p in payload["personas"]} == {"a", "b"}
+        return {"selections": {"a": ["m0"], "b": ["m1", "m2"]}}
     LlmResponder(cfg, model=fake_model).answer_pending(cfg)
     led = ingest_moment_casting(Ledger.load(cfg), cfg, "src_1", Accounts.load(cfg))
-    assert led.moments["m0"].affinities == ["@a"]
-    assert led.moments["m1"].affinities == ["@b"] and led.moments["m2"].affinities == ["@b"]
+    assert led.moments["m0"].affinities == ["a"]
+    assert led.moments["m1"].affinities == ["b"] and led.moments["m2"].affinities == ["b"]
 
 def test_moment_casting_prompt_builds():
     from fanops.prompts import moment_casting_prompt
     out = moment_casting_prompt({"moments": [{"moment_id": "m0", "reason": "guitar solo", "start": 0, "end": 7,
                                               "signal_score": 1.0, "hook": "watch this"}],
                                  "personas": [{"handle": "@a", "persona": "guitar nerd"}], "language": "en"})
-    assert "@a" in out and "m0" in out and "DIFFERENTIATION FIRST" in out.upper()   # MOL-129: differentiation-first, not the old GENEROUS/overlap framing
+    assert "a" in out and "m0" in out and "DIFFERENTIATION FIRST" in out.upper()   # MOL-129: differentiation-first, not the old GENEROUS/overlap framing
 
 
 def _req_path(cfg, source_id):
@@ -170,15 +170,15 @@ def _req_path(cfg, source_id):
 # ---- M4b: the LLM gate's selection lands a durable selection FACT (method=llm) ----
 def test_ingest_writes_llm_selection_facts(tmp_path):
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar"), _acct("@b", "drums", aid="2")])
+    led = _seed(cfg, [_acct("a", "guitar"), _acct("b", "drums", aid="2")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    led = _respond_and_ingest(led, cfg, {"@a": ["m0", "m1"], "@b": ["m2"]})
-    fa = {f.moment_id: f for f in led.selection_facts_of_account("@a")}
+    led = _respond_and_ingest(led, cfg, {"a": ["m0", "m1"], "b": ["m2"]})
+    fa = {f.moment_id: f for f in led.selection_facts_of_account("a")}
     assert set(fa) == {"m0", "m1"}                                # one fact per LLM-selected (account, moment)
     assert fa["m0"].method == "llm" and fa["m0"].reason == "r"    # the moment's editorial reason is the WHY
     assert fa["m0"].overlap is None and fa["m0"].rank is None and fa["m0"].signal is None   # LLM-chosen: no heuristic score
     assert fa["m0"].source_id == "src_1" and fa["m0"].created_at is not None
-    fb = led.selection_facts_of_account("@b")
+    fb = led.selection_facts_of_account("b")
     assert len(fb) == 1 and fb[0].moment_id == "m2" and fb[0].method == "llm"
 
 
@@ -188,14 +188,14 @@ def test_persona_bearing_zero_pick_emits_breadcrumb_not_silent(tmp_path):
     # vanish: a labeled breadcrumb names it (the operator can cast manually) and NO auto-fan record is written
     # (the no-fan-leak contract). An account that WAS picked is not named.
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "hype"), _acct("@b", "lyric", aid="2")])
+    led = _seed(cfg, [_acct("a", "hype"), _acct("b", "lyric", aid="2")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    led = _respond_and_ingest(led, cfg, {"@a": ["m0", "m1"], "@b": []})   # @b: zero picks
+    led = _respond_and_ingest(led, cfg, {"a": ["m0", "m1"], "b": []})   # @b: zero picks
     src = led.sources["src_1"]
-    assert src.degraded_reason and "@b" in src.degraded_reason            # @b named, VISIBLE
-    assert "@a" not in (src.degraded_reason or "")                       # @a was picked -> not named
-    assert led.account_selection_for("src_1", "@b") is None              # NO auto-fan record (no-fan-leak)
-    assert led.account_selection_for("src_1", "@a") is not None          # @a got its real selection
+    assert "nothing for b" in (src.degraded_reason or "")
+    assert "nothing for a" not in (src.degraded_reason or "")
+    assert led.account_selection_for("src_1", "b") is None              # NO auto-fan record (no-fan-leak)
+    assert led.account_selection_for("src_1", "a") is not None          # @a got its real selection
 
 
 def test_zero_cast_candidate_shows_review_badge(tmp_path):
@@ -204,14 +204,14 @@ def test_zero_cast_candidate_shows_review_badge(tmp_path):
     from datetime import datetime, timezone
     from fanops.studio.views_review import account_lanes
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "hype"), _acct("@b", "lyric", aid="2")])
+    led = _seed(cfg, [_acct("a", "hype"), _acct("b", "lyric", aid="2")])
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    led = _respond_and_ingest(led, cfg, {"@a": ["m0"], "@b": []})
+    led = _respond_and_ingest(led, cfg, {"a": ["m0"], "b": []})
     led.save(); led = Ledger.load(cfg)
     lanes = account_lanes(led, Accounts.load(cfg), cfg, source_id="src_1", now=datetime.now(timezone.utc))
-    lane_b = next(ln for ln in lanes.lanes if ln.account == "@b")
+    lane_b = next(ln for ln in lanes.lanes if ln.account == "b")
     assert lane_b.cast_count == 0 and lane_b.zero_cast is True           # the explicit labeled state
-    lane_a = next(ln for ln in lanes.lanes if ln.account == "@a")
+    lane_a = next(ln for ln in lanes.lanes if ln.account == "a")
     assert lane_a.zero_cast is False                                     # @a was picked -> not flagged
 
 
@@ -219,10 +219,10 @@ def test_zero_cast_candidate_shows_review_badge(tmp_path):
 def test_casting_payload_carries_frame_and_learned_signal(tmp_path, mocker):
     from fanops.models import AccountSelection, SelectionMethod, account_selection_id
     cfg = Config(root=tmp_path)
-    led = _seed(cfg, [_acct("@a", "guitar")])
+    led = _seed(cfg, [_acct("a", "guitar")])
     led.sources["src_1"] = led.sources["src_1"].model_copy(update={"duration": 20.0})   # probed -> casting eyes sample
     led.add_account_selection(AccountSelection(
-        id=account_selection_id("src_0", "@a"), source_id="src_0", account="@a",
+        id=account_selection_id("src_0", "a"), source_id="src_0", account="a",
         moment_ids=["m0"], method=SelectionMethod.llm))      # prior history hint for @a (references existing m0)
     led.save(); led = Ledger.load(cfg)
     mocker.patch("fanops.casting.extract_keyframes", return_value=["/kf/m0.jpg"])   # frames available (ffmpeg present)
@@ -230,10 +230,10 @@ def test_casting_payload_carries_frame_and_learned_signal(tmp_path, mocker):
     payload = json.loads(_req_path(cfg, "src_1").read_text())
     assert any(m.get("frame") for m in payload["moments"])    # per-moment keyframe threaded (casting eyes)
     assert payload["frames"]                                  # top-level frames list for the responder to attach
-    assert payload.get("learned", {}).get("@a")               # learned per-account history hint threaded (memory)
+    assert payload.get("learned", {}).get("a")               # learned per-account history hint threaded (memory)
 
 def test_casting_payload_text_only_when_no_frames(tmp_path, mocker):
-    cfg = Config(root=tmp_path); led = _seed(cfg, [_acct("@a", "guitar")])
+    cfg = Config(root=tmp_path); led = _seed(cfg, [_acct("a", "guitar")])
     led.sources["src_1"] = led.sources["src_1"].model_copy(update={"duration": 20.0}); led.save(); led = Ledger.load(cfg)
     mocker.patch("fanops.casting.extract_keyframes", return_value=[])   # no ffmpeg / no frames -> fail-open
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
@@ -246,8 +246,8 @@ def test_casting_answer_skips_ids_absent_from_current_pool(tmp_path):
     # AGENT-10 (characterization): a casting answer naming a moment id no longer in the pool (a superseded
     # re-pick) applies ONLY the still-present ids — the stale id is silently skipped, never resurrected. This
     # pins that casting correlates by source_id+rid + the skip-unknown guard, not a pool fingerprint.
-    cfg = Config(root=tmp_path); led = _seed(cfg, [_acct("@a", "guitar")], moments=("m0", "m1"))
+    cfg = Config(root=tmp_path); led = _seed(cfg, [_acct("a", "guitar")], moments=("m0", "m1"))
     led = request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    led = _respond_and_ingest(led, cfg, {"@a": ["m0", "GHOST"]})   # GHOST is not in the current pool
-    assert led.moments["m0"].affinities == ["@a"]
+    led = _respond_and_ingest(led, cfg, {"a": ["m0", "GHOST"]})   # GHOST is not in the current pool
+    assert led.moments["m0"].affinities == ["a"]
     assert "GHOST" not in led.moments                             # the stale/unknown id is never resurrected

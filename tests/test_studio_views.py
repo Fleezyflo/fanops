@@ -58,18 +58,18 @@ def test_review_buckets_editable_recent_held(tmp_path):
     led.add_clip(Clip(id="clip_held", parent_id="mom_1", path="/clips/h.mp4", aspect=Fmt.r9x16,
                       state=ClipState.held, held=True, held_reason="brand risk: foo"))
     # awaiting_approval post (the approve worklist) — editable, never imminent (gated, can't ship)
-    led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_edit", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="EDIT ME", hashtags=["#x"],
                       state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=3))))
     # an already-approved (queued) post has LEFT Review for the Schedule -> must NOT appear in editable
-    led.add_post(Post(id="p_appr", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_appr", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="APPROVED", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(minutes=1))))
     # recent published post (within 24h) on a DISTINCT clip — Face 4 dedups a clip out of 'recent' when it
     # is ALSO in the editable worklist, so the recent bucket needs its own shipped-only clip to cover it.
     led.add_clip(Clip(id="clip_recent", parent_id="mom_1", path="/clips/clip_recent.mp4", aspect=Fmt.r9x16,
                       state=ClipState.published))
-    led.add_post(Post(id="p_recent", parent_id="clip_recent", account="@a", account_id="1",
+    led.add_post(Post(id="p_recent", parent_id="clip_recent", account="a", account_id="1",
                       platform=Platform.instagram, caption="SHIPPED", state=PostState.published,
                       scheduled_time=_z(NOW - timedelta(hours=2)), public_url="dryrun://p_recent"))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
@@ -98,7 +98,7 @@ def test_review_buckets_variant_media_url_is_post_scoped(tmp_path):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
                           "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p_v", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_v", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="v", state=PostState.awaiting_approval,
                       media_urls=["file:///clips/clip_1_variant.mp4"],
                       scheduled_time=_z(NOW + timedelta(hours=3))))
@@ -118,7 +118,7 @@ def test_review_buckets_surfaces_postless_clips_as_prepared(tmp_path):
     led.add_clip(Clip(id="clip_held", parent_id="mom_1", path="/h.mp4", aspect=Fmt.r9x16, state=ClipState.held, held=True, held_reason="brand risk"))
     led.add_clip(Clip(id="clip_retired", parent_id="mom_1", path="/r.mp4", aspect=Fmt.r9x16, state=ClipState.retired))
     led.add_clip(Clip(id="clip_posted", parent_id="mom_1", path="/p.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p1", parent_id="clip_posted", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="clip_posted", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=3))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
     by_bucket = {}
@@ -139,7 +139,7 @@ def test_held_clip_with_queued_post_only_in_held_not_editable(tmp_path):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)                   # clip_1 = queued
     led.clips["clip_1"].held = True; led.clips["clip_1"].held_reason = "pulled back"; led.clips["clip_1"].state = ClipState.held
-    led.add_post(Post(id="p_q", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p_q", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=3))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
     assert [c.bucket for c in cards if c.clip_id == "clip_1"] == ["held"]
@@ -151,16 +151,16 @@ def test_schedule_rows_sorted_with_recent_and_imminent_flags(tmp_path):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
                           "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p_far", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_far", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="far", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(hours=5))))
-    led.add_post(Post(id="p_soon", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_soon", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="soon", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(hours=1))))
-    led.add_post(Post(id="p_imm", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_imm", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="imm", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(minutes=2))))
-    led.add_post(Post(id="p_done", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_done", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="done", state=PostState.published,
                       scheduled_time=_z(NOW - timedelta(hours=1)), public_url="dryrun://p_done"))
     rows = schedule_rows(led, cfg, now=NOW)
@@ -181,7 +181,7 @@ def test_lift_empty_no_analyzed_posts(tmp_path):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
                           "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://p1"))
     view = lift_rows(led, cfg, Accounts.load(cfg))
     assert view.variant_rows == []
@@ -194,7 +194,7 @@ def test_lift_empty_state_names_postiz(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://p1"))
     reason = lift_rows(led, cfg, Accounts.load(cfg)).variant_empty_reason
     assert "postiz" in reason.lower() and "POSTIZ_API_KEY" in reason   # no key value rendered, just the env var name
@@ -204,7 +204,7 @@ def test_lift_analyzed_but_no_variant_key(tmp_path):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
                           "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
                       metrics={"lift_score": 50.0}, public_url="dryrun://p1"))   # analyzed but no variant_key
     view = lift_rows(led, cfg, Accounts.load(cfg))
@@ -216,10 +216,10 @@ def test_lift_ranks_variants_by_lift_score(tmp_path):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
                           "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p_lo", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_lo", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="lo", state=PostState.analyzed,
                       variant_key="vk_lo", variant_hook="CALM", metrics={"lift_score": 10.0}, public_url="dryrun://p_lo"))
-    led.add_post(Post(id="p_hi", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_hi", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="hi", state=PostState.analyzed,
                       variant_key="vk_hi", variant_hook="HYPE", metrics={"lift_score": 90.0}, public_url="dryrun://p_hi"))
     view = lift_rows(led, cfg, Accounts.load(cfg))
@@ -234,11 +234,11 @@ def test_lift_row_carries_degraded_marker(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p_deg", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_deg", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
                       variant_key="vk", variant_hook="HYPE",
                       metrics={"lift_score": 50.0, "lift_degraded": True, "lift_missing_keys": ["saves", "retention"]}, public_url="dryrun://p_deg"))
-    led.add_post(Post(id="p_ok", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_ok", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="y", state=PostState.analyzed,
                       variant_key="vk2", variant_hook="CALM", metrics={"lift_score": 40.0}, public_url="dryrun://p_ok"))
     rows = {r.variant_hook: r for r in lift_rows(led, cfg, Accounts.load(cfg)).variant_rows}
@@ -253,7 +253,7 @@ def test_lift_row_carries_degraded_marker(tmp_path):
 def _deg_post(led, pid, hook, lift, degraded):
     m = {"lift_score": lift}
     if degraded: m |= {"lift_degraded": True, "lift_missing_keys": ["saves", "retention"]}
-    led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
                       variant_key="vk_" + pid, variant_hook=hook, metrics=m, public_url="dryrun://" + pid))
 
@@ -322,41 +322,41 @@ def _lr(account, lift, hook="h"):
 
 def test_account_median_deltas_stamps_delta_vs_group_median():
     # median of [10, 30, 50] = 30 -> deltas -20 / 0 / +20 for the same account.
-    rows = [_lr("@a", 10.0), _lr("@a", 30.0), _lr("@a", 50.0)]
+    rows = [_lr("a", 10.0), _lr("a", 30.0), _lr("a", 50.0)]
     account_median_deltas(rows)
     assert [r.delta_vs_account_median for r in rows] == [-20.0, 0.0, 20.0]
 
 def test_account_median_deltas_even_count_uses_mean_of_middle_two():
     # statistics.median of [10, 20, 30, 40] = 25 -> matches stdlib semantics, not a pick-one.
-    rows = [_lr("@a", 10.0), _lr("@a", 20.0), _lr("@a", 30.0), _lr("@a", 40.0)]
+    rows = [_lr("a", 10.0), _lr("a", 20.0), _lr("a", 30.0), _lr("a", 40.0)]
     account_median_deltas(rows)
     assert [r.delta_vs_account_median for r in rows] == [-15.0, -5.0, 5.0, 15.0]
 
 def test_account_median_deltas_single_row_account_stays_none():
     # a median vs a single data point is degenerate -> no chip (mirrors lineage_stats' measured guard).
-    rows = [_lr("@solo", 42.0)]
+    rows = [_lr("solo", 42.0)]
     account_median_deltas(rows)
     assert rows[0].delta_vs_account_median is None
 
 def test_account_median_deltas_groups_are_per_account():
     # @a has 2 rows (median 15), @b has 1 row -> @b stays None, @a is deltated against ITS own median.
-    a1, a2, b1 = _lr("@a", 10.0), _lr("@a", 20.0), _lr("@b", 99.0)
+    a1, a2, b1 = _lr("a", 10.0), _lr("a", 20.0), _lr("b", 99.0)
     account_median_deltas([a1, a2, b1])
     assert [a1.delta_vs_account_median, a2.delta_vs_account_median] == [-5.0, 5.0]
     assert b1.delta_vs_account_median is None
 
 def test_account_median_deltas_excludes_unmeasured_rows_from_median_and_delta():
     # a None lift_score is excluded from the median AND never stamped; a group needs >=2 MEASURED rows.
-    measured1, measured2 = _lr("@a", 10.0), _lr("@a", 30.0)
-    unmeasured = LiftRow(variant_hook="u", account="@a", platform="instagram", lift_score=None, loop_state="s")  # type: ignore[arg-type]
+    measured1, measured2 = _lr("a", 10.0), _lr("a", 30.0)
+    unmeasured = LiftRow(variant_hook="u", account="a", platform="instagram", lift_score=None, loop_state="s")  # type: ignore[arg-type]
     account_median_deltas([measured1, unmeasured, measured2])
     assert [measured1.delta_vs_account_median, measured2.delta_vs_account_median] == [-10.0, 10.0]  # median 20
     assert unmeasured.delta_vs_account_median is None
 
 def test_account_median_deltas_one_measured_plus_unmeasured_stays_none():
     # only ONE measured row in the group (the other is None) -> degenerate, no delta.
-    measured = _lr("@a", 50.0)
-    unmeasured = LiftRow(variant_hook="u", account="@a", platform="instagram", lift_score=None, loop_state="s")  # type: ignore[arg-type]
+    measured = _lr("a", 50.0)
+    unmeasured = LiftRow(variant_hook="u", account="a", platform="instagram", lift_score=None, loop_state="s")  # type: ignore[arg-type]
     account_median_deltas([measured, unmeasured])
     assert measured.delta_vs_account_median is None
 
@@ -367,7 +367,7 @@ def test_account_median_deltas_fail_open_on_bad_input():
 
 def test_lift_row_carries_account_median_delta_field():
     # the additive field exists and defaults None WITHOUT disturbing the existing delta_vs_best.
-    r = _lr("@a", 5.0)
+    r = _lr("a", 5.0)
     assert r.delta_vs_account_median is None and r.delta_vs_best is None
 
 def test_lift_page_renders_delta_arrow_glyphs(tmp_path):
@@ -378,7 +378,7 @@ def test_lift_page_renders_delta_arrow_glyphs(tmp_path):
     with Ledger.transaction(cfg) as led:
         _lineage(led)
         for i, (pid, hook, lift) in enumerate([("p_lo", "CALM", 10.0), ("p_mid", "MID", 30.0), ("p_hi", "HYPE", 50.0)]):
-            led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+            led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                               caption=hook, state=PostState.analyzed, variant_key="vk_%d" % i, variant_hook=hook,
                               metrics={"lift_score": lift}, public_url="dryrun://%s" % pid))
     from fanops.studio.app import create_app
@@ -399,7 +399,7 @@ def test_lift_compound_row_demotes_delta_vs_best_when_arrow_shows(tmp_path):
         # 3 posts of the SAME clip -> a lineage (sibling_count > 1) so lineage_delta's Δ-vs-best applies,
         # AND 3 lift scores on one account so the T-15 arrow applies. Both fire on the non-best rows.
         for i, (pid, hook, lift) in enumerate([("p_lo", "CALM", 10.0), ("p_mid", "MID", 30.0), ("p_hi", "HYPE", 50.0)]):
-            led.add_post(Post(id=pid, parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+            led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                               caption=hook, state=PostState.analyzed, variant_key="vk_%d" % i, variant_hook=hook,
                               metrics={"lift_score": lift}, public_url="dryrun://%s" % pid))
     from fanops.studio.app import create_app
@@ -431,10 +431,10 @@ def test_review_counts_tallies_buckets(tmp_path):
     led.add_clip(Clip(id="clip_held", parent_id="mom_1", path="/h.mp4", aspect=Fmt.r9x16,
                       state=ClipState.held, held=True, held_reason="brand risk"))
     led.add_clip(Clip(id="clip_edit", parent_id="mom_1", path="/e.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p_edit", parent_id="clip_edit", account="@a", account_id="1",
+    led.add_post(Post(id="p_edit", parent_id="clip_edit", account="a", account_id="1",
                       platform=Platform.instagram, caption="EDIT", state=PostState.awaiting_approval,
                       scheduled_time=_z(NOW + timedelta(hours=3))))
-    led.add_post(Post(id="p_recent", parent_id="clip_edit", account="@a", account_id="1",
+    led.add_post(Post(id="p_recent", parent_id="clip_edit", account="a", account_id="1",
                       platform=Platform.instagram, caption="SHIPPED", state=PostState.published,
                       scheduled_time=_z(NOW - timedelta(hours=2)), public_url="dryrun://p_recent"))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
@@ -464,7 +464,7 @@ def test_group_review_editable_sorted_by_day(tmp_path):
     _lineage_day(led, sid="src_new", mid="m_new", cid="c_new", day="2026-06-05")
     _lineage_day(led, sid="src_undated", mid="m_un", cid="c_un", day=None)
     for cid in ("c_old", "c_new", "c_un"):
-        led.add_post(Post(id=f"p_{cid}", parent_id=cid, account="@a", account_id="1",
+        led.add_post(Post(id=f"p_{cid}", parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval,
                           scheduled_time=_z(NOW + timedelta(hours=3))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
@@ -481,7 +481,7 @@ def test_review_body_poller_count_unchanged(tmp_path):
     _lineage_day(led, sid="src_a", mid="m_a", cid="c_a", day="2026-06-01")
     _lineage_day(led, sid="src_b", mid="m_b", cid="c_b", day="2026-06-05")
     for cid in ("c_a", "c_b"):
-        led.add_post(Post(id=f"p_{cid}", parent_id=cid, account="@a", account_id="1",
+        led.add_post(Post(id=f"p_{cid}", parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval,
                           scheduled_time=_z(NOW + timedelta(hours=3))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
@@ -489,18 +489,18 @@ def test_review_body_poller_count_unchanged(tmp_path):
 
 def test_group_posted_by_day_publish_day(tmp_path):
     from fanops.studio.views import group_posted_by_day, PostedRow
-    rows = [PostedRow(post_id="p1", clip_id="c", account="@a", platform="instagram", caption="x",
+    rows = [PostedRow(post_id="p1", clip_id="c", account="a", platform="instagram", caption="x",
                       public_url=None, scheduled_time="2026-06-01T00:00:00Z", lift_score=None,
                       published_at="2026-06-05T10:00:00Z"),
-            PostedRow(post_id="p2", clip_id="c", account="@a", platform="instagram", caption="y",
+            PostedRow(post_id="p2", clip_id="c", account="a", platform="instagram", caption="y",
                       public_url=None, scheduled_time="2026-06-05T00:00:00Z", lift_score=None,
                       published_at="2026-06-05T20:00:00Z"),
             # no published_at -> falls back to scheduled_time day
-            PostedRow(post_id="p3", clip_id="c", account="@a", platform="instagram", caption="z",
+            PostedRow(post_id="p3", clip_id="c", account="a", platform="instagram", caption="z",
                       public_url=None, scheduled_time="2026-06-02T00:00:00Z", lift_score=None,
                       published_at=None),
             # neither aware time -> undated, sorts last
-            PostedRow(post_id="p4", clip_id="c", account="@a", platform="instagram", caption="w",
+            PostedRow(post_id="p4", clip_id="c", account="a", platform="instagram", caption="w",
                       public_url=None, scheduled_time=None, lift_score=None, published_at=None)]
     groups = group_posted_by_day(rows)
     days = [d for d, _ in groups]
@@ -512,7 +512,7 @@ def test_group_posted_by_day_publish_day(tmp_path):
 
 def test_group_posted_by_day_naive_is_undated(tmp_path):
     from fanops.studio.views import group_posted_by_day, PostedRow
-    rows = [PostedRow(post_id="pn", clip_id="c", account="@a", platform="instagram", caption="x",
+    rows = [PostedRow(post_id="pn", clip_id="c", account="a", platform="instagram", caption="x",
                       public_url=None, scheduled_time="2026-06-05T00:00:00", lift_score=None,
                       published_at=None)]   # NAIVE scheduled_time -> undated (no local-tz guess)
     groups = group_posted_by_day(rows)
@@ -524,7 +524,7 @@ def test_group_posted_by_day_operator_tz_shifts_day(tmp_path, monkeypatch):
     from fanops.studio.views import group_posted_by_day, PostedRow
     monkeypatch.setenv("FANOPS_OPERATOR_TZ", "Asia/Dubai")
     cfg = Config(root=tmp_path)
-    rows = [PostedRow(post_id="p1", clip_id="c", account="@a", platform="instagram", caption="x",
+    rows = [PostedRow(post_id="p1", clip_id="c", account="a", platform="instagram", caption="x",
                       public_url=None, scheduled_time=None, lift_score=None,
                       published_at="2026-01-01T23:30:00Z")]
     assert [d for d, _ in group_posted_by_day(rows)] == ["2026-01-01"]          # cfg omitted -> UTC day (unchanged)
@@ -535,7 +535,7 @@ def test_posted_library_row_carries_published_at(tmp_path):
     from fanops.studio.views import posted_library
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c.mp4", state=ClipState.published))
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, scheduled_time="2026-06-01T00:00:00Z",
                       published_at="2026-06-05T10:00:00Z", public_url="dryrun://p1"))
     rows = posted_library(led, cfg)
@@ -548,7 +548,7 @@ def test_review_card_surfaces_removed_hook(tmp_path):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.moments["mom_1"].hook_removed = "made it and lost everything"   # what the guard stripped
-    led.add_post(Post(id="p_edit", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_edit", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://p_edit"))
     ed = [c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
           if c.bucket == "editable" and c.clip_id == "clip_1"][0]
@@ -556,7 +556,7 @@ def test_review_card_surfaces_removed_hook(tmp_path):
 
 
 # ---- P1: suggest_time helper + suggested_time on read-models (per-account operator scheduling) ----
-def _post(account="@a", platform=Platform.instagram, parent_id="clip_1"):
+def _post(account="a", platform=Platform.instagram, parent_id="clip_1"):
     return Post(id="p", parent_id=parent_id, account=account, account_id="1", platform=platform,
                 caption="x", state=PostState.awaiting_approval, public_url="dryrun://p")
 
@@ -588,7 +588,7 @@ def test_suggest_time_strictly_after_now_when_lead_zero(tmp_path, monkeypatch):
     date_str = NOW.date().isoformat()
     for n in range(2000):                            # find a (parent_id) whose surface_time(index=0) == now
         pid = f"clip_{n}"
-        raw = surface_time(NOW, "@a", "instagram", date_str, 0, clip_id=pid, lead_minutes=0)
+        raw = surface_time(NOW, "a", "instagram", date_str, 0, clip_id=pid, lead_minutes=0)
         if parse_iso(raw) <= NOW:
             out = suggest_time(cfg, _post(parent_id=pid), now=NOW)
             assert parse_iso(out) > NOW              # anti-degenerate +1s nudge fired
@@ -608,9 +608,9 @@ def test_schedulerow_carries_suggested_time(tmp_path):
     # a queued (editable) row carries the suggestion; a read-only past row carries None.
     from fanops.studio.views import schedule_rows
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pq", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pq", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=3))))
-    led.add_post(Post(id="pp", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pp", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, scheduled_time=_z(NOW - timedelta(hours=1)),
                       public_url="dryrun://pp"))
     rows = {r.post_id: r for r in schedule_rows(led, cfg, now=NOW)}
@@ -652,11 +652,11 @@ def _seed_home(cfg):
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.add_source(Source(id="src_tp", source_path="/v/tp.mp4", language="en", origin_kind="third_party"))
-    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
-    led.add_post(Post(id="p2", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="p2", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.queued, public_url="dryrun://p2"))
-    led.add_post(Post(id="p3", parent_id="clip_1", account="@b", account_id="2", platform=Platform.instagram,
+    led.add_post(Post(id="p3", parent_id="clip_1", account="b", account_id="2", platform=Platform.instagram,
                       caption="x", state=PostState.published, public_url="dryrun://p3"))
     led.save(); return led
 
@@ -671,13 +671,13 @@ def test_home_status_failed_and_live_trackable(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="plive", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="plive", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="live", state=PostState.published, public_url="https://www.instagram.com/reel/abc/"))
-    led.add_post(Post(id="pdry", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pdry", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="dry", state=PostState.published, public_url="dryrun://pdry"))
-    led.add_post(Post(id="pfail", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pfail", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="fail", state=PostState.failed, error_reason="postiz 429"))
-    led.add_post(Post(id="pinfl", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pinfl", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="wait", state=PostState.needs_reconcile, submission_id="cmqzabc"))
     led.save()
     c = home_status(cfg).counts
@@ -695,7 +695,7 @@ def test_home_awaiting_counts_moments_not_posts(tmp_path):
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"},
                          {"handle": "@c", "account_id": "3", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    for i, h in enumerate(["@a", "@b", "@c"]):            # 3 awaiting SURFACE posts, ONE moment (clip_1)
+    for i, h in enumerate(["a", "b", "c"]):            # 3 awaiting SURFACE posts, ONE moment (clip_1)
         led.add_post(Post(id=f"pa{i}", parent_id="clip_1", account=h, account_id=str(i + 1),
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://clip_1"))
     led.save()
@@ -710,9 +710,9 @@ def test_home_awaiting_matches_review_worklist(tmp_path):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
                          {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="pa", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pa", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.awaiting_approval, public_url="dryrun://pa"))
-    led.add_post(Post(id="pb", parent_id="clip_1", account="@b", account_id="2", platform=Platform.instagram,
+    led.add_post(Post(id="pb", parent_id="clip_1", account="b", account_id="2", platform=Platform.instagram,
                       caption="x", state=PostState.awaiting_approval, public_url="dryrun://pb"))
     led.save()
     now = datetime.now(timezone.utc)
@@ -721,13 +721,13 @@ def test_home_awaiting_matches_review_worklist(tmp_path):
 
 def test_home_status_by_account(tmp_path):
     cfg = Config(root=tmp_path); _seed_home(cfg)
-    assert home_status(cfg).by_account == {"@a": 2, "@b": 1}          # on-disk post facts, never fabricated
+    assert home_status(cfg).by_account == {"a": 2, "b": 1}          # on-disk post facts, never fabricated
 
 def test_home_status_batches_count(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    create_batch(led, name="Launch", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    create_batch(led, name="Launch", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
     assert home_status(cfg).counts["batches"] == 1
 
 def test_home_status_fail_open(tmp_path, monkeypatch):
@@ -747,8 +747,8 @@ def test_home_batches_counts_posts_born(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    b = create_batch(led, name="Launch", target_accounts=["@a"], now_iso="2026-06-22T00:00:00.000001Z")
-    led.add_post(Post(id="pb", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+    b = create_batch(led, name="Launch", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000001Z")
+    led.add_post(Post(id="pb", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.awaiting_approval, batch_id=b.id, public_url="dryrun://pb")); led.save()
     hb = home_batches(cfg)
     assert len(hb) == 1 and hb[0].posts_born == 1 and hb[0].is_zero_result is False
@@ -757,7 +757,7 @@ def test_home_batches_flags_zero_result(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    create_batch(led, name="Ghost", target_accounts=["@ghost"], now_iso="2026-06-22T00:00:00.000001Z")   # non-empty target, 0 posts
+    create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z")   # non-empty target, 0 posts
     create_batch(led, name="All", target_accounts=[], now_iso="2026-06-22T00:00:00.000002Z"); led.save()  # [] ALL-sentinel
     by_name = {h.name: h for h in home_batches(cfg)}
     assert by_name["Ghost"].is_zero_result is True and by_name["All"].is_zero_result is False
@@ -781,13 +781,13 @@ def test_review_surface_carries_per_account_length_cut_and_framing(tmp_path):
     ])
     led = Ledger.load(cfg); _lineage(led)
     # @long: a REAL per-account cut (render is_account_cut=True), post stamped its own length profile
-    led.add_render(Render(id="r_long", clip_id="clip_1", account="@long", surface_key="@long/instagram",
+    led.add_render(Render(id="r_long", clip_id="clip_1", account="long", surface_key="long/instagram",
                           hook_text="H", path="/clips/r_long.mp4", state=RenderState.rendered, is_account_cut=True))
-    led.add_post(Post(id="p_long", parent_id="clip_1", account="@long", account_id="1",
+    led.add_post(Post(id="p_long", parent_id="clip_1", account="long", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
                       render_id="r_long", clip_profile="long", scheduled_time=_z(NOW + timedelta(hours=3))))
     # @a: no render (shared-clip burn), the GLOBAL length, no pinned framing
-    led.add_post(Post(id="p_a", parent_id="clip_1", account="@a", account_id="2",
+    led.add_post(Post(id="p_a", parent_id="clip_1", account="a", account_id="2",
                       platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
                       clip_profile="talk", scheduled_time=_z(NOW + timedelta(hours=3))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
@@ -804,7 +804,7 @@ def test_review_surface_length_label_absent_when_no_profile(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p_x", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_x", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
                       clip_profile=None, scheduled_time=_z(NOW + timedelta(hours=3))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
@@ -818,15 +818,15 @@ from fanops.models import PostState as PS
 
 
 def test_classify_post_delivery_states(tmp_path):
-    p_await = Post(id="pa", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    p_await = Post(id="pa", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                    caption="x", state=PS.awaiting_approval)
-    p_q = Post(id="pq", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    p_q = Post(id="pq", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                caption="x", state=PS.queued)
-    p_inf = Post(id="pi", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    p_inf = Post(id="pi", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                  caption="x", state=PS.needs_reconcile, submission_id="cmqz_real_123")
-    p_live = Post(id="pl", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    p_live = Post(id="pl", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                   caption="x", state=PS.published, public_url="https://instagram.com/reel/abc/")
-    p_dry = Post(id="pd", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    p_dry = Post(id="pd", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                  caption="x", state=PS.published, public_url="dryrun://pd")
     assert classify_post_delivery(p_await) == "awaiting"
     assert classify_post_delivery(p_q) == "queued"
@@ -839,10 +839,10 @@ def test_schedule_rows_inflight_lane(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p_inf", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_inf", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="inf", state=PS.needs_reconcile,
                       submission_id="cmqz_abc", scheduled_time=_z(NOW + timedelta(hours=1))))
-    led.add_post(Post(id="p_q", parent_id="clip_1", account="@a", account_id="1",
+    led.add_post(Post(id="p_q", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="q", state=PS.queued,
                       scheduled_time=_z(NOW + timedelta(hours=2))))
     rows = schedule_rows(led, cfg, now=NOW)
@@ -856,9 +856,9 @@ def test_posted_library_delivery_filter(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    led.add_post(Post(id="pl", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pl", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="live", state=PS.published, public_url="https://instagram.com/x/"))
-    led.add_post(Post(id="pd", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pd", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="dry", state=PS.published, public_url="dryrun://pd"))
     from fanops.studio.views_results import posted_library
     assert len(posted_library(led, cfg, delivery="live")) == 1
@@ -871,7 +871,7 @@ from fanops.studio.views_results import classify_failure, failure_rollup
 
 
 def _fail_post(pid, reason):
-    return Post(id=pid, parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    return Post(id=pid, parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                 caption="x", state=PS.failed, error_reason=reason)
 
 
@@ -921,11 +921,11 @@ def test_delivery_audit_counts_buckets(tmp_path):
     from fanops.studio.views_results import delivery_audit
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    led.add_post(Post(id="pl", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pl", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="live", state=PS.published, public_url="https://instagram.com/x/"))
-    led.add_post(Post(id="pf", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pf", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="fail", state=PS.failed, error_reason="postiz 429"))
-    led.add_post(Post(id="pi", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="pi", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="wait", state=PS.needs_reconcile, submission_id="cmqzabc"))
     aud = delivery_audit(led)
     assert aud["live_trackable"] == 1 and aud["inflight"] == 1

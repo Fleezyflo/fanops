@@ -14,7 +14,7 @@ def test_clip_provenance_defaults_none_for_old_ledgers():
     assert c.first_frame_kind is None and c.cut_seconds is None
 
 def test_post_carries_full_attribution_key():
-    p = Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    p = Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
              caption="x", first_frame_kind="visual",
              clip_profile="song", cut_seconds=22.0, aspect=Fmt.r9x16)
     assert p.first_frame_kind == "visual"
@@ -22,7 +22,7 @@ def test_post_carries_full_attribution_key():
     assert p.cut_seconds == 22.0
 
 def test_post_attribution_defaults_none_for_old_ledgers():
-    p = Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+    p = Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
              caption="x")
     assert p.first_frame_kind is None
     assert p.clip_profile is None and p.cut_seconds is None

@@ -39,16 +39,16 @@ def _seed(cfg, *, moments=3, unrelated_sources=0, unrelated_sels_each=0):
             led.add_moment(Moment(id=mid, parent_id="src1", content_token=f"{i}-{i+5}", start=i * 10,
                                   end=i * 10 + 5, reason="r", state=MomentState.decided))
             led.add_clip(Clip(id=f"c{i}", parent_id=mid, path=f"/c{i}.mp4", state=ClipState.queued))
-            led.add_post(Post(id=f"p_a_{i}", parent_id=f"c{i}", account="@a", account_id="1",
+            led.add_post(Post(id=f"p_a_{i}", parent_id=f"c{i}", account="a", account_id="1",
                               platform=Platform.instagram, caption="A", state=PostState.awaiting_approval,
                               public_url=f"dryrun://p_a_{i}"))
-            led.add_post(Post(id=f"p_b_{i}", parent_id=f"c{i}", account="@b", account_id="2",
+            led.add_post(Post(id=f"p_b_{i}", parent_id=f"c{i}", account="b", account_id="2",
                               platform=Platform.instagram, caption="B", state=PostState.awaiting_approval,
                               public_url=f"dryrun://p_b_{i}"))
-        led.add_account_selection(AccountSelection(id=account_selection_id("src1", "@a"), source_id="src1",
-                                                   account="@a", moment_ids=list(mids), method=SelectionMethod.llm))
-        led.add_account_selection(AccountSelection(id=account_selection_id("src1", "@b"), source_id="src1",
-                                                   account="@b", moment_ids=[mids[0]], method=SelectionMethod.llm))
+        led.add_account_selection(AccountSelection(id=account_selection_id("src1", "a"), source_id="src1",
+                                                   account="a", moment_ids=list(mids), method=SelectionMethod.llm))
+        led.add_account_selection(AccountSelection(id=account_selection_id("src1", "b"), source_id="src1",
+                                                   account="b", moment_ids=[mids[0]], method=SelectionMethod.llm))
         # unrelated ledger history — the whole-map scan the fix must stop paying for on every cell.
         for s in range(unrelated_sources):
             sid = f"other{s}"
@@ -116,7 +116,7 @@ def test_review_matrix_cast_handles_unchanged(tmp_path):
     for mid in ("m0", "m1", "m2"):
         assert by_mid[mid].affinities == _display_handles(led.cast_handles_for("src1", mid), _by_norm)
     # @a cast on all moments; @b only on m0 (display handles preserve the '@' — accounts.json keys carry it).
-    assert set(by_mid["m0"].affinities) == {"@a", "@b"} and by_mid["m1"].affinities == ["@a"]
+    assert set(by_mid["m0"].affinities) == {"a", "b"} and by_mid["m1"].affinities == ["a"]
 
 
 # ── account_lanes: bounded, not per (account × moment) ────────────────────────
@@ -143,7 +143,7 @@ def test_account_lanes_cast_state_unchanged(tmp_path):
     led = Ledger.load(cfg); accts = Accounts.load(cfg)
     lv = views.account_lanes(led, accts, cfg, source_id="src1", now=NOW)
     lanes = {ln.account: ln for ln in lv.lanes}
-    a_cast = {r.moment_id for r in lanes["@a"].rows if r.is_cast}
-    b_cast = {r.moment_id for r in lanes["@b"].rows if r.is_cast}
+    a_cast = {r.moment_id for r in lanes["a"].rows if r.is_cast}
+    b_cast = {r.moment_id for r in lanes["b"].rows if r.is_cast}
     assert a_cast == {"m0", "m1", "m2"}      # @a cast on all
     assert b_cast == {"m0"}                    # @b cast only on m0 (durable AccountSelection truth, unchanged)

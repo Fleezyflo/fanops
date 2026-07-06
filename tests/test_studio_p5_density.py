@@ -20,7 +20,7 @@ def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
-def _seed_accounts(cfg, handles=("@a", "@b")):
+def _seed_accounts(cfg, handles=("a", "b")):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": h, "account_id": "1", "platforms": ["instagram"], "status": "active"} for h in handles]}))
@@ -42,7 +42,7 @@ def test_schedule_row_carries_caption(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     with Ledger.transaction(cfg) as led:
         _lineage(led)
-        led.add_post(Post(id="q1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="q1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                           caption="ship this one 🔥", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=9))))
     rows = views.schedule_rows(Ledger.load(cfg), cfg, now=NOW)
     r = [x for x in rows if x.post_id == "q1"][0]
@@ -52,7 +52,7 @@ def test_schedule_panel_renders_caption_column(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     with Ledger.transaction(cfg) as led:
         _lineage(led)
-        led.add_post(Post(id="q1", parent_id="clip_1", account="@a", account_id="1", platform=Platform.instagram,
+        led.add_post(Post(id="q1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                           caption="UNIQUECAP shippable", state=PostState.queued,
                           scheduled_time=_z(NOW + timedelta(hours=9))))
     html = _client(cfg).get("/schedule").data
@@ -65,7 +65,7 @@ def test_review_card_renders_source_window_transcript(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     with Ledger.transaction(cfg) as led:
         _lineage(led, excerpt="UNIQUE transcript peek line")
-        _await(led, "p_a", "@a")
+        _await(led, "p_a", "a")
     html = _client(cfg).get("/review?view=list").data
     assert b"showtime.mp4" in html                  # source_name surfaced
     assert "0–7".encode() in html                   # moment_window (en dash)
@@ -77,7 +77,7 @@ def test_review_card_has_per_surface_reject(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     with Ledger.transaction(cfg) as led:
         _lineage(led)
-        _await(led, "p_a", "@a"); _await(led, "p_b", "@b")
+        _await(led, "p_a", "a"); _await(led, "p_b", "b")
     html = _client(cfg).get("/review?view=list").data.decode()
     # each surface offers its OWN reject (a single-id control via hx-vals), distinct from the batch
     # checkbox set — so there are two single-id reject controls, one per post.
@@ -89,7 +89,7 @@ def test_per_surface_reject_rejects_single_post(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     with Ledger.transaction(cfg) as led:
         _lineage(led)
-        _await(led, "p_a", "@a"); _await(led, "p_b", "@b")
+        _await(led, "p_a", "a"); _await(led, "p_b", "b")
     _client(cfg).post("/posts/reject", data={"ids": "p_a"})
     led = Ledger.load(cfg)
     assert led.posts["p_a"].state is PostState.rejected      # the one rejected

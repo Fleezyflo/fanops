@@ -44,7 +44,7 @@ def test_ready_channels_explicit_provider_with_creds(tmp_path, monkeypatch):
     _seed(cfg, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"], "status": "active",
                  "backends": {"tiktok": "zernio"}}])
     ready = Accounts.load(cfg).live_ready_channels()
-    assert ready == [("@tk", "tiktok", "zernio")]
+    assert ready == [("tk", "tiktok", "zernio")]
 
 
 def test_ready_channels_excludes_provider_without_creds(tmp_path, monkeypatch):
@@ -65,7 +65,7 @@ def test_ready_channels_bridges_legacy_global(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    assert Accounts.load(cfg).live_ready_channels() == [("@ig", "instagram", "postiz")]
+    assert Accounts.load(cfg).live_ready_channels() == [("ig", "instagram", "postiz")]
 
 
 def test_ready_channels_excludes_inactive_accounts(tmp_path, monkeypatch):

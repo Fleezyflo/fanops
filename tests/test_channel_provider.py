@@ -38,20 +38,20 @@ def test_effective_provider_explicit_wins(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     _accounts(tmp_path, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"],
                           "status": "active", "backends": {"tiktok": "zernio"}}])
-    assert Accounts.load(Config(root=tmp_path)).effective_provider("@tk", Platform.tiktok) == "zernio"
+    assert Accounts.load(Config(root=tmp_path)).effective_provider("tk", Platform.tiktok) == "zernio"
 
 
 def test_effective_provider_bridges_legacy_global_when_live(tmp_path, monkeypatch):
     # the LIVE deployment: a channel with no explicit provider keeps publishing via the legacy global.
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     _accounts(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
-    assert Accounts.load(Config(root=tmp_path)).effective_provider("@ig", Platform.instagram) == "postiz"
+    assert Accounts.load(Config(root=tmp_path)).effective_provider("ig", Platform.instagram) == "postiz"
 
 
 def test_effective_provider_none_when_global_not_live(tmp_path, monkeypatch):
     # the NEW deployment: FANOPS_POSTER unset (dryrun) -> no bridge -> a channel MUST declare a provider.
     _accounts(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
-    assert Accounts.load(Config(root=tmp_path)).effective_provider("@ig", Platform.instagram) is None
+    assert Accounts.load(Config(root=tmp_path)).effective_provider("ig", Platform.instagram) is None
 
 
 def test_effective_provider_no_bridge_for_platform_global_does_not_serve(tmp_path, monkeypatch):
@@ -60,7 +60,7 @@ def test_effective_provider_no_bridge_for_platform_global_does_not_serve(tmp_pat
     # or burns the post). The TikTok channel must declare its own provider (e.g. zernio) instead.
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     _accounts(tmp_path, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"], "status": "active"}])
-    assert Accounts.load(Config(root=tmp_path)).effective_provider("@tk", Platform.tiktok) is None
+    assert Accounts.load(Config(root=tmp_path)).effective_provider("tk", Platform.tiktok) is None
 
 
 def test_effective_provider_bridge_serves_its_own_platform(tmp_path, monkeypatch):
@@ -68,7 +68,7 @@ def test_effective_provider_bridge_serves_its_own_platform(tmp_path, monkeypatch
     # H2 narrowing never strands a channel the legacy global legitimately published.
     monkeypatch.setenv("FANOPS_POSTER", "zernio")
     _accounts(tmp_path, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"], "status": "active"}])
-    assert Accounts.load(Config(root=tmp_path)).effective_provider("@tk", Platform.tiktok) == "zernio"
+    assert Accounts.load(Config(root=tmp_path)).effective_provider("tk", Platform.tiktok) == "zernio"
 
 
 # ---- C1: is_live_backend keys off PER-CHANNEL readiness, not the retired global poster_backend ----
@@ -102,7 +102,7 @@ def test_publish_due_skips_live_channel_with_no_provider(tmp_path, monkeypatch, 
     cfg = Config(root=tmp_path)
     _accounts(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
-        _queued(led, "p1", "@ig", Platform.instagram)
+        _queued(led, "p1", "ig", Platform.instagram)
     gp = mocker.patch("fanops.post.run.get_poster")
     res = publish_due(cfg)
     gp.assert_not_called()                                    # never tried to publish
@@ -123,7 +123,7 @@ def test_publish_due_dryrun_posts_nothing_even_with_explicit_provider(tmp_path, 
     _accounts(tmp_path, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"],
                           "status": "active", "backends": {"tiktok": "zernio"}}])
     with Ledger.transaction(cfg) as led:
-        _queued(led, "p1", "@tk", Platform.tiktok, acct_id="a")
+        _queued(led, "p1", "tk", Platform.tiktok, acct_id="a")
     seen = {}
     class _Fake:
         def __init__(self, backend): self.backend = backend
@@ -140,7 +140,7 @@ def test_publish_post_no_provider_returns_none(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _accounts(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
-        _queued(led, "p1", "@ig", Platform.instagram)
+        _queued(led, "p1", "ig", Platform.instagram)
     gp = mocker.patch("fanops.post.run.get_poster")
     assert publish_post(cfg, "p1") is None
     gp.assert_not_called()
@@ -165,9 +165,9 @@ def test_metrics_routing_uses_effective_provider_skips_none(tmp_path, monkeypatc
     seen = []
     mocker.patch.object(track, "_metrics_client_for",
                         side_effect=lambda c, b, ids: (seen.append((b, tuple(ids))), (lambda w="30d": []))[1])
-    posts = [Post(id="p1", parent_id="c", account="@tk", account_id="z1", platform=Platform.tiktok,
+    posts = [Post(id="p1", parent_id="c", account="tk", account_id="z1", platform=Platform.tiktok,
                   caption="c", state=PostState.published, submission_id="s1", public_url="dryrun://p1"),
-             Post(id="p2", parent_id="c", account="@ig", account_id="i1", platform=Platform.instagram,
+             Post(id="p2", parent_id="c", account="ig", account_id="i1", platform=Platform.instagram,
                   caption="c", state=PostState.published, submission_id="s2", public_url="dryrun://p2")]
     track._default_list_posts(cfg, posts=posts)()
     assert seen == [("zernio", ("s1",))]                  # ONLY the zernio channel; the provider-less IG post skipped
@@ -182,8 +182,8 @@ def test_reconcile_routing_uses_effective_provider_skips_none(tmp_path, monkeypa
     cfg = Config(root=tmp_path)
     from fanops.reconcile import _reconcilable_routing
     with Ledger.transaction(cfg) as led:
-        _submitted(led, "p1", "@tk", Platform.tiktok, "s1", acct_id="z1")
-        _submitted(led, "p2", "@ig", Platform.instagram, "s2", acct_id="i1")
+        _submitted(led, "p1", "tk", Platform.tiktok, "s1", acct_id="z1")
+        _submitted(led, "p2", "ig", Platform.instagram, "s2", acct_id="i1")
     assert _reconcilable_routing(cfg, Ledger.load(cfg)) == {"s1": "zernio"}   # p2 skipped, NOT dryrun-defaulted
 
 
@@ -196,7 +196,7 @@ def test_needs_reconcile_post_is_never_republished(tmp_path, monkeypatch, mocker
     _accounts(tmp_path, [{"handle": "@tk", "platforms": ["tiktok"], "status": "active",
                           "backends": {"tiktok": "zernio"}, "integrations": {"tiktok": "z1"}}])
     with Ledger.transaction(cfg) as led:
-        led.add_post(Post(id="p1", parent_id="c", account="@tk", account_id="z1", platform=Platform.tiktok,
+        led.add_post(Post(id="p1", parent_id="c", account="tk", account_id="z1", platform=Platform.tiktok,
                           caption="c", state=PostState.needs_reconcile, submission_id="s1",
                           media_urls=["https://x/v.mp4"], scheduled_time="2020-01-01T00:00:00+00:00", public_url="dryrun://p1"))
     gp = mocker.patch("fanops.post.run.get_poster")

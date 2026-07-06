@@ -13,7 +13,7 @@ from fanops.post.run import publish_post, publish_due
 def _queued(led, cfg, pid="p1", cid="clip_1", when="2999-01-01T00:00:00Z"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-    led.add_post(Post(id=pid, parent_id=cid, account="@a", account_id="98432",
+    led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
                       platform=Platform.instagram, caption="ship it",
                       scheduled_time=when, state=PostState.queued))
     led.save()
@@ -116,9 +116,9 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
     monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     rid = "render_x"; vf = cfg.clips / "v.mp4"; vf.parent.mkdir(parents=True, exist_ok=True); vf.write_bytes(b"V")
-    led.add_render(Render(id=rid, clip_id="c1", account="@a", surface_key="@a|instagram", path=str(vf)))
+    led.add_render(Render(id=rid, clip_id="c1", account="a", surface_key="a|instagram", path=str(vf)))
     led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(vf), state=ClipState.queued))
-    led.add_post(Post(id="p1", parent_id="c1", account="@a", account_id="98", platform=Platform.instagram,
+    led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="98", platform=Platform.instagram,
                       caption="x", state=PostState.queued, scheduled_time="2000-01-01T00:00:00Z",
                       render_id=rid, media_urls=[f"file://{vf}"], public_url="dryrun://p1"))
     led.save()
@@ -209,7 +209,7 @@ def test_publish_backend_fallback_logs_when_it_fires(tmp_path, monkeypatch):
     from fanops.post.compress import publish_backend_for_post
     cfg = Config(root=tmp_path)
     monkeypatch.setattr("fanops.accounts.Accounts.load", staticmethod(lambda c: (_ for _ in ()).throw(RuntimeError("accounts corrupt"))))
-    post = Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram, caption="x")
+    post = Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x")
     assert publish_backend_for_post(cfg, post) == "dryrun"                      # safe value byte-identical (no poster_backend set)
     assert "backend_fallback" in cfg.log_path.read_text()                       # breadcrumb landed
 
@@ -220,7 +220,7 @@ def test_publish_backend_no_log_on_happy_path(tmp_path):
     from fanops.accounts import add_account, set_backend
     cfg = Config(root=tmp_path)
     add_account(cfg, "@tt", [Platform.tiktok], status="active"); set_backend(cfg, "@tt", "tiktok", "zernio")
-    post = Post(id="p", parent_id="c", account="@tt", account_id="1", platform=Platform.tiktok, caption="x")
+    post = Post(id="p", parent_id="c", account="tt", account_id="1", platform=Platform.tiktok, caption="x")
     assert publish_backend_for_post(cfg, post) == "zernio"                      # resolved cleanly, no fallback
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "backend_fallback" not in log                                       # NOT logged on the happy path
@@ -232,7 +232,7 @@ def test_resolve_publish_account_id_fallback_logs_when_it_fires(tmp_path):
     cfg = Config(root=tmp_path)
     class _Boom:
         def resolve_account_id(self, handle, platform=None): raise RuntimeError("no mapping")
-    post = Post(id="p", parent_id="c", account="@a", account_id="frozen_id", platform=Platform.instagram, caption="x")
+    post = Post(id="p", parent_id="c", account="a", account_id="frozen_id", platform=Platform.instagram, caption="x")
     assert _resolve_publish_account_id(_Boom(), post, cfg=cfg) is None          # safe value: None -> frozen id stands
     assert "account_id_fallback" in cfg.log_path.read_text()                    # breadcrumb landed
 
@@ -242,7 +242,7 @@ def test_resolve_publish_account_id_no_log_on_happy_path(tmp_path):
     cfg = Config(root=tmp_path)
     class _Ok:
         def resolve_account_id(self, handle, platform=None): return "live_id"
-    post = Post(id="p", parent_id="c", account="@a", account_id="frozen_id", platform=Platform.instagram, caption="x")
+    post = Post(id="p", parent_id="c", account="a", account_id="frozen_id", platform=Platform.instagram, caption="x")
     assert _resolve_publish_account_id(_Ok(), post, cfg=cfg) == "live_id"       # resolved cleanly
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "account_id_fallback" not in log                                    # NOT logged on the happy path

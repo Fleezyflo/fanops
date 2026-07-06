@@ -20,7 +20,7 @@ def test_old_ledger_with_hooks_by_persona_loads(tmp_path):
         "sources": {"s1": {"id": "s1", "source_path": "/s.mp4", "state": "catalogued"}},
         "moments": {"m1": {"id": "m1", "parent_id": "s1", "content_token": "0-5", "start": 0, "end": 5,
                            "reason": "r", "state": "decided", "hook": "the kept hook",
-                           "hooks_by_persona": {"@a": "legacy"}, "hooks_by_persona_removed": {"@a": "x"}}},
+                           "hooks_by_persona": {"a": "legacy"}, "hooks_by_persona_removed": {"a": "x"}}},
         "clips": {}, "posts": {}, "renders": {}, "selection_facts": {}, "batches": {}, "stitch_plans": {},
     }
     cfg.control.mkdir(parents=True, exist_ok=True)
@@ -44,15 +44,15 @@ def test_crosspost_uses_m_hook(tmp_path, monkeypatch):
         "sources": {"s1": {"id": "s1", "source_path": "/s.mp4", "state": "catalogued", "width": 1080, "height": 1920}},
         "moments": {"m1": {"id": "m1", "parent_id": "s1", "content_token": "0-5", "start": 0, "end": 5,
                            "reason": "r", "state": "clipped", "hook": "ONE MOMENT HOOK",
-                           "hooks_by_persona": {"@a": "LEGACY"}}},
+                           "hooks_by_persona": {"a": "LEGACY"}}},
         "clips": {"c1": {"id": "c1", "parent_id": "m1", "path": str(base), "aspect": "9:16", "state": "captioned",
-                         "meta_captions": {"@a/instagram": {"caption": "A", "hashtags": []},
-                                           "@b/instagram": {"caption": "B", "hashtags": []}}}},
+                         "meta_captions": {"a/instagram": {"caption": "A", "hashtags": []},
+                                           "b/instagram": {"caption": "B", "hashtags": []}}}},
         "posts": {}, "renders": {}, "selection_facts": {}, "batches": {}, "stitch_plans": {},
     }))
     accts = Accounts(cfg)
-    accts.accounts = [Account(handle="@a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active),
-                      Account(handle="@b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active)]
+    accts.accounts = [Account(handle="a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active),
+                      Account(handle="b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active)]
     led = crosspost_clips(Ledger.load(cfg), cfg, accts, base_time="2026-06-02T18:00:00Z")
     hooks = {p.account: p.variant_hook for p in led.posts.values()}
-    assert hooks == {"@a": "ONE MOMENT HOOK", "@b": "ONE MOMENT HOOK"}
+    assert hooks == {"a": "ONE MOMENT HOOK", "b": "ONE MOMENT HOOK"}
