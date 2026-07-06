@@ -435,7 +435,7 @@ def caption_prompt(payload: dict) -> str:
         "that surface's `corpus` for that surface — they are its hand-picked, account-specific tags; fill "
         "any remaining slots (up to 4) from the menu above.\n"
         # ROOT FIX: the caption gate is HASHTAGS ONLY now — the on-screen hook is authored by the frame-
-        # seeing MOMENT gate (hooks_by_persona), never this blind text-only gate. The per-surface
+        # seeing MOMENT gate (m.hook), never this blind text-only gate. The per-surface
         # hook/axis/rationale ask was removed (the dormant coherence-gate machinery was deleted with it;
         # the learned/transferred feeds stay, empty by default while learning is frozen).
         f"{learned_block}"

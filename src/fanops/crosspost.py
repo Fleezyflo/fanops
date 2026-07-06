@@ -128,9 +128,7 @@ def render_account_file(led: Ledger, cfg: Config, *, post, acct, target_clip, sr
     hook = post.variant_hook
     aspect = target_clip.aspect
     rid, wants_cut, profile, top_bias = account_render_spec(cfg, clip=target_clip, hook=hook, acct=acct)
-    mom = led.moments.get(target_clip.parent_id)
-    own = mom.hooks_by_persona.get(post.account) if mom is not None else None
-    hook_source = HookSource.per_account if own else (HookSource.shared_fallback if hook else HookSource.none)
+    hook_source = HookSource.shared_fallback if hook else HookSource.none
     batch_id = src.batch_id if src is not None else None
     source_id = src.id if src is not None else None
     vpath = cfg.render_path(batch_id, source_id, rid, aspect)
@@ -243,10 +241,8 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
     variant_key = None
     variant_hook = None
     media_urls = []
-    # The on-screen per-account hook is the FRAME-SEEING moment author's hook for THIS handle
-    # (m.hooks_by_persona[handle]), falling back to the shared moment hook. m guarded defensively.
-    own_hook = m.hooks_by_persona.get(surf.account) if m is not None else None
-    hook_v = own_hook or (m.hook if m is not None else None)
+    # The on-screen hook is the moment author's single frame-grounded hook (m.hook). m guarded defensively.
+    hook_v = m.hook if m is not None else None
     if cfg.creative_variation and hook_v:
         variant_key = skey
         variant_hook = hook_v          # burned AT APPROVAL; account_render_spec(clip, hook, acct) there

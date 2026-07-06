@@ -206,8 +206,6 @@ class Moment(BaseModel):
                                                 # mechanical guard killed, not dead footage). None = nothing
                                                 # was stripped (old ledgers load fine).
     signal_score: float = 0.0
-    hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own frame-grounded on-screen hook (the moment author writes these); {} -> every surface uses `hook` (old ledgers load fine)
-    hooks_by_persona_removed: dict[str, str] = Field(default_factory=dict)   # per-account hooks stripped by guards (mirror hook_removed); {} on old ledgers
     hook_strategy: Optional[str] = None         # M2 router: text | clean_final | clean_awaiting_strategy:<key>
                                                 # | stitch:<format>. Observe-only annotation; None = unrouted
                                                 # (router off / old ledgers load). One writer: router.route_moments.
@@ -370,8 +368,8 @@ def is_real_submission_id(sid: Optional[str]) -> bool:
 
 
 class HookSource(str, Enum):
-    per_account = "per_account"          # this account's OWN persona-authored hook (m.hooks_by_persona[handle])
-    shared_fallback = "shared_fallback"  # fell back to the shared moment hook (m.hook)
+    per_account = "per_account"          # legacy provenance label (pre-P7 per-handle map); retained for old Render rows
+    shared_fallback = "shared_fallback"  # the moment's single on-screen hook (m.hook)
     none = "none"                        # no hook at all (variation OFF, or no hook resolved)
 
 
@@ -666,12 +664,11 @@ class MomentHookRequest(BaseModel):
     clip_profile: str = "talk"
     frames: list[str] = Field(default_factory=list)        # stills over the PICKED WINDOW (the author's eyes); [] -> text-only
     signal_peaks: list[dict] = Field(default_factory=list)  # window-scoped energy transients (the _hook_decision AUDIO step)
-    personas: list[dict] = Field(default_factory=list)      # [{handle, persona}] -> hooks_by_persona; [] -> no per-account hooks
+    personas: list[dict] = Field(default_factory=list)      # [{handle, persona}] owner voice for P6; [] -> shared hook
 
 class MomentHookDecision(BaseModel):
     request_id: str
     hook: Optional[str] = None      # the window-grounded on-screen RETENTION hook; None/"" -> this pick ships CLEAN (valid)
-    hooks_by_persona: dict[str, str] = Field(default_factory=dict)   # handle -> that account's own window-grounded hook
     hook_frames_unread: bool = False   # AGENT-9: NOT a model field — the responder STAMPS it (like request_id) when
                                        # claude_json_meta proves the attached frames were never read; ingest lifts it
                                        # onto Moment.hook_frames_unread. Default False -> a model-only answer is unchanged.
@@ -711,7 +708,7 @@ class CaptionItem(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     language: Optional[str] = None      # AUDIT H5: the LLM declares the caption's language
     # AGENT-7: hook/axis/rationale were REMOVED — the caption gate is hashtags-only (the frame-seeing moment
-    # gate owns hooks via hooks_by_persona), so these were never read and only widened the LLM --json-schema,
+    # gate owns the on-screen hook via m.hook), so these were never read and only widened the LLM --json-schema,
     # tempting the model to author a hook here. The DORMANT variant A/B machinery's persisted side lives on the
     # stored meta_captions entry (_caption_entry hook/axis keys, read by variant_amplify/digest/crosspost) and
     # is untouched. Old on-disk responses carrying these keys still parse (pydantic extra="ignore").
