@@ -9,7 +9,7 @@ from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState
 from fanops.post.postiz import (PostizPoster, build_postiz_payload, postiz_upload_media,
                                 postiz_list_integrations, postiz_check_auth, PostizIntegration,
-                                _extract_postiz_id)
+                                _extract_postiz_id, rewrite_media_base, _mirror_media_to_r2)
 from fanops.post import get_poster, get_media_uploader
 
 
@@ -366,6 +366,66 @@ def test_publish_2xx_captures_public_url_via_permalink_helper(tmp_path, monkeypa
     assert led.posts["p1"].state is PostState.submitted
     assert led.posts["p1"].submission_id == "postiz_1"
     assert led.posts["p1"].public_url == "https://dash.example/p/postiz_1"
+
+# ---- R2 public media mirror + upload-from-url (v4 self-healing publish path) ----
+def test_rewrite_media_base_rewrites_loopback_upload_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://media.example.com/clips")
+    cfg = Config(root=tmp_path)
+    assert rewrite_media_base("http://127.0.0.1:4007/uploads/clip_1.mp4", cfg) == \
+        "https://media.example.com/clips/uploads/clip_1.mp4"
+    assert rewrite_media_base("http://localhost:8787/media/render_x.9x16.mp4", cfg) == \
+        "https://media.example.com/clips/media/render_x.9x16.mp4"
+
+
+def test_rewrite_media_base_passthrough_foreign_https(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://media.example.com")
+    cfg = Config(root=tmp_path)
+    ext = "https://uploads.postiz.com/a.mp4"
+    assert rewrite_media_base(ext, cfg) == ext
+
+
+def test_rewrite_media_base_noop_without_public_base(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_MEDIA_PUBLIC_BASE", raising=False)
+    cfg = Config(root=tmp_path)
+    u = "http://127.0.0.1:4007/uploads/x.mp4"
+    assert rewrite_media_base(u, cfg) == u
+
+
+def test_mirror_media_to_r2_puts_and_returns_public_url(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://pub.r2.dev/fanops")
+    monkeypatch.setenv("R2_ACCOUNT_ID", "acct")
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "ak")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "sk")
+    monkeypatch.setenv("R2_BUCKET", "clips")
+    cfg = Config(root=tmp_path)
+    f = tmp_path / "v.mp4"; f.write_bytes(b"VIDEO")
+    put = mocker.patch("fanops.post.postiz.requests.put", return_value=_R(200))
+    url = _mirror_media_to_r2(cfg, f)
+    assert url.startswith("https://pub.r2.dev/fanops/fanops/")
+    assert url.endswith(".mp4")
+    assert put.called
+
+
+def test_postiz_upload_media_uses_r2_mirror_and_upload_from_url(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://pub.r2.dev/fanops")
+    monkeypatch.setenv("R2_ACCOUNT_ID", "acct")
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "ak")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "sk")
+    monkeypatch.setenv("R2_BUCKET", "clips")
+    cfg = _cfg(tmp_path, monkeypatch)
+    f = tmp_path / "a.mp4"; f.write_bytes(b"V")
+    mocker.patch("fanops.post.postiz.requests.put", return_value=_R(200))
+    post = mocker.patch("fanops.post.postiz.requests.post",
+                        return_value=_R(201, {"id": "img1", "path": "https://uploads.postiz.com/a.mp4"}))
+    out = postiz_upload_media(cfg, f)
+    assert out == "img1|https://uploads.postiz.com/a.mp4"
+    body = post.call_args[1]["json"]
+    assert body["url"].startswith("https://pub.r2.dev/fanops/fanops/")
+    assert post.call_args[0][0].endswith("/upload-from-url")
+
 
 def test_publish_unconfirmed_branches_never_capture_public_url(tmp_path, monkeypatch, mocker):
     # 2xx-no-id / 5xx / network ⇒ needs_reconcile and public_url stays None EVEN IF the helper would

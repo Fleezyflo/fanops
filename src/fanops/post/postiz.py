@@ -13,11 +13,15 @@ The created-post RESPONSE id key and the image-ref shape are INTEGRATION CHECKPO
 your Postiz version's API; the offline tests lock the SHAPE. accounts.json `account_id` carries the
 Postiz INTEGRATION id (from GET /public/v1/integrations) for a postiz deployment."""
 from __future__ import annotations
+import hashlib
+import hmac
 import logging
 import random
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
+from urllib.parse import quote, urlparse
 import requests
 from fanops.config import Config
 from fanops.errors import PostizAuthError, redact
@@ -93,6 +97,91 @@ def _postiz_image(u: str) -> dict:
         mid, mpath = u.split("|", 1); return {"id": mid, "path": mpath}
     return {"path": u} if u.startswith("http") else {"id": u}
 
+
+def rewrite_media_base(url: str, cfg: Config) -> str:
+    """Rewrite loopback / private Postiz upload paths to FANOPS_MEDIA_PUBLIC_BASE so hosted backends
+    (Postiz upload-from-url, Instagram pull-from-URL) can fetch the asset. Foreign https URLs and unset
+    public base pass through unchanged."""
+    base = cfg.media_public_base
+    if not base or not url:
+        return url
+    if url.startswith(base + "/") or url == base:
+        return url
+    if url.startswith("file://"):
+        return f"{base}/fanops/{Path(url.removeprefix('file://')).name}"
+    low = url.lower()
+    for prefix in ("http://127.0.0.1", "http://localhost", "https://127.0.0.1", "https://localhost"):
+        if low.startswith(prefix):
+            tail = urlparse(url).path.lstrip("/")
+            return f"{base}/{tail}" if tail else url
+    return url
+
+
+def _r2_configured(cfg: Config) -> bool:
+    return bool(cfg.media_public_base and cfg.r2_bucket and cfg.r2_access_key_id
+                and cfg.r2_secret_access_key and cfg.r2_account_id)
+
+
+def _r2_put_object(cfg: Config, *, key: str, body: bytes, content_type: str) -> None:
+    """S3-compatible PUT to Cloudflare R2 (no boto3 — requests + SigV4 only)."""
+    host = f"{cfg.r2_account_id}.r2.cloudflarestorage.com"
+    region, service = "auto", "s3"
+    t = datetime.now(timezone.utc)
+    amz_date, date_stamp = t.strftime("%Y%m%dT%H%M%SZ"), t.strftime("%Y%m%d")
+    payload_hash = hashlib.sha256(body).hexdigest()
+    enc_key = quote(key, safe="/")
+    canonical_uri = f"/{cfg.r2_bucket}/{enc_key}"
+    canonical_headers = (f"content-type:{content_type}\nhost:{host}\n"
+                           f"x-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n")
+    signed_headers = "content-type;host;x-amz-content-sha256;x-amz-date"
+    canonical_request = f"PUT\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+    algorithm, scope = "AWS4-HMAC-SHA256", f"{date_stamp}/{region}/{service}/aws4_request"
+    sts = (f"{algorithm}\n{amz_date}\n{scope}\n"
+           f"{hashlib.sha256(canonical_request.encode()).hexdigest()}")
+    def _hmac(k: bytes, msg: str) -> bytes:
+        return hmac.new(k, msg.encode(), hashlib.sha256).digest()
+    sk = ("AWS4" + cfg.r2_secret_access_key).encode()
+    sig_key = _hmac(_hmac(_hmac(_hmac(sk, date_stamp), region), service), "aws4_request")
+    signature = hmac.new(sig_key, sts.encode(), hashlib.sha256).hexdigest()
+    auth = (f"{algorithm} Credential={cfg.r2_access_key_id}/{scope}, "
+            f"SignedHeaders={signed_headers}, Signature={signature}")
+    resp = requests.put(f"https://{host}/{cfg.r2_bucket}/{enc_key}", data=body, headers={
+        "Content-Type": content_type, "Host": host, "x-amz-content-sha256": payload_hash,
+        "x-amz-date": amz_date, "Authorization": auth}, timeout=120)
+    if resp.status_code >= 300:
+        raise RuntimeError(f"R2 upload failed ({resp.status_code}) — body withheld")
+
+
+def _mirror_media_to_r2(cfg: Config, path: Path) -> str:
+    """Upload local media to R2 and return its public HTTPS URL under FANOPS_MEDIA_PUBLIC_BASE."""
+    if not _r2_configured(cfg):
+        raise RuntimeError("R2 mirroring not configured — set FANOPS_MEDIA_PUBLIC_BASE and R2_*")
+    body = path.read_bytes()
+    suffix = path.suffix if path.suffix else ".mp4"
+    key = f"fanops/{hashlib.sha256(body).hexdigest()[:32]}{suffix}"
+    ctype = "video/mp4" if suffix.lower() == ".mp4" else "application/octet-stream"
+    _r2_put_object(cfg, key=key, body=body, content_type=ctype)
+    return f"{cfg.media_public_base}/{key}"
+
+
+def _postiz_upload_from_url(cfg: Config, url: str) -> str:
+    """POST /public/v1/upload-from-url — fetch a public HTTPS asset into Postiz media storage."""
+    headers = {"Authorization": _key(cfg), "Content-Type": "application/json"}
+    pub = rewrite_media_base(url, cfg)
+    resp = requests.post(f"{_base(cfg)}{_PUBLIC}/upload-from-url", headers=headers,
+                         json={"url": pub}, timeout=120)
+    if resp.status_code == 401:
+        raise PostizAuthError("Postiz 401 on upload-from-url — check POSTIZ_API_KEY (response body withheld)")
+    if resp.status_code >= 300:
+        raise RuntimeError(f"Postiz upload-from-url failed ({resp.status_code}) — body withheld")
+    body = resp.json()
+    media_id = body.get("id") if isinstance(body, dict) else None
+    media_path = body.get("path") if isinstance(body, dict) else None
+    if not (media_id and media_path):
+        raise RuntimeError(f"Postiz upload-from-url response missing id/path; got keys {sorted(body) if isinstance(body, dict) else type(body)}")
+    return f"{media_id}|{rewrite_media_base(media_path, cfg)}"
+
+
 def _youtube_tags(hashtags) -> list[dict]:
     # YouTube tags are bare keywords — strip a leading '#', dedupe, drop empties. Postiz's
     # @IsYoutubeTagsLength caps the total label length (~500); stop before it so a long hashtag list
@@ -132,9 +221,11 @@ def build_postiz_payload(*, integration_id: str, platform: str, content: str,
 
 
 def postiz_upload_media(cfg: Config, path: Path, **kw) -> str:
-    """Upload a local file to Postiz (multipart POST /public/v1/upload) -> "id|path": the upload's
-    media id AND its public URL, joined (this Postiz version's image[] requires BOTH). 401 -> typed
-    PostizAuthError (halt)."""
+    """Upload a local file to Postiz. When R2 mirroring is configured, mirror bytes to the public CDN
+    first then POST /upload-from-url (Postiz SSRF-blocks localhost; IG needs internet-reachable URLs).
+    Otherwise multipart POST /upload -> "id|path". 401 -> typed PostizAuthError (halt)."""
+    if _r2_configured(cfg):
+        return _postiz_upload_from_url(cfg, _mirror_media_to_r2(cfg, path))
     headers = {"Authorization": _key(cfg)}
     with open(path, "rb") as fh:
         resp = requests.post(f"{_base(cfg)}{_PUBLIC}/upload", headers=headers,
@@ -148,7 +239,7 @@ def postiz_upload_media(cfg: Config, path: Path, **kw) -> str:
     media_path = body.get("path") if isinstance(body, dict) else None
     if not (media_id and media_path):
         raise RuntimeError(f"Postiz upload response missing id/path; got keys {sorted(body) if isinstance(body, dict) else type(body)}")
-    return f"{media_id}|{media_path}"
+    return f"{media_id}|{rewrite_media_base(media_path, cfg)}"
 
 
 def postiz_list_integrations(cfg: Config) -> list[PostizIntegration]:
@@ -275,8 +366,9 @@ class PostizPoster:
         from datetime import datetime, timezone
         from fanops.timeutil import iso_z
         sched = post.scheduled_time or iso_z(datetime.now(timezone.utc))
+        media_urls = [rewrite_media_base(u, self.cfg) for u in (post.media_urls or [])]
         payload = build_postiz_payload(integration_id=post.account_id, platform=post.platform.value,
-                                       content=post.caption, media_urls=post.media_urls,
+                                       content=post.caption, media_urls=media_urls,
                                        scheduled_time=sched,
                                        title=title, hashtags=post.hashtags)
         delay, last = 1.0, None
