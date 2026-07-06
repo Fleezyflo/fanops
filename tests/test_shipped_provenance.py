@@ -3,8 +3,6 @@ import json
 from fanops.config import Config
 from fanops.ledger import Ledger, SCHEMA_VERSION
 from fanops.models import Source, Moment, Clip, ClipState, MomentState, Fmt, HookSource
-from fanops.accounts import Accounts
-from fanops.crosspost import crosspost_clips
 
 def _accounts(cfg, accts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -21,18 +19,19 @@ def _seed_clip(cfg, *, moment_hook=None):
     clip.meta_captions = {"a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
     led.add_clip(clip); led.save(); return led
 
-def test_hook_source_shared_fallback(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+def test_hook_source_shared_fallback(tmp_path, mocker):
+    from fanops.crosspost import render_moment_file
+    from fanops.models import Post, Platform, PostState
     cfg = Config(root=tmp_path)
-    _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    _seed_clip(cfg, moment_hook="SHARED")
+    led = _seed_clip(cfg, moment_hook="SHARED")
+    clip = next(c for c in led.clips.values())
+    src = led.sources["src_1"]
+    post = Post(id="p1", parent_id=clip.id, account="a", account_id="1", platform=Platform.instagram,
+                caption="cap", state=PostState.awaiting_approval)
     mocker.patch("fanops.crosspost.render_account_cut", return_value=(True, 11.5))
     mocker.patch("fanops.overlay.burn_hook_only", return_value=True)
-    led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    led.save()
-    from fanops.studio.actions_approve import approve_posts
-    approve_posts(cfg, [p.id for p in led.posts.values()])
-    assert next(iter(Ledger.load(cfg).renders.values())).hook_source is HookSource.shared_fallback
+    plan = render_moment_file(led, cfg, post=post, target_clip=clip, src=src)
+    assert plan.hook_source is HookSource.shared_fallback
 
 def test_pre_p3_ledger_migrates_clean(tmp_path):
     cfg = Config(root=tmp_path)

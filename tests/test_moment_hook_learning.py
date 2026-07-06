@@ -3,7 +3,7 @@ import json
 from fanops.agentstep import request_path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState, Source, SourceState
+from fanops.models import Post, Platform, PostState, Source, SourceState, Moment, Clip
 from fanops.accounts import Accounts, Account, AccountStatus
 from fanops.moment_hook_learning import proven_hook_styles
 from fanops.moments import request_moments, ingest_moments, request_moment_hooks
@@ -13,9 +13,11 @@ from fanops.prompts import moment_hook_prompt
 
 
 def _vpost(led, pid, account, hook, lift, platform=Platform.instagram):
-    led.add_post(Post(id=pid, parent_id="c1", account=account, account_id="1", platform=platform,
-                      caption="x", state=PostState.analyzed, variant_key=f"vk_{pid}", variant_hook=hook,
-                      metrics={"lift_score": lift}, public_url="dryrun://c1"))
+    moment_id, clip_id = f"m_{pid}", f"c_{pid}"
+    led.add_moment(Moment(id=moment_id, parent_id="s1", start=0.0, end=4.0, reason="r", hook=hook))
+    led.add_clip(Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4"))
+    led.add_post(Post(id=pid, parent_id=clip_id, account=account, account_id="1", platform=platform,
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c1"))
 
 def _gated_winner(led, account, hook, platform=Platform.instagram):
     # 3 posts of `hook` (>= variant_min_posts) at high lift + 2 LOSE far below -> best_hooks fires.
