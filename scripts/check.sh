@@ -62,28 +62,15 @@ printf '        %s\n' "${CHANGED[@]}"
 echo "[check] ruff (scoped)"
 "$PY" -m ruff check "${CHANGED[@]}"
 
-# 2) Scoped pytest — the changed test files, plus tests/test_<module>.py for each changed src module.
-declare -A want=()
-for f in "${CHANGED[@]}"; do
-  case "$f" in
-    tests/*)
-      [[ -f "$f" ]] && want["$f"]=1
-      ;;
-    src/fanops/*.py)
-      base="$(basename "$f" .py)"
-      cand="tests/test_${base}.py"
-      [[ -f "$cand" ]] && want["$cand"]=1
-      ;;
-  esac
-done
+# 2) Scoped pytest — changed test files + convention/override map (scripts/check_scope.py handles
+# studio/, post/, and alternate test names like test_studio_actions.py).
+mapfile -t TESTS < <("$PY" "$ROOT/scripts/check_scope.py" "${CHANGED[@]}")
 
-if [[ ${#want[@]} -eq 0 ]]; then
+if [[ ${#TESTS[@]} -eq 0 ]]; then
   echo "[check] no matching test files for the changed modules — ruff passed; skipping pytest."
-  echo "[check] (a changed module with no tests/test_<name>.py is only proven by the full suite in CI.)"
+  echo "[check] (no scoped test mapping — only proven by the full suite in CI; see scripts/check_scope.py)"
   exit 0
 fi
-
-TESTS=("${!want[@]}")
 echo "[check] pytest (scoped): ${#TESTS[@]} file(s)"
 printf '        %s\n' "${TESTS[@]}"
 "$PY" -m pytest -q -m "not integration" "${TESTS[@]}"
