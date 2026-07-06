@@ -5,14 +5,18 @@ throwaway git repo (its own .venv with a stub python we control) so the assertio
 touch the real repo state or run the real suite. We assert on which files check.sh SELECTS, not on their
 pass/fail, by making the "unchanged" module a poison pill: if scoping leaks, it gets linted/run and the
 script fails loudly.
+
+check_scope.py (the resolver) is unit-tested directly; sandbox tests copy it in so the stub python can
+delegate scope resolution to the real interpreter.
 """
-import os, subprocess, textwrap
+import os, shutil, subprocess, textwrap
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 CHECK = REPO / "scripts" / "check.sh"
+SCOPE = REPO / "scripts" / "check_scope.py"
 
 # Body written into throwaway fixture test files. A real (never-trivial) assertion so it is not a
 # hollow test; the stub python never executes pytest on it anyway (scope is asserted via the log).
@@ -44,6 +48,12 @@ def sandbox(tmp_path):
     py_stub = venv_bin / "python"
     py_stub.write_text(textwrap.dedent("""\
         #!/usr/bin/env bash
+        # Delegate scope resolution to the real interpreter (stdlib-only script).
+        for a in "$@"; do
+          case "$a" in
+            *check_scope.py) exec /usr/bin/env python3 "$@";;
+          esac
+        done
         echo "$@" >> "$INVOKED_LOG"
         for a in "$@"; do
           case "$a" in
@@ -53,6 +63,11 @@ def sandbox(tmp_path):
         exit 0
     """))
     py_stub.chmod(0o755)
+
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy2(CHECK, scripts / "check.sh")
+    shutil.copy2(SCOPE, scripts / "check_scope.py")
 
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "t@t.t")
@@ -167,6 +182,57 @@ def test_check_full_mirrors_ci():
     full = (REPO / "scripts" / "check-full.sh").read_text()
     assert "ruff check ." in full
     assert 'pytest -q -m "not integration"' in full
+
+
+def test_scopes_studio_module_to_studio_test(sandbox):
+    """A studio/ subdir change maps to tests/test_studio_<name>.py (not skipped by top-level-only glob)."""
+    repo = sandbox
+    (repo / "src" / "fanops" / "studio").mkdir(parents=True, exist_ok=True)
+    (repo / "src" / "fanops" / "studio" / "widget.py").write_text("x = 1\n")
+    (repo / "tests" / "test_studio_widget.py").write_text(_FIXTURE_TEST)
+    (repo / "src" / "fanops" / "poison.py").write_text("y = 2\n")
+    _commit_all(repo, "baseline")
+
+    (repo / "src" / "fanops" / "studio" / "widget.py").write_text("x = 42\n")
+    _commit_all(repo, "touch studio widget")
+
+    r = _run(["bash", str(CHECK)], repo, env=_env(repo))
+    log = _log(repo)
+
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    assert "test_studio_widget.py" in log, f"studio scoped test not selected:\n{log}"
+    assert "poison" not in log, f"scope leaked to poison module:\n{log}"
+
+
+def test_check_scope_resolver_conventions():
+    """Unit-test the resolver: studio/, post/, and override alternates."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("check_scope", SCOPE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    r = mod.resolve_tests
+    assert "tests/test_studio_actions.py" in r(["src/fanops/studio/actions.py"])
+    assert "tests/test_post_run.py" in r(["src/fanops/post/run.py"])
+    assert "tests/test_smart_framing.py" in r(["src/fanops/framing.py"])
+    assert "tests/test_ledger.py" in r(["src/fanops/ledger.py"])
+    assert r(["src/fanops/controlio.py"]) == ["tests/test_cutover.py"]
+
+
+def test_check_scope_covers_all_src_modules():
+    """Every src module must resolve to >=1 test via convention or override (no silent blind spots)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("check_scope", SCOPE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    src_root = REPO / "src" / "fanops"
+    bare = []
+    for py in sorted(src_root.rglob("*.py")):
+        if py.name == "__init__.py":
+            continue
+        rel = py.relative_to(REPO).as_posix()
+        if not mod.resolve_tests([rel]):
+            bare.append(rel)
+    assert bare == [], f"modules with no scoped test mapping: {bare}"
 
 
 def test_check_self_heals_hookspath(sandbox):
