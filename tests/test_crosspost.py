@@ -555,8 +555,7 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
     led.add_source(Source(id="s1", source_path=str(tmp_path/"s.mp4"), width=1080, height=1920))
     # ROOT FIX: the per-account on-screen hooks are the FRAME-SEEING moment author's, keyed by handle
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
-                          state=MomentState.clipped, hook="default hook",
-                          hooks_by_persona={"@a": "HOOK A", "@b": "HOOK B"}))
+                          state=MomentState.clipped, hook="SHARED MOMENT HOOK"))
     # a captioned base clip; the caption gate writes NO hook now — a sentinel proves crosspost IGNORES it
     clip = Clip(id="c1", parent_id="m1", path=str(tmp_path/"c1.mp4"), aspect=Fmt.r9x16,
                 state=ClipState.captioned)
@@ -576,7 +575,7 @@ def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatc
     by_acct = {p.account: p for p in posts}
     # each account got a DIFFERENT variant_hook + variant_key; slice 2 (burn on approval) DEFERS the ffmpeg
     # burn to approval, so the mint RECORDS the per-account intent but runs NO burn and mints no Render.
-    assert by_acct["@a"].variant_hook == "HOOK A" and by_acct["@b"].variant_hook == "HOOK B"
+    assert by_acct["@a"].variant_hook == "SHARED MOMENT HOOK" and by_acct["@b"].variant_hook == "SHARED MOMENT HOOK"
     assert by_acct["@a"].variant_key and by_acct["@a"].variant_key != by_acct["@b"].variant_key
     assert calls == [] and led.renders == {}                          # mint defers the burn (no ffmpeg, no Render)
     assert all(p.render_id is None and p.media_urls == [] for p in posts)
@@ -600,7 +599,7 @@ def test_recrosspost_rewrites_stale_hook_on_awaiting_post_only(tmp_path, monkeyp
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          state=MomentState.clipped, hooks_by_persona={"@a": "HOOK A"}))
+                          state=MomentState.clipped, hook="HOOK A"))
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "c.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
@@ -622,7 +621,7 @@ def test_recrosspost_rewrites_stale_hook_on_awaiting_post_only(tmp_path, monkeyp
 
     def _redecide(hook):                                          # a re-caption resets the clip + changes this account's hook
         ld = Ledger.load(cfg)
-        ld.moments["mom_1"] = ld.moments["mom_1"].model_copy(update={"hooks_by_persona": {"@a": hook}})
+        ld.moments["mom_1"] = ld.moments["mom_1"].model_copy(update={"hook": hook})
         ld.set_clip_state("clip_1", ClipState.captioned); ld.save()
 
     _redecide("HOOK B"); led = _run()
