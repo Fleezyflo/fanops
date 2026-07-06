@@ -11,7 +11,6 @@ from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, Mo
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
 from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, discard_gate
-from fanops.text import sanitize_generated_text
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
@@ -326,7 +325,7 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         # window's frames. hook/hook_removed/hooks_by_persona stay at their empty defaults until then.
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.picked,
                            content_token=token, start=pick.start, end=pick.end,
-                           reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
+                           reason=pick.reason,
                            transcript_excerpt=pick.transcript_excerpt,
                            signal_score=pick.signal_score,
                            affinities=list(pick.personas),   # P1: owner stamped at birth; [] when persona-blind
@@ -459,7 +458,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
     for m in picked:
         dec = decisions[m.id]
         h = (dec.hook or "").strip()
-        hook = sanitize_generated_text(h) if h else None
+        hook = h or None
         hook_removed = None
         # Reject only MECHANICAL slop (is_weak_hook: exact cross/within-source dup, opening-template cluster)
         # OR an off-BRAND hook (brand_risk_flag). RF5: the post-generation PERSPECTIVE strip is REMOVED — the
@@ -472,7 +471,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
             hook = None                             # ...the clip still ships CLEAN by default
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
-        # per-account hooks: sanitize each (em-dash/quote burn-safety) + drop an off-BRAND one; a dropped
+        # per-account hooks: drop an off-BRAND one; a dropped
         # handle falls back to the shared `hook` at crosspost. RF5: NO perspective strip here either — the
         # generator authors these viewer-POV (each account's voice is its own stance), so a third-person
         # per-account hook is KEPT, not dropped. No cross-clip dedup (these are per-account variants of ONE clip).
@@ -493,7 +492,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
         hbp: dict[str, str] = {}
         hbp_removed: dict[str, str] = {}
         for hh, ph in raw_hbp.items():
-            s = sanitize_generated_text(ph) if ph else ""
+            s = (ph or "").strip()
             if s and not brand_risk_flag(s, cfg):
                 hbp[hh] = s
             elif (ph or "").strip():
