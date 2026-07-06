@@ -199,6 +199,30 @@ def register_review_routes(app, cfg):
             return _review_panel(actions.ActionResult(ok=False, error="Cast override needs a source and an account."))
         return _review_panel(actions.cast_remove(cfg, src, acct, moment_id))
 
+    @app.post("/segments/set/<moment_id>")
+    def do_set_segments(moment_id):
+        src = _source_arg()
+        if not src:
+            return _review_panel(actions.ActionResult(ok=False, error="Set segments needs a source."))
+        raw = (request.form.get("segments") or "").strip()
+        pairs: list[tuple[float, float]] = []
+        try:
+            for part in raw.split(";"):
+                part = part.strip()
+                if not part: continue
+                a, b = part.split("-", 1)
+                pairs.append((float(a), float(b)))
+        except (ValueError, AttributeError):
+            return _review_panel(actions.ActionResult(ok=False, error="Segments must be start-end pairs separated by semicolons."))
+        return _review_panel(actions.set_segments(cfg, src, moment_id, pairs))
+
+    @app.post("/segments/clear/<moment_id>")
+    def do_clear_segments(moment_id):
+        src = _source_arg()
+        if not src:
+            return _review_panel(actions.ActionResult(ok=False, error="Clear segments needs a source."))
+        return _review_panel(actions.clear_segments(cfg, src, moment_id))
+
 
     def _render_surface_edit(post_id, result):
         # P1: on success re-render _surface_edit.html via surface_for_post so the editor's time input

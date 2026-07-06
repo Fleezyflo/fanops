@@ -23,6 +23,7 @@ from fanops.audit import write_audit
 from fanops.studio.actions_run import (run_ingest, run_pull, save_uploads, save_uploads_and_ingest, save_thirdparty_uploads, run_ingest_thirdparty, run_advance, run_prepare)  # noqa: F401
 from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprove_post, approve_with_hook, approve_clip, approve_batch, approve_account, approve_moment, approve_as_is, approve_stitches, dismiss_stitches, release_stitches)  # noqa: F401
 from fanops.studio.actions_casting import cast_add, cast_remove  # noqa: F401
+from fanops.studio.actions_segments import set_segments, clear_segments  # noqa: F401
 
 SNOOZE_DAYS = 365
 _GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "moment_casting": MomentCastingDecision, "captions": CaptionSet}
