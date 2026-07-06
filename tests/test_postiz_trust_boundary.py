@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
+from fanops.ledger import Ledger
+from fanops.models import Clip, ClipState, Fmt, Moment, MomentState, Platform, Post, PostState, Source
 from fanops.studio import golive
 from fanops.studio import views
 from fanops.studio import views_common
@@ -54,6 +56,18 @@ def _clean(monkeypatch, tmp_path):
 def _seed(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
+
+
+def _seed_due_postiz_post(cfg, *, pid="due_p1", when="2020-01-01T12:00:00Z", account="@ig", account_id="1"):
+    with Ledger.transaction(cfg) as led:
+        if not led.sources:
+            led.add_source(Source(id="src_1", source_path="/v/s.mp4", language="en"))
+            led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                                  reason="r", state=MomentState.clipped))
+            led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id=pid, parent_id="clip_1", account=account, account_id=account_id,
+                          platform=Platform.instagram, caption="fire", state=PostState.queued,
+                          scheduled_time=when, public_url="dryrun://clip_1"))
 
 
 # ------------------------------------------------------------------ D12: routing_source detail ----
@@ -128,18 +142,45 @@ def test_postiz_health_for_banner_absent_when_no_channel_routes_to_postiz(tmp_pa
 
 
 def test_studio_renders_postiz_down_banner_when_unhealthy(tmp_path, monkeypatch, mocker):
-    # Postiz is down (502) AND a channel routes to postiz -> the banner shows, names the status code, and
-    # points at docs/POSTIZ_OPS.md. Assert on the read-model that base.html renders (build_system_strip).
+    # Postiz is down (502) AND a due postiz post is waiting -> real stall: danger banner names the status code
+    # and points at docs/POSTIZ_OPS.md. Assert on the read-model that base.html renders (build_system_strip).
     cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    _seed_due_postiz_post(cfg)
     mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
     strip = views.build_system_strip(cfg)
     pd = strip.get("postiz_down")
-    assert pd and pd.get("show") is True
+    assert pd and pd.get("show") is True and pd.get("danger") is True
     assert "502" in str(pd.get("status"))
+    assert "stalled" in pd.get("hint", "").lower()
     assert "POSTIZ_OPS.md" in pd.get("hint", "")
+
+
+# ------------------------------------------------------------------ MOL-124: idle-by-design vs real stall ----
+def test_postiz_banner_muted_idle_when_down_and_no_due_postiz_posts(tmp_path, monkeypatch, mocker):
+    # Reaper-stopped Postiz is expected cold state — probe down with zero due postiz posts must NOT cry wolf.
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
+    banner = views_common.postiz_health_for_banner(cfg)
+    assert banner.get("danger") is not True
+    assert "stalled" not in (banner.get("hint") or "").lower()
+
+
+def test_postiz_banner_danger_when_down_and_due_postiz_post(tmp_path, monkeypatch, mocker):
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    _seed_due_postiz_post(cfg)
+    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
+    banner = views_common.postiz_health_for_banner(cfg)
+    assert banner.get("show") is True and banner.get("danger") is True
+    assert "stalled" in (banner.get("hint") or "").lower()
 
 
 def test_postiz_down_banner_absent_when_healthy(tmp_path, monkeypatch, mocker):

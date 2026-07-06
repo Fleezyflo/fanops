@@ -333,8 +333,8 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
     mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert led.posts["pa"].state is PostState.needs_reconcile   # transient upload -> needs_reconcile after retries
-    assert "503" in (led.posts["pa"].error_reason or "") or "transient" in (led.posts["pa"].error_reason or "").lower()
+    assert led.posts["pa"].state is PostState.failed   # MOL-125: pre-send transient -> failed (re-queueable)
+    assert "503" in (led.posts["pa"].error_reason or "") or "publish failed" in (led.posts["pa"].error_reason or "").lower()
     assert led.posts["pb"].state is PostState.published        # healthy clip still shipped
 
 def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocker):

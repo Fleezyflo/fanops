@@ -191,7 +191,7 @@ def test_three_cap_sites_agree(tmp_path, mocker, monkeypatch):
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-120", start=0, end=120,
-                          reason="r", state=MomentState.clipped, hooks_by_persona={"@a": "hook A"}))
+                          reason="r", state=MomentState.clipped, hook="hook A"))
     base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16,
                 state=ClipState.captioned, cut_seconds=60.0)

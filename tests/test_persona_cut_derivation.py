@@ -137,11 +137,11 @@ def test_voice_matched_account_wants_cut_without_persona_id(tmp_path, monkeypatc
 
 
 # ---- approve path: persona-derived cut -> is_account_cut=True (not shared-cut burn) ----
-def _seed_clip_for_approve(led, cfg, *, hooks_by_persona, surfaces):
+def _seed_clip_for_approve(led, cfg, *, m_hook=None, surfaces):
     from fanops.models import Clip, Moment, Source, ClipState, MomentState, Fmt
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          state=MomentState.clipped, hooks_by_persona=hooks_by_persona))
+                          state=MomentState.clipped, hook=m_hook))
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
@@ -175,7 +175,7 @@ def test_persona_derived_approve_sets_is_account_cut(tmp_path, monkeypatch, mock
     _accounts(cfg, [_acct("@story")])                                                        # no hand-set clip_profile
     link_persona(cfg, "@story", add_persona(cfg, name="Story", voice="v", content_focus=["storytelling", "emotional"]))
     led = Ledger.load(cfg)
-    _seed_clip_for_approve(led, cfg, hooks_by_persona={"@story": "H"}, surfaces=("@story/instagram",)); led.save()
+    _seed_clip_for_approve(led, cfg, m_hook="H", surfaces=("@story/instagram",)); led.save()
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z"); led.save()
     approve_posts(cfg, [p.id for p in led.posts.values()])
     led = Ledger.load(cfg)

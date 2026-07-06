@@ -29,8 +29,7 @@ def screen_model_text(obj):
     if isinstance(obj, MomentHookDecision):
         h = (obj.hook or "").strip()
         hook = sanitize_generated_text(h) if h else None
-        hbp = {hh: sanitize_generated_text(ph) if ph else "" for hh, ph in (obj.hooks_by_persona or {}).items()}
-        return obj.model_copy(update={"hook": hook, "hooks_by_persona": hbp})
+        return obj.model_copy(update={"hook": hook})
     if isinstance(obj, CaptionSet):
         items = []
         for item in obj.items:

@@ -113,16 +113,16 @@ def test_gate_rows_lists_pending_moment_hooks_with_window(tmp_path):
 def test_answer_moment_hooks_writes_valid_decision_and_clears_gate(tmp_path):
     cfg = Config(root=tmp_path); _moment_hooks_req(cfg)
     res = actions.answer_gate(cfg, "moment_hooks", "s1.1.00-9.00",
-                              {"hook": "the part you'll replay", "hooks_by_persona": {"@a": "raw bars"}})
+                              {"hook": "the part you'll replay"})
     assert res.ok
     dec = read_response(cfg, "moment_hooks", "s1.1.00-9.00", MomentHookDecision)
-    assert dec.hook == "the part you'll replay" and dec.hooks_by_persona["@a"] == "raw bars"
+    assert dec.hook == "the part you'll replay" 
     assert pending(cfg, kind="moment_hooks") == []       # gate cleared (response matches request_id)
 
 def test_answer_moment_hooks_blank_hook_is_a_valid_clean_decision(tmp_path):
     # A blank manual hook -> null -> a CLEAN clip (a valid decision, not an error).
     cfg = Config(root=tmp_path); _moment_hooks_req(cfg)
-    res = actions.answer_gate(cfg, "moment_hooks", "s1.1.00-9.00", {"hook": None, "hooks_by_persona": {}})
+    res = actions.answer_gate(cfg, "moment_hooks", "s1.1.00-9.00", {"hook": None})
     assert res.ok and read_response(cfg, "moment_hooks", "s1.1.00-9.00", MomentHookDecision).hook is None
 
 def test_gates_answer_moment_hooks_route_parses_form(tmp_path):
@@ -133,7 +133,7 @@ def test_gates_answer_moment_hooks_route_parses_form(tmp_path):
                                data={"hook": "wait for the switch", "persona_hook__@a": "raw bars"})
     assert r.status_code == 200
     dec = read_response(cfg, "moment_hooks", "s1.1.00-9.00", MomentHookDecision)
-    assert dec.hook == "wait for the switch" and dec.hooks_by_persona["@a"] == "raw bars"
+    assert dec.hook == "wait for the switch" 
 
 
 # ---- MOL-109 / PKT-3: a length-desynced pick form is a FORM-VALIDATION error, never a silent

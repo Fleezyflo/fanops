@@ -80,24 +80,19 @@ def test_casting_gate_pending_states(tmp_path, monkeypatch):
     assert casting_gate_pending(cfg, "src_1") is False                # OFF short-circuit
 
 
-# ---- Task 2 wiring: crosspost WAITS for casting, then fans out scoped (the no-fan-to-all-leak proof) ----
-def test_crosspost_skips_while_casting_pending_then_fans_scoped(tmp_path, monkeypatch, mocker):
+# ---- MOL-149: crosspost uses affinity_admits only — no casting-pending defer; affinities govern in one pass ----
+def test_crosspost_fans_scoped_by_affinities_without_casting_defer(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("@a"), _acct("@b", aid="2")])
-    led = _src(cfg); led.add_moment(_clipped_moment(affinities=[])); led.add_clip(_captioned_clip())
+    led = _src(cfg); led.add_moment(_clipped_moment(affinities=["@a"])); led.add_clip(_captioned_clip())
     accts = Accounts.load(cfg)
-    led = request_moment_casting(led, cfg, "src_1", accts)            # gate OPEN, unanswered
+    led = request_moment_casting(led, cfg, "src_1", accts)            # gate OPEN, unanswered — must NOT defer
     assert latest_request_id(cfg, "moment_casting", "src_1") is not None
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
-    assert led.posts == {}                                           # NO premature fan-to-all mint while pending
-    rid = latest_request_id(cfg, "moment_casting", "src_1")
-    response_path(cfg, "moment_casting", "src_1").write_text(
-        MomentCastingDecision(request_id=rid, selections={"@a": ["mom_1"]}).model_dump_json())
-    led = ingest_moment_casting(led, cfg, "src_1", accts)
-    assert led.moments["mom_1"].affinities == ["@a"]
-    led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
-    assert {p.account for p in led.posts.values()} == {"@a"}         # the late answer GOVERNS; @b never posts
+    assert {p.account for p in led.posts.values()} == {"@a"}         # affinity gate admits owner only, one pass
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "casting_pending_skip" not in log
 
 
 # ---- Task 2/OFF firewall: pending is inert + fan-to-all is byte-identical when casting OFF ----
@@ -154,13 +149,9 @@ def test_disjoint_account_selections_yield_disjoint_posts_end_to_end(tmp_path):
     led = _src(cfg)
     bands = {"mom_1": (0, 7), "mom_2": (8, 15), "mom_3": (16, 23), "mom_4": (24, 31)}
     for i, (mid, (lo, hi)) in enumerate(bands.items(), 1):
-        led.add_moment(_moment_n(mid, lo, hi)); led.add_clip(_captioned_clip_for(mid, f"clip_{i}"))
-    # cast (durable AccountSelection — the RF1 gate input): NO casting request is written, so the gate is not
-    # pending (casting_gate_pending: no request -> nothing to wait for) and crosspost fans out now, scoped.
-    led.add_account_selection(AccountSelection(id=account_selection_id("src_1", "@a"), source_id="src_1",
-                                               account="@a", moment_ids=["mom_1", "mom_2"], method=SelectionMethod.llm))
-    led.add_account_selection(AccountSelection(id=account_selection_id("src_1", "@b"), source_id="src_1",
-                                               account="@b", moment_ids=["mom_3", "mom_4"], method=SelectionMethod.llm))
+        m = _moment_n(mid, lo, hi)
+        m.affinities = ["@a"] if mid in ("mom_1", "mom_2") else ["@b"]
+        led.add_moment(m); led.add_clip(_captioned_clip_for(mid, f"clip_{i}"))
     led.save(); led = Ledger.load(cfg)
     accts = Accounts.load(cfg)
     led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")

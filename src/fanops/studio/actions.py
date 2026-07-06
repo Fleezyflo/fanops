@@ -179,7 +179,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     per-account hook text; this re-burns it via ffmpeg (overlay.burn_hook_only) onto the SAME deterministic
     variant path /media serves, then a SHORT transaction flips post.variant_hook + post.media_urls ONLY.
     Both survive repost_post (the real 'Post again' reuse path). It NEVER writes clip.meta_captions['hook']
-    — that key is dead (the on-screen-hook source of truth is Moment.hooks_by_persona, read at crosspost).
+    — that key is dead (the on-screen-hook source of truth is Moment.hook, read at crosspost).
     Gated on cfg.creative_variation (per-surface variant burns only exist then). The 600s ffmpeg runs
     LOCK-FREE (the 60s flock guard forbids holding the lock across it — mirror regenerate_caption); the
     field flip is re-guarded inside a short transaction. hook_burn_failed (burn returns False — no libass /
@@ -872,7 +872,7 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
 
 
 def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> ActionResult:
-    """Restore a guard-stripped per-account hook onto this surface and re-burn preview media."""
+    """Restore a guard-stripped moment hook onto this surface and re-burn preview media."""
     if not cfg.creative_variation:
         return ActionResult(ok=False, error="per-account hook restore needs FANOPS_CREATIVE_VARIATION")
     led = Ledger.load(cfg)
@@ -883,7 +883,7 @@ def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] =
     mom = led.moments.get(clip.parent_id) if clip is not None else None
     if mom is None:
         return ActionResult(ok=False, error="no moment for post")
-    removed = (mom.hooks_by_persona_removed or {}).get(p.account)
+    removed = mom.hook_removed
     if not removed:
         return ActionResult(ok=False, error="no stripped hook to restore for this account")
     try:
@@ -891,10 +891,7 @@ def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] =
             m = led2.moments.get(mom.id)
             if m is None:
                 return ActionResult(ok=False, error="moment gone")
-            hbp = dict(m.hooks_by_persona or {})
-            hbp[p.account] = removed
-            hbr = {k: v for k, v in (m.hooks_by_persona_removed or {}).items() if k != p.account}
-            led2.moments[mom.id] = m.model_copy(update={"hooks_by_persona": hbp, "hooks_by_persona_removed": hbr})
+            led2.moments[mom.id] = m.model_copy(update={"hook": removed, "hook_removed": None})
             post = led2.posts.get(post_id)
             if post is not None:
                 post.variant_hook = removed
@@ -961,6 +958,36 @@ def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize
         write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
     return ActionResult(ok=True, detail={"retried": len(retried), "skipped": len(skipped), "post_ids": retried,
                                           "outcome": "retried_oversize", "stagger_min": stagger_min})
+
+
+def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transient", stagger_min: int = 2) -> ActionResult:
+    """Queue all failed posts whose error_reason is a transient network blip for daemon retry."""
+    from fanops.studio.views_common import is_transient_failure_reason
+    ids = [pid for pid, p in Ledger.load(cfg).posts.items()
+           if p.state in (PostState.failed, PostState.error) and is_transient_failure_reason(p.error_reason)]
+    if not ids:
+        return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
+    retried: list[str] = []
+    now = _now(None)
+    try:
+        with Ledger.transaction(cfg) as led:
+            for i, pid in enumerate(ids):
+                p = led.posts.get(pid)
+                if p is None or p.state not in (PostState.failed, PostState.error):
+                    continue
+                if not is_transient_failure_reason(p.error_reason):
+                    continue
+                p.state = PostState.queued
+                p.submission_id = None
+                p.error_reason = None
+                p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
+                retried.append(pid)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"retry_transient failed: {str(exc)[:160]}")
+    if retried:
+        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
+    return ActionResult(ok=True, detail={"retried": len(retried), "post_ids": retried, "outcome": "retried_transient",
+                                          "stagger_min": stagger_min})
 
 
 def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str = "") -> ActionResult:
