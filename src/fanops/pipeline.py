@@ -16,7 +16,7 @@ from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
-from fanops.casting import request_moment_casting, ingest_moment_casting, scoped_caption_surfaces
+from fanops.casting import request_moment_casting, ingest_moment_casting, affinity_admits
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
                                   approved_disabled_count)
 from fanops.intro_match import request_intro_match, ingest_intro_match
@@ -179,24 +179,33 @@ def _stage_casting(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
     return led
 
 
+def _owner_caption_surfaces(cfg: Config, m, accts: Accounts) -> list:
+    """P10 (MOL-151): the surfaces a clip's captions are REQUESTED for — the moment OWNER × the platforms it
+    posts to, gated by the SAME affinity_admits predicate crosspost enforces (so caption-scope can never drift
+    from post-minting). A cast moment (affinities=[owner]) authors captions for the owner's surfaces only;
+    casting OFF / an uncast moment fans to ALL (byte-identical). Returns the (account, platform) tuples
+    request_captions wants. The (clip × account) AccountSelection scoping is DELETED — owner × platform is the
+    truth."""
+    return [(s.account, s.platform) for s in accts.surfaces() if affinity_admits(cfg, m, s.account)]
+
+
 def _stage_render_and_caption(led: Ledger, cfg: Config, accts: Accounts, aspects: set[Fmt], log) -> Ledger:
     """For each DECIDED moment: render its aspects, then request captions for each rendered clip, scoped to
-    the affinity-admitted surfaces (M5). A failed-aspect clip (ClipState.error) is NOT laundered into a
-    phantom captioned post with a dangling mp4. Per-moment quarantine."""
+    the owner's affinity-admitted surfaces (P10). A failed-aspect clip (ClipState.error) is NOT laundered into
+    a phantom captioned post with a dangling mp4. Per-moment quarantine."""
     for m in list(led.moments.values()):
         if m.state is MomentState.decided:
             try:
                 led, clips = render_aspects_for(led, cfg, m.id, aspects=aspects)
                 for clip in clips:
                     if clip.state is not ClipState.rendered: continue   # a failed-aspect clip (ClipState.error) must not be laundered into a phantom captioned post with a dangling mp4
-                    # M5: scope the caption request to the affinity-admitted surfaces. Casting OFF / an
-                    # uncast moment -> all surfaces (byte-identical). Within a decision cycle this is a
-                    # SUPERSET of the crosspost survivors (which narrow further by batch target), so every
-                    # minted post has a caption; a post-captioning RE-DECISION swap is caught by crosspost's
-                    # cap-is-None skip. Crosspost stays the SOLE casting-intent gate; meta_captions is never
-                    # read as casting intent.
+                    # P10: scope the caption request to the moment OWNER's surfaces (affinity_admits — the SAME
+                    # gate crosspost enforces). Casting OFF / an uncast moment -> all surfaces (byte-identical).
+                    # Within a decision cycle this is a SUPERSET of the crosspost survivors (which narrow further
+                    # by batch target), so every minted post has a caption; a post-captioning RE-DECISION swap is
+                    # caught by crosspost's cap-is-None skip. Crosspost stays the SOLE casting-intent gate.
                     led = request_captions(led, cfg, clip.id,
-                                           scoped_caption_surfaces(cfg, led, m, accts.surfaces()),
+                                           _owner_caption_surfaces(cfg, m, accts),
                                            accounts=accts)
             except Exception as e:
                 _quarantine(led.moments, m.id, MomentState.error, "clip", e, log)
@@ -237,7 +246,7 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
         m = led.moments.get(c.parent_id)
         if m is None or m.state not in (MomentState.decided, MomentState.clipped):
             continue
-        want = scoped_caption_surfaces(cfg, led, m, accts.surfaces())
+        want = _owner_caption_surfaces(cfg, m, accts)
         need = {f"{a}/{p.value}" for a, p in want}
         have = set(c.meta_captions or {})
         if not need:
