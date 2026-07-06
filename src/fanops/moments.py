@@ -42,25 +42,56 @@ def _source_frames(cfg: Config, src) -> list[str]:
     return extract_keyframes(src.source_path, 0.0, src.duration, count=_AUTHOR_FRAME_COUNT,
                              out_dir=cfg.agent_io / "keyframes" / src.id)
 
-def _window_frames(cfg: Config, src, start: float, end: float) -> list[str]:
-    """PASS 2 — stills over the PICKED+FITTED window [start,end], the HOOK author's eyes for THIS exact
-    clip's opening (the operator's #1 ask: SEE the footage you ride the hook for). The window is the same
-    fit_window the renderer cuts, so the frames match what the clip actually opens on (snap/visual-start
-    drift accepted). Fail-open: no real source / unprobed / a window probe that yields nothing -> [] +
-    a breadcrumb -> the author writes text-only (degraded but HONEST). We deliberately do NOT substitute
-    whole-source frames: the hook prompt asserts the attached stills ARE this clip's window, so feeding
-    footage from OUTSIDE the window would actively mislead the author (review finding)."""
+def _pick_spans(pick) -> list[tuple[float, float]]:
+    """S2: a segments==[] pick is a synthetic one-element [(start,end)] for segment-set comparisons."""
+    if pick.segments:
+        return list(pick.segments)
+    return [(pick.start, pick.end)]
+
+def _frame_counts_for_spans(n: int, spans: list[tuple[float, float]]) -> list[int]:
+    """Distribute `n` hook stills across spans by length (total budget, NOT per-span n)."""
+    weights = [e - s for s, e in spans]
+    total = sum(weights)
+    if total <= 0 or n <= 0:
+        return [0] * len(spans)
+    raw = [n * w / total for w in weights]
+    counts = [int(x) for x in raw]
+    rem = n - sum(counts)
+    order = sorted(range(len(spans)), key=lambda i: (raw[i] - int(raw[i]), weights[i]), reverse=True)
+    for j in range(rem):
+        counts[order[j % len(order)]] += 1
+    return counts
+
+def _window_frames(cfg: Config, src, start: float, end: float,
+                   segments: list[tuple[float, float]] | None = None) -> list[str]:
+    """PASS 2 — stills over the PICKED+FITTED window [start,end]. S2 supercut: when `segments` is set,
+    distribute _HOOK_FRAME_COUNT stills across spans (total budget, not 3×N). Single-window unchanged."""
     if not (src.source_path and os.path.exists(src.source_path) and (src.duration or 0) > 0):
         return []
-    frames = extract_keyframes(src.source_path, start, end, count=_HOOK_FRAME_COUNT,
-                               out_dir=cfg.agent_io / "keyframes" / src.id)
-    if not frames:                                  # window probe yielded nothing -> honest text-only
+    out_dir = cfg.agent_io / "keyframes" / src.id
+    if segments:
+        frames: list[str] = []
+        for (s, e), c in zip(segments, _frame_counts_for_spans(_HOOK_FRAME_COUNT, segments)):
+            if c > 0:
+                frames.extend(extract_keyframes(src.source_path, s, e, count=c, out_dir=out_dir))
+    else:
+        frames = extract_keyframes(src.source_path, start, end, count=_HOOK_FRAME_COUNT, out_dir=out_dir)
+    if not frames:
         get_logger(cfg)("source", src.id, "hook_window_frames_empty", warn=True,
                         window=f"{start:.2f}-{end:.2f}")
     return frames
 
+def _content_token(start: float, end: float, segments: list[tuple[float, float]]) -> str:
+    """S2: bare envelope token for single-window; segment-hash suffix when spans present."""
+    from fanops.ids import _hash
+    base = f"{start:.2f}-{end:.2f}"
+    if segments:
+        span_key = "|".join(f"{s:.2f}-{e:.2f}" for s, e in segments)
+        return f"{base}\x1f{_hash('seg', span_key)}"
+    return base
+
 def _token(pick: MomentPick) -> str:
-    return f"{pick.start:.2f}-{pick.end:.2f}"
+    return _content_token(pick.start, pick.end, pick.segments or [])
 
 def _owned_moment_id(source_id: str, owner: str | None, token: str) -> str:
     """P3: owner handle in the id so two personas at the same timecode yield two moments. owner=None
@@ -78,6 +109,14 @@ def _peak_in_window(p, cs: float, ce: float) -> bool:
     except (TypeError, ValueError):
         return False
 
+def _peak_in_segments(p, segments: list[tuple[float, float]]) -> bool:
+    """True iff a peak's timecode falls inside any supercut span. Fail-open per peak (same contract)."""
+    try:
+        t = float(p.get("t"))
+        return isinstance(p, dict) and any(s <= t <= e for s, e in segments)
+    except (TypeError, ValueError):
+        return False
+
 # ffprobe durations round; a pick may overrun probed EOF by this much before it's "past the end".
 _EOF_TOLERANCE_S = 0.5
 # shorter than this can't carry a hook + payoff — reject as noise
@@ -86,14 +125,26 @@ _MIN_MOMENT_S = 0.5
 # keep the first (start-ordered), drop the later. The cross-pick guard validate_pick can't do.
 _MAX_OVERLAP_FRAC = 0.5
 
+def _spans_overlap(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    overlap = min(a[1], b[1]) - max(a[0], b[0])
+    if overlap <= 0:
+        return False
+    return overlap > _MAX_OVERLAP_FRAC * min(a[1] - a[0], b[1] - b[0])
+
+def _picks_overlap(p: MomentPick, q: MomentPick) -> bool:
+    """S2: overlap on SEGMENT SETS ([] coerced to [(start,end)] — single-window byte-identical)."""
+    for sa in _pick_spans(p):
+        for sb in _pick_spans(q):
+            if _spans_overlap(sa, sb):
+                return True
+    return False
+
 def _drop_overlaps(picks: list[MomentPick]) -> list[MomentPick]:
-    """Keep start-ordered picks, dropping any that overlap an already-kept pick by more than
-    _MAX_OVERLAP_FRAC of the shorter window. Keeps the FIRST of an overlapping pair, so an
-    all-overlapping set still yields one pick (never empties a valid decision -> never a false error)."""
+    """Keep start-ordered picks, dropping any whose segment set overlaps an already-kept pick by more than
+    _MAX_OVERLAP_FRAC of the shorter span. Keeps the FIRST of an overlapping pair."""
     out: list[MomentPick] = []
     for p in sorted(picks, key=lambda x: (x.start, x.end)):
-        if not any((min(p.end, q.end) - max(p.start, q.start)) >
-                   _MAX_OVERLAP_FRAC * min(p.end - p.start, q.end - q.start) for q in out):
+        if not any(_picks_overlap(p, q) for q in out):
             out.append(p)
     return out
 
@@ -198,7 +249,8 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
                            reason=sanitize_generated_text(pick.reason),   # strip AI-tell em-dashes
                            transcript_excerpt=pick.transcript_excerpt,
                            signal_score=pick.signal_score,
-                           affinities=list(pick.personas))   # P1: owner stamped at birth; [] when persona-blind
+                           affinities=list(pick.personas),   # P1: owner stamped at birth; [] when persona-blind
+                           segments=list(pick.segments))     # S2: supercut spans ride the moment
     if not keep:
         if dec.picks:
             # a wholly-INVALID new decision quarantines the source but does NOT reconcile — prior
@@ -274,13 +326,19 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         if latest_request_id(cfg, "moment_hooks", key) is not None:
             continue                                # write-ONCE: never re-stamp an existing (pending/answered) gate
         cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the cut the renderer makes
-        peaks = [p for p in (src.signal_peaks or []) if _peak_in_window(p, cs, ce)]   # window-scoped transients (fail-open per peak)
+        env_peaks = [p for p in (src.signal_peaks or []) if _peak_in_window(p, cs, ce)]
+        if m.segments:
+            span_peaks = [p for p in (src.signal_peaks or []) if _peak_in_segments(p, m.segments)]
+            peaks = span_peaks if span_peaks else env_peaks   # fail-open to envelope peaks
+        else:
+            peaks = env_peaks
+        segs = list(m.segments) if m.segments else None
         payload = MomentHookRequest(source_id=source_id, moment_id=m.id, token=m.content_token,
                                     request_id="", start=m.start, end=m.end, reason=m.reason,
                                     transcript_excerpt=m.transcript_excerpt, signal_score=m.signal_score,
                                     language=src.language, guidance=guidance,
                                     clip_profile=cfg.clip_profile,
-                                    frames=_window_frames(cfg, src, cs, ce),
+                                    frames=_window_frames(cfg, src, cs, ce, segments=segs),
                                     signal_peaks=peaks, personas=personas).model_dump()
         payload.pop("request_id", None)
         if styles:

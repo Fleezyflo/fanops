@@ -29,6 +29,11 @@
       {% for row in lane.rows %}
       <li class="lane-row{{ ' is-cast' if row.is_cast else ' is-uncast' }}">
         <span class="lane-window">{{ row.window }}s</span>{% if row.reason %} <span class="lane-reason muted">{{ row.reason }}</span>{% endif %}
+        <form class="lane-segments" hx-post="{{ url_for('do_set_segments', moment_id=row.moment_id, source=lv.source_id) }}" hx-target="#review-body" hx-swap="outerHTML">
+          <input type="text" name="segments" placeholder="supercut: 10-15;18-20" size="16" aria-label="Supercut segments for {{ row.window }}s moment">
+          <button type="submit" class="button">Set segments</button>
+        </form>
+        <button type="button" class="button lane-segments-clear" hx-post="{{ url_for('do_clear_segments', moment_id=row.moment_id, source=lv.source_id) }}" hx-target="#review-body" hx-swap="outerHTML" aria-label="Clear supercut segments for {{ row.window }}s moment">Clear segments</button>
         {% if row.preview_url %}<a class="lane-preview" href="{{ row.preview_url }}" aria-label="Preview the {{ row.window }} second moment">▸ preview</a>{% endif %}
         {% if row.is_cast %}
           <span class="lane-state cast" aria-label="cast">☑ cast</span>
