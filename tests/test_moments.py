@@ -161,6 +161,43 @@ def test_ingest_persona_blind_empty_affinities(tmp_path):
     m = led.moments_of("src_1")[0]
     assert m.affinities == [] and m.clip_profile is None and m.framing is None
 
+# ---- MOL-147 (P6): one owner, one hook — no hooks_by_persona map-building ---------------------------
+def test_hook_request_sends_only_owner(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=10, end=28, reason="a window", personas=["@a"])])
+    led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
+    req = json.loads(request_path(cfg, "moment_hooks", "src_1.10.00-28.00").read_text())
+    assert len(req["personas"]) == 1
+    assert req["personas"][0]["handle"] == "@a"
+    assert "@b" not in {p["handle"] for p in req["personas"]}
+
+def test_hook_applied_to_m_hook_single(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}])
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=10, end=28, reason="punchline", personas=["@a"])])
+    led = _decide_hooks(led, cfg, "src_1", {"10.00-28.00": "the part you'll replay"}, accounts=accts)
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.decided
+    assert m.hook == "the part you'll replay"
+    assert m.hooks_by_persona == {}
+
+def test_persona_blind_hook_falls_back_shared(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [_mp(10, 28, "blind pick")])
+    led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
+    req = json.loads(request_path(cfg, "moment_hooks", "src_1.10.00-28.00").read_text())
+    assert req["personas"] == []
+    led = _decide_hooks(led, cfg, "src_1", {"10.00-28.00": "wait for the switch"}, accounts=accts)
+    m = led.moments_of("src_1")[0]
+    assert m.hook == "wait for the switch" and m.hooks_by_persona == {}
+
 def test_ingest_no_skip_state_fields(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
@@ -549,10 +586,7 @@ def test_decide_hooks_keeps_viewer_pov_hook(tmp_path):
     assert led.moments_of("src_1")[0].hook == "the part you'll replay"   # viewer-POV ships
 
 def test_decide_hooks_does_not_strip_perspective_from_per_account_hooks(tmp_path):
-    # RF5: the per-account hooks ride the SAME ingest path — with the perspective strip removed, a
-    # third-person per-account hook is NO LONGER dropped from hooks_by_persona. The generator authors these
-    # viewer-POV by construction (persona voice is the account's stance, MOL-22); a stray one ships and is
-    # caught in Review. The brand strip still fires on hooks_by_persona — see the off-brand per-account test.
+    # P6: ingest no longer persists hooks_by_persona — only the shared `hook` lands on m.hook.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
@@ -560,9 +594,9 @@ def test_decide_hooks_does_not_strip_perspective_from_per_account_hooks(tmp_path
                         {"14.00-18.50": ("the part you'll replay",
                                          {"@a": "you won't expect the switch",
                                           "@b": "he flips the whole beat"})})
-    hbp = led.moments_of("src_1")[0].hooks_by_persona
-    assert hbp.get("@a") == "you won't expect the switch"   # viewer-POV kept
-    assert hbp.get("@b") == "he flips the whole beat"       # third-person NOT stripped — generator owns perspective
+    m = led.moments_of("src_1")[0]
+    assert m.hook == "the part you'll replay"
+    assert m.hooks_by_persona == {}
 
 def test_decide_hooks_rejects_off_brand_hook_to_clean_clip(tmp_path):
     # HIGH (audit): the BURNED on-screen hook must get the SAME brand-risk screen EN/AR captions get
@@ -577,8 +611,7 @@ def test_decide_hooks_rejects_off_brand_hook_to_clean_clip(tmp_path):
     assert m.hook_removed == "sorry but you'll replay this part"       # preserved for Review
 
 def test_decide_hooks_rejects_off_brand_per_account_hook_falls_back(tmp_path):
-    # The per-account hooks ride the SAME brand-risk gate: an off-brand persona hook is dropped from
-    # hooks_by_persona -> that handle falls back to the shared (gated) hook at crosspost.
+    # P6: off-brand keys in decision hooks_by_persona are ignored — only the shared hook is gated + persisted.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
@@ -586,16 +619,12 @@ def test_decide_hooks_rejects_off_brand_per_account_hook_falls_back(tmp_path):
                         {"14.00-18.50": ("the part you'll replay",
                                          {"@a": "you won't expect the switch",
                                           "@b": "please stream this, link in bio"})})
-    hbp = led.moments_of("src_1")[0].hooks_by_persona
-    assert hbp.get("@a") == "you won't expect the switch"   # clean kept
-    assert "@b" not in hbp                                   # off-brand dropped -> falls back to shared
+    m = led.moments_of("src_1")[0]
+    assert m.hook == "the part you'll replay"
+    assert m.hooks_by_persona == {}
 
 def test_decide_hooks_drops_and_logs_unknown_persona_handle(tmp_path):
-    # AGENT-5: the hook author can echo a near-miss / unknown handle key (@MohFlow vs the real @mohflow).
-    # crosspost does an EXACT m.hooks_by_persona.get(surf.account) lookup, so a key matching no real account
-    # would silently fall back to the shared hook with NO breadcrumb — the per-account hook vanishes. ingest
-    # now intersects the returned keys with the REAL account handles, dropping each unmatched key and leaving
-    # a hook_persona_unknown_handle breadcrumb (no silent collapse).
+    # P6: decision hooks_by_persona is not ingested; unknown-handle intersection/logging deferred to P7.
     from fanops.accounts import Accounts, Account
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     accts = Accounts(cfg); accts.accounts = [Account(handle="@mohflow", platforms=["instagram"])]
@@ -606,11 +635,9 @@ def test_decide_hooks_drops_and_logs_unknown_persona_handle(tmp_path):
                                          {"@mohflow": "you won't expect the switch",
                                           "@MohFlow": "you won't expect the switch"})},
                         accounts=accts)
-    hbp = led.moments_of("src_1")[0].hooks_by_persona
-    assert hbp.get("@mohflow") == "you won't expect the switch"   # the real handle kept
-    assert "@MohFlow" not in hbp                                  # near-miss handle dropped, not silently kept
-    log = cfg.log_path.read_text()
-    assert "hook_persona_unknown_handle" in log and "@MohFlow" in log
+    m = led.moments_of("src_1")[0]
+    assert m.hook == "the part you'll replay"
+    assert m.hooks_by_persona == {}
 
 def test_decide_hooks_brand_risk_honors_tuning_override(tmp_path):
     # The hook gate honors the SAME tuning.json offbrand override as captions: clearing both lists

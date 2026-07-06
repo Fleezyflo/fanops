@@ -219,17 +219,29 @@ def test_moment_hook_prompt_hierarchy_is_selective():
     assert "warning" not in p and "negativity" not in p      # doc-only mechanism, not instructed
     assert "concrete number" not in p                        # doc-only mechanism, not instructed
 
-def test_moment_hook_prompt_persona_block_when_personas():
-    # Per-account hooks: the frame-seeing author writes ONE hook per active handle, grounded in the SAME
-    # picked-window frames. Each is asked to be genuinely different.
+def test_moment_hook_prompt_owner_voice_when_personas():
+    # P6: the frame-seeing author writes ONE hook for the moment's owner, grounded in the picked-window frames.
     p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@underground", "persona": "raw, gritty"}]))
-    assert "hooks_by_persona" in p
+    assert "hooks_by_persona" not in p
     assert "@underground" in p and "raw, gritty" in p
-    assert "genuinely different" in p.lower()
+    assert "one" in p.lower() and "hook" in p.lower()
 
 def test_moment_hook_prompt_no_persona_block_when_absent():
-    p = moment_hook_prompt(_hook_payload())              # no personas key
+    p = moment_hook_prompt(_hook_payload())              # no personas key -> shared hook (persona-blind)
     assert "hooks_by_persona" not in p
+
+def test_hook_prompt_reads_structured_directive():
+    # P6/A2: the owner's structured hook Directive (mechanism_lean, register, fenced demos) reaches the author.
+    demos = ["a punchline moment -> 'the line you'll send to one person'"]
+    p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@a",
+                                                    "persona": "underground raw fan voice",
+                                                    "mechanism_lean": "dare or challenge the viewer",
+                                                    "demos": demos}]))
+    assert "hooks_by_persona" not in p
+    assert "dare or challenge" in p.lower()
+    assert "underground raw fan voice" in p
+    assert "the line you'll send to one person" in p
+    assert "<source_data>" in p
 
 def test_moment_hook_prompt_renders_learned_hint_and_byte_identical_without():
     base = _hook_payload()
