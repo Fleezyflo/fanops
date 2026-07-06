@@ -322,7 +322,7 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         mid = _owned_moment_id(source_id, owner, token)
         clip_prof, framing = _stamp_owner_spec(cfg, owner, by_handle)
         # Born `picked` with NO hook — the hook is authored in pass 2 (ingest_moment_hooks), seeing this
-        # window's frames. hook/hook_removed/hooks_by_persona stay at their empty defaults until then.
+        # window's frames. hook/hook_removed stay at their empty defaults until then.
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.picked,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=pick.reason,

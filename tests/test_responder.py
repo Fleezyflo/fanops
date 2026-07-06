@@ -301,11 +301,11 @@ def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
                            "start": 14.0, "end": 21.0, "reason": "punchline",
                            "transcript_excerpt": "they slept on me", "frames": []})
     def fake_model(kind, payload):
-        return {"hook": "the line you replay", "hooks_by_persona": {"@a": "for who you can't get over"}}
+        return {"hook": "the line you replay"}
     n = LlmResponder(cfg, model=fake_model).answer_pending(cfg)
     assert n == 1
     data = json.loads(response_path(cfg, "moment_hooks", key).read_text())
-    assert data["hook"] == "the line you replay" and data["hooks_by_persona"]["@a"] and "request_id" in data
+    assert data["hook"] == "the line you replay" and "request_id" in data
 
 
 # ---- AGENT-2: a context-limit failure becomes a LABELLED degraded source, never an infinite-pending wedge ----

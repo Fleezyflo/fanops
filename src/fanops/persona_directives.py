@@ -113,7 +113,7 @@ def hook_directive(p) -> Directive:
 
 def hook_author_slot(p) -> str:
     """The per-account hook-authoring brief for moment_hooks — ALWAYS non-empty for an active account so the
-    frame-seeing author writes hooks_by_persona for EVERY handle (not only accounts whose levers compile a
+    frame-seeing author writes ONE owner hook (P6); not only accounts whose levers compile a (not only accounts whose levers compile a
     hook_directive). Falls back: hook_directive -> inline persona voice -> tag_lean hint -> handle floor."""
     instr = hook_directive(p)
     if instr: return str(instr)
