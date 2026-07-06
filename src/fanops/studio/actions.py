@@ -324,6 +324,10 @@ def _studio_publish_guard(cfg: Config, post=None) -> Optional[str]:
             from fanops.post import postiz as _postiz            # module ref so a test monkeypatch on the symbol applies
             health = _postiz.postiz_health_probe(cfg)
             if not health.healthy:
+                from fanops.postiz_lifecycle import ensure_up
+                ensure_up(cfg)                                 # self-heal: wake idle-stopped local stack once
+                health = _postiz.postiz_health_probe(cfg)
+            if not health.healthy:
                 return (f"Postiz backend unhealthy ({health.status_code or 'unreachable'}) — its docker health-check "
                         f"is nginx-only and can lie while the Node backend crash-loops. Publishing now would submit "
                         f"then park in needs_reconcile. Fix Postiz first; see docs/POSTIZ_OPS.md.")

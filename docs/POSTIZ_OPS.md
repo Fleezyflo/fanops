@@ -102,6 +102,36 @@ If the grep does **not** hit but publishes still fail, this is a *different* pro
 
 ---
 
+## 7. IG publish funnel — mirror media to a public host (R2)
+
+**Symptom:** Postiz accepts a publish (2xx, post lands `submitted`) but Instagram never receives the
+video — or Postiz `upload-from-url` / IG pull fails with SSRF / unreachable URL errors. Common when:
+
+- Postiz runs on `localhost` and returns `http://127.0.0.1:…/uploads/…` paths IG cannot fetch, or
+- Studio serves renders at `http://127.0.0.1:8787/media/…` (Postiz SSRF-blocks loopback).
+
+**Fix (FanOps v4 path):** mirror clip bytes to a **public HTTPS** origin before Postiz ingests them.
+
+Set in `.env`:
+
+```bash
+FANOPS_MEDIA_PUBLIC_BASE=https://pub-<id>.r2.dev/fanops   # or your CDN / Tailscale funnel base
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=clips
+```
+
+With all of the above present, `postiz_upload_media` PUTs the file to R2 (S3-compatible API) then calls
+Postiz `POST /public/v1/upload-from-url` with the public URL. `rewrite_media_base` also rewrites any
+loopback paths still present at publish time. Without R2 creds, behavior is unchanged (multipart
+`/upload` only).
+
+The Studio **Publish now** guard calls `postiz_lifecycle.ensure_up` once when the health probe fails,
+so an idle-stopped local stack (reaper-by-design) self-heals before blocking the operator.
+
+---
+
 ## 6. Permanent fix (upstream)
 
 The real fix is upstream in Postiz/Mastra: cap or rotate the `mastra_ai_spans` table so it never

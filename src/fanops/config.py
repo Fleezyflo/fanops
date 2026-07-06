@@ -284,6 +284,35 @@ class Config:
         return v.strip() if v and v.strip() else None
 
     @property
+    def media_public_base(self) -> str | None:
+        # Public HTTPS origin for mirrored clip media (FANOPS_MEDIA_PUBLIC_BASE). Postiz upload-from-url
+        # and Instagram pull-from-URL require a host the backend can reach — localhost / Studio URLs are
+        # SSRF-blocked. When set WITH R2_* creds, postiz_upload_media mirrors bytes to R2 first. Trailing
+        # slash stripped.
+        v = os.getenv("FANOPS_MEDIA_PUBLIC_BASE")
+        return v.strip().rstrip("/") if v and v.strip() else None
+
+    @property
+    def r2_account_id(self) -> str | None:
+        v = os.getenv("R2_ACCOUNT_ID")
+        return v.strip() if v and v.strip() else None
+
+    @property
+    def r2_access_key_id(self) -> str | None:
+        v = os.getenv("R2_ACCESS_KEY_ID")
+        return v.strip() if v and v.strip() else None
+
+    @property
+    def r2_secret_access_key(self) -> str | None:
+        v = os.getenv("R2_SECRET_ACCESS_KEY")
+        return v.strip() if v and v.strip() else None
+
+    @property
+    def r2_bucket(self) -> str | None:
+        v = os.getenv("R2_BUCKET")
+        return v.strip() if v and v.strip() else None
+
+    @property
     def zernio_url(self) -> str | None:
         # Base URL of the Zernio API. Zernio is HOSTED (not self-hosted like Postiz), so this defaults
         # to the public endpoint; ZERNIO_API_URL overrides it (parity with the docs' env var, e.g. a

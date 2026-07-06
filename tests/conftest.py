@@ -32,7 +32,8 @@ import pytest
 # =1 leaking into the session would silently flip every test onto the pooled path (and the worker
 # count along with it). Stripping them makes each test see the OFF default; the concurrent tests
 # set them explicitly via monkeypatch and get clean teardown.
-_LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_HOOK_JUDGE",
+_LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
+              "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "FANOPS_HOOK_JUDGE",
               "FANOPS_RESPONDER",   # defaults to llm when `claude` is on PATH — must not leak across tests/CI
               "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL",
               "FANOPS_GC_KEEP_DAYS",   # content-lifecycle Phase 3: a repo .env value must not leak into the gc-window tests

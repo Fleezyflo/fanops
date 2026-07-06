@@ -19,6 +19,11 @@ which writes both `.env` and `os.environ`), **51 `.env`/shell-ONLY** (no UI). `S
 | `FANOPS_POSTIZ_AUTOSTART` | `1` (on) | Auto-start the local Postiz stack (`postiz_lifecycle`) | .env |
 | `FANOPS_POSTIZ_COMPOSE_DIR` | (blank) | Postiz docker-compose dir for `health` | .env |
 | `FANOPS_POSTIZ_PUBLISH_PER_MIN` | 4 | Postiz publish throttle (0=off) | .env |
+| `FANOPS_MEDIA_PUBLIC_BASE` | None | Public HTTPS base for mirrored clip media (R2/CDN) | .env |
+| `R2_ACCOUNT_ID` | None | Cloudflare R2 account id (S3-compatible mirror) | .env |
+| `R2_ACCESS_KEY_ID` | None | R2 access key (write-only) | .env |
+| `R2_SECRET_ACCESS_KEY` | None | R2 secret key (write-only) | .env |
+| `R2_BUCKET` | None | R2 bucket for mirrored clips | .env |
 | `FANOPS_ZERNIO_MAX_UPLOAD_MB` | 4 | Zernio TikTok upload preflight cap | .env |
 
 ## LLM gates (the AI switch + models)

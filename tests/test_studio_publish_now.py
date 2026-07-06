@@ -218,6 +218,23 @@ def test_three_cap_sites_agree(tmp_path, mocker, monkeypatch):
     assert p2.state is PostState.queued and clip_spy.call_count > n_after_reuse
 
 
+def test_publish_guard_self_heals_postiz_via_ensure_up(tmp_path, monkeypatch, mocker):
+    # An idle-stopped local Postiz stack should get one ensure_up wake before the guard blocks.
+    import fanops.post.postiz as postiz
+    from fanops.post.postiz import PostizHealth
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path); _seed(cfg, media=["file://x.mp4"])
+    calls = {"n": 0}
+    def probe(c):
+        calls["n"] += 1
+        return PostizHealth(calls["n"] > 1, 200, "") if calls["n"] > 1 else PostizHealth(False, 502, "down")
+    monkeypatch.setattr(postiz, "postiz_health_probe", probe)
+    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    post = Ledger.load(cfg).posts["p1"]
+    assert actions._studio_publish_guard(cfg, post) is None
+    ensure.assert_called_once_with(cfg)
+
+
 def test_publish_guard_passes_when_postiz_probe_healthy(tmp_path, monkeypatch):
     # A HEALTHY real probe must NOT block — the guard is fail-fast on down, transparent when up. Assert at the
     # guard seam directly (network-free): a healthy probe -> _studio_publish_guard returns None (no block).

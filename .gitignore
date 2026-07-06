@@ -1,5 +1,7 @@
 # secrets
 .env
+.env.*
+*.bak
 *.key
 *-credentials.json
 .mcp-credentials/
