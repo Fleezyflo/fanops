@@ -319,6 +319,21 @@ def test_default_get_status_postiz_resolves_end_to_end_with_date_window(tmp_path
     p = captured["params"] or {}
     assert "date" not in p and p["startDate"] <= "2099-01-01" <= p["endDate"]   # window brackets scheduled_time
 
+def test_reconcile_postiz_persists_ig_media_id_from_releaseId(tmp_path, monkeypatch, mocker):
+    # MOL-112 foundation: reconcile stamps media_id from the Postiz row's releaseId at promote time — the IG
+    # object id is captured at source, not inferred later by permalink feed-matching.
+    _postiz_env(monkeypatch)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "pp", PostState.needs_reconcile, sub="postiz_99")
+    url = "https://www.instagram.com/reel/DZvZ8Itkaxz/"
+    rid = "17841456789012345"
+    page = {"posts": [{"id": "postiz_99", "state": "PUBLISHED", "releaseURL": url, "releaseId": rid,
+                       "publishDate": "2099-01-01T00:00:00.000Z"}]}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, page))
+    led = reconcile_posts(led, cfg)
+    assert led.posts["pp"].state is PostState.published
+    assert led.posts["pp"].media_id == rid
+
 def test_reconcile_poll_error_log_carries_the_error_detail(tmp_path):
     # OBSERVABILITY: a persistent reconcile failure (API shape change, 404-on-every-token) must be
     # diagnosable from the log STREAM, not only by loading the ledger and reading each post's

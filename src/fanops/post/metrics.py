@@ -135,9 +135,10 @@ class PostizStatusClient:
     `display`/`date` params are rejected with HTTP 400 — verified against the running instance
     2026-06-21), so a post at a FUTURE operator-set time, an old post, or a 2099 cutover probe is found
     only when the query window covers its publishDate. So get_status anchors a ±35d ISO window on the
-    post's own publishDate/scheduled_time (or now when unset). Emits the SAME {status, publicUrl} dict
-    reconcile_posts consumes; publicUrl is the row's `releaseURL` (the real IG permalink, present on
-    PUBLISHED rows). 401 -> PostizAuthError (halt, so
+    post's own publishDate/scheduled_time (or now when unset). Emits the SAME {status, publicUrl, releaseId?}
+    dict reconcile_posts consumes; publicUrl is the row's `releaseURL` (the real IG permalink, present on
+    PUBLISHED rows); releaseId is the IG Graph media id (present on many PUBLISHED rows) for reconcile to
+    persist as Post.media_id without a feed-enumeration permalink match. 401 -> PostizAuthError (halt, so
     reconcile's auth-halt fires); 5xx -> RuntimeError (per-post-isolated by reconcile_posts -> parked,
     never failed). A row absent from the page -> {"status":"unknown"} (parked, never guessed failed).
 
@@ -171,6 +172,9 @@ class PostizStatusClient:
         out = {"status": status}
         if status == "published":
             out["publicUrl"] = row.get("releaseURL") or None   # the real IG permalink (present only on PUBLISHED rows)
+            rid = row.get("releaseId")
+            if isinstance(rid, str) and rid.strip():
+                out["releaseId"] = rid.strip()                 # IG Graph media id — reconcile persists on Post.media_id
         return out
 
 
