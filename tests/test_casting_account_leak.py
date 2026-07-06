@@ -15,7 +15,7 @@ import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, MomentState, MomentCastingDecision, SelectionMethod,
-                           Clip, ClipState, Fmt, AccountSelection, account_selection_id)
+                           Clip, ClipState, Fmt)
 from fanops.accounts import Accounts
 from fanops.casting import request_moment_casting, ingest_moment_casting, account_selection_admits
 from fanops.crosspost import crosspost_clips
@@ -106,14 +106,11 @@ def test_zero_post_clip_logs_no_post_born(tmp_path, mocker):
     _seed_accounts(cfg, [_acct("@a", persona="a devoted fan"), _acct("@b", persona="a blunt critic", aid="2")])
     led = _src(cfg)
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          transcript_excerpt="x", state=MomentState.clipped, affinities=[]))
+                          transcript_excerpt="x", state=MomentState.clipped, affinities=["@ghost"]))
     led.add_clip(_captioned_clip())
-    for h in ("@a", "@b"):   # both cast to a DIFFERENT moment -> source is cast, mom_1 excluded for both
-        led.add_account_selection(AccountSelection(id=account_selection_id("src_1", h), source_id="src_1",
-            account=h, moment_ids=["mom_other"], method=SelectionMethod.llm))
     led.save(); led = Ledger.load(cfg); _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert len(led.posts) == 0                                     # every surface denied
+    assert len(led.posts) == 0                                     # every surface denied (owner not active)
     assert led.clips["clip_1"].state is ClipState.queued          # clip is still consumed
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "no_post_born" in log and "clip_1" in log              # the silent drop now leaves a breadcrumb
@@ -128,11 +125,8 @@ def test_selection_denied_surface_leaves_per_surface_breadcrumb(tmp_path, mocker
     _seed_accounts(cfg, [_acct("@a", persona="a devoted fan"), _acct("@b", persona="a blunt critic", aid="2")])
     led = _src(cfg)
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          transcript_excerpt="x", state=MomentState.clipped, affinities=[]))
+                          transcript_excerpt="x", state=MomentState.clipped, affinities=["@ghost"]))
     led.add_clip(_captioned_clip())
-    for h in ("@a", "@b"):   # both cast to a DIFFERENT moment -> mom_1 excluded for both -> every surface DENIED
-        led.add_account_selection(AccountSelection(id=account_selection_id("src_1", h), source_id="src_1",
-            account=h, moment_ids=["mom_other"], method=SelectionMethod.llm))
     led.save(); led = Ledger.load(cfg); _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
@@ -140,11 +134,11 @@ def test_selection_denied_surface_leaves_per_surface_breadcrumb(tmp_path, mocker
     assert "@a/instagram" in log or "@b/instagram" in log          # the specific dropped surface is identified
 
 
-# ---- xc-2: a casting gate that FAILED to open must DEFER crosspost, not silently fan-to-all ----
-def test_crosspost_defers_when_casting_gate_failed_to_open(tmp_path, mocker):
-    # casting ON, a CANDIDATE account + a clipped moment + captioned clip, but NO gate opened and NO selections
-    # (the state left by a request_moment_casting I/O failure). Without the fix, account_selection_admits falls
-    # back to legacy affinities (no selections -> fan-to-all) and mints posts. The fix DEFERS instead.
+# ---- MOL-149: crosspost no longer defers on failed-to-open casting gate — affinity gate fans per affinities ----
+def test_crosspost_fans_per_affinities_when_gate_failed_to_open(tmp_path, mocker, monkeypatch):
+    # casting ON, clipped moment with affinities=[] (uncast) + captioned clip, NO gate opened: P8 crosspost uses
+    # affinity_admits only (no casting defer) -> uncast fans to all in one pass, no casting_pending_skip.
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [_acct("@a", persona="a devoted fan")])
     led = _src(cfg)
@@ -153,6 +147,6 @@ def test_crosspost_defers_when_casting_gate_failed_to_open(tmp_path, mocker):
     led.add_clip(_captioned_clip(handles=("@a",)))
     led.save(); led = Ledger.load(cfg); _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert len(led.posts) == 0, "casting gate failed to open -> must DEFER, not silently fan-to-all"
+    assert len(led.posts) == 2, "uncast moment (affinities=[]) fans to all surfaces in one pass"
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "casting_pending_skip" in log
+    assert "casting_pending_skip" not in log

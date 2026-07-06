@@ -84,12 +84,14 @@ def test_repair_fan_all_default_for_personaless_when_only_affinities_exist(tmp_p
     assert account_selection_admits(cfg, led, led.moments["mom_1"], "perca.late") is True
 
 
-def test_crosspost_mints_tiktok_after_affinities_repair(tmp_path, mocker):
+def test_crosspost_mints_tiktok_when_owner_in_affinities(tmp_path, mocker):
+    # P8 (MOL-149): crosspost gate = affinity_admits only — repair_casting_selections no longer runs inside
+    # crosspost_clips; each surface mints iff its account is in moment.affinities (owner-driven).
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          state=MomentState.decided, affinities=["perca.late"]))
+                          state=MomentState.decided, affinities=["perca.late", "hrmny-blog"]))
     clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {
         "perca.late/instagram": {"caption": "ig cap", "hashtags": []},
