@@ -22,9 +22,10 @@ def _mp(s, e, reason="r"):
 
 def _ingest_picks(led, cfg, source_id, picks):
     """PASS 1: write a MomentDecision response + ingest -> `picked` moments / `picks_decided`."""
+    from fanops.responder import screen_model_text
     rid = latest_request_id(cfg, "moments", source_id)
-    response_path(cfg, "moments", source_id).write_text(
-        MomentDecision(source_id=source_id, request_id=rid, picks=picks).model_dump_json())
+    dec = screen_model_text(MomentDecision(source_id=source_id, request_id=rid, picks=picks))
+    response_path(cfg, "moments", source_id).write_text(dec.model_dump_json())
     return ingest_moments(led, cfg, source_id)
 
 def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
@@ -39,8 +40,9 @@ def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
         hook, hbp = spec if isinstance(spec, tuple) else (spec, {})
         key = f"{source_id}.{m.content_token}"
         rid = latest_request_id(cfg, "moment_hooks", key)
-        response_path(cfg, "moment_hooks", key).write_text(
-            MomentHookDecision(request_id=rid, hook=hook, hooks_by_persona=hbp or {}).model_dump_json())
+        from fanops.responder import screen_model_text
+        dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hook, hooks_by_persona=hbp or {}))
+        response_path(cfg, "moment_hooks", key).write_text(dec.model_dump_json())
     return ingest_moment_hooks(led, cfg, source_id, accounts=accounts)
 
 def _src(led, cfg, dur=20.0):
@@ -91,14 +93,17 @@ def test_ingest_empty_picks_visible_not_silent_cascade(tmp_path):
     assert led.sources["src_1"].state is SourceState.moments_empty       # visible, non-terminal
     assert len(led.moments_of("src_1")) == 1                             # prior moment preserved
 
-def test_ingest_sanitizes_em_dash_in_reason(tmp_path):
-    # PASS 1 sanitizes the pick `reason` (an AI-tell em-dash never reaches the ledger). The hook em-dash
-    # guard moved to PASS 2 (test_decide_hooks_sanitizes_em_dash_in_hook).
+def test_consumer_receives_clean_text(tmp_path):
+    # MOL-166: ingest_moments trusts the responder-screened response — no downstream re-sanitize.
+    import inspect
+    from fanops import moments as moments_mod
+    src = inspect.getsource(moments_mod.ingest_moments)
+    assert "sanitize_generated_text" not in src
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=10, end=28, reason="punchline — then the beat drops")])
-    assert "—" not in led.moments_of("src_1")[0].reason
+                        [MomentPick(start=10, end=28, reason="punchline, then the beat drops")])
+    assert led.moments_of("src_1")[0].reason == "punchline, then the beat drops"
 
 def test_affinity_birth_path_intact(tmp_path):
     # MOL-142: ingest_moments stamps Moment.affinities from pick.personas at birth (single-owner convention).
@@ -597,6 +602,16 @@ def test_decide_hooks_does_not_strip_perspective_from_per_account_hooks(tmp_path
     m = led.moments_of("src_1")[0]
     assert m.hook == "the part you'll replay"
     assert m.hooks_by_persona == {}
+
+def test_brand_screen_runs_on_clean_text(tmp_path):
+    # MOL-166: brand_risk_flag remains a semantic gate on ALREADY-sanitized hook text.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "sorry but you'll replay this part"})
+    m = led.moments_of("src_1")[0]
+    assert m.hook is None
+    assert m.hook_removed == "sorry but you'll replay this part"
 
 def test_decide_hooks_rejects_off_brand_hook_to_clean_clip(tmp_path):
     # HIGH (audit): the BURNED on-screen hook must get the SAME brand-risk screen EN/AR captions get

@@ -20,6 +20,27 @@ from fanops.prompts import moment_pick_prompt, moment_hook_prompt, moment_castin
 from fanops.control import guidance_sha
 from fanops.log import get_logger
 
+def screen_model_text(obj):
+    """MOL-166: ONE text-screen chokepoint — sanitize model-authored strings before *.response.json is written."""
+    from fanops.text import sanitize_generated_text
+    if isinstance(obj, MomentDecision):
+        picks = [p.model_copy(update={"reason": sanitize_generated_text(p.reason) or ""}) for p in obj.picks]
+        return obj.model_copy(update={"picks": picks})
+    if isinstance(obj, MomentHookDecision):
+        h = (obj.hook or "").strip()
+        hook = sanitize_generated_text(h) if h else None
+        hbp = {hh: sanitize_generated_text(ph) if ph else "" for hh, ph in (obj.hooks_by_persona or {}).items()}
+        return obj.model_copy(update={"hook": hook, "hooks_by_persona": hbp})
+    if isinstance(obj, CaptionSet):
+        items = []
+        for item in obj.items:
+            items.append(item.model_copy(update={
+                "caption": sanitize_generated_text(item.caption) or "",
+                "hashtags": [sanitize_generated_text(t) or "" for t in (item.hashtags or [])],
+            }))
+        return obj.model_copy(update={"items": items})
+    return obj
+
 # Agent gates: `moments` (M1b pass 1 — pick the WINDOWS, sees whole-source frames), `moment_hooks` (pass 2 —
 # the vision hook AUTHOR, sees the PICKED WINDOW's frames), `moment_casting` (M1 Option C — per-account moment
 # SELECTION, text-only), and `captions` (text-only hashtags). The two vision gates attach `frames` as images.
@@ -108,6 +129,7 @@ class LlmResponder:
             if kind == "moments":           # MomentDecision requires source_id; the GATE is
                 out["source_id"] = payload.get("source_id")   # authoritative (review Issue A) — gate wins, not the model
             obj = model_cls(**out)          # decision (a): validate; ValidationError -> pending + log
+            obj = screen_model_text(obj)    # MOL-166: screen model-authored text once at the responder boundary
             write_response(cfg, kind, key, obj.model_dump_json(indent=2))   # ATOMIC (audit): no torn-read window for a concurrent reader
             return True
         except LlmContextLimitError as e:   # AGENT-2: a too-big payload is a LABELLED degraded state, never an

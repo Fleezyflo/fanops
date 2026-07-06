@@ -26,11 +26,12 @@ def _seed_src(cfg, dur=60.0):
 
 def _decide_one_hook(led, cfg, source_id, token, *, hook=None, hooks_by_persona=None, accounts=None):
     """Two-pass driver for ONE pick: open the hook gates, answer the named pick's gate, then ingest."""
+    from fanops.responder import screen_model_text
     led = request_moment_hooks(led, cfg, source_id, accounts=accounts)
     key = f"{source_id}.{token}"
     rid = latest_request_id(cfg, "moment_hooks", key)
-    response_path(cfg, "moment_hooks", key).write_text(
-        MomentHookDecision(request_id=rid, hook=hook, hooks_by_persona=hooks_by_persona or {}).model_dump_json())
+    dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hook, hooks_by_persona=hooks_by_persona or {}))
+    response_path(cfg, "moment_hooks", key).write_text(dec.model_dump_json())
     return ingest_moment_hooks(led, cfg, source_id)
 
 # ---- the hook DECISION carries per-persona (handle-keyed) hooks ----
@@ -119,14 +120,18 @@ def test_ingest_moment_hooks_persists_hooks_by_persona(tmp_path):
     assert m.hook == "the part you'll replay"
     assert m.hooks_by_persona == {}
 
-def test_ingest_moment_hooks_sanitizes_persona_hooks(tmp_path):
-    # P6: em-dash sanitization applies to the ONE shared hook only.
+def test_shared_hook_screened_at_responder_boundary(tmp_path):
+    # MOL-166: em-dash sanitization at responder write boundary (screen_model_text), not ingest.
+    # P6: ONE shared hook lands on m.hook; hooks_by_persona is not persisted.
+    import inspect
+    from fanops import moments as moments_mod
+    assert "sanitize_generated_text" not in inspect.getsource(moments_mod.ingest_moment_hooks)
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg, owner="markmakmouly")
     led = _decide_one_hook(led, cfg, "src_1", "10.00-28.00", hook="the craft — closely",
                            hooks_by_persona={"markmakmouly": "ignored per-account map"})
     m = led.moments_of("src_1")[0]
-    assert m.hook == "the craft, closely"   # em-dash sanitized on shared hook
+    assert m.hook == "the craft, closely"   # screened before ingest
     assert m.hooks_by_persona == {}
 
 from fanops.personas import hook_author_slot

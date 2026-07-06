@@ -9,6 +9,26 @@ def test_manual_responder_is_noop(tmp_path, monkeypatch):
     assert isinstance(r, ManualResponder)
     assert r.answer_pending(cfg) == 0                # writes nothing; a human does
 
+def test_responder_screens_text_once(tmp_path, monkeypatch):
+    # MOL-166: model-authored text is screened ONCE at the responder boundary — em-dashes never land on disk.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 20.0,
+                           "transcript": [{"start": 14, "end": 18, "text": "they slept on me"}],
+                           "signal_peaks": []})
+    def fake_model(kind, payload):
+        return {"source_id": payload["source_id"],
+                "picks": [{"start": 14.0, "end": 18.0, "reason": "punchline — then the beat drops",
+                           "transcript_excerpt": "they slept on me"}]}
+    n = LlmResponder(cfg, model=fake_model).answer_pending(cfg)
+    assert n == 1
+    data = json.loads(response_path(cfg, "moments", "src_1").read_text())
+    assert "—" not in data["picks"][0]["reason"]
+    assert "punchline" in data["picks"][0]["reason"]
+
 def test_llm_responder_writes_valid_response(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)
