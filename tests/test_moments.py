@@ -180,7 +180,8 @@ def test_request_packs_full_persona_spec_list(tmp_path):
     led = request_moments(led, cfg, "src_1", accounts=accts)
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
     for spec in payload["personas"]:
-        assert set(spec) == PERSONA_PICK_SPEC_KEYS
+        assert PERSONA_PICK_SPEC_KEYS <= set(spec)
+        assert "signal_peaks" in spec
         assert spec["handle"] in ("@x", "@y")
         assert spec["directive"] and spec["band"] and spec["framing"]
         assert spec["selection_scope"] and spec["hook_angle"] == "curiosity"
