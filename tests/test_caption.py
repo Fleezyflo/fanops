@@ -1,4 +1,5 @@
 import json
+import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Clip, Moment, Source, SourceState, MomentState, ClipState, Platform,
@@ -190,7 +191,6 @@ def test_caption_with_unknown_surface_key_is_held_with_specific_reason(tmp_path)
 # A skeptic proved the naive exact-string `!=` HELD legitimate same-language captions whose tag
 # carried a region subtag or different casing (en-US / EN / "en " vs en). That is a harmful
 # false-positive: it blocks correct work and, for an autonomous run, silently wedges the clip.
-import pytest
 
 @pytest.mark.parametrize("item_lang", ["en-US", "EN", "en-GB", "en ", " en", "En"])
 def test_caption_same_base_language_with_region_or_case_is_not_held(tmp_path, item_lang):
@@ -543,13 +543,40 @@ def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
     assert mc == vet_hashtags(tags, Platform.instagram, "en", content=content)  # no lean; content still rides
 
 
-# ---- AGENT-6: the vetting platform comes from the REQUEST record, not a re-parse of the model's surface ----
-def test_platform_for_surface_prefers_request_over_parse():
+# ---- MOL-168 / AGENT-6: caption platform is REQUEST-record-authoritative; no tail-parse or instagram-coerce ----
+def test_caption_platform_from_request_only():
     from fanops.caption import _platform_for_surface
     # the surface KEY tail says instagram, but the request recorded tiktok -> the request wins (vet truth)
     assert _platform_for_surface("@a/instagram", {"@a/instagram": "tiktok"}) == Platform.tiktok
-    assert _platform_for_surface("@a/tiktok", {}) == Platform.tiktok          # request omits it -> legacy parse fallback
-    assert _platform_for_surface("@a/tiktok", {"@a/tiktok": "garbage"}) == Platform.tiktok   # bad value -> parse, never crash
+    # a mangled model surface string is IRRELEVANT when the request carries the platform
+    assert _platform_for_surface("@a/nonsense", {"@a/nonsense": "tiktok"}) == Platform.tiktok
+
+def test_caption_missing_platform_errors():
+    from fanops.caption import _platform_for_surface
+    with pytest.raises(ValueError, match="missing platform"):
+        _platform_for_surface("@a/tiktok", {})
+    with pytest.raises(ValueError, match="invalid platform"):
+        _platform_for_surface("@a/tiktok", {"@a/tiktok": "garbage"})
+
+def test_caption_missing_platform_errors_end_to_end(tmp_path):
+    # ingest must surface the malformed request visibly (pipeline quarantines -> clip error)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("@a", Platform.instagram)])
+    req = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    del req["surfaces"][0]["platform"]                          # corrupt: hand-edited / legacy request
+    request_path(cfg, "captions", "clip_1").write_text(json.dumps(req))
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="@a/instagram", caption="#hiphop")]).model_dump_json())
+    with pytest.raises(ValueError, match="missing platform"):
+        ingest_captions(led, cfg, "clip_1")
+
+def test_platform_coerce_gone():
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops" / "caption.py"
+    text = src.read_text()
+    assert "platform_coerced" not in text
+    assert "_platform_of" not in text
 
 def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
     # End to end: a request whose surface KEY tail diverges from its recorded platform must vet under the
@@ -569,31 +596,3 @@ def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
     mocker.patch("fanops.caption.vet_hashtags_traced", side_effect=spy)
     ingest_captions(led, cfg, "clip_1")
     assert captured["plat"] == Platform.tiktok               # vetted under the REQUESTED platform, not the parsed @a/instagram
-
-
-# ---- #8 (degradation-honesty M1): a malformed surface platform coerces to instagram LOUDLY, never silently ----
-def test_platform_of_coercion_logs_the_bad_key(tmp_path):
-    # A surface whose platform tail is NOT a known Platform (and whose request omits a valid platform) is
-    # tolerated (coerced to instagram — autonomous ingest must not crash on a typo'd key) but the coercion
-    # is now LOGGED with the bad key, not swallowed. Structural: cfg is threaded from the ingest_captions
-    # call sites into _platform_of so the pure parser can breadcrumb.
-    from fanops.caption import _platform_of
-    cfg = Config(root=tmp_path)
-    assert _platform_of("@a/nonsense", cfg=cfg) == Platform.instagram          # safe value: still coerces, never crashes
-    log = cfg.log_path.read_text()
-    assert "platform_coerced" in log and "nonsense" in log                     # the bad key IS breadcrumbed
-
-def test_platform_of_no_log_on_known_platform(tmp_path):
-    # Silence when the tail IS a known platform — no manufactured noise on the happy path.
-    from fanops.caption import _platform_of
-    cfg = Config(root=tmp_path)
-    assert _platform_of("@a/tiktok", cfg=cfg) == Platform.tiktok               # parses cleanly
-    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "platform_coerced" not in log                                       # NOT logged on a valid tail
-
-def test_platform_of_coercion_backward_compatible_without_cfg():
-    # The pure 1-arg call still coerces silently (no cfg -> nothing to log with); existing callers/tests
-    # that pass no cfg keep their exact behavior.
-    from fanops.caption import _platform_of, _platform_for_surface
-    assert _platform_of("@a/nonsense") == Platform.instagram                   # 1-arg still works, coerces
-    assert _platform_for_surface("@a/nonsense", {}) == Platform.instagram      # 2-arg wrapper still works
