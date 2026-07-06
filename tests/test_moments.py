@@ -2,12 +2,13 @@ import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Clip, Post, Moment, MomentState, SourceState, Platform,
-                           MomentDecision, MomentPick, MomentHookDecision, PostState)
+                           MomentDecision, MomentPick, MomentHookDecision, PostState, ClipState)
 from fanops.agentstep import response_path, request_path, latest_request_id, pending
 from fanops.models import PERSONA_PICK_SPEC_KEYS
 from fanops.moments import (request_moments, ingest_moments, request_moment_hooks,
                             ingest_moment_hooks, validate_pick, _drop_overlaps, _owned_moment_id,
                             _pick_personas)
+from fanops.adjust import amplify
 from fanops.ids import child_id
 
 # M1b (frame-seeing two-pass): the moment gate is split. PASS 1 (request_moments/ingest_moments) picks
@@ -118,6 +119,16 @@ def _seed_pick_persona_accounts(cfg, handle="@a"):
         "hashtag_corpus": ["#detroitrap", "#bars"]}]}))
     return Accounts.load(cfg)
 
+def _seed_multi_pick_persona_accounts(cfg, handles):
+    from fanops.accounts import Accounts
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": h, "account_id": str(i + 1), "platforms": ["instagram"], "status": "active",
+         "persona": f"voice {h}", "content_focus": ["punchlines"],
+         "selection_scope": "credibility_first", "hook_angle": "curiosity",
+         "hashtag_corpus": [f"#tag{i}"]} for i, h in enumerate(handles)]}))
+    return Accounts.load(cfg)
+
 def test_pick_personas_returns_full_spec(tmp_path):
     cfg = Config(root=tmp_path); accts = _seed_pick_persona_accounts(cfg, "@raw")
     specs = _pick_personas(cfg, accts)
@@ -147,6 +158,87 @@ def test_pick_request_carries_resolved_persona_spec(tmp_path):
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
     assert len(payload["personas"]) == 1
     assert set(payload["personas"][0]) == PERSONA_PICK_SPEC_KEYS
+
+def test_request_writes_one_source_gate(tmp_path):
+    # P4 (MOL-145): N personas ride ONE source-keyed gate — no per-handle fork, no '#' in the key.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["@a", "@b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    gate_dir = request_path(cfg, "moments", "src_1").parent
+    moment_gates = [p.name for p in gate_dir.glob("moments__*.request.json")]
+    assert moment_gates == ["moments__src_1.request.json"]
+    assert "#" not in moment_gates[0]
+    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    assert len(payload["personas"]) == 2
+    assert {p["handle"] for p in payload["personas"]} == {"@a", "@b"}
+
+def test_request_packs_full_persona_spec_list(tmp_path):
+    # P4: each persona entry carries the full P4a resolved spec (handle through corpus).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["@x", "@y"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    for spec in payload["personas"]:
+        assert set(spec) == PERSONA_PICK_SPEC_KEYS
+        assert spec["handle"] in ("@x", "@y")
+        assert spec["directive"] and spec["band"] and spec["framing"]
+        assert spec["selection_scope"] and spec["hook_angle"] == "curiosity"
+        assert isinstance(spec["corpus"], list)
+
+def test_request_reuses_frames_once(tmp_path, mocker):
+    # P4: whole-source frames are extracted ONCE per request (persona-blind visual survey).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
+    (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
+    spy = mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/a.jpg"])
+    accts = _seed_multi_pick_persona_accounts(cfg, ["@a", "@b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    assert spy.call_count == 1
+    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    assert payload["frames"] == ["/k/a.jpg"]
+
+def test_request_zero_personas_drops_key(tmp_path, monkeypatch):
+    # P4: empty personas -> drop the key; persona-blind path byte-identical to no-accounts call.
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_pick_persona_accounts(cfg)
+    request_moments(led, cfg, "src_1")
+    payload_blind = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    led2 = Ledger.load(cfg); _src(led2, cfg)
+    request_moments(led2, cfg, "src_1", accounts=accts)
+    payload_cast_off = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    assert "personas" not in payload_blind and "personas" not in payload_cast_off
+    for k in ("duration", "transcript", "signal_peaks", "language", "clip_profile"):
+        assert payload_blind[k] == payload_cast_off[k]
+
+def test_request_adds_no_skip_state(tmp_path):
+    # P4: request_moments must NOT invent wait-cycle / skip-state machinery on the source.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["@a", "@b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    src = led.sources["src_1"]
+    assert src.state is SourceState.moments_requested
+    forbidden = ("moments_wait_cycles", "moments_skipped_handles", "skip_state")
+    assert not any(k in (src.meta or {}) for k in forbidden)
+
+def test_amplify_gate_still_read(tmp_path):
+    # P4: amplify keeps writing the source-keyed moments gate (no #handle fork) — path intact.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.moments_decided,
+                          duration=30.0, transcript=[{"start": 14, "end": 18, "text": "they slept on me"}],
+                          signal_peaks=[], meta={"transcribed": True}))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="14-21", start=14, end=21,
+                          reason="punchline", state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.analyzed))
+    led.add_post(Post(id="p1", parent_id="clip_1", account="@a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      metrics={"lift_score": 400}, public_url="dryrun://1"))
+    led = amplify(led, cfg, ["p1"])
+    assert request_path(cfg, "moments", "src_1").exists()
+    assert not request_path(cfg, "moments", "src_1#@a").exists()
+    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    assert payload["source_id"] == "src_1" and "AMPLIFY" in payload["guidance"]
+    assert latest_request_id(cfg, "moments", "src_1") is not None
 
 def test_request_moments_writes_pick_request_with_transcript_signals_language(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
