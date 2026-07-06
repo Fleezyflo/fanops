@@ -1,0 +1,11 @@
+{
+  "$schema": "https://cursor.com/schemas/environment.json",
+  "snapshot": "auto",
+  "install": "python3 -m venv .venv && ./.venv/bin/pip install --upgrade pip && ./.venv/bin/pip install -e '.[dev,studio]'",
+  "terminals": [
+    {
+      "name": "unit-tests",
+      "command": "./.venv/bin/python -m pytest -q -m 'not integration'"
+    }
+  ]
+}
