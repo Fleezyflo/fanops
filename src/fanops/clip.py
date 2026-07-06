@@ -418,6 +418,60 @@ def ffmpeg_segments_cmd(src: str, dst: str, cs: float, ce: float, aspect_value: 
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
     return cmd
 
+def _supercut_span_entries(cfg: Config, src, spans: list[tuple[float, float]]):
+    """Per-span framing for supercut concat inputs (one ABSOLUTE seek per span). Fail-open centered."""
+    entries = []; ct_out = None
+    for s, e in spans:
+        dur = float(e) - float(s)
+        focus, track, ct = _resolve_framing(cfg, src, float(s), float(e))
+        if ct and ct_out is None:
+            ct_out = ct
+        if focus is not None:
+            fx, fy = focus[0], focus[1]
+            fh = focus[2] if len(focus) > 2 else None
+            ey = focus[3] if len(focus) > 3 else None
+        elif track:
+            fx, fy = track[0][2], track[0][3]
+            fh = track[0][4] if len(track[0]) > 4 else None
+            ey = track[0][5] if len(track[0]) > 5 else None
+        else:
+            fx, fy, fh, ey = 0.5, 0.5, None, None
+        entries.append((0.0, dur, fx, fy, fh, ey))
+    return entries, ct_out
+
+def ffmpeg_supercut_cmd(src: str, dst: str, spans: list[tuple[float, float]], aspect_value: str,
+                        *, src_w: int = 0, src_h: int = 0, span_entries: list | None = None,
+                        content_type: str | None = None, sub_token: str | None = None) -> list[str]:
+    """S3 supercut: one ABSOLUTE seeked input per span (`-ss s -t (e-s) -i src`), each span its own
+    crop chain, joined by the concat-filter STRING `_segments_filter_complex` builds. NET-NEW seek loop;
+    only the concat string reuses."""
+    cmd = ["ffmpeg", "-y"]
+    for s, e in spans:
+        cmd += ["-ss", f"{float(s):.3f}", "-t", f"{float(e) - float(s):.3f}", "-i", src]
+    if span_entries is None:
+        span_entries = [(0.0, float(e) - float(s), 0.5, 0.5, None, None) for s, e in spans]
+    fc = _segments_filter_complex(span_entries, src_w, src_h, aspect_value, content_type, sub_token=sub_token)
+    cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
+            "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
+    return cmd
+
+def render_supercut_reframed(src_path: str, dst: str, spans: list[tuple[float, float]], aspect_value: str, *,
+                             src_w: int, src_h: int, span_entries: list | None = None,
+                             content_type: str | None = None, extra_vf: str | None = None,
+                             timeout: float = _FFMPEG_TIMEOUT):
+    """Atomic supercut render (MOL-178). Returns subprocess result; fail-open caller falls back."""
+    tmp = str(dst) + ".part.mp4"
+    try:
+        cmd = ffmpeg_supercut_cmd(src_path, tmp, spans, aspect_value, src_w=src_w, src_h=src_h,
+                                  span_entries=span_entries, content_type=content_type, sub_token=extra_vf)
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+        if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
+            os.replace(tmp, dst)
+        return r
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
 # ---- Stable render strategy: a LOCKED-OFF camera per shot (no per-frame motion = no jitter) ----
 # A per-frame crop that CHASES the subject reads as a jittery hand-held cam — it tracks every detection wobble
 # and the zoom "breathes" with per-frame face-height noise (the operator's "jittery cameraman" complaint).
@@ -487,7 +541,7 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
             os.unlink(tmp)
 
 def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
-                  *, clip_start: float, clip_end: float):
+                  *, clip_start: float, clip_end: float, supercut_spans: list[tuple[float, float]] | None = None):
     """Build the burned-on-screen-text `-vf` fragment for this clip, or return None (reframe only).
     FAIL-OPEN by contract: a clip is NEVER blocked on its text. Two independent layers:
       • the RETENTION HOOK (m.hook) — the default on-screen text, a curiosity-gap line that drives
@@ -522,8 +576,21 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
         warns = overlay.hook_legibility_warnings(hook, width=tw, height=th)
         if warns:
             get_logger(cfg)("clip", cid, "hook_legibility", warning="; ".join(warns))
-    ass_text = overlay.build_ass(segments, hook=hook, clip_start=clip_start, clip_end=clip_end,
-                                 width=tw, height=th, font=cfg.subtitle_font)
+    ass_text = None
+    if supercut_spans:
+        try:
+            ass_text = overlay.build_supercut_ass(segments, spans=supercut_spans, hook=hook,
+                                                    width=tw, height=th, font=cfg.subtitle_font)
+        except Exception as exc:
+            get_logger(cfg)("clip", cid, "supercut_subs_rebase_failed", reason=str(exc)[:180])
+            ass_text = None
+        if (not ass_text or not ass_text.strip()) and hook:
+            ass_text = overlay.build_ass([], hook=hook, clip_start=0.0,
+                                         clip_end=sum(float(e) - float(s) for s, e in supercut_spans),
+                                         width=tw, height=th, font=cfg.subtitle_font)
+    else:
+        ass_text = overlay.build_ass(segments, hook=hook, clip_start=clip_start, clip_end=clip_end,
+                                     width=tw, height=th, font=cfg.subtitle_font)
     if not ass_text or not ass_text.strip():
         return None, True                                # WANTED but produced no burnable text -> F9 flag
     ass_path = cfg.clips / f"{cid}.ass"
@@ -542,7 +609,9 @@ _REFRAME_GEOM_V = 4          # bump to force re-render of ZOOM/eyeline/dynamic c
 def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
                         src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
                         focus: tuple | None = None, track: list | None = None,
-                        content_type: str | None = None) -> str:
+                        content_type: str | None = None,
+                        supercut_segments: list[tuple[float, float]] | None = None,
+                        supercut_span_entries: list | None = None) -> str:
     payload = {"src": src_path, "cs": round(cs, 3), "ce": round(ce, 3), "aspect": aspect_value,
                "w": src_w, "h": src_h, "ass": ass_text}
     if top_bias:                                          # additive: absent key -> byte-identical fp to today
@@ -556,6 +625,12 @@ def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
         payload["ct"] = content_type
     if geom:                                              # version the new geometry so a future change can bust it
         payload["geom"] = _REFRAME_GEOM_V
+    if supercut_segments:
+        payload["supercut"] = [[round(float(s), 3), round(float(e), 3)] for s, e in supercut_segments]
+        if supercut_span_entries:
+            payload["sc_spans"] = [[round(s[0], 2), round(s[1], 2)]
+                                   + [round(v, 3) if v is not None else None for v in s[2:]]
+                                   for s in supercut_span_entries]
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
 
@@ -618,9 +693,52 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     cfg.clips.mkdir(parents=True, exist_ok=True)
     dst = cfg.clips / f"{cid}.mp4"
     first_frame_kind = None
+    spans = list(m.segments) if (m.segments and not is_stitch) else None
     if is_stitch:
         cs, ce = float(cut_window[0]), float(cut_window[1])    # the impact-cut window, verbatim
-    else:
+    elif spans:
+        # S3 supercut (MOL-178): bypass fit_window/snap/visual_start; absolute-span concat; postable tail.
+        sc_cut_seconds = round(sum(float(e) - float(s) for s, e in spans), 3)
+        span_entries, span_ct = _supercut_span_entries(cfg, src, spans)
+        env_cs, env_ce = float(m.start), float(m.end)
+        extra_vf, hook_burn_failed = _subtitles_vf(led, cfg, moment_id, cid, aspect,
+                                                   clip_start=env_cs, clip_end=env_ce, supercut_spans=spans)
+        ass_path = cfg.clips / f"{cid}.ass"
+        ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
+        fp = _render_fingerprint(src.source_path, env_cs, env_ce, aspect.value, src.width or 0, src.height or 0,
+                                 ass_text, supercut_segments=spans, supercut_span_entries=span_entries)
+        fp_path = cfg.clips / f"{cid}.render.json"
+        if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
+            clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
+                        first_frame_kind=None, cut_seconds=sc_cut_seconds, hook_burn_failed=hook_burn_failed)
+            led.clips[cid] = clip
+            led.set_moment_state(moment_id, MomentState.clipped)
+            return led, clip
+        sc_ok = False
+        try:
+            r = render_supercut_reframed(src.source_path, str(dst), spans, aspect.value,
+                                         src_w=src.width or 0, src_h=src.height or 0,
+                                         span_entries=span_entries, content_type=span_ct, extra_vf=extra_vf,
+                                         timeout=_FFMPEG_TIMEOUT)
+            sc_ok = r.returncode == 0 and dst.exists() and dst.stat().st_size > 0
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+            get_logger(cfg)("clip", cid, "supercut_fail_open",
+                            reason=f"{type(exc).__name__}: supercut render failed — falling back to envelope")
+            r = None
+        if sc_ok:
+            clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
+                        first_frame_kind=None, cut_seconds=sc_cut_seconds, hook_burn_failed=hook_burn_failed)
+            led.clips[cid] = clip
+            led.set_moment_state(moment_id, MomentState.clipped)
+            try: fp_path.write_text(json.dumps({"fp": fp}))
+            except OSError: pass
+            return led, clip
+        rc = getattr(r, "returncode", "?") if r is not None else "?"
+        get_logger(cfg)("clip", cid, "supercut_fail_open",
+                        reason=f"supercut rc={rc} — falling back to envelope cut")
+        # FAIL-OPEN: today's single-window path over the envelope (fit_window/snap/visual_start below).
+        spans = None
+    if not is_stitch and not spans:
         band = band_for(cfg.clip_profile)                          # talk 12-22s / song 18-35s
         cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
         cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
@@ -631,6 +749,8 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         if cfg.visual_start:
             cs, first_frame_kind = pick_visual_start(src.source_path, cs, ce,
                                                      scene_peaks=src.signal_peaks, out_dir=cfg.clips)
+    elif is_stitch:
+        pass                                                   # cs/ce already set from cut_window
     cut_seconds = round(ce - cs, 3)                            # P1 provenance (observational; length not varied)
     # Smart framing (default-on, fail-open): the subject's normalized centroid over THIS window slides the
     # crop onto the speaker/action instead of the blind top/center guess. None (no [framing] extra / no
@@ -754,31 +874,50 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
     try:
         m = led.moments[moment_id]
         src = led.sources[m.parent_id]
-        band = band_for(profile)
-        cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the account's band
-        cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)
-        if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
-            cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
-        realized = ce - cs                                    # P3: the account cut's REALIZED window length (post snap+visual-start)
-        focus, track, content_type = _resolve_framing(cfg, src, cs, ce)   # content-adaptive crop (fail-open -> centered)
         tw, th = _TARGETS[aspect.value]
         extra_vf = None
-        if (hook or "").strip() and overlay.ffmpeg_has_textfilter():
-            # hook-only .ass, 0-based over the cut output's first min(2.5, len) seconds (build_ass uses
-            # clip_start/clip_end only for clip_len; the HOOK event is emitted at t=0 regardless).
-            ass_text = overlay.build_ass([], hook=hook, clip_start=0.0, clip_end=ce - cs,
-                                         width=tw, height=th, font=cfg.subtitle_font)
-            if ass_text and ass_text.strip():
-                ass_path = str(Path(out_path).with_suffix(".ass"))
-                overlay.write_ass(ass_text, ass_path)
-                extra_vf = overlay.subtitles_vf(ass_path)
-        try:
-            r = render_reframed(src.source_path, tmp, cs, ce, aspect.value,
-                                src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                                top_bias=top_bias, focus=focus, track=track,
-                                content_type=content_type, timeout=_FFMPEG_TIMEOUT)
-        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-            return False, None                                # ffmpeg absent/hung -> fail-open to the shared burn
+        if m.segments:
+            spans = list(m.segments)
+            realized = sum(float(e) - float(s) for s, e in spans)
+            span_entries, span_ct = _supercut_span_entries(cfg, src, spans)
+            if (hook or "").strip() and overlay.ffmpeg_has_textfilter():
+                ass_text = overlay.build_supercut_ass([], spans=spans, hook=hook, width=tw, height=th,
+                                                      font=cfg.subtitle_font)
+                if ass_text and ass_text.strip():
+                    ass_path = str(Path(out_path).with_suffix(".ass"))
+                    overlay.write_ass(ass_text, ass_path)
+                    extra_vf = overlay.subtitles_vf(ass_path)
+            try:
+                r = render_supercut_reframed(src.source_path, tmp, spans, aspect.value,
+                                             src_w=src.width or 0, src_h=src.height or 0,
+                                             span_entries=span_entries, content_type=span_ct, extra_vf=extra_vf,
+                                             timeout=_FFMPEG_TIMEOUT)
+            except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+                return False, None
+        else:
+            band = band_for(profile)
+            cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the account's band
+            cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)
+            if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
+                cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
+            realized = ce - cs                                    # P3: the account cut's REALIZED window length (post snap+visual-start)
+            focus, track, content_type = _resolve_framing(cfg, src, cs, ce)   # content-adaptive crop (fail-open -> centered)
+            if (hook or "").strip() and overlay.ffmpeg_has_textfilter():
+                # hook-only .ass, 0-based over the cut output's first min(2.5, len) seconds (build_ass uses
+                # clip_start/clip_end only for clip_len; the HOOK event is emitted at t=0 regardless).
+                ass_text = overlay.build_ass([], hook=hook, clip_start=0.0, clip_end=ce - cs,
+                                             width=tw, height=th, font=cfg.subtitle_font)
+                if ass_text and ass_text.strip():
+                    ass_path = str(Path(out_path).with_suffix(".ass"))
+                    overlay.write_ass(ass_text, ass_path)
+                    extra_vf = overlay.subtitles_vf(ass_path)
+            try:
+                r = render_reframed(src.source_path, tmp, cs, ce, aspect.value,
+                                    src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
+                                    top_bias=top_bias, focus=focus, track=track,
+                                    content_type=content_type, timeout=_FFMPEG_TIMEOUT)
+            except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+                return False, None                                # ffmpeg absent/hung -> fail-open to the shared burn
         if r.returncode != 0 or not Path(tmp).exists():
             return False, None                                # ffmpeg failed -> fail-open (tmp swept in finally)
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
