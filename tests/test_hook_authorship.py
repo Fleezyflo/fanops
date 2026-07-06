@@ -1,6 +1,4 @@
-# tests/test_hook_authorship.py — the frame-seeing MOMENT author (Opus) owns on-screen hook authorship.
-# M1b: hook is authored in PASS-2 moment_hooks seeing each picked window's frames. P6: ONE hook for the
-# moment's owner (m.affinities[0]); hooks_by_persona map-building stopped (field removal is P7).
+# tests/test_hook_authorship.py — P6/P7: ONE hook on m.hook; hooks_by_persona removed (MOL-148).
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -10,6 +8,7 @@ from fanops.accounts import Accounts, Account, AccountStatus
 from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks
 from fanops.agentstep import request_path, response_path, latest_request_id
 from fanops.prompts import moment_hook_prompt
+from fanops.responder import screen_model_text
 
 def _accts(cfg, handles_personas):
     a = Accounts(cfg)
@@ -24,118 +23,42 @@ def _seed_src(cfg, dur=60.0):
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}]))
     return led
 
-def _decide_one_hook(led, cfg, source_id, token, *, hook=None, hooks_by_persona=None, accounts=None):
-    """Two-pass driver for ONE pick: open the hook gates, answer the named pick's gate, then ingest."""
-    from fanops.responder import screen_model_text
-    led = request_moment_hooks(led, cfg, source_id, accounts=accounts)
-    key = f"{source_id}.{token}"
-    rid = latest_request_id(cfg, "moment_hooks", key)
-    dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hook, hooks_by_persona=hooks_by_persona or {}))
-    response_path(cfg, "moment_hooks", key).write_text(dec.model_dump_json())
-    return ingest_moment_hooks(led, cfg, source_id)
+def _pick(led, cfg, owner=None):
+    request_moments(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moments", "src_1")
+    pick = MomentPick(start=10, end=28, reason="r")
+    if owner: pick = pick.model_copy(update={"personas": [owner]})
+    response_path(cfg, "moments", "src_1").write_text(MomentDecision(
+        source_id="src_1", request_id=rid, picks=[pick]).model_dump_json())
+    return ingest_moments(led, cfg, "src_1")
 
-# ---- the hook DECISION carries per-persona (handle-keyed) hooks ----
+def test_moment_hook_decision_has_no_hooks_by_persona_field():
+    assert "hooks_by_persona" not in MomentHookDecision.model_fields
 
-def test_moment_hook_decision_carries_hooks_by_persona():
-    d = MomentHookDecision(request_id="r", hook="x", hooks_by_persona={"markmakmouly": "watch the craft"})
-    assert d.hooks_by_persona["markmakmouly"] == "watch the craft"
+def test_moment_has_no_hooks_by_persona_field():
+    assert "hooks_by_persona" not in Moment.model_fields
 
-def test_moment_hook_decision_defaults_empty_hooks_by_persona():
-    d = MomentHookDecision(request_id="r")               # old responses (no key) still validate
-    assert d.hooks_by_persona == {}
+def test_moment_hook_prompt_no_hooks_by_persona_map():
+    p = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "", "language": "en",
+         "guidance": "", "frames": [], "signal_peaks": [],
+         "personas": [{"handle": "markmakmouly", "persona": "craft angle"}]}
+    out = moment_hook_prompt(p)
+    assert "hooks_by_persona" not in out and "markmakmouly" in out
 
-def test_moment_carries_hooks_by_persona():
-    m = Moment(id="m1", parent_id="s1", start=0, end=5, reason="r",
-               hooks_by_persona={"markmakmouly": "x"})
-    assert m.hooks_by_persona == {"markmakmouly": "x"}
-
-def test_moment_defaults_empty_hooks_by_persona():
-    m = Moment(id="m1", parent_id="s1", start=0, end=5, reason="r")   # old ledger rows load fine
-    assert m.hooks_by_persona == {}
-
-# ---- moment_hook_prompt authors ONE owner hook from the owner's directive (P6) ----
-
-def _payload(**extra):
-    base = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "",
-            "language": "en", "guidance": "", "frames": [], "signal_peaks": []}
-    base.update(extra)
-    return base
-
-def test_moment_hook_prompt_asks_for_per_persona_hooks_when_personas_present():
-    out = moment_hook_prompt(_payload(personas=[
-        {"handle": "markmakmouly", "persona": "champions craft, watch-for-the-craft angle"}]))
-    assert "hooks_by_persona" not in out                  # P6: no per-handle map
-    assert "markmakmouly" in out
-    assert "champions craft" in out                       # owner voice reaches the frame-seeing author
-    assert "perca.late" not in out                        # not the full roster
-
-def test_moment_hook_prompt_byte_identical_without_personas():
-    out = moment_hook_prompt(_payload())                  # no personas key -> no block (back-compat)
-    assert "hooks_by_persona" not in out
-
-# ---- request_moment_hooks sends owner only; ingest applies ONE hook to m.hook (P6) ----
-
-def _pick(led, cfg, source_id="src_1", token="10.00-28.00", start=10.0, end=28.0, owner=None):
-    request_moments(led, cfg, source_id)
-    rid = latest_request_id(cfg, "moments", source_id)
-    pick = MomentPick(start=start, end=end, reason="r")
-    if owner is not None:
-        pick = pick.model_copy(update={"personas": [owner]})
-    response_path(cfg, "moments", source_id).write_text(MomentDecision(
-        source_id=source_id, request_id=rid, picks=[pick]).model_dump_json())
-    return ingest_moments(led, cfg, source_id)
-
-def test_request_moment_hooks_threads_active_personas(tmp_path):
+def test_request_moment_hooks_sends_owner_only(tmp_path):
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg, owner="markmakmouly")
-    accts = _accts(cfg, [("markmakmouly", "champions craft"), ("perca.late", "underground raw")])
-    led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
+    led = request_moment_hooks(led, cfg, "src_1", accounts=_accts(cfg, [("markmakmouly", "craft"), ("other", "x")]))
     req = json.loads(request_path(cfg, "moment_hooks", "src_1.10.00-28.00").read_text())
-    assert len(req["personas"]) == 1
-    assert req["personas"][0]["handle"] == "markmakmouly"
-    assert req["personas"][0]["persona"] == "champions craft"
+    assert len(req["personas"]) == 1 and req["personas"][0]["handle"] == "markmakmouly"
 
-def test_request_moment_hooks_floor_slot_when_account_has_no_persona(tmp_path):
-    cfg = Config(root=tmp_path); led = _seed_src(cfg)
-    led = _pick(led, cfg, owner="a")
-    led = request_moment_hooks(led, cfg, "src_1", accounts=_accts(cfg, [("a", None)]))
-    req = json.loads(request_path(cfg, "moment_hooks", "src_1.10.00-28.00").read_text())
-    assert len(req["personas"]) == 1 and req["personas"][0]["handle"] == "a"   # floor slot, not omitted
-
-def test_request_moment_hooks_no_personas_without_accounts(tmp_path):
-    cfg = Config(root=tmp_path); led = _seed_src(cfg)
-    led = _pick(led, cfg)
-    led = request_moment_hooks(led, cfg, "src_1")          # accounts=None (legacy)
-    req = json.loads(request_path(cfg, "moment_hooks", "src_1.10.00-28.00").read_text())
-    assert req["personas"] == []
-
-def test_ingest_moment_hooks_persists_hooks_by_persona(tmp_path):
-    # P6: ingest applies ONE shared hook to m.hook; decision hooks_by_persona is NOT persisted (P7 removes field).
+def test_ingest_moment_hooks_persists_m_hook_only(tmp_path):
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg, owner="markmakmouly")
-    led = _decide_one_hook(led, cfg, "src_1", "10.00-28.00", hook="the part you'll replay",
-                           hooks_by_persona={"markmakmouly": "watch the craft", "perca.late": "raw bars no polish"})
+    led = request_moment_hooks(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moment_hooks", "src_1.10.00-28.00")
+    dec = screen_model_text(MomentHookDecision(request_id=rid, hook="the part you'll replay"))
+    response_path(cfg, "moment_hooks", "src_1.10.00-28.00").write_text(dec.model_dump_json())
+    led = ingest_moment_hooks(led, cfg, "src_1")
     m = led.moments_of("src_1")[0]
-    assert m.state is MomentState.decided
-    assert m.hook == "the part you'll replay"
-    assert m.hooks_by_persona == {}
-
-def test_shared_hook_screened_at_responder_boundary(tmp_path):
-    # MOL-166: em-dash sanitization at responder write boundary (screen_model_text), not ingest.
-    # P6: ONE shared hook lands on m.hook; hooks_by_persona is not persisted.
-    import inspect
-    from fanops import moments as moments_mod
-    assert "sanitize_generated_text" not in inspect.getsource(moments_mod.ingest_moment_hooks)
-    cfg = Config(root=tmp_path); led = _seed_src(cfg)
-    led = _pick(led, cfg, owner="markmakmouly")
-    led = _decide_one_hook(led, cfg, "src_1", "10.00-28.00", hook="the craft — closely",
-                           hooks_by_persona={"markmakmouly": "ignored per-account map"})
-    m = led.moments_of("src_1")[0]
-    assert m.hook == "the craft, closely"   # screened before ingest
-    assert m.hooks_by_persona == {}
-
-from fanops.personas import hook_author_slot
-
-def test_hook_author_slot_floor():
-    a = Account(handle="tiktokfan", account_id="1", platforms=[Platform.tiktok], status=AccountStatus.active, persona=None)
-    assert "tiktokfan" in hook_author_slot(a)
+    assert m.state is MomentState.decided and m.hook == "the part you'll replay"

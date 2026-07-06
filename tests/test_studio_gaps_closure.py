@@ -73,13 +73,13 @@ def test_restore_persona_hook_reburns(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
     led = Ledger.load(cfg)
-    led.moments["m1"] = led.moments["m1"].model_copy(update={"hooks_by_persona_removed": {"@a": "STRIPPED"}})
+    led.moments["m1"] = led.moments["m1"].model_copy(update={"hook_removed": "STRIPPED"})
     led.save()
     res = actions.restore_persona_hook(cfg, "p0")
     assert res.ok
     led2 = Ledger.load(cfg)
     assert led2.posts["p0"].variant_hook == "STRIPPED"
-    assert "@a" not in (led2.moments["m1"].hooks_by_persona_removed or {})
+    assert led2.moments["m1"].hook == "STRIPPED" and led2.moments["m1"].hook_removed is None
 
 def test_retry_rate_limit_staggers_schedule(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)

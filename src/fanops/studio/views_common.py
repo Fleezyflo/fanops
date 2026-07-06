@@ -8,6 +8,7 @@ cheap GET, cached ~30s) — the Postiz backend health probe the Studio banner de
 new module) because it's a global-strip read like the others, and it imports only fanops.post.postiz."""
 from __future__ import annotations
 import logging
+import re as _re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -262,14 +263,14 @@ def _any_channel_routes_to_postiz(cfg: Config) -> bool:
 
 
 def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict:
-    """D13b read-model for the Studio Postiz-down banner. Returns {show, status, hint}. `show` is True ONLY
-    when the backend health probe is unhealthy AND at least one channel routes to postiz — a Postiz outage
-    is irrelevant to a deployment that doesn't publish through it, and no banner should nag then. The probe
-    result is cached ~30s (keyed by postiz_url) so a per-render Studio hit doesn't slam Postiz. Fail-open:
-    any error -> {show: False} (an informational banner must never block a page). `now` is injected for
-    deterministic cache tests; defaults to time.monotonic()."""
+    """D13b read-model for the Studio Postiz-down banner. Returns {show, danger, status, hint}. `danger` is True
+    ONLY when the probe is unhealthy AND at least one due postiz-routed post is waiting — a reaper-idle stack
+    with nothing to publish is muted idle, not a stall. `show` is True for danger OR the muted idle hint when
+    a channel routes to postiz and the probe is down. No banner when healthy or no postiz channel. The probe
+    result is cached ~30s (keyed by postiz_url). Fail-open: any error -> {show: False} (must never block a page).
+    `now` is injected for deterministic cache tests; defaults to time.monotonic()."""
     if not _any_channel_routes_to_postiz(cfg):
-        return {"show": False, "status": None, "hint": ""}
+        return {"show": False, "danger": False, "status": None, "hint": ""}
     key = cfg.postiz_url or ""
     t = now if now is not None else time.monotonic()
     cached = _postiz_health_cache.get(key)
@@ -281,13 +282,71 @@ def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict
             health = postiz_health_probe(cfg)
         except Exception as e:                       # postiz_health_probe never raises, but stay defensive
             _log.warning("postiz_health_probe raised in banner read (suppressing banner): %s", e)
-            return {"show": False, "status": None, "hint": ""}
+            return {"show": False, "danger": False, "status": None, "hint": ""}
         _postiz_health_cache[key] = (t, health)
     if health.healthy:
-        return {"show": False, "status": health.status_code, "hint": ""}
+        return {"show": False, "danger": False, "status": health.status_code, "hint": ""}
     status = health.status_code
+    postiz_due = 0
+    try:
+        from fanops.studio.views_results import due_publish_plan
+        postiz_due = due_publish_plan(cfg).postiz_due
+    except Exception as e:
+        _log.debug("due_publish_plan failed in banner read (treat as idle): %s", e)
+    if postiz_due <= 0:
+        return {"show": True, "danger": False, "status": status,
+                "hint": "Postiz idle (starts on publish)"}
     where = f" (status: {status})" if status is not None else ""
-    return {"show": True, "status": status,
+    return {"show": True, "danger": True, "status": status,
             "hint": (f"Postiz API unhealthy{where} — publishes via Postiz are stalled. The container's "
                      "health check is nginx-only and can lie; check `docker logs postiz` (see "
                      "docs/POSTIZ_OPS.md).")}
+
+
+# MOL-125: shared transient-network failure classifier for publish error_reason strings (Studio recovery +
+# daemon re-queue). Distinct from run._is_transient_publish_error (Exception-typed publish path).
+
+_TRANSIENT_DAEMON_PREFIX = _re.compile(r"^transient_daemon_retry=(\d+)/(\d+)\|", _re.I)
+
+def transient_daemon_retry_count(error_reason: str | None) -> int:
+    """How many daemon-level transient re-queue cycles this post has consumed (0 when unset)."""
+    m = _TRANSIENT_DAEMON_PREFIX.match((error_reason or "").strip())
+    return int(m.group(1)) if m else 0
+
+
+def strip_transient_daemon_prefix(error_reason: str | None) -> str:
+    er = (error_reason or "").strip()
+    return _TRANSIENT_DAEMON_PREFIX.sub("", er, count=1) if er else ""
+
+
+def is_transient_failure_reason(error_reason: str | None) -> bool:
+    """True for DNS/read-timeout/connection blips in a stored error_reason (failed-tab recovery + daemon).
+    Permanent 4xx/auth/validation -> False. Poll errors are reconcile-column, not publish transients."""
+    er = strip_transient_daemon_prefix(error_reason).lower()
+    if not er:
+        return False
+    if "publish transient error" in er:
+        return True
+    if "reconcile poll error" in er or "poll error" in er:
+        return False
+    if any(x in er for x in ("401", "403", "unauthorized", "auth rejected", "credentials rejected")):
+        return False
+    if any(x in er for x in ("413", "oversize", "too large", "entity too large")):
+        return False
+    if any(x in er for x in ("400", "bad request", "bad media", "invalid media", "422")):
+        return False
+    if "429" in er or "rate limit" in er or "too many requests" in er:
+        return False
+    if any(x in er for x in ("nameresolution", "name resolution", "failed to resolve",
+                             "read timed out", "timed out", "timeout", "connection refused",
+                             "connection error", "connection reset", "max retries exceeded",
+                             "network error", "unreachable", "connection aborted")):
+        return True
+    m = _re.search(r'\((\d{3})\)', er)
+    if m:
+        code = int(m.group(1))
+        if 500 <= code < 600:
+            return True
+        if 400 <= code < 500:
+            return False
+    return False
