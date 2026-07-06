@@ -28,6 +28,7 @@ from fanops.post.compress import maybe_shrink_for_cap
 
 _log = logging.getLogger("fanops.post.zernio")
 _MAX_RETRIES = 4
+_PUBLISH_TRANSIENT_MAX = _MAX_RETRIES   # MOL-115: connection/timeout retries before parking needs_reconcile
 
 
 class ZernioAccount(NamedTuple):
@@ -229,10 +230,13 @@ class ZernioPoster:
                                        content=post.caption, media_urls=post.media_urls,
                                        scheduled_time=post.scheduled_time)
         delay, last = 1.0, None
-        for _ in range(_MAX_RETRIES):
+        for attempt in range(_MAX_RETRIES):
             try:
                 resp = requests.post(f"{self.base}/posts", headers=self.headers, json=payload, timeout=30)
             except requests.exceptions.RequestException as exc:
+                # Pre-send connection blips are safe to retry; ambiguous post-send drops park immediately.
+                if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout)) and attempt < _MAX_RETRIES - 1:
+                    time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
                 # Body may have landed on Zernio (the response, not the request, was lost) — ambiguous,
                 # park for reconcile, never re-POST into a possible second live post (no idempotency key).
                 post.state = PostState.needs_reconcile

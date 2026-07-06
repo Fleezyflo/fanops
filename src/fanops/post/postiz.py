@@ -31,6 +31,7 @@ from fanops.text import safe_public_url
 
 _log = logging.getLogger("fanops.post.postiz")
 _MAX_RETRIES = 4
+_PUBLISH_TRANSIENT_MAX = _MAX_RETRIES   # MOL-115: connection/timeout retries before parking needs_reconcile
 _PUBLIC = "/public/v1"
 _YOUTUBE_TITLE_FLOOR = "New clip"   # YouTube REQUIRES a 2-100 char title; last-resort so no caller ever emits an invalid one
 
@@ -372,10 +373,12 @@ class PostizPoster:
                                        scheduled_time=sched,
                                        title=title, hashtags=post.hashtags)
         delay, last = 1.0, None
-        for _ in range(_MAX_RETRIES):
+        for attempt in range(_MAX_RETRIES):
             try:
                 resp = requests.post(f"{self.base}{_PUBLIC}/posts", headers=self.headers, json=payload, timeout=30)
             except requests.exceptions.RequestException as exc:
+                if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout)) and attempt < _MAX_RETRIES - 1:
+                    time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
                 # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
                 # park for reconcile, never re-POST into a possible second live post.
                 post.state = PostState.needs_reconcile

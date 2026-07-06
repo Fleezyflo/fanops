@@ -246,8 +246,8 @@ def moment_pick_prompt(payload: dict) -> str:
 def moment_hook_prompt(payload: dict) -> str:
     """M1b PASS 2 — author the ON-SCREEN HOOK for ONE already-picked clip, seeing the frames extracted
     over THAT clip's fitted window (the operator's #1 ask: the author SEES the footage it rides the hook
-    for). Carries the same `_hook_decision` + `_hook_spec` craft and per-account `hooks_by_persona` the
-    single-pass gate had — only now grounded in the picked window, not a whole-source survey."""
+    for). Carries `_hook_decision` + `_hook_spec` craft for the moment's OWNER (P6); persona-blind moments
+    use the shared-hook path with no owner voice block."""
     start = float(payload.get("start", 0.0) or 0.0)
     end = float(payload.get("end", 0.0) or 0.0)
     dur = max(0.0, end - start)
@@ -261,18 +261,14 @@ def moment_hook_prompt(payload: dict) -> str:
         f"{json.dumps(learned, ensure_ascii=False)}\n"
         if learned else ""
     )
-    # Per-account hooks: ALSO write ONE hook per active fan account, keyed by handle, in that account's
-    # voice — each grounded in the SAME picked-window frames. Absent/empty `personas` -> no block.
+    # P6: the moment's OWNER voice — ONE hook in that account's stance. Absent/empty `personas` -> shared hook.
     personas = payload.get("personas")
     persona_block = (
-        "  - PER-ACCOUNT HOOKS: ALSO return `hooks_by_persona` — a map from each account HANDLE below to "
-        "ITS OWN on-screen hook, written in that account's voice and obeying EVERY hook rule above "
-        "(frame-grounded, viewer-POV, <=6 words, never a third-person recap of the artist). Make each "
-        "account's hook GENUINELY DIFFERENT to fit its angle; key the map by the EXACT handle string. Omit "
-        "an account only when it has no honest hook (it then falls back to the shared `hook`). Each account's "
-        "voice below is THAT ACCOUNT'S own STANCE/angle — the lens it hooks the viewer through, source to "
-        "TRANSFORM into a second-person line, NEVER a third-person artist recap to echo. Accounts:\n"
-        + "".join(f"      * {p.get('handle')}: {_inline(p.get('persona',''))}\n" for p in personas)
+        "  - OWNER VOICE: write ONE on-screen hook for this moment's owning account, in that account's "
+        "voice and obeying EVERY hook rule above (frame-grounded, viewer-POV, <=6 words, never a third-person "
+        "recap of the artist). The voice below is that account's STANCE/angle — the lens it hooks the viewer "
+        "through, source to TRANSFORM into a second-person line, NEVER a third-person artist recap to echo:\n"
+        f"      * {personas[0].get('handle')}: {_inline(personas[0].get('persona', ''))}\n"
         if personas else ""
     )
     return (

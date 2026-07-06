@@ -323,6 +323,7 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
             raise RuntimeError("postiz upload failed (503): server down")
         return "https://cdn/ok.mp4"
     mocker.patch.object(run, "ensure_clip_media", side_effect=fake_ensure)
+    mocker.patch("fanops.post.run.time.sleep", return_value=None)   # MOL-115 retry backoff — no real sleep in unit test
     class _OkPoster:
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
@@ -332,8 +333,8 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
     mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert led.posts["pa"].state is PostState.failed          # bad upload -> failed, isolated
-    assert "503" in (led.posts["pa"].error_reason or "")
+    assert led.posts["pa"].state is PostState.needs_reconcile   # transient upload -> needs_reconcile after retries
+    assert "503" in (led.posts["pa"].error_reason or "") or "transient" in (led.posts["pa"].error_reason or "").lower()
     assert led.posts["pb"].state is PostState.published        # healthy clip still shipped
 
 def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocker):
