@@ -5,7 +5,8 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
 from fanops.errors import ToolchainMissingError
-from fanops.signals import parse_silences, parse_scene_changes, detect_signals, apply_energy, _silence_cmd, _scene_cmd, _scene_timeout
+from fanops.signals import (parse_silences, parse_scene_changes, detect_signals, apply_energy,
+                            filter_peaks_by_intensity, _silence_cmd, _scene_cmd, _scene_timeout)
 
 SILENCE_STDERR = """
 [silencedetect @ 0x] silence_start: 2.5
@@ -313,3 +314,40 @@ def test_detect_signals_producer_path_still_runs_ffmpeg(tmp_path, mocker):
     led = detect_signals(led, cfg, "src_1")                          # default: producer path
     spy.assert_called()                                             # ffmpeg ran (warms the sidecar)
     assert led.sources["src_1"].state is SourceState.signalled
+
+
+# ---- MOL-158 (P4b): content_focus INTENSITY filters the peak set — NET-NEW, no energy lever ----
+def _score(p):
+    return float(p.get("energy") or p.get("score") or 0.0)
+
+def _sample_peaks():
+    return [{"t": 1.0, "kind": "speech_resume", "score": 0.15, "energy": 0.15},
+            {"t": 2.0, "kind": "speech_resume", "score": 0.45, "energy": 0.45},
+            {"t": 3.0, "kind": "speech_resume", "score": 0.70, "energy": 0.70},
+            {"t": 4.0, "kind": "speech_resume", "score": 0.95, "energy": 0.95}]
+
+def test_intensity_filter_high_keeps_loud():
+    peaks = _sample_peaks()
+    out = filter_peaks_by_intensity(peaks, "high")
+    assert out and max(_score(p) for p in out) >= 0.95
+    assert all(_score(p) >= _score(peaks[2]) for p in out)
+
+def test_intensity_filter_low_keeps_calm():
+    peaks = _sample_peaks()
+    out = filter_peaks_by_intensity(peaks, "low")
+    assert out and max(_score(p) for p in out) <= 0.45
+    assert all(_score(p) <= _score(peaks[1]) for p in out)
+
+def test_intensity_filter_neutral_unchanged():
+    peaks = _sample_peaks()
+    for neutral in (None, "", "neutral", "medium"):
+        assert filter_peaks_by_intensity(peaks, neutral) is peaks
+
+def test_intensity_filter_is_new_function():
+    import fanops.signals as sig
+    assert callable(filter_peaks_by_intensity)
+    assert not hasattr(sig, "filter_peaks_by_energy")
+
+def test_no_energy_key_referenced():
+    import inspect
+    assert "energy" not in inspect.signature(filter_peaks_by_intensity).parameters

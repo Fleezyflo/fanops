@@ -146,7 +146,8 @@ def test_pick_request_carries_resolved_persona_spec(tmp_path):
     led = request_moments(led, cfg, "src_1", accounts=accts)
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
     assert len(payload["personas"]) == 1
-    assert set(payload["personas"][0]) == PERSONA_PICK_SPEC_KEYS
+    assert PERSONA_PICK_SPEC_KEYS <= set(payload["personas"][0])
+    assert "signal_peaks" in payload["personas"][0]
 
 def test_request_moments_writes_pick_request_with_transcript_signals_language(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)

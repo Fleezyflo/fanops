@@ -77,6 +77,31 @@ def apply_energy(peaks: list[dict], windows: list[dict]) -> list[dict]:
         out.append(q)
     return out
 
+def _peak_rank_score(p: dict) -> float:
+    """Rank key for intensity filtering — prefers apply_energy's `energy`, else `score`. Fail-soft -> 0.0."""
+    try:
+        if p.get("energy") is not None: return float(p["energy"])
+        return float(p.get("score") or 0.0)
+    except (TypeError, ValueError): return 0.0
+
+def filter_peaks_by_intensity(peaks: list[dict], intensity: str | None) -> list[dict]:
+    """P4b: select a SUBSET of scored signal_peaks by content_focus INTENSITY (high=loud, low=calm).
+    neutral/None/medium -> peaks UNCHANGED (byte-identical). Deterministic tercile on the existing score."""
+    if not peaks: return peaks
+    tier = (intensity or "").strip().lower()
+    if tier in ("", "neutral", "medium", "none"): return peaks
+    if tier not in ("high", "low"): return peaks
+    scored = [(p, _peak_rank_score(p)) for p in peaks]
+    scores = sorted(s for _, s in scored)
+    n = len(scores)
+    lo_thr = scores[n // 3]
+    hi_thr = scores[(2 * n) // 3]
+    if tier == "high":
+        kept = [p for p, s in scored if s >= hi_thr]
+    else:
+        kept = [p for p, s in scored if s <= lo_thr]
+    return sorted(kept, key=lambda p: p["t"])
+
 def _silence_cmd(src: str) -> list[str]:
     # -vn: silencedetect is a pure AUDIO filter — without it ffmpeg decodes the whole video stream to the
     # null sink (MOL-119: a 13GB/1728x3072 source blew the 600s cap doing exactly that). Audio-only decode

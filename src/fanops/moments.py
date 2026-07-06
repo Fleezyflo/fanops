@@ -199,6 +199,7 @@ def _pick_personas(cfg: Config, accounts) -> list[dict]:
     if accounts is None or not cfg.account_casting:
         return []
     from fanops.persona_directives import casting_directive, resolved_cut_spec
+    from fanops.persona_levers import derive_intensity_from_focus
     out: list[dict] = []
     for a in accounts.active():
         try:
@@ -209,16 +210,28 @@ def _pick_personas(cfg: Config, accounts) -> list[dict]:
             pin_fr = (getattr(a, "framing", None) or "").strip().lower()
             _, derived_fr = resolved_cut_spec(a)
             framing = pin_fr or derived_fr or ("top" if cfg.resolve_top_bias(a) else "center")
+            content_focus = list(getattr(a, "content_focus", None) or [])
+            intensity = derive_intensity_from_focus(content_focus)
             out.append({"handle": a.handle,
                         "directive": d.select_rule or d.register,
                         "selection_scope": d.scope_lens,
                         "band": f"{band.lo:g}-{band.hi:g}s",
                         "framing": framing,
+                        "content_focus": content_focus,
+                        "intensity": intensity or "",
                         "hook_angle": (getattr(a, "hook_angle", None) or ""),
                         "corpus": list(getattr(a, "hashtag_corpus", None) or [])})
         except Exception:
             continue
     return out
+
+def _persona_peaks(peaks: list[dict], personas: list[dict]) -> list[dict]:
+    """P4b: attach each persona's intensity-filtered peak view (ONE gate, per-persona lens)."""
+    if not personas: return personas
+    from fanops.signals import filter_peaks_by_intensity
+    for pe in personas:
+        pe["signal_peaks"] = filter_peaks_by_intensity(peaks, pe.get("intensity") or None)
+    return personas
 
 def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     """M1b PASS 1 — request the WINDOWS. P4a: the picker SEES per-persona lenses via _pick_personas so each
@@ -227,6 +240,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> 
     transcript, dropped = _bounded_transcript(src.transcript or [], src.signal_peaks or [])   # AGENT-2: bound the payload
     if dropped:
         get_logger(cfg)("source", source_id, "transcript_truncated", dropped=dropped, total=len(src.transcript or []))
+    personas = _persona_peaks(src.signal_peaks or [], _pick_personas(cfg, accounts))
     payload = MomentRequest(source_id=source_id, request_id="",   # filled by write_request
                             duration=src.duration or 0.0,
                             transcript=transcript,
@@ -235,7 +249,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> 
                             language=src.language,
                             guidance=load_guidance(cfg),
                             clip_profile=cfg.clip_profile,
-                            personas=_pick_personas(cfg, accounts),
+                            personas=personas,
                             frames=_source_frames(cfg, src)).model_dump()   # band + the picker's eyes
     payload.pop("request_id", None)
     if not payload.get("personas"):
