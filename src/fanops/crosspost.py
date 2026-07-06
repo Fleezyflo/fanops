@@ -76,28 +76,21 @@ def _clip_for_aspect(led: Ledger, cfg: Config, moment_id: str, aspect: Fmt):
     led, clip = render_moment(led, cfg, moment_id, aspect=aspect)   # rebind led (was discarded as led2)
     return clip
 
-def account_render_spec(cfg: Config, *, clip, hook: str, acct):
-    """The per-account Render IDENTITY (content-addressed id) + cut decision for (clip, hook, account).
-    SINGLE SOURCE so the crosspost mint (below) AND the Studio re-burn (actions.reburn_hook) compute the SAME
-    render_id and the SAME cut/burn choice — they MUST NOT drift (audit H1: a re-burn that recomputed a
-    bare-hook id silently reverted the M2 per-account length/framing CUT). Pure (no I/O). acct may be None
-    (removed/unknown handle) -> the global defaults -> a bare-hook id + no cut (byte-identical to the shared
-    clip). content-addresses by (clip, hook[, band][, frame]); the band tag stays first so a band-only id is
-    unchanged from M2b. Returns (render_id, wants_cut, profile, top_bias)."""
-    profile = cfg.resolve_clip_profile(acct)
+def _top_bias_from_framing(framing: str | None, cfg: Config) -> bool:
+    if framing == "top": return True
+    if framing == "center": return False
+    return cfg.aware_reframe
+
+def render_spec(cfg: Config, *, clip, hook: str, moment):
+    """Owner-moment render IDENTITY + cut decision. wants_cut = bool(hook)."""
+    profile = ((moment.clip_profile if moment is not None else None) or cfg.clip_profile)
     band = band_for(profile)
-    top_bias = cfg.resolve_top_bias(acct)
-    band_differs = band != band_for(cfg.clip_profile)
-    frame_differs = top_bias != cfg.aware_reframe
-    wants_cut = bool(hook) and (band_differs or frame_differs)
-    tag = [hook]
-    if band_differs: tag.append(f"band:{band.lo:g}-{band.hi:g}")
-    if frame_differs: tag.append(f"frame:{'top' if top_bias else 'center'}")
-    # CULM-7 (latent): the render id captures the framing AXIS (top/center) but NOT the smart-framing focus
-    # CENTROID. Today focus derives from source+window (NOT per account), so two accounts sharing
-    # (clip,hook,band,frame) share one focus -> one render -> the id is correct. IF per-account focus is ever
-    # added, append a focus token here or two accounts COLLIDE on one render id. Pinned: test_render_mint
-    # asserts the shared-focus contract (same spec -> same id), so a future focus-diverging change must update this.
+    top_bias = _top_bias_from_framing(moment.framing if moment is not None else None, cfg)
+    wants_cut = bool(hook)
+    tag = [hook] if hook else []
+    if wants_cut:
+        tag.append(f"band:{band.lo:g}-{band.hi:g}")
+        tag.append(f"frame:{'top' if top_bias else 'center'}")
     return child_id("render", clip.id, "\x1f".join(tag)), wants_cut, profile, top_bias
 
 @dataclass
@@ -105,7 +98,7 @@ class RenderPlan:
     """The result of rendering ONE per-account burned file (pure render-to-disk, NO ledger write) — adopted
     into a Render by the approve actions. render_id is content-addressed; produced=True ONLY when a real
     per-account CUT succeeded (else the shared-clip burn fallback wrote vpath); realized is the cut's seconds
-    (None unless a cut). vpath ALWAYS exists once render_account_file returns (cut OR burn OR fail-open)."""
+    (None unless a cut). vpath ALWAYS exists once render_moment_file returns (cut OR burn OR fail-open)."""
     render_id: str
     vpath: str
     produced: bool
@@ -117,20 +110,13 @@ class RenderPlan:
 
 _ASPECT_WH = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080), Fmt.r16x9: (1920, 1080)}
 
-def render_account_file(led: Ledger, cfg: Config, *, post, acct, target_clip, src, caller: str = "approve") -> RenderPlan:
-    """Render (burn) the per-account file for `post.variant_hook` to its content-addressed path and return its
-    RenderPlan. PURE render-to-disk — NO ledger mutation — so it is safe LOCK-FREE (the approve warm pass) OR
-    in-lock (the fallback). This is the mint's old burn block MOVED here (slice 2: burn on approval) so
-    approval and the Studio re-burn share ONE renderer (anti-drift H1). A real CUT when the account's
-    band/framing diverges (its own length + crop off the SAME moment); else the shared-clip burn onto
-    target_clip. `caller` is the log event category (the only caller today is approval). Fail-open: any ffmpeg
-    failure leaves a breadcrumb and falls back, and vpath always exists."""
-    hook = post.variant_hook
-    aspect = target_clip.aspect
-    rid, wants_cut, profile, top_bias = account_render_spec(cfg, clip=target_clip, hook=hook, acct=acct)
+def render_moment_file(led: Ledger, cfg: Config, *, post, target_clip, src, caller: str = "approve") -> RenderPlan:
+    """Render (burn) the owner-moment file for m.hook. PURE render-to-disk."""
     mom = led.moments.get(target_clip.parent_id)
-    own = mom.hooks_by_persona.get(post.account) if mom is not None else None
-    hook_source = HookSource.per_account if own else (HookSource.shared_fallback if hook else HookSource.none)
+    hook = (mom.hook or "").strip() if mom is not None else ""
+    aspect = target_clip.aspect
+    rid, wants_cut, profile, top_bias = render_spec(cfg, clip=target_clip, hook=hook, moment=mom)
+    hook_source = HookSource.shared_fallback if hook else HookSource.none
     batch_id = src.batch_id if src is not None else None
     source_id = src.id if src is not None else None
     vpath = cfg.render_path(batch_id, source_id, rid, aspect)
@@ -231,41 +217,14 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
                          hour_hint=hour_hint, tz=_operator_zone(cfg))
     if decide_tag(led, account=surf.account, clip_id=clip.id, when=_parse(sched)):
         caption = f"{caption}\n{ARTIST_HANDLE}"
-    # Per-account creative variation (FANOPS_CREATIVE_VARIATION, default ON; fail-open). Slice 2 (burn
-    # on approval): the mint RECORDS the per-account on-screen hook — the INTENT — but does NOT run
-    # ffmpeg or mint a Render. The Render materializes when the operator APPROVES the surface
-    # (actions_approve._adopt_render via render_account_file), so ONLY approved surfaces ever render
-    # (the operator's anti-explosion ask — no "100 burned videos per run"). A born variant post carries
-    # variant_hook + variant_key with render_id None + media_urls [] (review serves the MASTER clip;
-    # approval points it at the burned file BEFORE it can become queued, so publish always has media).
-    # OFF / no hook -> variant_* None, render_id None, media [] == the shared-clip behavior (byte-identical).
     render_id = None
-    variant_key = None
-    variant_hook = None
     media_urls = []
-    # The on-screen per-account hook is the FRAME-SEEING moment author's hook for THIS handle
-    # (m.hooks_by_persona[handle]), falling back to the shared moment hook. m guarded defensively.
-    own_hook = m.hooks_by_persona.get(surf.account) if m is not None else None
-    hook_v = own_hook or (m.hook if m is not None else None)
-    if cfg.creative_variation and hook_v:
-        variant_key = skey
-        variant_hook = hook_v          # burned AT APPROVAL; account_render_spec(clip, hook, acct) there
-                                       # recomputes the SAME content-addressed render id + cut decision (H1).
     existing = led.posts.get(pid)
     if existing is not None:
         if existing.state in (PostState.rejected, PostState.failed):
             led.posts.pop(pid, None)
             existing = None
     if existing is not None:
-        # M2 (audit): a re-crosspost reaches an EXISTING post — pid is content-addressed on (clip,
-        # surface), NOT the per-account hook, so add_post's first-write-wins would keep a STALE hook
-        # after a re-decision (the operator would review/approve the old hook). Rewrite the variant
-        # INTENT in place ONLY while the post is still AWAITING (the render is deferred to approval, so
-        # there is no stale burn to undo) and ONLY on a real diff (a same-input re-run stays
-        # byte-identical). A queued/published post keeps the hook the operator already approved.
-        if existing.state is PostState.awaiting_approval and (
-                existing.variant_hook != variant_hook or existing.variant_key != variant_key):
-            existing.variant_hook = variant_hook; existing.variant_key = variant_key
         return 0
     led.add_post(Post(
         # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator
@@ -280,20 +239,12 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
         # an ambiguous publish is ALWAYS pollable (a real backend id overwrites it on
         # publish). pid is content-addressed -> a re-run computes the identical token.
         submission_id=f"fanops_{_hash('idemp', pid)}",
-        render_id=render_id, variant_key=variant_key, variant_hook=variant_hook,
-        # P1 attribution key (one writer = here): the creative dims P3 groups reach by.
-        # first_frame_kind/cut_seconds from the rendered clip, clip_profile from the global
-        # video-type knob (its only home today — config.py). Absent dims default None cleanly.
+        render_id=render_id,
         first_frame_kind=target_clip.first_frame_kind, cut_seconds=target_clip.cut_seconds,
-        # clip_profile is the GLOBAL profile at the mint; a real per-account CUT re-stamps its OWN
-        # length profile at APPROVAL (actions_approve._adopt_render), when the cut's realized truth is
-        # known — so the P4 clip_profile dim is accurate by the time a post is published + learned on.
-        clip_profile=cfg.clip_profile, batch_id=src_batch,   # Account-First Studio: denormalized batch (None=ungrouped)
-        # Leg 3 (framing): stamp the PER-ACCOUNT top_bias (NOT the global cfg.aware_reframe) so
-        # aggregate_by_dim can rank framing per account — the global value would mis-attribute a
-        # per-account creative choice. A real per-account CUT keeps the same top_bias (it IS the crop).
-        top_bias=cfg.resolve_top_bias(surf.account),
-        variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))   # P2: the axis this variant moved
+        clip_profile=(m.clip_profile if m is not None else None) or cfg.clip_profile,
+        batch_id=src_batch,
+        top_bias=_top_bias_from_framing(m.framing if m is not None else None, cfg),
+        variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))
     return 0
 
 

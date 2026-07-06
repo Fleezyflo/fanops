@@ -42,14 +42,16 @@ def _archive_published(cfg: Config, post: Post) -> None:
         d = cfg.published / day; d.mkdir(parents=True, exist_ok=True, mode=0o700)
         try: os.chmod(d, 0o700)             # L2 (audit): tighten a pre-existing world-listable day dir too
         except OSError: pass
+        hook = ""
+        try:
+            hook = _moment_hook(Ledger.load(cfg), post)
+        except Exception:
+            pass
         rec = {"post_id": post.id, "clip_id": post.parent_id, "account": post.account,
                "platform": post.platform.value, "caption": post.caption, "hashtags": list(post.hashtags or []),
                "public_url": post.public_url, "scheduled_time": post.scheduled_time,
                "created_at": post.created_at, "published_at": post.published_at,
-               # Render foundation: durably record the per-account render identity (id + the on-screen hook
-               # text + the file path) so "what hook/media shipped for @a on this day" is reconstructable
-               # forever — even after the Render entity + its file are GC-swept from the live ledger.
-               "render_id": post.render_id, "variant_hook": post.variant_hook,
+               "render_id": post.render_id, "hook": hook,
                "media": (post.media_urls[0] if post.media_urls else None)}
         ap = d / f"{post.id}.json"
         # L2 (audit): create 0600 ATOMICALLY (no write-then-chmod world-readable window) — the archive carries
@@ -152,45 +154,16 @@ def _post_provider(cfg: Config, accounts: Accounts, post: Post) -> str | None:
 
 
 
-def _materialize_variant_media(led: Ledger, cfg: Config, post: Post, accts: Accounts) -> None:
-    """Publish-time safety net: a queued post with variant_hook but no burned file (approve warm-miss,
-    legacy row, or media_urls cleared) MUST NOT ship the hookless base clip. Burns off-lock via the SAME
-    render_account_file path approval uses, then points post at the content-addressed render."""
-    if not (post.variant_hook or "").strip():
-        return
-    if post.render_id and post.media_urls:
-        r = led.get_render(post.render_id)
-        if r is not None and (r.hook_text or "") == (post.variant_hook or ""):
-            return   # the held render was burned for the CURRENT hook -> reuse (fast path)
-        # variant-hook-render-race (high): reburn/restore edits post.variant_hook IN PLACE without clearing
-        # render_id/media_urls, so a stale render_id points at a file burned with the OLD hook. Render.hook_text
-        # is THE source of truth (post.variant_hook is its mirror); when they disagree (or the render is
-        # missing) the burned file is STALE -> fall through and re-materialize, never ship the wrong hook.
-    from fanops.crosspost import render_account_file
-    from fanops.models import Render, RenderState
-    from fanops.ids import surface_key
+def _moment_hook(led, post: Post) -> str:
     clip = led.clips.get(post.parent_id)
-    if clip is None:
-        return
-    acct = next((a for a in accts.accounts if a.handle == post.account), None)
-    mom = led.moments.get(clip.parent_id)
-    src = led.sources.get(mom.parent_id) if mom is not None else None
-    try:
-        plan = render_account_file(led, cfg, post=post, acct=acct, target_clip=clip, src=src, caller="publish")
-    except Exception as exc:
-        get_logger(cfg)("publish", post.id, "variant_materialize_failed", err=str(exc)[:120])
-        return
-    if led.get_render(plan.render_id) is None:
-        led.add_render(Render(id=plan.render_id, clip_id=clip.id, account=post.account,
-                              surface_key=surface_key(post.account, post.platform.value),
-                              hook_text=post.variant_hook, path=plan.vpath, state=RenderState.rendered,
-                              batch_id=plan.batch_id, source_id=plan.source_id, is_account_cut=plan.produced,
-                              hook_source=plan.hook_source, cut_seconds=plan.realized))
-    r = led.get_render(plan.render_id)
-    if r is None:
-        return
-    post.render_id = plan.render_id
-    post.media_urls = [f"file://{r.path}"]
+    if clip is None: return ""
+    m = led.moments.get(clip.parent_id)
+    return (m.hook or "").strip() if m is not None else ""
+
+
+def _materialize_variant_media(led: Ledger, cfg: Config, post: Post, accts: Accounts) -> None:
+    """P9: owner-moment hook is burned on the shared clip at render_moment — no per-post materialize."""
+    return
 
 def _resolve_publish_account_id(accounts: Accounts, post: Post, *, cfg: Config | None = None) -> str | None:
     """The CURRENT poster/integration id for this post's channel, re-resolved at publish time so a Go-Live
@@ -215,8 +188,6 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
     from fanops.post.compress import apply_shrink_to_post, upload_cap_bytes
     if upload_cap_bytes(cfg, post, backend) is not None:
         apply_shrink_to_post(cfg, led, post, backend=backend)
-    if (post.variant_hook or "").strip() and not post.render_id:
-        raise RuntimeError("variant hook could not be burned — refusing to ship the hookless base clip")
     if not post.media_urls:
         post.media_urls = [ensure_clip_media(led, cfg, post.parent_id, backend, account_id=aid)]
     elif backend != "dryrun":

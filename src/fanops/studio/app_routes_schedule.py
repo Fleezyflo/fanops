@@ -9,6 +9,7 @@ from flask import render_template, request
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState
+from fanops.variant_learning import _hook_for_post
 from fanops.studio import actions, views
 from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _offset_arg, _row_chips, _time_arg, _with_active
 
@@ -106,7 +107,7 @@ def register_schedule_routes(app, cfg):
         # Chip universe from a CHEAP post scan (the same analyzed-variant predicate lift_rows uses), so we
         # call lift_rows ONCE — building an unfiltered view just for chips would re-run its per-row gate I/O.
         vcounts = Counter(p.account for p in led.posts.values()
-                          if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics)
+                          if _hook_for_post(led, p) and p.state is PostState.analyzed and LIFT_SCORE in p.metrics)
         chips = {"chip_accounts": _with_active(vcounts, account), "chip_counts": dict(vcounts),
                  "chip_route": "lift", "chip_total": sum(vcounts.values()), "active": account}
         return render_template("lift.html", view=view, peaks=peaks, tab="lift", **chips)

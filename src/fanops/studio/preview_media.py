@@ -1,10 +1,8 @@
-"""Lock-free preview burn for Review WYSIWYG — renders to the SAME content-addressed path approve uses."""
+"""Lock-free preview for Review WYSIWYG — serves the owner-moment clip (hook burned at render_moment)."""
 from __future__ import annotations
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.accounts import Accounts
-from fanops.crosspost import render_account_file, account_render_spec
 
 
 def preview_media_path(cfg: Config, led: Ledger, post_id: str) -> str | None:
@@ -18,26 +16,6 @@ def preview_media_path(cfg: Config, led: Ledger, post_id: str) -> str | None:
     clip = led.clips.get(post.parent_id)
     if clip is None:
         return None
-    hook = (post.variant_hook or "").strip()
-    if hook and cfg.creative_variation:
-        acct = next((a for a in Accounts.load(cfg).accounts if a.handle == post.account), None)
-        mom = led.moments.get(clip.parent_id)
-        src = led.sources.get(mom.parent_id) if mom is not None else None
-        try:
-            rid, *_ = account_render_spec(cfg, clip=clip, hook=hook, acct=acct)
-            vpath = cfg.render_path(src.batch_id if src else None, src.id if src else None, rid, clip.aspect)
-            if Path(vpath).exists() and Path(vpath).stat().st_size > 0:
-                return vpath
-        except Exception as exc:
-            from fanops.log import get_logger   # a resolved-spec miss falls through the ladder — record it, don't hide it
-            get_logger(cfg)("preview", post_id, "spec_resolve_error", err=str(exc)[:160])
-        try:
-            plan = render_account_file(led, cfg, post=post, acct=acct, target_clip=clip, src=src, caller="preview")
-            if plan.vpath and Path(plan.vpath).exists():
-                return plan.vpath
-        except Exception as exc:
-            from fanops.log import get_logger   # a preview burn miss falls through to media_urls/clip.path — record it
-            get_logger(cfg)("preview", post_id, "burn_error", err=str(exc)[:160])
     if post.media_urls:
         raw = post.media_urls[0]
         if raw.startswith("file://"):

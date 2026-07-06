@@ -237,15 +237,18 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     if editable:
         from fanops.studio.views_results import publish_readiness
         ready, ready_reason = publish_readiness(led, post, cfg)
+    _mom_hook = None
+    if _mom is not None:
+        _mom_hook = (_mom.hook or "").strip() or None
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=post.caption, hashtags=list(post.hashtags or []),
-        scheduled_time=post.scheduled_time, media_url=(f"/media-preview/{post.id}" if (cfg.creative_variation and (post.variant_hook or "").strip() and not post.render_id) else f"/media/{post.id}"),
+        scheduled_time=post.scheduled_time, media_url=f"/media/{post.id}",
         state=state, imminent=imm, editable=editable,
-        suggested_time=suggest_time(cfg, post, now=now) if editable else None,   # P1: only editable surfaces
-        variant_hook=post.variant_hook,
+        suggested_time=suggest_time(cfg, post, now=now) if editable else None,
+        variant_hook=_mom_hook,
         persona_hook_removed=_phr,
-        hook_preburn=bool((post.variant_hook or "").strip() and not post.render_id),
+        hook_preburn=False,
         length_label=_length_label(post.clip_profile),
         is_account_cut=bool(r and r.is_account_cut),
         framing=(getattr(acct, "framing", None) or None),

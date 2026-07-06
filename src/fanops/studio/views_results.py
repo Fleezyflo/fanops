@@ -15,6 +15,7 @@ from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState, RenderState
 from fanops.timeutil import parse_iso
+from fanops.variant_learning import _hook_for_post
 from fanops.studio.views_common import RECENT_WINDOW_HOURS, _batch_title, _imminent, suggest_time
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,9 @@ def publish_readiness(led: Ledger, post, cfg: Config | None = None) -> tuple[boo
             if r is None: return (False, "render record missing")
             if r.state not in _SHIPPABLE_RENDER: return (False, "render not finished")
             if not (r.path and Path(r.path).exists()): return (False, "render file missing from disk")
-            if (r.hook_text or "") != (post.variant_hook or ""):
+            m = led.moments.get(led.clips[post.parent_id].parent_id) if post.parent_id in led.clips else None
+            shown_hook = (m.hook or "").strip() if m is not None else ""
+            if rid and (r.hook_text or "") != shown_hook:
                 return (False, "hook drift — the burned hook differs from the one shown")
             ready, reason = True, "ready — its own cut"
         else:
@@ -187,7 +190,7 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             backend=backend, error_reason=(p.error_reason or "")[:120] or None,
             suggested_time=suggest_time(cfg, p, now=now) if editable else None,
             batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
-            caption=p.caption, variant_hook=p.variant_hook)
+            caption=p.caption, variant_hook=_hook_for_post(led, p) or None)
         if editable:
             row.ready, row.ready_reason = publish_readiness(led, p, cfg)
             row.why_suggested = explain_suggested_time(cfg, row)
@@ -571,7 +574,7 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, b
                       saves=p.metrics.get("saves"), shares=p.metrics.get("shares"),
                       retention=p.metrics.get("retention"), reach=p.metrics.get("reach"),
                       batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
-                      variant_hook=p.variant_hook,
+                      variant_hook=_hook_for_post(led, p) or None,
                       posted_via=classify_post_delivery(p), submission_id=p.submission_id,
                       error_reason=(p.error_reason or "")[:120] or None, raw_state=p.state.value,
                       failure_kind=classify_failure(p) if p.state in (PostState.failed, PostState.error) else None) for p in posts]
@@ -714,15 +717,10 @@ def _loop_state(led: Ledger, cfg: Config, accounts: Optional[Accounts], post,
 
 def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None, *,
              account: Optional[str] = None) -> LiftView:
-    """Per-variant lift (spec §8): analyzed posts carrying a variant_key + lift_score, ranked desc.
-    Honest, reason-bearing empty states per sub-view; amplify section mirrors digest's
-    `if cfg.variant_amplify:` gate (absent, not blank, when off). P5: an optional `account` scopes the post
-    universe (variant_posts AND the any_analyzed empty-reason probe) BEFORE the empty branch, so a
-    filtered-to-empty view still gets an honest reason (R6); the amplify candidates are filtered by their
-    resolved post's account too. Each variant row carries P1's scheduled_time + the P3 metric breakdown."""
+    """Per-hook lift: analyzed posts with a moment hook + lift_score, ranked desc."""
     posts_view = [p for p in led.posts.values() if account is None or p.account == account]
     variant_posts = [p for p in posts_view
-                     if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
+                     if _hook_for_post(led, p) and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
     variant_rows: list[LiftRow] = []
     variant_empty_reason: Optional[str] = None
     if not variant_posts:
@@ -731,13 +729,12 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None, *,
             variant_empty_reason = ("No results yet — connect Postiz (Go Live) so posts come back "
                                     "with analytics. (Needs a POSTIZ_API_KEY.)")
         else:
-            variant_empty_reason = ("Creative variation (FANOPS_CREATIVE_VARIATION) was off when "
-                                    "these posts were crossposted — no per-variant lift.")
+            variant_empty_reason = ("No analyzed posts with a burned hook and lift_score yet.")
     else:
         gate_cache: dict = {}                       # one scorer pass per surface per request
         for p in sorted(variant_posts, key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True):
             variant_rows.append(LiftRow(
-                variant_hook=p.variant_hook or p.variant_key, account=p.account,
+                variant_hook=_hook_for_post(led, p), account=p.account,
                 platform=p.platform.value, lift_score=float(p.metrics.get(LIFT_SCORE, 0.0)),
                 loop_state=_loop_state(led, cfg, accounts, p, gate_cache),
                 lift_degraded=bool(p.metrics.get("lift_degraded")),

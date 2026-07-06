@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Clip, Moment, Source, Batch, ClipState, MomentState, Platform, Fmt, PostState
+from fanops.models import Clip, Moment, Source, Batch, ClipState, MomentState, Platform, Fmt
 from fanops.accounts import Accounts
 from fanops.crosspost import surface_time, crosspost_clips, _STEP_MIN, _JITTER_MAX
 from fanops.ids import _hash
@@ -508,124 +508,82 @@ def test_crosspost_appends_artist_tag_when_decided(tmp_path, mocker):
     assert ig.caption.startswith("ig cap")
 
 
-def test_crosspost_creates_per_account_variant_when_enabled(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+def test_crosspost_stamps_moment_spec_for_all_surfaces(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     monkeypatch.chdir(tmp_path)
     from fanops.config import Config
     from fanops.ledger import Ledger
     from fanops.accounts import Accounts, Account, AccountStatus
-    from fanops.models import Source, Moment, Clip, MomentState, ClipState, Fmt, Platform
-    import fanops.overlay as overlay  # noqa: F401
+    from fanops.models import Source, Moment, Clip, MomentState, ClipState, Fmt, Platform, Post
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    # two active accounts, same platform -> same aspect, so they'd share a clip today
     accts = Accounts(cfg); accts.accounts = [
         Account(handle="@a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active),
         Account(handle="@b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active)]
     led.add_source(Source(id="s1", source_path=str(tmp_path/"s.mp4"), width=1080, height=1920))
-    # ROOT FIX: the per-account on-screen hooks are the FRAME-SEEING moment author's, keyed by handle
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
-                          state=MomentState.clipped, hook="default hook",
-                          hooks_by_persona={"@a": "HOOK A", "@b": "HOOK B"}))
-    # a captioned base clip; the caption gate writes NO hook now — a sentinel proves crosspost IGNORES it
-    clip = Clip(id="c1", parent_id="m1", path=str(tmp_path/"c1.mp4"), aspect=Fmt.r9x16,
-                state=ClipState.captioned)
+                          state=MomentState.clipped, hook="SHARED", clip_profile="long", framing="top"))
+    clip = Clip(id="c1", parent_id="m1", path=str(tmp_path/"c1.mp4"), aspect=Fmt.r9x16, state=ClipState.captioned)
     Path(clip.path).write_bytes(b"BASECLIP")
-    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": [], "hook": "CAPHOOK_IGNORED"},
-                          "@b/instagram": {"caption": "B cap", "hashtags": [], "hook": "CAPHOOK_IGNORED"}}
+    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": []},
+                          "@b/instagram": {"caption": "B cap", "hashtags": []}}
     led.add_clip(clip)
-    # make burn_hook_only deterministic + observable (write a distinct file per call)
-    calls = []
-    def fake_burn(base, out, hook, **kw):
-        calls.append((out, hook)); Path(out).write_bytes(("V:"+hook).encode()); return True
-    mocker.patch("fanops.crosspost.overlay.burn_hook_only", side_effect=fake_burn)
+    mocker.patch("fanops.crosspost.overlay.burn_hook_only")
     from fanops.crosspost import crosspost_clips
     led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
-    posts = [p for p in led.posts.values()]
+    posts = list(led.posts.values())
     assert len(posts) == 2
-    by_acct = {p.account: p for p in posts}
-    # each account got a DIFFERENT variant_hook + variant_key; slice 2 (burn on approval) DEFERS the ffmpeg
-    # burn to approval, so the mint RECORDS the per-account intent but runs NO burn and mints no Render.
-    assert by_acct["@a"].variant_hook == "HOOK A" and by_acct["@b"].variant_hook == "HOOK B"
-    assert by_acct["@a"].variant_key and by_acct["@a"].variant_key != by_acct["@b"].variant_key
-    assert calls == [] and led.renders == {}                          # mint defers the burn (no ffmpeg, no Render)
-    assert all(p.render_id is None and p.media_urls == [] for p in posts)
-    # DETERMINISM (pinned in-test, not only by construction): variant_key MUST be the
-    # content-addressed surface_key — a future swap to random/uuid (distinct but non-reproducible,
-    # the #1 v1 duplicate-post bug) would still pass the distinctness check above, so assert the
-    # exact content-addressed value here.
-    from fanops.ids import surface_key
-    assert by_acct["@a"].variant_key == surface_key("@a", "instagram")
-    assert by_acct["@b"].variant_key == surface_key("@b", "instagram")
+    assert all(p.clip_profile == "long" and p.top_bias is True for p in posts)
+    assert "variant_key" not in Post.model_fields
 
 
-def test_recrosspost_rewrites_stale_hook_on_awaiting_post_only(tmp_path, monkeypatch, mocker):
-    # M2 (audit): the post id is content-addressed on (clip, surface), NOT the per-account hook, so a
-    # re-decision that changes this account's hook can't mint a superseding post — add_post's first-write-wins
-    # would keep a STALE hook and the operator would review/approve the old one. crosspost must rewrite the
-    # still-AWAITING post's variant_hook in place; a QUEUED/approved post must be left untouched.
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+def test_recrosspost_leaves_existing_awaiting_post(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          state=MomentState.clipped, hooks_by_persona={"@a": "HOOK A"}))
+                          state=MomentState.clipped, hook="HOOK A", clip_profile="talk"))
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "c.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {"@a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
     led.add_clip(clip); led.save()
-
-    def _burn(base, out, hook, **kw):
-        Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_bytes(b"V"); return True
-    mocker.patch("fanops.overlay.burn_hook_only", side_effect=_burn)
+    mocker.patch("fanops.overlay.burn_hook_only")
 
     def _run():
         ld = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
         ld.save(); return ld
 
     led = _run()
-    posts = list(led.posts.values())
-    assert len(posts) == 1 and posts[0].variant_hook == "HOOK A"
-    pid = posts[0].id
+    pid = next(iter(led.posts))
+    led.moments["mom_1"] = led.moments["mom_1"].model_copy(update={"hook": "HOOK B"})
+    led.save(); _run()
+    assert len(Ledger.load(cfg).posts) == 1 and pid in Ledger.load(cfg).posts
 
-    def _redecide(hook):                                          # a re-caption resets the clip + changes this account's hook
-        ld = Ledger.load(cfg)
-        ld.moments["mom_1"] = ld.moments["mom_1"].model_copy(update={"hooks_by_persona": {"@a": hook}})
-        ld.set_clip_state("clip_1", ClipState.captioned); ld.save()
-
-    _redecide("HOOK B"); led = _run()
-    assert len(led.posts) == 1                                    # SAME post (content-addressed) — not duplicated
-    assert led.posts[pid].variant_hook == "HOOK B"               # rewritten in place — never a stale hook
-
-    from fanops.studio.actions_approve import approve_posts       # now APPROVE, then re-decide -> queued must NOT change
-    approve_posts(cfg, [pid])
-    assert Ledger.load(cfg).posts[pid].state is PostState.queued
-    _redecide("HOOK C"); _run()
-    assert Ledger.load(cfg).posts[pid].variant_hook == "HOOK B"  # queued post keeps the approved hook (untouched)
-
-def test_crosspost_no_variant_when_disabled(tmp_path, monkeypatch, mocker):
-    monkeypatch.delenv("FANOPS_CREATIVE_VARIATION", raising=False)   # OFF
+def test_crosspost_mints_post_without_variant_fields(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     monkeypatch.chdir(tmp_path)
     from fanops.config import Config
     from fanops.ledger import Ledger
     from fanops.accounts import Accounts, Account, AccountStatus
-    from fanops.models import Source, Moment, Clip, MomentState, ClipState, Fmt, Platform
+    from fanops.models import Source, Moment, Clip, MomentState, ClipState, Fmt, Platform, Post
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     accts = Accounts(cfg); accts.accounts = [
         Account(handle="@a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active)]
     led.add_source(Source(id="s1", source_path=str(tmp_path/"s.mp4"), width=1080, height=1920))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
-                          state=MomentState.clipped))
+                          state=MomentState.clipped, hook="HOOK"))
     clip = Clip(id="c1", parent_id="m1", path=str(tmp_path/"c1.mp4"), aspect=Fmt.r9x16, state=ClipState.captioned)
     Path(clip.path).write_bytes(b"BASECLIP")
-    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": [], "hook": "HOOK A"}}
+    clip.meta_captions = {"@a/instagram": {"caption": "A cap", "hashtags": []}}
     led.add_clip(clip)
     burn = mocker.patch("fanops.crosspost.overlay.burn_hook_only")
     from fanops.crosspost import crosspost_clips
     led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
     p = next(iter(led.posts.values()))
-    assert p.variant_key is None and p.variant_hook is None     # off -> today's behavior
+    assert p.render_id is None and p.media_urls == []
+    assert "variant_hook" not in Post.model_fields
     burn.assert_not_called()
 
 

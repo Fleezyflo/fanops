@@ -15,7 +15,6 @@ from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ledger import Ledger
 from fanops.models import CaptionSet, ClipState, MomentCastingDecision, MomentDecision, MomentHookDecision, Post, PostState
 from fanops.ids import child_id, surface_key, _hash
-from fanops import overlay
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
 from fanops.studio.actions_common import ActionResult, _now, _inherit_captions  # noqa: F401
@@ -175,75 +174,40 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
 
 
 def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime] = None) -> ActionResult:
-    """Face 4 — re-burn ONE editable surface's on-screen HOOK (NO LLM). The operator edits the literal
-    per-account hook text; this re-burns it via ffmpeg (overlay.burn_hook_only) onto the SAME deterministic
-    variant path /media serves, then a SHORT transaction flips post.variant_hook + post.media_urls ONLY.
-    Both survive repost_post (the real 'Post again' reuse path). It NEVER writes clip.meta_captions['hook']
-    — that key is dead (the on-screen-hook source of truth is Moment.hooks_by_persona, read at crosspost).
-    Gated on cfg.creative_variation (per-surface variant burns only exist then). The 600s ffmpeg runs
-    LOCK-FREE (the 60s flock guard forbids holding the lock across it — mirror regenerate_caption); the
-    field flip is re-guarded inside a short transaction. hook_burn_failed (burn returns False — no libass /
-    nothing burnable) -> ok=True, detail.hook_burned=False (WARN, surfaced; an EDIT, so NO rollback, unlike
-    approve_with_hook). Does NOT publish — safe on any backend, no confirm gate."""
-    if not cfg.creative_variation:
-        return ActionResult(ok=False, error="re-burn needs per-account hooks ON (FANOPS_CREATIVE_VARIATION)")
-    from fanops.models import Fmt, PLATFORM_ASPECT, Render, RenderState
+    """P9: re-burn the owner-moment hook — updates m.hook and re-renders the shared clip (no per-post variant)."""
+    from fanops.clip import render_moment
     now = _now(now)
-    led = Ledger.load(cfg)                              # lock-free read: reject early, then burn OUTSIDE the lock
+    led = Ledger.load(cfg)
     p, err = _guard_editable_post(led, post_id, now)
     if err:
         return ActionResult(ok=False, error=err)
     clip = led.clips.get(p.parent_id)
     if clip is None:
         return ActionResult(ok=False, error=f"no clip for post {post_id}")
-    # The on-screen hook is owned by the per-account RENDER (the single source of truth). A hook EDIT changes
-    # the content -> a NEW content-addressed render id (child_id of clip+hook); burn it (atomic, LOCK-FREE)
-    # and point the post at it. The render's hook_text ALWAYS matches the burned pixels — the old reburn
-    # mutated post.variant_hook alone and drifted from the file. Lineage for filing: clip->moment->source.
-    aspect = PLATFORM_ASPECT.get(p.platform, Fmt.r9x16)
-    tw, th = {Fmt.r9x16: (1080, 1920), Fmt.r1x1: (1080, 1080), Fmt.r16x9: (1920, 1080)}.get(aspect, (1080, 1920))
-    # AUDIT H1: the render IDENTITY + cut decision come from the SAME source the crosspost mint uses
-    # (account_render_spec), so a re-burn of an OVERRIDE account (its own length/framing) PRESERVES the
-    # per-account CUT instead of silently reverting it to a bare-hook, global-length, centred shared clip.
-    from fanops.crosspost import account_render_spec
-    from fanops.clip import render_account_cut
-    from fanops.models import HookSource
-    from fanops.accounts import Accounts
-    acct = next((a for a in Accounts.load(cfg).accounts if a.handle == p.account), None)   # None -> global defaults
-    rid, wants_cut, acct_profile, acct_top_bias = account_render_spec(cfg, clip=clip, hook=hook, acct=acct)
-    mom = led.moments.get(clip.parent_id)
-    src = led.sources.get(mom.parent_id) if mom is not None else None
-    batch_id = src.batch_id if src is not None else None
-    source_id = src.id if src is not None else None
-    skey = surface_key(p.account, p.platform.value)
-    vpath = cfg.render_path(batch_id, source_id, rid, aspect)   # filed under clips/{batch}/{src}/; mkdirs
-    produced, realized = False, None
-    if wants_cut:                                       # override account: re-cut the SOURCE at its own band+crop (LOCK-FREE)
-        produced, realized = render_account_cut(led, cfg, clip.parent_id, aspect=aspect, profile=acct_profile,
-                                                hook=hook, out_path=vpath, top_bias=acct_top_bias)
-    burned = produced
-    # P3: a re-burn supplies a LITERAL operator-typed hook -> it IS account-specific (per_account); there is no
-    # "shared fallback" on an explicit edit. Empty hook -> none. cut_seconds rides the same re-mint (anti-drift H1).
-    hook_source = HookSource.per_account if (hook or "").strip() else HookSource.none
-    if not produced:                                    # default band/frame OR a failed cut -> shared-clip burn
-        burned = overlay.burn_hook_only(clip.path, vpath, hook, width=tw, height=th,
-                                        font=cfg.subtitle_font)   # LOCK-FREE; atomic + fail-open: vpath always exists
-    with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
-        p2, err2 = _guard_editable_post(led2, post_id, _now(None))   # fresh now: the burn may have made it imminent
-        if err2:
-            return ActionResult(ok=False, error=err2)
-        # add_render is content-addressed first-write-wins: a re-burn of an EXISTING hook reuses the same
-        # render; a NEW hook adds a fresh one (the prior render, if now unreferenced, is GC-swept by state).
-        # is_account_cut mirrors the crosspost mint: truthful when an override account got its own cut.
-        led2.add_render(Render(id=rid, clip_id=p2.parent_id, account=p2.account, surface_key=skey,
-                               hook_text=hook, path=vpath, state=RenderState.rendered,
-                               batch_id=batch_id, source_id=source_id, is_account_cut=produced,
-                               hook_source=hook_source, cut_seconds=realized))   # P3: never stale on re-burn (H1 anti-drift)
-        p2.render_id = rid                              # the authoritative pointer
-        p2.variant_hook = hook                          # read-only mirror of Render.hook_text (carried by repost_post)
-        p2.media_urls = [f"file://{vpath}"]
-    return ActionResult(ok=True, detail={"post_id": post_id, "hook": hook, "hook_burned": bool(burned),
-                                         "render_id": rid, "media_url": f"file://{vpath}"})
+    mom_id = clip.parent_id
+    snap = Ledger.load(cfg)
+    mom = snap.moments.get(mom_id)
+    if mom is None:
+        return ActionResult(ok=False, error="no moment for clip")
+    snap.moments[mom_id] = mom.model_copy(update={"hook": hook, "hook_removed": None})
+    try:
+        _, rc = render_moment(snap, cfg, mom_id, aspect=clip.aspect)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"re-burn render failed: {str(exc)[:120]}")
+    if rc.state is ClipState.error:
+        return ActionResult(ok=False, error=rc.error_reason or "re-burn render failed")
+    hook_burned = not rc.hook_burn_failed
+    try:
+        with Ledger.transaction(cfg) as led2:
+            p2, err2 = _guard_editable_post(led2, post_id, _now(None))
+            if err2:
+                return ActionResult(ok=False, error=err2)
+            m2 = led2.moments.get(mom_id)
+            if m2 is not None:
+                led2.moments[mom_id] = m2.model_copy(update={"hook": hook, "hook_removed": None})
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"re-burn failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"post_id": post_id, "hook": hook, "hook_burned": hook_burned})
 
 
 def approve_candidate(cfg: Config, eid: str) -> ActionResult:
@@ -530,9 +494,8 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
                               submission_id=f"fanops_{_hash('idemp', new_id)}",
                               first_frame_kind=src.first_frame_kind,
                               cut_seconds=src.cut_seconds, clip_profile=src.clip_profile,
-                              batch_id=src.batch_id,   # Account-First Studio: a repost keeps its source batch grouping
-                              variant_key=src.variant_key, variant_hook=src.variant_hook,
-                              variation_axis=src.variation_axis))   # carry P2 axis so a repost's attribution isn't lost
+                              batch_id=src.batch_id,
+                              variation_axis=src.variation_axis))
     except Exception as exc:
         return ActionResult(ok=False, error=f"repost failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": new_id, "source_id": post_id})
@@ -872,9 +835,7 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
 
 
 def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> ActionResult:
-    """Restore a guard-stripped per-account hook onto this surface and re-burn preview media."""
-    if not cfg.creative_variation:
-        return ActionResult(ok=False, error="per-account hook restore needs FANOPS_CREATIVE_VARIATION")
+    """Restore a guard-stripped hook onto the owner moment and re-render."""
     led = Ledger.load(cfg)
     p = led.posts.get(post_id)
     if p is None:
@@ -883,23 +844,9 @@ def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] =
     mom = led.moments.get(clip.parent_id) if clip is not None else None
     if mom is None:
         return ActionResult(ok=False, error="no moment for post")
-    removed = (mom.hooks_by_persona_removed or {}).get(p.account)
+    removed = ((mom.hooks_by_persona_removed or {}).get(p.account) or mom.hook_removed)
     if not removed:
-        return ActionResult(ok=False, error="no stripped hook to restore for this account")
-    try:
-        with Ledger.transaction(cfg) as led2:
-            m = led2.moments.get(mom.id)
-            if m is None:
-                return ActionResult(ok=False, error="moment gone")
-            hbp = dict(m.hooks_by_persona or {})
-            hbp[p.account] = removed
-            hbr = {k: v for k, v in (m.hooks_by_persona_removed or {}).items() if k != p.account}
-            led2.moments[mom.id] = m.model_copy(update={"hooks_by_persona": hbp, "hooks_by_persona_removed": hbr})
-            post = led2.posts.get(post_id)
-            if post is not None:
-                post.variant_hook = removed
-    except Exception as exc:
-        return ActionResult(ok=False, error=f"restore hook failed: {str(exc)[:160]}")
+        return ActionResult(ok=False, error="no stripped hook to restore")
     return reburn_hook(cfg, post_id, removed, now=now)
 
 

@@ -311,7 +311,7 @@ def create_app(cfg: Config) -> Flask:
         return {"nav_account": _account_arg(), "review_nav": views.review_nav_params(cfg, _account_arg()), "compact": _compact_arg(),
                 "active_source": _source_arg(), "active_state": _state_arg(),
                 "active_view": _view_arg(), "ultra": _ultra_arg(),
-                "creative_variation": cfg.creative_variation,
+                "creative_variation": False,
                 "cast_state": {"casting": cfg.account_casting, "profile": cfg.clip_profile},
                 "cfg": cfg}
 

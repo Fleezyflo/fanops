@@ -138,15 +138,13 @@ def test_moment_hook_request_carries_window_and_frames():
     assert r.frames == ["/k/a.jpg"] and r.start == 14.0 and r.moment_id == "moment_x"
 
 
-def test_post_has_optional_variant_fields():
+def test_post_has_no_variant_fields():
     from fanops.models import Post, Platform, PostState
-    p = Post(id="p1", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-             caption="x", state=PostState.queued, variant_key="vk1", variant_hook="WATCH THIS", public_url="dryrun://p1")
-    assert p.variant_key == "vk1" and p.variant_hook == "WATCH THIS"
-    # old ledgers (no variant fields) still load
-    p2 = Post(id="p2", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
-              caption="x", state=PostState.queued, public_url="dryrun://p2")
-    assert p2.variant_key is None and p2.variant_hook is None
+    assert "variant_key" not in Post.model_fields
+    assert "variant_hook" not in Post.model_fields
+    p = Post(id="p2", parent_id="c1", account="@a", account_id="1", platform=Platform.instagram,
+             caption="x", state=PostState.queued, public_url="dryrun://p2")
+    assert p.clip_profile is None
 
 # ---- M1 (structural-hooks): asset origin (native vs third-party) ----
 # origin_kind is a THIRD axis, distinct from source_origin (drop|url|scan, HOW it arrived) and the

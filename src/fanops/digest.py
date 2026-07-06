@@ -12,7 +12,7 @@ from fanops.agentstep import pending
 # The digest is a READ-ONLY observability surface — importing the (pure, read-only) learner here is safe
 # and does NOT touch the C1 amplify/delete-cascade path (track.py/pipeline.py stay blind to it; the
 # isolation grep test enforces that). Bound at module scope so the fail-open path is unit-patchable.
-from fanops.variant_learning import best_hooks
+from fanops.variant_learning import best_hooks, _hook_for_post
 # Creative-variation v3: when FANOPS_VARIANT_UCB is on, the digest reports the bandit's pick for
 # the surface instead of the greedy gate wording. SAME read-only safe side; fail-open. Bound at
 # module scope so the fail-open path is unit-patchable.
@@ -137,12 +137,12 @@ def _variant_lift(led: Ledger, cfg: Config, accounts=None) -> list[str]:
     # via the SAME gated scorer request_captions uses (one gate-logic home). Still observe-only on the
     # amplify side — no automated propagation (that touches the amplify machinery, deferred / C1).
     variant_posts = [p for p in led.posts.values()
-                     if p.variant_key and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
+                     if _hook_for_post(led, p) and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
     if not variant_posts:
         return []
     rows = sorted(variant_posts, key=lambda p: p.metrics.get(LIFT_SCORE, 0.0), reverse=True)
     gate_cache: dict[tuple[str, str], str] = {}     # one best_hooks call per surface per render
-    lines = [f"- `{p.variant_hook or p.variant_key}` ({p.account}/{p.platform.value}): "
+    lines = [f"- `{_hook_for_post(led, p) or p.id}` ({p.account}/{p.platform.value}): "
              f"lift {p.metrics.get(LIFT_SCORE, 0.0)}"
              # T4: surface the honest-lift marker — a degraded score (a primary metric absent from the
              # row) is partial, so flag it inline + name the missing keys instead of letting the operator

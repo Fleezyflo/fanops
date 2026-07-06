@@ -102,85 +102,41 @@ def test_voice_match_hydrates_without_persona_id(tmp_path):
     assert acc.persona_id is None and acc.clip_profile == "long" and acc.framing == "top"   # voice match, no persisted link
 
 
-# ---- account_render_spec: linked persona hydration -> wants_cut (shared-cut era guard) ----
+# ---- render_spec: owner-moment clip_profile/framing (P9) ----
 def _clip_stub():
     from fanops.models import Clip, ClipState, Fmt
     return Clip(id="clip_1", parent_id="mom_1", path="/x.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
 
-def test_linked_persona_accounts_want_cut_when_derived_differs(tmp_path, monkeypatch):
-    """Every active persona-linked account whose derived band/framing diverges from global must request a cut."""
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    from fanops.crosspost import account_render_spec
+def test_render_spec_reads_moment_not_account(tmp_path):
+    from fanops.crosspost import render_spec
+    from fanops.models import Moment, MomentState
     cfg = Config(root=tmp_path)
-    _accounts(cfg, [_acct("@story"), _acct("@punch"), _acct("@bare")])
-    link_persona(cfg, "@story", add_persona(cfg, name="Story", voice="v1", content_focus=["storytelling", "emotional"]))
-    link_persona(cfg, "@punch", add_persona(cfg, name="Punch", voice="v2", content_focus=["punchlines", "hype"]))
-    link_persona(cfg, "@bare", add_persona(cfg, name="Bare", voice="v3"))                  # no levers -> global cut
     clip = _clip_stub()
-    for acct in Accounts.load(cfg).active():
-        _, wants_cut, profile, _ = account_render_spec(cfg, clip=clip, hook="HOOK", acct=acct)
-        if acct.handle == "@bare":
-            assert wants_cut is False and profile == cfg.clip_profile                    # voice-only persona -> shared cut
-        else:
-            assert wants_cut is True, f"{acct.handle} derived {profile}/{acct.framing} must diverge from global"
+    m = Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+               state=MomentState.clipped, hook="H", clip_profile="long", framing="top")
+    _, wants, profile, top = render_spec(cfg, clip=clip, hook="H", moment=m)
+    assert wants is True and profile == "long" and top is True
 
-def test_voice_matched_account_wants_cut_without_persona_id(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    from fanops.crosspost import account_render_spec
-    cfg = Config(root=tmp_path)
-    voice = "curator voice for craft clips."
-    _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": voice}])
-    add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling", "emotional"])
-    acct = next(a for a in Accounts.load(cfg).active())
-    _, wants_cut, profile, top_bias = account_render_spec(cfg, clip=_clip_stub(), hook="H", acct=acct)
-    assert wants_cut is True and profile == "long" and top_bias is True                    # hydrated derived spec
-
-
-# ---- approve path: persona-derived cut -> is_account_cut=True (not shared-cut burn) ----
-def _seed_clip_for_approve(led, cfg, *, hooks_by_persona, surfaces):
-    from fanops.models import Clip, Moment, Source, ClipState, MomentState, Fmt
-    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          state=MomentState.clipped, hooks_by_persona=hooks_by_persona))
-    cfg.clips.mkdir(parents=True, exist_ok=True)
-    base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
-    clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
-    clip.meta_captions = {s: {"caption": f"cap {s}", "hashtags": ["#x"]} for s in surfaces}
-    led.add_clip(clip)
-
-def _patch_cut_burn(mocker, *, cut_ok=True):
-    from pathlib import Path
-    cut_calls, burn_calls = [], []
-    def cut(led, cfg, moment_id, *, aspect, profile, hook, out_path, top_bias=False):
-        cut_calls.append({"profile": profile, "hook": hook, "top_bias": top_bias})
-        if cut_ok:
-            Path(out_path).parent.mkdir(parents=True, exist_ok=True); Path(out_path).write_bytes(b"ACUT")
-        return (cut_ok, 12.0 if cut_ok else None)
-    def burn(base, out, hook, **kw):
-        burn_calls.append({"hook": hook})
-        Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_bytes(b"BURN"); return True
-    mocker.patch("fanops.crosspost.render_account_cut", side_effect=cut)
-    mocker.patch("fanops.overlay.burn_hook_only", side_effect=burn)
-    return cut_calls, burn_calls
-
-def test_persona_derived_approve_sets_is_account_cut(tmp_path, monkeypatch, mocker):
-    """Approve path must cut (not shared-burn) when the linked persona derives a divergent band/framing."""
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")                                        # isolate cut path from casting gate
+def test_approve_does_not_materialize_render(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     from fanops.ledger import Ledger
     from fanops.crosspost import crosspost_clips
     from fanops.studio.actions_approve import approve_posts
-    cut_calls, burn_calls = _patch_cut_burn(mocker)
+    from fanops.models import Clip, Moment, Source, ClipState, MomentState, Fmt
+    cut = mocker.patch("fanops.crosspost.render_account_cut")
     cfg = Config(root=tmp_path)
-    _accounts(cfg, [_acct("@story")])                                                        # no hand-set clip_profile
-    link_persona(cfg, "@story", add_persona(cfg, name="Story", voice="v", content_focus=["storytelling", "emotional"]))
+    _accounts(cfg, [_acct("@story")])
     led = Ledger.load(cfg)
-    _seed_clip_for_approve(led, cfg, hooks_by_persona={"@story": "H"}, surfaces=("@story/instagram",)); led.save()
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped, hook="H", clip_profile="long", framing="top"))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
+    clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
+    clip.meta_captions = {"@story/instagram": {"caption": "cap", "hashtags": ["#x"]}}
+    led.add_clip(clip); led.save()
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z"); led.save()
     approve_posts(cfg, [p.id for p in led.posts.values()])
-    led = Ledger.load(cfg)
-    assert len(cut_calls) == 1 and cut_calls[0]["profile"] == "long" and cut_calls[0]["top_bias"] is True
-    assert burn_calls == []
-    r = next(iter(led.renders.values())); p = next(iter(led.posts.values()))
-    assert r.is_account_cut is True and p.clip_profile == "long" and p.render_id == r.id
+    cut.assert_not_called()
+    assert Ledger.load(cfg).renders == {}
 

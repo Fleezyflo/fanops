@@ -350,16 +350,20 @@ class PostizPoster:
         self.base = _base(cfg)
         self.headers = {"Authorization": _key(cfg), "Content-Type": "application/json"}
 
-    def _youtube_title(self, post) -> str:
-        # YouTube REQUIRES a 2-100 char title (Postiz rejects an empty one — there is NO content fallback).
-        # Reuse the per-account burned hook (Post.variant_hook); floor to the artist name when a surface has
-        # no hook (creative_variation OFF / weak-hook-stripped). build_postiz_payload clamps the 100 ceiling.
-        t = (post.variant_hook or "").strip()
+    def _youtube_title(self, post, led: Ledger | None = None) -> str:
+        # YouTube REQUIRES a 2-100 char title. Use the owner-moment hook; floor to artist name when absent.
+        t = ""
+        if led is not None:
+            clip = led.clips.get(post.parent_id)
+            if clip is not None:
+                m = led.moments.get(clip.parent_id)
+                if m is not None:
+                    t = (m.hook or "").strip()
         return t if len(t) >= 2 else self.cfg.artist_name
 
     def publish(self, led: Ledger, post_id: str) -> Ledger:
         post = led.posts[post_id]
-        title = self._youtube_title(post) if post.platform is Platform.youtube else None
+        title = self._youtube_title(post, led) if post.platform is Platform.youtube else None
         # Postiz requires `date` to be a valid ISO 8601 string. A publish_now-claimed post (or any
         # untimed approval) carries scheduled_time=None; pass `now` so Postiz schedules it ~immediately
         # (per build_postiz_payload's comment, a past/now date posts ~now). Without this, Postiz 400s

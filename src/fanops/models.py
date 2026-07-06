@@ -298,13 +298,7 @@ class Post(BaseModel):
     # snapshot (byte-identical back-compat: every existing reader stays on it). An old ledger row lacking
     # this key defaults to [] (Pydantic default_factory; independent of extra="ignore").
     metrics_series: list[dict] = Field(default_factory=list)
-    render_id: Optional[str] = None     # per-account Render foundation: THE single authoritative pointer to the
-                                        # rendered file this account ships (Render owns the bytes + the hook).
-                                        # None == no per-account render (creative_variation OFF / no hook) -> the
-                                        # serve route falls to the shared Clip.path (byte-identical to old ledgers).
-    variant_key: Optional[str] = None   # creative-variation attribution: deterministic per-(account,platform,clip) key
-    variant_hook: Optional[str] = None  # the burned-in hook text this account's variant used (observe-only; a
-                                        # READ-ONLY mirror of Render.hook_text — Render is the single source of truth)
+    render_id: Optional[str] = None     # optional Render pointer; None -> serve Clip.path
     # P1 attribution key (one writer = crosspost): the creative dims P3 aggregates reach by and P4 ranks.
     # All None on old ledgers + when the upstream dim is unknown (validate-or-default; never crashes a load).
     first_frame_kind: Optional[str] = None  # "visual" | "transcript" — how the opening frame was chosen
@@ -370,9 +364,8 @@ def is_real_submission_id(sid: Optional[str]) -> bool:
 
 
 class HookSource(str, Enum):
-    per_account = "per_account"          # this account's OWN persona-authored hook (m.hooks_by_persona[handle])
-    shared_fallback = "shared_fallback"  # fell back to the shared moment hook (m.hook)
-    none = "none"                        # no hook at all (variation OFF, or no hook resolved)
+    shared_fallback = "shared_fallback"  # the owner moment's on-screen hook (m.hook)
+    none = "none"                        # no hook at all (hookless clip)
 
 
 class Render(BaseModel):
