@@ -571,6 +571,23 @@ def test_pick_prompt_renders_scope_lens():
     assert "sensational" in p.lower() or "accurate" in p.lower()
     assert "<source_data>" in p
 
+def test_pick_prompt_renders_scope_and_directive():
+    p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
+                            "guidance": "", "personas": [{"handle": "@a", "directive": "Clip for punchlines",
+                            "selection_scope": "Favor clear and accurate over sensational", "band": "8-15s"}]})
+    assert "punchlines" in p.lower()
+    assert "sensational" in p.lower() or "accurate" in p.lower()
+    assert "8-15s" in p or "8" in p
+
+def test_pick_prompt_omits_hook_angle_and_corpus():
+    p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
+                            "guidance": "", "personas": [{"handle": "@a", "directive": "Clip for punchlines",
+                            "selection_scope": "Favor restraint", "band": "12-22s",
+                            "hook_angle": "curiosity", "corpus": ["#detroitrap", "#bars"]}]})
+    assert "#detroitrap" not in p and "#bars" not in p
+    assert "hook_angle" not in p.lower()
+    assert "curiosity" not in p
+
 def test_pick_prompt_single_owner_framing():
     p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
                             "guidance": "", "personas": [{"handle": "@a", "directive": "x"}]})
