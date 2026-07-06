@@ -8,8 +8,11 @@
     {% else %}<span class="strip-dryrun">● DRYRUN</span><span class="muted">· local only</span>{% endif %}
   </div>
   {% if system_strip.half_live %}<div class="strip-alert danger" role="alert">{{ system_strip.half_live_hint }}</div>{% endif %}
-  {# D13b: Postiz backend unhealthy (past the nginx-only container check) AND a channel routes to postiz. #}
-  {% if system_strip.postiz_down and system_strip.postiz_down.show %}<div class="strip-alert danger" role="alert">{{ system_strip.postiz_down.hint }}</div>{% endif %}
+  {# D13b/MOL-124: Postiz unhealthy — danger only when due postiz posts are waiting; else muted idle. #}
+  {% if system_strip.postiz_down and system_strip.postiz_down.show %}
+    {% if system_strip.postiz_down.danger %}<div class="strip-alert danger" role="alert">{{ system_strip.postiz_down.hint }}</div>
+    {% else %}<span class="muted">{{ system_strip.postiz_down.hint }}</span>{% endif %}
+  {% endif %}
   <div class="strip-deps" hx-get="{{ url_for('do_golive_health', compact=1) }}" hx-trigger="load" hx-swap="innerHTML"><span class="muted">deps…</span></div>
   {% if system_strip.blocked_gates %}<a class="strip-alert danger" href="{{ url_for('gates') }}">{{ system_strip.blocked_gates }} gate{{ 's' if system_strip.blocked_gates != 1 else '' }} blocked</a>{% endif %}
   {% if system_strip.failed %}<a class="strip-alert danger" href="{{ url_for('posted', delivery='failed') }}">{{ system_strip.failed }} failed</a>{% endif %}
