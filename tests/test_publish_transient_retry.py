@@ -29,6 +29,7 @@ def test_is_transient_publish_error_classifies():
     assert _is_transient_publish_error(_rq.exceptions.Timeout("timed out")) is True
     assert _is_transient_publish_error(RuntimeError("Zernio upload failed (503) — body withheld")) is True
     assert _is_transient_publish_error(RuntimeError("postiz upload failed (422) — body withheld")) is False
+    assert _is_transient_publish_error(RuntimeError("postiz 503: upstream request 401abc timed out")) is False
     from fanops.errors import ZernioAuthError
     assert _is_transient_publish_error(ZernioAuthError("401")) is False
 

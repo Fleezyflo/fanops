@@ -74,6 +74,8 @@ def _is_transient_publish_error(exc: Exception) -> bool:
         return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout,
                                 requests.exceptions.Timeout, requests.exceptions.ReadTimeout))
     if isinstance(exc, RuntimeError):
+        # Canonical upload/publish errors stamp (NNN) — e.g. "upload failed (503)". Loose prose like
+        # "postiz 503: upstream request 401abc timed out" (H8 regression string) is NOT transient.
         m = re.search(r'\((\d{3})\)', str(exc))
         if m:
             code = int(m.group(1))
@@ -83,10 +85,6 @@ def _is_transient_publish_error(exc: Exception) -> bool:
                 return False
             if 500 <= code < 600:
                 return True
-        low = str(exc).lower()
-        if any(k in low for k in ('connection', 'timeout', 'timed out', 'max retries exceeded',
-                                  'name or service not known', 'temporarily unavailable')):
-            return True
     return False
 
 
@@ -287,8 +285,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         delay = 0.5
         for attempt in range(_PUBLISH_TRANSIENT_MAX):
             try:
-                _publish_throttle_wait(cfg, backend, post.account_id)
                 _ensure_media(led, cfg, post, backend, account_id=post.account_id)
+                _publish_throttle_wait(cfg, backend, post.account_id)   # throttle only before the real POST
                 led = poster.publish(led, post.id)
                 post = led.posts[post_id]
                 if post.state is PostState.submitted:
