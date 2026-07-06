@@ -696,3 +696,52 @@ def test_long_transcript_is_truncated_with_marker():
     assert dropped > 0 and kept and len(kept) < len(segs)
     assert kept == sorted(kept, key=lambda s: s["start"])         # chronological order restored
     assert _bounded_transcript(segs[:2], peaks) == (segs[:2], 0)  # short -> unchanged (byte-identical)
+
+
+# ---- MOL-159: persona-biased _bounded_transcript (filtered peaks + corpus bonus) ----
+def test_bounded_transcript_biases_to_filtered_peaks(monkeypatch):
+    from fanops import moments
+    from fanops.moments import _bounded_transcript
+    monkeypatch.setattr(moments, "_TRANSCRIPT_CHAR_BUDGET", 5000)
+    segs = [{"start": float(i), "end": float(i) + 1, "text": "line " * 20} for i in range(200)]
+    peaks_early = [{"t": 5.0, "kind": "energy", "score": 9.0}]
+    peaks_late = [{"t": 195.0, "kind": "energy", "score": 9.0}]
+    kept_early, _ = _bounded_transcript(segs, peaks_early)
+    kept_late, _ = _bounded_transcript(segs, peaks_late)
+    assert kept_early and kept_late
+    assert {s["start"] for s in kept_early} != {s["start"] for s in kept_late}
+    assert max(s["start"] for s in kept_early) < min(s["start"] for s in kept_late)
+
+
+def test_bounded_transcript_corpus_bonus(monkeypatch):
+    from fanops import moments
+    from fanops.moments import _bounded_transcript
+    monkeypatch.setattr(moments, "_TRANSCRIPT_CHAR_BUDGET", 50)
+    near_plain = {"start": 48.0, "end": 52.0, "text": "x" * 40}           # mid=50, no corpus hit
+    near_corpus = {"start": 49.0, "end": 51.0, "text": "freestyle " * 4}  # mid=50, corpus hit
+    far = [{"start": float(i * 10), "end": float(i * 10) + 1, "text": "z" * 200} for i in range(30)]
+    segs = sorted(far + [near_plain, near_corpus], key=lambda s: s["start"])
+    peaks = [{"t": 50.0}]
+    kept, _ = _bounded_transcript(segs, peaks, corpus=["freestyle"])
+    assert near_corpus in kept
+    assert near_plain not in kept
+
+
+def test_bounded_transcript_corpus_not_a_filter(monkeypatch):
+    from fanops import moments
+    from fanops.moments import _bounded_transcript
+    monkeypatch.setattr(moments, "_TRANSCRIPT_CHAR_BUDGET", 200)
+    segs = [{"start": float(i), "end": float(i) + 1, "text": "off theme " * 10} for i in range(50)]
+    peaks = [{"t": 25.0}]
+    kept, dropped = _bounded_transcript(segs, peaks, corpus=["freestyle", "drill"])
+    assert kept and dropped > 0
+    assert all("freestyle" not in s.get("text", "").lower() for s in kept)
+
+
+def test_bounded_transcript_no_corpus_byte_identical():
+    from fanops.moments import _bounded_transcript
+    segs = [{"start": float(i), "end": float(i) + 1, "text": "x" * 1000} for i in range(200)]
+    peaks = [{"t": 50.0, "kind": "scene_cut", "score": 9.0}]
+    baseline = _bounded_transcript(segs, peaks)
+    assert _bounded_transcript(segs, peaks, corpus=None) == baseline
+    assert _bounded_transcript(segs, peaks, corpus=[]) == baseline
