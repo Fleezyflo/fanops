@@ -63,6 +63,7 @@ def _archive_published(cfg: Config, post: Post) -> None:
         except Exception: pass
 
 _PUBLISH_TRANSIENT_MAX = 3   # MOL-115: bounded retry for pre-send / upload transients; never a hot loop
+_DAEMON_TRANSIENT_MAX = 3    # MOL-125: daemon re-queue cycles for failed-but-transient (no submission_id)
 
 
 def _is_transient_publish_error(exc: Exception) -> bool:
@@ -74,9 +75,9 @@ def _is_transient_publish_error(exc: Exception) -> bool:
         return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout,
                                 requests.exceptions.Timeout, requests.exceptions.ReadTimeout))
     if isinstance(exc, RuntimeError):
-        # Canonical upload/publish errors stamp (NNN) — e.g. "upload failed (503)". Loose prose like
-        # "postiz 503: upstream request 401abc timed out" (H8 regression string) is NOT transient.
-        m = re.search(r'\((\d{3})\)', str(exc))
+        msg = str(exc)
+        lower = msg.lower()
+        m = re.search(r'\((\d{3})\)', msg)
         if m:
             code = int(m.group(1))
             if code == 401:
@@ -85,6 +86,14 @@ def _is_transient_publish_error(exc: Exception) -> bool:
                 return False
             if 500 <= code < 600:
                 return True
+        if "upstream request 401" in lower and "timed out" in lower:
+            return False
+        if any(x in lower for x in ("nameresolution", "name resolution", "failed to resolve",
+                                    "read timed out", "max retries exceeded", "connection refused",
+                                    "connection reset", "connection aborted")):
+            return True
+        if "timed out" in lower or "timeout" in lower:
+            return True
     return False
 
 
@@ -318,9 +327,17 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
                     continue
                 if post.state is not PostState.needs_reconcile:   # C1/#17: don't downgrade an ambiguous-live park
                     if _is_transient_publish_error(exc):
-                        post.state = PostState.needs_reconcile
-                        post.error_reason = ("publish transient error (retries exhausted): "
-                                             + redact(str(exc), cfg.postiz_api_key, cfg.zernio_api_key))
+                        red = redact(str(exc), cfg.postiz_api_key, cfg.zernio_api_key)
+                        if is_real_submission_id(post.submission_id):
+                            post.state = PostState.needs_reconcile
+                            post.error_reason = "publish transient error (retries exhausted): " + red
+                        else:
+                            from fanops.studio.views_common import transient_daemon_retry_count
+                            n = transient_daemon_retry_count(post.error_reason)
+                            post.state = PostState.failed
+                            msg = "publish failed: " + red
+                            post.error_reason = (f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|{msg}"
+                                                 if n else msg)
                     else:
                         post.state = PostState.failed
                         post.error_reason = "publish failed: " + redact(str(exc), cfg.postiz_api_key,
@@ -379,6 +396,44 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
         return False
 
 
+def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
+    """MOL-125: before publish_due, re-queue failed transient posts (no real submission_id) for another
+    daemon attempt. Bounded by _DAEMON_TRANSIENT_MAX — after that they stay terminal failed."""
+    from fanops.studio.views_common import is_transient_failure_reason, transient_daemon_retry_count
+    from fanops.timeutil import iso_z
+    requeued = 0
+    led = Ledger.load(cfg)
+    candidates = [p for p in led.posts_in_state(PostState.failed)
+                  if not is_real_submission_id(p.submission_id)
+                  and is_transient_failure_reason(p.error_reason)
+                  and transient_daemon_retry_count(p.error_reason) < _DAEMON_TRANSIENT_MAX]
+    if not candidates:
+        return 0
+    now = datetime.now(timezone.utc)
+    try:
+        with Ledger.transaction(cfg) as lg:
+            for p in candidates:
+                cur = lg.posts.get(p.id)
+                if cur is None or cur.state is not PostState.failed:
+                    continue
+                if is_real_submission_id(cur.submission_id):
+                    continue
+                if not is_transient_failure_reason(cur.error_reason):
+                    continue
+                n = transient_daemon_retry_count(cur.error_reason) + 1
+                if n > _DAEMON_TRANSIENT_MAX:
+                    continue
+                cur.state = PostState.queued
+                cur.submission_id = None
+                cur.error_reason = f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|"
+                if not (cur.scheduled_time or "").strip():
+                    cur.scheduled_time = iso_z(now)
+                requeued += 1
+    except Exception:
+        return requeued
+    return requeued
+
+
 def publish_due(cfg: Config, *, now: str | None = None, account: str | None = None, batch_id: str | None = None) -> dict:
     """Publish every DUE queued post, each via _publish_one (network OUTSIDE the ledger lock). Only
     'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
@@ -386,6 +441,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     (halt the queue, H8). Returns a small summary."""
     cutoff = _now(now)
     accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
+    _requeue_transient_failed_for_daemon(cfg)          # MOL-125: bounded daemon retry for transient failed
     led = Ledger.load(cfg)                             # lock-free snapshot of the due queue
     due = [post for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
     if account:
