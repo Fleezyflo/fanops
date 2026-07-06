@@ -3,9 +3,10 @@
 # failure mode RF1's diagnosis flagged ("the brain works but never reaches output"): a cast that updates a
 # selection but doesn't change what the gate admits is dead. So every assertion here checks the GATE verdict
 # (admit/deny), with the ledger record as corroboration. Casting is ON (the firewall admits-all when OFF, which
-# would mask the whole point). Slow UNIT (no marker) — runs in CI `unit`, fully deterministic (time injected).
+# would mask the whole point). Slow UNIT (`@pytest.mark.slow`) — runs in CI `unit`, fully deterministic (time injected).
 import json
 import pytest
+pytestmark = pytest.mark.slow
 pytest.importorskip("flask")
 from datetime import datetime, timezone
 from fanops.config import Config
