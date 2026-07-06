@@ -1,5 +1,22 @@
 # tests/test_prompts.py
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
+from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
+
+def test_prompt_does_not_ask_for_request_id():
+    # MOL-167: the model must never be asked to echo request_id/source_id — the gate stamps both.
+    pick = moment_pick_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                               "language": "en", "guidance": ""})
+    hook = moment_hook_prompt({"start": 14.0, "end": 21.0, "reason": "r", "transcript_excerpt": "x",
+                               "language": "en", "guidance": "", "frames": [], "signal_peaks": []})
+    cap = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "", "transcript_excerpt": "x",
+                          "surfaces": [{"surface": "@a/instagram", "platform": "instagram"}]})
+    for p in (pick, hook, cap):
+        low = p.lower()
+        assert "request_id" not in low and "source_id" not in low
+    for cls in (MomentDecision, MomentHookDecision, CaptionSet):
+        req = cls.model_json_schema().get("required", [])
+        assert "request_id" not in req, cls.__name__
+    assert "source_id" not in MomentDecision.model_json_schema().get("required", [])
 
 # M1b (frame-seeing two-pass): the moment gate is split. moment_pick_prompt chooses WINDOWS only;
 # moment_hook_prompt authors the on-screen hook seeing THAT clip's window frames. The hook-craft
