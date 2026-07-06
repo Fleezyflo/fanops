@@ -370,11 +370,15 @@ def test_lift_page_renders_delta_arrow_glyphs(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
-        _lineage(led)
-        for i, (pid, hook, lift) in enumerate([("p_lo", "CALM", 10.0), ("p_mid", "MID", 30.0), ("p_hi", "HYPE", 50.0)]):
+        led.add_source(Source(id="src_1", source_path="/videos/show.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="big drop", state=MomentState.clipped, hook="SHARED"))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/clips/clip_1.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.queued))
+        for i, (pid, lift) in enumerate([("p_lo", 10.0), ("p_mid", 30.0), ("p_hi", 50.0)]):
             led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
-                              caption=hook, state=PostState.analyzed, variant_key="vk_%d" % i, variant_hook=hook,
-                              metrics={"lift_score": lift}, public_url="dryrun://%s" % pid))
+                              caption="x", state=PostState.analyzed, metrics={"lift_score": lift},
+                              public_url="dryrun://%s" % pid))
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True)
     h = app.test_client().get("/lift").data.decode()
@@ -389,13 +393,15 @@ def test_lift_compound_row_demotes_delta_vs_best_when_arrow_shows(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
-        _lineage(led)
-        # 3 posts of the SAME clip -> a lineage (sibling_count > 1) so lineage_delta's Δ-vs-best applies,
-        # AND 3 lift scores on one account so the T-15 arrow applies. Both fire on the non-best rows.
-        for i, (pid, hook, lift) in enumerate([("p_lo", "CALM", 10.0), ("p_mid", "MID", 30.0), ("p_hi", "HYPE", 50.0)]):
+        led.add_source(Source(id="src_1", source_path="/videos/show.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="big drop", state=MomentState.clipped, hook="SHARED"))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/clips/clip_1.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.queued))
+        for i, (pid, lift) in enumerate([("p_lo", 10.0), ("p_mid", 30.0), ("p_hi", 50.0)]):
             led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
-                              caption=hook, state=PostState.analyzed, variant_key="vk_%d" % i, variant_hook=hook,
-                              metrics={"lift_score": lift}, public_url="dryrun://%s" % pid))
+                              caption="x", state=PostState.analyzed, metrics={"lift_score": lift},
+                              public_url="dryrun://%s" % pid))
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True)
     h = app.test_client().get("/lift").data.decode()

@@ -205,6 +205,8 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
             m2 = led2.moments.get(mom_id)
             if m2 is not None:
                 led2.moments[mom_id] = m2.model_copy(update={"hook": hook, "hook_removed": None})
+            c2 = led2.clips.get(rc.id)
+            led2.clips[rc.id] = rc.model_copy(update={"meta_captions": c2.meta_captions}) if c2 else rc
     except Exception as exc:
         return ActionResult(ok=False, error=f"re-burn failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": post_id, "hook": hook, "hook_burned": hook_burned})
