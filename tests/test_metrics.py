@@ -165,6 +165,25 @@ def test_postiz_status_published_captures_releaseURL(tmp_path, monkeypatch, mock
     assert out["status"] == "published"
     assert out["publicUrl"] == url                              # the real IG permalink from the row, not None
 
+def test_postiz_status_published_captures_releaseId(tmp_path, monkeypatch, mocker):
+    # MOL-112 foundation: the Postiz row's releaseId is the IG Graph media id — surface it at poll time so
+    # reconcile can persist media_id without a feed-enumeration permalink match (MOL-113 liveness spine).
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    page = {"posts": [{"id": "sid1", "state": "PUBLISHED", "releaseURL": "https://www.instagram.com/reel/X/",
+                       "releaseId": "17841456789012345", "publishDate": "2099-01-01T00:00:00.000Z"}]}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, page))
+    out = PostizStatusClient(cfg).get_status("sid1", publish_date="2099-01-01T00:00:00Z")
+    assert out.get("releaseId") == "17841456789012345"
+
+def test_postiz_status_published_without_releaseId_omits_key(tmp_path, monkeypatch, mocker):
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_R(200, {"posts": [{"id": "sid1", "state": "PUBLISHED", "releaseURL": "u"}]}))
+    out = PostizStatusClient(cfg).get_status("sid1")
+    assert "releaseId" not in out
+
 def test_postiz_status_published_without_releaseURL_is_none(tmp_path, monkeypatch, mocker):
     # ERROR/queued rows carry no releaseURL; a published row that lacks it -> publicUrl None (never crash).
     from fanops.post.metrics import PostizStatusClient

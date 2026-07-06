@@ -553,6 +553,9 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             upd = {"state": PostState.published,
                    "public_url": captured_url,
                    "error_reason": None}                  # a transient poll-error reason must not survive a successful publish
+            rid = info.get("releaseId")
+            if post.platform is Platform.instagram and isinstance(rid, str) and rid.strip():
+                upd["media_id"] = rid.strip()            # MOL-112: IG object id from Postiz row — no feed match required
             if not (post.published_at or "").strip():
                 upd["published_at"] = iso_z(now)         # mirror _publish_one: reconcile-only promote must carry a ship stamp
             # Leg 3 (timing): bucket the ship stamp into operator-local (hour, weekday) — mirror _publish_one
