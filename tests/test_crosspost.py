@@ -352,6 +352,37 @@ def test_crosspost_uncast_moment_fans_to_all(tmp_path, mocker, monkeypatch):
     assert len(led.posts) == 4                        # uncast fans to all
 
 
+def test_crosspost_admits_only_owner(tmp_path, mocker, monkeypatch):
+    # MOL-149 (P8): the crosspost gate is affinity_admits only — a single-owner moment admits ONLY its owner.
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
+    cfg = Config(root=tmp_path)
+    led = _two_accounts_clip(cfg, source_batch_id=None)
+    led.moments["mom_1"].affinities = ["@a"]
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
+    assert not any(p.account == "@b" for p in led.posts.values())
+
+
+def test_crosspost_no_casting_defer(tmp_path, mocker, monkeypatch):
+    # MOL-149 (P8): crosspost no longer defers on casting pending/failed-to-open — owned moments crosspost in
+    # one pass with no casting_pending_skip breadcrumb, even when a casting request is still unanswered.
+    from fanops.casting import request_moment_casting
+    from fanops.agentstep import write_request
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
+    cfg = Config(root=tmp_path)
+    led = _two_accounts_clip(cfg, source_batch_id=None)
+    led.moments["mom_1"].affinities = ["@a"]          # owner stamped — gate can admit without waiting on casting
+    accts = Accounts.load(cfg)
+    write_request(cfg, kind="moment_casting", key="src_1", payload={"source_id": "src_1", "moments": [], "personas": []})
+    led = request_moment_casting(led, cfg, "src_1", accts)   # gate OPEN, unanswered — must NOT defer crosspost
+    _fake_ffmpeg(mocker)
+    led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
+    assert {p.account for p in led.posts.values()} == {"@a"} and len(led.posts) == 2
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "casting_pending_skip" not in log
+
+
 def test_crosspost_two_clips_same_surface_do_not_collide_on_time(tmp_path, mocker):
     # AUDIT H1/H2: two clips (distinct moments) posting to the SAME surface must not land on the
     # same minute (surface_time previously ignored the clip -> identical timestamps -> lockstep
