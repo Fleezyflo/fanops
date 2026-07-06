@@ -165,10 +165,17 @@ def test_publish_queue_none_account_unchanged(tmp_path):
 
 # ---- T5: Results (lift) filter + P1 time column + P3 breakdown ----
 def _variant(led, pid, account, hook, lift, *, metrics_extra=None, when="2026-06-01T00:00:00Z"):
+    cid, mid = f"clip_{pid}", f"mom_{pid}"
+    if not led.sources.get("src_1"):
+        led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en"))
+    if not led.moments.get(mid):
+        led.add_moment(Moment(id=mid, parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                              state=MomentState.clipped, hook=hook))
+        led.add_clip(Clip(id=cid, parent_id=mid, path="/c/clip.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
     m = {LIFT_SCORE: lift}; m.update(metrics_extra or {})
-    led.add_post(Post(id=pid, parent_id="clip_1", account=account, account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, variant_key=f"vk_{pid}", variant_hook=hook,
-                      scheduled_time=when, metrics=m, public_url="dryrun://clip_1"))
+    led.add_post(Post(id=pid, parent_id=cid, account=account, account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.analyzed,
+                      scheduled_time=when, metrics=m, public_url=f"dryrun://{pid}"))
 
 def test_lift_rows_filtered_by_account(tmp_path):
     from fanops.studio.views import lift_rows
@@ -226,11 +233,11 @@ def _seed_two_accounts_all_surfaces(cfg):
     base = cfg.clips / "c.mp4"; base.write_bytes(b"\x00\x00\x00\x18ftypmp42CLIP")
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en"))
-        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
-                              reason="r", state=MomentState.clipped))
         for acct in ("a", "b"):
             tag = acct.strip("@")
-            led.add_clip(Clip(id=f"clip_{tag}", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+            led.add_moment(Moment(id=f"mom_{tag}", parent_id="src_1", content_token="0-7", start=0, end=7,
+                                  reason="r", state=MomentState.clipped, hook=f"HOOK_{tag}"))
+            led.add_clip(Clip(id=f"clip_{tag}", parent_id=f"mom_{tag}", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
             for n in ("", "2"):                          # aw_a + aw_a2 (approve one, the other keeps @a in the universe)
                 led.add_post(Post(id=f"aw_{tag}{n}", parent_id=f"clip_{tag}", account=acct, account_id="1",
                                   platform=Platform.instagram, caption=f"await {tag}", state=PostState.awaiting_approval,
@@ -243,7 +250,6 @@ def _seed_two_accounts_all_surfaces(cfg):
                               scheduled_time="2026-06-01T00:00:00Z", public_url=f"https://insta/{tag}"))
             led.add_post(Post(id=f"var_{tag}", parent_id=f"clip_{tag}", account=acct, account_id="1",
                               platform=Platform.instagram, caption=f"variant {tag}", state=PostState.analyzed,
-                              variant_key=f"vk_{tag}", variant_hook=f"HOOK_{tag}",
                               scheduled_time="2026-06-01T00:00:00Z", metrics={LIFT_SCORE: 50.0, "saves": 3}, public_url="dryrun://1"))
 
 @pytest.mark.parametrize("path,present,absent", [

@@ -7,22 +7,38 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Source, Moment, Clip, SourceState
 from fanops.variant_amplify import update_streaks, amplify_candidates, apply_variant_amplify
+from fanops.variant_learning import _hook_for_post
 
 
-def _post(pid, acct, hook, lift, state=PostState.analyzed):
-    # R1: stamp a synthetic dryrun:// permalink so the analyzed-state invariant holds. The
-    # learning math only reads metrics + state + variant_hook; the URL is shape-only here.
+def _lineage(pid, acct, hook, lift, state=PostState.analyzed, *, src_id="s1"):
+    # P9: hook lives on the owner moment; each analyzed post needs its own moment/clip lineage.
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
+    clip_id, moment_id = f"c_{pid}", f"m_{pid}"
     url = f"dryrun://{pid}" if state in _POST_TERMINAL_REQUIRES_URL else None
-    return Post(id=pid, parent_id="c1", account=acct, account_id="1", platform=Platform.instagram,
-                caption="x", state=state, variant_key=f"vk_{pid}", variant_hook=hook,
-                metrics={"lift_score": lift}, public_url=url)
+    moment = Moment(id=moment_id, parent_id=src_id, start=0.0, end=4.0, reason="r", hook=hook,
+                    transcript_excerpt="ex")
+    clip = Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4")
+    post = Post(id=pid, parent_id=clip_id, account=acct, account_id="1", platform=Platform.instagram,
+                caption="x", state=state, metrics={"lift_score": lift}, public_url=url)
+    return moment, clip, post
 
 
-def _led(cfg, posts):
+def _post(pid, acct, hook, lift, state=PostState.analyzed, *, src_id="s1"):
+    return _lineage(pid, acct, hook, lift, state, src_id=src_id)
+
+
+def _add_lineage(led, triple, *, src_id="s1"):
+    m, c, p = triple
+    if not led.sources.get(src_id):
+        led.add_source(Source(id=src_id, source_path="x.mp4", state=SourceState.transcribed,
+                              duration=10.0, transcript=[], language="en"))
+    led.add_moment(m); led.add_clip(c); led.add_post(p)
+
+
+def _led(cfg, triples, *, src_id="s1"):
     led = Ledger.load(cfg)
-    for p in posts:
-        led.add_post(p)
+    for t in triples:
+        _add_lineage(led, t, src_id=src_id)
     return led
 
 
@@ -55,7 +71,7 @@ def test_same_winner_new_evidence_increments(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
     update_streaks(led, cfg)               # streak 1
-    led.add_post(_post("99", "a", "WIN", 90.0))   # NEW analyzed evidence (new post id)
+    _add_lineage(led, _post("99", "a", "WIN", 90.0))   # NEW analyzed evidence (new post id)
     update_streaks(led, cfg)               # streak 2
     assert led.variant_streaks["a|instagram"]["streak"] == 2
 
@@ -78,7 +94,7 @@ def test_winner_change_resets_to_one(tmp_path):
     # WIN runner-up (mean 90) by >= variant_min_gap (10) — else best_hooks would see no comparative
     # winner and return []. 110 mean -> WIN2 leads WIN by 20 (clears the floor gate).
     for i in range(9):
-        led.add_post(_post(f"2{i}", "a", "WIN2", 110.0))
+        _add_lineage(led, _post(f"2{i}", "a", "WIN2", 110.0))
     update_streaks(led, cfg)
     e = led.variant_streaks["a|instagram"]
     assert e["hook"] == "WIN2" and e["streak"] == 1     # reset, not continued
@@ -90,7 +106,7 @@ def test_winner_disappears_resets_to_zero(tmp_path):
     update_streaks(led, cfg)               # streak 1
     # Drop below the floor: make the gap tiny so best_hooks now returns [] (raise the losers).
     for p in led.posts.values():
-        if p.variant_hook == "LOSE":
+        if _hook_for_post(led, p) == "LOSE":
             p.metrics["lift_score"] = 89.0
     update_streaks(led, cfg)
     assert led.variant_streaks["a|instagram"]["streak"] == 0
@@ -154,7 +170,7 @@ def test_all_gates_met_returns_candidate(tmp_path):
     assert len(cands) == 1
     c = cands[0]
     assert c["source_id"] == "s1" and c["winning_hook"] == "WIN"
-    assert c["post_id"] in {p.id for p in led.posts.values() if p.variant_hook == "WIN"}
+    assert c["post_id"] in {p.id for p in led.posts.values() if _hook_for_post(led, p) == "WIN"}
 
 
 def test_require_full_objective_excludes_degraded_winner(tmp_path, monkeypatch):
@@ -164,7 +180,7 @@ def test_require_full_objective_excludes_degraded_winner(tmp_path, monkeypatch):
     led = _led(cfg, _winset(8, "WIN", 90.0))
     _seed_lineage(led)
     led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
-    win = next(p for p in led.posts.values() if p.variant_hook == "WIN")
+    win = next(p for p in led.posts.values() if _hook_for_post(led, p) == "WIN")
     win.metrics["lift_degraded"] = True                        # one winning post scored on a partial objective
     monkeypatch.delenv("FANOPS_REQUIRE_FULL_OBJECTIVE", raising=False)
     assert len(amplify_candidates(led, cfg)) == 1              # default OFF -> unchanged
@@ -224,7 +240,7 @@ def test_apply_amplifies_when_fully_gated(tmp_path, monkeypatch):
     payload = json.loads(request_path(cfg, "moments", "s1").read_text())
     assert "WIN" in payload["guidance"]
     # G2: the winning analyzed post survives, state unchanged.
-    win_posts = [p for p in led.posts.values() if p.variant_hook == "WIN"]
+    win_posts = [p for p in led.posts.values() if _hook_for_post(led, p) == "WIN"]
     assert win_posts and all(p.state is PostState.analyzed for p in win_posts)
 
 
@@ -325,20 +341,13 @@ def test_apply_failsafe_logs_the_error_detail(tmp_path, monkeypatch):
 
 # ---- MOL-85: per-candidate isolation in the amplify loop (mirror p4_dim_bias's per-item guard) ----
 def _seed_gated_surface(led, cfg, acct):
-    """Build ONE fully-gated amplify surface on `acct` with its OWN source lineage (source_<acct>,
-    clip_<acct>, moment_<acct>). 8 analyzed WIN posts + 3 runner-ups, streak 3 — clears every gate,
-    so amplify_candidates emits exactly one candidate for this surface. Post ids are namespaced by
-    acct so the three surfaces' lineages never collide."""
-    sid, cid, mid = f"source_{acct}", f"clip_{acct}", f"moment_{acct}"
-    posts = ([_post(f"{acct}_w{i}", acct, "WIN", 90.0) for i in range(8)]
-             + [_post(f"{acct}_l{i}", acct, "LOSE", 1.0) for i in range(3)])
-    for p in posts:
-        led.add_post(p.model_copy(update={"parent_id": cid}))
-    led.add_source(Source(id=sid, source_path=f"{acct}.mp4", state=SourceState.transcribed,
-                          duration=10.0, transcript=[], language="en"))
-    led.add_moment(Moment(id=mid, parent_id=sid, start=0.0, end=4.0, reason="r",
-                          transcript_excerpt="ex"))
-    led.add_clip(Clip(id=cid, parent_id=mid, path=f"{cid}.mp4"))
+    """Build ONE fully-gated amplify surface on `acct` with its OWN source lineage (source_<acct>).
+    8 analyzed WIN posts + 3 runner-ups, streak 3 — clears every gate."""
+    sid = f"source_{acct}"
+    for i in range(8):
+        _add_lineage(led, _post(f"{acct}_w{i}", acct, "WIN", 90.0, src_id=sid), src_id=sid)
+    for i in range(3):
+        _add_lineage(led, _post(f"{acct}_l{i}", acct, "LOSE", 1.0, src_id=sid), src_id=sid)
     led.variant_streaks[f"{acct}|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
 
 

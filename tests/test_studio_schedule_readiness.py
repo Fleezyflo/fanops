@@ -21,16 +21,20 @@ def _client(cfg):
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
 
-def _led_with(cfg, *, render=None, clip_state=ClipState.queued, post_over=None):
+def _led_with(cfg, *, render=None, clip_state=ClipState.queued, post_over=None, moment_hook=None):
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
-        led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+        mom_kw = dict(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped)
+        if moment_hook is not None: mom_kw["hook"] = moment_hook
+        led.add_moment(Moment(**mom_kw))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=clip_state))
         if render is not None: led.add_render(render)
         po = dict(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                   caption="x", state=PostState.queued)
-        po.update(post_over or {})
+        post_over = dict(post_over or {})
+        post_over.pop("variant_hook", None)                         # P9: hook lives on moment, not Post
+        po.update(post_over)
         # R1: if a test overrides state to a terminal state, also override public_url. Default safe.
         from fanops.models import _POST_TERMINAL_REQUIRES_URL
         if po.get("state") in _POST_TERMINAL_REQUIRES_URL and not po.get("public_url"):
@@ -44,7 +48,7 @@ def test_ready_when_render_shippable_and_hook_matches(tmp_path):
     cfg = Config(root=tmp_path)
     r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="H",
                path=str(cfg.clips / "b.mp4"), state=RenderState.rendered, is_account_cut=True)
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="H")
     ready, reason = views.publish_readiness(led, led.posts["p"])
     assert ready is True and "cut" in reason
 
@@ -67,7 +71,7 @@ def test_not_ready_when_render_not_finished(tmp_path):
     cfg = Config(root=tmp_path)
     r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="H",
                path=str(cfg.clips / "b.mp4"), state=RenderState.retired)
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="H")
     ready, reason = views.publish_readiness(led, led.posts["p"])
     assert ready is False
 
@@ -76,7 +80,7 @@ def test_not_ready_on_hook_drift(tmp_path):
     cfg = Config(root=tmp_path)
     r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="BURNED",
                path=str(cfg.clips / "b.mp4"), state=RenderState.rendered, is_account_cut=True)
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "SHOWN"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="SHOWN")
     ready, reason = views.publish_readiness(led, led.posts["p"])
     assert ready is False and "drift" in reason.lower()
 
@@ -93,7 +97,7 @@ def test_ready_when_render_is_queued_state(tmp_path):
     cfg = Config(root=tmp_path)
     r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="H",
                path=str(cfg.clips / "b.mp4"), state=RenderState.queued, is_account_cut=True)
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="H")
     ready, _ = views.publish_readiness(led, led.posts["p"])
     assert ready is True
 
@@ -103,7 +107,7 @@ def test_not_ready_when_render_file_absent(tmp_path):
     cfg = Config(root=tmp_path)
     r = Render(id="r1", clip_id="c", account="a", surface_key="a/instagram", hook_text="H",
                path=str(cfg.clips / "GONE.mp4"), state=RenderState.rendered, is_account_cut=True)  # no such file
-    led = _led_with(cfg, render=r, post_over={"render_id": "r1", "variant_hook": "H"})
+    led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="H")
     ready, reason = views.publish_readiness(led, led.posts["p"])
     assert ready is False and "disk" in reason.lower()
 

@@ -102,10 +102,9 @@ def test_moment_pick_is_pick_only_no_hook_fields():
     p = MomentPick(start=14.0, end=21.0, reason="bar lands, beat drops")
     assert not hasattr(p, "hook")
 
-def test_moment_hook_decision_carries_hook_and_personas():
+def test_moment_hook_decision_carries_hook_only():
     from fanops.models import MomentHookDecision
-    d = MomentHookDecision(request_id="r1", hook="the line you replay",
-                           )
+    d = MomentHookDecision(request_id="r1", hook="the line you replay")
     assert d.hook == "the line you replay"
     assert "hooks_by_persona" not in MomentHookDecision.model_fields
     # a CLEAN pick: the author legitimately returns no hook (better clean than slop) — still valid.
@@ -139,15 +138,13 @@ def test_moment_hook_request_carries_window_and_frames():
     assert r.frames == ["/k/a.jpg"] and r.start == 14.0 and r.moment_id == "moment_x"
 
 
-def test_post_has_optional_variant_fields():
+def test_post_has_no_variant_fields():
     from fanops.models import Post, Platform, PostState
-    p = Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-             caption="x", state=PostState.queued, variant_key="vk1", variant_hook="WATCH THIS", public_url="dryrun://p1")
-    assert p.variant_key == "vk1" and p.variant_hook == "WATCH THIS"
-    # old ledgers (no variant fields) still load
-    p2 = Post(id="p2", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-              caption="x", state=PostState.queued, public_url="dryrun://p2")
-    assert p2.variant_key is None and p2.variant_hook is None
+    assert "variant_key" not in Post.model_fields
+    assert "variant_hook" not in Post.model_fields
+    p = Post(id="p2", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
+             caption="x", state=PostState.queued, public_url="dryrun://p2")
+    assert p.clip_profile is None
 
 # ---- M1 (structural-hooks): asset origin (native vs third-party) ----
 # origin_kind is a THIRD axis, distinct from source_origin (drop|url|scan, HOW it arrived) and the

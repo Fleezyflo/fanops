@@ -7,7 +7,7 @@
 import fanops.config as cfgmod
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Platform, Fmt, PLATFORM_ASPECT, PLATFORM_MAX_SECONDS, Post
+from fanops.models import Platform, Fmt, PLATFORM_ASPECT, PLATFORM_MAX_SECONDS, Post, Source, Moment, Clip, ClipState, MomentState
 from fanops.post.postiz import build_postiz_payload, PostizPoster
 
 
@@ -68,10 +68,17 @@ def test_instagram_payload_byte_identical():
 
 
 # ---- publish: title sourced from the per-account hook, fallback to artist_name ----
-def test_publish_youtube_title_from_variant_hook(tmp_path, monkeypatch, mocker):
+def _yt_lineage(led, *, hook=None):
+    led.add_source(Source(id="src_1", source_path="/s.mp4"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped, hook=hook))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
+
+def test_publish_youtube_title_from_moment_hook(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(_yt_post(hashtags=["#wave", "alt"], variant_hook="they slept on me"))
+    _yt_lineage(led, hook="they slept on me")
+    led.add_post(_yt_post(hashtags=["#wave", "alt"]))
     cap = _mock_post_ok(mocker)
     PostizPoster(cfg).publish(led, "p1")
     s = cap["json"]["posts"][0]["settings"]
@@ -83,7 +90,8 @@ def test_publish_youtube_title_falls_back_to_artist(tmp_path, monkeypatch, mocke
     monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     monkeypatch.setenv("FANOPS_ARTIST_NAME", "Moh Flow")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(_yt_post(variant_hook=None))                      # no hook -> floor
+    _yt_lineage(led, hook=None)
+    led.add_post(_yt_post())                      # no hook -> floor
     cap = _mock_post_ok(mocker)
     PostizPoster(cfg).publish(led, "p1")
     assert cap["json"]["posts"][0]["settings"]["title"] == "Moh Flow"
@@ -108,7 +116,8 @@ def test_youtube_payload_floors_empty_title():
 def test_publish_instagram_still_stub(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(_yt_post(id="p2", platform=Platform.instagram, account_id="ig1", variant_hook="ignored"))
+    _yt_lineage(led, hook=None)
+    led.add_post(_yt_post(id="p2", platform=Platform.instagram, account_id="ig1"))
     cap = _mock_post_ok(mocker)
     PostizPoster(cfg).publish(led, "p2")
     assert cap["json"]["posts"][0]["settings"] == {"__type": "instagram", "post_type": "post"}

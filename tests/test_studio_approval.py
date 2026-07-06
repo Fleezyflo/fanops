@@ -402,18 +402,18 @@ def _seed_removed_hook_review(cfg):
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
 
-def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypatch):
-    # default ON: per-surface hooks own the burn + approve_with_hook refuses, so the moment-restore choice
-    # is HIDDEN; the generic 'Approve all accounts' is the approve path instead.
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+def test_review_shows_hook_choice_when_hook_removed(tmp_path):
+    # P9: creative_variation is no longer a runtime flag — the moment-hook RESTORE choice shows whenever
+    # hook_removed is set (the OFF-mode approve_with_hook flow).
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
-    assert b"Approve with hook" not in html and b"hook removed" not in html
-    assert b"Approve all accounts" in html
+    assert b"Approve with hook" in html and b"hook removed" in html
 
-def test_review_shows_hook_choice_when_creative_variation_off(tmp_path, monkeypatch):
-    # pinned OFF: the shared clip ships clean with the stripped hook, so the restore badge + choice show.
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
+
+def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypatch):
+    # Legacy name kept: FANOPS_CREATIVE_VARIATION no longer gates the template (golive hardcodes OFF), so the
+    # restore choice remains visible when hook_removed is set.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
     assert b"Approve with hook" in html and b"hook removed" in html

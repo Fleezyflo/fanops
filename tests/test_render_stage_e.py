@@ -15,11 +15,12 @@ NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 FUTURE = "2099-01-01T00:00:00Z"
 
 
-def _base(cfg):
+def _base(cfg, *, hook=None):
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4"))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
-                          reason="r", state=MomentState.clipped))
+    mom_kw = dict(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped)
+    if hook: mom_kw["hook"] = hook
+    led.add_moment(Moment(**mom_kw))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
     return led
 
@@ -27,20 +28,20 @@ def _base(cfg):
 # ---- E1: the read-models surface the per-account hook ----
 def test_schedule_row_carries_variant_hook(tmp_path):
     from fanops.studio import views
-    cfg = Config(root=tmp_path); led = _base(cfg)
+    cfg = Config(root=tmp_path); led = _base(cfg, hook="watch his face")
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.queued, scheduled_time=FUTURE,
-                      render_id="render_x", variant_hook="watch his face", public_url="dryrun://p1"))
+                      render_id="render_x", public_url="dryrun://p1"))
     led.save()
     rows = views.schedule_rows(Ledger.load(cfg), cfg, now=NOW)
     assert rows and rows[0].variant_hook == "watch his face"
 
 def test_posted_row_carries_variant_hook(tmp_path):
     from fanops.studio import views
-    cfg = Config(root=tmp_path); led = _base(cfg)
+    cfg = Config(root=tmp_path); led = _base(cfg, hook="the smile gives it away")
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.published, scheduled_time="2026-06-01T00:00:00Z",
-                      public_url="http://x", variant_hook="the smile gives it away"))
+                      public_url="http://x"))
     led.save()
     rows = views.posted_library(Ledger.load(cfg), cfg)
     assert rows and rows[0].variant_hook == "the smile gives it away"
@@ -50,14 +51,15 @@ def test_posted_row_carries_variant_hook(tmp_path):
 def test_archive_records_render_identity(tmp_path):
     from fanops.post.run import _archive_published
     cfg = Config(root=tmp_path)
+    led = _base(cfg, hook="he wrote this for one person"); led.save()
     p = Post(id="p_pub", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
              caption="c", state=PostState.published, published_at="2026-06-05T10:00:00Z",
-             render_id="render_x", variant_hook="he wrote this for one person",
+             render_id="render_x",
              media_urls=["file:///clips/batch/src/render_x.9x16.mp4"], public_url="http://ig/x")
     _archive_published(cfg, p)
     rec = json.loads((cfg.published / "2026-06-05" / "p_pub.json").read_text())
     assert rec["render_id"] == "render_x"
-    assert rec["variant_hook"] == "he wrote this for one person"
+    assert rec["hook"] == "he wrote this for one person"
     assert rec["media"] == "file:///clips/batch/src/render_x.9x16.mp4"
 
 
@@ -95,11 +97,11 @@ def test_schedule_panel_renders_hook_column(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path="/s.mp4"))
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
-                              reason="r", state=MomentState.clipped))
+                              reason="r", state=MomentState.clipped, hook="watch his face"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                           caption="c", state=PostState.queued, scheduled_time="2099-06-06T12:00:00Z",
-                          variant_hook="watch his face", public_url="dryrun://p1"))
+                          public_url="dryrun://p1"))
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/schedule").data
     assert b"sched-caption" in html and "watch his face".encode() in html and b"\xe2\x9c\xa6" in html

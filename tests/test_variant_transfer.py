@@ -5,7 +5,7 @@ best_hooks gate on every donor. The whole anti-homogenization + stricter-gate ar
 from __future__ import annotations
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
+from fanops.models import Post, Platform, PostState, Moment, Clip, Source, SourceState
 from fanops.accounts import Account, Accounts, AccountStatus
 from fanops.variant_transfer import transferred_hooks
 
@@ -19,15 +19,21 @@ def _accounts(cfg, specs):
     return a
 
 
-def _win_surface(led, account, platform, hook="WIN", *, n=3, win=90.0, lose=10.0, idprefix=""):
-    """Seed `account/platform` with a comparative gated winner `hook` (n WIN posts vs n LOSE posts).
-    Mirrors the v2 best_hooks gate: >= MIN_POSTS (3) and a gap (80) well over MIN_GAP (10)."""
+def _win_surface(led, account, platform, hook="WIN", *, n=3, win=90.0, lose=10.0, idprefix="", src_id="s1"):
+    """Seed `account/platform` with a comparative gated winner `hook` (n WIN posts vs n LOSE posts)."""
     pid = idprefix or f"{account}_{platform.value}_"
+    if not led.sources.get(src_id):
+        led.add_source(Source(id=src_id, source_path="x.mp4", state=SourceState.transcribed,
+                              duration=10.0, transcript=[], language="en"))
     rows = [(hook, win)] * n + [("LOSE", lose)] * n
     for i, (h, lift) in enumerate(rows):
-        led.add_post(Post(id=f"{pid}{i}", parent_id="clip_1", account=account, account_id="x",
-                          platform=platform, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_{pid}{i}", variant_hook=h, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
+        mid, cid = f"m_{pid}{i}", f"c_{pid}{i}"
+        moment = Moment(id=mid, parent_id=src_id, start=0.0, end=4.0, reason="r", hook=h)
+        clip = Clip(id=cid, parent_id=mid, path=f"{cid}.mp4")
+        post = Post(id=f"{pid}{i}", parent_id=cid, account=account, account_id="x",
+                    platform=platform, caption="x", state=PostState.analyzed,
+                    metrics={"lift_score": lift}, public_url="dryrun://clip_1")
+        led.add_moment(moment); led.add_clip(clip); led.add_post(post)
 
 
 def _validate(cfg):
@@ -113,9 +119,14 @@ def test_donor_below_v2_gate_contributes_nothing(tmp_path):
     # @a and @b each have ONLY a single "STYLE" variant (no runner-up) -> best_hooks -> [].
     for acct in ("a", "b"):
         for i in range(3):
-            led.add_post(Post(id=f"{acct}{i}", parent_id="clip_1", account=acct, account_id="x",
+            mid, cid = f"m_{acct}{i}", f"c_{acct}{i}"
+            moment = Moment(id=mid, parent_id="s1", start=0.0, end=4.0, reason="r", hook="STYLE")
+            clip = Clip(id=cid, parent_id=mid, path=f"{cid}.mp4")
+            led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.transcribed,
+                                  duration=10.0, transcript=[], language="en"))
+            led.add_moment(moment); led.add_clip(clip)
+            led.add_post(Post(id=f"{acct}{i}", parent_id=cid, account=acct, account_id="x",
                               platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                              variant_key=f"vk_{acct}{i}", variant_hook="STYLE",
                               metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
     assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == []
 

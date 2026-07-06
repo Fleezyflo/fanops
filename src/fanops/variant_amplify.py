@@ -36,14 +36,13 @@ from fanops.ids import _hash
 from fanops.log import get_logger
 from fanops.models import LIFT_SCORE, Platform, PostState
 from fanops.validation_gate import learning_validated
-from fanops.variant_learning import best_hooks
+from fanops.variant_learning import best_hooks, _hook_for_post
 
 
 def _surfaces(led) -> set[tuple[str, Platform]]:
-    """Distinct (account, platform) surfaces that have at least one analyzed variant post — derived
-    purely from the ledger (no Accounts dependency), matching how best_hooks scopes per surface."""
+    """Distinct (account, platform) surfaces that have at least one analyzed post with a moment hook."""
     return {(p.account, p.platform) for p in led.posts.values()
-            if p.variant_key and p.variant_hook and p.state is PostState.analyzed
+            if _hook_for_post(led, p) and p.state is PostState.analyzed
             and LIFT_SCORE in p.metrics}
 
 
@@ -93,7 +92,7 @@ def _source_for_surface(led, account: str, platform: Platform, hook: str):
     post_id) or (None, None) if the lineage can't be resolved."""
     by_source: dict[str, list[str]] = {}
     for p in led.posts.values():
-        if not (p.account == account and p.platform is platform and p.variant_hook == hook
+        if not (_hook_for_post(led, p) == hook and p.account == account and p.platform is platform
                 and p.state is PostState.analyzed and LIFT_SCORE in p.metrics):
             continue
         clip = led.clips.get(p.parent_id)
@@ -122,22 +121,22 @@ def amplify_candidates(led, cfg) -> list[dict]:
         hook = winners[0]
         # Re-derive the winner's posts/lifts on this surface for the v3 stronger thresholds.
         lifts = [float(p.metrics[LIFT_SCORE]) for p in led.posts.values()
-                 if p.account == account and p.platform is platform and p.variant_hook == hook
+                 if p.account == account and p.platform is platform and _hook_for_post(led, p) == hook
                  and p.state is PostState.analyzed and LIFT_SCORE in p.metrics]
         if len(lifts) < cfg.variant_amplify_min_posts:
             continue
         if cfg.require_full_objective and any(
                 p.metrics.get("lift_degraded") for p in led.posts.values()
-                if p.account == account and p.platform is platform and p.variant_hook == hook
+                if p.account == account and p.platform is platform and _hook_for_post(led, p) == hook
                 and p.state is PostState.analyzed and LIFT_SCORE in p.metrics):
             continue                                             # T4: a degraded (partial-objective) winner is not amplified
         # runner-up mean among OTHER hooks on this surface (best_hooks already guaranteed >= 2 hooks).
         others: dict[str, list[float]] = {}
         for p in led.posts.values():
-            if (p.account == account and p.platform is platform and p.variant_hook
-                    and p.variant_hook != hook and p.state is PostState.analyzed
-                    and LIFT_SCORE in p.metrics):
-                others.setdefault(p.variant_hook, []).append(float(p.metrics[LIFT_SCORE]))
+            oh = _hook_for_post(led, p)
+            if (p.account == account and p.platform is platform and oh and oh != hook
+                    and p.state is PostState.analyzed and LIFT_SCORE in p.metrics):
+                others.setdefault(oh, []).append(float(p.metrics[LIFT_SCORE]))
         runner_mean = max((mean(v) for v in others.values()), default=0.0)
         if mean(lifts) - runner_mean < cfg.variant_amplify_min_gap:
             continue

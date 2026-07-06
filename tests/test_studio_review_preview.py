@@ -32,19 +32,21 @@ def _seed_personas(cfg, *, hooks=True, two_clips=False):
     vb = cfg.clips / "vb.mp4"; vb.write_bytes(b"\x00\x00\x00\x18ftypmp42VARIANTB")
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped,
+                          hook=("WATCH THE CRAFT" if hooks else None)))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-    def _post(pid, acct, media, hook):
+    def _post(pid, acct):
         return Post(id=pid, parent_id="clip_1", account=acct, account_id="", platform=Platform.instagram,
                     caption=f"#{acct[:4]}tag", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=5)),
-                    media_urls=([f"file://{media}"] if hooks else []), variant_hook=(hook if hooks else None))
-    led.add_post(_post("p_mark", "markmakmouly", va, "WATCH THE CRAFT"))
-    led.add_post(_post("p_perc", "perca.late", vb, "RAW BARS NO POLISH"))
+                    media_urls=([f"file://{va}"] if hooks else []))
+    led.add_post(_post("p_mark", "markmakmouly"))
+    led.add_post(_post("p_perc", "perca.late"))
     if two_clips:
-        led.add_clip(Clip(id="clip_2", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_moment(Moment(id="mom_2", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped, hook="SECOND CARD"))
+        led.add_clip(Clip(id="clip_2", parent_id="mom_2", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p_two", parent_id="clip_2", account="markmakmouly", account_id="", platform=Platform.instagram,
                           caption="#x", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=6)),
-                          media_urls=[f"file://{va}"], variant_hook="SECOND CARD"))
+                          media_urls=[f"file://{va}"]))
     led.save()
 
 def test_card_renders_master_clip_and_per_account_text(tmp_path):
@@ -55,7 +57,8 @@ def test_card_renders_master_clip_and_per_account_text(tmp_path):
     assert html.count("<video") == 1
     assert "/media/p_mark" not in html and "/media/p_perc" not in html   # per-account video previews dropped
     # each account's hook + caption shown as TEXT (right columns) so personas compare side by side
-    assert "WATCH THE CRAFT" in html and "RAW BARS NO POLISH" in html
+    # P9: owner-moment hook is shared by every surface on this clip
+    assert "WATCH THE CRAFT" in html
     assert "#marktag" in html and "#perctag" in html
 
 def test_card_degrades_when_no_variant(tmp_path):

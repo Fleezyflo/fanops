@@ -253,13 +253,21 @@ from fanops.models import Post, PostState
 
 def _seed_variant_posts_for_at_a(led):
     # 3 "WIN" posts at lift 90 + 3 "LOSE" posts at lift 10 on @a/instagram -> best_hooks -> ["WIN"]
-    # (90 mean - 10 mean = 80 gap, well over the default MIN_GAP 10; 3 >= default MIN_POSTS 3).
-    for i, (hook, lift) in enumerate(
-        [("WIN", 90.0), ("WIN", 90.0), ("WIN", 90.0), ("LOSE", 10.0), ("LOSE", 10.0), ("LOSE", 10.0)]
-    ):
-        led.add_post(Post(id=f"p{i}", parent_id="clip_1", account="a", account_id="1",
+    src = "src_1"
+    if not led.sources.get(src):
+        led.add_source(Source(id=src, source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_win", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="WIN"))
+    led.add_clip(Clip(id="clip_win", parent_id="mom_win", path="/c_win.mp4"))
+    for i in range(3):
+        led.add_post(Post(id=f"p{i}", parent_id="clip_win", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_p{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
+    led.add_moment(Moment(id="mom_lose", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="LOSE"))
+    led.add_clip(Clip(id="clip_lose", parent_id="mom_lose", path="/c_lose.mp4"))
+    for i in range(3, 6):
+        led.add_post(Post(id=f"p{i}", parent_id="clip_lose", account="a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                          metrics={"lift_score": 10.0}, public_url="dryrun://clip_1"))
 
 def test_request_captions_injects_learned_hint_when_gate_met(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
@@ -285,9 +293,11 @@ def test_request_captions_below_gate_emits_no_hint(monkeypatch, tmp_path):
     # open for this surface until data accrues). The noise guard, exercised through request_captions.
     monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    led.add_post(Post(id="p0", parent_id="clip_1", account="a", account_id="1",
+    led.add_moment(Moment(id="mom_p0", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", hook="WIN"))
+    led.add_clip(Clip(id="clip_p0", parent_id="mom_p0", path="/c_p0.mp4"))
+    led.add_post(Post(id="p0", parent_id="clip_p0", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_p0", variant_hook="WIN", metrics={"lift_score": 90.0}, public_url="dryrun://p0"))  # only 1
+                      metrics={"lift_score": 90.0}, public_url="dryrun://p0"))  # only 1
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "learned_hooks" not in payload
@@ -298,12 +308,19 @@ def test_request_captions_dedups_hint_across_surfaces(monkeypatch, tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     _seed_variant_posts_for_at_a(led)                      # @a/instagram -> WIN
     # same WIN winner on @a/tiktok
-    for i, (hook, lift) in enumerate(
-        [("WIN", 90.0), ("WIN", 90.0), ("WIN", 90.0), ("LOSE", 10.0), ("LOSE", 10.0), ("LOSE", 10.0)]
-    ):
-        led.add_post(Post(id=f"t{i}", parent_id="clip_1", account="a", account_id="1",
+    src = "src_1"
+    led.add_moment(Moment(id="mom_twin", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="WIN"))
+    led.add_clip(Clip(id="clip_twin", parent_id="mom_twin", path="/c_twin.mp4"))
+    for i in range(3):
+        led.add_post(Post(id=f"t{i}", parent_id="clip_twin", account="a", account_id="1",
                           platform=Platform.tiktok, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_t{i}", variant_hook=hook, metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
+    led.add_moment(Moment(id="mom_tlose", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="LOSE"))
+    led.add_clip(Clip(id="clip_tlose", parent_id="mom_tlose", path="/c_tlose.mp4"))
+    for i in range(3, 6):
+        led.add_post(Post(id=f"t{i}", parent_id="clip_tlose", account="a", account_id="1",
+                          platform=Platform.tiktok, caption="x", state=PostState.analyzed,
+                          metrics={"lift_score": 10.0}, public_url="dryrun://clip_1"))
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram), ("a", Platform.tiktok)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert payload["learned_hooks"] == ["WIN"]             # one entry, not ["WIN", "WIN"]
@@ -334,12 +351,21 @@ def _transfer_accounts(cfg, handles_personas, platform=Platform.instagram):
     return a
 
 def _win_surface_for(led, account, platform, hook, *, n=3):
-    rows = [(hook, 90.0)] * n + [("LOSE", 10.0)] * n
-    for i, (h, lift) in enumerate(rows):
-        led.add_post(Post(id=f"{account}_{platform.value}_{i}", parent_id="clip_1", account=account,
+    src = "src_1"
+    if not led.sources.get(src):
+        led.add_source(Source(id=src, source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id=f"m_{account}_{hook}", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook=hook))
+    led.add_clip(Clip(id=f"c_{account}_{hook}", parent_id=f"m_{account}_{hook}", path=f"/c_{account}_{hook}.mp4"))
+    for i in range(n):
+        led.add_post(Post(id=f"{account}_{platform.value}_{i}", parent_id=f"c_{account}_{hook}", account=account,
                           account_id="x", platform=platform, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_{account}_{i}", variant_hook=h,
-                          metrics={"lift_score": lift}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
+    led.add_moment(Moment(id=f"m_{account}_LOSE", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="LOSE"))
+    led.add_clip(Clip(id=f"c_{account}_LOSE", parent_id=f"m_{account}_LOSE", path=f"/c_{account}_LOSE.mp4"))
+    for i in range(n):
+        led.add_post(Post(id=f"{account}_{platform.value}_l{i}", parent_id=f"c_{account}_LOSE", account=account,
+                          account_id="x", platform=platform, caption="x", state=PostState.analyzed,
+                          metrics={"lift_score": 10.0}, public_url="dryrun://clip_1"))
 
 def test_request_captions_injects_transferred_prior_for_cold_surface(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
@@ -436,13 +462,20 @@ def test_ingest_captions_ignores_legacy_caption_hook(tmp_path):
 # (1.0) < MIN_GAP 10 -> best_hooks returns [] (no hint). UCB explores the under-sampled NEW (its
 # optimism bonus beats LEAD's thin mean lead) -> picks NEW. So UCB-on yields "NEW", UCB-off yields none.
 def _seed_thinlead_for_at_a(led):
+    src = "src_1"
+    if not led.sources.get(src):
+        led.add_source(Source(id=src, source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_lead", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="LEAD"))
+    led.add_clip(Clip(id="clip_lead", parent_id="mom_lead", path="/c_lead.mp4"))
     for i in range(1, 9):
-        led.add_post(Post(id=f"L{i}", parent_id="clip_1", account="a", account_id="1",
+        led.add_post(Post(id=f"L{i}", parent_id="clip_lead", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          variant_key=f"vk_L{i}", variant_hook="LEAD", metrics={"lift_score": 60.0}, public_url="dryrun://clip_1"))
-    led.add_post(Post(id="N1", parent_id="clip_1", account="a", account_id="1",
+                          metrics={"lift_score": 60.0}, public_url="dryrun://clip_1"))
+    led.add_moment(Moment(id="mom_new", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="NEW"))
+    led.add_clip(Clip(id="clip_new", parent_id="mom_new", path="/c_new.mp4"))
+    led.add_post(Post(id="N1", parent_id="clip_new", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_N1", variant_hook="NEW", metrics={"lift_score": 59.0}, public_url="dryrun://N1"))
+                      metrics={"lift_score": 59.0}, public_url="dryrun://N1"))
 
 def test_request_captions_ucb_picks_challenger_when_flag_on(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")

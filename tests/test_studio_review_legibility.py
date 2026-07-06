@@ -200,12 +200,12 @@ def _seed_editable_no_cut(cfg):
                           caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
 
 
-def test_shared_cut_warn_still_fires_on_editable_card(tmp_path):
-    # the gate's other half: on the EDITABLE worklist (?view=list cards) under creative_variation ON, a surface
-    # with no per-account cut DOES show the actionable ⚠ shared-cut — the warn isn't gone, just scoped.
-    cfg = Config(root=tmp_path); _seed_editable_no_cut(cfg)        # creative_variation defaults ON
+def test_shared_cut_warn_suppressed_without_creative_variation_flag(tmp_path):
+    # P9: creative_variation is hardcoded False in Studio — shared-cut warn never fires on editable cards.
+    cfg = Config(root=tmp_path); _seed_editable_no_cut(cfg)
     html = _client(cfg).get("/review?view=list").data.decode()
-    assert "shared-cut" in html                            # fires where it's actionable
+    assert "28–45s" in html
+    assert "shared-cut" not in html
 
 
 def test_pivot_off_firewall_no_shared_cut_warn(tmp_path, monkeypatch):

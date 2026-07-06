@@ -831,7 +831,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         checks=report["checks"],
         notes=report["notes"],
         learning_validated=learning_validated(cfg),    # M3: shows whether the loop is unfrozen (cutover done)
-        creative_variation=cfg.creative_variation,     # per-account on-screen hooks toggle state (persona diff)
+        creative_variation=False,
         account_casting=cfg.account_casting,           # per-account moment casting toggle state (persona diff)
         clip_profile=cfg.clip_profile,                 # clip-length band (talk/song)
         responder_mode=cfg.responder_mode,             # THE AI switch state (llm/manual) — surfaced for the toggle

@@ -162,9 +162,10 @@ def test_three_cap_sites_agree(tmp_path, mocker, monkeypatch):
     import json, subprocess
     from pathlib import Path as P
     from fanops import clip as clip_mod
-    from fanops.crosspost import crosspost_clips, account_render_spec
+    from fanops.crosspost import crosspost_clips, render_spec
+    from fanops.variant_learning import _hook_for_post
     from fanops.studio.actions import crosspost_to_account
-    from fanops.studio.actions_approve import approve_posts, _acct_for
+    from fanops.studio.actions_approve import approve_posts
     from fanops.models import Render, RenderState
     from fanops.accounts import Accounts
     cross_spy = mocker.patch("fanops.crosspost.realized_clip_seconds", wraps=clip_mod.realized_clip_seconds)
@@ -206,12 +207,13 @@ def test_three_cap_sites_agree(tmp_path, mocker, monkeypatch):
     assert r.ok and clip_spy.call_count > n_after_cross
     n_after_reuse = clip_spy.call_count
     p = next(pp for pp in Ledger.load(cfg).posts.values() if pp.account == "a")
-    accts = Accounts.load(cfg)
-    rid, *_ = account_render_spec(cfg, clip=clip, hook=p.variant_hook, acct=_acct_for(accts, "a"))
+    led3 = Ledger.load(cfg)
+    hook = _hook_for_post(led3, p); mom = led3.moments.get("mom_1")
+    rid, *_ = render_spec(cfg, clip=clip, hook=hook, moment=mom)
     vf = cfg.clips / "ok.mp4"; vf.write_bytes(b"V")
     with Ledger.transaction(cfg) as led2:
         led2.add_render(Render(id=rid, clip_id="clip_1", account="a", surface_key="a|instagram",
-                               hook_text=p.variant_hook, path=str(vf), state=RenderState.rendered,
+                               hook_text=hook, path=str(vf), state=RenderState.rendered,
                                is_account_cut=True, cut_seconds=60.0))
     approve_posts(cfg, [p.id])
     p2 = Ledger.load(cfg).posts[p.id]

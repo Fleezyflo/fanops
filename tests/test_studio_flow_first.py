@@ -79,7 +79,7 @@ def test_review_handoff_includes_dominant_batch(tmp_path):
 def test_focus_shows_hook_preburn_notice(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n=1)
     led = Ledger.load(cfg)
-    p = led.posts["p0"]; p.variant_hook = "Wait for it"; led.save()
+    led.moments["m1"] = led.moments["m1"].model_copy(update={"hook": "Wait for it"})
+    led.save()
     html = _client(cfg).get("/review?account=@a&view=account&focus=1&fi=0").data.decode()
     assert "focus-hook-banner" in html and "Wait for it" in html
-    assert "hook-preburn" in html

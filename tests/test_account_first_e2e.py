@@ -70,7 +70,7 @@ def test_account_first_batch_to_queued_only_targeted_account(tmp_path, mocker, m
     for p in led.posts.values():
         assert p.batch_id == b.id                                  # denormalized through crosspost (carried by repost_post too)
         assert p.state is PostState.awaiting_approval              # the approval gate: NOTHING auto-publishes
-        assert hasattr(p, "variant_hook") and p.variant_hook is None   # M3d: this moment has no hook, so the render path is skipped regardless of creative_variation
+        assert led.moments["mom_1"].hook in (None, "")               # P9: no owner-moment hook -> shared clip path at approve
     assert led.moments["mom_1"].affinities in (None, [], {})       # casting did NOT run (Moment.affinities default [])
 
     # 4) operator approves -> queued AND strictly-future (suggest_time landed a future slot, never "now")

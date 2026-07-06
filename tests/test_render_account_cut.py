@@ -11,8 +11,7 @@ from fanops.ledger import Ledger
 from fanops.models import Clip, Moment, Source, ClipState, MomentState, Fmt
 from fanops.accounts import Accounts
 from fanops.clip import render_account_cut
-from fanops.crosspost import crosspost_clips
-from fanops.ids import child_id
+from fanops.crosspost import crosspost_clips, render_spec
 from fanops import overlay
 
 
@@ -113,7 +112,7 @@ def test_cut_success_leaves_no_artifacts(tmp_path, mocker, monkeypatch):
     assert Path(out).exists() and not Path(out + ".part").exists() and not Path(out).with_suffix(".ass").exists()
 
 
-# ---------------------------------------------------------------- crosspost wiring (integration) ----
+# ---------------------------------------------------------------- crosspost wiring (P9: moment-level spec, no per-account cut at mint) ----
 def _seed_accounts(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
@@ -121,144 +120,128 @@ def _seed_accounts(cfg, accounts):
 def _acct(handle, aid, **extra):
     return {"handle": handle, "account_id": aid, "platforms": ["instagram"], "status": "active", **extra}
 
-def _seed_clip(led, cfg, *, m_hook=None, surfaces, batch_id=None):
+def _seed_clip(led, cfg, *, m_hook=None, m_profile=None, surfaces, batch_id=None):
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920,
                           duration=120.0, batch_id=batch_id))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          state=MomentState.clipped, hook=m_hook))
+                          state=MomentState.clipped, hook=m_hook, clip_profile=m_profile))
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {s: {"caption": f"cap {s}", "hashtags": ["#x"]} for s in surfaces}
     led.add_clip(clip)
 
-def _patch_cut(mocker, *, returns=True):
-    # isolate from ffmpeg: write the per-account file (so Render.path exists) and report success/failure.
-    calls = []
-    def cut(led, cfg, moment_id, *, aspect, profile, hook, out_path, top_bias=False):
-        calls.append({"profile": profile, "hook": hook, "out_path": out_path, "top_bias": top_bias})
-        if returns:
-            Path(out_path).parent.mkdir(parents=True, exist_ok=True); Path(out_path).write_bytes(b"ACUT")
-        return (returns, 12.0 if returns else None)   # P3: (produced, realized_seconds)
-    mocker.patch("fanops.crosspost.render_account_cut", side_effect=cut)
-    return calls
-
-def _patch_burn(mocker):
-    calls = []
-    def burn(base, out, hook, **kw):
-        calls.append({"base": base, "out": out, "hook": hook})
-        Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_bytes(b"BURN"); return True
-    mocker.patch("fanops.overlay.burn_hook_only", side_effect=burn)
-    return calls
-
-def _run(cfg):
-    # Slice 2 (burn on approval): the per-account Render materializes at APPROVAL, not at crosspost. Drive the
-    # FULL mint->approve path (persist so the approve txn sees the posts) — the cut/framing/provenance SEMANTICS
-    # asserted below are unchanged; only the render's timing moved.
+def _run_crosspost(cfg, mocker):
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    out = cfg.clips / "r.mp4"; out.write_bytes(b"R")
+    rendered = Clip(id="clip_mom_1_9x16", parent_id="mom_1", path=str(out), aspect=Fmt.r9x16, state=ClipState.rendered)
+    mocker.patch("fanops.crosspost.render_moment", return_value=(Ledger.load(cfg), rendered))
     led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     led.save()
-    from fanops.studio.actions_approve import approve_posts
-    approve_posts(cfg, [p.id for p in led.posts.values()])
     return Ledger.load(cfg)
 
-
-def test_override_account_triggers_per_account_cut(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")           # global stays default "talk"
-    cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
+def test_crosspost_stamps_moment_profile_on_post(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="hook L", surfaces=("long/instagram",)); led.save()
-    led = _run(cfg)
-    assert len(cut_calls) == 1 and cut_calls[0]["profile"] == "long" and cut_calls[0]["hook"] == "hook L"
-    assert burn_calls == []                                        # the shared-clip burn path was NOT used
-    r = next(iter(led.renders.values()))
-    assert Path(r.path).read_bytes() == b"ACUT"                    # the post serves the per-account cut
+    _seed_clip(led, cfg, m_hook="hook L", m_profile="long", surfaces=("long/instagram",)); led.save()
+    led = _run_crosspost(cfg, mocker)
+    p = next(iter(led.posts.values()))
+    assert p.clip_profile == "long"
 
-def test_override_account_render_id_is_band_tagged(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    _patch_cut(mocker); _patch_burn(mocker)
+def test_crosspost_default_profile_from_moment(tmp_path, mocker):
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
-    led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="H", surfaces=("long/instagram",)); led.save()
-    led = _run(cfg)
-    rid = next(iter(led.posts.values())).render_id
-    assert rid != child_id("render", "clip_1", "H")               # NOT the un-tagged (global-band) id
-    post = next(iter(led.posts.values()))
-    assert post.clip_profile == "long"                            # provenance reflects the ACTUAL cut length
-
-def test_default_account_uses_shared_clip_burn_byte_identical(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    cut_calls = _patch_cut(mocker); burn_calls = _patch_burn(mocker)
-    cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("a", "1")])                        # no clip_profile -> global band
+    _seed_accounts(cfg, [_acct("a", "1")])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="H", surfaces=("a/instagram",)); led.save()
-    led = _run(cfg)
-    assert cut_calls == [] and len(burn_calls) == 1               # shared-clip burn, no per-account cut
-    post = next(iter(led.posts.values()))
-    assert post.render_id == child_id("render", "clip_1", "H")    # un-tagged id (byte-identical)
-    assert post.clip_profile == "talk"                            # the global profile
+    led = _run_crosspost(cfg, mocker)
+    assert next(iter(led.posts.values())).clip_profile == "talk"
 
-def test_same_hook_different_bands_distinct_renders(tmp_path, monkeypatch, mocker):
-    # the collision guard: @short and @long with the SAME hook must NOT share one file (different lengths)
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    _patch_cut(mocker); _patch_burn(mocker)
+def test_render_spec_band_tagged_when_profile_differs(tmp_path):
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("short", "1", clip_profile="short"),
-                         _acct("long", "2", clip_profile="long")])
-    led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="SAME",
-               surfaces=("short/instagram", "long/instagram")); led.save()
-    led = _run(cfg)
-    rids = {p.render_id for p in led.posts.values()}
-    assert len(rids) == 2 and len(led.renders) == 2               # band tag keeps them distinct despite one hook
+    clip = Clip(id="clip_1", parent_id="mom_1", path="/x.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
+    m_long = Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", clip_profile="long", hook="H")
+    m_talk = Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", clip_profile="talk", hook="H")
+    rid_long, wants_cut, profile, _ = render_spec(cfg, clip=clip, hook="H", moment=m_long)
+    rid_talk, _, _, _ = render_spec(cfg, clip=clip, hook="H", moment=m_talk)
+    assert wants_cut is True and profile == "long" and rid_long != rid_talk
 
-def test_per_account_cut_fail_open_falls_back_to_shared_burn(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    cut_calls = _patch_cut(mocker, returns=False)                 # the per-account cut FAILS
-    burn_calls = _patch_burn(mocker)
+def test_same_moment_same_profile_one_render(tmp_path, mocker):
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
+    _seed_accounts(cfg, [_acct("short", "1", clip_profile="short"), _acct("long", "2", clip_profile="long")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="H", surfaces=("long/instagram",)); led.save()
-    led = _run(cfg)
-    assert len(cut_calls) == 1 and len(burn_calls) == 1           # tried the cut, fell back to the shared burn
-    r = next(iter(led.renders.values()))
-    assert Path(r.path).exists()                                  # Render.path invariant: a usable file always exists
-    p = next(iter(led.posts.values()))
-    assert p.render_id and r.is_account_cut is False              # the render records it is NOT a real cut (fell back)
-    assert p.clip_profile == "talk"                              # PROVENANCE TRUTH: shipped the global-band burn, not "long"
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped, hook="SAME", clip_profile="long"))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "clip_1_16x9.mp4"; base.write_bytes(b"BASE")
+    clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r16x9, state=ClipState.captioned)
+    clip.meta_captions = {s: {"caption": "c", "hashtags": []} for s in ("short/instagram", "long/instagram")}
+    led.add_clip(clip); led.save()
+    calls = []
+    def _rm(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
+        calls.append(1)
+        rc = Clip(id="clip_mom_1_9x16", parent_id="mom_1", path=str(cfg.clips / "r.mp4"),
+                  aspect=aspect, state=ClipState.rendered)
+        led.clips[rc.id] = rc
+        return led, rc
+    mocker.patch("fanops.crosspost.render_moment", side_effect=_rm)
+    led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    assert len(calls) == 1
+    assert {p.clip_profile for p in led.posts.values()} == {"long"}
 
-def test_successful_cut_records_is_account_cut(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    _patch_cut(mocker, returns=True); _patch_burn(mocker)
+def test_render_moment_file_fail_open_burn(tmp_path, mocker):
+    from fanops.crosspost import render_moment_file
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
-    _seed_clip(led, cfg, m_hook="H", surfaces=("long/instagram",)); led.save()
-    led = _run(cfg)
-    assert next(iter(led.renders.values())).is_account_cut is True
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", clip_profile="long", hook="H"))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
+    clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
+    led.add_clip(clip)
+    from fanops.models import Post, Platform, PostState
+    post = Post(id="p1", parent_id="clip_1", account="long", account_id="1", platform=Platform.instagram,
+                caption="c", state=PostState.awaiting_approval)
+    mocker.patch("fanops.crosspost.render_account_cut", return_value=(False, None))
+    def _burn(base, out, hook, **kw):
+        Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_bytes(b"BURN"); return True
+    mocker.patch("fanops.overlay.burn_hook_only", side_effect=_burn)
+    plan = render_moment_file(led, cfg, post=post, target_clip=clip, src=led.sources["src_1"])
+    assert plan.produced is False and Path(plan.vpath).exists()
 
-def test_dedup_hit_reads_truth_not_intent(tmp_path, monkeypatch, mocker):
-    # one account on TWO 9:16 platforms (ig+tiktok) -> SAME band-tagged render id -> the 2nd surface DEDUP-hits.
-    # With the cut FAILING, BOTH posts must read the render's is_account_cut=False and stamp the global profile —
-    # never the "long" lie just because the id was band-tagged (the reviewer's MEDIUM).
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    _patch_cut(mocker, returns=False); _patch_burn(mocker)
+def test_render_moment_file_cut_success(tmp_path, mocker):
+    from fanops.crosspost import render_moment_file
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", clip_profile="long", hook="H"))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
+    clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
+    led.add_clip(clip)
+    from fanops.models import Post, Platform, PostState
+    post = Post(id="p1", parent_id="clip_1", account="long", account_id="1", platform=Platform.instagram,
+                caption="c", state=PostState.awaiting_approval)
+    def _cut(led, cfg, moment_id, *, aspect, profile, hook, out_path, top_bias=False):
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True); Path(out_path).write_bytes(b"ACUT")
+        return (True, 12.0)
+    mocker.patch("fanops.crosspost.render_account_cut", side_effect=_cut)
+    plan = render_moment_file(led, cfg, post=post, target_clip=clip, src=led.sources["src_1"])
+    assert plan.produced is True and Path(plan.vpath).read_bytes() == b"ACUT"
+
+def test_posts_share_moment_profile_not_account_override(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
     led_obj = led
     led_obj.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
     led_obj.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                              state=MomentState.clipped, hook="H"))
+                              state=MomentState.clipped, hook="H", clip_profile="talk"))
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "clip_1_9x16.mp4"; base.write_bytes(b"BASE")
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {s: {"caption": "c", "hashtags": []} for s in ("long/instagram", "long/tiktok")}
     led_obj.add_clip(clip); led_obj.save()
-    led = _run(cfg)
-    assert len(led.renders) == 1                                  # both surfaces share the one (failed-cut) render
-    assert {p.clip_profile for p in led.posts.values()} == {"talk"}   # neither post lies about the length
+    led = _run_crosspost(cfg, mocker)
+    assert {p.clip_profile for p in led.posts.values()} == {"talk"}

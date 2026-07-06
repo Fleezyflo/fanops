@@ -557,7 +557,7 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
     clip that silently lost its text. False when there was nothing to burn (clean clip) or it burned."""
     m = led.moments[moment_id]
     src = led.sources[m.parent_id]
-    hook = None if cfg.creative_variation else ((m.hook or "").strip() or None)  # per-surface hook owns it under variation; blank -> None
+    hook = ((m.hook or "").strip() or None)
     # Subtitle burn is opt-in via the GLOBAL cfg.burn_subs, with a PER-BATCH override (Batch.burn_subs): a music
     # batch can skip lyric subs (burn_subs=False) while talk stays on, or vice-versa. None override -> global.
     batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
@@ -678,6 +678,14 @@ def _probe_duration(path: str) -> float | None:
     except (ToolchainMissingError, OSError, ValueError):
         return None
 
+def _moment_profile(m, cfg: Config) -> str:
+    return (m.clip_profile if m is not None else None) or cfg.clip_profile
+
+def _moment_top_bias(m, cfg: Config) -> bool:
+    if m is not None and m.framing == "top": return True
+    if m is not None and m.framing == "center": return False
+    return cfg.aware_reframe
+
 def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                   aspect: Fmt = Fmt.r9x16, cut_window: tuple[float, float] | None = None,
                   clip_id: str | None = None, born_state: ClipState = ClipState.rendered) -> tuple[Ledger, Clip]:
@@ -739,7 +747,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         # FAIL-OPEN: today's single-window path over the envelope (fit_window/snap/visual_start below).
         spans = None
     if not is_stitch and not spans:
-        band = band_for(cfg.clip_profile)                          # talk 12-22s / song 18-35s
+        band = band_for(_moment_profile(m, cfg))
         cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
         cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
         # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after band + snap) so the
@@ -769,7 +777,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     ass_path = cfg.clips / f"{cid}.ass"
     ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
     fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0,
-                             ass_text, top_bias=cfg.aware_reframe, focus=focus, track=track, content_type=content_type)
+                             ass_text, top_bias=_moment_top_bias(m, cfg), focus=focus, track=track, content_type=content_type)
     fp_path = cfg.clips / f"{cid}.render.json"
     if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
         # An fp-match means a prior render of THIS exact window already passed (the fp is stamped only
@@ -784,7 +792,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     try:
         r = render_reframed(src.source_path, str(dst), cs, ce, aspect.value,
                             src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                            top_bias=cfg.aware_reframe, focus=focus, track=track,
+                            top_bias=_moment_top_bias(m, cfg), focus=focus, track=track,
                             content_type=content_type, timeout=_FFMPEG_TIMEOUT)
     except (FileNotFoundError, OSError) as e:
         # ffmpeg ABSENT from PATH (or otherwise unspawnable): subprocess.run raises BEFORE the

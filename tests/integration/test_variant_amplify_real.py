@@ -1,14 +1,4 @@
-"""Creative-variation v3 — variant-gated amplification closing END-TO-END ON DISK (the Integrate bar).
-
-The unit tests prove the gate (`amplify_candidates`), the deterministic streak (`update_streaks`),
-and that the actuator is amplify-only + fail-SAFE. This integration test proves the whole arrow lands
-on real artifacts: a REAL ledger.json on disk where @a/instagram's "WIN" hook out-lifts a runner-up
-over >= AMPLIFY_MIN_POSTS analyzed posts; `apply_variant_amplify` driven across enough DISTINCT
-evidence windows (new analyzed posts between passes, each round-tripping the on-disk ledger) to
-satisfy the streak with FANOPS_VARIANT_AMPLIFY=1; then the ACTUAL moment-request file read back from
-`04_agent_io/requests/` — asserting the winning hook reached the amplify request AND the source state
-flipped to moments_requested. That is the auto-propagate loop, closed, observed on disk. It also
-asserts G2: the winning published/analyzed posts SURVIVE (v3 never deletes them)."""
+"""Creative-variation v3 — variant-gated amplification closing END-TO-END ON DISK (the Integrate bar)."""
 from __future__ import annotations
 import json
 import pytest
@@ -16,6 +6,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, SourceState
 from fanops.variant_amplify import apply_variant_amplify
+from fanops.variant_learning import _hook_for_post
 from fanops.agentstep import request_path
 from fanops import cutover
 
@@ -23,82 +14,74 @@ pytestmark = pytest.mark.integration
 
 
 def _validate(cfg):
-    # Phase 2: the amplify actuator is OFF-until-proven — establish the live-validation precondition
-    # (a real metrics row reconciled by `fanops cutover metrics`) so the on-disk amplify path is
-    # reachable. Both tests then isolate the STREAK gate, not the validation gate.
     cutover._save_state(cfg, {"metrics_confirmed": True})
 
 
-def _win(pid, hook, lift):
-    return Post(id=pid, parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                caption="x", state=PostState.analyzed, variant_key=f"vk_{pid}", variant_hook=hook,
-                metrics={"lift_score": lift}, public_url="dryrun://c1")
+def _win(pid, hook, lift, *, moment_id="m1", clip_id="c1"):
+    """P9: hook on owner moment; WIN/LOSE lineages share one moment+clip per hook family."""
+    return Post(id=pid, parent_id=clip_id, account="a", account_id="1", platform=Platform.instagram,
+                caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c1")
+
+
+def _ensure_lineage(led, moment_id, clip_id, hook):
+    if moment_id not in led.moments:
+        led.add_moment(Moment(id=moment_id, parent_id="s1", start=0.0, end=4.0, reason="r",
+                              transcript_excerpt="ex", hook=hook))
+    if clip_id not in led.clips:
+        led.add_clip(Clip(id=clip_id, parent_id=moment_id, path="c1.mp4"))
 
 
 def test_sustained_winner_amplifies_source_on_disk(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
-    _validate(cfg)                                       # Phase 2 precondition: isolate the streak gate
-    # Seed a REAL ledger on disk: a full lineage (source -> moment -> clip) + a clear surface winner:
-    # @a/instagram's "WIN" (8 posts, mean 90) over a "LOSE" runner-up (3 posts, mean 1) — clears the
-    # v2 floor (>=3, gap>=10) AND the v3 min_posts (8) and min_gap (25).
+    _validate(cfg)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.transcribed,
                               duration=10.0, transcript=[], language="en"))
-        led.add_moment(Moment(id="m1", parent_id="s1", start=0.0, end=4.0, reason="r",
-                              transcript_excerpt="ex"))
-        led.add_clip(Clip(id="c1", parent_id="m1", path="c1.mp4"))
+        _ensure_lineage(led, "m_win", "c_win", "WIN")
+        _ensure_lineage(led, "m_lose", "c_lose", "LOSE")
         for i in range(8):
-            led.add_post(_win(str(i), "WIN", 95.0))
+            led.add_post(_win(str(i), "WIN", 95.0, moment_id="m_win", clip_id="c_win"))
         for i in range(3):
-            led.add_post(_win(f"l{i}", "LOSE", 1.0))
+            led.add_post(_win(f"l{i}", "LOSE", 1.0, moment_id="m_lose", clip_id="c_lose"))
 
-    # Drive >= min_streak windows, adding ONE new analyzed WIN post per window (distinct evidence) so
-    # the streak genuinely accrues across multiple on-disk passes — never a single window.
     nid = 100
     for _ in range(cfg.variant_amplify_min_streak):
         with Ledger.transaction(cfg) as led:
             led = apply_variant_amplify(led, cfg)
         with Ledger.transaction(cfg) as led:
-            led.add_post(_win(str(nid), "WIN", 95.0)); nid += 1
+            led.add_post(_win(str(nid), "WIN", 95.0, moment_id="m_win", clip_id="c_win")); nid += 1
 
-    # Final pass once the streak is satisfied -> amplify must fire.
     with Ledger.transaction(cfg) as led:
         led = apply_variant_amplify(led, cfg)
 
     led = Ledger.load(cfg)
-    # The loop closed on disk: the source was amplified and the request carries the winning hook.
     assert led.sources["s1"].state is SourceState.moments_requested
     payload = json.loads(request_path(cfg, "moments", "s1").read_text())
     assert "WIN" in payload["guidance"]
-    assert payload["guidance"].startswith("AMPLIFY:")           # the existing C1-fixed amplify path
-    # G2 — the winning analyzed posts SURVIVE (v3 never deletes/retires real content).
+    assert payload["guidance"].startswith("AMPLIFY:")
     surviving = [p for p in led.posts.values()
-                 if p.variant_hook == "WIN" and p.state is PostState.analyzed]
+                 if _hook_for_post(led, p) == "WIN" and p.state is PostState.analyzed]
     assert surviving, "variant-amplify must never delete the winning posts (G2)"
 
 
 def test_no_sustained_winner_never_amplifies_on_disk(tmp_path, monkeypatch):
-    """Adversarial on-disk: a strong but SINGLE-window winner (one pass, no sustained streak) must
-    NEVER amplify. Proves the streak gate holds against real on-disk evidence, not just in memory."""
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
-    _validate(cfg)                                       # Phase 2 precondition: isolate the streak gate
+    _validate(cfg)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.transcribed,
                               duration=10.0, transcript=[], language="en"))
-        led.add_moment(Moment(id="m1", parent_id="s1", start=0.0, end=4.0, reason="r",
-                              transcript_excerpt="ex"))
-        led.add_clip(Clip(id="c1", parent_id="m1", path="c1.mp4"))
+        _ensure_lineage(led, "m_win", "c_win", "WIN")
+        _ensure_lineage(led, "m_lose", "c_lose", "LOSE")
         for i in range(20):
-            led.add_post(_win(str(i), "WIN", 99.0))     # overwhelming, but ONE window
+            led.add_post(_win(str(i), "WIN", 99.0, moment_id="m_win", clip_id="c_win"))
         for i in range(3):
-            led.add_post(_win(f"l{i}", "LOSE", 1.0))
+            led.add_post(_win(f"l{i}", "LOSE", 1.0, moment_id="m_lose", clip_id="c_lose"))
 
-    # A SINGLE pass -> streak reaches only 1 -> must not amplify.
     with Ledger.transaction(cfg) as led:
         led = apply_variant_amplify(led, cfg)
 
     led = Ledger.load(cfg)
-    assert led.sources["s1"].state is SourceState.transcribed   # NOT moments_requested
-    assert not request_path(cfg, "moments", "s1").exists()      # no amplify request written
+    assert led.sources["s1"].state is SourceState.transcribed
+    assert not request_path(cfg, "moments", "s1").exists()

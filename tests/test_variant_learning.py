@@ -5,20 +5,30 @@ so it is tested hardest: below-min-posts -> [], enough-posts-but-gap-too-small -
 clear-winner -> [hook], other-surface isolated, empty, deterministic."""
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
+from fanops.models import Post, Platform, PostState, Moment, Clip, Source, SourceState
 from fanops.variant_learning import best_hooks
 
 
+def _lineage(pid, acct, hook, lift, *, src_id="s1"):
+    clip_id, moment_id = f"c_{pid}", f"m_{pid}"
+    moment = Moment(id=moment_id, parent_id=src_id, start=0.0, end=4.0, reason="r", hook=hook)
+    clip = Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4")
+    post = Post(id=pid, parent_id=clip_id, account=acct, account_id="1", platform=Platform.instagram,
+                caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c1")
+    return moment, clip, post
+
+
 def _post(pid, acct, hook, lift):
-    return Post(id=pid, parent_id="c1", account=acct, account_id="1", platform=Platform.instagram,
-                caption="x", state=PostState.analyzed, variant_key=f"vk_{pid}", variant_hook=hook,
-                metrics={"lift_score": lift}, public_url="dryrun://c1")
+    return _lineage(pid, acct, hook, lift)
 
 
-def _led(cfg, posts):
+def _led(cfg, triples, *, src_id="s1"):
     led = Ledger.load(cfg)
-    for p in posts:
-        led.add_post(p)
+    if triples and not led.sources.get(src_id):
+        led.add_source(Source(id=src_id, source_path="x.mp4", state=SourceState.transcribed,
+                              duration=10.0, transcript=[], language="en"))
+    for m, c, p in triples:
+        led.add_moment(m); led.add_clip(c); led.add_post(p)
     return led
 
 

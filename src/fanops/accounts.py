@@ -253,7 +253,7 @@ class Accounts:
             if a.handle in seen:
                 problems.append(f"duplicate handle {a.handle} (handles must be unique)")
             seen.add(a.handle)
-        if self.cfg.creative_variation and any((a.persona_id or a.persona or getattr(a, "tag_lean", None)) for a in self.active()):
+        if self.cfg.account_casting and any((a.persona_id or a.persona or getattr(a, "tag_lean", None)) for a in self.active()):
             from fanops.bands import band_for
             g_band = band_for(self.cfg.clip_profile); g_frame = self.cfg.aware_reframe
             for a in self.active():

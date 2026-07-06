@@ -586,12 +586,13 @@ def test_golive_panel_renders_remove_and_demote_controls(tmp_path, monkeypatch):
 
 # ---- persona differentiation: per-account on-screen-hooks toggle ----
 def test_set_per_account_hooks_dual_writes_both_directions(tmp_path, monkeypatch):
+    import os
     cfg = _clean(monkeypatch, tmp_path)
     assert golive.set_per_account_hooks(cfg, True).ok is True
     assert "FANOPS_CREATIVE_VARIATION=1" in (tmp_path / ".env").read_text()   # durable
-    assert cfg.creative_variation is True                                     # in-process (reads os.environ live)
+    assert os.environ.get("FANOPS_CREATIVE_VARIATION") == "1"
     assert golive.set_per_account_hooks(cfg, False).ok is True
-    assert cfg.creative_variation is False                                    # flipped back off
+    assert os.environ.get("FANOPS_CREATIVE_VARIATION") == "0"
 
 def test_set_account_casting_dual_writes_both_directions(tmp_path, monkeypatch):
     # C2: the Go-Live casting toggle dual-writes FANOPS_ACCOUNT_CASTING (.env + os.environ), mirroring hooks.
@@ -708,12 +709,13 @@ def test_golive_status_carries_hooks_state(tmp_path, monkeypatch):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     st = views.golive_status(cfg)
-    assert st.creative_variation is True
+    assert st.creative_variation is False   # P9: owner-moment hook — legacy env toggle is inert in status
 
 def test_post_golive_hooks_route_turns_on(tmp_path, monkeypatch):
+    import os
     cfg = _clean(monkeypatch, tmp_path)
     r = _client(cfg).post("/golive/hooks", data={"on": "1"})
-    assert r.status_code == 200 and cfg.creative_variation is True
+    assert r.status_code == 200 and os.environ.get("FANOPS_CREATIVE_VARIATION") == "1"
 
 
 # ---- S8: make toggle EFFECTS legible (engine-sourced, not hardcoded) + account→persona link badge ----

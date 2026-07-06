@@ -54,5 +54,5 @@ def test_crosspost_uses_m_hook(tmp_path, monkeypatch):
     accts.accounts = [Account(handle="a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active),
                       Account(handle="b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active)]
     led = crosspost_clips(Ledger.load(cfg), cfg, accts, base_time="2026-06-02T18:00:00Z")
-    hooks = {p.account: p.variant_hook for p in led.posts.values()}
+    hooks = {p.account: led.moments[led.clips[p.parent_id].parent_id].hook for p in led.posts.values()}
     assert hooks == {"a": "ONE MOMENT HOOK", "b": "ONE MOMENT HOOK"}

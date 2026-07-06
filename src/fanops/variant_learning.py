@@ -10,15 +10,20 @@ from statistics import mean
 from fanops.models import LIFT_SCORE, Platform, PostState
 
 
+def _hook_for_post(led, post) -> str:
+    clip = led.clips.get(post.parent_id)
+    if clip is None: return ""
+    m = led.moments.get(clip.parent_id)
+    return (m.hook or "").strip() if m is not None else ""
+
 def _collect_lifts(led, account: str, platform: Platform) -> dict[str, list[float]]:
-    """Group this (account, platform) surface's ANALYZED variant posts by hook -> their lift_scores.
-    The single gather predicate both scorers share (so v2/v3 can never disagree on what data exists).
-    An 'arm' only appears here once it has >= 1 analyzed post carrying a lift_score."""
+    """Group this (account, platform) surface's ANALYZED posts by owner-moment hook -> lift_scores."""
     by_hook: dict[str, list[float]] = {}
     for p in led.posts.values():
-        if (p.variant_key and p.variant_hook and p.account == account and p.platform is platform
+        hook = _hook_for_post(led, p)
+        if (hook and p.account == account and p.platform is platform
                 and p.state is PostState.analyzed and LIFT_SCORE in p.metrics):
-            by_hook.setdefault(p.variant_hook, []).append(float(p.metrics[LIFT_SCORE]))
+            by_hook.setdefault(hook, []).append(float(p.metrics[LIFT_SCORE]))
     return by_hook
 
 

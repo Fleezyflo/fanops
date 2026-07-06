@@ -199,68 +199,62 @@ def test_lift_empty_state_names_postiz(tmp_path, monkeypatch):
     reason = lift_rows(led, cfg, Accounts.load(cfg)).variant_empty_reason
     assert "postiz" in reason.lower() and "POSTIZ_API_KEY" in reason   # no key value rendered, just the env var name
 
-def test_lift_analyzed_but_no_variant_key(tmp_path):
+def _lift_post(led, pid, hook, lift, *, degraded=False):
+    cid, mid = f"clip_{pid}", f"mom_{pid}"
+    if not led.sources.get("src_1"):
+        led.add_source(Source(id="src_1", source_path="/videos/show.mp4", language="en"))
+    led.add_moment(Moment(id=mid, parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped, hook=hook))
+    led.add_clip(Clip(id=cid, parent_id=mid, path=f"/clips/{cid}.mp4", aspect=Fmt.r9x16,
+                      state=ClipState.queued))
+    m = {"lift_score": lift}
+    if degraded: m |= {"lift_degraded": True, "lift_missing_keys": ["saves", "retention"]}
+    led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      metrics=m, public_url=f"dryrun://{pid}"))
+
+def test_lift_analyzed_but_no_hook(tmp_path):
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
+    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"],
                           "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      metrics={"lift_score": 50.0}, public_url="dryrun://p1"))   # analyzed but no variant_key
+                      metrics={"lift_score": 50.0}, public_url="dryrun://p1"))
     view = lift_rows(led, cfg, Accounts.load(cfg))
     assert view.variant_rows == []
-    assert "Creative variation" in view.variant_empty_reason
+    assert "hook" in (view.variant_empty_reason or "").lower()
 
 def test_lift_ranks_variants_by_lift_score(tmp_path):
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
+    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"],
                           "status": "active"}])
-    led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p_lo", parent_id="clip_1", account="a", account_id="1",
-                      platform=Platform.instagram, caption="lo", state=PostState.analyzed,
-                      variant_key="vk_lo", variant_hook="CALM", metrics={"lift_score": 10.0}, public_url="dryrun://p_lo"))
-    led.add_post(Post(id="p_hi", parent_id="clip_1", account="a", account_id="1",
-                      platform=Platform.instagram, caption="hi", state=PostState.analyzed,
-                      variant_key="vk_hi", variant_hook="HYPE", metrics={"lift_score": 90.0}, public_url="dryrun://p_hi"))
+    led = Ledger.load(cfg)
+    _lift_post(led, "p_lo", "CALM", 10.0)
+    _lift_post(led, "p_hi", "HYPE", 90.0)
     view = lift_rows(led, cfg, Accounts.load(cfg))
     assert view.variant_empty_reason is None
-    assert [r.variant_hook for r in view.variant_rows] == ["HYPE", "CALM"]   # desc by lift_score
+    assert [r.variant_hook for r in view.variant_rows] == ["HYPE", "CALM"]
     assert view.variant_rows[0].lift_score == 90.0
     assert isinstance(view.variant_rows[0].loop_state, str) and view.variant_rows[0].loop_state
 
 def test_lift_row_carries_degraded_marker(tmp_path):
-    # T4: a degraded lift (a primary metric absent from the row) must surface in the Studio lift view,
-    # not just the digest — the operator should see the score is partial before trusting it.
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    led = Ledger.load(cfg); _lineage(led)
-    led.add_post(Post(id="p_deg", parent_id="clip_1", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk", variant_hook="HYPE",
-                      metrics={"lift_score": 50.0, "lift_degraded": True, "lift_missing_keys": ["saves", "retention"]}, public_url="dryrun://p_deg"))
-    led.add_post(Post(id="p_ok", parent_id="clip_1", account="a", account_id="1",
-                      platform=Platform.instagram, caption="y", state=PostState.analyzed,
-                      variant_key="vk2", variant_hook="CALM", metrics={"lift_score": 40.0}, public_url="dryrun://p_ok"))
+    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _lift_post(led, "p_deg", "HYPE", 50.0, degraded=True)
+    _lift_post(led, "p_ok", "CALM", 40.0, degraded=False)
     rows = {r.variant_hook: r for r in lift_rows(led, cfg, Accounts.load(cfg)).variant_rows}
     assert rows["HYPE"].lift_degraded is True and "saves" in (rows["HYPE"].lift_missing or [])
-    assert rows["CALM"].lift_degraded is False        # a full-objective row is not flagged
+    assert rows["CALM"].lift_degraded is False
 
-# ── MOL-50: uniform DEGRADED is a TABLE-level fact — surface once, quiet the per-row repetition ──
-# When >50% of the shown variant rows are degraded, the view reports it as a table-level fact
-# (degraded_count/degraded_total + degraded_mostly=True) so the template can emit ONE note and
-# shrink the per-row badge. A minority (<=50%) keeps degraded_mostly False so the loud per-row
-# badge stays the exception-signal it was built to be.
 def _deg_post(led, pid, hook, lift, degraded):
-    m = {"lift_score": lift}
-    if degraded: m |= {"lift_degraded": True, "lift_missing_keys": ["saves", "retention"]}
-    led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      variant_key="vk_" + pid, variant_hook=hook, metrics=m, public_url="dryrun://" + pid))
+    _lift_post(led, pid, hook, lift, degraded=degraded)
 
 def test_lift_all_degraded_reports_table_level_fact(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    led = Ledger.load(cfg); _lineage(led)
+    led = Ledger.load(cfg)
     for i in range(4): _deg_post(led, f"p{i}", f"H{i}", 10.0 * i, degraded=True)   # 4/4 degraded
     view = lift_rows(led, cfg, Accounts.load(cfg))
     assert view.degraded_count == 4 and view.degraded_total == 4
@@ -269,7 +263,7 @@ def test_lift_all_degraded_reports_table_level_fact(tmp_path):
 def test_lift_majority_degraded_is_mostly(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    led = Ledger.load(cfg); _lineage(led)
+    led = Ledger.load(cfg)
     for i in range(3): _deg_post(led, f"p{i}", f"H{i}", 10.0 * i, degraded=True)    # 3 degraded
     _deg_post(led, "pok", "OK", 99.0, degraded=False)                               # 1 clean -> 3/4 = 75%
     view = lift_rows(led, cfg, Accounts.load(cfg))
@@ -279,7 +273,7 @@ def test_lift_majority_degraded_is_mostly(tmp_path):
 def test_lift_minority_degraded_is_not_mostly(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    led = Ledger.load(cfg); _lineage(led)
+    led = Ledger.load(cfg)
     _deg_post(led, "pdeg", "DEG", 10.0, degraded=True)                              # 1 degraded
     for i in range(3): _deg_post(led, f"pok{i}", f"OK{i}", 20.0 + i, degraded=False)  # 3 clean -> 1/4 = 25%
     view = lift_rows(led, cfg, Accounts.load(cfg))
@@ -289,7 +283,7 @@ def test_lift_minority_degraded_is_not_mostly(tmp_path):
 def test_lift_no_degraded_is_not_mostly(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    led = Ledger.load(cfg); _lineage(led)
+    led = Ledger.load(cfg)
     for i in range(3): _deg_post(led, f"pok{i}", f"OK{i}", 10.0 + i, degraded=False)
     view = lift_rows(led, cfg, Accounts.load(cfg))
     assert view.degraded_count == 0 and view.degraded_mostly is False
@@ -376,11 +370,15 @@ def test_lift_page_renders_delta_arrow_glyphs(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
-        _lineage(led)
-        for i, (pid, hook, lift) in enumerate([("p_lo", "CALM", 10.0), ("p_mid", "MID", 30.0), ("p_hi", "HYPE", 50.0)]):
+        led.add_source(Source(id="src_1", source_path="/videos/show.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="big drop", state=MomentState.clipped, hook="SHARED"))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/clips/clip_1.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.queued))
+        for i, (pid, lift) in enumerate([("p_lo", 10.0), ("p_mid", 30.0), ("p_hi", 50.0)]):
             led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
-                              caption=hook, state=PostState.analyzed, variant_key="vk_%d" % i, variant_hook=hook,
-                              metrics={"lift_score": lift}, public_url="dryrun://%s" % pid))
+                              caption="x", state=PostState.analyzed, metrics={"lift_score": lift},
+                              public_url="dryrun://%s" % pid))
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True)
     h = app.test_client().get("/lift").data.decode()
@@ -395,13 +393,15 @@ def test_lift_compound_row_demotes_delta_vs_best_when_arrow_shows(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
-        _lineage(led)
-        # 3 posts of the SAME clip -> a lineage (sibling_count > 1) so lineage_delta's Δ-vs-best applies,
-        # AND 3 lift scores on one account so the T-15 arrow applies. Both fire on the non-best rows.
-        for i, (pid, hook, lift) in enumerate([("p_lo", "CALM", 10.0), ("p_mid", "MID", 30.0), ("p_hi", "HYPE", 50.0)]):
+        led.add_source(Source(id="src_1", source_path="/videos/show.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="big drop", state=MomentState.clipped, hook="SHARED"))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/clips/clip_1.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.queued))
+        for i, (pid, lift) in enumerate([("p_lo", 10.0), ("p_mid", 30.0), ("p_hi", 50.0)]):
             led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
-                              caption=hook, state=PostState.analyzed, variant_key="vk_%d" % i, variant_hook=hook,
-                              metrics={"lift_score": lift}, public_url="dryrun://%s" % pid))
+                              caption="x", state=PostState.analyzed, metrics={"lift_score": lift},
+                              public_url="dryrun://%s" % pid))
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True)
     h = app.test_client().get("/lift").data.decode()

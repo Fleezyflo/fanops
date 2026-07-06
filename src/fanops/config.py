@@ -588,17 +588,6 @@ class Config:
         v = os.getenv("FANOPS_SUBTITLE_FONT")
         return v.strip() if v and v.strip() else "Arial Unicode MS"
 
-    @property
-    def creative_variation(self) -> bool:
-        # Per-account creative variation: each active account gets a genuinely different caption +
-        # burned-in on-screen hook per clip (+ its own length/framing cut under M2). M3d (2026-06-23):
-        # DEFAULT ON — per-account differentiation is the system's purpose, not an opt-in. The OFF code
-        # path is RETAINED (§7 firewall: only the default resolution flipped) so an operator can pin the
-        # legacy fan-to-all single-clip behavior with FANOPS_CREATIVE_VARIATION=0. The approve-with-hook
-        # moment-restore flow is an OFF-mode feature (per-surface hooks own the burn when ON) — Review
-        # hides that choice while ON. Mirrors visual_start/isolate_vocals' default-ON shape.
-        v = (os.getenv("FANOPS_CREATIVE_VARIATION") or "").strip().lower()
-        return v not in ("0", "false", "no", "off")     # DEFAULT ON; only explicit off-words disable it
 
     @property
     def account_casting(self) -> bool:

@@ -19,11 +19,12 @@ def _seed_awaiting(cfg, hook="WAIT"):
     cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
     led = Ledger.load(cfg)
     led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
-    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped, hook=hook))
     (cdir / "c0.mp4").write_bytes(b"V" * 100)
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="p0", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
-                      caption="c", state=PostState.awaiting_approval, variant_hook=hook))
+                      caption="c", state=PostState.awaiting_approval))
     led.save()
 
 def _client(cfg):
@@ -35,14 +36,12 @@ def test_review_nav_params_includes_focus(tmp_path):
     p = views.review_nav_params(cfg, "a")
     assert p["view"] == "account" and p["focus"] == 1 and p["account"] == "a"
 
-def test_focus_uses_media_preview_url(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+def test_focus_uses_media_preview_url(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook="HOOK")
     html = _client(cfg).get("/review?account=@a&view=account&focus=1&fi=0").data.decode()
-    assert "/media-preview/p0" in html
+    assert "/media/p0" in html
 
-def test_preview_media_returns_playable_path(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+def test_preview_media_returns_playable_path(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook="HOOK")
     led = Ledger.load(cfg)
     path = preview_media_path(cfg, led, "p0")
@@ -69,16 +68,16 @@ def test_spine_next_links_focus_review(tmp_path):
     assert "focus=1" in html and "view=account" in html
 
 
-def test_restore_persona_hook_reburns(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
+def test_restore_persona_hook_reburns(tmp_path, mocker):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
     led = Ledger.load(cfg)
     led.moments["m1"] = led.moments["m1"].model_copy(update={"hook_removed": "STRIPPED"})
     led.save()
+    rendered = Clip(id="c0", parent_id="m1", path=str(cfg.clips / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.rendered)
+    mocker.patch("fanops.clip.render_moment", return_value=(Ledger.load(cfg), rendered))
     res = actions.restore_persona_hook(cfg, "p0")
     assert res.ok
     led2 = Ledger.load(cfg)
-    assert led2.posts["p0"].variant_hook == "STRIPPED"
     assert led2.moments["m1"].hook == "STRIPPED" and led2.moments["m1"].hook_removed is None
 
 def test_retry_rate_limit_staggers_schedule(tmp_path):

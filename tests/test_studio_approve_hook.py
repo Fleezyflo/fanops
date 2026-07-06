@@ -142,15 +142,15 @@ def test_approve_with_hook_no_removed_hook_just_approves(tmp_path, mocker):
     r.assert_not_called()                                       # nothing to restore -> no re-render
 
 
-def test_approve_with_hook_blocked_under_creative_variation(tmp_path, mocker, monkeypatch):
-    # creative_variation suppresses the moment-hook burn (per-surface owns it) — never silently ship clean.
+def test_approve_with_hook_works_regardless_of_creative_variation_env(tmp_path, mocker, monkeypatch):
+    # P9: approve_with_hook no longer refuses when FANOPS_CREATIVE_VARIATION=1 — owner-moment restore always runs.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed(cfg)
     r = mocker.patch("fanops.clip.render_moment", side_effect=_fake_render)
     res = approve_with_hook(cfg, "clip_1", now=NOW)
-    assert res.ok is False and "variation" in res.error.lower()
-    assert Ledger.load(cfg).posts["p_1"].state is PostState.awaiting_approval  # untouched
-    r.assert_not_called()
+    assert res.ok is True and res.detail["approved"] == 1
+    assert Ledger.load(cfg).posts["p_1"].state is PostState.queued
+    assert r.call_count >= 1                                        # warm + in-lock burn both call render_moment
 
 
 def test_approve_with_hook_unknown_clip(tmp_path):
