@@ -109,6 +109,70 @@ def test_affinity_birth_path_intact(tmp_path):
     m = led.moments_of("src_1")[0]
     assert m.affinities == ["@a"]
 
+# ---- MOL-146 (P5): atomic whole-source ingest + owner-stamped spec ----
+def _seed_owner_spec_accounts(cfg, specs):
+    """specs: list of {handle, clip_profile?, framing?} dicts."""
+    from fanops.accounts import Accounts
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for i, s in enumerate(specs):
+        rows.append({"handle": s["handle"], "account_id": str(i + 1), "platforms": ["instagram"],
+                     "status": "active", "persona": f"voice {s['handle']}", "content_focus": ["punchlines"],
+                     "selection_scope": "credibility_first", "hook_angle": "curiosity",
+                     "hashtag_corpus": [f"#tag{i}"],
+                     **{k: v for k, v in s.items() if k in ("clip_profile", "framing")}})
+    cfg.accounts_path.write_text(json.dumps({"accounts": rows}))
+    return Accounts.load(cfg)
+
+def test_ingest_single_gate_reconciles_whole_source(tmp_path):
+    # P5 data-loss guard: N picks across M owners in ONE gate -> all minted, none cascade-deleted.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
+    led = request_moments(led, cfg, "src_1")
+    picks = [MomentPick(start=10, end=28, reason="a window", personas=["@a"]),
+             MomentPick(start=40, end=58, reason="b window", personas=["@b"])]
+    led = _ingest_picks(led, cfg, "src_1", picks)
+    moms = led.moments_of("src_1")
+    assert len(moms) == 2
+    owners = {tuple(m.affinities) for m in moms}
+    assert owners == {("@a",), ("@b",)}
+
+def test_ingest_owner_becomes_affinities_and_stamps_spec(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    _seed_owner_spec_accounts(cfg, [{"handle": "@a", "clip_profile": "short", "framing": "top"}])
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=10, end=28, reason="punchline", personas=["@a"])])
+    m = led.moments_of("src_1")[0]
+    assert m.affinities == ["@a"] and m.clip_profile == "short" and m.framing == "top"
+
+def test_ingest_pending_defers_whole_source(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    assert led.sources["src_1"].state is SourceState.moments_requested
+    led = ingest_moments(led, cfg, "src_1")   # no response yet
+    assert led.sources["src_1"].state is SourceState.moments_requested
+    assert len(led.moments_of("src_1")) == 0
+
+def test_ingest_persona_blind_empty_affinities(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [_mp(10, 28, "blind pick")])
+    m = led.moments_of("src_1")[0]
+    assert m.affinities == [] and m.clip_profile is None and m.framing is None
+
+def test_ingest_no_skip_state_fields(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=10, end=28, reason="a", personas=["@a"]),
+                         MomentPick(start=40, end=58, reason="b", personas=["@b"])])
+    src = led.sources["src_1"]
+    forbidden = ("moments_wait_cycles", "moments_skipped_handles", "skip_state")
+    assert not any(k in (src.meta or {}) for k in forbidden)
+    assert not hasattr(src, "moments_wait_cycles")
+
 def _seed_pick_persona_accounts(cfg, handle="@a"):
     from fanops.accounts import Accounts
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
