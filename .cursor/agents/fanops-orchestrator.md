@@ -35,4 +35,13 @@ Spawn `fanops-rfd` only when:
 
 ## Rules
 
-Lane agents own code. Max 2 picking worktrees (AGENTS.md). Never force-push / push main / `git reset --hard`.
+Lane agents own code. **HARD CAP: ≤2 active branches**, file-disjoint + blocker-free (AGENTS.md).
+Never force-push / push main / `git reset --hard` / `git checkout -B … origin/main`.
+
+**Drift recovery:** when `origin/main` advances, agents MUST use AGENTS.md re-sync (commit →
+`git merge origin/main` → resolve → push). NEVER reset or abandon the worktree for the same ticket.
+
+**Landing:** merge PRs **serially** in dependency order. After each merge, remaining branches
+re-sync before CI/continue. Orchestrator opens PRs if lane `gh` token cannot.
+
+**Push early:** lanes must push after every green `./scripts/check.sh` — unpushed work is what gets lost.
