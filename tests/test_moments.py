@@ -4,8 +4,10 @@ from fanops.ledger import Ledger
 from fanops.models import (Source, Clip, Post, Moment, MomentState, SourceState, Platform,
                            MomentDecision, MomentPick, MomentHookDecision, PostState)
 from fanops.agentstep import response_path, request_path, latest_request_id, pending
+from fanops.models import PERSONA_PICK_SPEC_KEYS
 from fanops.moments import (request_moments, ingest_moments, request_moment_hooks,
-                            ingest_moment_hooks, validate_pick, _drop_overlaps, _owned_moment_id)
+                            ingest_moment_hooks, validate_pick, _drop_overlaps, _owned_moment_id,
+                            _pick_personas)
 from fanops.ids import child_id
 
 # M1b (frame-seeing two-pass): the moment gate is split. PASS 1 (request_moments/ingest_moments) picks
@@ -106,6 +108,46 @@ def test_affinity_birth_path_intact(tmp_path):
     m = led.moments_of("src_1")[0]
     assert m.affinities == ["@a"]
 
+def _seed_pick_persona_accounts(cfg, handle="@a"):
+    from fanops.accounts import Accounts
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [{
+        "handle": handle, "account_id": "1", "platforms": ["instagram"], "status": "active",
+        "persona": "underground grit", "content_focus": ["punchlines"],
+        "selection_scope": "credibility_first", "hook_angle": "curiosity",
+        "hashtag_corpus": ["#detroitrap", "#bars"]}]}))
+    return Accounts.load(cfg)
+
+def test_pick_personas_returns_full_spec(tmp_path):
+    cfg = Config(root=tmp_path); accts = _seed_pick_persona_accounts(cfg, "@raw")
+    specs = _pick_personas(cfg, accts)
+    assert len(specs) == 1
+    assert set(specs[0]) == PERSONA_PICK_SPEC_KEYS
+    assert specs[0]["handle"] == "@raw"
+    assert "punchline" in specs[0]["directive"].lower()
+    assert "sensational" in specs[0]["selection_scope"].lower() or specs[0]["selection_scope"]
+    assert specs[0]["band"] and "s" in specs[0]["band"]
+    assert specs[0]["framing"] in ("top", "center")
+    assert specs[0]["hook_angle"] == "curiosity"
+    assert specs[0]["corpus"] == ["#detroitrap", "#bars"]
+
+def test_pick_personas_empty_when_casting_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = Config(root=tmp_path); accts = _seed_pick_persona_accounts(cfg)
+    assert _pick_personas(cfg, accts) == []
+    led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    assert "personas" not in payload
+
+def test_pick_request_carries_resolved_persona_spec(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_pick_persona_accounts(cfg, "@a")
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    assert len(payload["personas"]) == 1
+    assert set(payload["personas"][0]) == PERSONA_PICK_SPEC_KEYS
+
 def test_request_moments_writes_pick_request_with_transcript_signals_language(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
@@ -115,7 +157,7 @@ def test_request_moments_writes_pick_request_with_transcript_signals_language(tm
     assert payload["signal_peaks"][0]["t"] == 16.0
     assert payload["language"] == "en"
     assert "request_id" in payload
-    assert "personas" not in payload                 # M1b: personas ride the hook pass, not picks
+    assert "personas" not in payload                 # persona-blind when no accounts passed
     assert led.sources["src_1"].state is SourceState.moments_requested
 
 def test_request_moments_carries_clip_profile(tmp_path, monkeypatch):

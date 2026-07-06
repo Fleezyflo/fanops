@@ -192,11 +192,37 @@ def _bounded_transcript(transcript: list, peaks: list) -> tuple:
     kept = [s for i, s in enumerate(segs) if i in keep_idx]         # restore chronological order
     return kept, len(segs) - len(kept)
 
+def _pick_personas(cfg: Config, accounts) -> list[dict]:
+    """P4a: ONE assembly point for the per-active-persona FULL spec the pick + downstream gates read.
+    Returns handle+directive+selection_scope+band+framing+hook_angle+corpus. Empty when casting OFF or no
+    truthy casting directive (byte-identical persona-blind pick). Fail-open: a bad account row is skipped."""
+    if accounts is None or not cfg.account_casting:
+        return []
+    from fanops.persona_directives import casting_directive, resolved_cut_spec
+    out: list[dict] = []
+    for a in accounts.active():
+        try:
+            d = casting_directive(a)
+            if not d: continue
+            prof = cfg.resolve_clip_profile(a)
+            band = band_for(prof)
+            pin_fr = (getattr(a, "framing", None) or "").strip().lower()
+            _, derived_fr = resolved_cut_spec(a)
+            framing = pin_fr or derived_fr or ("top" if cfg.resolve_top_bias(a) else "center")
+            out.append({"handle": a.handle,
+                        "directive": d.select_rule or d.register,
+                        "selection_scope": d.scope_lens,
+                        "band": f"{band.lo:g}-{band.hi:g}s",
+                        "framing": framing,
+                        "hook_angle": (getattr(a, "hook_angle", None) or ""),
+                        "corpus": list(getattr(a, "hashtag_corpus", None) or [])})
+        except Exception:
+            continue
+    return out
+
 def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
-    """M1b PASS 1 — request the WINDOWS only. The on-screen hook (and the per-account hooks + learned
-    hook styles) ride the SEPARATE moment_hooks gate (request_moment_hooks), which sees each picked
-    window's own frames. `accounts` is accepted for caller-signature stability but unused here — personas
-    and learned styles belong to the hook pass, not picking."""
+    """M1b PASS 1 — request the WINDOWS. P4a: the picker SEES per-persona lenses via _pick_personas so each
+    pick is attributed to its owner inside ONE source gate. The on-screen hook still rides moment_hooks."""
     src = led.sources[source_id]
     transcript, dropped = _bounded_transcript(src.transcript or [], src.signal_peaks or [])   # AGENT-2: bound the payload
     if dropped:
@@ -209,9 +235,11 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> 
                             language=src.language,
                             guidance=load_guidance(cfg),
                             clip_profile=cfg.clip_profile,
+                            personas=_pick_personas(cfg, accounts),
                             frames=_source_frames(cfg, src)).model_dump()   # band + the picker's eyes
     payload.pop("request_id", None)
-    payload.pop("personas", None)   # M1b: per-account hooks ride the moment_hooks pass, not the pick pass
+    if not payload.get("personas"):
+        payload.pop("personas", None)   # empty -> drop key so persona-blind path is byte-identical
     write_request(cfg, kind="moments", key=source_id, payload=payload)
     led.set_source_state(source_id, SourceState.moments_requested)
     return led
