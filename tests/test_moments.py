@@ -65,6 +65,41 @@ def test_drop_overlaps_all_overlap_keeps_first():
 def test_drop_overlaps_disjoint_all_kept():
     assert len(_drop_overlaps([_mp(0, 15), _mp(20, 35), _mp(40, 55)])) == 3
 
+def _mpo(s, e, owner, reason="r"):
+    return MomentPick(start=s, end=e, reason=reason, personas=[owner])
+
+# MOL-169 (RF-D4): overlap-dedup is a WITHIN-owner near-duplicate filter. Two DIFFERENT owners at the
+# same timecode are two LEGITIMATE moments (single-owner rebuild) — dropping one is the ghost the
+# picking rebuild killed. Cross-owner overlap must never drop a pick.
+def test_drop_overlaps_same_owner_drops_near_dupe():
+    kept = _drop_overlaps([_mpo(0, 18, "a"), _mpo(5, 20, "a"), _mpo(40, 58, "a")])
+    assert [(p.start, p.end) for p in kept] == [(0, 18), (40, 58)]   # within-owner dedup unchanged
+
+def test_drop_overlaps_different_owners_both_kept():
+    # a's window and b's window overlap in time but are DIFFERENT owners -> BOTH kept (the fix).
+    kept = _drop_overlaps([_mpo(0, 18, "a"), _mpo(5, 20, "b")])
+    assert len(kept) == 2
+    assert {(p.personas[0], p.start, p.end) for p in kept} == {("a", 0, 18), ("b", 5, 20)}
+
+def test_drop_overlaps_blind_picks_still_deduped():
+    # persona-blind picks (no owner) all share the None owner -> within-that-owner dedup as before.
+    kept = _drop_overlaps([_mp(0, 18), _mp(5, 20), _mp(40, 58)])
+    assert [(p.start, p.end) for p in kept] == [(0, 18), (40, 58)]
+
+def test_named_threshold_is_sole_overlap_constant():
+    # The overlap threshold has exactly ONE named home; no bare 0.5 magic overlap literal elsewhere.
+    import fanops.moments as M
+    assert M._MAX_OVERLAP_FRAC == 0.5
+    # _spans_overlap is the only comparator; it must reference the named constant, never a literal.
+    fn = __import__("inspect").getsource(M._spans_overlap)
+    assert "_MAX_OVERLAP_FRAC" in fn and "0.5" not in fn
+
+def test_drop_overlaps_single_home():
+    # Grep-proof: moments.py is the ONLY timecode overlap-dedup site (one _drop_overlaps, one comparator).
+    src = __import__("inspect").getsource(__import__("fanops.moments", fromlist=["x"]))
+    assert src.count("def _drop_overlaps(") == 1
+    assert src.count("def _spans_overlap(") == 1
+
 def test_ingest_picks_lands_picked_not_decided(tmp_path):
     # A pick is born `picked` (NOT renderable) and the source lands `picks_decided` — the hook gate is
     # still owed. Render keys on `decided`, so a picked moment never renders hookless.
@@ -141,6 +176,18 @@ def test_ingest_single_gate_reconciles_whole_source(tmp_path):
     assert len(moms) == 2
     owners = {tuple(m.affinities) for m in moms}
     assert owners == {("a",), ("b",)}
+
+def test_ingest_overlapping_different_owners_both_minted(tmp_path):
+    # MOL-169: two owners whose windows OVERLAP in time are two legitimate moments — neither dropped.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
+    led = request_moments(led, cfg, "src_1")
+    picks = [MomentPick(start=10, end=28, reason="a window", personas=["a"]),
+             MomentPick(start=12, end=30, reason="b window (overlaps a)", personas=["b"])]
+    led = _ingest_picks(led, cfg, "src_1", picks)
+    moms = led.moments_of("src_1")
+    assert len(moms) == 2                                   # cross-owner overlap kept BOTH
+    assert {tuple(m.affinities) for m in moms} == {("a",), ("b",)}
 
 def test_ingest_owner_becomes_affinities_and_stamps_spec(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
