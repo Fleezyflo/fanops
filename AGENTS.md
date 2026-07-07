@@ -147,3 +147,23 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
 Post one line: `MOL-xxx merged, CI green, worktree removed`.
 Stop and ask if: a blocker isn't merged, a ticket's anchors no longer match the code,
 CI is red for a reason you can't fix quickly, or any guardrail would be violated.
+
+## Cursor Cloud specific instructions
+
+Deps are refreshed automatically on VM startup (venv + `pip install -e '.[dev,studio]'`, mirroring
+`.cursor/environment.json`). Standard dev commands live in `CLAUDE.md` (Commands) — use those:
+lint `ruff check .`, fast tests `python -m pytest -q -m "not integration"` (~6 min, all green),
+studio `fanops studio`. Optional extras (`transcribe`/`asr`/`compose`/`framing`) and the `integration`
+suite need real ffmpeg/whisper/etc. on PATH and are NOT installed by default; the unit suite skips them.
+
+Non-obvious caveats found during setup:
+- **`fanops studio` cold-start takes ~90s here before it binds the port.** This VM has a stray
+  `/usr/bin/open`, so launch-time `health._start_docker` thinks it can start Docker Desktop and then
+  polls a non-existent daemon 30×3s before serving. The port answers nothing (curl `HTTP 000`) until
+  then — this is expected, not a hang; just wait it out. Output is also block-buffered when not a TTY,
+  so run with `PYTHONUNBUFFERED=1` if you want live startup logs.
+- **Do manual/UI testing against a THROWAWAY workspace root, never the live one.** `Config` uses
+  `<cwd>/MohFlow-FanOps` as its data root; the repo's `MohFlow-FanOps/` is live-adjacent and UI actions
+  (add account, ingest) write real files like `00_control/accounts.json`. `cd` into a temp dir that has
+  its own `MohFlow-FanOps/00_control/context.md` and run `fanops studio` from there (backend stays
+  `dryrun` — nothing publishes). Per the root guardrails, never run live publish/metrics verbs.
