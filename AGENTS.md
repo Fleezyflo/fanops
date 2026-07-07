@@ -36,9 +36,10 @@ cd ../fanops-<mol-id>
 python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'   # each worktree needs its OWN venv
 git config --local core.hooksPath .githooks                          # wire the repo policy hooks
 ```
-The hooks enforce POLICY only: `pre-commit` = secret scan + staged ruff; `pre-push` = block main/force-push.
-Neither runs tests. Keep `.githooks/pre-commit` (it carries the secret scanner; `core.hooksPath` disables
-the global one). Tests run via `./scripts/check.sh` (below) and CI — never at push time.
+`pre-commit` = secret scan + staged ruff + scoped `check.sh` when `src/`/`tests/` `.py` is staged
+(`BASE=HEAD` — not the full suite); `pre-push` = block main/force-push only (no tests, ever). Keep
+`.githooks/pre-commit` (it carries the secret scanner; `core.hooksPath` disables the global one).
+CI is the authoritative gate; `check.sh` also runs by hand (step F) before commits.
 
 **B. Read first** — the full ticket body (exact `file:line` anchors + its "Tests" list);
 every blocker it names (if a blocker is NOT merged to `origin/main`, STOP: "blocked on MOL-x");
@@ -56,13 +57,15 @@ reason, paste the failure.
 ```bash
 ./scripts/check.sh          # scoped ruff + pytest on changed modules vs origin/main merge-base — seconds
 ```
-Green or you're not done. This is the local gate; it is NOT enforced by a hook, so actually run it.
+Green or you're not done. `pre-commit` also runs `BASE=HEAD ./scripts/check.sh` when `src/`/`tests/` `.py`
+is staged; run step F by hand anyway (merge-base scope catches cross-commit drift pre-commit skips).
 (Broad refactor that scoping can't cover? `./scripts/check-full.sh` for full CI parity — minutes.)
 
-**G. Commit + push — push freely; CI is the gate.** The `pre-commit` hook runs the secret scan +
-staged ruff; `pre-push` only blocks main/force-push. **No test runs at push time and there is no
-`FANOPS_SKIP_PREPUSH` to set** — you already proved the change in step F, and CI proves it fully on the
-PR. Do NOT rely on any push-time test gate; it doesn't exist. Conventional commit `fix(scope): …
+**G. Commit + push — push freely; CI is the gate.** The `pre-commit` hook runs secret scan + staged ruff
++ scoped `check.sh` (when `src/`/`tests/` `.py` staged); `pre-push` only blocks main/force-push.
+**No test runs at push time and there is no `FANOPS_SKIP_PREPUSH` to set** — you already proved the
+change in step F (and pre-commit re-proves scoped src/tests changes), and CI proves it fully on the PR.
+Do NOT rely on any push-time test gate; it doesn't exist. Conventional commit `fix(scope): …
 (MOL-xxx)`, one logical change per commit.
 
 **H. PR** — open to `main`, summarize change + test plan, wait for CI (the definitive unit + e2e gate)
@@ -129,11 +132,11 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
 
 ## What is HARD-enforced vs. advisory
 
-- **Hard-enforced (git `.githooks/pre-push`, cannot be ignored by an agent):** direct push to
-  `main` is REFUSED; force-push (non-fast-forward) to `main` is REFUSED. Override is a deliberate
-  human env var (`FANOPS_ALLOW_MAIN_PUSH=1`), never something an agent sets. The pre-push hook runs
-  NO tests — it is a policy guard only. Correctness is proven by `./scripts/check.sh` (local, step F)
-  and by CI (authoritative, every PR), not at push time.
+- **Hard-enforced (git `.githooks/`, cannot be ignored by an agent):** `pre-commit` runs secret scan +
+  staged ruff + scoped `check.sh` when `src/`/`tests/` `.py` is staged (`ECC_SKIP_PRECOMMIT=1` bypasses
+  the whole hook — emergency only). `pre-push` refuses direct push to `main` and force-push to `main`
+  (override: human-only `FANOPS_ALLOW_MAIN_PUSH=1`); it runs NO tests. Correctness is also proven by
+  `./scripts/check.sh` (local, step F) and by CI (authoritative, every PR).
 - **Advisory (this file — no git hook exists to enforce it):** `git reset --hard`, force-push to a
   FEATURE branch, and "commit only staged files". Git has no `pre-reset` hook, so these rely on the
   agent obeying the guardrails above. Treat them as absolute anyway; they are the exact operations
