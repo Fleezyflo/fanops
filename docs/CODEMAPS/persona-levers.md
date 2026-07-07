@@ -10,8 +10,8 @@ The persona is the operator's control surface over per-account output. Each **le
 
 | Lever | Stage | What it does | Effect string lives in | Compiler / resolver |
 |---|---|---|---|---|
-| `content_focus` (multi) | casting | which moment KINDS to clip for | `_FOCUS_CLAUSE` (personas.py) | `casting_directive()` injects into the casting prompt |
-| `energy` | casting | bias toward calm vs peak-intensity (`low`/`high`) | `_ENERGY_CLAUSE` | `casting_directive()` |
+| `content_focus` (multi) | pick | which moment KINDS to clip for (per-persona lens in `request_moments`) | `_FOCUS_CLAUSE` | `persona_directives` pick payload |
+| `energy` | pick/hook | bias toward calm vs peak-intensity (`low`/`high`) | `_ENERGY_CLAUSE` | pick + hook prompts via owner persona |
 | `hook_angle` | hook | the on-screen hook's strategy | `_ANGLE_CLAUSE` | `hook_directive()` injects into the hook prompt |
 | `hook_tone` | hook | the on-screen hook's voice | `_TONE_CLAUSE` | `hook_directive()` |
 | `clip_profile` | cut | the deterministic cut-length band | `bands._PROFILES` / `band_for()` | `config.resolve_clip_profile` → `clip.fit_window` |
@@ -24,7 +24,7 @@ The persona is the operator's control surface over per-account output. Each **le
 ## The firewall
 
 A persona with no levers and no override compiles to the **bare voice** (`_join`/`_base_voice`), so every
-existing persona's casting/hook/caption payload is byte-identical. Asserted across
+existing persona's pick/hook/caption payload is byte-identical. Asserted across
 [tests/test_persona_levers.py](../../tests/test_persona_levers.py).
 
 ## The exposure surface (Studio Personas tab)

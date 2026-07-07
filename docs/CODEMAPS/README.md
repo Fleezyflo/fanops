@@ -7,13 +7,14 @@ you need the full detail. Route yourself with the "read when…" column instead 
 
 | File | Read this when… |
 |---|---|
-| [full-trace-index.md](full-trace-index.md) | You need the master map: 108-module coverage, the 10-cluster split, the safety-verdict table (10 invariants, all HOLD), dead-code triage, silent-failure inventory, how to regenerate. |
+| [full-trace-index.md](full-trace-index.md) | You need the master map: 109-module coverage, the 10-cluster split, the safety-verdict table (10 invariants, all HOLD), dead-code triage, silent-failure inventory, how to regenerate. |
 | [anomalies.md](anomalies.md) | You need the FLAT ledger of every anomaly/dead-code lead/silent swallow, per cluster in file:line order — incl. the 5 "dead" flags corrected to live (aliased/lazy imports) and the one real wiring bug. |
 | [system-lens-map.md](system-lens-map.md) | You need the EXHAUSTIVE 64-env-var table (13 Studio-settable / 51 shell-only), the ingestion chain stage-by-stage, the full hashtag-vet algorithm, or persona-field→downstream-consumer chains. Every claim carries a verified file:line. |
 | [architecture.md](architecture.md) | You want narrative system architecture — the stage DAG, the two agent gates, crash-safety model. |
 | [data.md](data.md) | You need the data model: the single JSON ledger, the Source→Moment→Clip→Post lifecycle, control-file schemas. |
 | [dependencies.md](dependencies.md) | You need the external-binary + Python-package dependency surface (ffmpeg/whisper/yt-dlp, subprocess timeouts). |
-| [lifecycle-full-picture.md](lifecycle-full-picture.md) | You want the maximum-depth end-to-end pipeline audit (ingest→publish→learn), the deepest single narrative. |
+| [fresh-ingestion-trace.md](fresh-ingestion-trace.md) | **Source of truth** for the live ingest→publish path (post–P11 casting teardown): stage DAG, fan-out arithmetic, `affinity_admits` routing. |
+| [lifecycle-full-picture.md](lifecycle-full-picture.md) | Dated 2026-06-27 audit snapshot (superseded by fresh-ingestion-trace for live behavior). |
 | [hashtag-lifecycle.md](hashtag-lifecycle.md) | You are touching hashtags: persona corpus → vet → post → live Graph reach → surfaced. |
 | [insights-culmination.md](insights-culmination.md) | You are touching the reach-loop bias actuators (framing/timing/casting/dim) — stamp → aggregate → actuator, all gated + amplify-only. |
 | [persona-levers.md](persona-levers.md) | You are touching a persona lever (content_focus/energy/hook_angle) — what each is, its validation vocab, where it bites downstream. |

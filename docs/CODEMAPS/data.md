@@ -29,18 +29,16 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
   (M3 structural-hooks) + `batches` (Account-First: named, account-targeted ingest groups) + `renders`
   (per-account Render foundation: the per-account shippable artifacts) + `selection_facts` (M4: durable
   per-(moment, account) selection audit). Versioned:
-  `SCHEMA_VERSION=8` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
-  v2→v3 `_migrate_v3_created_at` backfills `created_at` — Source from file mtime, Post from a tz-aware
-  `scheduled_time` else the migration stamp; v3→v4 `_migrate_v4_metrics_series` back-fills ONE 'legacy'-tagged
-  metrics_series row per post that already carries metrics; v4→v5 the additive `{**raw, "batches": raw.get(
-  "batches", {})}` lambda injects the empty `batches` map; v5→v6 injects the empty `renders` map (per-account
-  Render foundation); v6→v7 injects the empty `selection_facts` map (M4 filing/naming/tracking); v7→v8 the
-  latest additive step; all idempotent, never raise, do NOT backfill
-  `published_at` — old ledgers load clean, proven on the real 51-post ledger); a NEWER on-disk version →
-  `_NewerSchema` refuses to load (exit 2) rather than silently drop fields. New OPTIONAL entity fields
-  (Moment.{hook_strategy, intro_matches, affinities}, StitchPlan.*, Source.{created_at, batch_id}, Post.
-  {created_at, published_at, batch_id, variant_hook}, Batch.*, Render.*, SelectionFact.*) ride pydantic defaults. Inner dicts of
-  variant_streaks/tag_log remain untyped (known gap).
+  `SCHEMA_VERSION=11` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
+  v2→v3 `_migrate_v3_created_at` backfills `created_at`; v3→v4 `_migrate_v4_metrics_series`; v4→v5 injects
+  `batches`; v5→v6 injects `renders`; v6→v7 injects `selection_facts`; v7→v8 additive step; v8→v9 lifts
+  legacy `Moment.affinities` into `account_selections` (RF1, later dropped); v10→v11 **drops**
+  `account_selections` + `selection_facts` (P12/MOL-154, post–P11 casting teardown). All hops idempotent,
+  never raise; old ledgers load clean. A NEWER on-disk version → `_NewerSchema` refuses to load (exit 2).
+  New OPTIONAL entity fields (Moment.{hook_strategy, intro_matches, affinities, clip_profile, framing},
+  StitchPlan.*, Source.{created_at, batch_id}, Post.{created_at, published_at, batch_id, top_bias,
+  publish_hour, publish_dow}, Batch.*, Render.*) ride pydantic defaults. Inner dicts of variant_streaks/tag_log
+  remain untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
 
