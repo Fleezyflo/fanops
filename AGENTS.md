@@ -118,7 +118,8 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
   1. **No blocker edge** between the two tickets (neither blocks the other, transitively), and
   2. **Disjoint file sets** — no common file. If both touch a shared hot file
      (`models.py`, `moments.py`, `crosspost.py`, `ledger.py`, `prompts.py`, `config.py`,
-     `casting.py`, `clip.py`), they are NOT parallel-safe → run serially.
+     `casting.py`, `clip.py`), they are NOT parallel-safe → run serially. Hot-file OWNERSHIP per lane
+     is declared in `.agents/lanes.json` and enforced mechanically (see below), not just by trust.
 - Every branch is cut fresh off `git fetch origin` + `origin/main` at setup (step A).
 - Do NOT start a ticket whose blocker is unmerged (e.g. RF-D MOL-164/MOL-169 need MOL-146 on
   `origin/main`).
@@ -137,6 +138,13 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
   the whole hook — emergency only). `pre-push` refuses direct push to `main` and force-push to `main`
   (override: human-only `FANOPS_ALLOW_MAIN_PUSH=1`); it runs NO tests. Correctness is also proven by
   `./scripts/check.sh` (local, step F) and by CI (authoritative, every PR).
+- **Lane isolation (mechanical for multi-agent waves):** `scripts/lane_guard.py` reads
+  `.agents/lanes.json` and, for a branch named after a lane (`publish/`, `picking/`, `pick/`, `rfd/`,
+  `ci/`), refuses any change that edits a hot file owned by a DIFFERENT lane. It runs at `pre-push`
+  (fail-open on infra gaps) and as the `lane-guard` CI job (authoritative). Non-lane branches (`cursor/*`,
+  `bycreamco/mol-*`, human branches) are a no-op — never blocked. The orchestration that drives lanes
+  lives in `.cursor/agents/fanops-*.md` + `.agents/*-agent.md` (Linear-driven queue, orchestrator-owned
+  serial merges).
 - **Advisory (this file — no git hook exists to enforce it):** `git reset --hard`, force-push to a
   FEATURE branch, and "commit only staged files". Git has no `pre-reset` hook, so these rely on the
   agent obeying the guardrails above. Treat them as absolute anyway; they are the exact operations

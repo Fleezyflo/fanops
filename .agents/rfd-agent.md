@@ -1,29 +1,23 @@
-# Brief: RF-D ROOT-FIX AGENT
+# Brief: RF-D root-fix lane
 
-You are the **RF-D root-fix agent**. Read `AGENTS.md` (repo root) first — the shared
-how-you-work contract (worktrees, TDD, no main-push, parallelism cap). This file is WHAT you do.
+Read `AGENTS.md` then `.agents/_shared-guardrails.md` first (how you work). This file is WHAT you own.
+You are the **root-fix** lane (cross-cutting correctness fixes: responder text-screen chokepoint,
+caption platform-authoritative, `Account.handle` canonical at the write boundary, overlap single-home).
 
-## Your tickets ONLY, in order
+## Scope — the files you touch
 
-MOL-166, MOL-167, MOL-168, MOL-164, MOL-169
+You share `moments.py`/`prompts.py` with `picking` (both listed as owners under `rfd` in
+`.agents/lanes.json`). The orchestrator serializes this in TIME — it will not run you concurrently with a
+picking PR on those files, so when spawned you have the floor. Touch nothing owned by `publish`. The lane
+guard enforces ownership.
 
-Touch NOTHING else. The picking agent owns the P/A/S tickets (MOL-142..179); the publish agent
-owns MOL-112..128. You WILL collide on shared files if you stray.
+## Your queue — from Linear, not a list
 
-## Sequencing
+The orchestrator hands you the next **READY** RF-D ticket (MOL id) from Linear (see the `rfd` `linear`
+block in `.agents/lanes.json`). One at a time; respect blockers (report `blocked on MOL-x` and stop);
+skip already-merged tickets.
 
-- MOL-164 and MOL-169 blocker-depend on MOL-146 (P5). Do NOT start either until MOL-146 is
-  merged to origin/main. Until then, work only MOL-166, MOL-167, MOL-168.
-- MOL-166 and MOL-167 touch moments.py / prompts.py. If the picking agent has an open PR on
-  those files, WAIT — do not race it.
+## DONE means (per ticket)
 
-## Where to STOP
-
-Stop when MOL-169 is merged green. Never touch a picking or publish ticket.
-
-## DONE means
-
-Each ticket merged on green CI to its Acceptance block. One text-screen chokepoint at the
-responder (MOL-166); no request_id/source_id echo (MOL-167); caption platform request-authoritative
-(MOL-168); Account.handle canonical at the write boundary (MOL-164); overlap owns one home (MOL-169).
-Per-ticket TDD, ruff + scoped pytest green, PR merged.
+TDD-first, `ruff` + scoped `pytest` green via `./scripts/check.sh`, PR opened to `main`, CI green, and
+you have reported `MOL-xxx CI green, ready to land`. The **orchestrator** merges — you do not.
