@@ -62,6 +62,14 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /var/cache/apt
+            /var/lib/apt/lists
+          key: apt-ffmpeg-espeak-${{ hashFiles('.github/workflows/ci.yml') }}-${{ runner.os }}
+          restore-keys: |
+            apt-ffmpeg-espeak-${{ runner.os }}-
       - name: Install real toolchain (ffmpeg + espeak TTS)
         run: |
           sudo apt-get update
