@@ -31,12 +31,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-py3.12-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-${{ runner.os }}-py3.12-
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install (dev + studio = flask, so the studio route tests run not skip)
         run: |
           python -m pip install --upgrade pip
@@ -64,16 +60,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install real toolchain (ffmpeg + espeak TTS)
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg espeak
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-py3.12-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-${{ runner.os }}-py3.12-
       - name: Install (dev + transcribe = openai-whisper + studio = flask + compose = moviepy)
         run: |
           python -m pip install --upgrade pip
