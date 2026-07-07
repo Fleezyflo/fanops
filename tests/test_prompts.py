@@ -92,7 +92,15 @@ def test_moment_pick_prompt_long_source_asks_for_multiple_nonoverlapping():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
                             "language": "en", "guidance": ""})
     assert "5" in p                            # the proportional target count for ~90s
-    assert "overlap" in p.lower()              # they must not overlap
+    assert "overlap" in p.lower()              # prefer distinct windows; code dedups downstream
+
+def test_prompt_overlap_contract():
+    # MOL-169: the model advises; _drop_overlaps enforces — prompt must not claim model-guarantees-it.
+    p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
+                            "language": "en", "guidance": ""}).lower()
+    assert "prefer distinct" in p or "prefer" in p and "non-overlapping" in p
+    assert "de-duplicated downstream" in p or "deduplicated downstream" in p
+    assert "must not overlap" not in p
 
 def test_moment_pick_prompt_unprobed_omits_target_count():
     p = moment_pick_prompt({"duration": 0.0, "transcript": [], "signal_peaks": [],
