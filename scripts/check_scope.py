@@ -91,8 +91,26 @@ def resolve_tests(changed: list[str]) -> list[str]:
     return sorted(want)
 
 
+def orphan_src_modules(changed: list[str]) -> list[str]:
+    """Return changed src/fanops/*.py paths (excl __init__) with no scoped test mapping."""
+    out: list[str] = []
+    for f in changed:
+        if not f.startswith("src/fanops/") or not f.endswith(".py"):
+            continue
+        if f.endswith("__init__.py"):
+            continue
+        if not resolve_tests([f]):
+            out.append(f)
+    return sorted(out)
+
+
 def main(argv: list[str] | None = None) -> int:
-    for t in resolve_tests(list(argv or sys.argv[1:])):
+    args = list(argv or sys.argv[1:])
+    if args and args[0] == "--orphans":
+        for o in orphan_src_modules(args[1:]):
+            print(o)
+        return 0
+    for t in resolve_tests(args):
         print(t)
     return 0
 

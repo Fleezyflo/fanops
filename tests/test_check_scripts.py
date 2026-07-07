@@ -24,11 +24,14 @@ _FIXTURE_TEST = "def test_ok():\n    assert (2 * 3) == 6\n"
 
 
 def _run(cmd, cwd, env=None):
-    return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
+    e = dict(os.environ if env is None else env)
+    for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        e.pop(k, None)
+    return subprocess.run(cmd, cwd=cwd, env=e, capture_output=True, text=True)
 
 
-def _git(cwd, *args):
-    r = _run(["git", *args], cwd)
+def _git(repo, *args):
+    r = _run(["git", "-C", str(repo), *args], cwd="/")
     assert r.returncode == 0, f"git {args} failed: {r.stderr}"
     return r
 
@@ -72,6 +75,7 @@ def sandbox(tmp_path):
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "t@t.t")
     _git(repo, "config", "user.name", "t")
+    assert (repo / ".git").exists(), "sandbox must own an isolated .git"
     return repo
 
 
@@ -85,6 +89,10 @@ def _env(repo):
     e["INVOKED_LOG"] = str(repo / ".invoked")
     e["BASE"] = "HEAD~1"   # scope = last commit's changes, deterministic without origin/main
     return e
+
+
+def _sandbox_check(repo):
+    return str(repo / "scripts" / "check.sh")
 
 
 def _log(repo):
@@ -104,7 +112,7 @@ def test_scopes_to_changed_module_and_its_test(sandbox):
     (repo / "src" / "fanops" / "widget.py").write_text("x = 42\n")
     _commit_all(repo, "touch widget")
 
-    r = _run(["bash", str(CHECK)], repo, env=_env(repo))
+    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
     log = _log(repo)
 
     assert r.returncode == 0, f"check.sh failed unexpectedly:\n{r.stdout}\n{r.stderr}"
@@ -123,7 +131,7 @@ def test_changed_test_file_is_run_directly(sandbox):
     (repo / "tests" / "test_alpha.py").write_text(_FIXTURE_TEST.replace("== 6", "== 6  # touched"))
     _commit_all(repo, "touch test_alpha")
 
-    r = _run(["bash", str(CHECK)], repo, env=_env(repo))
+    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
     log = _log(repo)
 
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
@@ -141,7 +149,7 @@ def test_no_python_change_runs_nothing(sandbox):
     (repo / "README.md").write_text("v2\n")
     _commit_all(repo, "docs only")
 
-    r = _run(["bash", str(CHECK)], repo, env=_env(repo))
+    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
     assert "no changed .py" in r.stdout
     assert not (repo / ".invoked").exists(), "ran python despite no .py change"
@@ -157,7 +165,7 @@ def test_scoped_pytest_failure_propagates_nonzero(sandbox):
     (repo / "src" / "fanops" / "poison.py").write_text("y = 99\n")
     _commit_all(repo, "touch poison")
 
-    r = _run(["bash", str(CHECK)], repo, env=_env(repo))
+    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
     assert r.returncode != 0, "check.sh must exit non-zero when a scoped check fails"
 
 
@@ -224,7 +232,7 @@ def test_scopes_studio_module_to_studio_test(sandbox):
     (repo / "src" / "fanops" / "studio" / "widget.py").write_text("x = 42\n")
     _commit_all(repo, "touch studio widget")
 
-    r = _run(["bash", str(CHECK)], repo, env=_env(repo))
+    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
     log = _log(repo)
 
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
@@ -263,6 +271,49 @@ def test_check_scope_covers_all_src_modules():
     assert bare == [], f"modules with no scoped test mapping: {bare}"
 
 
+def test_check_full_sets_require_studio():
+    """check-full.sh must set FANOPS_REQUIRE_STUDIO=1 on pytest (CI unit parity)."""
+    full = (REPO / "scripts" / "check-full.sh").read_text()
+    assert "FANOPS_REQUIRE_STUDIO=1" in full
+
+
+def test_check_scope_orphans_detects_bare_src():
+    """orphan_src_modules flags changed src with no convention/override test mapping."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("check_scope", SCOPE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.orphan_src_modules(["src/fanops/ledger.py"]) == []
+    assert mod.orphan_src_modules(["src/fanops/__init__.py"]) == []
+    assert mod.orphan_src_modules(["src/fanops/no_such_module_xyz.py"]) == ["src/fanops/no_such_module_xyz.py"]
+
+
+def test_orphan_src_module_fails_check_sh(sandbox):
+    """Changing src with no scoped test mapping must make check.sh exit non-zero."""
+    repo = sandbox
+    (repo / "src" / "fanops" / "orphan_mod.py").write_text("x = 1\n")
+    _commit_all(repo, "baseline")
+    (repo / "src" / "fanops" / "orphan_mod.py").write_text("x = 2\n")
+    _commit_all(repo, "touch orphan")
+    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
+    assert r.returncode != 0, "check.sh must fail when changed src has no scoped test"
+    assert "orphan_mod.py" in r.stderr or "orphan_mod.py" in r.stdout
+
+
+def test_orphan_src_allow_env_passes(sandbox):
+    """FANOPS_CHECK_ALLOW_NO_TESTS=1 permits deliberate test-less src changes."""
+    repo = sandbox
+    (repo / "src" / "fanops" / "orphan_mod.py").write_text("x = 1\n")
+    _commit_all(repo, "baseline")
+    (repo / "src" / "fanops" / "orphan_mod.py").write_text("x = 2\n")
+    _commit_all(repo, "touch orphan")
+    env = _env(repo)
+    env["FANOPS_CHECK_ALLOW_NO_TESTS"] = "1"
+    r = _run(["bash", _sandbox_check(repo)], repo, env=env)
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    assert "WARNING" in r.stdout or "FANOPS_CHECK_ALLOW_NO_TESTS" in r.stdout
+
+
 def test_check_self_heals_hookspath(sandbox):
     """check.sh arms the policy hooks: an unwired repo gets core.hooksPath=.githooks set for it.
 
@@ -277,12 +328,12 @@ def test_check_self_heals_hookspath(sandbox):
     _commit_all(repo, "docs")
 
     # Precondition: the sandbox has NO hooksPath set.
-    pre = _run(["git", "config", "--local", "core.hooksPath"], repo)
+    pre = _run(["git", "-C", str(repo), "config", "--local", "core.hooksPath"], cwd="/")
     assert pre.stdout.strip() == "", "sandbox should start unwired"
 
-    r = _run(["bash", str(CHECK)], repo, env=_env(repo))
+    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
 
-    post = _run(["git", "config", "--local", "core.hooksPath"], repo)
+    post = _run(["git", "-C", str(repo), "config", "--local", "core.hooksPath"], cwd="/")
     assert post.stdout.strip() == ".githooks", "check.sh must wire the policy hooks"
     assert "armed" in r.stdout, "check.sh should announce it armed the hooks"

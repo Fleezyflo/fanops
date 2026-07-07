@@ -62,6 +62,19 @@ printf '        %s\n' "${CHANGED[@]}"
 echo "[check] ruff (scoped)"
 "$PY" -m ruff check "${CHANGED[@]}"
 
+# 1b) Fail closed on changed src modules with no scoped test mapping (false-confidence hole).
+mapfile -t ORPHANS < <("$PY" "$ROOT/scripts/check_scope.py" --orphans "${CHANGED[@]}")
+if [[ ${#ORPHANS[@]} -gt 0 ]]; then
+  if [[ "${FANOPS_CHECK_ALLOW_NO_TESTS:-}" == "1" ]]; then
+    echo "[check] WARNING: changed src with no scoped test (FANOPS_CHECK_ALLOW_NO_TESTS=1):"
+    printf '        %s\n' "${ORPHANS[@]}"
+  else
+    echo "[check] FAIL: changed src modules have no scoped test — add tests or set FANOPS_CHECK_ALLOW_NO_TESTS=1:" >&2
+    printf '        %s\n' "${ORPHANS[@]}" >&2
+    exit 1
+  fi
+fi
+
 # 2) Scoped pytest — changed test files + convention/override map (scripts/check_scope.py handles
 # studio/, post/, and alternate test names like test_studio_actions.py).
 mapfile -t TESTS < <("$PY" "$ROOT/scripts/check_scope.py" "${CHANGED[@]}")

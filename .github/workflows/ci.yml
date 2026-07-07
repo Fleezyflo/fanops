@@ -6,7 +6,8 @@ name: CI
 # FANOPS_REQUIRE_E2E=1 on the e2e job: conftest's pytest_runtest_makereport hook turns any
 # integration-marked skip into a FAILURE (non-integration skips are unaffected). The unit job sets
 # FANOPS_REQUIRE_STUDIO=1: conftest's pytest_configure aborts collection if flask is absent (studio
-# tests use importorskip and would otherwise skip silently).
+# tests use importorskip and would otherwise skip silently). Cross-face hermetic proofs carry
+# @pytest.mark.slow — unit job deselects them; e2e job runs them in a separate step.
 
 on:
   push:
@@ -42,7 +43,7 @@ jobs:
       - name: Unit tests (with coverage report)
         env:
           FANOPS_REQUIRE_STUDIO: "1"   # #13: flask is installed above, so this stays green — but it now FAILS if a future extras regression drops flask (no silent studio-test skip)
-        run: python -m pytest -q -m "not integration" --cov=src/fanops --cov-report=term-missing   # report-only, NOT a gate (no --cov-fail-under)
+        run: python -m pytest -q -m "not integration and not slow" --cov=src/fanops --cov-report=term-missing   # report-only, NOT a gate (no --cov-fail-under)
       - name: Verify FANOPS_REQUIRE_E2E skip→fail hook (must fail, not skip)
         env:
           FANOPS_REQUIRE_E2E: "1"
@@ -97,3 +98,7 @@ jobs:
           FANOPS_REQUIRE_STUDIO: "1"
           FANOPS_WHISPER_MODEL: "tiny"
         run: python -m pytest -q -m "integration and not ci_hook_regression" -rs
+      - name: Slow cross-face proofs (hermetic — no real toolchain required)
+        env:
+          FANOPS_REQUIRE_STUDIO: "1"
+        run: python -m pytest -q -m slow
