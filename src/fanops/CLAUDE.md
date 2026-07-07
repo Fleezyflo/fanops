@@ -15,11 +15,12 @@
   (`post/__init__.py:19`). `FANOPS_LIVE=1` may be set ONLY by `studio/golive.go_live`. Never add a code path
   that flips it. (These gates are in run.py / post/__init__.py — NOT providers.py; providers.py only holds the
   lazy provider lambdas.)
-- **Bias actuators amplify-only, validation-frozen.** `p4_dim_bias`, `variant_amplify`, `timing_bias`,
-  `casting_bias` may only call `adjust.amplify` (p4/variant) or write an isolated prior file (timing/casting).
-  They must NEVER retire, state-set, or publish, and every one is default-OFF + gated by
-  `validation_gate.learning_validated(cfg)` (`validation_gate.py:22`). Adding a new learning signal = same shape:
-  off by default, frozen until validated, generation/schedule only.
+- **Bias actuators amplify-only, validation-frozen.** `p4_dim_bias`, `variant_amplify`, `timing_bias`
+  may only call `adjust.amplify` (p4/variant) or write an isolated prior file (timing). They must NEVER
+  retire, state-set, or publish, and every one is default-OFF + gated by
+  `validation_gate.learning_validated(cfg)` (`validation_gate.py:22`). (`casting_bias` was removed with the
+  P11 casting teardown.) Adding a new learning signal = same shape: off by default, frozen until validated,
+  generation/schedule only.
 - **Never mass-reformat** (no `black`/`ruff format`; compact one-liner style is deliberate — pyproject comments).
   Never run live `fanops` verbs speculatively (they hit Postiz/Meta Graph).
 
