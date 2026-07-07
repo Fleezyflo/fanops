@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-03 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + ruff + 10 Sonnet-agent exhaustive subsystem traces | Files scanned: 108/108 src/fanops/*.py (100% coverage, zero gaps, zero overlaps — verified programmatically) | Functions: 889 top-level + 178 methods across 113 classes | Token estimate: ~2400 -->
+<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.
@@ -29,16 +29,16 @@ argparse `type=` callbacks. Every cluster trace below cross-checked its cluster'
 
 ## The 10 clusters — zero-gap coverage
 
-Every one of the 108 modules under `src/fanops/` is assigned to exactly one cluster below
-(verified programmatically: `structural_index.json`'s 108 paths − cluster union = ∅, cluster
-union − 108 paths = ∅, zero paths assigned twice).
+Every one of the 109 modules under `src/fanops/` is assigned to exactly one cluster below
+(verified programmatically: `structural_index.json`'s 109 paths − cluster union = ∅, cluster
+union − 109 paths = ∅, zero paths assigned twice).
 
 | # | Cluster | Files | Trace doc | Lines |
 |---|---|---|---|---|
 | C1 | Core data model & persistence | models, ledger, ledger_wipe, ids, config, controlio, control, errors, log, stage_lock (10) | [C1_data_model.md](subsystem-traces/C1_data_model.md) | 386 |
 | C2 | Ingest & source acquisition | ingest, discover, adjust, bands, frames, audio_energy, vocals, intro_match, transcribe (9) | [C2_ingest.md](subsystem-traces/C2_ingest.md) | 180 |
 | C3 | Clip production & framing | clip, framing, keyframes, stitch_render, overlay, impact_cut, compose, produce (8) | [C3_clip_production_framing.md](subsystem-traces/C3_clip_production_framing.md) | 434 |
-| C4 | Moments, casting & personas | moments, casting, casting_bias, personas, persona_directives, persona_levers, persona_research, persona_store, accounts, batches (10) | [C4_moments_casting_personas.md](subsystem-traces/C4_moments_casting_personas.md) | 235 |
+| C4 | Moments, casting & personas | moments, casting, personas, persona_directives, persona_levers, persona_research, persona_store, accounts, batches (9) | [C4_moments_casting_personas.md](subsystem-traces/C4_moments_casting_personas.md) | 235 |
 | C5 | Caption, hooks & hashtags | caption, hashtags, fanops_hashtags, tagging, hookcheck, hookscore, text, prompts, llm (9) | [C5_caption_hooks_hashtags.md](subsystem-traces/C5_caption_hooks_hashtags.md) | 277 |
 | C6 | Crosspost, publish & post | crosspost, pipeline, router, responder, signals, agentstep, autopilot, postiz_lifecycle, post/{__init__,compress,dryrun,media,metrics,postiz,providers,run,zernio} (17) | [C6_crosspost_publish_post.md](subsystem-traces/C6_crosspost_publish_post.md) | 417 |
 | C7 | Metrics, reconcile & learning | reconcile, track, meta_graph, metrics_schedule, validation_gate, learn_doctor, moment_hook_learning, variant_learning, variant_amplify, variant_transfer, p4_dim_bias, timing_bias (12) | [C7_metrics_learning.md](subsystem-traces/C7_metrics_learning.md) | 203 |
@@ -46,20 +46,20 @@ union − 108 paths = ∅, zero paths assigned twice).
 | C9 | Studio backend (Flask routes + actions) | studio/{__init__,app,app_routes_golive,app_routes_live,app_routes_personas,app_routes_review,app_routes_run,app_routes_schedule,actions,actions_approve,actions_casting,actions_common,actions_run,actions_wipe,golive,personas,preview_media} (17) | [C9_studio_backend.md](subsystem-traces/C9_studio_backend.md) | 892 |
 | C10 | Studio views (read-only projections) | studio/{views,views_common,views_live,views_results,views_review} (5) | [C10_studio_views.md](subsystem-traces/C10_studio_views.md) | 302 |
 
-**108/108 modules covered. 3,646 total lines of per-function trace documentation.**
+**109/109 modules covered. 3,646 total lines of per-function trace documentation.**
 
 ## Data-flow spine (cluster → cluster)
 
 ```
 C2 ingest ──Source(catalogued)──> C1 ledger
 C2 ──transcript+signals──> C3 clip production ──rendered Clip/Render──> C1
-C4 moments/casting/personas ──decided Moment + AccountSelection/SelectionFact──> C3, C5, C6
+C4 moments/casting/personas ──owner-stamped Moment.affinities + affinity_admits──> C3, C5, C6
 C3 ──rendered Clip (fingerprinted mp4)──> C5 caption gate
 C5 ──captioned Clip (hashtags ≤4, per-account hook)──> C6 crosspost
 C6 ──Post(awaiting_approval)──> C1 ledger ──[operator approves via C9]──> Post(queued)
 C6 ──publish_due/publish_now──> real network POST (Postiz/Zernio) ──published──> C7
 C7 metrics/learning ──analyzed metrics, lift_score──> C1
-C7 ──validated bias artifacts (amplify-only)──> casting_reach_prior (C4), learned/transferred hooks (C5), hour_hint (C6)
+C7 ──validated bias artifacts (amplify-only)──> learned/transferred hooks (C5), hour_hint (C6), p4_dim amplify (C3)
 C8 ops/CLI/daemon ──drives the advance loop──> C2 through C7, end to end
 C9 Studio backend ──every browser-triggered mutation, one Ledger.transaction each──> C1
 C10 Studio views ──pure read projections of C1 (Ledger.load, no writes)──> Jinja templates via C9 routes
@@ -83,7 +83,7 @@ full anomaly ledger.
 | Dryrun→live boundary cannot be silently crossed | C6, C9 | **HOLDS**, via two independent gates: `_post_provider` returns `"dryrun"` unconditionally when `not cfg.is_live`; `get_poster()` separately refuses to construct a `DryRunPoster` when `cfg.is_live`. `FANOPS_LIVE=1` is settable only through `studio/golive.py:go_live`, itself behind accounts-validate → live-ready-channels → past-due-backlog-gate → explicit confirm. Postiz API key confirmed write-only (never rendered back to any template/response). |
 | Ledger wipe requires multi-step operator confirmation | C9 | **HOLDS with one caveat.** Four-gate order verified in code (typed word "REMOVE" → mandatory snapshot → snapshot-restorability check → `execute_wipe`'s own re-check), every terminal outcome logged. Caveat: `app_routes_live.py:29-34`'s `do_wipe_confirm` has no *server-side* check that `do_wipe_preview` ran first — "preview before confirm" is a UI convention, not a server-enforced invariant. The destructive-action gates themselves are unaffected. |
 | Re-ingest/reconcile can never drop an in-review or approved post | C1 | **HOLDS.** `ledger._delete_moment_cascade` checks `_PROTECTED_POST_STATES` (live states + awaiting_approval + queued + retired) at both the post-loop check and the clip-drop check. |
-| Bias/learning actuators are amplify-only, never touch retire/cascade/publish | C7 | **HOLDS, no violations found.** Every actuator (`variant_amplify`, `p4_dim_bias`, `timing_bias`, `casting_bias`) imports exclusively `adjust.amplify` or writes an isolated prior file — never a retire/state-setter/publish call. All independently kill-switched, all validation-frozen behind `learning_validated(cfg)` (`cutover.json["metrics_confirmed"]`, thresholds `_MIN_ATTRIBUTED_N=8`/`_MIN_VALUES=2`). |
+| Bias/learning actuators are amplify-only, never touch retire/cascade/publish | C7 | **HOLDS, no violations found.** Every live actuator (`variant_amplify`, `p4_dim_bias`, `timing_bias`) imports exclusively `adjust.amplify` or writes an isolated prior file — never a retire/state-setter/publish call. (`casting_bias` removed P11.) All independently kill-switched, all validation-frozen behind `learning_validated(cfg)` (`cutover.json["metrics_confirmed"]`, thresholds `_MIN_ATTRIBUTED_N=8`/`_MIN_VALUES=2`). |
 | `cutover.py`/`cutover_postiz.py` never touch the ledger | C8 | **HOLDS, grep-proven.** `grep -n "Ledger\|led\." cutover.py cutover_postiz.py` returns zero matches; sole write path is `cutover.py:38 write_json_atomic(cfg.cutover_path, ...)`. |
 | Upload ingestion path is traversal-safe and size-capped | C9 | **HOLDS, verified beyond the CLAUDE.md summary.** Extension validation, secure_filename + raw-and-sanitized traversal check, inbox-bound `is_relative_to` resolve (independent second check), atomic `.uploadpart`→`os.replace`, `MAX_CONTENT_LENGTH` cap, filename-collision discriminator, failed-probe cleanup — all confirmed at cited lines. |
 | Timezone resolution fails closed to UTC, never silently wrong-zone | C8 | **HOLDS.** `timeutil.py:38-39 _operator_zone` — confirmed exactly matching CLAUDE.md's claim. |
@@ -98,7 +98,7 @@ callbacks). Outcome:
 
 - **Confirmed false positives** (real callers the AST tool structurally cannot see — dispatch tables,
   default-parameter injection, Jinja-filter/argparse registration, and **aliased or lazy imports**):
-  - `prompts.py`'s 4 prompt-builders (`moment_pick_prompt`/`moment_hook_prompt`/`moment_casting_prompt`/`caption_prompt`) via `responder.py:_PROMPT[kind]` dict-dispatch (C5).
+  - `prompts.py`'s 3 live prompt-builders (`moment_pick_prompt`/`moment_hook_prompt`/`caption_prompt`) via `responder.py:_PROMPT[kind]` dict-dispatch (C5). (`moment_casting_prompt` removed P11.)
   - `compose.py`'s `_moviepy_prepend_render`/`_moviepy_render`/`_probe` — default-parameter values (C3).
   - `timeutil.to_local_display`/`to_local_input` — Jinja filter registration (C8); `cli._http_url` — argparse `type=` callback (C8).
   - `llm.claude_json` — called via `studio/actions.py:138-139` (`from fanops.llm import claude_json`) (C5).
