@@ -72,6 +72,7 @@ testpaths = ["tests"]
 markers = [
   "integration: hits real ffmpeg/whisper/Blotato sandbox (deselect with -m 'not integration')",
   "slow: cross-face proofs; deselect with -m 'not integration and not slow'",
+  "ci_hook_regression: proves FANOPS_REQUIRE_E2E skip→fail hook; excluded from integration CI run",
 ]
 # Global per-test timeout (pytest-timeout): a concurrency regression that self-deadlocks under the
 # ledger flock (e.g. a locking save() inside a transaction) FAILS FAST here instead of hanging CI

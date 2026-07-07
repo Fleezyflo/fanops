@@ -39,6 +39,12 @@ jobs:
         env:
           FANOPS_REQUIRE_STUDIO: "1"   # #13: flask is installed above, so this stays green — but it now FAILS if a future extras regression drops flask (no silent studio-test skip)
         run: python -m pytest -q -m "not integration" --cov=src/fanops --cov-report=term-missing   # report-only, NOT a gate (no --cov-fail-under)
+      - name: Verify FANOPS_REQUIRE_E2E skip→fail hook (must fail, not skip)
+        env:
+          FANOPS_REQUIRE_E2E: "1"
+        run: |
+          python -m pytest -q tests/test_ci_require_e2e.py
+          test $? -eq 1
 
   e2e:
     name: real-tooling E2E (must run, not skip)
@@ -78,4 +84,4 @@ jobs:
           FANOPS_REQUIRE_E2E: "1"
           FANOPS_REQUIRE_STUDIO: "1"
           FANOPS_WHISPER_MODEL: "tiny"
-        run: python -m pytest -q -m integration -rs
+        run: python -m pytest -q -m "integration and not ci_hook_regression" -rs
