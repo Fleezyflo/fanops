@@ -14,11 +14,20 @@ Contract (kept green by tests/test_lane_guard.py):
   * Infra errors (no git, missing/broken manifest) FAIL OPEN with a warning; a detected stray FAILS
     CLOSED (exit 1). Mirrors the repo norm: local hooks degrade, CI is the hard gate.
 
+Lane resolution order (first hit wins): explicit --lane  >  branch prefix (`<lane>/`)  >  (with
+--use-linear) the branch's MOL id looked up in Linear -> its label/project -> lane. The Linear step is
+what lets this engage on your real per-ticket branches (`cursor/mol-156-…`, `fix/mol-169-…`) that carry
+no lane prefix. It is BEST-EFFORT: no LINEAR_API_KEY / any network error -> lane stays unresolved and the
+guard SKIPs (fail-open); the cross-PR collision guard (scripts/pr_collision_guard.py) is the always-on
+protection that needs no Linear.
+
 Usage:
-  lane_guard.py [--branch REF] [--base REF] [--lane NAME] [--manifest PATH] [--changed a,b,c]
+  lane_guard.py [--branch REF] [--base REF] [--lane NAME] [--manifest PATH] [--changed a,b,c] [--use-linear]
 """
-import argparse, json, subprocess, sys
+import argparse, json, os, re, subprocess, sys, urllib.request
 from pathlib import Path
+
+_MOL_RE = re.compile(r"(?i)\bmol-(\d+)\b")
 
 
 def _repo_root() -> Path:
@@ -41,6 +50,57 @@ def lane_for_branch(branch: str, manifest: dict):
         for pref in cfg.get("branch_prefixes", []):
             if branch.startswith(pref): return name
     return None
+
+
+def mol_id_from_branch(branch: str):
+    """Extract the canonical Linear id (e.g. 'MOL-156') from any branch name, or None."""
+    if not branch: return None
+    m = _MOL_RE.search(branch)
+    return f"MOL-{m.group(1)}" if m else None
+
+
+def _lane_from_issue_fields(labels, project, manifest: dict):
+    """Pure: map an issue's label names + project name to a lane via each lane's `linear` block."""
+    labelset = set(labels or [])
+    for name, cfg in manifest.get("lanes", {}).items():
+        lin = cfg.get("linear", {})
+        if project and lin.get("project") and project == lin["project"]: return name
+        if labelset & set(lin.get("labels", [])): return name
+    return None
+
+
+def _parse_issue_payload(data: dict):
+    """Pure: pull (label names, project name) out of a Linear GraphQL `issues` response."""
+    nodes = (((data or {}).get("data") or {}).get("issues") or {}).get("nodes") or []
+    if not nodes: return [], None
+    n = nodes[0]
+    labels = [x.get("name") for x in ((n.get("labels") or {}).get("nodes") or []) if x.get("name")]
+    project = (n.get("project") or {}).get("name")
+    return labels, project
+
+
+def _fetch_linear_issue(mol_id: str, api_key: str, timeout: int = 10):
+    """Best-effort Linear GraphQL fetch → (labels, project). Filters by team key + issue number."""
+    key, num = mol_id.rsplit("-", 1)
+    query = ("query($num:Float!,$key:String!){ issues(filter:{ number:{ eq:$num }, "
+             "team:{ key:{ eq:$key } } }, first:1){ nodes{ project{ name } labels{ nodes{ name } } } } }")
+    body = json.dumps({"query": query, "variables": {"num": float(num), "key": key}}).encode()
+    req = urllib.request.Request("https://api.linear.app/graphql", data=body,
+        headers={"Content-Type": "application/json", "Authorization": api_key})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return _parse_issue_payload(json.loads(r.read().decode()))
+
+
+def lane_from_linear(branch: str, manifest: dict, api_key: str):
+    """Resolve a lane from the branch's MOL id via Linear. None on no id / no key / any failure."""
+    mol = mol_id_from_branch(branch)
+    if not mol or not api_key: return None
+    try:
+        labels, project = _fetch_linear_issue(mol, api_key)
+    except Exception as exc:
+        print(f"[lane-guard] Linear lookup for {mol} failed ({type(exc).__name__}) — lane unresolved.", file=sys.stderr)
+        return None
+    return _lane_from_issue_fields(labels, project, manifest)
 
 
 def _owners(owner) -> list:
@@ -92,6 +152,9 @@ def main(argv=None) -> int:
     ap.add_argument("--lane", default=None, help="force a lane, bypassing branch-prefix detection")
     ap.add_argument("--manifest", default=None, help="path to lanes.json (default: <repo>/.agents/lanes.json)")
     ap.add_argument("--changed", default=None, help="comma/space/newline list of changed paths (skip git)")
+    ap.add_argument("--use-linear", action="store_true",
+                    help="if no lane from --lane/branch-prefix, resolve via the branch's MOL id in Linear "
+                         "(needs LINEAR_API_KEY; best-effort, fail-open)")
     args = ap.parse_args(argv)
 
     # --- Infra layer: FAIL OPEN. A broken manifest or absent git must never brick a push. ---
@@ -103,8 +166,11 @@ def main(argv=None) -> int:
 
     branch = args.branch or _current_branch()
     lane = args.lane or lane_for_branch(branch, manifest)
+    if lane is None and args.use_linear:
+        lane = lane_from_linear(branch, manifest, os.environ.get("LINEAR_API_KEY", ""))
+        if lane: print(f"[lane-guard] resolved lane={lane} from Linear via {mol_id_from_branch(branch)}")
     if lane is None:
-        print(f"[lane-guard] SKIP: branch {branch!r} is not a lane branch — nothing to enforce.")
+        print(f"[lane-guard] SKIP: branch {branch!r} maps to no lane (no prefix / no Linear match) — nothing to enforce.")
         return 0
 
     if args.changed is not None:

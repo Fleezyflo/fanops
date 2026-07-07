@@ -104,3 +104,47 @@ def test_manifest_round_trips_as_json():
     # guard must never choke on the shipped file
     raw = (_ROOT / ".agents" / "lanes.json").read_text()
     json.loads(raw)
+
+
+def test_mol_id_from_branch_reads_real_branch_conventions():
+    # the point of the Linear path: engage on per-ticket branches that carry NO lane prefix
+    assert lane_guard.mol_id_from_branch("cursor/mol-156-doc-sync") == "MOL-156"
+    assert lane_guard.mol_id_from_branch("fix/mol-169-overlap-home") == "MOL-169"
+    assert lane_guard.mol_id_from_branch("bycreamco/mol-181-ci-01") == "MOL-181"
+    assert lane_guard.mol_id_from_branch("MOL-42-hotfix") == "MOL-42"
+    assert lane_guard.mol_id_from_branch("cursor/env-655a") is None
+    assert lane_guard.mol_id_from_branch("main") is None
+
+
+def test_lane_from_issue_fields_matches_project_then_labels():
+    m = _manifest()
+    # ci lane matches by PROJECT
+    assert lane_guard._lane_from_issue_fields([], "FanOps: CI Hardening (2026 Audit)", m) == "ci"
+    # source lanes match by their proposed PRD label
+    assert lane_guard._lane_from_issue_fields(["PRD:hook-viewer-pov"], None, m) == "picking"
+    assert lane_guard._lane_from_issue_fields(["PRD:dryrun-boundary"], None, m) == "publish"
+    assert lane_guard._lane_from_issue_fields(["PRD:degradation-honesty"], None, m) == "rfd"
+    # an unmapped label / no project -> no lane (guard will SKIP, fail-open)
+    assert lane_guard._lane_from_issue_fields(["Improvement"], None, m) is None
+    assert lane_guard._lane_from_issue_fields([], None, m) is None
+
+
+def test_parse_issue_payload_reads_linear_graphql_shape():
+    payload = {"data": {"issues": {"nodes": [{
+        "project": {"name": "FanOps: CI Hardening (2026 Audit)"},
+        "labels": {"nodes": [{"name": "Improvement"}, {"name": "PRD:dryrun-boundary"}]},
+    }]}}}
+    labels, project = lane_guard._parse_issue_payload(payload)
+    assert project == "FanOps: CI Hardening (2026 Audit)"
+    assert set(labels) == {"Improvement", "PRD:dryrun-boundary"}
+    # empty / malformed payloads degrade to ([], None) — never raise
+    assert lane_guard._parse_issue_payload({"data": {"issues": {"nodes": []}}}) == ([], None)
+    assert lane_guard._parse_issue_payload({}) == ([], None)
+
+
+def test_lane_from_linear_is_fail_open_without_key():
+    m = _manifest()
+    # no api key -> None (never raises, never blocks)
+    assert lane_guard.lane_from_linear("cursor/mol-190-x", m, "") is None
+    # no mol id in branch -> None
+    assert lane_guard.lane_from_linear("cursor/env-655a", m, "fake-key") is None
