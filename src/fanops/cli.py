@@ -610,6 +610,12 @@ def main(argv: list[str] | None = None) -> int:
     hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
     hash_sub.add_parser("refresh", help="rebuild 00_control/hashtags.json from live Graph reach (harvest->measure->rank; needs Meta creds, fail-open)")
     hash_sub.add_parser("discover", help="report fresh per-persona hashtags from live category top_media (needs Meta creds; never writes the menu)")
+    p_lever = sub.add_parser("lever", help="persona lever reference docs (generated from the live registry)")
+    lever_sub = p_lever.add_subparsers(dest="lever_cmd", required=True)
+    lever_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")
+    p_thresh = sub.add_parser("threshold", help="selection threshold reference docs (generated from live constants)")
+    thresh_sub = p_thresh.add_subparsers(dest="thresh_cmd", required=True)
+    thresh_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
     dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
@@ -801,6 +807,11 @@ def _dispatch(cfg: Config, args) -> int:
         if args.hashtags_cmd == "discover":
             from fanops.fanops_hashtags import cmd_hashtags_discover  # lazy: keeps it off the hot path
             return cmd_hashtags_discover(cfg)
+        return 2
+    if args.cmd in ("lever", "threshold"):
+        if getattr(args, "lever_cmd", None) == "docs" or getattr(args, "thresh_cmd", None) == "docs":
+            from fanops.lever_docs import cmd_lever_docs
+            return cmd_lever_docs(cfg)
         return 2
     if args.cmd == "doctor":   return cmd_doctor(cfg, args)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
