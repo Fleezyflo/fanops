@@ -1,4 +1,4 @@
-import json, os, shutil, subprocess
+import json, shutil, subprocess
 import pytest
 from pathlib import Path
 from fanops.config import Config
@@ -19,15 +19,8 @@ pytestmark = pytest.mark.integration
 _PINNED_WHISPER_MODEL = "tiny"
 
 def _skip_or_fail(reason: str) -> None:
-    """AUDIT H10: locally, a missing real toolchain is a clean SKIP (the real tool is genuinely
-    absent — a skip beats a cryptic failure). But the whole point of this "not just mocks" test is
-    lost if EVERY environment skips it, so a regression in the real ffmpeg/whisper/clip path would
-    never be caught. In CI we set FANOPS_REQUIRE_E2E=1, which turns these skips into FAILURES — the
-    CI image is responsible for installing the toolchain, and if the E2E didn't actually run, that
-    is a CI failure, not a silent pass."""
-    if os.getenv("FANOPS_REQUIRE_E2E") == "1":
-        pytest.fail(f"FANOPS_REQUIRE_E2E=1 but the real-tooling E2E could not run: {reason}")
-    pytest.skip(reason)
+    from tests._require_e2e import skip_or_fail
+    skip_or_fail(reason)
 
 def _have(*bins): return all(shutil.which(b) for b in bins)
 
