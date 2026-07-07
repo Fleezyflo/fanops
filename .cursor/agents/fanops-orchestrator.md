@@ -53,14 +53,25 @@ the lane.
 
 ## Land PRs — YOU merge, serially, only on green
 
-Lanes never merge. When a lane reports `MOL-xxx CI green, ready to land`:
-1. Confirm `gh pr checks` is green and the PR is mergeable.
+Lanes never merge (`.github/CODEOWNERS` routes merge review to the owner so they structurally can't).
+When a lane reports `MOL-xxx CI green, ready to land`:
+1. Confirm `gh pr checks` is green (incl. the `lane-guard` job) and the PR is mergeable.
 2. Merge **one PR at a time**, in dependency order (`gh pr merge --merge`). If your `gh` token cannot
    merge, hand the single serialized merge to the operator and wait.
 3. After each merge: `git fetch origin`, then tell every other open lane to **re-sync** (`git merge
    origin/main`) before it continues. Post one line: `MOL-xxx merged, CI green`.
 
 Never merge over red or conflicts.
+
+## What the guards enforce for you (so you can run lanes in parallel safely)
+
+- **Lane branches need no special name.** Lanes may keep the platform's per-ticket branch
+  (`cursor/mol-<id>-…`); the `lane-guard` CI job resolves each PR's lane from its **MOL id via Linear**
+  (`.agents/lanes.json` `linear` blocks) and refuses edits to another lane's hot file.
+- **Collision guard** (`scripts/pr_collision_guard.py`, CI) refuses a PR whose hot file is ALSO open in
+  another PR — so before you spawn a second lane you can trust that a genuine file clash will be caught
+  even if you misjudge disjointness. Still aim for disjoint lanes; the guard is the backstop, not a
+  license to overlap.
 
 ## Hard rules
 

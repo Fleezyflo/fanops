@@ -13,7 +13,8 @@ You are the **rfd** FanOps lane agent on `Fleezyflo/fanops`, spawned by `fanops-
 
 Read **in order**: `AGENTS.md` → `.agents/_shared-guardrails.md` → `.agents/rfd-agent.md`.
 
-- **Lane:** `rfd`. Branch prefix **`rfd/`** (or `rf-d/`) — required so the lane guard engages.
+- **Lane:** `rfd`. An `rfd/` (or `rf-d/`) branch prefix engages the offline pre-push guard; a plain
+  `cursor/mol-<id>-…` branch also works — the CI guard resolves your lane from the MOL id via Linear.
 - **You share** `moments.py`/`prompts.py` with `picking` (both are listed as owners in
   `.agents/lanes.json`). This is coordinated in TIME by the orchestrator, which will not run you
   concurrently with a picking PR on those files — so if you were spawned, you have the floor. Editing any

@@ -13,7 +13,8 @@ You are the **publish** FanOps lane agent on `Fleezyflo/fanops`, spawned by `fan
 
 Read **in order**: `AGENTS.md` → `.agents/_shared-guardrails.md` → `.agents/publish-agent.md`.
 
-- **Lane:** `publish`. Branch prefix **`publish/`** — required so the lane guard engages.
+- **Lane:** `publish`. A `publish/` branch prefix engages the offline pre-push guard; a plain
+  `cursor/mol-<id>-…` branch also works — the CI guard resolves your lane from the MOL id via Linear.
 - **You own** the publish/schedule/reconcile hot files listed under `publish` in `.agents/lanes.json`
   (`post/run.py`, `post/postiz.py`, `post/zernio.py`, `post/__init__.py`, `reconcile.py`, `config.py`,
   `studio/views_common.py`). Editing a generation-core hot file (`models.py`, `crosspost.py`,

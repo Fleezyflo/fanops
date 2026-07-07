@@ -13,7 +13,8 @@ You are the **picking** FanOps lane agent on `Fleezyflo/fanops`, spawned by `fan
 
 Read **in order**: `AGENTS.md` → `.agents/_shared-guardrails.md` → `.agents/picking-agent.md`.
 
-- **Lane:** `picking`. Branch prefix **`picking/`** (or `pick/`) — required so the lane guard engages.
+- **Lane:** `picking`. A `picking/` (or `pick/`) branch prefix engages the offline pre-push guard; a
+  plain `cursor/mol-<id>-…` branch also works — the CI guard resolves your lane from the MOL id via Linear.
 - **You own** the generation core hot files listed under `picking` in `.agents/lanes.json`
   (`models.py`, `crosspost.py`, `ledger.py`, `casting.py`, `clip.py`, and — shared with `rfd`,
   time-coordinated — `moments.py`, `prompts.py`). Editing another lane's hot file is refused by

@@ -16,7 +16,9 @@ Review`, no unmet blocker. Your lane→Linear mapping (label/project) lives in `
 
 ```bash
 git fetch origin
-# Branch MUST start with your lane prefix (publish/ picking/ rfd/ ci/) so the lane guard engages.
+# Branch name: your platform's per-ticket name is fine (cursor/mol-<id>-…, fix/mol-<id>-…) — CI resolves
+# your lane from the MOL id via Linear. A `<lane>/…` prefix (publish/ picking/ rfd/ ci/) additionally
+# engages the OFFLINE pre-push guard. Either way the MOL id MUST be in the branch or PR title.
 git worktree add ../fanops-<mol-id> -b <lane>/<mol-id>-<slug> origin/main
 cd ../fanops-<mol-id>
 python3 -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'   # each worktree gets its OWN venv
@@ -33,14 +35,21 @@ Land authority is centralized to avoid two lanes merging at once (a drift race).
 `./scripts/check.sh` green → push → open the PR to `main` → wait for CI green → **report to the
 orchestrator: `MOL-xxx CI green, ready to land`**. The orchestrator merges PRs one at a time in
 dependency order and, after each merge, tells the remaining lanes to re-sync. Do **not** run
-`gh pr merge` yourself.
+`gh pr merge` yourself — `.github/CODEOWNERS` routes merge review to the owner precisely so a lane can't
+self-merge (binding once branch protection requires code-owner review).
 
 ## Stay in your lane — mechanically enforced
 
-Edit only your lane's files. The **hot files** in `.agents/lanes.json` are owned per-lane; a branch that
-edits a hot file owned by another lane is **refused** by `scripts/lane_guard.py` at pre-push and by the
-`lane-guard` CI job. If you genuinely need a file another lane owns, STOP and tell the orchestrator — do
-not edit `lanes.json` to grab it unilaterally.
+Edit only your lane's files. The **hot files** in `.agents/lanes.json` are owned per-lane; enforcement is
+two-layer:
+- **`scripts/lane_guard.py`** (pre-push + `lane-guard` CI job) refuses a change that edits a hot file
+  owned by ANOTHER lane. Your lane is read from a `<lane>/` prefix or from your branch's MOL id via Linear.
+- **`scripts/pr_collision_guard.py`** (CI) refuses your PR if a hot file it touches is ALSO open in
+  another PR to `main`. So even two same-lane tickets can't silently race the same hot file — land one,
+  re-sync the other.
+
+If you genuinely need a file another lane owns, STOP and tell the orchestrator — do not edit `lanes.json`
+to grab it unilaterally.
 
 ## Drift is normal and SAFE — re-sync, never reset
 
