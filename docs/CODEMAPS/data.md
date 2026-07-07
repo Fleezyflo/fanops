@@ -27,28 +27,20 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
   guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log` + `stitch_plans`
   (M3 structural-hooks) + `batches` (Account-First: named, account-targeted ingest groups) + `renders`
-  (per-account Render foundation: the per-account shippable artifacts) + `selection_facts` (M4: durable
-  per-(moment, account) selection audit). Versioned:
-  `SCHEMA_VERSION=8` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
-  v2→v3 `_migrate_v3_created_at` backfills `created_at` — Source from file mtime, Post from a tz-aware
-  `scheduled_time` else the migration stamp; v3→v4 `_migrate_v4_metrics_series` back-fills ONE 'legacy'-tagged
-  metrics_series row per post that already carries metrics; v4→v5 the additive `{**raw, "batches": raw.get(
-  "batches", {})}` lambda injects the empty `batches` map; v5→v6 injects the empty `renders` map (per-account
-  Render foundation); v6→v7 injects the empty `selection_facts` map (M4 filing/naming/tracking); v7→v8 the
-  latest additive step; all idempotent, never raise, do NOT backfill
-  `published_at` — old ledgers load clean, proven on the real 51-post ledger); a NEWER on-disk version →
+  (per-account Render foundation: the per-account shippable artifacts). Versioned:
+  `SCHEMA_VERSION=11` + `_MIGRATIONS` hop-chain (v10→v11 drops retired `account_selections` +
+  `selection_facts` maps — MOL-154; prior hops inject `batches`/`renders`/etc.). A NEWER on-disk version →
   `_NewerSchema` refuses to load (exit 2) rather than silently drop fields. New OPTIONAL entity fields
   (Moment.{hook_strategy, intro_matches, affinities}, StitchPlan.*, Source.{created_at, batch_id}, Post.
-  {created_at, published_at, batch_id, variant_hook}, Batch.*, Render.*, SelectionFact.*) ride pydantic defaults. Inner dicts of
+  {created_at, published_at, batch_id, variant_hook}, Batch.*, Render.*) ride pydantic defaults. Inner dicts of
   variant_streaks/tag_log remain untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
 
 ```
-Source: catalogued -> transcribed -> signalled -> moments_requested -> moments_decided | error
+Source: catalogued -> transcribed -> signalled -> moments_requested -> picks_decided -> moments_decided | moments_empty | error
         | retired (M1 retire_source: cascade-drop descendants, file KEPT on disk) | discovered (M1 rebuild_catalog orphan — inert until confirmed)
-Moment: decided -> clipped | retired | error    (M2: router stamps .hook_strategy on a `decided` moment, renders nothing;
-        M6: .intro_matches holds the LLM-vision matcher's ranked intro pairings for an intro_tease-reserved moment)
+Moment: picked -> decided (hook pass) -> clipped | retired | error
 Clip:   rendered -> captions_requested -> captioned -> queued -> published -> analyzed
         | held | retired | error
         | stitch_draft (M3/M4: a stitched clip BORN here — absent from crosspost's `captioned` select AND

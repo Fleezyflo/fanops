@@ -127,7 +127,7 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 - **`due_offset(published_at, captured, now)`** — the single cadence offset newly due at `now`. Pure. Callers: `track.pull_metrics`.
 
 ### `validation_gate.py` — the correctness gate, pure reads only
-- **`learning_validated(cfg)`** — reads `cutover.json["metrics_confirmed"]`, `False` on any error. Callers: `caption._transferred_hooks`, `casting_bias.casting_reach_prior`, `digest.gate_state`, `doctor.doctor_report`, `p4_dim_bias.apply_p4_dim_bias`, `studio.views.golive_status`, `timing_bias.apply_timing_bias`, `track._auto_validate_metrics_shape`, `variant_amplify.apply_variant_amplify`, `p4_unlocked`.
+- **`learning_validated(cfg)`** — reads `cutover.json["metrics_confirmed"]`, `False` on any error. Callers: `caption._transferred_hooks`, `digest.gate_state`, `doctor.doctor_report`, `p4_dim_bias.apply_p4_dim_bias`, `studio.views.golive_status`, `timing_bias.apply_timing_bias`, `track._auto_validate_metrics_shape`, `variant_amplify.apply_variant_amplify`, `p4_unlocked`. (`casting_bias.casting_reach_prior` removed P11.)
 - **`enough_attributed_signal(led, dim, *, min_n=8, min_values=2)`** — ≥8 attributed posts in ≥2 distinct dim-values. Callers: `p4_unlocked`.
 - **`p4_unlocked(led, cfg, dim)`** — `learning_validated AND enough_attributed_signal`. Callers: `digest._reach_by_dim`, `p4_dim_bias.dim_bias_candidates`, `timing_bias.timing_bias_winner`.
 

@@ -433,13 +433,8 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 
 ### `actions_casting.py` — operator cast override
 
-- `cast_add(cfg, source_id, account, moment_id)` (lines 13-30) — one transaction; rejects a moment
-  that isn't a decided child of `source_id` (blocks a hand-crafted POST from minting a selection
-  for a foreign moment); unions the moment into the account's `AccountSelection`, stamping
-  `method=SelectionMethod.operator` (a human decision supersedes llm/migrated provenance).
-- `cast_remove(cfg, source_id, account, moment_id)` (lines 33-52) — removes one moment; if the
-  removal empties the selection, **drops the whole record** (`led.drop_account_selection`) rather
-  than leaving an illegal empty `operator` row.
+- `cast_add(cfg, source_id, account, moment_id)` (lines 13-29) — one transaction; appends `account` to `moment_id`'s `Moment.affinities` (operator co-own allowed). Idempotent re-add.
+- `cast_remove(cfg, source_id, account, moment_id)` (lines 32-47) — removes one owner; empty `affinities` → fan-to-all path.
 
 ### `actions_common.py` — shared mutation-layer primitives
 

@@ -254,7 +254,7 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `_GRID_TIMEOUT = 60.0` (keyframes.py:48) — bound on one `extract_frames_grid` ffmpeg spawn (whole window, single pass).
 
 **Functions**
-- `extract_keyframes(video_path, start, end, *, count=3, out_dir, width=480, timeout=_KF_TIMEOUT)` (keyframes.py:25) — returns up to `count` jpeg paths sampled evenly strictly inside `(start,end)`, one ffmpeg spawn PER frame; `[]` on non-positive window or ffmpeg absence/timeout (fail-open). **Shells ffmpeg** (N times). Called by `casting.request_moment_casting`, `intro_match._frames`, `intro_match._thumb`, `moments._source_frames`, `moments._window_frames`.
+- `extract_keyframes(...)` (keyframes.py:25) — Called by `intro_match._frames`, `intro_match._thumb`, `moments._source_frames`, `moments._window_frames`. (`casting.request_moment_casting` removed P11.)
 - `_window_cache_key(*, source_id, start, end, fps, width)` (keyframes.py:51) — pure: sha256 content-address over the inputs that determine the grid output. Called by `extract_frames_grid`.
 - `_cache_dir_for(cfg, *, source_id, window_hash)` (keyframes.py:61) — pure path builder: `<agent_io>/keyframes/<source_id>/<window_hash>/`. Called by `extract_frames_grid`.
 - `_existing_cached_frames(cache_dir)` (keyframes.py:67) — pure read: sorted jpg paths already on disk (cache-hit short-circuit), `[]` if none. Called by `extract_frames_grid`.

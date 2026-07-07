@@ -1,5 +1,12 @@
 # FanOps Lifecycle — Full-Picture Audit
 
+> **SUPERSEDED for routing/casting claims (2026-07-07):** the P11 casting teardown (MOL-152) and P15
+> single-owner rebuild removed the LLM casting stage, `AccountSelection`, `_stage_casting`, and
+> `casting_bias`. Current ground truth for ingest→crosspost routing is `casting.affinity_admits` +
+> `Moment.affinities` (see `subsystem-traces/C4_moments_casting_personas.md` Post-P15 snapshot). The
+> narrative below is a **2026-06-27 audit snapshot** — keep for historical findings, do not treat
+> casting/AccountSelection passages as live.
+
 > Maximum-depth read-only audit of the entire production pipeline (ingest → transcribe → asset-prep → moments → hooks → casting → render/caption → structural-hooks → culmination + the cross-cutting spine).
 > Method: 9 parallel per-cluster deep-reads → adversarial verify on every finding → cross-stage completeness critic → synthesis. Generated 2026-06-27.
 
