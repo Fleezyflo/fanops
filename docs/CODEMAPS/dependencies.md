@@ -57,18 +57,14 @@ Extras:
   `FANOPS_INTRO_TEASE` (M6: pair a clean clip with a third-party intro asset + compose-PREPEND a
   "wait for it" tease; needs the router on + `FANOPS_RESPONDER=llm` for the LLM-vision matcher gate).
 
-**Learning family (default OFF, fail-safe — except `FANOPS_CREATIVE_VARIATION`, default ON):**
-- `FANOPS_CREATIVE_VARIATION` (default ON; =0 restores the legacy single shared-clip path), `FANOPS_VARIANT_LEARNING` (+_MIN_POSTS/_MIN_GAP),
+**Learning family (default OFF, fail-safe):**
+- `FANOPS_VARIANT_LEARNING` (+_MIN_POSTS/_MIN_GAP),
   `FANOPS_VARIANT_UCB` (+_C), `FANOPS_VARIANT_AMPLIFY` (+_MIN_POSTS/_MIN_GAP/_MIN_STREAK),
   `FANOPS_VARIANT_TRANSFER` (+_MAX_HOOKS/_MIN_DONORS).
+- `FANOPS_CREATIVE_VARIATION` — **documentation-only**: Go-Live dual-writes `.env` (`golive.set_per_account_hooks`) but `config.py` has no getter; Studio hardcodes `creative_variation=False`. Per-account hook fork removed (one `m.hook` per moment).
 
-**Account-casting (Account-First, default ON — set =0 to restore fan-to-all):**
-- `FANOPS_ACCOUNT_CASTING` (gates the per-account moment-casting stage in `casting.py`: default ON — a cast
-  Moment fans ONLY to its `affinities` accounts; =0 leaves `affinities=[]` and is render/post byte-identical);
-  `FANOPS_CAST_PICK_BUDGET` (per-account winner cap, default 6, clamped ≥1). The Go-Live tab's **casting
-  toggle** (Studio, go_live-style) now writes `FANOPS_ACCOUNT_CASTING` to `.env` + `os.environ`, so the flag
-  is UI-reachable, not env-only. Batch targeting (`Batch.target_accounts`) is a SEPARATE, always-on hard
-  bound enforced at crosspost (no flag) — distinct from this casting narrow.
+**Account routing (default ON — set =0 to restore fan-to-all):**
+- `FANOPS_ACCOUNT_CASTING` — gates `casting.affinity_admits` (owner in `Moment.affinities`; `[]` fans all). Go-Live toggle writes `.env` + `os.environ`. **No** LLM casting stage (`request_moment_casting` removed P11). Batch targeting (`Batch.target_accounts`) is a separate always-on hard bound at crosspost.
 
 **Autonomous:**
 - `FANOPS_RESPONDER=llm` (set durably by `autopilot`).

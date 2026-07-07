@@ -33,19 +33,19 @@ Root ingest unit, one per ingested video file.
 - `error_reason`, `degraded_reason` (RF1 visible-degradation channel)
 - `meta: dict`, `created_at: Optional[str]` (ISO-8601 UTC ingest day)
 
-### `Moment` (models.py:154-194)
+### `Moment` (models.py:216-249)
 A candidate window within a Source. `parent_id` → Source.id.
 - `id`, `parent_id`, `state: MomentState = decided`, `content_token: str = ""`
 - `start: float`, `end: float`, `reason: str` (required)
 - `transcript_excerpt`, `hook: Optional[str]`, `hook_removed: Optional[str]` (stripped-hook audit trail)
 - `signal_score: float = 0.0`
-- `hooks_by_persona: dict[str,str]` (handle → per-account hook)
-- `hooks_by_persona_removed: dict[str,str]`
 - `hook_strategy: Optional[str]` (router annotation: text|clean_final|clean_awaiting_strategy:<key>|stitch:<format>)
 - `intro_matches: Optional[list[dict]]` (M6 intro-tease pairings)
-- `affinities: list[str]` — **legacy/non-durable** cast-tag; superseded by AccountSelection but still mirrored by the LLM ingest
+- `affinities: list[str]` — **the single-owner crosspost gate input** (P5 pick stamps owner; P13 operator `cast_add`/`cast_remove`; `[]` = persona-blind → fan-to-all)
+- `clip_profile`, `framing` (per-owner cut spec stamped at pick)
 - `hook_frames_unread: bool = False` (AGENT-9 responder-stamped, not model-authored)
 - `error_reason`
+- **Removed (P11/P12):** `hooks_by_persona`, durable `AccountSelection`/`SelectionFact` ledger maps (v10→v11 drop migration)
 
 ### `Clip` (models.py:196-215)
 A rendered video file. `parent_id` → Moment.id.
@@ -66,9 +66,9 @@ One per (clip, account, platform) posting surface. `parent_id` → Clip.id.
 - `scheduled_time: Optional[str]`, `submission_id: Optional[str]` (fanops_ prefix = idempotency token, not real backend id — see `is_real_submission_id`)
 - `public_url: Optional[str]`, `media_id: Optional[str]` (IG Graph media id), `product_type: Optional[str]`
 - `error_reason`, `metrics: dict` (latest snapshot), `metrics_series: list[dict]` (append-only time series, P3)
-- `render_id: Optional[str]` → Render.id
-- `variant_key`, `variant_hook` (read-only mirror of Render.hook_text)
+- `render_id: Optional[str]` → Render.id (optional; owner-moment hook burns on shared `Clip.path` at `render_moment`)
 - P1 attribution: `first_frame_kind`, `clip_profile`, `cut_seconds`, `variation_axis`
+- **Removed (P11):** `variant_key`, `variant_hook` on `Post` — hook text lives on `Moment.hook` / `Render.hook_text`; Studio view DTOs derive `variant_hook` for display only
 - Leg 3 attribution: `top_bias: Optional[bool]`, `publish_hour: Optional[int]`, `publish_dow: Optional[int]`
 - `batch_id: Optional[str]` (denormalized), `created_at`, `published_at`
 - **`@model_validator(mode="after") _enforce_published_url_invariant`** (R1 invariant): `published`/`analyzed`/`retired` states MUST carry a non-empty `public_url`, else raises `ValueError` at construction. `_POST_TERMINAL_REQUIRES_URL = frozenset({published, analyzed, retired})` module constant backs this.
@@ -84,20 +84,9 @@ Per-account shippable artifact, content-addressed child of Clip. `clip_id` → C
 - `hook_source: HookSource = none` (per_account|shared_fallback|none)
 - `cut_seconds: Optional[float]`
 
-### `SelectionFact` (models.py:370-391)
-Durable audit record of a casting decision. Content-addressed one-per-(moment, account): `child_id("selfact", moment_id, account)`.
-- `id`, `moment_id`, `account`, `method: SelectionMethod = heuristic`
-- `reason: str = ""`, `overlap: Optional[int]`, `signal: Optional[float]`, `rank: Optional[int]`
-- `source_id`, `batch_id`, `created_at`
+### `SelectionFact` / `AccountSelection` — REMOVED (P11/P12, MOL-152/154)
 
-### `AccountSelection` (models.py:401-440) — **frozen model**
-The durable, account-owned crosspost gate input, replacing `Moment.affinities`. One-per-(source, account): `child_id("acctsel", source_id, account)`. `model_config = ConfigDict(frozen=True)`.
-- `id`, `source_id`, `account`
-- `moment_ids: list[str]` (specific picks; [] iff a tag-method)
-- `method: SelectionMethod = fan_all_default` (the sum-type discriminator)
-- `batch_id`, `created_at`
-- **`@model_validator(mode="after") _enforce_sum_type`**: a CHOSEN method (llm/heuristic/operator/migrated) MUST have non-empty `moment_ids`; a TAG method (fan_all_default/pending) MUST have empty `moment_ids`. Raises `ValueError` otherwise.
-- **`model_copy` override**: re-validates through `model_validate` after copy, closing a pydantic-v2 gap where `model_copy(update=...)` skips validators even on a frozen model (would otherwise let a caller forge an illegal sum-type via copy).
+Durable casting audit (`SelectionFact`) and per-account selection rows (`AccountSelection`) were removed from `models.py` and dropped from the ledger at SCHEMA v11 (`ledger._migrate_v10_drop_selection_maps`). **Live routing:** `Moment.affinities` only, gated by `casting.affinity_admits`.
 
 ### `StitchPlan` (models.py:459-472)
 Operator-approval spine for structural-hook formats (impact-cut, intro-tease). `clip_id` → Clip.id.
@@ -123,7 +112,8 @@ A live IG post probed from the platform with NO clip lineage (ledger-rebuild "In
 
 ### Agent-step request/response contracts (models.py:531-657)
 Not persisted units — LLM I/O DTOs, all carry `request_id` for correlation:
-`MomentRequest`, `MomentPick` (with `@field_validator` `_finite` rejecting NaN/Infinity timestamps), `MomentDecision`, `MomentHookRequest`, `MomentHookDecision`, `MomentCastingRequest`, `MomentCastingDecision`, `CaptionRequest`, `CaptionItem`, `CaptionSet`, `IntroMatchItem`, `IntroMatchDecision`.
+`MomentRequest`, `MomentPick` (with `@field_validator` `_finite` rejecting NaN/Infinity timestamps), `MomentDecision`, `MomentHookRequest`, `MomentHookDecision`, `CaptionRequest`, `CaptionItem`, `CaptionSet`, `IntroMatchItem`, `IntroMatchDecision`.
+- **Removed gate DTOs (P11):** `MomentCastingRequest`, `MomentCastingDecision`
 
 ### Module-level constants
 - `LIFT_SCORE = "lift_score"` — the single canonical Post.metrics key every scorer ranks by.
@@ -134,32 +124,28 @@ Not persisted units — LLM I/O DTOs, all carry `request_id` for correlation:
 ```
 Source 1──* Moment 1──* Clip 1──* Post
                           Clip 1──* Render (per-account child)
-Source 1──* AccountSelection (per account, references Moment.ids)
-Moment  1──* SelectionFact (per account)
 Clip    1──* StitchPlan
 Batch   1──* Source, Post (denormalized batch_id)
 ImportedMedia — standalone, no lineage
+(Moment.affinities is the live cast/routing input — no AccountSelection map)
 ```
 
 ## Per-file breakdown
 
 ### `models.py` — purpose
-Defines every persisted unit (Source→Moment→Clip→Post + Render/SelectionFact/AccountSelection/StitchPlan/Batch/ImportedMedia), all state enums, and every LLM agent-step request/response contract. Pure data + validators; no I/O.
+Defines every persisted unit (Source→Moment→Clip→Post + Render/StitchPlan/Batch/ImportedMedia), all state enums, and every LLM agent-step request/response contract. Pure data + validators; no I/O.
 
-**Enums** (11 total): `SourceState`, `MomentState`, `ClipState`, `RenderState`, `PostState`, `Platform`, `Fmt`, `HookSource`, `SelectionMethod`, `StitchState`, `BatchState`.
+**Enums** (10 total): `SourceState`, `MomentState`, `ClipState`, `RenderState`, `PostState`, `Platform`, `Fmt`, `HookSource`, `StitchState`, `BatchState`. (`SelectionMethod` removed with AccountSelection.)
 
 **Functions:**
 - `is_real_submission_id(sid) -> bool` (models.py:307-316) — returns False if `sid` is falsy or starts with `"fanops_"`. Called by `track.pull_metrics` / status logic.
-- `normalize_account_handle(handle) -> str` (models.py:442-445) — strips whitespace and leading `@`. Pure. Called by ledger.py's selection dedup/add paths.
-- `account_selection_id(source_id, account) -> str` (models.py:448-451) — `child_id("acctsel", source_id, normalize_account_handle(account))`. Pure, deterministic. Called throughout ledger.py.
+- `normalize_account_handle(handle) -> str` (models.py:445) — strips whitespace and leading `@`. Pure. Called by ledger/casting validation paths.
 - `stitch_plan_id(clip_id, asset_ids, strategy_key, plan_params) -> str` (models.py:474-480) — content-addressed id. Pure.
 - `batch_id(name, created_at) -> str` (models.py:497-501) — `content_id("batch", name, created_at)`. Pure.
 
 **Model methods (validators):**
 - `Post._enforce_published_url_invariant` (models.py:279-299) — raises `ValueError` if state ∈ terminal-positive set and `public_url` empty.
 - `MomentPick._finite` (models.py:557-562) — raises `ValueError` on non-finite float.
-- `AccountSelection._enforce_sum_type` (models.py:424-431) — raises `ValueError` on sum-type violation.
-- `AccountSelection.model_copy` (models.py:433-440) — overrides base to re-validate via `model_validate(copied.model_dump())` after copy.
 
 Callers (from call_graph.json / grep): every pipeline module (`ledger.py`, `crosspost.py`, `casting.py`, `moments.py`, `clip.py`, `caption.py`, `intro_match.py`, `stitch_render.py`) plus the entire Studio surface imports these models directly. This is the most widely-imported module in the repo.
 
@@ -169,14 +155,10 @@ Single source of truth persistence layer: one JSON document holding id→unit ma
 **Migration/versioning:**
 - `_migrate_v3_created_at(raw) -> dict` (ledger.py:25-55) — v2→v3 pure-dict transform, backfills `created_at` on Source/Post rows. Never raises.
 - `_migrate_v4_metrics_series(raw) -> dict` (ledger.py:58-77) — v3→v4, back-fills one `"legacy"`-tagged metrics_series row. Never raises.
-- `_migrate_v8_account_selections(raw) -> dict` (ledger.py:128-152) — v8→v9, lifts legacy `Moment.affinities` into durable `AccountSelection` rows.
-- `_ACCTSEL_METHOD_RANK` (module dict, ledger.py:80-81) — priority ranking for dedup tie-breaking.
-- `_pick_account_selection(rows) -> dict` (ledger.py:84-90) — picks the surviving row among duplicate rows. Pure.
-- `_dedupe_account_selections(raw) -> dict` (ledger.py:93-113) — collapses duplicate rows to one canonical per (source_id, account).
-- `prune_orphan_account_selections(led) -> int` (ledger.py:116-125) — drops rows whose `source_id` is absent from `led.sources`. Module-level function, called externally.
-- `_migrate(raw, from_version) -> dict` (ledger.py:209-221) — hop-chains through `_MIGRATIONS` dict; raises `ControlFileError` on a chain gap.
-- `_MIGRATIONS` dict (ledger.py:182-191) — version N ← transform table, versions 1-10.
-- `SCHEMA_VERSION = 10` (ledger.py:155).
+- `_migrate_v8_account_selections(raw) -> dict` (ledger.py:148-175) — v8→v9 historical lift of `Moment.affinities` into `account_selections` (dropped again at v11).
+- `_migrate_v10_drop_selections(raw) -> dict` (ledger.py:178-181) — v10→v11, drops retired `account_selections` + `selection_facts` maps.
+- `_MIGRATIONS` dict (ledger.py:215-225) — version N ← transform table, versions 1-11.
+- `SCHEMA_VERSION = 11` (ledger.py:186).
 - `_SID_RE` (ledger.py:196) — regex `^src_[0-9a-f]{12}$`.
 
 **Locking:**
@@ -362,12 +344,13 @@ error
 open (this codebase version only ever sets open) — closed/error exist, no writer found
 ```
 
-### AccountSelection.method sum-type
-Not linear — a validated discriminator: CHOSEN methods (llm/heuristic/operator/migrated) require non-empty moment_ids; TAG methods (fan_all_default/pending) require empty moment_ids. Enforced at every construction path including model_copy.
+### AccountSelection.method sum-type — REMOVED (P12)
+
+Historical note only: sum-type enforcement lived on the deleted `AccountSelection` model; live routing uses `Moment.affinities` + `affinity_admits`.
 
 ## config.py: env vars and control-file fields (full enumeration)
 
-~55 environment variables covering: publish backend selection (`FANOPS_POSTER`, `FANOPS_LIVE`), Postiz/Zernio/Meta Graph credentials, hashtag trends, LLM responder mode + model tiering, clip profile/framing/visual-start/smart-framing toggles, ASR model/language/vocal-isolation, subtitle burning, creative-variation + account-casting toggles, structural-hooks flags (hook_router/impact_cut/intro_tease), the full variant-learning family (v2 best-hooks, v3 amplify+UCB1+transfer, all with min-posts/min-gap/min-streak thresholds), P4 dim-bias/timing-bias/casting-bias (all validation-frozen), GC retention, upload size cap, operator timezone, realistic cadence, publish lead time, Zernio upload cap, Postiz rate throttle, concurrent-sources toggle+worker count.
+~55 environment variables covering: publish backend selection (`FANOPS_POSTER`, `FANOPS_LIVE`), Postiz/Zernio/Meta Graph credentials, hashtag trends, LLM responder mode + model tiering, clip profile/framing/visual-start/smart-framing toggles, ASR model/language/vocal-isolation, subtitle burning, creative-variation + account-casting toggles, structural-hooks flags (hook_router/impact_cut/intro_tease), the full variant-learning family (v2 best-hooks, v3 amplify+UCB1+transfer, all with min-posts/min-gap/min-streak thresholds), P4 dim-bias/timing-bias (all validation-frozen; casting-bias removed P11), GC retention, upload size cap, operator timezone, realistic cadence, publish lead time, Zernio upload cap, Postiz rate throttle, concurrent-sources toggle+worker count.
 
 Two control-file fields read directly by config.py: `tuning.json` (offbrand regex overrides + lift_weights) and `accounts.json` (`account_window` reads `daily_window` per handle). Every other control file's path is defined here but read by other modules.
 
