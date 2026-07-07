@@ -309,5 +309,6 @@ def persona_facts(cfg: Config, p) -> dict:
         get_logger(cfg)("personas", getattr(p, "handle", "-"), "store_load_error", err=str(exc)[:160])
         store = None
     lead = vet_hashtags([], Platform.instagram,
-                        corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store)
+                        corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store,
+                        genre=((getattr(p, "intake", None) or {}).get("genre") or None))
     return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead}
