@@ -1,14 +1,26 @@
 version: 2
-# Roadmap Phase 4b — scoped NARROWLY on purpose. yt-dlp moves fast and has had security-relevant
-# releases, so it earns automated update PRs; the other deps (pydantic / requests / python-dotenv /
-# flask) are stable enough that broad Dependabot noise isn't worth it on a single-operator tool.
+# Roadmap Phase 4b — scoped NARROWLY on purpose (single-operator noise budget).
+# Automated PRs: GitHub Actions SHAs (paired with CI-10 pin policy), yt-dlp (fast-moving,
+# security-relevant), and critical dev/runtime deps we actually exercise in CI (pytest*, ruff,
+# flask, pydantic). Everything else (requests, python-dotenv, transitive churn, etc.) stays
+# manual — broad Dependabot volume isn't worth triage on a localhost tool.
 # SECURITY.md / CODEOWNERS were deliberately NOT added (enterprise checkboxes for a localhost tool).
 updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
     allow:
       - dependency-name: "yt-dlp"
+      - dependency-name: "pytest*"
+      - dependency-name: "ruff"
+      - dependency-name: "flask"
+      - dependency-name: "pydantic"
     commit-message:
       prefix: "chore"
