@@ -1,0 +1,67 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.34.2
+    method: GET
+    uri: https://graph.facebook.com/v21.0/debug_token?access_token=DUMMY&input_token=DUMMY
+  response:
+    body:
+      string: '{"data":{"app_id":"1961373921176595","type":"USER","application":"FanOps
+        Publisher","data_access_expires_at":1789811236,"expires_at":1787219236,"is_valid":true,"issued_at":1781856610,"scopes":["instagram_basic","instagram_manage_comments","instagram_manage_insights","instagram_content_publish","instagram_manage_messages","instagram_manage_contents","instagram_manage_engagement","public_profile"],"granular_scopes":[{"scope":"instagram_basic"},{"scope":"instagram_manage_comments"},{"scope":"instagram_manage_insights"},{"scope":"instagram_content_publish"},{"scope":"instagram_manage_messages"},{"scope":"instagram_manage_contents"},{"scope":"instagram_manage_engagement"}],"user_id":"122105323563359438"}}'
+    headers:
+      Access-Control-Allow-Origin:
+      - '*'
+      Alt-Svc:
+      - h3=":443"; ma=86400
+      Cache-Control:
+      - private, no-cache, no-store, must-revalidate
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json; charset=UTF-8
+      Date:
+      - Tue, 07 Jul 2026 15:28:08 GMT
+      ETag:
+      - '"0d289e52100fa24fdba30ddfa04cf03ccf70b461"'
+      Expires:
+      - Sat, 01 Jan 2000 00:00:00 GMT
+      Pragma:
+      - no-cache
+      Strict-Transport-Security:
+      - max-age=15552000; preload
+      Vary:
+      - Origin
+      - Accept-Encoding
+      X-FB-Connection-Quality:
+      - EXCELLENT; q=0.9, rtt=24, rtx=1, c=10, mss=1380, tbw=3472, tp=-1, tpl=-1,
+        uplat=393, ullat=0
+      X-FB-Debug:
+      - dgDrxhimOE7ynwkqW79WH9pcx5L0wyW+F5mgKy6ChqMytdlo9ZUc3YUtdkzKNewbf3itgExQrItptZUMODpEBQ==
+      content-length:
+      - '709'
+      cross-origin-resource-policy:
+      - cross-origin
+      facebook-api-version:
+      - v25.0
+      x-ad-api-version-warning:
+      - The call has been auto-upgraded to v25.0 as v21.0 has been deprecated.
+      x-app-usage:
+      - '{"call_count":2,"total_cputime":0,"total_time":0}'
+      x-fb-request-id:
+      - AYwBcAZm1qoz7RT6DG-SOmq
+      x-fb-rev:
+      - '1042742319'
+      x-fb-trace-id:
+      - GMLjjc9acIW
+    status:
+      code: 200
+      message: OK
+version: 1
