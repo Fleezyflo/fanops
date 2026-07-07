@@ -16,12 +16,19 @@ One ticket at a time. Own worktree off fresh `origin/main`, own venv, TDD-first,
 before merge. Never edit outside your lane files. Never push to main. Never `git reset --hard`.
 Commit only staged files. Post `MOL-xxx merged, CI green` after each merge.
 
+**The gate model (current — do not rely on any push-time test gate):** git hooks are POLICY ONLY
+(pre-commit = secret scan + staged ruff; pre-push = block main/force-push). They run NO tests. Before
+each commit run `./scripts/check.sh` (scoped ruff + pytest on changed modules). CI (`unit` + `e2e`) is
+the authoritative gate on the PR — both are required to merge and are enforced server-side, so you
+cannot merge red, cannot push to main, and cannot push a secret regardless of local state. There is no
+`FANOPS_SKIP_PREPUSH`.
+
 ```bash
 git fetch origin
 git worktree add ../fanops-<mol-id> -b <branch> origin/main
 cd ../fanops-<mol-id>
 python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'
-git config --local core.hooksPath .githooks
+git config --local core.hooksPath .githooks   # wire POLICY hooks (no tests); check.sh also self-wires this
 ```
 
 Skip tickets already merged to `origin/main`. Verify every anchor in code before editing.

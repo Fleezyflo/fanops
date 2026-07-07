@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "data_source": {
+    "Tantivy": {
+      "path": "/Users/molhamhomsi/Moh Flow Fanops/.codanna/index/tantivy",
+      "doc_count": 43719,
+      "timestamp": 1783268569
+    }
+  },
+  "symbol_count": 20975,
+  "file_count": 379,
+  "last_modified": 1783268569,
+  "indexed_paths": [
+    "/Users/molhamhomsi/Moh Flow Fanops/src",
+    "/Users/molhamhomsi/Moh Flow Fanops/tests",
+    "/Users/molhamhomsi/Moh Flow Fanops/.claude/workflows"
+  ]
+}

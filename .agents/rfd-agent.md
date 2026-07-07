@@ -26,4 +26,5 @@ Stop when MOL-169 is merged green. Never touch a picking or publish ticket.
 Each ticket merged on green CI to its Acceptance block. One text-screen chokepoint at the
 responder (MOL-166); no request_id/source_id echo (MOL-167); caption platform request-authoritative
 (MOL-168); Account.handle canonical at the write boundary (MOL-164); overlap owns one home (MOL-169).
-Per-ticket TDD, ruff + scoped pytest green, PR merged.
+Per-ticket TDD; run `./scripts/check.sh` (scoped ruff + tests) locally before each commit; PR merged
+on green CI (the authoritative gate — `unit` + `e2e`). Git hooks run NO tests; `check.sh` + CI ARE the gate.

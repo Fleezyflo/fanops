@@ -1,0 +1,9 @@
+{
+  "model_name": "AllMiniLML6V2",
+  "backend": "local",
+  "dimension": 384,
+  "embedding_count": 707,
+  "created_at": 1783333425,
+  "updated_at": 1783333425,
+  "version": 1
+}

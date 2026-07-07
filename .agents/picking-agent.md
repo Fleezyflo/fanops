@@ -3,6 +3,9 @@
 You are the **picking-rebuild agent**. Read `AGENTS.md` (repo root) first — the shared
 how-you-work contract (worktrees, TDD, no main-push, parallelism cap). This file is WHAT you do.
 
+**Gate:** git hooks run NO tests (policy only). Before each commit run `./scripts/check.sh` (scoped ruff
++ tests); merge on green CI (`unit` + `e2e`, both required, server-side). No `FANOPS_SKIP_PREPUSH`.
+
 ## Your tickets ONLY, in order
 
 MOL-145, MOL-158, MOL-159, MOL-146, MOL-147, MOL-148, MOL-149, MOL-150, MOL-151, MOL-152, MOL-154, MOL-153, MOL-155, MOL-174, MOL-175, MOL-162, MOL-163, MOL-156

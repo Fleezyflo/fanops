@@ -1,0 +1,599 @@
+{
+  "index_settings": {
+    "docstore_compression": "lz4",
+    "docstore_blocksize": 16384
+  },
+  "segments": [
+    {
+      "segment_id": "e612b486-852f-4f9b-975f-41d247579f09",
+      "max_doc": 11249,
+      "deletes": {
+        "num_deleted_docs": 1356,
+        "opstamp": 51742
+      }
+    },
+    {
+      "segment_id": "cc7c6bc8-f4b2-4773-a85a-4c4c29731de6",
+      "max_doc": 10412,
+      "deletes": {
+        "num_deleted_docs": 3210,
+        "opstamp": 48098
+      }
+    },
+    {
+      "segment_id": "fe7b2ee6-1713-44c3-a13a-ed7643aa9f3e",
+      "max_doc": 7849,
+      "deletes": {
+        "num_deleted_docs": 3363,
+        "opstamp": 51643
+      }
+    },
+    {
+      "segment_id": "b0abc919-4dfe-49b0-9a23-e9a030826af4",
+      "max_doc": 3176,
+      "deletes": {
+        "num_deleted_docs": 1133,
+        "opstamp": 51742
+      }
+    },
+    {
+      "segment_id": "2f2606f2-a7ef-44e9-a475-78dd8c710976",
+      "max_doc": 2798,
+      "deletes": {
+        "num_deleted_docs": 60,
+        "opstamp": 51643
+      }
+    },
+    {
+      "segment_id": "2478e3b3-1118-4d43-bf07-e674c1125fc8",
+      "max_doc": 2461,
+      "deletes": {
+        "num_deleted_docs": 163,
+        "opstamp": 50197
+      }
+    },
+    {
+      "segment_id": "f95d3b57-20e5-40ed-b6a4-ee85e894626a",
+      "max_doc": 2150,
+      "deletes": {
+        "num_deleted_docs": 923,
+        "opstamp": 51426
+      }
+    },
+    {
+      "segment_id": "0cf8c02c-bab0-41b6-82c1-938b5aa77408",
+      "max_doc": 1337,
+      "deletes": {
+        "num_deleted_docs": 224,
+        "opstamp": 49986
+      }
+    },
+    {
+      "segment_id": "4a800993-b674-49ea-a4b4-f935d108c8ab",
+      "max_doc": 1184,
+      "deletes": {
+        "num_deleted_docs": 43,
+        "opstamp": 49885
+      }
+    },
+    {
+      "segment_id": "f10be7b7-24fa-4364-a5ff-cd71d290707b",
+      "max_doc": 664,
+      "deletes": {
+        "num_deleted_docs": 346,
+        "opstamp": 51331
+      }
+    },
+    {
+      "segment_id": "bdb3c936-22e4-47fc-98e2-f243ae0d6a41",
+      "max_doc": 320,
+      "deletes": {
+        "num_deleted_docs": 2,
+        "opstamp": 43784
+      }
+    },
+    {
+      "segment_id": "947c078d-1ce0-452b-ae95-b7affa209502",
+      "max_doc": 115,
+      "deletes": {
+        "num_deleted_docs": 6,
+        "opstamp": 51742
+      }
+    },
+    {
+      "segment_id": "8fe22ea5-8e39-4298-bce3-7c8f49e42eec",
+      "max_doc": 32,
+      "deletes": {
+        "num_deleted_docs": 28,
+        "opstamp": 43950
+      }
+    },
+    {
+      "segment_id": "94cbaf71-fec4-4e0c-a8c4-8c632ee0bf04",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "34c95153-0e1b-4d23-82ab-e7918dcbe227",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "184857b0-7fbe-4c70-8020-71b3b8c1f71d",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "acded9ef-6b5a-4a5d-8a04-785705c4bee8",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "78b48bce-0975-42ee-bb6b-4b1a41a7c412",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "1e2ad11e-f8b4-479f-b58d-3650f1b04c8c",
+      "max_doc": 1,
+      "deletes": null
+    }
+  ],
+  "schema": [
+    {
+      "name": "doc_type",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": true
+      }
+    },
+    {
+      "name": "symbol_id",
+      "type": "u64",
+      "options": {
+        "indexed": true,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "file_path",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "line_number",
+      "type": "u64",
+      "options": {
+        "indexed": true,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "column",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "end_line",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "end_column",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "name_text",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "ngram"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "doc_comment",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "signature",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "context",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "module_path",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "kind",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "visibility",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "scope_context",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "language",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": true
+      }
+    },
+    {
+      "name": "from_symbol_id",
+      "type": "u64",
+      "options": {
+        "indexed": true,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "to_symbol_id",
+      "type": "u64",
+      "options": {
+        "indexed": true,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "relation_kind",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": true
+      }
+    },
+    {
+      "name": "relation_weight",
+      "type": "f64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "relation_line",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "relation_column",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "relation_context",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "relation_receiver",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "relation_static_call",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "file_id",
+      "type": "u64",
+      "options": {
+        "indexed": true,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "file_hash",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "file_timestamp",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "file_mtime",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "meta_key",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": true
+      }
+    },
+    {
+      "name": "meta_value",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "cluster_id",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "vector_id",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "has_vector",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "import_file_id",
+      "type": "u64",
+      "options": {
+        "indexed": true,
+        "fieldnorms": false,
+        "fast": true,
+        "stored": true
+      }
+    },
+    {
+      "name": "import_path",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "import_alias",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "basic",
+          "fieldnorms": true,
+          "tokenizer": "raw"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "import_is_glob",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "import_is_type_only",
+      "type": "u64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    }
+  ],
+  "opstamp": 51742
+}
