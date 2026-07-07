@@ -1,6 +1,6 @@
 # Fresh-Ingestion End-to-End Trace — one video → posts across the 5 accounts
 
-> Code-verified against `origin/main` @ `93da2f7` on 2026-07-07. Method: read `pipeline.advance()`
+> Code-verified against `origin/main` @ `b4b632d` on 2026-07-07. Method: read `pipeline.advance()`
 > + every stage fn, two parallel deep-trace agents (fan-out arithmetic + external-service map),
 > then re-verified the load-bearing claims (casting teardown, `affinity_admits`, R2 path) against
 > the live code. This is the operator's field guide for a fresh live test: drop a video, watch each
@@ -70,7 +70,7 @@ All 5 accounts are single-platform → **exactly 5 surfaces**, all **9:16**:
 
 | Multiplier | Value | Where |
 |---|---|---|
-| moments per video | **M — uncapped, model-driven** (no `_target_pick_count`; validity + within-owner overlap dedup only) | `moments.py:4-5,301`, `validate_pick` `:159`, `_drop_overlaps` `:145` |
+| moments per video | **M — uncapped, model-driven** (`moments.py` enforces no pick-count quota; `prompts._target_pick_count` is an optional prompt CEILING only, not a pipeline gate) | `moments.py:4-5,301`, `validate_pick` `:159`, `_drop_overlaps` `:145`, `prompts._target_pick_count` `:61` |
 | clips per moment (aspects) | **×1** — IG and TikTok both map to `Fmt.r9x16` | `pipeline.py:36` `_aspects_for`, `models.py:156-158` `PLATFORM_ASPECT` |
 | surfaces total | **5** | `accounts.py:268`; accounts.json |
 | posts per clip — casting ON (default) | **×1** — owner subset (single-owner moment → its owner surface) | `crosspost.py:166`, `casting.affinity_admits` `:22` |

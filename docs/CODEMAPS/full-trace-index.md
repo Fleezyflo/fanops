@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + manual semantic sync (P11/P15 casting teardown) | Files scanned: 109/109 src/fanops/*.py @ 93da2f7 | Token estimate: ~2400 -->
+<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + manual semantic sync (P11/P15 casting teardown) | Files scanned: 109/109 src/fanops/*.py @ b4b632d | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.
@@ -16,7 +16,7 @@ this file is the raw coverage ledger and anomaly index.
 | `structural_index.json` | Every module's imports/functions/classes/methods/module-level calls/line numbers, AST-parsed | `.reports/` |
 | `import_graph.json` | Per-module `imports_from` / `imported_by`, resolved incl. relative imports | `.reports/` |
 | `call_graph.json` | Name-based reverse call graph: ~1,146 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
-| `unreferenced_candidates.json` | 55 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
+| `unreferenced_candidates.json` | 134 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
 | `ruff_report.json` | Full-repo `ruff check` — **0 findings against src/** (2 historical findings were in the analysis scratch script itself, fixed) | `.reports/` |
 | `ast_extract.py` / `build_graphs.py` | The two extractor scripts themselves (stdlib-only, re-runnable) | `.reports/` |
 
@@ -89,9 +89,9 @@ full anomaly ledger.
 | Timezone resolution fails closed to UTC, never silently wrong-zone | C8 | **HOLDS.** `timeutil.py:38-39 _operator_zone` — confirmed exactly matching CLAUDE.md's claim. |
 | Studio views layer is pure-read (no ledger/control-file mutation) | C10 | **HOLDS, with two narrow documented exceptions**, neither a layering violation: (1) `views_common.postiz_health_for_banner` performs one live network GET behind a 30s module-level cache; (2) `views_results.lineage_stats` mutates its own transient argument objects in place (never ledger/control-file state) — this second one **does violate the project's own immutability coding-style rule**, flagged as a follow-up, not a safety issue. |
 
-## Dead-code candidates (55 raw leads → triaged)
+## Dead-code candidates (134 raw leads → triaged)
 
-`unreferenced_candidates.json` flags 55 top-level functions with zero in-repo callers by
+`unreferenced_candidates.json` flags 134 top-level functions with zero in-repo callers by
 name-based matching. Each cluster triaged its own candidates by hand against actual usage
 (grep for dict-dispatch, decorator registration, Jinja filters, template macros, argparse
 callbacks). Outcome:

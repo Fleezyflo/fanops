@@ -17,7 +17,7 @@ The persona is the operator's control surface over per-account output. Each **le
 | `voice` | all | freeform register base | `_base_voice()` → hook/caption compilers |
 | `clip_profile` (catalog) | cut (global) | Go-Live default band — NOT a per-persona pin | `config.clip_profile` / `bands.band_for` |
 
-**Retired (M3/MOL-170):** per-persona `clip_profile`/`framing` pins, `energy`, `tag_lean`, freeform `*_directive` persona-field overrides, and the LLM **casting** stage (`casting_directive` compiler removed P11). `casting_directive()` as a **function** may still appear in historical docs — the live pick path uses `selection_directive` / per-persona pick lenses.
+**Retired (M3/MOL-170 / P11):** per-persona `clip_profile`/`framing` pins, `energy`, `tag_lean`, freeform `*_directive` persona-field overrides, and the LLM **casting** stage (removed P11/MOL-152). `casting_directive()` the **compiler function** still exists for operator `compose_breakdown` preview only — it no longer feeds a casting gate. The live pick path uses `_pick_personas` / `selection_scope` (`_SCOPE_CLAUSE`) + `content_focus` (`_FOCUS_CLAUSE`).
 
 ## The firewall
 
