@@ -138,13 +138,22 @@ def _picks_overlap(p: MomentPick, q: MomentPick) -> bool:
                 return True
     return False
 
+def _pick_owner(p: MomentPick) -> str | None:
+    """The pick's single owner handle — matches ingest's `(pick.personas or [None])[0]`. None = persona-blind."""
+    return (p.personas or [None])[0]
+
 def _drop_overlaps(picks: list[MomentPick]) -> list[MomentPick]:
-    """Keep start-ordered picks, dropping any whose segment set overlaps an already-kept pick by more than
-    _MAX_OVERLAP_FRAC of the shorter span. Keeps the FIRST of an overlapping pair."""
+    """WITHIN-OWNER near-duplicate filter (MOL-169): keep start-ordered picks, dropping any whose segment
+    set overlaps an already-kept pick OF THE SAME OWNER by more than _MAX_OVERLAP_FRAC of the shorter span.
+    Two DIFFERENT owners overlapping in time are two legitimate moments (single-owner rebuild) — never
+    cross-owner dropped. Keeps the FIRST of a same-owner overlapping pair; persona-blind picks share the
+    None owner (byte-identical to the pre-owner dedup)."""
+    kept_by_owner: dict[str | None, list[MomentPick]] = {}
     out: list[MomentPick] = []
     for p in sorted(picks, key=lambda x: (x.start, x.end)):
-        if not any(_picks_overlap(p, q) for q in out):
-            out.append(p)
+        peers = kept_by_owner.setdefault(_pick_owner(p), [])
+        if not any(_picks_overlap(p, q) for q in peers):
+            peers.append(p); out.append(p)
     return out
 
 def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
