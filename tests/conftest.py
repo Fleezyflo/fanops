@@ -62,17 +62,18 @@ def pytest_configure(config):
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """CI-01: FANOPS_REQUIRE_E2E=1 turns any @pytest.mark.integration skip into a failure."""
+    from tests._require_e2e import require_e2e, integration_skip_failure_longrepr, skip_reason_from_report
     outcome = yield
     rep = outcome.get_result()
-    if os.getenv("FANOPS_REQUIRE_E2E") != "1" or not rep.skipped:
+    if not require_e2e():
         return
-    if call.when not in ("setup", "call"):
+    if "integration" not in item.keywords:
         return
-    if item.get_closest_marker("integration") is None:
+    if not rep.skipped or getattr(rep, "wasxfail", None):
         return
+    reason = skip_reason_from_report(rep)
     rep.outcome = "failed"
-    rep.longrepr = f"FANOPS_REQUIRE_E2E=1: integration test skipped: {rep.longreprtext}"
+    rep.longrepr = integration_skip_failure_longrepr(call.when, reason)
 
 
 @pytest.fixture(autouse=True)

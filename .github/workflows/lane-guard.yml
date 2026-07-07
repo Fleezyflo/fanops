@@ -1,0 +1,41 @@
+name: lane-guard
+
+# Mechanical enforcement of the AGENTS.md parallelism rules for multi-agent work. Two checks:
+#  1. Lane hot-file ownership — a branch that "belongs" to a lane may not edit a hot file owned by a
+#     DIFFERENT lane (.agents/lanes.json). Lane is resolved from the `<lane>/` prefix OR, for the real
+#     per-ticket branches (cursor/mol-*, fix/mol-*), from the branch's MOL id looked up in Linear
+#     (best-effort; skips silently without LINEAR_API_KEY).
+#  2. Cross-open-PR collision — fails if a hot file this PR touches is ALSO being modified by another
+#     OPEN PR to main (the real merge-drift risk in the one-agent-per-ticket flow). Needs no lane/Linear.
+# Both use only the Python stdlib + git/gh, so there is no dependency install — the job is seconds. A PR
+# that touches no hot files (docs/tooling/tests) passes trivially.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  lane-guard:
+    name: lane file-ownership + cross-PR collision
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so the base-vs-head diff resolves
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Lane hot-file ownership (branch-prefix or MOL-id -> Linear label; best-effort)
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: python scripts/lane_guard.py --branch "$HEAD_REF" --base "$BASE_SHA" --use-linear
+      - name: Cross-open-PR hot-file collision guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/pr_collision_guard.py --pr "${{ github.event.number }}" --repo "${{ github.repository }}"

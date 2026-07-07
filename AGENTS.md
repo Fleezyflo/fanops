@@ -118,7 +118,8 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
   1. **No blocker edge** between the two tickets (neither blocks the other, transitively), and
   2. **Disjoint file sets** — no common file. If both touch a shared hot file
      (`models.py`, `moments.py`, `crosspost.py`, `ledger.py`, `prompts.py`, `config.py`,
-     `casting.py`, `clip.py`), they are NOT parallel-safe → run serially.
+     `casting.py`, `clip.py`), they are NOT parallel-safe → run serially. Hot-file OWNERSHIP per lane
+     is declared in `.agents/lanes.json` and enforced mechanically (see below), not just by trust.
 - Every branch is cut fresh off `git fetch origin` + `origin/main` at setup (step A).
 - Do NOT start a ticket whose blocker is unmerged (e.g. RF-D MOL-164/MOL-169 need MOL-146 on
   `origin/main`).
@@ -137,6 +138,20 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
   the whole hook — emergency only). `pre-push` refuses direct push to `main` and force-push to `main`
   (override: human-only `FANOPS_ALLOW_MAIN_PUSH=1`); it runs NO tests. Correctness is also proven by
   `./scripts/check.sh` (local, step F) and by CI (authoritative, every PR).
+- **Lane isolation (mechanical for multi-agent waves):** driven by `.agents/lanes.json` (hot-file → lane
+  ownership). Two CI checks in the `lane-guard` job, plus a local pre-push fast-path:
+  - `scripts/lane_guard.py` refuses a change that edits a hot file owned by a DIFFERENT lane. The lane is
+    resolved from a `<lane>/` branch prefix OR — for the real per-ticket branches (`cursor/mol-*`,
+    `fix/mol-*`) — from the branch's **MOL id looked up in Linear** (best-effort; needs `LINEAR_API_KEY`,
+    fail-open without it). Also runs at `pre-push` (prefix-only there, fail-open on infra gaps).
+  - `scripts/pr_collision_guard.py` refuses a PR whose hot file is ALSO open in another PR to `main` —
+    the real drift risk when many `cursor/mol-*` agents run at once (no lane/Linear needed).
+  A PR touching no hot files (docs/tooling/tests) passes trivially. Merge authority is routed by
+  `.github/CODEOWNERS` (binding once branch protection requires code-owner review). The orchestration
+  that drives lanes lives in `.cursor/agents/fanops-*.md` + `.agents/*-agent.md` (Linear-driven queue,
+  orchestrator-owned serial merges). **Remaining human toggles:** add `LINEAR_API_KEY` as an Actions
+  secret (for MOL-id lane resolution) and mark the `lane-guard` check + code-owner review as REQUIRED in
+  branch protection to make all of the above blocking rather than advisory.
 - **Advisory (this file — no git hook exists to enforce it):** `git reset --hard`, force-push to a
   FEATURE branch, and "commit only staged files". Git has no `pre-reset` hook, so these rely on the
   agent obeying the guardrails above. Treat them as absolute anyway; they are the exact operations
@@ -147,3 +162,23 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
 Post one line: `MOL-xxx merged, CI green, worktree removed`.
 Stop and ask if: a blocker isn't merged, a ticket's anchors no longer match the code,
 CI is red for a reason you can't fix quickly, or any guardrail would be violated.
+
+## Cursor Cloud specific instructions
+
+Deps are refreshed automatically on VM startup (venv + `pip install -e '.[dev,studio]'`, mirroring
+`.cursor/environment.json`). Standard dev commands live in `CLAUDE.md` (Commands) — use those:
+lint `ruff check .`, fast tests `python -m pytest -q -m "not integration"` (~6 min, all green),
+studio `fanops studio`. Optional extras (`transcribe`/`asr`/`compose`/`framing`) and the `integration`
+suite need real ffmpeg/whisper/etc. on PATH and are NOT installed by default; the unit suite skips them.
+
+Non-obvious caveats found during setup:
+- **`fanops studio` cold-start takes ~90s here before it binds the port.** This VM has a stray
+  `/usr/bin/open`, so launch-time `health._start_docker` thinks it can start Docker Desktop and then
+  polls a non-existent daemon 30×3s before serving. The port answers nothing (curl `HTTP 000`) until
+  then — this is expected, not a hang; just wait it out. Output is also block-buffered when not a TTY,
+  so run with `PYTHONUNBUFFERED=1` if you want live startup logs.
+- **Do manual/UI testing against a THROWAWAY workspace root, never the live one.** `Config` uses
+  `<cwd>/MohFlow-FanOps` as its data root; the repo's `MohFlow-FanOps/` is live-adjacent and UI actions
+  (add account, ingest) write real files like `00_control/accounts.json`. `cd` into a temp dir that has
+  its own `MohFlow-FanOps/00_control/context.md` and run `fanops studio` from there (backend stays
+  `dryrun` — nothing publishes). Per the root guardrails, never run live publish/metrics verbs.
