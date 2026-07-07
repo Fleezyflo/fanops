@@ -309,3 +309,56 @@ def test_none_product_type_post_writes_no_scope_block_end_to_end(tmp_path, monke
     assert rows == []                                            # transient skip (no data) -> keep prior snapshot
     assert got.calls == []                                       # the malformed request was never built
     assert meta_graph.insights_blocked_signal(cfg) is False      # NO false scope-block over a malformed request
+
+
+# ---- MOL-127: the breadcrumb self-clears once the credential IDENTITY is fixed (scope was never missing) ----
+# The insights read was refused because it ran against an AMBIGUOUS/wrong account identity (MOL-113/114 gave
+# every IG account its OWN ig_user_id), NOT a missing instagram_manage_insights scope. These regression tests
+# prove the CODE guarantee: a successful read for a CREDENTIALED account (own token + ig_user_id), driven
+# through the REAL media_insights (not a stub), self-clears the persisted breadcrumb and does not re-arm it.
+
+
+def test_credentialed_read_clears_stale_breadcrumb_end_to_end(tmp_path, monkeypatch):
+    # A stale breadcrumb from a pre-fix ambiguous-identity refusal must SELF-HEAL: the next successful read
+    # for a credentialed account (own token + ig_user_id) through the REAL media_insights clears it. No manual
+    # reset, no code change to the live 00_control file — the code guarantee is the clear on a 200-with-data.
+    cfg = _cfg(tmp_path, monkeypatch, ig="17841400000000001")     # this account resolves its OWN ig_user_id
+    cfg.insights_blocked_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.insights_blocked_path.write_text('{"blocked": true}')      # STALE state from the ambiguous-identity era
+    assert meta_graph.insights_blocked_signal(cfg) is True         # loud breadcrumb present, pre-fix
+    post = _ig_post("p1", "M1", cut_seconds=20.0)
+    got = _get(_Resp(200, _insights_body([("reach", 900), ("saved", 30), ("shares", 8),
+                                          ("ig_reels_avg_watch_time", 8000)])))
+    rows = GraphInsightsClient(cfg, posts=[post],
+                               insights_fn=lambda mid, pt: meta_graph.media_insights(cfg, mid, pt, get=got)).list_posts()
+    assert len(rows) == 1 and rows[0]["metrics"]["reach"] == 900   # real insights flowed
+    assert got.calls and "access_token" in got.calls[0][1]         # the read really hit the Graph edge
+    assert meta_graph.insights_blocked_signal(cfg) is False        # SELF-HEALED: breadcrumb cleared on the clean read
+
+
+def test_credentialed_read_does_not_re_arm_the_breadcrumb(tmp_path, monkeypatch):
+    # Once each account resolves its own id + the scope is granted, a successful read must NOT re-set the
+    # breadcrumb: _set_insights_blocked is PERMISSION-specific (only MetaInsightsScopeError arms it), never a
+    # generic non-200. Start clean, read cleanly through the real path, and assert it stays clean.
+    cfg = _cfg(tmp_path, monkeypatch, ig="17841400000000001")
+    assert meta_graph.insights_blocked_signal(cfg) is False         # clean baseline
+    post = _ig_post("p1", "M1", cut_seconds=20.0)
+    got = _get(_Resp(200, _insights_body([("reach", 500), ("saved", 12)])))
+    GraphInsightsClient(cfg, posts=[post],
+                        insights_fn=lambda mid, pt: meta_graph.media_insights(cfg, mid, pt, get=got)).list_posts()
+    assert meta_graph.insights_blocked_signal(cfg) is False         # a credentialed 200 never re-arms the gate
+
+
+def test_genuine_scope_refusal_still_arms_the_breadcrumb(tmp_path, monkeypatch):
+    # Fail-closed is PRESERVED: a REAL permission refusal (OAuthException) through the real media_insights still
+    # raises MetaInsightsScopeError -> arms the loud breadcrumb + writes no rows. The self-heal must NOT weaken
+    # the genuine signal — an actually-refused read is still surfaced to doctor/Home.
+    cfg = _cfg(tmp_path, monkeypatch, ig="17841400000000001")
+    assert meta_graph.insights_blocked_signal(cfg) is False
+    post = _ig_post("p1", "M1", cut_seconds=20.0)
+    got = _get(_Resp(400, {"error": {"type": "OAuthException", "code": 10,
+                                     "message": "requires instagram_manage_insights permission"}}))
+    rows = GraphInsightsClient(cfg, posts=[post],
+                               insights_fn=lambda mid, pt: meta_graph.media_insights(cfg, mid, pt, get=got)).list_posts()
+    assert rows == []                                               # nothing written -> no wrong numbers
+    assert meta_graph.insights_blocked_signal(cfg) is True          # genuine scope refusal still arms the gate
