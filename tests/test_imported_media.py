@@ -14,9 +14,9 @@ def _write(cfg, raw):
     cfg.ledger_path.write_text(json.dumps(raw))
 
 
-def test_schema_version_is_ten():
-    # The bump the new top-level imported_media map requires.
-    assert SCHEMA_VERSION == 10
+def test_schema_version_is_eleven():
+    # P12 (MOL-154) bumped 10->11 dropping account_selections + selection_facts.
+    assert SCHEMA_VERSION == 11
 
 
 def test_imported_media_model_has_no_clip_lineage():
@@ -100,4 +100,4 @@ def test_v9_migration_preserves_all_other_maps(tmp_path):
     cfg.ledger_path.write_text(json.dumps(raw))
     led = Ledger.load(cfg)
     assert led.imported_media == {} and "s1" in led.sources
-    assert led.renders == {} and led.selection_facts == {} and led.account_selections == {}
+    assert led.renders == {}

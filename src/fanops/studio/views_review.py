@@ -266,7 +266,7 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     accts = acct_by_handle or {}
     mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed (clip -> moment)
     _by_norm = _handle_display_map(accts)
-    _affs = _display_handles(led.cast_handles_for(mom.parent_id, mom.id), _by_norm) if mom is not None else []   # MOM-3: DERIVED from durable AccountSelection, not the stored tag
+    _affs = _display_handles(sorted(set(mom.affinities or [])), _by_norm) if mom is not None else []   # P13: Moment.affinities (the gate input)
     surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account), affinities=_affs)
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     src_key = mom.parent_id if mom is not None else None   # Phase 4: stable source id (clip -> moment.parent_id); the ?source= key

@@ -17,8 +17,6 @@ PER-ENTITY DISPOSITION (PRD "Full entity-graph disposition"):
   - moments   : removed if NO kept post lives in the moment's clip closure
   - sources   : removed if NO kept post descends from the source (else it STAYS — the live 1 source stays)
   - renders   : follow their parent clip (removed iff the clip is removed)
-  - selection_facts : removed iff their moment is removed
-  - account_selections : removed iff their source is removed, OR a CHOSEN pick whose every moment_id is gone
   - stitch_plans : removed iff their clip is removed
   - batches   : removed iff NO kept row (source/post) references the batch
   - tag_log   : entries keyed "account|clip_id" — removed iff the clip is removed
@@ -62,8 +60,6 @@ class WipePlan:
     clip_ids: set = field(default_factory=set)
     source_ids: set = field(default_factory=set)
     render_ids: set = field(default_factory=set)
-    selection_fact_ids: set = field(default_factory=set)
-    account_selection_ids: set = field(default_factory=set)
     stitch_plan_ids: set = field(default_factory=set)
     batch_ids: set = field(default_factory=set)
     tag_log_keys: set = field(default_factory=set)
@@ -120,20 +116,7 @@ def compute_wipe_set(led: Ledger) -> WipePlan:
     for r in led.renders.values():
         if r.clip_id in plan.clip_ids:
             plan.render_ids.add(r.id)
-    # 7) selection_facts follow their moment.
-    for f in led.selection_facts.values():
-        if f.moment_id in plan.moment_ids:
-            plan.selection_fact_ids.add(f.id)
-    # 8) account_selections: removed iff their SOURCE is removed, OR (a CHOSEN pick whose EVERY moment_id
-    #    was removed — it would otherwise be a dangling/illegal-empty selection referencing gone moments).
-    #    A TAG selection (empty moment_ids) rides only the source rule. Matches the PRD "referencing removed
-    #    rows swept by the same closure".
-    for sel in led.account_selections.values():
-        source_gone = sel.source_id in plan.source_ids
-        picks_all_gone = bool(sel.moment_ids) and all(mid in plan.moment_ids for mid in sel.moment_ids)
-        if source_gone or picks_all_gone:
-            plan.account_selection_ids.add(sel.id)
-    # 9) stitch_plans follow their clip.
+    # 7) stitch_plans follow their clip.
     for st in led.stitch_plans.values():
         if st.clip_id in plan.clip_ids:
             plan.stitch_plan_ids.add(st.id)
@@ -169,7 +152,6 @@ def wipe_preview(led: Ledger) -> dict:
     plan = compute_wipe_set(led)
     counts = {"posts": len(plan.post_ids), "moments": len(plan.moment_ids), "clips": len(plan.clip_ids),
               "sources": len(plan.source_ids), "renders": len(plan.render_ids),
-              "selection_facts": len(plan.selection_fact_ids), "account_selections": len(plan.account_selection_ids),
               "stitch_plans": len(plan.stitch_plan_ids), "batches": len(plan.batch_ids),
               "tag_log": len(plan.tag_log_keys), "variant_streaks": len(plan.variant_streak_keys)}
     detail = {"counts": counts, "post_ids": sorted(plan.post_ids), "kept_posts": len(plan.kept_post_ids),
@@ -228,16 +210,12 @@ def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path 
         for mid in plan.moment_ids: led.moments.pop(mid, None)
         for sid in plan.source_ids: led.sources.pop(sid, None)
         for rid in plan.render_ids: led.renders.pop(rid, None)
-        for fid in plan.selection_fact_ids: led.selection_facts.pop(fid, None)
-        for aid in plan.account_selection_ids: led.account_selections.pop(aid, None)
         for stid in plan.stitch_plan_ids: led.stitch_plans.pop(stid, None)
         for bid in plan.batch_ids: led.batches.pop(bid, None)
         for k in plan.tag_log_keys: led.tag_log.pop(k, None)
         for k in plan.variant_streak_keys: led.variant_streaks.pop(k, None)
         removed = {"posts": len(plan.post_ids), "moments": len(plan.moment_ids), "clips": len(plan.clip_ids),
                    "sources": len(plan.source_ids), "renders": len(plan.render_ids),
-                   "selection_facts": len(plan.selection_fact_ids),
-                   "account_selections": len(plan.account_selection_ids),
                    "stitch_plans": len(plan.stitch_plan_ids), "batches": len(plan.batch_ids),
                    "tag_log": len(plan.tag_log_keys), "variant_streaks": len(plan.variant_streak_keys)}
     return {"removed": removed, "snapshot": str(snapshot_path)}

@@ -10,9 +10,8 @@ import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops import ledger_wipe
-from fanops.models import (Source, Moment, Clip, Post, Render, SelectionFact, AccountSelection,
-                           SelectionMethod, StitchPlan, StitchState, Platform,
-                           PostState, ClipState, RenderState, LIFT_SCORE, account_selection_id)
+from fanops.models import (Source, Moment, Clip, Post, Render, StitchPlan, StitchState, Platform,
+                           PostState, ClipState, RenderState, LIFT_SCORE)
 
 
 def _live_shaped(cfg):
@@ -36,15 +35,9 @@ def _live_shaped(cfg):
                           platform=Platform.instagram, caption="never", state=PostState.awaiting_approval,
                           public_url="dryrun://p_drop"))
         # entity-graph refs on the UNBACKED subtree (must be swept):
-        led.add_selection_fact(SelectionFact(id="sf_drop", moment_id="m_drop", account="a",
-                                             method=SelectionMethod.llm, source_id="s1"))
-        led.add_account_selection(AccountSelection(id="as_drop", source_id="s1", account="drop",
-                                                   moment_ids=["m_drop"], method=SelectionMethod.llm))
         led.add_stitch_plan(StitchPlan(id="st_drop", clip_id="c_drop", strategy_key="k", state=StitchState.suggested))
         led.tag_log["a|c_drop"] = "2026-06-01T00:00:00Z"
         # entity-graph refs on the KEPT subtree (must SURVIVE):
-        led.add_selection_fact(SelectionFact(id="sf_keep", moment_id="m_keep", account="a",
-                                             method=SelectionMethod.llm, source_id="s1"))
         led.tag_log["a|c_keep"] = "2026-06-02T00:00:00Z"
     return Ledger.load(cfg)
 
@@ -87,14 +80,10 @@ def test_wipe_keep_guard_keys_on_state_not_live_match(tmp_path):
     assert plan.post_ids == set()                          # nothing removed — it's all backed history
 
 
-def test_wipe_removes_selection_facts_batches_stitch_in_closure(tmp_path):
+def test_wipe_removes_batches_stitch_in_closure(tmp_path):
     led = _live_shaped(Config(root=tmp_path))
     plan = ledger_wipe.compute_wipe_set(led)
-    assert "sf_drop" in plan.selection_fact_ids and "sf_keep" not in plan.selection_fact_ids
     assert "st_drop" in plan.stitch_plan_ids
-    # AccountSelection id is content-addressed (source, account) — the CHOSEN pick on the removed moment
-    # m_drop is swept (its every moment_id is gone) even though its source s1 survives.
-    assert account_selection_id("s1", "drop") in plan.account_selection_ids
     assert "a|c_drop" in plan.tag_log_keys and "a|c_keep" not in plan.tag_log_keys
 
 
@@ -128,7 +117,7 @@ def test_snapshot_written_and_restorable(tmp_path):
     snap = Ledger.snapshot(cfg)                             # writes a timestamped copy under 00_control
     assert snap.exists()
     # corrupt the live ledger, then restore -> byte-identical to pre-corruption
-    cfg.ledger_path.write_text('{"schema_version": 10, "posts": {}}')
+    cfg.ledger_path.write_text('{"schema_version": 11, "posts": {}}')
     Ledger.restore_snapshot(cfg, snap)
     assert cfg.ledger_path.read_bytes() == original
     Ledger.load(cfg)                                       # the restored ledger loads cleanly
@@ -209,12 +198,12 @@ def test_execute_wipe_removes_closure_keeps_history(tmp_path):
     led = Ledger.load(cfg)
     # unbacked closure gone:
     assert "p_drop" not in led.posts and "m_drop" not in led.moments and "c_drop" not in led.clips
-    assert "r_drop" not in led.renders and "sf_drop" not in led.selection_facts
-    assert "st_drop" not in led.stitch_plans and "as_drop" not in led.account_selections
+    assert "r_drop" not in led.renders
+    assert "st_drop" not in led.stitch_plans
     assert "a|c_drop" not in led.tag_log
     # kept history intact:
     assert "p_keep" in led.posts and "m_keep" in led.moments and "c_keep" in led.clips
-    assert "r_keep" in led.renders and "sf_keep" in led.selection_facts and "s1" in led.sources
+    assert "r_keep" in led.renders and "s1" in led.sources
     assert "a|c_keep" in led.tag_log
     assert result["removed"]["posts"] == 1
 
