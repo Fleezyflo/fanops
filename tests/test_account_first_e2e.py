@@ -1,6 +1,6 @@
 # tests/test_account_first_e2e.py — Account-First Studio: the ONE cross-face end-to-end test (E1).
 # Walks a named, account-targeted ingest batch all the way to a queued, strictly-future post for ONLY the
-# targeted account. Slow UNIT (`@pytest.mark.slow` — CI `unit` still runs it via `-m "not integration"`),
+# targeted account. Slow UNIT (`@pytest.mark.slow` — CI `e2e` job runs it; unit job deselects).
 # fully deterministic: time injected at every seam, ffmpeg faked, dryrun-FORCED, stops at `queued` (never publishes).
 #   create_batch -> batch-stamped Source -> moment/captioned clip -> crosspost (batch-target skip, casting
 #   OFF) -> posts born ONLY for the targeted account with Post.batch_id denormalized + awaiting_approval

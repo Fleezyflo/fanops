@@ -1,11 +1,10 @@
 name: CI
 
-# AUDIT H10: the real-tooling E2E (tests/integration/test_e2e_real.py) is the proof the pipeline
-# is "not just mocks" — real ffmpeg + real whisper + a real clip render. Locally it SKIPS when the
-# toolchain is absent (a clean skip beats a cryptic failure), but if it skips everywhere a
-# regression in the real path is invisible. This workflow installs the toolchain and runs the E2E
-# with FANOPS_REQUIRE_E2E=1, which turns a skip into a FAILURE — so the real path is guaranteed to
-# actually execute in CI.
+# Skip→fail enforcement (no silent false greens):
+# - FANOPS_REQUIRE_E2E=1 (e2e job): any @pytest.mark.integration skip becomes a FAILURE via conftest hook.
+# - FANOPS_REQUIRE_STUDIO=1 (unit + e2e): flask absence aborts collection (studio tests must run, not skip).
+# - Cross-face hermetic proofs carry @pytest.mark.slow — unit job deselects them; e2e job runs them.
+# Locally, integration tests SKIP when the real toolchain is absent; CI installs it and requires execution.
 
 on:
   push:
@@ -37,7 +36,7 @@ jobs:
       - name: Unit tests (with coverage report)
         env:
           FANOPS_REQUIRE_STUDIO: "1"   # #13: flask is installed above, so this stays green — but it now FAILS if a future extras regression drops flask (no silent studio-test skip)
-        run: python -m pytest -q -m "not integration" --cov=src/fanops --cov-report=term-missing   # report-only, NOT a gate (no --cov-fail-under)
+        run: python -m pytest -q -m "not integration and not slow" --cov=src/fanops --cov-report=term-missing   # report-only, NOT a gate (no --cov-fail-under)
 
   e2e:
     name: real-tooling E2E (must run, not skip)
@@ -75,5 +74,10 @@ jobs:
       - name: Integration suite — E2E MUST run (FANOPS_REQUIRE_E2E=1 fails on skip)
         env:
           FANOPS_REQUIRE_E2E: "1"
+          FANOPS_REQUIRE_STUDIO: "1"
           FANOPS_WHISPER_MODEL: "tiny"
         run: python -m pytest -q -m integration -rs
+      - name: Slow cross-face proofs (hermetic — no real toolchain required)
+        env:
+          FANOPS_REQUIRE_STUDIO: "1"
+        run: python -m pytest -q -m slow

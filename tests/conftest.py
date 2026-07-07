@@ -60,6 +60,21 @@ def pytest_configure(config):
             pytest.exit("FANOPS_REQUIRE_STUDIO=1 but flask is absent — run: pip install -e '.[dev,studio]'", returncode=1)
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """CI-01: FANOPS_REQUIRE_E2E=1 turns any @pytest.mark.integration skip into a failure."""
+    outcome = yield
+    rep = outcome.get_result()
+    if os.getenv("FANOPS_REQUIRE_E2E") != "1" or not rep.skipped:
+        return
+    if call.when not in ("setup", "call"):
+        return
+    if item.get_closest_marker("integration") is None:
+        return
+    rep.outcome = "failed"
+    rep.longrepr = f"FANOPS_REQUIRE_E2E=1: integration test skipped: {rep.longreprtext}"
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_publish_env():
     saved = {k: os.environ.get(k) for k in _LEAKY_ENV}
