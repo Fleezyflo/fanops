@@ -1,0 +1,31 @@
+name: lane-guard
+
+# Mechanical enforcement of the AGENTS.md "disjoint hot files" rule for multi-agent lane work.
+# It is a NO-OP for any branch that is not a lane branch (publish/, picking/, pick/, rfd/, ci/ — see
+# .agents/lanes.json), so normal branches (cursor/*, bycreamco/mol-*, human branches) are never
+# affected. For a lane branch it FAILS the PR if the branch edits a hot file owned by a different lane.
+# Uses only the Python stdlib + git, so there is no dependency install — the job is seconds.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lane-guard:
+    name: lane file-ownership (no-op unless a lane branch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so the base-vs-head diff resolves
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Enforce lane hot-file ownership
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python scripts/lane_guard.py --branch "$HEAD_REF" --base "$BASE_SHA"
