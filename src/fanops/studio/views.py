@@ -321,7 +321,9 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     never 500s), mirroring golive_accounts. `led` is accepted for call-compat; the surface reads no ledger."""
     try:
         from fanops.personas import (Personas, compose_persona_instruction, persona_facts,   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
-                                     hook_directive, caption_directive, resolved_cut_spec, manifest)
+                                     hook_directive, caption_directive, resolved_cut_spec, manifest,
+                                     ensure_baked_personas)
+        ensure_baked_personas(cfg)
         reg = Personas.load(cfg)
         accts = Accounts.load(cfg).accounts
     except Exception as exc:

@@ -1,0 +1,54 @@
+{
+  "personas": [
+    {
+      "id": "credibility-first",
+      "name": "Credibility First",
+      "voice": "restraint is the product; pass on the sensational cut",
+      "selection_scope": "credibility_first",
+      "content_focus": ["emotional", "storytelling"],
+      "hook_angle": "curiosity",
+      "hashtag_corpus": ["#podcast", "#interview", "#facts", "#science"],
+      "intake": {"genre": "science"}
+    },
+    {
+      "id": "controversy",
+      "name": "Controversy",
+      "voice": "pick the cut that starts the argument — high-arousal, never neutral",
+      "selection_scope": "controversy_seeking",
+      "content_focus": ["bold-statement"],
+      "hook_angle": "challenge",
+      "hashtag_corpus": ["#celebritygossip", "#drama", "#popculture", "#entertainment"],
+      "intake": {"genre": "gossip"}
+    },
+    {
+      "id": "edutainment",
+      "name": "Edutainment",
+      "voice": "one teachable insight per clip — the fact has to earn attention",
+      "selection_scope": "source_briefed",
+      "content_focus": ["storytelling"],
+      "hook_angle": "curiosity",
+      "hashtag_corpus": ["#hiphop", "#lyrics", "#music", "#newmusic"],
+      "intake": {"genre": "hiphop"}
+    },
+    {
+      "id": "cliffhanger",
+      "name": "Cliffhanger",
+      "voice": "cut before the resolution — leave the dilemma open so they have to watch through",
+      "selection_scope": "open",
+      "content_focus": ["storytelling"],
+      "hook_angle": "curiosity",
+      "hashtag_corpus": ["#podcast", "#storytime", "#reels", "#viral"],
+      "intake": {"genre": "podcast"}
+    },
+    {
+      "id": "hype-vibe",
+      "name": "Hype / Vibe",
+      "voice": "underground energy — the hardest bar, the room going up, never mid",
+      "selection_scope": "open",
+      "content_focus": ["hype"],
+      "hook_angle": "fomo",
+      "hashtag_corpus": ["#hiphop", "#rap", "#bars", "#undergroundhiphop"],
+      "intake": {"genre": "rap"}
+    }
+  ]
+}

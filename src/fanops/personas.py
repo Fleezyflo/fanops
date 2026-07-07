@@ -105,6 +105,7 @@ from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; 
     _FOCUS_CLAUSE, _SCOPE_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP)
 from fanops.persona_store import (   # noqa: E402,F401
     add_persona, update_persona, add_corpus_tag, remove_corpus_tag,
-    delete_persona, migrate_from_accounts, link_personas_by_voice)
+    delete_persona, migrate_from_accounts, link_personas_by_voice,
+    baked_personas, ensure_baked_personas)
 from fanops.persona_research import research_corpus, discover_corpus   # noqa: E402,F401
 from fanops.persona_levers import LEVER_REGISTRY, build_catalog as _registry_build_catalog   # noqa: E402,F401  (facade re-export of the M1 registry)
