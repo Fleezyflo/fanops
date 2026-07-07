@@ -13,7 +13,8 @@ you need the full detail. Route yourself with the "read when…" column instead 
 | [architecture.md](architecture.md) | You want narrative system architecture — the stage DAG, the two agent gates, crash-safety model. |
 | [data.md](data.md) | You need the data model: the single JSON ledger, the Source→Moment→Clip→Post lifecycle, control-file schemas. |
 | [dependencies.md](dependencies.md) | You need the external-binary + Python-package dependency surface (ffmpeg/whisper/yt-dlp, subprocess timeouts). |
-| [lifecycle-full-picture.md](lifecycle-full-picture.md) | You want the maximum-depth end-to-end pipeline audit (ingest→publish→learn), the deepest single narrative. |
+| [fresh-ingestion-trace.md](fresh-ingestion-trace.md) | **Source of truth** for the live ingest→publish path (post–P11 casting teardown): stage DAG, fan-out arithmetic, `affinity_admits` routing. |
+| [lifecycle-full-picture.md](lifecycle-full-picture.md) | Dated 2026-06-27 audit snapshot (superseded by fresh-ingestion-trace for live behavior). |
 | [hashtag-lifecycle.md](hashtag-lifecycle.md) | You are touching hashtags: persona corpus → vet → post → live Graph reach → surfaced. |
 | [insights-culmination.md](insights-culmination.md) | You are touching the reach-loop bias actuators (framing/timing/casting/dim) — stamp → aggregate → actuator, all gated + amplify-only. |
 | [persona-levers.md](persona-levers.md) | You are touching a persona lever (content_focus/energy/hook_angle) — what each is, its validation vocab, where it bites downstream. |

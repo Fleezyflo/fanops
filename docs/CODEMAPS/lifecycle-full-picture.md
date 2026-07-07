@@ -1,5 +1,7 @@
 # FanOps Lifecycle — Full-Picture Audit
 
+> **Superseded by** [fresh-ingestion-trace.md](fresh-ingestion-trace.md) (code-verified 2026-07-07, post–P11 casting teardown). This file is a **dated audit snapshot** — keep for historical findings; do not treat casting / `AccountSelection` / `moment_casting` claims here as live.
+
 > Maximum-depth read-only audit of the entire production pipeline (ingest → transcribe → asset-prep → moments → hooks → casting → render/caption → structural-hooks → culmination + the cross-cutting spine).
 > Method: 9 parallel per-cluster deep-reads → adversarial verify on every finding → cross-stage completeness critic → synthesis. Generated 2026-06-27.
 

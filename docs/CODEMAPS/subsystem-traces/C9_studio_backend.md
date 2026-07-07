@@ -77,8 +77,8 @@ through a named `actions.*` function, never touching `led.posts[...]` directly f
   traversal defense is `_bounded`, applied by the caller). Called by `/media/<post_id>`
   (`app.py:489`).
 - `_parse_gate_form(kind, form)` (`app.py:82-128`) — **pure read** (no I/O). Maps the raw Gates-tab
-  HTML form into `answer_gate`'s expected data shape for each of the 4 gate kinds
-  (`captions`/`moments`/`moment_hooks`/`moment_casting`). Values stay strings; Pydantic coerces and
+  HTML form into `answer_gate`'s expected data shape for each gate kind
+  (`captions`/`moments`/`moment_hooks`). Values stay strings; Pydantic coerces and
   validates downstream (`actions.answer_gate`), so a non-numeric timestamp surfaces as a clean
   `ActionResult` error rather than a 500. Called by `/gates/answer/<kind>/<key>` (`app.py:484`).
 - `_time_arg()` (`app.py:133-136`) — parses `request.form["new_time"]` (a `datetime-local` naive
@@ -431,15 +431,10 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
   349-405) — the stitch-plan M3/M4 approval lifecycle; `release_stitches` is the **only** transition
   out of `ClipState.stitch_draft`, re-checked in-lock.
 
-### `actions_casting.py` — operator cast override
+### `actions_casting.py` — operator cast override (P13)
 
-- `cast_add(cfg, source_id, account, moment_id)` (lines 13-30) — one transaction; rejects a moment
-  that isn't a decided child of `source_id` (blocks a hand-crafted POST from minting a selection
-  for a foreign moment); unions the moment into the account's `AccountSelection`, stamping
-  `method=SelectionMethod.operator` (a human decision supersedes llm/migrated provenance).
-- `cast_remove(cfg, source_id, account, moment_id)` (lines 33-52) — removes one moment; if the
-  removal empties the selection, **drops the whole record** (`led.drop_account_selection`) rather
-  than leaving an illegal empty `operator` row.
+- `cast_add(cfg, source_id, account, moment_id)` — appends handle to `Moment.affinities` (sorted-set union); rejects foreign moments. Idempotent re-add.
+- `cast_remove(cfg, source_id, account, moment_id)` — removes handle from `affinities`; empty set → fan-to-all path (`affinities==[]`).
 
 ### `actions_common.py` — shared mutation-layer primitives
 

@@ -41,9 +41,9 @@ The main-txn saves ONLY on clean exit; an uncaught raise rolls the whole pass ba
 | 1 | Transcribe | `transcribe.transcribe_source` (`transcribe.py:155`) | `Source.source_path`, cached JSON | `Source.transcript`, `.language`, `meta.transcribed`, state→`transcribed` (`transcribe.py:254-256`); JSON under `04_agent_io/transcripts` | faster-whisper via `python -m fanops._fwrun` else `whisper` CLI (`transcribe.py:217-220`); `_WHISPER_TIMEOUT=2700.0` length-scaled ×1.5 (`transcribe.py:27-37`); optional Demucs vocal isolation (`vocals.isolate_vocals`, `transcribe.py:198-210`) | **Fail-soft, per-source**: absent binary / timeout / no-JSON / malformed-JSON all → `SourceState.error` with a typed reason, `transcribed` unset so it re-runs (`transcribe.py:224-253`); vocal isolation fails OPEN to raw audio |
 | 2 | Signals | `signals.detect_signals` (`signals.py:108`) | source path, sidecar | `Source.signal_peaks` (top-400 capped `signals.py:22-35`), `.duration`, state→`signalled`; sidecar `04_agent_io/signals/<sid>.json` | 2× ffmpeg (`silencedetect`, `scdet`) + optional `ebur128`/astats energy (`signals.py:79-86,134`); `_FFMPEG_TIMEOUT=600.0` (`signals.py:92`); absent → `ToolchainMissingError` | **Fail-loud on the two required passes** (typed error → per-source quarantine); the ENERGY pass is an ENHANCEMENT that fails SOFT to today's scoring (`signals.py:129-138`) |
 | 3 | Request moments (pick) | `moments.request_moments` (`moments.py:137`) | transcript (char-budget bounded `moments.py:117`), peaks, `cfg.clip_profile`, 6 survey frames | opens `moments` agent gate, state→`moments_requested` | `keyframes.extract_keyframes` (fail-open `[]`) | LLM gate; per-source quarantine in pipeline (`pipeline.py:88-89`) |
-| 3b | Ingest picks | `moments.ingest_moments` (`moments.py:161`) | agent response | `Moment` born `picked`, state→`picks_decided`; `[]` → non-terminal `moments_empty` (`moments.py:206-207`); all-invalid → `error` (`moments.py:197-198`) | none | Fail-visible: empty is LOUD but non-terminal, preserves prior moments; discards stale hook/casting gates (`moments.py:215-227`) |
-| 3c | Hook author (pass 2) | `moments.request_moment_hooks`/`ingest_moment_hooks` (`moments.py:232,272`) | picked window + 3 window frames + personas + learned styles | per-pick `moment_hooks` gate; on ingest → `Moment.hook`/`hooks_by_persona`/removed, state `picked`→`decided`, source→`moments_decided` (`moments.py:344-348`) | `keyframes.extract_keyframes` over window (fail-open `[]` `moments.py:53-60`) | ATOMIC per source (waits for every pick); `is_weak_hook`+`brand_risk_flag` strip mechanical/off-brand hooks, PRESERVED for restore (`moments.py:311-314`) |
-| 4 | Casting (select) | `casting.request_moment_casting`/`ingest_moment_casting` (`casting.py:65,111`); pipeline `_stage_casting` (`pipeline.py:120`) | decided pool, personas, casting reach prior | `Moment.affinities` + durable `AccountSelection` (`casting.py:137-156`) | `keyframes.extract_keyframes` per moment (fail-open) | Default ON (`cfg.account_casting`); fail-open through `Source.degraded_reason` (`casting.py:194-199`) — never silent |
+| 3b | Ingest picks | `moments.ingest_moments` (`moments.py:301`) | agent response | `Moment` born `picked` with owner-stamped `affinities`, state→`picks_decided`; `[]` → non-terminal `moments_empty`; all-invalid → `error` | none | Fail-visible: empty is LOUD but non-terminal; discards stale hook gates only (`moments.py:365`) |
+| 3c | Hook author (pass 2) | `moments.request_moment_hooks`/`ingest_moment_hooks` (`moments.py:394,437`) | picked window + 3 window frames + owner persona + learned styles | per-pick `moment_hooks` gate; on ingest → `Moment.hook`, state `picked`→`decided`, source→`moments_decided` | `keyframes.extract_keyframes` over window (fail-open `[]`) | ATOMIC per source; `is_weak_hook`+`brand_risk_flag` strip mechanical/off-brand hooks, PRESERVED for restore |
+| 4 | Routing (affinity gate) | `casting.affinity_admits` (`casting.py:10`); crosspost `_mint_surface_post` (`crosspost.py:166`) | `Moment.affinities` (single-owner at pick; operator `cast_add`/`cast_remove`) | posts minted only on admitted surfaces | none | Default ON (`cfg.account_casting`); OFF ignores affinities and fans all; `affinities==[]` fans all; attributed moment denies non-owners |
 | 5 | Render | `clip.render_moment` → `render_aspects_for` (`clip.py:571,694`); pipeline `_stage_render_and_caption` (`pipeline.py:156`) | source, moment window, framing detect | `Clip` born `rendered` under `03_clips/<cid>.mp4`; state moment→`clipped`; render fingerprint sidecar (`clip.py:688-689`) | ffmpeg (`ffmpeg_clip_cmd`/`ffmpeg_segments_cmd`), `_FFMPEG_TIMEOUT=600.0` (`clip.py:24`); framing detect (YuNet, `[framing]` extra) fail-open | **Fail-safe per-moment**: ffmpeg absent/hung/rc≠0/0-byte → `ClipState.error`, moment left `decided` to retry (`clip.py:634-662`); smart framing fails OPEN to centered crop (`clip.py:533,550`) |
 | 6 | Captions | `caption.request_captions`/`ingest_captions` (`caption.py:200,283`); pipeline (`pipeline.py:172,231`) | clip, scoped surfaces, corpus, content tags | `Clip.meta_captions[surface]`, state→`captioned` (or `held`) (`caption.py:356`) | none (LLM gate) | HOLD on brand-risk/language-mismatch (`caption.py:349-353`); SEED-TAG FALLBACK on missing surface, NOT a hold (`caption.py:342-348`) |
 | 7 | Crosspost | `crosspost.crosspost_clips` → `_mint_surface_post` (`crosspost.py:299,168`); pipeline (`pipeline.py:243`) | captioned clips, surfaces, selections, batch target | `Post` born `awaiting_approval` (`crosspost.py:269-273`), clip state→`queued` | none | Wrapped so a raise doesn't cost the pass; a FATAL `AuthError` deliberately escapes (`pipeline.py:249-255`) |
@@ -90,7 +90,7 @@ holds TWO variables). Table is complete (no sampling):
 | 23 | `FANOPS_BURN_SUBS` | config.py:541 | OFF | Burn transcript captions (hook is separate) |
 | 24 | `FANOPS_AWARE_REFRAME` | config.py:551 | OFF | Global top-third crop bias |
 | 25 | `FANOPS_SUBTITLE_FONT` | config.py:559 | `Arial Unicode MS` | .ass subtitle font |
-| 26 | `FANOPS_CREATIVE_VARIATION` | config.py:571 | ON | Per-account hooks/renders |
+| 26 | `FANOPS_CREATIVE_VARIATION` | golive.py:225 (write-only) | **documentation-only** | Studio Go-Live toggle dual-writes `.env`; **no `config.py` getter** — `app.py:298` and `views.golive_status` hardcode `creative_variation=False`. Per-account hook fork removed; one owner-moment hook burns at crosspost. |
 | 27 | `FANOPS_ACCOUNT_CASTING` | config.py:581 | ON | Per-account moment casting |
 | 28 | `FANOPS_HOOK_ROUTER` | config.py:589 | OFF | Observe-only hook_strategy classifier |
 | 29 | `FANOPS_IMPACT_CUT` | config.py:598 | OFF | Impact-cut stitch producer |
@@ -110,7 +110,7 @@ holds TWO variables). Table is complete (no sampling):
 | 43 | `FANOPS_ADJUST_PER_SURFACE` | config.py:763 | OFF | Per-surface winner ranking |
 | 44 | `FANOPS_P4_DIM_BIAS` | config.py:774 | OFF | Creative-dim reach amplify |
 | 45 | `FANOPS_TIMING_BIAS` | config.py:784 | OFF | Reach-winning publish-hour schedule bias |
-| 46 | `FANOPS_CASTING_BIAS` | config.py:796 | OFF | Per-(account,profile) reach casting hint |
+| ~~46~~ | ~~`FANOPS_CASTING_BIAS`~~ | — | — | **REMOVED P11** (casting_bias module deleted) |
 | 47 | `FANOPS_IG_RETENTION_PROOF` | config.py:811 | OFF | Require IG retention to prove learning |
 | 48 | `FANOPS_MOMENT_HOOK_LEARNING` | config.py:820 | OFF | Feed winning hook styles to moment author |
 | 49 | `FANOPS_P4_MIN_REACH_GAP` | config.py:832 | 0.0 | P4/timing comparative reach margin |
@@ -153,7 +153,7 @@ The ONLY Studio setter of environment variables is the Go-Live tab via `golive._
 `grep -oE '_dual_write\(cfg, "..."'`:
 
 **Studio-settable env vars (13 total = 9 + 3 + 1):**
-- `FANOPS_*` (9): `FANOPS_LIVE` (golive.py:632, via `go_live`), `FANOPS_CREATIVE_VARIATION` (225),
+- `FANOPS_*` (9): `FANOPS_LIVE` (golive.py:632, via `go_live`), `FANOPS_CREATIVE_VARIATION` (225, write-only — no `config.py` getter),
   `FANOPS_ACCOUNT_CASTING` (237), `FANOPS_RESPONDER` (250), `FANOPS_CLIP_PROFILE` (292),
   `FANOPS_VARIANT_LEARNING` (306), `FANOPS_VARIANT_AMPLIFY` (315), `FANOPS_VARIANT_UCB` (322),
   `FANOPS_VARIANT_TRANSFER` (333).
@@ -166,7 +166,7 @@ The ONLY Studio setter of environment variables is the Go-Live tab via `golive._
 
 **.env/shell-ONLY (51 of the 64 — never settable from any Studio route):** all trust-gate numerics
 (`FANOPS_VARIANT_*_MIN_*`, `FANOPS_VARIANT_UCB_C`, `FANOPS_P4_MIN_REACH_GAP`), all Phase-2 bias kill switches
-(`FANOPS_P4_DIM_BIAS`, `FANOPS_TIMING_BIAS`, `FANOPS_CASTING_BIAS`, `FANOPS_MOMENT_HOOK_LEARNING`,
+(`FANOPS_P4_DIM_BIAS`, `FANOPS_TIMING_BIAS`, `FANOPS_MOMENT_HOOK_LEARNING`,
 `FANOPS_ADJUST_PER_SURFACE`, `FANOPS_IG_RETENTION_PROOF`), the stitch producers (`FANOPS_IMPACT_CUT`,
 `FANOPS_INTRO_TEASE`, `FANOPS_HOOK_ROUTER`), all ASR/framing knobs (`FANOPS_ASR_*`, `FANOPS_WHISPER_MODEL`,
 `FANOPS_ISOLATE_VOCALS`, `FANOPS_BURN_SUBS`, `FANOPS_AWARE_REFRAME`, `FANOPS_SUBTITLE_FONT`,
@@ -385,7 +385,7 @@ id that falls open (`studio/personas.py:97-99`).
 | `voice` | casting/hook/caption prompt per-account slot | `_base_voice` (`persona_directives.py:56`) → leads `casting_directive` (`:68`), `hook_directive` (`:82`), `caption_directive` (`:107`) → carried in casting `personas[].persona` (`casting.py:78`), hook `personas[].persona` (`moments.py:243`), caption `surfaces[].persona` (`caption.py:209,226`) |
 | `content_focus` | casting SELECTION language + DERIVED cut LENGTH | `_FOCUS_CLAUSE` → `casting_directive` "Clip for this account: ..." (`persona_directives.py:75-76`); `_FOCUS_PROFILE` → `derive_cut_spec` length tier (`:41`) → `resolved_cut_spec` → `acc.clip_profile` → `cfg.resolve_clip_profile(acct)` (`config.py:433`) → `crosspost.account_render_spec` — `resolve_clip_profile` call at `crosspost.py:86`, `wants_cut` decision `crosspost.py:86-91` → `render_account_cut` band (`clip.py:706,723`) — physically cuts the clip length |
 | `energy` | casting energy clause + DERIVED framing | `_ENERGY_CLAUSE` → `casting_directive` (`persona_directives.py:77-78`); `_ENERGY_FRAMING` → `derive_cut_spec` framing (`:42`) → `acc.framing` → `cfg.resolve_top_bias(acct)` (`config.py:443`) → `top_bias` in `render_account_cut`/`reframe_filter` (`clip.py:310-311`), and stamped on `Post.top_bias` at mint (`crosspost.py:294`) |
-| `hook_angle` | on-screen hook strategy | `_ANGLE_CLAUSE` → `hook_directive` "For the on-screen hook, ..." (`persona_directives.py:88-89`) → `hook_author_slot` (`:93`) → hook `personas[].persona` (`moments.py:243`) → the burned `hooks_by_persona[handle]` (`moments.py:344`) → `Post.variant_hook` (`crosspost.py:251`) → burned file at approval/publish |
+| `hook_angle` | on-screen hook strategy | `_ANGLE_CLAUSE` → `hook_directive` (`persona_directives.py:88-89`) → `hook_author_slot` → hook `personas[].persona` (`moments.py:394`) → `Moment.hook` (one owner hook) → burned at crosspost/approval |
 | `hashtag_corpus` | caption hashtags (deterministic post-step) | hydrated `acc.hashtag_corpus` → `corpora[handle]` in caption request (`caption.py:213`) → surface `corpus` key (`caption.py:227`) → prompt "PREFER ... corpus" (`prompts.py:429-431`) AND `vet_hashtags(corpus=...)` float+floor+backfill (`caption.py:330`, `hashtags.py:159-205`) |
 | `intake.genre` | Graph research seeds only | `_seed_tags` (`fanops_hashtags.py:32`) + `discover_corpus` — never a live caption |
 
@@ -404,15 +404,13 @@ operator view cannot drift from output. Pinned by `tests/test_persona_lever_cohe
 ### 3.5 Feedback — does performance flow back into persona fields?
 
 **NO.** Persona field values are write-once-by-operator. I checked every reach/lift/metrics consumer:
-- `casting_bias.casting_reach_prior` (`casting_bias.py:55`) produces a READ-ONLY brief hint (a dict passed to
-  the casting prompt `casting.py:98`); it NEVER mutates a Persona.
 - `p4_dim_bias`/`timing_bias` (`p4_dim_bias.py:56`, `timing_bias.py:79`) amplify sources / write a schedule
   prior — never a persona field.
 - `variant_learning`/`variant_transfer` bias captions/hooks at request time — never a persona.
 - `persona_facts`/`compose_breakdown` SURFACE derived stats (lead tags, cut band) but only from persona
   values + the reach store, not into the persona (`persona_directives.py:272,178`).
-- `casting._learned_account_signal` (`casting.py:44`) is a per-account HISTORY summary (prior selection
-  reasons), explicitly "READ-ONLY history, NOT a live metric" — a hint, never an unfreeze, never a write.
+- ~~`casting_bias.casting_reach_prior`~~ — **REMOVED P11** (MOL-152) with the LLM casting stage.
+- ~~`casting._learned_account_signal`~~ — **REMOVED P11** with `request_moment_casting`.
 
 No proposal/surfaced-stat/auto-update writes any persona field. Persona values change ONLY via the Studio
 Personas write routes (§3.2).
@@ -463,14 +461,14 @@ proves it (`track.py:331-332`); a degraded row never stamps (`track.py:341-346`)
 |----------------------|------------------------|-----------------|-----------|
 | `p4_dim_bias.apply_p4_dim_bias` (`p4_dim_bias.py:56`) — amplify a rep source per winning creative dim (`first_frame_kind`, `clip_profile`, `top_bias`) | `FANOPS_P4_DIM_BIAS` (OFF) | `p4_unlocked(dim)` (`p4_dim_bias.py:38`) | leader beats runner-up by ≥`p4_min_reach_gap` (default 0.0); ≥8 posts × ≥2 values |
 | `timing_bias.apply_timing_bias` (`timing_bias.py:79`) — write reach-winning `publish_hour` prior consumed by `surface_time` | `FANOPS_TIMING_BIAS` (OFF) | `p4_unlocked('publish_hour')` (`timing_bias.py:36`) | ≥`p4_min_reach_gap` lead; window-clamped to `account_window` (`timing_bias.py:64`) |
-| `casting_bias.casting_reach_prior` (`casting_bias.py:55`) — READ-ONLY per-(account,profile) reach hint in the casting brief | `FANOPS_CASTING_BIAS` (OFF, checked at `casting.py:98`) | `learning_validated` (`casting_bias.py:67`) | per-cell floor ≥`_MIN_ATTRIBUTED_N`=8 (annotate-only, no comparative winner, explore-guard `casting_bias.py:58-65`) |
+| ~~`casting_bias.casting_reach_prior`~~ | — | — | **REMOVED P11** (MOL-152) |
 | `variant_amplify` (config.py:645; CLAUDE.md ref `variant_amplify.py:166`) — re-mine a source off a sustained hook winner | `FANOPS_VARIANT_AMPLIFY` (OFF) | `learning_validated` (validation-frozen) | ≥8 posts, ≥25.0 gap, ≥3 distinct windows |
 | `variant_learning`/`ucb_rank` caption bias (`caption.py:153-173`) | `FANOPS_VARIANT_LEARNING` (OFF), `FANOPS_VARIANT_UCB` (OFF) | NOT validation-frozen (safe reversible read side, `config.py:698-704`) | ≥3 posts, ≥10.0 gap (v2); UCB c=sqrt(2) |
 | `variant_transfer` cold-start bias (`caption.py:175-198`) | `FANOPS_VARIANT_TRANSFER` (OFF) | `learning_validated` (`caption.py:183-185`) | ≥2 donors, ≤2 borrowed |
 | `moment_hook_learning` (config.py:815) — feed winning hook STYLES to the moment author | `FANOPS_MOMENT_HOOK_LEARNING` (OFF) + `FANOPS_VARIANT_LEARNING` | (rides variant_learning) | STYLE cue only |
 
-Every actuator is AMPLIFY/BIAS-ONLY (audit C1: never retire/cascade/track — `p4_dim_bias.py:8-11`,
-`casting_bias.py:10-16`), FAIL-SAFE (exception → logged once, ledger byte-identical), and introduces NO new
+Every actuator is AMPLIFY/BIAS-ONLY (audit C1: never retire/cascade/track — `p4_dim_bias.py:8-11`),
+FAIL-SAFE (exception → logged once, ledger byte-identical), and introduces NO new
 auto-publish path (biases GENERATION + SCHEDULE only).
 
 **What output quality depends on before vs after these gates open:** BEFORE `learning_validated` (i.e. on
@@ -493,7 +491,7 @@ generation and schedule toward measured reach, but never past the operator appro
 
 2. **Studio exposes only 13 of 64 distinct env variables; every trust-gate numeric and Phase-2 bias kill
    switch is .env/shell-only.** `_dual_write` covers 9 FANOPS_* + 3 static creds + the dynamic per-handle
-   token slot (`studio/golive.py`), so `FANOPS_P4_DIM_BIAS`, `FANOPS_TIMING_BIAS`, `FANOPS_CASTING_BIAS`,
+   token slot (`studio/golive.py`), so `FANOPS_P4_DIM_BIAS`, `FANOPS_TIMING_BIAS`,
    all `FANOPS_VARIANT_*_MIN_*`, `FANOPS_OPERATOR_TZ`, etc. have no UI. An operator-only deployment cannot
    turn on the reach-loop bias actuators or tune their thresholds without shell access. Evidence: §1.3
    itemization vs the 64-variable table in §1.2.
@@ -506,7 +504,7 @@ generation and schedule toward measured reach, but never past the operator appro
 
 4. **`learning_validated` is a single global boolean (`cutover.json metrics_confirmed`) that gates all
    validation-frozen actuators at once, and auto-flips on the FIRST qualifying live metric.** One
-   non-degraded analyzed row from any live post unfreezes p4_dim_bias, timing_bias, casting_bias, and
+   non-degraded analyzed row from any live post unfreezes p4_dim_bias, timing_bias, and
    variant_transfer/amplify simultaneously (`track.py:347-348`, `validation_gate.py:22`). There is no
    per-actuator or per-account validation — the plumbing proof is system-wide. Evidence:
    `_auto_validate_metrics_shape` writes one flag consumed by every frozen actuator.
