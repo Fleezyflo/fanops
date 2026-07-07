@@ -88,4 +88,13 @@ if [[ -n "$staged_py" && -x "$PY" ]]; then
   fi
 fi
 
+# --- Scoped check.sh: when src/ or tests/ .py is staged, run the local gate (ruff + scoped pytest).
+# BASE=HEAD scopes to this commit (staged + unstaged vs HEAD). Docs-only / scripts-only .py skip (fast path).
+if printf '%s\n' "$staged_files" | rg -q '^(src|tests)/.+\.py$'; then
+  if ! BASE=HEAD "$ROOT/scripts/check.sh"; then
+    echo "[fanops pre-commit] check.sh failed — fix, re-stage, commit again." >&2
+    exit 1
+  fi
+fi
+
 exit 0
