@@ -230,3 +230,19 @@ def test_segments_tuple_json_roundtrip():
     assert raw["segments"] == [[1.0, 3.0], [5.0, 7.0]]                # JSON lists
     p2 = MomentPick.model_validate(raw)
     assert p2.segments == [(1.0, 3.0), (5.0, 7.0)] and p2 == p
+
+# ---- MOL-155 (P14): dead casting-request models removed; flip fields retained ----
+def test_casting_request_models_gone():
+    import fanops.models as m
+    for gone in ("MomentCastingRequest", "MomentCastingDecision"):
+        assert gone not in dir(m), f"{gone} should be removed from fanops.models"
+
+def test_moment_request_personas_retained():
+    assert "personas" in MomentRequest.model_fields
+    assert "personas" in MomentPick.model_fields
+
+def test_old_casting_response_extra_ignored():
+    # stale on-disk casting artifacts may carry selections/reach_prior; live models ignore unknown keys.
+    d = MomentDecision.model_validate({"source_id": "s", "request_id": "r", "picks": [],
+                                       "selections": {"a": ["m1"]}, "reach_prior": 0.5})
+    assert d.picks == [] and "selections" not in d.model_dump()

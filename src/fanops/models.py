@@ -630,25 +630,6 @@ class MomentHookDecision(BaseModel):
                                        # claude_json_meta proves the attached frames were never read; ingest lifts it
                                        # onto Moment.hook_frames_unread. Default False -> a model-only answer is unchanged.
 
-# M1 (Option C — per-account moment SELECTION): an agent gate that, seeing the source's DECIDED moments +
-# each active account's persona, chooses per account that account's OWN set of moments. The decision writes
-# Moment.affinities, which the EXISTING crosspost affinity gate already honors (a cast moment fans ONLY to
-# its accounts). GENEROUS — no count cap; overlap allowed (a moment can suit several personas). Gate key =
-# source_id (one selection gate per source, like the moments gate).
-class MomentCastingRequest(BaseModel):
-    source_id: str
-    request_id: str
-    moments: list[dict] = Field(default_factory=list)   # [{moment_id, reason, hook, transcript_excerpt, signal_score, start, end}]
-    personas: list[dict] = Field(default_factory=list)  # [{handle, persona}] active fan accounts to cast for
-    language: Optional[str] = None
-    guidance: str = ""
-    learned: dict = Field(default_factory=dict)   # AGENT-4: per-account history hint (handle -> [prior selection reasons]);
-                                                  # {} -> none (byte-identical). READ-ONLY history, NOT a live metric (no unfreeze).
-
-class MomentCastingDecision(BaseModel):
-    request_id: Optional[str] = None            # gate-populated; not model-authored
-    selections: dict[str, list[str]] = Field(default_factory=dict)   # handle -> [moment_id,...] that account's OWN moments
-
 class CaptionRequest(BaseModel):
     clip_id: str
     request_id: str
