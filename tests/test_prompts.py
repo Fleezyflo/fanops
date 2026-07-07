@@ -485,6 +485,15 @@ def test_brief_fence_renders_none_provided_when_guidance_empty():
 # author (CaptionRequest has NO frames/signal) and the pick author must never be ordered to read inputs
 # they lack.
 
+def test_caption_prompt_has_no_genre_recipe():
+    p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
+                        "transcript_excerpt": "x",
+                        "surfaces": [{"surface": "a/instagram", "platform": "instagram"}]})
+    assert "Compose a balanced 4" not in p
+    assert "#hiphop/#rap" not in p
+    assert "#rapper/#bars" not in p
+
+
 def test_caption_prompt_has_no_decision_pollution():
     # FIREWALL: the hook-only decision process (read the attached frames + signal peaks + register, then
     # select) must NOT reach the caption author. CaptionRequest carries no frames/signal, so instructing
