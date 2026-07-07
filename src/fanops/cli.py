@@ -165,6 +165,27 @@ def cmd_map_media(cfg: Config) -> int:
     print(f"media mapped; ig_live={ig} with_media_id={mapped} imported_live_only={len(led.imported_media)}")
     return 0
 
+def cmd_verify_live(cfg: Config) -> int:
+    # MOL-113: READ-ONLY liveness report. For each published/analyzed post, ask the platform's own API about
+    # THIS specific object via the confirm_post_live seam (IG per-object resolve / TikTok oEmbed) and print
+    # confirmed/unconfirmed + owner. NEVER writes the ledger (load, iterate, print — no .save()); a run leaves
+    # 00_control byte-identical. Fail-open: a post with no creds / no confirmable signal is reported unconfirmed,
+    # never crashes. This is the on-demand mirror of the primitive MOL-117's gate consumes.
+    from fanops.meta_graph import confirm_post_live
+    from fanops.models import PostState
+    led = Ledger.load(cfg)
+    targets = [p for p in led.posts.values() if p.state in (PostState.published, PostState.analyzed)]
+    confirmed = 0
+    for p in targets:
+        try:
+            res = confirm_post_live(cfg, p, reported_username=p.account)   # best-effort username for the TikTok gate
+        except Exception:
+            res = {"confirmed": False, "owner": None}                      # read path never crashes on one post
+        if res.get("confirmed"): confirmed += 1
+        print(f"{p.id}\t{p.platform.value}\t{'LIVE' if res.get('confirmed') else 'unconfirmed'}\towner={res.get('owner')}")
+    print(f"verify-live: {confirmed}/{len(targets)} confirmed live (read-only; ledger untouched)")
+    return 0
+
 def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: float) -> int:
     # Phase-B-followup: wrap the whole classify->amplify->retire under one transaction (B4). No
     # network here — classify_outcomes/amplify/retire only read+mutate the ledger and write agent
@@ -539,6 +560,7 @@ def main(argv: list[str] | None = None) -> int:
     p_pull = sub.add_parser("pull"); p_pull.add_argument("url", type=_http_url)
     p_trk = sub.add_parser("track"); p_trk.add_argument("--window", default="30d")
     sub.add_parser("map-media", help="Leg 2: resolve each live IG post's Graph media_id from its permalink (read-only; instagram_basic)")
+    sub.add_parser("verify-live", help="MOL-113: per-object liveness report over the confirm-post-live seam (read-only; ledger untouched)")
     p_adj = sub.add_parser("adjust"); p_adj.add_argument("--winner-pct", type=float, default=0.3)
     p_adj.add_argument("--retire-pct", type=float, default=0.2); p_adj.add_argument("--lift-floor", type=float, default=20.0)
     p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=None)   # None -> cfg.gc_keep_days
@@ -761,6 +783,7 @@ def _dispatch(cfg: Config, args) -> int:
         _heartbeat(cfg, s); print(s); return 0
     if args.cmd == "track":    return cmd_track(cfg, args.window)
     if args.cmd == "map-media": return cmd_map_media(cfg)
+    if args.cmd == "verify-live": return cmd_verify_live(cfg)
     if args.cmd == "reconcile": return cmd_reconcile(cfg)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)

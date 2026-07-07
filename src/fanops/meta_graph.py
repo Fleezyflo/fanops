@@ -236,6 +236,55 @@ def _next_path(cfg: Config, next_url: str) -> str:
     return next_url[len(base):] if next_url.startswith(base) else next_url.lstrip("/")
 
 
+_IG_OBJECT_FIELDS = "id,permalink,media_type,timestamp,username"   # MOL-113: the per-object liveness projection
+
+def resolve_ig_media(cfg: Config, media_id, *, handle: Optional[str] = None, get=None) -> Optional[dict]:
+    """MOL-113 — ask the Graph about ONE specific IG object: GET /{media_id}?fields=id,permalink,media_type,
+    timestamp,username with the resolved per-account creds. THE direct liveness SOURCE — no feed enumeration,
+    no permalink string-match (which is capped at one global credential and breaks on a re-share). Returns
+    {"exists": True, "permalink":…, "media_type":…, "username":…} on a 200 that carries the object id back
+    (proof it resolved), else None. FAIL-CLOSED at every step (empty/None id, no creds, non-200, transport
+    error, a 200 whose body lacks the id) -> None, NEVER a fabricated exists:True. Mirrors _graph_get's
+    fail-soft + resolve_meta_creds threading exactly (the token rides access_token, never logged/echoed).
+    `handle` scopes the read to that account's ig_user_id+token (the object belongs to one account); None
+    resolves the GLOBAL creds. This is the confirming primitive MOL-117's gate consumes."""
+    mid = (str(media_id).strip() if media_id is not None else "")
+    if not mid:
+        return None                                              # no id -> nothing to resolve (no HTTP)
+    creds = resolve_meta_creds(cfg, handle=handle)
+    if not creds.token:
+        return None                                              # no token -> can't ask the platform (fail-closed, no HTTP)
+    body = _graph_get(cfg, mid, {"fields": _IG_OBJECT_FIELDS}, get=get, token=creds.token)
+    if not isinstance(body, dict) or not body.get("id"):
+        return None                                              # non-200 / transport / error-shaped 200 -> unconfirmed
+    return {"exists": True, "permalink": body.get("permalink"),
+            "media_type": body.get("media_type"), "username": body.get("username")}
+
+
+def confirm_post_live(cfg: Config, post, *, reported_username: Optional[str] = None, get=None) -> dict:
+    """MOL-113 — the ONE seam that confirms a post against ITS platform's own API and returns
+    {"confirmed": bool, "owner": Optional[str]}. Routes by platform, NEVER guesses:
+      IG     -> resolve_ig_media on the captured media_id (Post.media_id, stamped from the Postiz releaseId at
+                reconcile — the stable per-object input). Confirmed iff the object resolves; owner is the
+                Graph-reported username. No media_id / a removed object -> {confirmed:False, owner:None}.
+      TikTok -> the EXISTING oEmbed verifier (post.metrics.verify_tiktok_permalink) — unchanged, just routed
+                here. Confirmed iff the live oEmbed author == `reported_username` (the Zernio-reported username
+                the post published to); owner is that username on a pass.
+    FAIL-CLOSED: any surface with no confirmable signal returns {confirmed:False, owner:None}. Read-only —
+    no ledger write, no publish. The injectable `get` keeps every call mockable (no live network in tests)."""
+    from fanops.models import Platform
+    if post.platform is Platform.instagram:
+        res = resolve_ig_media(cfg, post.media_id, handle=post.account, get=get)
+        if res:
+            return {"confirmed": True, "owner": res.get("username")}
+        return {"confirmed": False, "owner": None}
+    if post.platform is Platform.tiktok:
+        from fanops.post.metrics import verify_tiktok_permalink
+        ok = bool(verify_tiktok_permalink(cfg, post.public_url, reported_username, get=get))
+        return {"confirmed": ok, "owner": (reported_username if ok else None)}
+    return {"confirmed": False, "owner": None}                   # no per-object liveness notion on other surfaces
+
+
 def credentialed_ig_handles(cfg: Config) -> list[str]:
     """The active IG-carrying account handles that have their OWN per-account ig_user_id configured — the
     set of handles reconcile must enumerate media for (the per-handle-creds gap: live-linking capped at the
