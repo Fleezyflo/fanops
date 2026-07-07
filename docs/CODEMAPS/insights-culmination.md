@@ -30,11 +30,12 @@ Every actuator ranks by **raw Meta Graph reach**, not the engagement-skewed `lif
 | opening frame | `first_frame_kind` | `aggregate_by_dim` (in `_P4_DIMS`) | `apply_p4_dim_bias` | `cmd_run` post-loop |
 | **framing** (top/center) | `top_bias` | `aggregate_by_dim` (in `_P4_DIMS`) | `apply_p4_dim_bias` | `cmd_run` post-loop |
 | **timing** (hour/day) | `publish_hour`, `publish_dow` | `timing_bias_winner` | `apply_timing_bias` | `cmd_run` post-loop |
-| **casting** (account × content) | `account` × `clip_profile` | `reach_by_account_type` | `casting_reach_prior` | casting brief-build |
-| hook / cheap-text axis | `variant_hook`, `variation_axis` | `best_hooks` / `ucb_rank` | `apply_variant_amplify` | `cmd_run` post-loop |
+| ~~**casting** (account × content)~~ | — | — | — | **REMOVED P11** (`casting_bias` / `casting_reach_prior` deleted with LLM casting teardown) |
+| hook / cheap-text axis | `variation_axis` | `best_hooks` / `ucb_rank` | `apply_variant_amplify` | `cmd_run` post-loop |
 
-The hook axis predates this work (the caption/hook loop keeps `lift`); Legs 2–3 added framing, timing, and
-casting so all six varied axes now have feedback.
+The hook axis predates this work (the caption/hook loop keeps `lift`); Legs 2–3 added framing and
+timing reach feedback. The casting reach prior (`casting_bias`) was removed with the P11 casting teardown
+(MOL-152) — owner attribution is now stamped at pick time, not learned via a casting brief.
 
 ### STAMP — where each dim lands on the Post
 
@@ -46,7 +47,6 @@ casting so all six varied axes now have feedback.
   UTC-bucketed hour is noise for a single-region audience):
   - primary publish path: [post/run.py](../../src/fanops/post/run.py):267
   - late reconcile path: [reconcile.py](../../src/fanops/reconcile.py):374-375 (mirrors run.py after `published_at`)
-- casting reads the already-stamped `account` + `clip_profile` off analyzed posts (no new stamp).
 
 ### AGGREGATE — reach per value
 
@@ -56,9 +56,6 @@ casting so all six varied axes now have feedback.
 - `timing_bias_winner(led, cfg)` ([timing_bias.py](../../src/fanops/timing_bias.py):31) ranks
   `aggregate_by_dim(led, "publish_hour")` reach-desc / hour-asc, returns the leading hour when it clears the
   gap.
-- `reach_by_account_type(led)` ([casting_bias.py](../../src/fanops/casting_bias.py):33) is the composite
-  aggregation `aggregate_by_dim` can't express — it keys by `(account, clip_profile)` (both are Post fields),
-  → per cell `{n, reach_mean}`.
 
 ### The gate (shared by every structural actuator)
 
@@ -66,7 +63,7 @@ casting so all six varied axes now have feedback.
 ([validation_gate.py](../../src/fanops/validation_gate.py):42). Signal floor: ≥ `_MIN_ATTRIBUTED_N` (8)
 attributed posts across ≥ `_MIN_VALUES` (2) distinct values — otherwise a UCB-style ranker explores forever on
 n≈1 cells. `dim_bias_candidates` and `timing_bias_winner` also require the reach leader to beat the runner-up
-by `cfg.p4_min_reach_gap` (a comparative winner). Casting is the exception below.
+by `cfg.p4_min_reach_gap` (a comparative winner).
 
 ### ACTUATOR — feeding the winner back
 
@@ -79,40 +76,26 @@ by `cfg.p4_min_reach_gap` (a comparative winner). Casting is the exception below
   reach-winning operator-local hour to a control-file prior (`cfg.timing_bias_path`) that `crosspost.surface_time`
   consumes (`hour_hint=`, `tz=`), window-clamped to `cfg.account_window(handle)`. A schedule-slot bias, never a
   publish. Kill switch `FANOPS_TIMING_BIAS`, default OFF. Wired at cli.py:994.
-- **`casting_reach_prior(led, cfg, handles)`** ([casting_bias.py](../../src/fanops/casting_bias.py):55) — the
-  per-`(account, clip_profile)` reach hint injected **inline at casting brief-build** in
-  `casting.request_moment_casting` (the sibling of `_learned_account_signal`, which already injects a per-account
-  frozen hint the same way — so there is **no `cmd_run` control-file** for casting). Rides into the brief as
-  `MomentCastingRequest.reach_prior`; the key is dropped when empty → the brief is byte-identical when OFF/frozen.
-  Kill switch `FANOPS_CASTING_BIAS`, default OFF.
 
 ## Invariants
 
 - **C1 firewall — every actuator is amplify/bias-only.** None retire, `_delete_moment_cascade`, or
-  `set_*_state`. Grounded in `p4_dim_bias.py:8-14` and mirrored by `timing_bias` / `casting_bias`.
+  `set_*_state`. Grounded in `p4_dim_bias.py:8-14` and mirrored by `timing_bias`.
 - **Validation-frozen.** Even with its kill switch ON, each actuator is INERT until `learning_validated` — a
   correctness gate against learning on an unproven / mis-keyed metric shape, not an operator gate.
 - **Fail-safe.** Any actuator exception is logged once and leaves the ledger / brief byte-identical (the loop
   never crashes on a learning hiccup; `cmd_run` exit stays 0).
 - **No new auto-publish path.** These actuators bias GENERATION and the SCHEDULE slot only. The
   no-auto-publish rule (a post is BORN `awaiting_approval`, only the operator promotes it) is untouched.
-- **Casting explore-guard (no reach-monoculture).** `casting_reach_prior` only ADDS a lean for a cell that
-  clears the per-cell `_MIN_ATTRIBUTED_N` floor; an under-exposed cell is OMITTED (unproven ≠ losing), and the
-  prior never removes an account from the casting `personas` — every active account keeps getting cast and can
-  prove itself. It ANNOTATES proven cells (a lone proven account is a valid lean), it does not pick one
-  comparative winner the way p4/timing do.
 
 ## The autonomous driver
 
 `fanops run` (dispatched at [cli.py](../../src/fanops/cli.py):919) runs, after `advance`, `_learn_pass` →
 `apply_variant_amplify` → `apply_p4_dim_bias` → `apply_timing_bias`, each in its own transaction, gated on
 `is_live_backend` + its kill switch (cli.py:966-994). `cmd_daemon` (cli.py:505) is the launchd packaging of
-`fanops run`. Casting's prior needs no `cmd_run` wiring — it is recomputed from the live ledger
-at each casting brief. ("Wire into `pipeline.advance`" was a PHANTOM — the loop was already autonomous;
-dropped from Leg 3.)
+`fanops run`.
 
 ## Tests
 
 - Framing / timing / legibility: [tests/test_culmination_coverage.py](../../tests/test_culmination_coverage.py)
-- Casting reach prior: [tests/test_casting_bias.py](../../tests/test_casting_bias.py)
 - The gate: `tests/test_validation_gate.py`; existing P4 dims: `tests/test_p4_dim_bias.py`

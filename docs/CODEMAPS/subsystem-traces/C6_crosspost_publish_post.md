@@ -1,5 +1,11 @@
 # C6: Crosspost, Publish & Post
 
+> **POST-REBUILD (P15 / MOL-156).** Crosspost mints posts only on owner-admitted surfaces
+> (`casting.affinity_admits` — `Moment.affinities` single-owner). No `account_selection_admits`,
+> `repair_casting_selections`, casting-gate defer, `hooks_by_persona`, or `Post.variant_hook`.
+> Captions scope via `pipeline._owner_caption_surfaces` (same predicate). Closed-loop proof:
+> `tests/test_per_persona_e2e.py`.
+
 ## Files covered (all 17 read in full, cross-checked against structural_index.json — function/class/method lists match exactly)
 
 - `src/fanops/crosspost.py` (342 lines) — read
@@ -82,24 +88,23 @@ platform)." No publish/network calls in this file — it is purely a minting sta
 - `surface_time(base, account, platform, date_str, index, *, clip_id="", lead_minutes=0, hour_hint=None, tz=None) -> str` — computes the deterministic, monotonic-in-`index` scheduled ISO time for one surface/clip/index. Uses a stable `random.Random(seed)` stream (not reseeded per index) so `jitter < step` guarantees monotonicity (AUDIT H1/H2). `hour_hint` (from the Leg-3 timing-bias feature, outside this cluster) can pin the hour in operator-local tz. Pure function, no I/O. Called by `_mint_surface_post`.
 - `_clip_for_aspect(led, cfg, moment_id, aspect) -> Clip` — finds a reusable rendered clip in the target aspect (`_REUSABLE_CLIP_STATES` allowlist) or renders one on demand via `render_moment` (in `clip.py`, outside this cluster — shells ffmpeg). **Side effect**: may mutate `led.clips` via `render_moment`. Called by `_mint_surface_post`, and (per call_graph) `studio.actions._warm_target_aspect`, `studio.actions.crosspost_to_account`.
 - `account_render_spec(cfg, *, clip, hook, acct) -> tuple[render_id, wants_cut, profile, top_bias]` — pure, content-addressed per-account Render identity + cut decision (band/framing divergence check). Single source of truth shared by the crosspost mint AND the Studio re-burn action, so the two never drift (audit H1 note in the docstring). Called by `render_account_file`, and per call_graph by `studio.actions_approve`, `studio.actions_review` (re-burn path).
-- `render_account_file(led, cfg, *, post, acct, target_clip, src, caller="approve") -> RenderPlan` — **the actual ffmpeg burn**: renders (or falls back to a shared-clip hook burn via `overlay.burn_hook_only`) the per-account file for `post.variant_hook`. PURE render-to-disk, NO ledger mutation (safe to call lock-free). Fail-open: an ffmpeg failure logs a breadcrumb (`account_cut_failed` / `hook_burn_failed`) and falls back; `vpath` always exists on return. Called by `post/run.py:_materialize_variant_media` (the publish-time safety net) and by Studio's approval/re-burn actions (per call_graph, `studio.actions_approve`).
+- `render_account_file(led, cfg, *, post, acct, target_clip, src, caller="approve") -> RenderPlan` — **the actual ffmpeg burn**: renders (or falls back to a shared-clip hook burn via `overlay.burn_hook_only`) the per-account file from `m.hook` on the moment. PURE render-to-disk, NO ledger mutation (safe to call lock-free). Fail-open: an ffmpeg failure logs a breadcrumb (`account_cut_failed` / `hook_burn_failed`) and falls back; `vpath` always exists on return. Called by `post/run.py:_materialize_variant_media` (the publish-time safety net) and by Studio's approval/re-burn actions (per call_graph, `studio.actions_approve`).
 - `_moment_is_live_target(m) -> bool` — MOM-1 guard: a captioned clip may only seed a post while its parent moment is `decided`/`clipped` (not `picked`, which means a re-pick superseded it). `m is None` fails open (existing behavior preserved). Pure. Called by `_seed_clips`.
 - `_seed_clips(led) -> list[Clip]` — the crosspost candidate set: `captioned` clips, not held, not retired (clip or moment), whose moment is still a live render target. Pure read. Called by `crosspost_clips`.
 - `_mint_surface_post(led, cfg, clip, m, surf, i, *, base, date_str, clip_dur, tgt, src_batch) -> int` — **the core per-(clip,surface) minting body**, hoisted from `crosspost_clips`'s deepest nesting. Returns `1` only for a batch-target exclusion (tally purposes), else `0`. Owns every per-surface skip gate in order:
   1. batch-target skip (`tgt and surf.account not in tgt`) — logs `batch_target_skip`, returns 1
-  2. `account_selection_admits` casting gate (RF1 durable-selection) — logs `skipped_surface why=not_cast`, returns 0
+  2. `affinity_admits` owner gate — logs `skipped_surface why=not_cast`, returns 0
   3. per-platform duration cap (`PLATFORM_MAX_SECONDS`) — logs `skipped_surface why=over_cap_...`, returns 0 (fail-OPEN on unknown duration)
   4. on-demand render via `_clip_for_aspect`; if the rendered clip's state isn't reusable — logs `skipped_surface why=render_...`, returns 0
   5. caption lookup (`clip.meta_captions.get(surface_key)`); `None` → logs `skipped_surface`, returns 0
   6. `decide_tag` (in `tagging.py`, outside this cluster) appends the artist handle line
   7. Leg-3 timing-bias hour hint (fail-open try/except around `timing_bias_hour_for`)
   8. `surface_time` computes the schedule
-  9. creative-variation hook resolution (per-account `hooks_by_persona` else shared `m.hook`)
-  10. **existing-post reconciliation**: if a post already exists for this content-addressed `pid` and is `rejected`/`failed`, it's popped and re-minted; if it's `awaiting_approval` and the hook diverged, the hook is rewritten in place (an approved/queued post's hook is NEVER touched — the operator already approved it)
-  11. `led.add_post(Post(..., state=PostState.awaiting_approval, ...))` — **the birth**, with a content-addressed `submission_id=f"fanops_{_hash('idemp', pid)}"` idempotency token stamped at birth (AUDIT H1) so an ambiguous publish is always pollable.
+  9. **existing-post reconciliation**: if a post already exists for this content-addressed `pid` and is `rejected`/`failed`, it's popped and re-minted; if it's `awaiting_approval` and already present, skip (no hook rewrite — one owner-moment hook on the clip)
+  10. `led.add_post(Post(..., state=PostState.awaiting_approval, ...))` — **the birth**, with a content-addressed `submission_id=f"fanops_{_hash('idemp', pid)}"` idempotency token stamped at birth (AUDIT H1) so an ambiguous publish is always pollable.
 
   Called by `crosspost_clips` only.
-- `crosspost_clips(led, cfg, accounts, *, base_time) -> Ledger` — **the module's public entry point**. For each seed clip: resolves its moment/source, runs `repair_casting_selections` once per source (RF1), defers the whole clip via `continue` if the casting gate is pending/failed-to-open (never silently fans-to-all), resolves the batch's `target_accounts`, then loops every surface via `_mint_surface_post`, tallies batch-target skips vs. an unbatched zero-post outcome, and finally `led.set_clip_state(clip.id, ClipState.queued)` — the clip itself (not the posts) is marked queued once its fan-out pass completes, regardless of how many posts actually born. Called by `pipeline._stage_crosspost`.
+- `crosspost_clips(led, cfg, accounts, *, base_time) -> Ledger` — **the module's public entry point**. For each seed clip: resolves its moment/source, resolves the batch's `target_accounts`, loops every surface via `_mint_surface_post`, tallies batch-target skips vs. an unbatched zero-post outcome, and finally `led.set_clip_state(clip.id, ClipState.queued)` — the clip itself (not the posts) is marked queued once its fan-out pass completes. No casting-gate defer/repair (P8). Called by `pipeline._stage_crosspost`.
 
 **Class `RenderPlan`** (`@dataclass`) — the pure result of `render_account_file`: `render_id, vpath, produced, realized, profile, hook_source, batch_id, source_id`. No methods, pure data holder.
 
@@ -114,8 +119,8 @@ Module constants: `_STEP_MIN=40`, `_JITTER_MAX=30` (must stay `< _STEP_MIN` for 
 - `_stage_source_to_moments(led, cfg, accts, log) -> Ledger` — transcribe → signals → request moments, per source, quarantined; skips `third_party` sources entirely (M1: inert to clip-production). **Side effects**: shells ffprobe/whisper/ffmpeg transitively (via `transcribe_source`, `detect_signals`, outside/partially-in this cluster). Called by `advance`.
 - `_stage_ingest_moments(led, cfg, log) -> Ledger` — ingests decided moments for `moments_requested` sources, quarantined. Called by `advance`.
 - `_stage_moment_hooks(led, cfg, accts, log) -> Ledger` — the pass-2 frame-seeing hook-author gate for `picks_decided` sources, quarantined. Called by `advance`.
-- `_stage_casting(led, cfg, accts, log) -> Ledger` — per-account moment SELECTION LLM gate (M1 Option C), default ON via `cfg.account_casting`; fail-open on error (logs + stamps `degraded_reason`, never quarantines the whole source to `error`). Called by `advance`.
-- `_stage_render_and_caption(led, cfg, accts, aspects, log) -> Ledger` — for each `decided` moment: renders its aspects, then requests captions for each successfully-rendered clip scoped to affinity-admitted surfaces; a failed-aspect clip (`ClipState.error`) is explicitly never captioned (no phantom post with a dangling mp4). Quarantines the MOMENT (not the clip) on exception. Called by `advance`.
+- `_owner_caption_surfaces(cfg, m, accts) -> list` — pure: the (account, platform) tuples the moment OWNER should get captions for, gated by `affinity_admits` (same predicate as crosspost). Called by `_stage_render_and_caption`, `_stage_refresh_caption_requests`.
+- `_stage_render_and_caption(led, cfg, accts, aspects, log) -> Ledger` — for each `decided` moment: renders its aspects, then requests captions for each successfully-rendered clip scoped to `_owner_caption_surfaces` (P10). Called by `advance`.
 - `_stage_structural_hooks(led, cfg, log) -> Ledger` — M4/M5/M6: opens the intro-tease matcher gate, mines structural-hook suggestions, renders approved plans. Fail-open (log-only, no quarantine) since it's additive/opt-in. Called by `advance`.
 - `_stage_refresh_caption_requests(led, cfg, accts, log) -> Ledger` — re-opens stale/incomplete caption gates BEFORE ingest, so incomplete caption coverage never silently blocks crosspost. Runs per-`try/except` per clip (log-only, not quarantine). Called by `advance`.
 - `_stage_ingest_captions(led, cfg, log) -> Ledger` — ingests landed captions for `captions_requested` clips, quarantined (clip → error). Called by `advance`.
