@@ -115,6 +115,16 @@ _IG_MEDIA_ENRICH_UNRESOLVED = ("ig_media_id_unresolved: this post's permalink is
 _UNVERIFIED_TIKTOK = (_UNVERIFIED_PREFIX + " TikTok post not live-verified — needs a real backend "
                       "submission_id AND a public_url proven live for this handle (oEmbed author==handle). "
                       "Backend reported published but the URL/id could not be confirmed; parked, not rested.")
+# MOL-117 — the CREDENTIALED-account IG identity park. A quarantine (the _UNVERIFIED_PREFIX sentinel), so
+# reconcile_posts keeps re-polling it (needs_reconcile ∈ _RECONCILABLE) and re-confirms next pass — a
+# post that later resolves on the platform recovers, one that never does stays visibly parked. Reached
+# ONLY for an account with its OWN ig_user_id: the Graph gave a DEFINITIVE verdict (object absent, or
+# resolved to a DIFFERENT owner than the intended handle) — never on a transport hiccup (that fails OPEN).
+_UNVERIFIED_IG = (_UNVERIFIED_PREFIX + " IG post not platform-confirmed live — this account carries its "
+                  "own ig_user_id, so liveness is gated on the Meta Graph: the captured media object must "
+                  "resolve AND its owner username must match the intended account handle. The Graph gave a "
+                  "definitive verdict that it does NOT (object absent or owned by a different handle); parked, "
+                  "not rested on Postiz's self-report. Re-polled next pass — recovers if the object resolves.")
 
 
 def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[str],
@@ -140,6 +150,64 @@ def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[s
         return bool(verify_tiktok_permalink(cfg, ok, reported_username, get=get))
     except Exception:
         return False                                         # an unimportable/erroring verifier is NOT proof it is live
+
+
+# MOL-117 gate verdicts: REST (platform-confirmed / uncredentialed Postiz-rest), PARK (definitive
+# identity failure on a credentialed account), FAIL_OPEN (transport hiccup during confirm -> retry next tick).
+_GATE_REST, _GATE_PARK, _GATE_FAILOPEN = "rest", "park", "fail_open"
+
+
+def _ig_rest_verdict(cfg: Config, post, media_id, credentialed_handles, confirm, graph_get) -> str:
+    """MOL-117 — the CONDITIONAL IG rest-gate. `post.account` is the intended IG handle; `media_id` is the
+    Postiz releaseId (the IG object id) just captured this pass; `credentialed_handles` is
+    meta_graph.credentialed_ig_handles(cfg) (handles with their OWN ig_user_id). `confirm` is the MOL-113
+    confirm_post_live seam (injectable for tests); `graph_get` is the Graph HTTP getter (injectable).
+      • UNCREDENTIALED account (handle NOT in `credentialed_handles`): _GATE_REST — UNCHANGED Postiz-rest
+        path. A borrowed/global credential can't enumerate this object without false-negativing it (the #317
+        6-stuck-posts regression), so liveness stands on the Postiz-confirmed releaseURL. confirm is NEVER
+        called here.
+      • CREDENTIALED account: FAIL-CLOSED platform identity gate. Ask the platform (confirm_post_live over
+        the captured media_id, scoped to this handle's creds) and REST only when it resolves AND its owner
+        username == the intended handle. A DEFINITIVE non-confirmation (object absent) or an owner MISMATCH
+        -> _GATE_PARK (never rest on Postiz's word). A TRANSPORT failure during the confirm (the injected
+        probe saw the getter raise) -> _GATE_FAILOPEN: the confirmed=False is a network hiccup, NOT a verdict,
+        so don't strand the post — retry next tick. Mirrors TikTok's posture: fail-closed on a real identity
+        mismatch, fail-open on a network hiccup."""
+    handle = (post.account or "").strip()
+    if handle.lstrip("@").lower() not in {h.lstrip("@").lower() for h in credentialed_handles}:
+        return _GATE_REST                                    # uncredentialed -> Postiz-rest UNCHANGED (#317 guard)
+    # credentialed: platform-confirm over the captured media_id, transport-probed so a raising getter is
+    # distinguishable from a definitive absence (confirm/_graph_get both collapse to confirmed=False).
+    probe = {"transport_failed": False}
+    def _probed_get(url, params=None, timeout=None):
+        g = graph_get or _requests_get()
+        try:
+            return g(url, params=params, timeout=timeout)
+        except Exception:
+            probe["transport_failed"] = True                 # record the transport error, then let it propagate
+            raise                                            # into _graph_get, which fail-softs it to None
+    cand = post.model_copy(update={"media_id": media_id})    # the resolve INPUT is the just-captured releaseId
+    try:
+        res = confirm(cfg, cand, get=_probed_get)
+    except Exception:
+        return _GATE_FAILOPEN                                # an erroring seam is NOT a verdict -> retry next tick
+    if res.get("confirmed") and _owner_matches(res.get("owner"), handle):
+        return _GATE_REST                                    # platform-confirmed AND owned by the intended handle
+    if probe["transport_failed"]:
+        return _GATE_FAILOPEN                                # confirmed=False rode a transport hiccup -> fail OPEN
+    return _GATE_PARK                                        # DEFINITIVE: object absent or owner mismatch -> fail CLOSED
+
+
+def _owner_matches(owner, handle) -> bool:
+    """The Graph-reported owner username == the intended IG handle, compared case-insensitively and
+    '@'-insensitively (the handle is canonicalized to a leading '@'; the Graph username carries none)."""
+    return bool(owner) and owner.strip().lstrip("@").lower() == handle.lstrip("@").lower()
+
+
+def _requests_get():
+    import requests
+    return requests.get
+
 
 def _norm_permalink(url: Optional[str]) -> Optional[str]:
     """Canonical key for matching a stored public_url to a Graph media `permalink`: `host_without_www + path`,
@@ -448,10 +516,17 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
 
 
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None,
-                    now: Optional[datetime] = None) -> Ledger:
+                    confirm=None, graph_get=None, now: Optional[datetime] = None) -> Ledger:
     poll = get_status or _default_get_status(cfg, led)
     now = now or datetime.now(timezone.utc)               # clock injected by tests; real callers default to UTC now
     log = get_logger(cfg)
+    # MOL-117: the IG liveness confirmation seam (confirm_post_live) + the Graph getter, both injectable so
+    # tests never touch the network. The credentialed-handle set is read ONCE per pass (a torn accounts.json
+    # degrades to [] -> every IG post treated as uncredentialed -> Postiz-rest unchanged, never stranded).
+    if confirm is None:
+        from fanops.meta_graph import confirm_post_live as confirm
+    from fanops.meta_graph import credentialed_ig_handles
+    _cred_ig = credentialed_ig_handles(cfg)
     for post in [p for p in led.posts.values() if p.state in _RECONCILABLE]:
         if _is_giveup(post):
             continue                       # XC-2/XC-6: a labeled-terminal post is no longer polled or re-logged
@@ -521,30 +596,42 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 })
                 log("reconcile", post.id, "published_no_url_parked")
                 continue
-            # REST-gate: a post may only REST in published/analyzed if its LIVENESS is CONFIRMED by the
-            # PUBLISHER; else it QUARANTINES to needs_reconcile (visible, labeled) rather than resting on an
-            # unconfirmed URL.
-            #   IG      -> LIVENESS is Postiz: status==published + a real releaseURL (get_status sets publicUrl
-            #              ONLY on a published Postiz row). Reaching HERE already means both — a non-published
-            #              status never enters this branch, and a published-with-no-releaseURL was parked at
-            #              the no-url gate above. So a Postiz-confirmed IG post ALWAYS rests here. The Graph
-            #              media_id match is opportunistic METRICS ENRICHMENT (resolve_media_ids), NOT a
-            #              liveness gate — with one global Meta credential we can enumerate only one account's
-            #              feed, so gating liveness on it stranded posts published to other handles (the
-            #              6-stuck-posts bug). PHANTOM PROTECTION is preserved by the Postiz-confirmation
-            #              itself: a stored URL that Postiz does NOT confirm published never reaches this rest.
+            # REST-gate: a post may only REST in published/analyzed if its LIVENESS is CONFIRMED; else it
+            # QUARANTINES to needs_reconcile (visible, labeled) rather than resting on an unconfirmed URL.
+            #   IG      -> MOL-117 CONDITIONAL, platform-confirmed gate (_ig_rest_verdict):
+            #                • account WITHOUT its own ig_user_id (uncredentialed) -> UNCHANGED Postiz-rest
+            #                  (status==published + a real releaseURL, set ONLY on a published Postiz row). A
+            #                  borrowed/global credential can't enumerate this object without false-negativing
+            #                  it (the #317 6-stuck-posts regression), so liveness stands on the releaseURL.
+            #                • account WITH its own ig_user_id (credentialed) -> FAIL-CLOSED identity gate:
+            #                  ask the Meta Graph (confirm_post_live over the captured releaseId, scoped to the
+            #                  handle's creds) and rest ONLY when it resolves AND its owner username == the
+            #                  intended handle. A DEFINITIVE non-confirmation/owner-mismatch -> park (never
+            #                  rest on Postiz's word). A TRANSPORT hiccup during confirm -> FAIL-OPEN, retry.
             #   TikTok  -> a live-verified public_url (T8 oEmbed author==reported username) atop a real
             #              submission_id — UNCHANGED (Zernio has no releaseURL-shaped liveness, so it keeps the
-            #              oEmbed identity gate). FAIL CLOSED.
+            #              oEmbed identity gate). FAIL CLOSED. (Already routes verify_tiktok_permalink, the same
+            #              primitive MOL-113's confirm_post_live wraps — left as-is, not re-plumbed.)
             # Non-IG/non-TikTok surfaces keep resting on the R1-validated URL (no identity notion).
             from fanops.models import Platform
             _reason = None
+            # The IG object id captured THIS pass (Postiz row releaseId) — the credentialed-gate resolve INPUT
+            # AND the MOL-112 media_id stamp. Computed BEFORE the gate so the confirm can consume it.
+            _rid = info.get("releaseId")
+            _rid = _rid.strip() if isinstance(_rid, str) and _rid.strip() else None
             if post.platform is Platform.tiktok:
                 # reported_username (resolved above from the status body, or the /analytics fallback body) is the
                 # authority the oEmbed author must match — NOT post.account (the internal handle, the shipped bug).
                 # Absent (fail-closed input) -> the gate rejects and the post stays parked.
                 if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username):
                     _reason = _UNVERIFIED_TIKTOK           # no live-verified url / no reported username / no real id -> parked
+            elif post.platform is Platform.instagram:
+                _verdict = _ig_rest_verdict(cfg, post, _rid, _cred_ig, confirm, graph_get)
+                if _verdict == _GATE_PARK:
+                    _reason = _UNVERIFIED_IG               # credentialed account, DEFINITIVE identity failure -> park
+                elif _verdict == _GATE_FAILOPEN:
+                    log("reconcile", post.id, "ig_confirm_transport_failopen")  # network hiccup -> retry next tick
+                    continue                               # leave state untouched (still needs_reconcile), never stranded
             if _reason is not None:
                 led.posts[post.id] = post.model_copy(update={
                     "state": PostState.needs_reconcile, "error_reason": _reason})
@@ -553,9 +640,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             upd = {"state": PostState.published,
                    "public_url": captured_url,
                    "error_reason": None}                  # a transient poll-error reason must not survive a successful publish
-            rid = info.get("releaseId")
-            if post.platform is Platform.instagram and isinstance(rid, str) and rid.strip():
-                upd["media_id"] = rid.strip()            # MOL-112: IG object id from Postiz row — no feed match required
+            if post.platform is Platform.instagram and _rid:
+                upd["media_id"] = _rid                    # MOL-112: IG object id from Postiz row — no feed match required
             if not (post.published_at or "").strip():
                 upd["published_at"] = iso_z(now)         # mirror _publish_one: reconcile-only promote must carry a ship stamp
             # Leg 3 (timing): bucket the ship stamp into operator-local (hour, weekday) — mirror _publish_one
