@@ -550,14 +550,13 @@ class Ledger:
         sel = self.account_selection_for(source_id, account)
         return set(sel.moment_ids) if sel else set()
     def cast_handles_for(self, source_id: str, moment_id: str) -> list:
-        # MOM-3 ROOT: the handles CAST on this moment, DERIVED from the durable AccountSelection map — the Review
-        # READ-MODEL ONLY (matrix display), NEVER the gate. Replaces reading the legacy Moment.affinities tag,
-        # which the operator override (cast_add/cast_remove writes AccountSelection, not affinities) never touched,
-        # so the matrix could diverge from the lanes/gate. A handle is "cast on this moment" iff it owns a CHOSEN
-        # selection listing this moment_id; a fan_all_default/pending TAG row (no moment_ids) is NOT a per-moment
-        # cast and is excluded. [] = no chosen selection for this moment -> the matrix treats it as uncast/all
-        # (exactly today's affinities==[] behavior). Sorted for deterministic display.
-        return sorted(s.account for s in self.selections_of_source(source_id) if moment_id in set(s.moment_ids))
+        # P13 (MOL-152/153): the handles CAST on this moment = its single-owner Moment.affinities (the ONE gate
+        # input after the casting teardown; operator override cast_add/cast_remove mutates affinities directly).
+        # The Review READ-MODEL only (matrix/lane display); [] = persona-blind -> the grid treats it as fans-to-all
+        # (exactly the crosspost affinity gate's affinities==[] admit-all). Guarded to this source; sorted for display.
+        m = self.moments.get(moment_id)
+        if m is None or m.parent_id != source_id: return []
+        return sorted(set(m.affinities or []))
 
     # ---- typed state setters (FIX F65 — no cross-unit scan) ----
     # ECC fix #10: immutable update (model_copy + dict reassignment) instead of in-place `.state =`.

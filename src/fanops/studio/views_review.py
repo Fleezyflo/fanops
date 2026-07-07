@@ -10,8 +10,8 @@ from typing import Optional
 
 from fanops.config import Config
 from fanops.accounts import Accounts
-from fanops.ledger import Ledger, selection_index_for_source
-from fanops.models import PostState, SelectionMethod, MomentState
+from fanops.ledger import Ledger
+from fanops.models import PostState, MomentState
 from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
@@ -21,6 +21,13 @@ from fanops.studio.actions_common import RENDER_PENDING_REASON
 
 def _handle_display_map(acct_by_handle: dict) -> dict[str, str]:
     return {k: k for k in acct_by_handle}
+
+
+def _affinity_index(led: Ledger, source_id: str) -> dict[str, list]:
+    """P13 (MOL-152/153): {moment_id: sorted(owners)} for a source's moments — the single-owner affinity cast set
+    that IS the crosspost gate input after the casting teardown. [] == persona-blind -> the moment fans to all
+    (matches the crosspost affinity gate). Replaces the deleted selection_index_for_source read. Pure."""
+    return {m.id: sorted(set(m.affinities or [])) for m in led.moments.values() if m.parent_id == source_id}
 
 
 def _display_handle(handle: str, by_norm: dict[str, str]) -> str:
@@ -186,22 +193,15 @@ def provenance_chips(surface, *, creative_variation: bool = False) -> list[ProvC
 
 
 def _cast_cause(led: Ledger, post, affinities) -> Optional[str]:
-    """RF1: name WHY this account got this moment, from the DURABLE AccountSelection (method-aware) instead of
-    the non-durable affinities tag. A degraded provenance (fan_all_default / migrated) is flagged ⚠ so the
-    operator SEES a labelled fan-to-all or a lifted-legacy pick rather than a silent gap. Falls back to the
-    exact legacy affinities string ONLY for a pre-v9 source that wrote no selection. Pure read; fail-open."""
+    """P13 (MOL-152/153): name WHY this account got this moment, from the single-owner Moment.affinities (the
+    sole crosspost-gate input after the casting teardown). A persona-blind (empty-affinities) moment fans to all
+    -> no per-account cause. An owner (incl. an operator co-owner) reads 'picked for @a'. Pure read; fail-open."""
     clip = led.clips.get(post.parent_id)
     mom = led.moments.get(clip.parent_id) if clip else None
     if mom is None: return None
-    sel = led.account_selection_for(mom.parent_id, post.account)
-    if sel is None:
-        if not led.selections_of_source(mom.parent_id):       # pre-v9 / casting-never-ran -> legacy fallback
-            return f"picked for {post.account}" if (affinities and post.account in affinities) else None
-        return None                                           # cast source, account not selected -> no cause
-    if sel.method == SelectionMethod.fan_all_default: return f"⚠ fans to all ({post.account})"
-    if mom.id in set(sel.moment_ids):
-        return (f"⚠ picked for {post.account} (migrated)" if sel.method == SelectionMethod.migrated
-                else f"picked for {post.account} ({sel.method.value})")
+    owners = set(mom.affinities or [])
+    if owners and post.account in owners:
+        return f"picked for {post.account}"
     return None
 
 def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=None, affinities=()) -> SurfacePost:
@@ -387,9 +387,9 @@ def review_matrix(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
     # empty cell of an excluded channel. Read fail-open; [] (ALL-sentinel / no batch) -> off-target never fires.
     _batch = led.get_batch(getattr(src, "batch_id", None)) if getattr(src, "batch_id", None) else None
     targets = list(_batch.target_accounts) if _batch is not None else []
-    # MOL-82: SCOPE the cast-handles lookup to this source — build the moment->handles index ONCE (one scan of
-    # the source's selections) instead of cast_handles_for rescanning the whole ledger-wide map per moment.
-    _cast_idx = selection_index_for_source(led, source_id)
+    # MOL-82 / P13: SCOPE the cast-handles lookup to this source — build the moment->owners index ONCE from the
+    # single-owner Moment.affinities (the crosspost gate input) instead of cast_handles_for rescanning per moment.
+    _cast_idx = _affinity_index(led, source_id)
     _by_norm = _handle_display_map(acct_by_handle)
     channels: dict = {}; rows = []
     for m in moments:
@@ -474,42 +474,41 @@ def account_lanes(led: Ledger, accounts: Accounts, cfg: Config, *, source_id: st
         if p.parent_id in clip_ids: posts_by_clip.setdefault(p.parent_id, []).append(p)
     acct_by_handle = {a.handle: a for a in accounts.accounts}
     personas = _personas(accounts)
-    # MOL-82: SCOPE the cast-handles lookup to this source — build the moment->handles index ONCE from a single
-    # scan of the source's selections, reused for every lane row below (was cast_handles_for rescanning the whole
-    # ledger-wide map per (account × moment)). _source_sels is that same one scan, reused for the universe + has-chosen.
-    _source_sels = led.selections_of_source(source_id)
-    _cast_idx = selection_index_for_source(led, source_id)
-    # lane universe: active-first (in accounts.json order), then any has-selection / has-post handle, alpha.
+    # MOL-82 / P13: SCOPE the cast-owners lookup to this source — build the moment->owners index ONCE from the
+    # single-owner Moment.affinities (the crosspost gate input after the casting teardown), reused for every lane
+    # row below + the universe + has-cast check (was cast_handles_for rescanning the whole ledger-wide map).
+    _cast_idx = _affinity_index(led, source_id)
+    # lane universe: active-first (in accounts.json order), then any cast-owner / has-post handle, alpha.
     active_order = [a.handle for a in accounts.accounts]
     _by_norm = _handle_display_map(acct_by_handle)
-    extra = {_display_handle(s.account, _by_norm) for s in _source_sels} | {_display_handle(p.account, _by_norm) for p in led.posts.values() if p.parent_id in clip_ids}
+    extra = ({_display_handle(h, _by_norm) for owners in _cast_idx.values() for h in owners}
+             | {_display_handle(p.account, _by_norm) for p in led.posts.values() if p.parent_id in clip_ids})
     handles = active_order + sorted(h for h in extra if h not in set(active_order))
     # first-clip per moment owns the MASTER preview (clip -> source player), matching the cards/matrix.
     preview_by_moment = {mid: f"/clips/{cs[0].id}" for mid, cs in clips_by_moment.items() if cs}
-    # MOM-2: who was a casting CANDIDATE (active + persona-bearing, the SAME predicate request_moment_casting
-    # filters on) and is this a CAST source (any chosen selection — moment_ids non-empty per the sum-type)? A
-    # candidate with NO record on a cast source posts nothing -> the lane shows a "0 cast" badge (visibility only).
+    # MOM-2: who was a casting CANDIDATE (active + persona-bearing)? On a CAST source (any moment owned by anyone)
+    # a candidate that owns NO moment posts nothing for the owned moments -> the lane shows a "0 cast" badge.
     candidates = {a.handle for a in accounts.active() if casting_directive(a)}
-    source_has_chosen = any(s.moment_ids for s in _source_sels)   # MOL-82: reuse the one scan, no rescan
+    source_has_chosen = any(owners for owners in _cast_idx.values())   # any moment is attributed
     lanes: list = []
     for handle in handles:
-        sel = led.account_selection_for(source_id, handle)
-        cast_ids = led.moment_ids_selected_for(source_id, handle)    # set() for BOTH no-record AND fan_all_default (read-model only)
-        fans_all = sel is None or sel.method == SelectionMethod.fan_all_default
+        cast_ids = {mid for mid, owners in _cast_idx.items() if handle in owners}   # moments THIS account owns
+        fans_all = not source_has_chosen   # no moment on this source is attributed -> everything fans to all
         acct = acct_by_handle.get(handle); persona = personas.get(handle)
         rows: list = []
         for m in moments:
             mposts = [p for c in clips_by_moment.get(m.id, []) for p in posts_by_clip.get(c.id, [])
                       if p.account == handle and _state_matches(p, state)]
             sp = _surface(_pick_lead(mposts), persona=persona, now=now, cfg=cfg, led=led, acct=acct,
-                          affinities=_display_handles(_cast_idx.get(m.id, []), _by_norm)) if mposts else None   # MOM-3: derived view, not the stored tag; MOL-82: O(1) scoped-index lookup, not a per-(account×moment) whole-map rescan
+                          affinities=_display_handles(_cast_idx.get(m.id, []), _by_norm)) if mposts else None   # single-owner affinities view; O(1) scoped-index lookup
             rows.append(LaneRow(moment_id=m.id, window=f"{int(m.start)}–{int(m.end)}", reason=m.reason,
                                 hook=m.hook, is_cast=m.id in cast_ids,
                                 preview_url=preview_by_moment.get(m.id, ""), post=sp))
-        # MOM-2: a candidate with NO durable record (sel is None -> not a fan_all_default/pending row either) on
-        # a cast source is denied everywhere -> posts nothing. Flag it; the operator casts it manually (no auto-fan).
-        zero_cast = sel is None and source_has_chosen and handle in candidates
-        lanes.append(AccountLane(account=handle, rows=rows, method=(sel.method.value if sel else None),
+        # MOM-2: a persona-bearing candidate that owns NO moment on a source that HAS owned moments posts nothing
+        # for the owned set -> flag it; the operator casts it manually (no auto-fan). method has no meaning post-
+        # teardown (affinities carries no provenance) -> None.
+        zero_cast = not cast_ids and source_has_chosen and handle in candidates
+        lanes.append(AccountLane(account=handle, rows=rows, method=None,
                                  cast_count=len(cast_ids & moment_ids), moment_count=len(moments),
                                  fans_all=fans_all, zero_cast=zero_cast))
     return LaneView(source_id=source_id, source_name=_source_label(src), lanes=lanes)

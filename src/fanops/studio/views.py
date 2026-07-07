@@ -154,7 +154,6 @@ def pipeline_status(cfg: Config) -> dict:
         "holds": sum(1 for c in led.clips.values() if c.held),
         "pending_moments": len(pending(cfg, kind="moments")),
         "pending_moment_hooks": len(pending(cfg, kind="moment_hooks")),
-        "pending_moment_casting": len(pending(cfg, kind="moment_casting")),
         "pending_captions": len(pending(cfg, kind="captions")),
         # R3-followup: the UI mode label MUST be the per-channel truth, not the legacy global. On a live
         # deployment with per-channel routing, cfg.poster_backend still reads 'dryrun' (the legacy
@@ -200,7 +199,7 @@ def run_next_step(status: dict) -> dict:
         try: return int(s.get(k, 0) or 0)
         except (TypeError, ValueError): return 0
     footage = _n("sources") + _n("third_party")
-    gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_moment_casting") + _n("pending_captions")
+    gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_captions")
     awaiting = _n("awaiting")               # ACTIONABLE clips awaiting review (moments) — the SAME unit Home/Review
                                             # show, so the Make banner agrees with them (was raw posts: "57" vs "17").
     if footage == 0:
@@ -446,7 +445,7 @@ def build_system_strip(cfg: Config) -> dict:
     try:
         ps = pipeline_status(cfg)
         blocked = (ps.get("pending_moments", 0) + ps.get("pending_moment_hooks", 0)
-                   + ps.get("pending_moment_casting", 0) + ps.get("pending_captions", 0))
+                   + ps.get("pending_captions", 0))
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "pipeline_status_error", err=str(exc)[:160])
         blocked = 0
@@ -848,7 +847,7 @@ def gate_rows(cfg: Config) -> list[dict]:
     A torn/unreadable request file is skipped (fail-open) rather than 500-ing the tab."""
     from fanops.agentstep import pending, request_path
     rows: list[dict] = []
-    for kind in ("moments", "moment_hooks", "moment_casting", "captions"):
+    for kind in ("moments", "moment_hooks", "captions"):
         for key in pending(cfg, kind=kind):
             try:
                 payload = json.loads(request_path(cfg, kind, key).read_text())

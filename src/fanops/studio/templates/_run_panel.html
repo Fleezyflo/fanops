@@ -126,7 +126,7 @@
 
     <div class="queue-meter">
       <span><strong>{{ status.sources }}</strong> source{{ '' if status.sources == 1 else 's' }} queued</span>
-      <span><strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_moment_casting', 0) + status.get('pending_captions', 0) }}</strong> awaiting decisions</span>
+      <span><strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_captions', 0) }}</strong> awaiting decisions</span>
       <span><strong>{{ status.holds }}</strong> on hold</span>
     </div>
 
@@ -184,7 +184,7 @@
         <span>3rd-party<strong>{{ status.third_party }}</strong></span>
         <span>Posts<strong>{{ status.posts }}</strong></span>
         <span>Held<strong>{{ status.holds }}</strong></span>
-        <span>Awaiting<strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_moment_casting', 0) + status.get('pending_captions', 0) }}</strong></span>
+        <span>Awaiting<strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_captions', 0) }}</strong></span>
       </div>
       <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML"
             hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-busy">

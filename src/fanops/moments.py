@@ -10,7 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, discard_gate
+from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
@@ -354,18 +354,9 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     # OLD reason/window/frames). Discard them BEFORE reconcile so every reconciled pick re-authors fresh.
     # (Only on the reconcile path — the empty/error paths preserve prior moments AND their valid hooks.)
     discard_gates_for(cfg, "moment_hooks", f"{source_id}.")
-    # M1 (Option C): a new pick decision SUPERSEDES the prior per-source moment_casting selection too — its
-    # moment ids/windows changed, so the stale per-account affinities must not be re-applied (and the new
-    # moments must get a FRESH selection). The casting gate is keyed on source_id (one per source), so a
-    # single discard suffices. Without this, request_moment_casting's write-once guard would skip re-asking.
-    discard_gate(cfg, "moment_casting", source_id)
-    # MOM-1: a re-pick changed this source's moment set; the prior per-account AccountSelections reference
-    # possibly-gone moments and STALE casting intent. Drop them ALL here (symmetric to the gate discard above)
-    # so the re-opened casting gate writes a FRESH selection and the crosspost gate can't fan a surviving
-    # captioned clip on stale intent before the re-cast lands. (selections key on (source, account); iterate
-    # this source's selections.) Only on the reconcile path — the empty/error early-returns above preserve them.
-    for sel in list(led.selections_of_source(source_id)):
-        led.drop_account_selection(source_id, sel.account)
+    # P11 (MOL-152): the moment_casting gate + durable AccountSelection are gone. A re-pick's fresh single-owner
+    # affinities are stamped by reconcile_moments below (owner attribution rides on the pick), so there is no
+    # stale per-account selection to discard here anymore.
     led.reconcile_moments(source_id, keep)          # upsert + cascade-delete dropped lineages
     led.set_source_state(source_id, SourceState.picks_decided)   # M1b: picks reconciled; hook gates next
     return led

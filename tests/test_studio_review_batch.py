@@ -147,14 +147,11 @@ def test_excluded_all_sentinel_is_zero(tmp_path):              # B4 ALL-sentinel
     _await(led, "p_a", "clip_1", "a", batch_id="batch_all")
     assert _editable(led, cfg).batch_excluded == 0
 
-def test_affinity_from_moment(tmp_path):                       # C3 — affinities now DERIVED from durable AccountSelection
-    # MOM-3 ROOT: the card derives the cast set from AccountSelection (the durable truth the operator override
-    # writes), not the legacy Moment.affinities tag. Seed a chosen selection casting mom_1 to @a and @b.
-    from fanops.models import AccountSelection, SelectionMethod, account_selection_id
+def test_affinity_from_moment(tmp_path):                       # C3 — the card derives the cast set from Moment.affinities
+    # P11/MOL-152: the card derives the cast set from the single-owner Moment.affinities (the crosspost gate input
+    # the operator override mutates) after the casting teardown. Cast mom_1 to @a and @b.
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    for h in ("a", "b"):
-        led.add_account_selection(AccountSelection(id=account_selection_id("src_1", h), source_id="src_1",
-                                                   account=h, moment_ids=["mom_1"], method=SelectionMethod.operator))
+    led.moments["mom_1"].affinities = ["a", "b"]
     _await(led, "p_a", "clip_1", "a")
     assert _editable(led, cfg).affinities == ["a", "b"]
 
