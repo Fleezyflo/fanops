@@ -1,0 +1,81 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.34.2
+    method: GET
+    uri: https://graph.facebook.com/v21.0/17915984967201344/insights?access_token=DUMMY&metric=reach%2Cviews%2Clikes%2Ccomments%2Csaved%2Cshares%2Cig_reels_avg_watch_time
+  response:
+    body:
+      string: '{"data":[{"name":"reach","period":"lifetime","values":[{"value":12}],"title":"Accounts
+        reached","description":"The number of unique accounts that have seen this
+        reel, at least once. Reach is different from impressions, which may include
+        multiple views of your reel by the same accounts. This metric is estimated.","id":"17915984967201344\/insights\/reach\/lifetime"},{"name":"views","period":"lifetime","values":[{"value":15}],"title":"Views","description":"The
+        number of times your reels was played or displayed.","id":"17915984967201344\/insights\/views\/lifetime"},{"name":"likes","period":"lifetime","values":[{"value":0}],"title":"Likes","description":"The
+        number of likes on your reel.","id":"17915984967201344\/insights\/likes\/lifetime"},{"name":"comments","period":"lifetime","values":[{"value":0}],"title":"Comments","description":"The
+        number of comments on your reel.","id":"17915984967201344\/insights\/comments\/lifetime"},{"name":"saved","period":"lifetime","values":[{"value":0}],"title":"Saved","description":"The
+        number of saves of your reel.","id":"17915984967201344\/insights\/saved\/lifetime"},{"name":"shares","period":"lifetime","values":[{"value":0}],"title":"Shares","description":"The
+        number of shares of your reel.","id":"17915984967201344\/insights\/shares\/lifetime"},{"name":"ig_reels_avg_watch_time","period":"lifetime","values":[{"value":4504}],"title":"Reels
+        Average Watch Time (milliseconds)","description":"This body communicates the
+        definition for reels average watch time","id":"17915984967201344\/insights\/ig_reels_avg_watch_time\/lifetime"}]}'
+    headers:
+      Access-Control-Allow-Origin:
+      - '*'
+      Alt-Svc:
+      - h3=":443"; ma=86400
+      Cache-Control:
+      - private, no-cache, no-store, must-revalidate
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json; charset=UTF-8
+      Date:
+      - Tue, 07 Jul 2026 15:33:54 GMT
+      ETag:
+      - '"d71eb99d48a12eaafaea23e93087cd7671b7b04b"'
+      Expires:
+      - Sat, 01 Jan 2000 00:00:00 GMT
+      Pragma:
+      - no-cache
+      Strict-Transport-Security:
+      - max-age=15552000; preload
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Accept-Encoding
+      - Accept-Encoding
+      X-FB-Connection-Quality:
+      - EXCELLENT; q=0.9, rtt=14, rtx=0, c=10, mss=1380, tbw=3473, tp=-1, tpl=-1,
+        uplat=1636, ullat=0
+      X-FB-Debug:
+      - KtbDgjeAOZzWJlgE9IToyY8JNQI9drQ2ghuxlJ6mOjs=
+      content-length:
+      - '1581'
+      facebook-api-version:
+      - v25.0
+      shadow-id:
+      - kjv2o1dou4x8ku1j_As8sQF3-OBKzEZMV_7Cj6hU
+      x-ad-api-version-warning:
+      - The call has been auto-upgraded to v25.0 as v21.0 has been deprecated.
+      x-business-use-case-usage:
+      - '{"1214342021755412":[{"type":"instagram","call_count":1,"total_cputime":1,"total_time":1,"estimated_time_to_regain_access":0}]}'
+      x-fb-request-id:
+      - A4XZsGoSQGUoPhFDCBE699f
+      x-fb-rev:
+      - '1042742319'
+      x-fb-server-load:
+      - '19'
+      - '29'
+      x-fb-trace-id:
+      - Gwm6mPKNkgt
+    status:
+      code: 200
+      message: OK
+version: 1

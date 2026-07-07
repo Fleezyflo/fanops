@@ -82,3 +82,32 @@ def _hermetic_publish_env():
             os.environ.pop("FANOPS_ISOLATE_VOCALS", None)
         else:
             os.environ["FANOPS_ISOLATE_VOCALS"] = iso_saved
+
+
+# ── VCR: source external API shapes from the REAL call, never a guess ──────────────────────────────
+# pytest-recording/VCR.py records the verbatim request+response of every external HTTP call into a
+# cassette (tests/cassettes/), then replays it. The recorded body IS the contract — Meta/Postiz/Zernio's
+# actual shape, not a hand-written classifier. First capture: `pytest --record-mode=once <test>` (hits the
+# live endpoint once). Thereafter tests replay the cassette offline. Secrets NEVER hit disk: the token
+# (access_token query param + Authorization header) and R2 creds are scrubbed to DUMMY before the cassette
+# is written, so cassettes are safe to commit and version alongside the code they pin.
+@pytest.fixture(scope="module")
+def vcr_config():
+    return {
+        "filter_query_parameters": [("access_token", "DUMMY"), ("input_token", "DUMMY")],
+        "filter_headers": [("authorization", "DUMMY"), ("Authorization", "DUMMY")],
+        "filter_post_data_parameters": [("access_token", "DUMMY")],
+        # MATCH on method + path ONLY — deliberately NOT on the query string. The token rides the query
+        # (access_token/input_token); it is scrubbed to DUMMY on write, but a replay in CI carries a
+        # DIFFERENT (or absent) token, so matching on query would never match the recorded DUMMY and every
+        # replay would miss (the CI `unit` failure: "Matchers failed: query"). Path+method uniquely
+        # identifies each recorded Graph edge here, so this is exact without leaking the secret into the key.
+        "match_on": ["method", "path"],
+        # record_mode is NOT pinned here — it is driven by the CLI `--record-mode` flag (default "none"
+        # via pytest-recording, so a missing cassette is an error, not a silent live call). Pinning it to
+        # "none" here would (a) override --record-mode=once so recording never happens, and (b) on a
+        # replay-miss VCR raises with the UNFILTERED request URI — leaking the real token into the error
+        # (filter_query_parameters only scrubs what is WRITTEN to a cassette, not a miss-error). Leaving it
+        # unpinned lets `--record-mode=once` actually record, and normal runs still default to none.
+        "decode_compressed_response": True,
+    }
