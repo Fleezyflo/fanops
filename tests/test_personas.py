@@ -211,3 +211,51 @@ def test_add_corpus_tag_raises_when_full_but_existing_is_noop(tmp_path):
         P.add_corpus_tag(cfg, pid, "#overflow")
     P.add_corpus_tag(cfg, pid, "#tag0")              # an already-present tag at cap is a clean no-op
     assert len(P.Personas.load(cfg).get(pid).hashtag_corpus) == 40
+
+
+# --- MOL-175: baked archetype personas (seed data) ---------------------------------------------
+
+def test_baked_personas_load():
+    baked = P.baked_personas()
+    assert 3 <= len(baked) <= 5
+    for p in baked:
+        assert isinstance(p, P.Persona) and p.id and p.voice
+        assert p.content_focus and p.hook_angle
+        assert p.hashtag_corpus
+
+
+def test_each_baked_persona_coherent(tmp_path):
+    cfg = Config(root=tmp_path)
+    for p in P.baked_personas():
+        rows = P.manifest(cfg, p)
+        assert rows, f"manifest empty for {p.id}"
+        assert all(r["health"] == "ok" for r in rows), {r["key"]: r["health"] for r in rows if r["health"] != "ok"}
+
+
+def test_credibility_first_scope_reaches_pick(tmp_path):
+    from fanops.accounts import Accounts
+    from fanops.moments import _pick_personas
+    cfg = Config(root=tmp_path)
+    P.ensure_baked_personas(cfg)
+    _write_accounts(cfg, [{"handle": "@trust", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    link_persona(cfg, "@trust", "credibility-first")
+    specs = _pick_personas(cfg, Accounts.load(cfg))
+    assert len(specs) == 1
+    scope = specs[0]["selection_scope"].lower()
+    assert "sensational" in scope or "accurate" in scope
+
+
+def test_baked_personas_mappable_to_account(tmp_path):
+    cfg = Config(root=tmp_path)
+    added = P.ensure_baked_personas(cfg)
+    assert added
+    pid = added[0]
+    baked = next(p for p in P.baked_personas() if p.id == pid)
+    _write_accounts(cfg, [{"handle": "@map", "platforms": ["instagram"], "status": "active", "persona": "stale"}])
+    link_persona(cfg, "@map", pid)
+    a = Accounts.load(cfg).accounts[0]
+    assert a.persona_id == pid and a.persona == baked.voice
+    assert a.content_focus == baked.content_focus
+    assert a.selection_scope == baked.selection_scope
+    assert a.hook_angle == baked.hook_angle
+    assert a.hashtag_corpus == baked.hashtag_corpus
