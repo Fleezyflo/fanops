@@ -1,0 +1,60 @@
+{
+  "_doc": "SINGLE SOURCE OF TRUTH for FanOps multi-agent lane orchestration. Edit THIS file to add/retire a lane or re-assign a hot file for a wave — nothing else. Two independent consumers: (1) scripts/lane_guard.py — OFFLINE, at pre-push + CI: maps branch->lane by prefix, then FAILS a push/PR that edits a hot file owned by a DIFFERENT lane (this is the mechanical enforcement of the AGENTS.md 'disjoint hot files' rule). (2) the fanops-orchestrator agent — ONLINE: uses each lane's `linear` block to pull the next READY ticket from Linear at runtime instead of a frozen list. Discovered Linear facts (2026-07-07): team 'Molham homsi'; statuses = Backlog | Todo | In Progress | In Review | Done | Canceled | Duplicate; every issue carries a canonical `gitBranchName`; active wave = project 'FanOps: CI Hardening (2026 Audit)' (MOL-181..199).",
+  "guard": {
+    "_doc": "The guard is OPT-IN by branch prefix: a branch whose name does not start with a lane prefix below is IGNORED (exit 0). So normal branches (cursor/*, bycreamco/mol-*, human branches) are never blocked. Only files listed in `hot_files` are restricted; every other path is unrestricted. `owner` may be a single lane or a list (a genuinely shared hot file, coordinated in TIME by the orchestrator, not by this static guard).",
+    "hot_files": {
+      "src/fanops/config.py": "publish",
+      "src/fanops/reconcile.py": "publish",
+      "src/fanops/post/run.py": "publish",
+      "src/fanops/post/postiz.py": "publish",
+      "src/fanops/post/zernio.py": "publish",
+      "src/fanops/post/__init__.py": "publish",
+      "src/fanops/studio/views_common.py": "publish",
+      "src/fanops/models.py": "picking",
+      "src/fanops/crosspost.py": "picking",
+      "src/fanops/ledger.py": "picking",
+      "src/fanops/casting.py": "picking",
+      "src/fanops/clip.py": "picking",
+      "src/fanops/moments.py": ["picking", "rfd"],
+      "src/fanops/prompts.py": ["picking", "rfd"]
+    }
+  },
+  "lanes": {
+    "publish": {
+      "branch_prefixes": ["publish/"],
+      "owns_note": "Publish/schedule/reconcile subsystem — boundary mirrors src/fanops/post/CLAUDE.md.",
+      "linear": {
+        "labels": [],
+        "project": "",
+        "note": "Set `project` or `labels` per wave to the Linear grouping for publish-resilience work; leave empty to let the orchestrator hand this lane tickets explicitly."
+      }
+    },
+    "picking": {
+      "branch_prefixes": ["picking/", "pick/"],
+      "owns_note": "Clip/moment/casting generation core (models, crosspost, ledger, casting, clip, moments, prompts).",
+      "linear": {
+        "labels": [],
+        "project": "",
+        "note": "Set per wave (e.g. the picking-rebuild PRD label)."
+      }
+    },
+    "rfd": {
+      "branch_prefixes": ["rfd/", "rf-d/"],
+      "owns_note": "Root-fix cross-cutting lane; shares moments.py/prompts.py with picking (TIME-coordinated by the orchestrator, never run concurrently on those files).",
+      "linear": {
+        "labels": [],
+        "project": "",
+        "note": "Set per wave."
+      }
+    },
+    "ci": {
+      "branch_prefixes": ["ci/"],
+      "owns_note": "CI / infra / tooling. No src/fanops hot files, so it is compatible with any source lane running in parallel.",
+      "linear": {
+        "labels": ["Improvement"],
+        "project": "FanOps: CI Hardening (2026 Audit)",
+        "note": "The live wave as of 2026-07-07 (MOL-181..199)."
+      }
+    }
+  }
+}
