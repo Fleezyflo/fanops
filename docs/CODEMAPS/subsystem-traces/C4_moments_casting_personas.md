@@ -1,5 +1,12 @@
 # C4: Moments, Casting & Personas
 
+> **POST-REBUILD (P15 / MOL-156).** Single-owner per-persona picking is live. One `moments` gate attributes
+> picks per owner (`Moment.affinities` len==1). One `moment_hooks` gate authors `m.hook` for the owner only.
+> Captions + crosspost scope via `affinity_admits` (owner × platform). The LLM casting stage, durable
+> `AccountSelection`, `hooks_by_persona`, `scoped_caption_surfaces`, and `casting_bias` are **gone**. Operator
+> `cast_add`/`cast_remove` writes `Moment.affinities` directly. Proofs: `tests/test_per_persona_e2e.py`,
+> `tests/test_archetype_differentiation.py`, `tests/test_no_ghosts.py`.
+
 ## Files covered (all 10 read in full)
 
 1. `src/fanops/moments.py` (349 lines) — read
@@ -15,39 +22,36 @@
 
 Cross-checked against `.reports/structural_index.json` and `.reports/call_graph.json`. Note: there are look-alike files elsewhere (`src/fanops/studio/actions_casting.py`, `src/fanops/studio/app_routes_personas.py`, `src/fanops/studio/personas.py`) which are Studio-layer callers, NOT part of this cluster — excluded per the exact file list given.
 
-## Persona/account data flow (definition → hydration → use)
+## Persona/account data flow (definition → hydration → use) — single-owner lineage
 
 ```
 personas.json (disk)
    │  Personas.load()
    ▼
 Persona (BaseModel: id, name, voice, hashtag_corpus, intake,
-         content_focus[], energy, hook_angle)
+         content_focus[], selection_scope, hook_angle)
    │
    │  accounts.py: Accounts.load() → _hydrate_from_personas(accts, cfg)
-   │    - resolves each Account's linked Persona via _persona_for_account
-   │      (persona_id exact match, else inline-voice exact match)
-   │    - OVERWRITES in-memory (never persisted back):
-   │        acc.persona      = per.voice        (if voice non-blank)
-   │        acc.hashtag_corpus = per.hashtag_corpus
-   │        acc.content_focus  = per.content_focus
-   │        acc.energy         = per.energy
-   │        acc.hook_angle     = per.hook_angle
-   │        acc.clip_profile, acc.framing = resolved_cut_spec(per)  (only if derived/pinned)
-   │        acc.persona_owns_profile = True (provenance flag, if clip_profile came from persona)
-   │    - FAIL-OPEN: no personas.json / dangling persona_id / any exception → inline values stand, no crash
+   │    - OVERWRITES in-memory: persona voice, hashtag_corpus, content_focus,
+   │      selection_scope, hook_angle, derived clip_profile/framing
    ▼
 Account (hydrated, in memory only)
    │
-   ├─► casting.py: casting_directive(account) → per-account "which moments" instruction
-   │      → request_moment_casting brief → LLM selects moments per account
+   ├─► moments.py PASS 1: _pick_personas → ONE moments gate, per-persona lenses
+   │      → ingest stamps pick.personas[0] as Moment.affinities (single owner)
    │
-   ├─► moments.py: hook_author_slot(account) → per-account on-screen-hook brief
-   │      → request_moment_hooks personas[] payload → LLM authors hooks_by_persona
+   ├─► moments.py PASS 2: request_moment_hooks sends ONLY the owner persona
+   │      → ingest writes m.hook (one hook per owner-moment)
    │
-   └─► caption.py (outside cluster): caption_directive(account) → per-surface caption angle
-          + account.hashtag_corpus leads the vetted hashtag set
+   └─► caption.py: owner × platform via pipeline._owner_caption_surfaces
+          (affinity_admits — same gate as crosspost)
 ```
+
+Legacy note: the pre-P11 LLM casting stage (`request_moment_casting`, durable `AccountSelection`,
+`hooks_by_persona`, `scoped_caption_surfaces`) is removed. `casting.py` now holds `affinity_admits` +
+operator co-ownership helpers only.
+
+## Persona/account data flow (definition → hydration → use) — ARCHIVED pre-P15 diagram
 
 The lever engine (`persona_levers.py`) is the single upstream declaration. `personas.py`'s `CONTENT_FOCUS`/`ENERGY_LEVELS`/`HOOK_ANGLES` (validation vocabularies), `persona_directives.py`'s `_FOCUS_CLAUSE`/`_ENERGY_CLAUSE`/`_ANGLE_CLAUSE`/`_FOCUS_PROFILE`/`_ENERGY_FRAMING` (compile clause maps), and `lever_catalog()` (operator-facing catalog) are all **projections** derived from `LEVER_REGISTRY` at import/call time — one edit to the registry propagates to validation, compilation, and the UI catalog simultaneously (no manual-parity risk).
 
@@ -82,8 +86,8 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 - `casting_gate_pending(cfg, source_id, led=None)` — read-only, fail-open-to-`False` predicate: True iff casting is ON and the moment_casting gate is open-but-unanswered (crosspost must wait), OR (when `led` passed) the source has a re-picked `picked`-state moment (MOM-1: fresh recast incoming). Called by `crosspost.crosspost_clips`.
 - `casting_gate_failed_to_open(cfg, led, accounts, source_id)` — read-only, fail-open-to-`False` predicate detecting an I/O failure fingerprint: candidate accounts exist, castable moments exist, but no gate opened and no selections/affinities were written. Distinguishes a real failure from the legit no-candidate-accounts case. Called by `crosspost.crosspost_clips`.
 - `affinity_admits(cfg, moment, account)` — pure legacy predicate: True if casting OFF, or moment uncast (`affinities==[]`), or account in `moment.affinities`. Called by `account_selection_admits`.
-- `account_selection_admits(cfg, led, moment, account)` — **THE crosspost gate predicate** (RF1). Casting OFF → admit all. Missing moment under casting-ON → deny. Has a selection → `fan_all_default`/`pending` decide by method, else admit iff moment id in `sel.moment_ids`. No selection for this account but the source HAS other selections (casting ran) → deny (not silent fan-to-all). Source has NO selections at all → falls back to `affinity_admits` (pre-v9/casting-never-ran legacy). Called by `casting.scoped_caption_surfaces`, `crosspost._mint_surface_post`.
-- `scoped_caption_surfaces(cfg, led, moment, surfaces)` — pure, reuses `account_selection_admits` as the SAME gate crosspost enforces, so caption scoping can't drift from post-minting. Called by `pipeline._stage_refresh_caption_requests`, `pipeline._stage_render_and_caption`.
+- `account_selection_admits(cfg, led, moment, account)` — **THE crosspost gate predicate** (RF1). Casting OFF → admit all. Missing moment under casting-ON → deny. Has a selection → `fan_all_default`/`pending` decide by method, else admit iff moment id in `sel.moment_ids`. No selection for this account but the source HAS other selections (casting ran) → deny (not silent fan-to-all). Source has NO selections at all → falls back to `affinity_admits` (pre-v9/casting-never-ran legacy). Called by `crosspost._mint_surface_post` (the operator cast-lane still writes AccountSelection, read here for the Review gate).
+- Caption scoping (P10 / MOL-151): the old `scoped_caption_surfaces` (the (clip × account) `account_selection_admits` scoper) is **DELETED**. Captions are now **owner × platform** — `pipeline._owner_caption_surfaces(cfg, m, accts)` scopes a clip's caption REQUEST to the moment owner's surfaces via `affinity_admits` (the SAME gate crosspost enforces), so caption-scope can't drift from post-minting. Called by `pipeline._stage_refresh_caption_requests`, `pipeline._stage_render_and_caption`.
 
 ### `casting_bias.py` — Leg 3 Task 4: the reach prior injected into the casting brief
 

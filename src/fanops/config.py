@@ -428,8 +428,8 @@ class Config:
 
     def llm_model_for(self, kind: str) -> str:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
-        # But the tier is now PER-GATE, not one blanket "opus": the MECHANICAL gates — hashtags-only
-        # `captions` and per-account `moment_casting` — run on `sonnet` (fast + plenty for the task).
+        # But the tier is now PER-GATE, not one blanket "opus": the MECHANICAL gate — hashtags-only
+        # `captions` — runs on `sonnet` (fast + plenty for the task). (P11/MOL-152: moment_casting is gone.)
         # The CREATIVE VISION gates — `moments` (the pass-1 WINDOW picks) and `moment_hooks` (the pass-2
         # author of the on-screen RETENTION hook, the watch-through driver) — stay on `opus`.
         # FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
@@ -800,18 +800,6 @@ class Config:
         # FROZEN (Phase 2): even ON, apply_timing_bias stays INERT until learning_validated. No hour
         # variance in the published set -> no winner -> no-op (a fixed schedule has nothing to learn).
         v = (os.getenv("FANOPS_TIMING_BIAS") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
-
-    @property
-    def casting_bias(self) -> bool:
-        # Leg 3 (casting, the heaviest): with this ON, the per-(account, clip_profile) reach winner (once the
-        # composite cell clears the min-attributed floor) becomes a READ-ONLY hint in the casting brief so the
-        # selector leans an OTHERWISE-TIE toward the account proven to reach on that content type. BIAS-ONLY —
-        # it can never remove an account from the pool nor starve an under-exposed one (explore-guard: an
-        # unproven cell is OMITTED, not penalized, so every active account keeps getting cast). KILL SWITCH:
-        # DEFAULT OFF. VALIDATION-FROZEN (Phase 2): even ON, casting_reach_prior returns {} until
-        # learning_validated -> the casting brief is byte-identical until the shape is proven.
-        v = (os.getenv("FANOPS_CASTING_BIAS") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property

@@ -13,10 +13,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
-from fanops.models import MomentDecision, MomentHookDecision, MomentCastingDecision, CaptionSet
+from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
 from fanops.agentstep import pending, request_path, write_response, latest_request_id
 from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError
-from fanops.prompts import moment_pick_prompt, moment_hook_prompt, moment_casting_prompt, caption_prompt
+from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
 
@@ -41,14 +41,11 @@ def screen_model_text(obj):
     return obj
 
 # Agent gates: `moments` (M1b pass 1 — pick the WINDOWS, sees whole-source frames), `moment_hooks` (pass 2 —
-# the vision hook AUTHOR, sees the PICKED WINDOW's frames), `moment_casting` (M1 Option C — per-account moment
-# SELECTION, text-only), and `captions` (text-only hashtags). The two vision gates attach `frames` as images.
-_SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision,
-           "moment_casting": MomentCastingDecision, "captions": CaptionSet}
-_PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt,
-           "moment_casting": moment_casting_prompt, "captions": caption_prompt}
-_VISION_GATES = ("moments", "moment_hooks", "moment_casting")   # gates whose payload MAY carry top-level `frames` to attach
-# (moment_casting only carries `frames` when keyframes were extracted; an empty/absent list -> images=None -> text-only)
+# the vision hook AUTHOR, sees the PICKED WINDOW's frames), and `captions` (text-only hashtags). The two vision
+# gates attach `frames` as images. (The moment_casting per-account SELECTION gate was removed in P11/MOL-152.)
+_SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
+_PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}
+_VISION_GATES = ("moments", "moment_hooks")   # gates whose payload MAY carry top-level `frames` to attach
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg
@@ -60,8 +57,7 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
     cfg.llm_model_for(kind) (V2 M1/F1 — an unpinned `claude -p` drifts with the CLI default; the tier is
     PER-GATE — opus for the creative VISION moments gate, sonnet for the mechanical caption gate). For
     the two VISION gates (`moments` = window picks, `moment_hooks` = the frame-seeing on-screen-hook author),
-    also hand the relevant frames (top-level `frames`) as images; `moment_casting` and `captions` stay
-    text-only. When
+    also hand the relevant frames (top-level `frames`) as images; `captions` stays text-only. When
     cfg is given, emit ONE provenance line per call (the model that ANSWERED, the prompt fingerprint, and
     the brief fingerprint) so every creative output is traceable to the exact model + brief that produced
     it (M1/F10). cfg=None (the legacy test path) keeps the old behavior: no pin, no provenance."""
@@ -148,7 +144,7 @@ class LlmResponder:
         from fanops.ledger import Ledger
         try:
             led = Ledger.load(cfg)
-            if kind in ("moments", "moment_hooks", "moment_casting"):
+            if kind in ("moments", "moment_hooks"):
                 sid = key.split(".", 1)[0]
             else:                                          # captions gate keys on a CLIP id -> clip.parent=moment, moment.parent=source
                 clip = led.clips.get(key)

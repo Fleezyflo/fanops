@@ -1,12 +1,12 @@
-# tests/test_actions_casting.py — RF1 Task 6: the operator cast OVERRIDE action. The operator adds or removes
-# a single (moment, account) from that account's durable AccountSelection (method=operator — a human decision
-# SUPERSEDES llm/migrated). The sum-type stays honest: removing an account's LAST moment DROPS the record
-# (back to "no selection" -> the gate denies it on a cast source), never an illegal empty operator row.
+# tests/test_actions_casting.py — P13 (MOL-152/153): the operator cast OVERRIDE, ported OFF the deleted durable
+# AccountSelection ONTO Moment.affinities. cast_add appends a handle to a decided moment's affinities; cast_remove
+# pops it. Emptying the set leaves affinities==[] (the moment fans to all — the persona-blind path). A moment is
+# single-owner by CONVENTION (the picker), but the operator override may deliberately CO-OWN (the human escape hatch).
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import (Source, Moment, MomentState, AccountSelection, SelectionMethod, account_selection_id)
-from fanops.casting import account_selection_admits
+from fanops.models import Source, Moment, MomentState
+from fanops.casting import affinity_admits
 from fanops.studio import actions
 
 
@@ -22,73 +22,65 @@ def _mom(led, mid):
     return led.moments[mid]
 
 
-def test_cast_add_creates_operator_selection(tmp_path):
+def test_cast_add_writes_affinities(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     res = actions.cast_add(cfg, "s", "a", "m0")
     assert res.ok
     led = Ledger.load(cfg)
-    sel = led.account_selection_for("s", "a")
-    assert sel is not None and sel.moment_ids == ["m0"] and sel.method == SelectionMethod.operator
-    assert account_selection_admits(cfg, led, _mom(led, "m0"), "a") is True    # now admitted
-    assert account_selection_admits(cfg, led, _mom(led, "m1"), "a") is False   # not added -> denied
+    assert led.moments["m0"].affinities == ["a"]               # mutated the affinities tag, not an AccountSelection
+    assert affinity_admits(cfg, _mom(led, "m0"), "a") is True   # now admitted
+    assert affinity_admits(cfg, _mom(led, "m0"), "b") is False  # @b not an owner -> DENY (single-owner)
+    assert affinity_admits(cfg, _mom(led, "m1"), "a") is True   # m1 persona-blind -> fans to all
 
 
-def test_cast_add_appends_and_supersedes_method(tmp_path):
+def test_cast_remove_pops_affinities(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    with Ledger.transaction(cfg) as led:                                        # start from an llm selection
-        led.add_account_selection(AccountSelection(id=account_selection_id("s", "a"), source_id="s",
-                                                   account="a", moment_ids=["m0"], method=SelectionMethod.llm))
-    assert actions.cast_add(cfg, "s", "a", "m1").ok
-    sel = Ledger.load(cfg).account_selection_for("s", "a")
-    assert sel.moment_ids == ["m0", "m1"] and sel.method == SelectionMethod.operator   # human supersedes llm
+    assert actions.cast_add(cfg, "s", "a", "m0").ok
+    assert actions.cast_remove(cfg, "s", "a", "m0").ok
+    led = Ledger.load(cfg)
+    assert led.moments["m0"].affinities == []                  # emptied -> fans to all (persona-blind), no stuck record
+    assert affinity_admits(cfg, _mom(led, "m0"), "a") is True   # affinities==[] -> admit all
 
 
-def test_cast_handles_for_derives_from_account_selection_not_stored_tag(tmp_path):
-    # MOM-3 ROOT: cast_handles_for derives the cast set from the durable AccountSelection an operator cast_add
-    # writes — NOT the legacy Moment.affinities tag (which the override never touches), so the Review read model
-    # can no longer diverge from the gate. cast_remove of the last pick drops the record -> not cast.
+def test_operator_override_may_co_own(tmp_path):
+    # the operator override may deliberately add a SECOND owner (the human escape hatch). The picker enforces
+    # single-owner; this manual path does not — affinities grows to a co-owned set.
+    cfg = Config(root=tmp_path); _seed(cfg)
+    assert actions.cast_add(cfg, "s", "a", "m0").ok
+    assert actions.cast_add(cfg, "s", "b", "m0").ok
+    led = Ledger.load(cfg)
+    assert led.moments["m0"].affinities == ["a", "b"]          # co-owned
+    assert affinity_admits(cfg, _mom(led, "m0"), "a") is True
+    assert affinity_admits(cfg, _mom(led, "m0"), "b") is True
+    assert affinity_admits(cfg, _mom(led, "m0"), "c") is False  # a third handle is still DENIED
+
+
+def test_cast_affinities_reads_moment_tag(tmp_path):
+    # the Review cast chips read Moment.affinities (the single gate input), operator overrides included.
     cfg = Config(root=tmp_path); _seed(cfg)
     actions.cast_add(cfg, "s", "a", "m0"); actions.cast_add(cfg, "s", "b", "m0")
     led = Ledger.load(cfg)
-    assert led.cast_handles_for("s", "m0") == ["a", "b"]      # derived view sees the operator override
-    assert led.moments["m0"].affinities == []                  # the stored tag is NOT the source of truth
-    assert led.cast_handles_for("s", "m1") == []               # m1 cast to nobody
+    assert led.moments["m0"].affinities == ["a", "b"]
+    assert led.moments["m1"].affinities == []               # m1 cast to nobody -> fans to all
     actions.cast_remove(cfg, "s", "a", "m0")
-    assert Ledger.load(cfg).cast_handles_for("s", "m0") == ["b"]   # @a's last pick removed -> record dropped -> not cast
+    assert Ledger.load(cfg).moments["m0"].affinities == ["b"]
 
 
-def test_cast_remove_drops_record_when_last_moment_removed(tmp_path):
+def test_cast_add_is_idempotent(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     assert actions.cast_add(cfg, "s", "a", "m0").ok
-    assert actions.cast_remove(cfg, "s", "a", "m0").ok
-    led = Ledger.load(cfg)
-    assert led.account_selection_for("s", "a") is None                         # record dropped (no illegal empty row)
-    # on a CAST source (@b still has a selection) the dropped account is denied; here no other selection -> legacy fallback
-    with Ledger.transaction(cfg) as led2:
-        led2.add_account_selection(AccountSelection(id=account_selection_id("s", "b"), source_id="s",
-                                                    account="b", moment_ids=["m1"], method=SelectionMethod.operator))
-    led = Ledger.load(cfg)
-    assert account_selection_admits(cfg, led, _mom(led, "m0"), "a") is False   # cast source, no record -> DENY
-
-
-def test_cast_remove_keeps_other_moments(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg)
-    assert actions.cast_add(cfg, "s", "a", "m0").ok
-    assert actions.cast_add(cfg, "s", "a", "m1").ok
-    assert actions.cast_remove(cfg, "s", "a", "m0").ok
-    sel = Ledger.load(cfg).account_selection_for("s", "a")
-    assert sel.moment_ids == ["m1"] and sel.method == SelectionMethod.operator
+    assert actions.cast_add(cfg, "s", "a", "m0").ok            # re-add
+    assert Ledger.load(cfg).moments["m0"].affinities == ["a"]  # sorted-set union -> no duplicate
 
 
 def test_cast_add_rejects_unknown_moment(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     assert actions.cast_add(cfg, "s", "a", "nope").ok is False
-    assert Ledger.load(cfg).account_selection_for("s", "a") is None
 
 
-def test_cast_remove_on_missing_selection_is_noop(tmp_path):
+def test_cast_remove_on_missing_moment_is_noop(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    res = actions.cast_remove(cfg, "s", "a", "m0")
+    res = actions.cast_remove(cfg, "s", "a", "gone")
     assert res.ok and res.detail.get("noop") is True
 
 
@@ -110,8 +102,7 @@ def test_cast_add_route_mutates_ledger(tmp_path):
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/cast/add/m0?source=s&account=@a")
     assert r.status_code == 200
-    sel = Ledger.load(cfg).account_selection_for("s", "a")
-    assert sel is not None and sel.moment_ids == ["m0"] and sel.method == SelectionMethod.operator
+    assert Ledger.load(cfg).moments["m0"].affinities == ["a"]
 
 
 def test_cast_route_requires_source_and_account(tmp_path):
@@ -120,4 +111,4 @@ def test_cast_route_requires_source_and_account(tmp_path):
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/cast/add/m0")                          # no source/account
     assert r.status_code == 200 and b"needs a source" in r.data
-    assert Ledger.load(cfg).account_selection_for("s", "a") is None
+    assert Ledger.load(cfg).moments["m0"].affinities == []

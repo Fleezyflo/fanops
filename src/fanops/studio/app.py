@@ -115,24 +115,6 @@ def _parse_gate_form(kind: str, form) -> dict:
         # M1b/P6: the manual frame-seeing hook answer — one shared hook (blank -> null -> clean clip).
         hook = (form.get("hook") or "").strip()
         return {"hook": hook or None}
-    if kind == "moment_casting":
-        from fanops.models import validate_account_handle
-        selections: dict[str, list[str]] = {}
-        for k in form:
-            if not k.startswith("cast__"):
-                continue
-            parts = k.split("__", 2)
-            if len(parts) != 3:
-                continue
-            _, handle, mid = parts
-            try:
-                handle = validate_account_handle(handle)
-            except ValueError:
-                handle = (handle or "").strip().lstrip("@").lower()
-            if form.get(k):
-                selections.setdefault(handle, []).append(mid)
-        return {"selections": selections}
-
     return {}
 
 

@@ -1,7 +1,7 @@
 # src/fanops/ledger.py
 """Single source of truth: one JSON doc of top-level maps (SCHEMA_VERSION-stamped), git-versioned.
-Persists 10 id->unit (model) maps — sources, moments, clips, posts, stitch_plans, batches, renders,
-selection_facts, account_selections, imported_media — plus 2 non-unit scalar/plain-dict maps: tag_log
+Persists 8 id->unit (model) maps — sources, moments, clips, posts, stitch_plans, batches, renders,
+imported_media — plus 2 non-unit scalar/plain-dict maps: tag_log
 ("account|clip_id" -> ISO tag time) and variant_streaks ("account|platform" -> streak dict). Keep this
 inventory in sync with _save_unlocked's `doc` (the serialization truth) whenever a map is added/removed.
 Writes are ATOMIC (temp file + os.replace) under a file lock so the 're-run advance()'
@@ -13,10 +13,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
-from fanops.models import (Source, Moment, Clip, Post, Render, SelectionFact, AccountSelection,
-                           SelectionMethod, account_selection_id, validate_account_handle,
+from fanops.models import (Source, Moment, Clip, Post, Render, validate_account_handle,
                            StitchPlan, StitchState, Batch, ImportedMedia,
                            SourceState, MomentState, ClipState, PostState)
+from fanops.ids import child_id
 
 
 _DEFAULT_LOCK_TIMEOUT = 30.0
@@ -81,15 +81,19 @@ def _migrate_v4_metrics_series(raw: dict) -> dict:
     return out
 
 
-_ACCTSEL_METHOD_RANK = {SelectionMethod.operator: 5, SelectionMethod.llm: 4, SelectionMethod.migrated: 3,
-                        SelectionMethod.heuristic: 2, SelectionMethod.fan_all_default: 1, SelectionMethod.pending: 0}
+_ACCTSEL_METHOD_RANK = {"operator": 5, "llm": 4, "migrated": 3, "heuristic": 2, "fan_all_default": 1, "pending": 0}
+
+
+def _account_selection_id(source_id: str, account: str) -> str:
+    """Historical v8->v9 migration only — content-addressed one-per-(source, account) id."""
+    return child_id("acctsel", source_id, account)
 
 
 def _pick_account_selection(rows: list[dict]) -> dict:
     """Choose the surviving row for a duplicate (source_id, account) group — prefer chosen methods over
     fan_all_default, then more moment_ids, then newer created_at."""
     def _key(s: dict):
-        method = SelectionMethod(s.get("method") or SelectionMethod.fan_all_default.value)
+        method = s.get("method") or "fan_all_default"
         return (_ACCTSEL_METHOD_RANK.get(method, 0), len(s.get("moment_ids") or []), s.get("created_at") or "")
     return max(rows, key=_key)
 
@@ -108,21 +112,9 @@ def _canonicalize_ledger_account_refs(raw: dict) -> dict:
     for po in (out.get("posts") or {}).values():
         if isinstance(po, dict) and po.get("account"):
             po["account"] = _ledger_canon_handle(po["account"])
-    for f in (out.get("selection_facts") or {}).values():
-        if isinstance(f, dict) and f.get("account"):
-            f["account"] = _ledger_canon_handle(f["account"])
     for m in (out.get("moments") or {}).values():
         if isinstance(m, dict) and m.get("affinities"):
             m["affinities"] = sorted({_ledger_canon_handle(h) for h in m["affinities"] if h})
-    sel: dict[str, dict] = {}
-    for _sid, s in (out.get("account_selections") or {}).items():
-        if not isinstance(s, dict): continue
-        src_id = s.get("source_id")
-        acct = _ledger_canon_handle(s.get("account") or "")
-        if not src_id or not acct: continue
-        norm = dict(s); norm["account"] = acct; norm["id"] = account_selection_id(src_id, acct)
-        sel[norm["id"]] = norm
-    out["account_selections"] = sel
     return out
 
 
@@ -142,7 +134,7 @@ def _dedupe_account_selections(raw: dict) -> dict:
         if not src_id or not acct: continue
         norm = dict(s)
         norm["account"] = acct
-        norm["id"] = account_selection_id(src_id, acct)
+        norm["id"] = _account_selection_id(src_id, acct)
         groups.setdefault((src_id, acct), []).append((sid, norm))
     deduped: dict[str, dict] = {}
     for (_src, _acct), rows in groups.items():
@@ -151,32 +143,6 @@ def _dedupe_account_selections(raw: dict) -> dict:
     out["account_selections"] = deduped
     return out
 
-
-def prune_orphan_account_selections(led: "Ledger") -> int:
-    """Drop AccountSelections whose source_id is absent from sources (stale re-ingest lineage). Returns count dropped."""
-    live = set(led.sources.keys())
-    dropped = 0
-    for sid in list(led.account_selections.keys()):
-        sel = led.account_selections[sid]
-        if sel.source_id not in live:
-            del led.account_selections[sid]
-            dropped += 1
-    return dropped
-
-
-def selection_index_for_source(led: "Ledger", source_id: str) -> dict[str, list]:
-    """MOL-82: the SCOPED cast-handles index for ONE source — moment_id -> sorted cast handles, built by ONE
-    scan of the source's selections instead of rescanning the whole ledger-wide account_selections map per
-    moment/cell. Exactly cast_handles_for's per-moment truth (a handle is cast on a moment iff it owns a CHOSEN
-    selection listing that moment_id; fan_all_default/pending rows carry no moment_ids -> excluded), lifted to a
-    single pass so review_matrix/account_lanes look up O(1) per cell. A moment absent from the index == [] cast
-    (same as cast_handles_for returning []). Pure read; the sorted lists match cast_handles_for byte-for-byte."""
-    idx: dict[str, list] = {}
-    for s in led.selections_of_source(source_id):
-        for mid in (s.moment_ids or []):
-            idx.setdefault(mid, []).append(s.account)
-    for mid in idx: idx[mid].sort()
-    return idx
 
 
 def _migrate_v8_account_selections(raw: dict) -> dict:
@@ -199,7 +165,7 @@ def _migrate_v8_account_selections(raw: dict) -> dict:
             acct = validate_account_handle(handle)
         except ValueError:
             continue
-        asid = account_selection_id(sid, acct)
+        asid = _account_selection_id(sid, acct)
         if asid in selections: continue                          # idempotent: never overwrite an existing row
         method = "llm" if (sid, handle) in llm_pairs else "migrated"
         selections[asid] = {"id": asid, "source_id": sid, "account": acct,
@@ -209,7 +175,15 @@ def _migrate_v8_account_selections(raw: dict) -> dict:
     return _dedupe_account_selections(out)
 
 
-SCHEMA_VERSION = 10
+def _migrate_v10_drop_selections(raw: dict) -> dict:
+    """v10->v11 (P12/MOL-154): drop the retired account_selections + selection_facts maps. Idempotent."""
+    out = dict(raw)
+    out.pop("account_selections", None)
+    out.pop("selection_facts", None)
+    return out
+
+
+SCHEMA_VERSION = 11
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
 # v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
@@ -230,7 +204,9 @@ SCHEMA_VERSION = 10
 # durable, account-owned crosspost-gate input — (source, account) -> moment_ids + method, replacing the
 # non-durable Moment.affinities filter-tag). NO row backfill in Task 1 (scaffold); the decided default for
 # legacy affinities lands in Task 4. Old ledgers load with account_selections={} — same injection shape as v5/v6/v7.
-# v9 -> v10 (ledger-rebuild, Instagram is the source of truth): inject the new top-level imported_media map
+# v10 -> v11 (P12/MOL-154): DROP the retired account_selections + selection_facts maps (the crosspost gate
+# now reads Moment.affinities only; casting teardown removed all consumers). The v8->v9 hop (:9) still CREATES
+# the maps for old ledgers, then :11 DROPS them — the hop-chain is v8->9->10->11 with no gap. Idempotent.
 # (additive; the ImportedMedia entity — a live IG post PROBED from the platform with NO clip lineage, keyed by
 # its Graph media_id). Old ledgers load with imported_media={} — same injection shape as v5/v6/v7/v9. A naive
 # add that skips this step AND the load/save lines silently DROPS the map on the next save (pydantic doesn't
@@ -245,7 +221,8 @@ _MIGRATIONS = {1: lambda raw: raw,
                7: lambda raw: {**raw, "selection_facts": raw.get("selection_facts", {})},
                8: lambda raw: raw,
                9: _migrate_v8_account_selections,
-               10: lambda raw: {**raw, "imported_media": raw.get("imported_media", {})}}
+               10: lambda raw: {**raw, "imported_media": raw.get("imported_media", {})},
+               11: _migrate_v10_drop_selections}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk
@@ -362,12 +339,6 @@ class Ledger:
         self.renders: dict[str, Render] = {}  # per-account Render foundation: the per-account shippable artifacts
                                               # (6th id->unit map; additive). Empty until crosspost mints one under
                                               # creative_variation. Content-addressed by (clip_id, hook_text).
-        self.selection_facts: dict[str, SelectionFact] = {}   # M4: durable per-(moment, account) selection audit
-                                              # (7th id->unit map; additive). Empty until casting writes one (M4b).
-        self.account_selections: dict[str, AccountSelection] = {}   # RF1: the durable, account-owned crosspost-gate
-                                              # input (8th id->unit map; additive). One-per-(source, account),
-                                              # content-addressed. Empty until casting writes one; the gate falls
-                                              # back to Moment.affinities for a source that has none (pre-v9).
         self.imported_media: dict[str, ImportedMedia] = {}   # ledger-rebuild: live IG posts PROBED from the platform
                                               # with NO clip lineage (9th id->unit map; additive). Keyed by the Graph
                                               # media_id (the natural key). Empty until the projection imports one (M2);
@@ -390,7 +361,6 @@ class Ledger:
                 if on_disk < SCHEMA_VERSION:
                     raw = _migrate(raw, on_disk)
                 raw = _canonicalize_ledger_account_refs(raw)
-                raw = _dedupe_account_selections(raw)
                 led.sources = {k: Source(**v) for k, v in raw.get("sources", {}).items()}
                 led.moments = {k: Moment(**v) for k, v in raw.get("moments", {}).items()}
                 led.clips = {k: Clip(**v) for k, v in raw.get("clips", {}).items()}
@@ -406,8 +376,6 @@ class Ledger:
                 led.stitch_plans = {k: StitchPlan(**v) for k, v in raw.get("stitch_plans", {}).items()}
                 led.batches = {k: Batch(**v) for k, v in raw.get("batches", {}).items()}
                 led.renders = {k: Render(**v) for k, v in raw.get("renders", {}).items()}
-                led.selection_facts = {k: SelectionFact(**v) for k, v in raw.get("selection_facts", {}).items()}
-                led.account_selections = {k: AccountSelection(**v) for k, v in raw.get("account_selections", {}).items()}
                 led.imported_media = {k: ImportedMedia(**v) for k, v in raw.get("imported_media", {}).items()}
             except ControlFileError:
                 raise                                  # _NewerSchema / _migrate gap: pass through, unreworded
@@ -461,8 +429,6 @@ class Ledger:
             "stitch_plans": {k: v.model_dump() for k, v in self.stitch_plans.items()},
             "batches": {k: v.model_dump() for k, v in self.batches.items()},
             "renders": {k: v.model_dump() for k, v in self.renders.items()},
-            "selection_facts": {k: v.model_dump() for k, v in self.selection_facts.items()},
-            "account_selections": {k: v.model_dump() for k, v in self.account_selections.items()},
             "imported_media": {k: v.model_dump() for k, v in self.imported_media.items()},
         }
         self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
@@ -522,42 +488,8 @@ class Ledger:
     def add_post(self, p: Post) -> None: self.posts.setdefault(p.id, p)
     def add_render(self, r: Render) -> None: self.renders.setdefault(r.id, r)   # first-write-wins (content-addressed dedup)
     def get_render(self, rid: str): return self.renders.get(rid)
-    def add_selection_fact(self, f: SelectionFact) -> None: self.selection_facts[f.id] = f   # M4: OVERWRITE — a re-cast updates the why (latest selection wins; NOT render's content-dedup)
-    def get_selection_fact(self, fid: str): return self.selection_facts.get(fid)
     def add_imported_media(self, im: ImportedMedia) -> None: self.imported_media[im.media_id] = im   # ledger-rebuild: UPSERT by media_id — a live re-pull carries fresher metrics that WIN (latest snapshot; NOT render's first-write dedup)
     def get_imported_media(self, media_id: str): return self.imported_media.get(media_id)
-    def add_account_selection(self, s: AccountSelection) -> None:
-        acct = validate_account_handle(s.account)
-        canon_id = account_selection_id(s.source_id, acct)
-        if acct != s.account or s.id != canon_id:
-            s = s.model_copy(update={"id": canon_id, "account": acct})
-        for stale_id, stale in list(self.account_selections.items()):
-            if stale_id != canon_id and stale.source_id == s.source_id and stale.account == acct:
-                del self.account_selections[stale_id]              # legacy duplicate id
-        self.account_selections[canon_id] = s                      # RF1: OVERWRITE — one-per-(source, account)
-    def account_selection_for(self, source_id: str, account: str):
-        return self.account_selections.get(account_selection_id(source_id, account))
-    def selections_of_source(self, source_id: str) -> list[AccountSelection]:
-        return [s for s in self.account_selections.values() if s.source_id == source_id]
-    def drop_account_selection(self, source_id: str, account: str) -> None:
-        self.account_selections.pop(account_selection_id(source_id, account), None)   # RF1: operator removed the last pick -> no record (gate denies on a cast source)
-    def moment_ids_selected_for(self, source_id: str, account: str) -> set:
-        # "which specific moments did this account get?" — for the Review READ-MODEL ONLY, NEVER the gate. The
-        # name says it: this is the SELECTED-ids set for display, not an admit/deny predicate. It returns set()
-        # for BOTH "no selection written" (gate must fall back to affinities) AND fan_all_default (gate must
-        # admit ALL) — two OPPOSITE gate decisions, indistinguishable here. The crosspost gate calls
-        # account_selection_for() and branches on sel.method instead (casting.account_selection_admits).
-        sel = self.account_selection_for(source_id, account)
-        return set(sel.moment_ids) if sel else set()
-    def cast_handles_for(self, source_id: str, moment_id: str) -> list:
-        # MOM-3 ROOT: the handles CAST on this moment, DERIVED from the durable AccountSelection map — the Review
-        # READ-MODEL ONLY (matrix display), NEVER the gate. Replaces reading the legacy Moment.affinities tag,
-        # which the operator override (cast_add/cast_remove writes AccountSelection, not affinities) never touched,
-        # so the matrix could diverge from the lanes/gate. A handle is "cast on this moment" iff it owns a CHOSEN
-        # selection listing this moment_id; a fan_all_default/pending TAG row (no moment_ids) is NOT a per-moment
-        # cast and is excluded. [] = no chosen selection for this moment -> the matrix treats it as uncast/all
-        # (exactly today's affinities==[] behavior). Sorted for deterministic display.
-        return sorted(s.account for s in self.selections_of_source(source_id) if moment_id in set(s.moment_ids))
 
     # ---- typed state setters (FIX F65 — no cross-unit scan) ----
     # ECC fix #10: immutable update (model_copy + dict reassignment) instead of in-place `.state =`.
@@ -618,10 +550,6 @@ class Ledger:
     # under-reported a render shared via cross-account REUSE (a reused render keeps its origin `account`,
     # so a naive `r.account == handle` scan misses it). Re-add a CORRECT (surface-keyed) version if a
     # consumer ever needs it; don't resurrect the buggy scan.
-    def selection_facts_of_account(self, handle: str) -> list[SelectionFact]:
-        return [f for f in self.selection_facts.values() if f.account == handle]
-    def selection_facts_of_moment(self, moment_id: str) -> list[SelectionFact]:
-        return [f for f in self.selection_facts.values() if f.moment_id == moment_id]
 
     # ---- reconcile (FIX F08/F32): upsert keep-set, cascade-delete the rest for this source ----
     def reconcile_moments(self, source_id: str, keep: dict[str, Moment]) -> None:
@@ -642,26 +570,6 @@ class Ledger:
                 # upserted in place, so legitimate re-decision keeps working.)
                 continue
             self.moments[mid] = m
-        self._prune_orphan_selection_ids(source_id)   # MOM-4: drop selection ids for moments no longer render-targeting
-
-    def _prune_orphan_selection_ids(self, source_id: str) -> None:
-        """MOM-4: after a reconcile, an AccountSelection may list a moment id that was cascade-DELETED or RETIRED
-        (so it can never post). Prune those ids; if a CHOSEN selection empties, DROP the record (the sum-type
-        validator forbids an empty CHOSEN row, and an absent record correctly DENIES the account on a cast source).
-        A TAG row (fan_all_default/pending) carries no ids and is untouched. Idempotent. Distinct from Task-5's
-        re-pick drop (which clears the WHOLE source); this closes the retire/adjust paths that drop ONE moment
-        without going through ingest_moments, leaving an orphan id in an otherwise-valid selection."""
-        live = {m.id for m in self.moments_of(source_id) if m.state is not MomentState.retired}
-        for sel in list(self.selections_of_source(source_id)):
-            if not sel.moment_ids:
-                continue                                   # TAG row (fan_all_default/pending) -> nothing to prune
-            pruned = sorted(set(sel.moment_ids) & live)
-            if pruned == sorted(sel.moment_ids):
-                continue                                   # no orphan -> leave it
-            if pruned:
-                self.add_account_selection(sel.model_copy(update={"moment_ids": pruned}))   # re-validates (still CHOSEN)
-            else:
-                self.drop_account_selection(source_id, sel.account)   # emptied CHOSEN row -> drop, never an illegal []
 
     # Clip/Post states that mean "live on the platform / carries the performance record" —
     # these are NEVER cascade-deleted (deleting them would orphan a live post: untrackable by

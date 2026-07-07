@@ -31,9 +31,9 @@ def _gates_blocked_note(s) -> str | None:
     caller can `if (note := ...)` unconditionally."""
     aw = (s or {}).get("awaiting", {})
     # WS2 (audit x-f2): EVERY agent gate blocks downstream work — moments (pick) blocks the hook gate,
-    # moment_hooks blocks the clip/caption stages, moment_casting blocks crosspost, captions blocks crosspost.
-    # Iterate the awaiting dict itself (built from pipeline.GATE_KINDS) so a stuck moment_casting (the bug) — or
-    # any future gate — raises the same loud signal; a hardcoded subset let a wedged casting gate read as converged.
+    # moment_hooks blocks the clip/caption stages, captions blocks crosspost. Iterate the awaiting dict itself
+    # (built from pipeline.GATE_KINDS) so a stuck gate (the bug) — or any future gate — raises the same loud
+    # signal; a hardcoded subset let a wedged gate read as converged. (P11/MOL-152: moment_casting is gone.)
     open_gates = {k: v for k, v in aw.items() if v}
     if open_gates:
         detail = " ".join(f"{k}={v}" for k, v in open_gates.items())
@@ -65,8 +65,8 @@ def cmd_status(cfg: Config) -> int:
           # UI-LIE-FIX: per-channel truth (M3), not the legacy global. `fanops status` is an
           # operator-facing line; lying here was the same bug as the Studio status banner.
           f"backend={cfg.effective_publish_mode()} "
-          # WS2 (audit xc-3): one awaiting_<kind>= per GATE_KINDS (the single source) so a stuck moment_casting
-          # gate is visible on `fanops status` — previously only moments/moment_hooks/captions printed.
+          # WS2 (audit xc-3): one awaiting_<kind>= per GATE_KINDS (the single source) so a stuck gate
+          # is visible on `fanops status`; the surface can never omit a gate kind (it derives from GATE_KINDS).
           + " ".join(f"awaiting_{k}={len(pending(cfg, kind=k))}" for k in GATE_KINDS))
     return 0
 
@@ -163,6 +163,27 @@ def cmd_map_media(cfg: Config) -> int:
     ig = sum(1 for p in led.posts.values()
              if p.platform.value == "instagram" and p.state.value in ("published", "analyzed"))
     print(f"media mapped; ig_live={ig} with_media_id={mapped} imported_live_only={len(led.imported_media)}")
+    return 0
+
+def cmd_verify_live(cfg: Config) -> int:
+    # MOL-113: READ-ONLY liveness report. For each published/analyzed post, ask the platform's own API about
+    # THIS specific object via the confirm_post_live seam (IG per-object resolve / TikTok oEmbed) and print
+    # confirmed/unconfirmed + owner. NEVER writes the ledger (load, iterate, print — no .save()); a run leaves
+    # 00_control byte-identical. Fail-open: a post with no creds / no confirmable signal is reported unconfirmed,
+    # never crashes. This is the on-demand mirror of the primitive MOL-117's gate consumes.
+    from fanops.meta_graph import confirm_post_live
+    from fanops.models import PostState
+    led = Ledger.load(cfg)
+    targets = [p for p in led.posts.values() if p.state in (PostState.published, PostState.analyzed)]
+    confirmed = 0
+    for p in targets:
+        try:
+            res = confirm_post_live(cfg, p, reported_username=p.account)   # best-effort username for the TikTok gate
+        except Exception:
+            res = {"confirmed": False, "owner": None}                      # read path never crashes on one post
+        if res.get("confirmed"): confirmed += 1
+        print(f"{p.id}\t{p.platform.value}\t{'LIVE' if res.get('confirmed') else 'unconfirmed'}\towner={res.get('owner')}")
+    print(f"verify-live: {confirmed}/{len(targets)} confirmed live (read-only; ledger untouched)")
     return 0
 
 def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: float) -> int:
@@ -539,6 +560,7 @@ def main(argv: list[str] | None = None) -> int:
     p_pull = sub.add_parser("pull"); p_pull.add_argument("url", type=_http_url)
     p_trk = sub.add_parser("track"); p_trk.add_argument("--window", default="30d")
     sub.add_parser("map-media", help="Leg 2: resolve each live IG post's Graph media_id from its permalink (read-only; instagram_basic)")
+    sub.add_parser("verify-live", help="MOL-113: per-object liveness report over the confirm-post-live seam (read-only; ledger untouched)")
     p_adj = sub.add_parser("adjust"); p_adj.add_argument("--winner-pct", type=float, default=0.3)
     p_adj.add_argument("--retire-pct", type=float, default=0.2); p_adj.add_argument("--lift-floor", type=float, default=20.0)
     p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=None)   # None -> cfg.gc_keep_days
@@ -588,6 +610,12 @@ def main(argv: list[str] | None = None) -> int:
     hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
     hash_sub.add_parser("refresh", help="rebuild 00_control/hashtags.json from live Graph reach (harvest->measure->rank; needs Meta creds, fail-open)")
     hash_sub.add_parser("discover", help="report fresh per-persona hashtags from live category top_media (needs Meta creds; never writes the menu)")
+    p_lever = sub.add_parser("lever", help="persona lever reference docs (generated from the live registry)")
+    lever_sub = p_lever.add_subparsers(dest="lever_cmd", required=True)
+    lever_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")
+    p_thresh = sub.add_parser("threshold", help="selection threshold reference docs (generated from live constants)")
+    thresh_sub = p_thresh.add_subparsers(dest="thresh_cmd", required=True)
+    thresh_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
     p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
     dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
@@ -761,6 +789,7 @@ def _dispatch(cfg: Config, args) -> int:
         _heartbeat(cfg, s); print(s); return 0
     if args.cmd == "track":    return cmd_track(cfg, args.window)
     if args.cmd == "map-media": return cmd_map_media(cfg)
+    if args.cmd == "verify-live": return cmd_verify_live(cfg)
     if args.cmd == "reconcile": return cmd_reconcile(cfg)
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
@@ -778,6 +807,11 @@ def _dispatch(cfg: Config, args) -> int:
         if args.hashtags_cmd == "discover":
             from fanops.fanops_hashtags import cmd_hashtags_discover  # lazy: keeps it off the hot path
             return cmd_hashtags_discover(cfg)
+        return 2
+    if args.cmd in ("lever", "threshold"):
+        if getattr(args, "lever_cmd", None) == "docs" or getattr(args, "thresh_cmd", None) == "docs":
+            from fanops.lever_docs import cmd_lever_docs
+            return cmd_lever_docs(cfg)
         return 2
     if args.cmd == "doctor":   return cmd_doctor(cfg, args)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)

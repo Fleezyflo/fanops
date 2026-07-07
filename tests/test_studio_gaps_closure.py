@@ -47,13 +47,6 @@ def test_preview_media_returns_playable_path(tmp_path):
     path = preview_media_path(cfg, led, "p0")
     assert path and Path(path).exists()
 
-def test_pipeline_status_counts_casting_gate(tmp_path, monkeypatch):
-    from fanops.agentstep import write_request
-    cfg = Config(root=tmp_path)
-    write_request(cfg, kind="moment_casting", key="src1", payload={"source_id": "src1", "moments": [], "personas": []})
-    ps = views.pipeline_status(cfg)
-    assert ps.get("pending_moment_casting", 0) >= 1
-
 def test_retry_rate_limited_failures(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
     led = Ledger.load(cfg)
@@ -120,28 +113,6 @@ def test_home_renders_zero_post_clip_warning(tmp_path):
     html = _client(cfg).get("/").data.decode()
     assert "birthed zero posts" in html and "orph" in html
 
-
-def test_answer_casting_gate_from_studio(tmp_path):
-    from fanops.agentstep import write_request, latest_request_id
-    cfg = Config(root=tmp_path)
-    write_request(cfg, kind="moment_casting", key="src1", payload={
-        "source_id": "src1", "moments": [{"moment_id": "m1", "start": 0, "end": 7, "reason": "r"}],
-        "personas": [{"handle": "@a", "persona": "p"}]})
-    rid = latest_request_id(cfg, "moment_casting", "src1")
-    class F:
-        def get(self, k): return None
-        def __iter__(self):
-            return iter(["cast__@a__m1"])
-        def getlist(self, k): return []
-    class Form(dict):
-        def get(self, k, default=None):
-            return super().get(k, default)
-    f = Form({"cast__@a__m1": "1"})
-    from fanops.studio.app import _parse_gate_form
-    data = _parse_gate_form("moment_casting", f)
-    assert data["selections"]["a"] == ["m1"]
-    res = actions.answer_gate(cfg, "moment_casting", "src1", {**data, "request_id": rid})
-    assert res.ok
 
 def test_account_work_counts_includes_review_batch(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg)

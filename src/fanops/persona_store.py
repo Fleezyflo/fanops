@@ -6,6 +6,7 @@ never leaves a torn file. The validators are the WRITE boundary — a typo'd lev
 so the file never lands a record that won't reload. All names are re-exported from fanops.personas."""
 from __future__ import annotations
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Optional
 from fanops.config import Config
 from fanops.hashtags import _norm
@@ -13,6 +14,58 @@ from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic 
 from fanops.personas import (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES, Personas, _slug)
 
 _CORPUS_CAP = 40                # max curated tags per persona — keeps captions/budget bounded (cap, not a target)
+_BAKED_FILE = "baked_personas.json"
+
+
+def _baked_path() -> Path:
+    return Path(__file__).resolve().parent / "data" / _BAKED_FILE
+
+
+def _persona_dict(p) -> dict:
+    """Serialize a Persona (or baked record) to the personas.json row shape."""
+    return {"id": p.id, "name": p.name or "", "voice": p.voice or "",
+            "hashtag_corpus": list(p.hashtag_corpus or []), "intake": dict(p.intake or {}),
+            "content_focus": list(p.content_focus or []), "selection_scope": p.selection_scope,
+            "hook_angle": p.hook_angle}
+
+
+def baked_personas() -> list:
+    """The shipped archetype presets (package seed data). Validated at load; empty when the file is absent."""
+    from fanops.personas import Persona
+    p = _baked_path()
+    if not p.exists():
+        return []
+    import json
+    raw = json.loads(p.read_text())
+    out: list = []
+    for x in raw.get("personas", []):
+        if not isinstance(x, dict) or not x.get("id"): continue
+        focus = _norm_focus(x.get("content_focus"))
+        scope_v = _enum_or_none(x.get("selection_scope", ""), SELECTION_SCOPE_LEVELS, "selection_scope")
+        angle_v = _enum_or_none(x.get("hook_angle", ""), HOOK_ANGLES, "hook_angle")
+        corpus = [_norm(t) for t in (x.get("hashtag_corpus") or []) if _norm(t)]
+        out.append(Persona(id=str(x["id"]), name=str(x.get("name") or ""), voice=str(x.get("voice") or ""),
+                           content_focus=focus, selection_scope=scope_v, hook_angle=angle_v,
+                           hashtag_corpus=corpus, intake=dict(x.get("intake") or {})))
+    return out
+
+
+def ensure_baked_personas(cfg: Config) -> list[str]:
+    """Additive seed: write any baked archetype whose id is not yet in personas.json. Idempotent."""
+    baked = baked_personas()
+    if not baked:
+        return []
+    added: list[str] = []
+    p = cfg.personas_path
+    with _personas_txn(cfg):
+        raw, plist = _load_raw(p)
+        existing = {d.get("id") for d in plist if isinstance(d, dict)}
+        for per in baked:
+            if per.id in existing: continue
+            plist.append(_persona_dict(per)); existing.add(per.id); added.append(per.id)
+        if added:
+            write_json_atomic(p, raw)
+    return added
 
 
 def _enum_or_none(v, names, label) -> Optional[str]:

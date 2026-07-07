@@ -18,16 +18,39 @@ _MEGA = ["#hiphop", "#hiphopmusic", "#rap"]                  # ~504M / ~113M / ~
 # class-ranked (well-known massive rap hashtags), not live-counted — same disclaimer as the file header.
 _RELEVANCE = ["#rapper", "#bars", "#undergroundhiphop", "#newmusic",
               "#lyrics", "#freestyle", "#trap", "#rapmusic"]           # targets the rap feed
+_GOSSIP_MEGA = ["#celebritygossip", "#gossip", "#entertainmentnews"]   # gossip/drama niche reach anchors
+_GOSSIP_RELEVANCE = ["#celebritynews", "#popculture", "#drama", "#entertainment", "#celebrity"]
 _ARABIC = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]        # AR language/region reach
 _DISCOVERY = {Platform.tiktok: ["#fyp", "#foryou", "#viral"],
               Platform.instagram: ["#reels", "#foryou", "#viral"]}
 _DISCOVERY_DEFAULT = ["#foryou", "#viral"]                   # youtube/other -> platform-neutral
 
-# Canonical reach rank across all pools (mega first), used to order the model's kept tags.
-_RANK = {t: i for i, t in enumerate(_MEGA + _RELEVANCE + _ARABIC + ["#fyp", "#reels", "#foryou", "#viral"])}
+_NICHE_POOLS: dict[str, tuple[list[str], list[str]]] = {
+    "rap": (_MEGA, _RELEVANCE),
+    "gossip": (_GOSSIP_MEGA, _GOSSIP_RELEVANCE),
+}
 
-# The membership set: a tag the model returns survives only if it is one of these.
-VETTED = set(_MEGA) | set(_RELEVANCE) | set(_ARABIC) | {t for v in _DISCOVERY.values() for t in v}
+def _normalize_genre(genre: str | None) -> str:
+    """Map intake.genre / persona research seed to a niche key. Blank -> rap (legacy default)."""
+    g = (genre or "").strip().lower().replace("-", "").replace(" ", "")
+    if g in ("hiphop", "rap", "hiphopmusic"):
+        return "rap"
+    if g in ("gossip", "drama", "celebrity", "celebritygossip", "popculture"):
+        return "gossip"
+    return "rap" if not g else g                          # unknown niche -> rap floor (fail-open)
+
+def niche_floor(genre: str | None = None) -> list[str]:
+    """Reach-ranked mega + relevance tags for ONE niche. Rap only for hiphop/rap; separate floors for gossip etc."""
+    mega, rel = _NICHE_POOLS.get(_normalize_genre(genre), _NICHE_POOLS["rap"])
+    return list(mega) + list(rel)
+
+# Canonical reach rank across all pools (mega first), used to order the model's kept tags.
+_RANK = {t: i for i, t in enumerate(
+    _MEGA + _RELEVANCE + _GOSSIP_MEGA + _GOSSIP_RELEVANCE + _ARABIC + ["#fyp", "#reels", "#foryou", "#viral"])}
+
+# The membership set: a tag the model returns survives only if it is one of these (union of all niche floors).
+VETTED = (set(niche_floor("rap")) | set(niche_floor("gossip")) | set(_ARABIC)
+          | {t for v in _DISCOVERY.values() for t in v})
 
 # NB (M3, 2026-06-27): the per-account tag LEAN was RETIRED. It was an invisible+duplicate lever — no editor
 # control, and it co-owned the hashtag channel with `hashtag_corpus`. Its 3 disjoint flavor pools were folded
@@ -68,14 +91,15 @@ def load_store_reach(cfg) -> dict[str, float]:
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         return {}
 
-def vetted_menu(store: list[str] | None = None) -> list[str]:
+def vetted_menu(store: list[str] | None = None, genre: str | None = None) -> list[str]:
     """The vetted tags as one flat, reach-ordered, de-duplicated list — the MENU the caption prompt
-    tells the model to pick from. With a live `store` (M4) it IS the menu; else the frozen pools. The
-    code still hard-caps + filters via vet_hashtags, so this is a guide, not the enforcement."""
+    tells the model to pick from. With a live `store` (M4) it IS the menu; else the niche floor for
+    `genre` (+ region + discovery). The code still hard-caps + filters via vet_hashtags, so this is a
+    guide, not the enforcement."""
     if store:
         return list(store)
     seen: set[str] = set(); out: list[str] = []
-    for t in _MEGA + _RELEVANCE + _ARABIC + _DISCOVERY[Platform.tiktok] + _DISCOVERY[Platform.instagram]:
+    for t in niche_floor(genre) + _ARABIC + _DISCOVERY[Platform.tiktok] + _DISCOVERY[Platform.instagram]:
         if t not in seen: seen.add(t); out.append(t)
     return out
 
@@ -128,14 +152,20 @@ def content_tag_candidates(text: str | None, *, max_n: int = 6) -> list[str]:
         if len(out) >= max_n: break
     return out
 
-def _composition(platform: Platform, language: str | None) -> list[str]:
-    """The balanced default 4 (genre + relevance + language/region + discovery), reach-ordered.
-    A mega tag for reach, a relevance tag for the right feed, an Arabic tag only when the clip is
-    Arabic (else a second music-discovery tag), and one platform discovery tag. Backfill draws from
-    this in order, so an empty/junk model answer still ships a strong, vetted, on-rule set."""
+def _composition(platform: Platform, language: str | None, genre: str | None = None) -> list[str]:
+    """The balanced default 4 (niche mega + relevance + language/region + discovery), reach-ordered.
+    Backfill draws from the niche floor for `genre`, not the global rap pools — so gossip accounts
+    never ship #hiphop/#rapper on an underfill."""
+    key = _normalize_genre(genre)
+    mega, rel = _NICHE_POOLS.get(key, _NICHE_POOLS["rap"])
     disc = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)
-    lang_slot = _ARABIC[:1] if (language or "").strip().lower().startswith("ar") else ["#newmusic"]
-    return _MEGA[:1] + _RELEVANCE[:1] + lang_slot + disc[:1] + _MEGA[1:] + _RELEVANCE[1:] + disc[1:]
+    if (language or "").strip().lower().startswith("ar"):
+        lang_slot = _ARABIC[:1]
+    elif key == "gossip":
+        lang_slot = rel[2:3] if len(rel) > 2 else rel[1:2]
+    else:
+        lang_slot = ["#newmusic"]
+    return mega[:1] + rel[:1] + lang_slot + disc[:1] + mega[1:] + rel[1:] + disc[1:]
 
 def _screen_content(content_norm: list[str], cfg=None) -> list[str]:
     """MOL-76: drop any content-derived candidate that trips brand_risk_flag — the SAME off-brand guard
@@ -154,7 +184,7 @@ def _screen_content(content_norm: list[str], cfg=None) -> list[str]:
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
                  max_tags: int = 4, *, store: list[str] | None = None,
                  corpus: list[str] | None = None, content: list[str] | None = None,
-                 cfg=None) -> list[str]:
+                 genre: str | None = None, cfg=None) -> list[str]:
     """Return at most `max_tags` reach-vetted hashtags. Keeps the model's VETTED tags (reach-ordered),
     then backfills the balanced default until full. Drops every non-vetted word, dedupes case/'#'
     variants, hard-caps the count. Deterministic; never empty (the default always fills). With a live
@@ -171,7 +201,9 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     content=None/empty -> byte-identical (no membership change, no float, no reserved slot)."""
     corpus_norm = _dedupe_norm(corpus)
     content_norm = _screen_content(_dedupe_norm(content), cfg)   # MOL-76: brand-risk screen the raw-transcript floor BEFORE it joins the gate/floats/floors
-    vetted = (set(store) if store else set(VETTED)) | set(corpus_norm) | set(content_norm)   # corpus + content join the gate
+    vetted = ((set(store) if store else set(niche_floor(genre)) | set(_ARABIC)
+               | {t for v in _DISCOVERY.values() for t in v})
+              | set(corpus_norm) | set(content_norm))   # corpus + content join the gate
     base_rank = {t: i for i, t in enumerate(store)} if store else dict(_RANK)
     # Preference float ahead of the frozen rank: corpus (operator curation) > content (clip info).
     preferred: list[str] = []
@@ -214,7 +246,7 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     # Backfill is REACH-first; content trails. The content FLOOR above already guarantees ONE content slot,
     # so a seed-fallback clip ships 1 content + reach (not all-content) — content adds more only if reach is
     # exhausted. content=[] -> identical tail -> byte-identical.
-    for h in corpus_norm + disc_floor + (store or []) + _composition(platform, language) + content_norm:
+    for h in corpus_norm + disc_floor + (store or []) + _composition(platform, language, genre) + content_norm:
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)
@@ -239,13 +271,14 @@ def _tag_source(tag: str, *, content_set: set, corpus_set: set, store_set: set) 
 def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: str | None = None,
                         max_tags: int = 4, *, store: list[str] | None = None,
                         corpus: list[str] | None = None,
-                        content: list[str] | None = None, cfg=None) -> tuple[list[str], dict[str, str]]:
+                        content: list[str] | None = None, genre: str | None = None,
+                        cfg=None) -> tuple[list[str], dict[str, str]]:
     """vet_hashtags + a provenance `source` per shipped tag. SAME selection as vet_hashtags (DRY — it
     calls it), then labels each kept tag by the signal it traces to (content|corpus|region|graph-reach|
     discovery|genre-floor). This proves every shipped tag is evidence-backed — the hashtag-axis instance
     of the operator's 'every knob real, no theater' rule."""
     out = vet_hashtags(tags, platform, language, max_tags,
-                       store=store, corpus=corpus, content=content, cfg=cfg)
+                       store=store, corpus=corpus, content=content, genre=genre, cfg=cfg)
     content_set = set(_dedupe_norm(content)); corpus_set = set(_dedupe_norm(corpus))
     store_set = set(store) if store else set()
     sources = {t: _tag_source(t, content_set=content_set, corpus_set=corpus_set, store_set=store_set) for t in out}

@@ -1,15 +1,17 @@
-# tests/test_caption_scoping.py — M5: scope the caption REQUEST to the affinity-admitted surfaces.
-# affinity_admits is the SHARED gate (crosspost + caption scoper read it, so they can't drift). The
-# scoper returns the full surface set when casting is OFF or the moment is uncast (byte-identical), so OFF
-# is a no-op. The composed test proves a casting-ON run loses NO cast-surface post; the swap-edge test
-# proves a post-captioning re-cast degrades safely via the pre-existing crosspost `cap is None` net.
+# tests/test_caption_scoping.py — P10 (MOL-151): captions are owner × platform. The caption REQUEST is
+# scoped to the moment OWNER's surfaces via affinity_admits — the SAME gate crosspost enforces, so caption-
+# scope can never drift from post-minting. The scoper returns the full surface set when casting is OFF or the
+# moment is uncast (byte-identical), so OFF is a no-op. The (clip × account) AccountSelection scoping (the old
+# scoped_caption_surfaces) is DELETED. The composed test proves a casting-ON run loses NO owner-surface post;
+# the swap-edge test proves a post-captioning re-cast degrades safely via the crosspost `cap is None` net.
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, ClipState, MomentState, Fmt,
                            CaptionSet, CaptionItem)
 from fanops.accounts import Accounts
-from fanops.casting import affinity_admits, scoped_caption_surfaces
+from fanops.casting import affinity_admits
+from fanops.pipeline import _owner_caption_surfaces
 from fanops.caption import request_captions, ingest_captions, caption_request_stale
 from fanops.crosspost import crosspost_clips
 from fanops.agentstep import latest_request_id, response_path, request_path
@@ -61,32 +63,33 @@ def test_affinity_admits_on_matrix(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
     assert affinity_admits(cfg, _moment(affinities=[]), "b") is True       # uncast -> fan to all
-    assert affinity_admits(cfg, None, "a") is True                          # defensive: no moment -> admit
+    assert affinity_admits(cfg, None, "a") is False                         # P11: no moment -> DENY (scrutiny, never admit-all)
     assert affinity_admits(cfg, _moment(affinities=["a"]), "a") is True    # cast & member
     assert affinity_admits(cfg, _moment(affinities=["a"]), "b") is False   # cast & NOT member -> skip
 
 
-# ---- Task 2 + 5: scoped_caption_surfaces (the filter the pipeline calls) ----
-def test_scoped_caption_surfaces_scopes_when_cast(tmp_path, monkeypatch):
+# ---- P10: owner × platform caption scoping (the filter the pipeline calls) ----
+def test_owner_caption_surfaces_scopes_to_owner_when_cast(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
-    surfaces = Accounts.load(cfg).surfaces()
-    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=["a"]), surfaces)
-    assert {acct for acct, _ in scoped} == {"a"}                            # only the cast account's surfaces (legacy fallback: no selection)
+    accts = Accounts.load(cfg)
+    scoped = _owner_caption_surfaces(cfg, _moment(affinities=["a"]), accts)
+    assert {acct for acct, _ in scoped} == {"a"}                            # owner ONLY (no @b) — clip × account scoping dead
+    assert {plat.value for _, plat in scoped} == {"instagram", "youtube"}   # per-platform survives: owner × its platforms
 
-def test_scoped_caption_surfaces_full_when_off(tmp_path, monkeypatch):
+def test_owner_caption_surfaces_full_when_off(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
-    surfaces = Accounts.load(cfg).surfaces()
-    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=["a"]), surfaces)
-    assert list(scoped) == [(s.account, s.platform) for s in surfaces]       # OFF -> byte-identical (all)
+    accts = Accounts.load(cfg)
+    scoped = _owner_caption_surfaces(cfg, _moment(affinities=["a"]), accts)
+    assert list(scoped) == [(s.account, s.platform) for s in accts.surfaces()]   # OFF -> byte-identical (all)
 
-def test_scoped_caption_surfaces_full_when_uncast(tmp_path, monkeypatch):
+def test_owner_caption_surfaces_full_when_uncast(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
-    surfaces = Accounts.load(cfg).surfaces()
-    scoped = scoped_caption_surfaces(cfg, Ledger.load(cfg), _moment(affinities=[]), surfaces)
-    assert {acct for acct, _ in scoped} == {"a", "b"}                      # uncast -> all surfaces
+    accts = Accounts.load(cfg)
+    scoped = _owner_caption_surfaces(cfg, _moment(affinities=[]), accts)
+    assert {acct for acct, _ in scoped} == {"a", "b"}                      # uncast -> all surfaces (fan-to-all)
 
 
 # ---- Task 5b: composed casting-ON — scoped request THEN zero post loss for cast surfaces ----
@@ -98,8 +101,8 @@ def test_casting_on_scopes_request_and_loses_no_post(tmp_path, monkeypatch, mock
     led.add_moment(_moment(affinities=["a"]))                               # cast to @a only
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
     accts = Accounts.load(cfg)
-    # the scoped request the pipeline would build (Task 3 wiring uses this exact call)
-    led = request_captions(led, cfg, "clip_1", scoped_caption_surfaces(cfg, led, led.moments["mom_1"], accts.surfaces()),
+    # the owner-scoped request the pipeline would build (P10 wiring uses this exact call)
+    led = request_captions(led, cfg, "clip_1", _owner_caption_surfaces(cfg, led.moments["mom_1"], accts),
                            accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert {s["surface"].split("/")[0] for s in payload["surfaces"]} == {"a"}   # request SCOPED to @a

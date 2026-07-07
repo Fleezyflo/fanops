@@ -15,9 +15,9 @@ def _write(cfg, raw):
     cfg.ledger_path.write_text(json.dumps(raw))
 
 
-def test_schema_version_is_ten():
-    # ledger-rebuild M1 bumped 9->10 for the new top-level imported_media map.
-    assert SCHEMA_VERSION == 10
+def test_schema_version_is_eleven():
+    # P12 (MOL-154) bumped 10->11; imported_media arrived at v10.
+    assert SCHEMA_VERSION == 11
 
 
 def test_migration_v2_to_v3_round_trip(tmp_path):
@@ -80,7 +80,6 @@ def test_migration_v0_to_v5_full_chain(tmp_path):
     assert led.stitch_plans == {}                                   # step-2 injection survives step 3
     assert led.batches == {}                                        # step-5 injection (empty batches map)
     assert led.renders == {}                                        # step-6 injection (empty renders map)
-    assert led.selection_facts == {}                               # step-7 injection (empty selection_facts map)
     assert "src_cccccccccccc" in led.sources and led.sources["src_cccccccccccc"].created_at
     assert led.posts["p1"].created_at
     assert led.posts["p1"].metrics_series == []                    # no metrics -> no legacy row
@@ -233,7 +232,6 @@ def test_migration_v4_to_v5_injects_empty_batches(tmp_path):
     assert set(led.posts) == {"pa"} and led.posts["pa"].batch_id is None   # row survives; batch_id default None
     assert set(led.stitch_plans) == {"sp1"}                         # stitch_plans untouched by the v5 step
     assert led.renders == {}                                        # v5->v6 step injects the empty renders map
-    assert led.selection_facts == {}                               # v6->v7 step injects the empty selection_facts map
     with Ledger.transaction(cfg):
         pass
     assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
