@@ -11,7 +11,7 @@ pytest.importorskip("flask")
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import (Source, Moment, Clip, Platform, ClipState, MomentState,
+from fanops.models import (Source, Moment, Clip, ClipState, MomentState,
                            AccountSelection, SelectionMethod, account_selection_id, Fmt)
 from fanops.casting import account_selection_admits
 
@@ -74,20 +74,7 @@ def test_lane_cast_button_drives_gate_admit_then_uncast_denies(tmp_path):
     assert led.account_selection_for("src1", "b") is None       # last pick removed -> no illegal empty operator row
     assert account_selection_admits(cfg, led, led.moments["m0"], "b") is False   # gate: back to DENY
 
-
-def test_lane_cast_scopes_caption_surfaces(tmp_path):
-    # the gate the lane drives is the SAME one caption-scoping uses (scoped_caption_surfaces) — so a freshly
-    # cast moment also pulls the account into captioning. Proves reach into the OTHER gate consumer, not just crosspost.
-    from types import SimpleNamespace
-    from fanops.casting import scoped_caption_surfaces
-    cfg = Config(root=tmp_path); _seed(cfg)
-    client = _client(cfg)
-    surfaces = [SimpleNamespace(account="a", platform=Platform.instagram),
-                SimpleNamespace(account="b", platform=Platform.instagram)]
-    led = Ledger.load(cfg)
-    # BEFORE: @b uncast -> only @a survives the caption-scope gate for m0.
-    assert ("b", Platform.instagram) not in scoped_caption_surfaces(cfg, led, led.moments["m0"], surfaces)
-    client.post("/cast/add/m0?source=src1&account=@b&view=lanes")
-    led = Ledger.load(cfg)
-    # AFTER: the lane cast pulled @b into m0's caption scope too.
-    assert ("b", Platform.instagram) in scoped_caption_surfaces(cfg, led, led.moments["m0"], surfaces)
+# NB (P10 / MOL-151): the old `test_lane_cast_scopes_caption_surfaces` was removed. Caption scoping is now
+# owner × platform via `affinity_admits` (the SAME gate crosspost enforces), NOT the AccountSelection the
+# cast lane writes — so the lane no longer drives caption scope. Owner-scoping is covered by
+# tests/test_caption_scoping.py + tests/test_mol151_p10_captions.py.

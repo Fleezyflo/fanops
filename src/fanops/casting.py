@@ -401,12 +401,3 @@ def account_selection_admits(cfg, led, moment, account) -> bool:
     if sel.method == SelectionMethod.fan_all_default: return True   # EXPLICIT, labelled fan-to-all
     if sel.method == SelectionMethod.pending: return False          # gate open, unconverged -> hold (never fan)
     return moment.id in set(sel.moment_ids)                         # specific picks: admit iff selected
-
-def scoped_caption_surfaces(cfg, led, moment, surfaces):
-    """M5/RF1: the surfaces a clip's captions are REQUESTED for — the SAME gate the crosspost enforcer uses
-    (account_selection_admits), so caption-scoping can never drift from post-minting (the H1 lesson). Returns
-    the full list unchanged when casting is OFF or the source is uncast. Within a decision cycle this is a
-    SUPERSET of the crosspost survivors (which narrow further by batch target), so every minted post has a
-    caption; a post-captioning re-cast SWAP is backstopped by crosspost's cap-is-None skip. `surfaces` is an
-    iterable of Surface; returns the (account, platform) tuples request_captions wants."""
-    return [(s.account, s.platform) for s in surfaces if account_selection_admits(cfg, led, moment, s.account)]
