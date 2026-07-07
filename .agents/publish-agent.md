@@ -1,33 +1,27 @@
-# Brief: PUBLISH-RESILIENCE AGENT
+# Brief: PUBLISH lane
 
-You are the **publish-resilience agent**. Read `AGENTS.md` (repo root) first — the shared
-how-you-work contract (worktrees, TDD, no main-push, parallelism cap). This file is WHAT you do.
+Read `AGENTS.md` then `.agents/_shared-guardrails.md` first (how you work). This file is WHAT you own.
+You are the **publish-resilience** lane (publish/schedule/reconcile subsystem — boundary mirrors
+`src/fanops/post/CLAUDE.md`).
 
-## Your tickets ONLY, in order
+## Scope — the files you own
 
-MOL-128, MOL-115, MOL-125, MOL-124, MOL-112, MOL-113, MOL-114, MOL-116, MOL-117
+Your hot files, defined under `publish` in `.agents/lanes.json`: `post/run.py`, `post/postiz.py`,
+`post/zernio.py`, `post/__init__.py`, `reconcile.py`, `config.py`, `studio/views_common.py` (plus
+`.gitignore`). Do **not** edit the generation-core hot files (`models.py`, `crosspost.py`, `ledger.py`,
+`casting.py`, `clip.py`, `moments.py`, `prompts.py`) — those belong to `picking`/`rfd`. The lane guard
+enforces this.
 
-Touch NOTHING else. The picking agent owns MOL-142..179; the RF-D agent owns
-MOL-166/167/168/164/169. Your files: post/run.py, post/postiz.py, post/zernio.py, reconcile.py,
-studio/views_common.py, config.py, .gitignore. Do NOT edit moments.py, models.py, crosspost.py,
-prompts.py, casting.py, clip.py, ledger.py.
+## Your queue — from Linear, not a list
 
-## SKIP — do NOT execute (LIVE operator actions, not code)
+The orchestrator hands you the next **READY** publish ticket (MOL id) from Linear (see the `publish`
+`linear` block in `.agents/lanes.json`). Work one at a time; respect blockers (report `blocked on MOL-x`
+and stop); skip already-merged tickets. **Some publish items are LIVE operator actions, not code** — if
+the orchestrator flags a ticket as operator-only, leave it for the human and move on.
 
-MOL-126, MOL-127. Leave them for the human.
+## DONE means (per ticket)
 
-## Sequencing
-
-MOL-128 FIRST (security: purge the live-key .env.bak + gitignore .env/.env.*/*.bak + commit the
-v4/R2 work). Then the rest in the order above.
-
-## Where to STOP
-
-Stop when MOL-117 is merged green. Never touch a picking or RF-D ticket, never run MOL-126/127.
-
-## DONE means
-
-Each ticket merged on green CI to its Acceptance block. A transient publish failure retries then
-parks needs_reconcile (not terminal failed); a 4xx stays terminal; no double-submit on retry; the
-live-key backup is gone and gitignored; the Postiz banner distinguishes idle from broken. Per-ticket
-TDD, ruff + scoped pytest green, PR merged.
+TDD-first, `ruff` + scoped `pytest` green via `./scripts/check.sh`, PR opened to `main`, CI green, and
+you have reported `MOL-xxx CI green, ready to land`. The **orchestrator** merges — you do not. Honor each
+ticket's Acceptance block (e.g. a transient publish failure retries then parks `needs_reconcile`, not
+terminal `failed`; a 4xx stays terminal; no double-submit on retry).

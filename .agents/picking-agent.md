@@ -1,30 +1,26 @@
-# Brief: PICKING AGENT
+# Brief: PICKING lane
 
-You are the **picking-rebuild agent**. Read `AGENTS.md` (repo root) first — the shared
-how-you-work contract (worktrees, TDD, no main-push, parallelism cap). This file is WHAT you do.
+Read `AGENTS.md` then `.agents/_shared-guardrails.md` first (how you work). This file is WHAT you own.
+You are the **clip/moment/casting generation-core** lane.
 
-## Your tickets ONLY, in order
+## Scope — the files you own
 
-MOL-145, MOL-158, MOL-159, MOL-146, MOL-147, MOL-148, MOL-149, MOL-150, MOL-151, MOL-152, MOL-154, MOL-153, MOL-155, MOL-174, MOL-175, MOL-162, MOL-163, MOL-156
+Your hot files (exclusive unless noted) are defined under `picking` in `.agents/lanes.json`:
+`models.py`, `crosspost.py`, `ledger.py`, `casting.py`, `clip.py`, and — **shared with `rfd`,
+time-coordinated by the orchestrator** — `moments.py`, `prompts.py`. Touch nothing owned by `publish`
+(`post/*`, `reconcile.py`, `config.py`, `studio/views_common.py`). The lane guard enforces this.
 
-Touch NOTHING else. The publish agent owns MOL-112..128; the RF-D agent owns
-MOL-166/167/168/164/169. You WILL collide on shared files (moments.py, models.py, crosspost.py,
-prompts.py, casting.py, clip.py, ledger.py) if you stray.
+## Your queue — from Linear, not a list
 
-## Where to STOP
+The orchestrator hands you the next **READY** picking ticket (MOL id) from Linear (see the `picking`
+`linear` block in `.agents/lanes.json`). Work exactly one at a time. **Respect blockers**: never start a
+ticket whose blocker isn't yet merged to `origin/main` — report `blocked on MOL-x` and stop. Skip any
+ticket already merged.
 
-Stop when MOL-156 is merged green. Never start a ticket outside this list. Never work ahead of an
-unmerged blocker — read each ticket's Blockers section; if blocked, report "blocked on MOL-x" and stop.
+## DONE means (per ticket)
 
-## Key sequencing notes
-
-- MOL-146 (P5) ADDS Moment.clip_profile/framing — the fields MOL-150 (P9) reads.
-- MOL-150 (P9) owns the merged render_account_cut and must carry the S3 supercut branch forward.
-- MOL-156 is the capstone, LAST.
-
-## DONE means
-
-MOL-156 merged with all four proofs green WITH OUTPUT:
-1. single-owner E2E · 2. archetype-differentiation · 3. ghost-sweep ·
-4. **closed-loop metric round-trip** (crosspost→approve→publish[dryrun]→reconcile→Meta-Graph insight→lift_score back on the Post).
-The closed-loop test green is the gate that declares the rebuild finished. Until then, NOT done.
+TDD-first (write the ticket's named tests RED, then GREEN), `ruff` + scoped `pytest` green via
+`./scripts/check.sh`, PR opened to `main`, CI green, and you have reported `MOL-xxx CI green, ready to
+land`. The **orchestrator** merges — you do not. A capstone/closed-loop ticket is done only when its
+named proof (e.g. crosspost→approve→publish[dryrun]→reconcile→Meta-Graph insight→lift back on the Post)
+is green with output.

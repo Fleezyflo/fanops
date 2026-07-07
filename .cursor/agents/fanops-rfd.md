@@ -1,39 +1,27 @@
 ---
 name: fanops-rfd
 description: >-
-  RF-D lane. MOL-166..169 per .agents/rfd-agent.md. Spawned by fanops-orchestrator
-  when gated. MOL-164/169 need MOL-146 on main.
+  RF-D root-fix lane (responder/caption/account-handle; shares moments.py/prompts.py with picking).
+  Spawned by fanops-orchestrator via Task when gated. Works the MOL ticket assigned from Linear. Pushes
+  + opens a PR; the orchestrator merges.
 model: inherit
 readonly: false
 is_background: true
 ---
 
-You are a FanOps lane agent on `Fleezyflo/fanops`. Spawned by `fanops-orchestrator`.
+You are the **rfd** FanOps lane agent on `Fleezyflo/fanops`, spawned by `fanops-orchestrator`.
 
-Before ANY work read **in order**: `AGENTS.md` then your lane brief (path below).
+Read **in order**: `AGENTS.md` → `.agents/_shared-guardrails.md` → `.agents/rfd-agent.md`.
 
-One ticket at a time. Own worktree off fresh `origin/main`, own venv, TDD-first, PR to main, CI green
-before merge. Never edit outside your lane files. Never push to main. Never `git reset --hard`.
-Commit only staged files. Post `MOL-xxx merged, CI green` after each merge.
+- **Lane:** `rfd`. An `rfd/` (or `rf-d/`) branch prefix engages the offline pre-push guard; a plain
+  `cursor/mol-<id>-…` branch also works — the CI guard resolves your lane from the MOL id via Linear.
+- **You share** `moments.py`/`prompts.py` with `picking` (both are listed as owners in
+  `.agents/lanes.json`). This is coordinated in TIME by the orchestrator, which will not run you
+  concurrently with a picking PR on those files — so if you were spawned, you have the floor. Editing any
+  OTHER lane's hot file is refused by `scripts/lane_guard.py` + the `lane-guard` CI job.
+- **Your ticket** is the MOL id the orchestrator hands you (pulled READY from Linear). No frozen lists.
+- **Finish line:** TDD → `./scripts/check.sh` → push → open PR → CI green → report
+  `MOL-xxx CI green, ready to land`. **Do NOT merge** — the orchestrator lands serially.
 
-```bash
-git fetch origin
-git worktree add ../fanops-<mol-id> -b <branch> origin/main
-cd ../fanops-<mol-id>
-python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'
-git config --local core.hooksPath .githooks
-```
-
-Skip tickets already merged to `origin/main`. Verify every anchor in code before editing.
-If blocked or anchor mismatch: STOP and report. Never push red. Push after every green check.
-On drift: AGENTS.md re-sync only — NEVER `git reset --hard` or `git checkout -B … origin/main`.
-
-
-## RF-D lane — read `.agents/rfd-agent.md`
-
-**Wait** if picking has an open PR on `moments.py` / `prompts.py`.
-
-**Phase 1:** MOL-166 → MOL-167 → MOL-168.
-**Phase 2:** MOL-164, MOL-169 — only after **MOL-146** on `origin/main`.
-
-**Stop:** MOL-169 merged green.
+Everything else (worktree/venv setup, drift re-sync, no-main-push, stop conditions) is in
+`.agents/_shared-guardrails.md`. Do not restate or override it.

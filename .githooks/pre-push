@@ -33,4 +33,22 @@ while read -r _lref lsha rref rsha; do
   fi
 done
 
+# --- GUARD: lane file-ownership (AGENTS.md 'disjoint hot files' rule, now MECHANICAL) --------------
+# OPT-IN by branch prefix: for a branch named after a lane (publish/, picking/, pick/, rfd/, ci/) this
+# refuses a push that edits a hot file owned by a DIFFERENT lane (see .agents/lanes.json). For every
+# other branch it is a no-op, so it never blocks cursor/*, bycreamco/mol-*, or human branches. Policy
+# only — runs NO tests. FAILS OPEN on infra gaps (no venv/python, missing manifest/script): the guard
+# is a fast structural check, not a correctness gate; CI (.github/workflows/lane-guard.yml) is the hard
+# gate. Detected strays FAIL CLOSED. No skip env var — nothing here is slow.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -n "$ROOT" && -f "$ROOT/scripts/lane_guard.py" && -f "$ROOT/.agents/lanes.json" ]]; then
+  PY="$ROOT/.venv/bin/python"; [[ -x "$PY" ]] || PY="$(command -v python3 || true)"
+  if [[ -n "$PY" ]]; then
+    if ! "$PY" "$ROOT/scripts/lane_guard.py"; then
+      echo "[fanops pre-push] REFUSED: lane file-ownership guard failed (see above)." >&2
+      exit 1
+    fi
+  fi
+fi
+
 exit 0
