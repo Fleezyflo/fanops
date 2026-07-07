@@ -3,7 +3,7 @@
 # unknown fields are silently dropped, never a crash. This pins that forward-compat contract: a regression to
 # extra="forbid" (or a pydantic-default change) would turn a forward-rolled ledger into a hard load error and
 # this test would catch it. Covers a plain model AND the frozen-config model (frozen must not drop the default).
-from fanops.models import Source, AccountSelection, SelectionMethod
+from fanops.models import Source, Render, RenderState
 
 
 def test_unknown_field_is_ignored(tmp_path):
@@ -14,8 +14,8 @@ def test_unknown_field_is_ignored(tmp_path):
 
 
 def test_frozen_config_model_also_ignores_unknown_fields():
-    # AccountSelection sets ConfigDict(frozen=True) but NOT extra= — so it must still inherit extra="ignore".
-    sel = AccountSelection(id="as1", source_id="s1", account="a", moment_ids=["m1"],
-                           method=SelectionMethod.llm, brand_new_key=123)
-    assert not hasattr(sel, "brand_new_key")
-    assert sel.account == "a" and sel.moment_ids == ["m1"]
+    # Render sets no extra= — so it must still inherit extra="ignore" even when frozen fields are present.
+    r = Render(id="r1", clip_id="c1", account="a", surface_key="a\x1finstagram", path="/r.mp4",
+               state=RenderState.rendered, brand_new_key=123)
+    assert not hasattr(r, "brand_new_key")
+    assert r.account == "a" and r.clip_id == "c1"

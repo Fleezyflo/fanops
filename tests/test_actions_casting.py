@@ -55,15 +55,15 @@ def test_operator_override_may_co_own(tmp_path):
     assert affinity_admits(cfg, _mom(led, "m0"), "c") is False  # a third handle is still DENIED
 
 
-def test_cast_handles_for_reads_affinities(tmp_path):
-    # the Review cast chips: cast_handles_for reads Moment.affinities (the single gate input), operator overrides included.
+def test_cast_affinities_reads_moment_tag(tmp_path):
+    # the Review cast chips read Moment.affinities (the single gate input), operator overrides included.
     cfg = Config(root=tmp_path); _seed(cfg)
     actions.cast_add(cfg, "s", "a", "m0"); actions.cast_add(cfg, "s", "b", "m0")
     led = Ledger.load(cfg)
-    assert led.cast_handles_for("s", "m0") == ["a", "b"]
-    assert led.cast_handles_for("s", "m1") == []               # m1 cast to nobody -> fans to all
+    assert led.moments["m0"].affinities == ["a", "b"]
+    assert led.moments["m1"].affinities == []               # m1 cast to nobody -> fans to all
     actions.cast_remove(cfg, "s", "a", "m0")
-    assert Ledger.load(cfg).cast_handles_for("s", "m0") == ["b"]
+    assert Ledger.load(cfg).moments["m0"].affinities == ["b"]
 
 
 def test_cast_add_is_idempotent(tmp_path):

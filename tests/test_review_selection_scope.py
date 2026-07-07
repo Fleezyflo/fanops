@@ -67,12 +67,12 @@ def _counting_index(monkeypatch):
 
 
 # ── the scoped index helper (source-of-truth for both views) ─────────────────
-def test_affinity_index_matches_cast_handles_for(tmp_path):
+def test_affinity_index_matches_moment_affinities(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, moments=3, unrelated_sources=5, unrelated_moments_each=4)
     led = Ledger.load(cfg)
     idx = views_review._affinity_index(led, "src1")
     for mid in ("m0", "m1", "m2"):
-        assert idx.get(mid, []) == led.cast_handles_for("src1", mid)   # byte-identical, per moment
+        assert idx.get(mid, []) == sorted(set(led.moments[mid].affinities or []))
 
 
 def test_affinity_index_scoped_to_source(tmp_path):
@@ -98,7 +98,7 @@ def test_review_matrix_cast_handles_unchanged(tmp_path):
     from fanops.studio.views_review import _display_handles, _handle_display_map
     _by_norm = _handle_display_map({a.handle: a for a in accts.accounts})
     for mid in ("m0", "m1", "m2"):
-        assert by_mid[mid].affinities == _display_handles(led.cast_handles_for("src1", mid), _by_norm)
+        assert by_mid[mid].affinities == _display_handles(sorted(set(led.moments[mid].affinities or [])), _by_norm)
     # @a cast on all moments; @b only on m0.
     assert set(by_mid["m0"].affinities) == {"a", "b"} and by_mid["m1"].affinities == ["a"]
 
