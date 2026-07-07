@@ -31,9 +31,9 @@ def _gates_blocked_note(s) -> str | None:
     caller can `if (note := ...)` unconditionally."""
     aw = (s or {}).get("awaiting", {})
     # WS2 (audit x-f2): EVERY agent gate blocks downstream work — moments (pick) blocks the hook gate,
-    # moment_hooks blocks the clip/caption stages, moment_casting blocks crosspost, captions blocks crosspost.
-    # Iterate the awaiting dict itself (built from pipeline.GATE_KINDS) so a stuck moment_casting (the bug) — or
-    # any future gate — raises the same loud signal; a hardcoded subset let a wedged casting gate read as converged.
+    # moment_hooks blocks the clip/caption stages, captions blocks crosspost. Iterate the awaiting dict itself
+    # (built from pipeline.GATE_KINDS) so a stuck gate (the bug) — or any future gate — raises the same loud
+    # signal; a hardcoded subset let a wedged gate read as converged. (P11/MOL-152: moment_casting is gone.)
     open_gates = {k: v for k, v in aw.items() if v}
     if open_gates:
         detail = " ".join(f"{k}={v}" for k, v in open_gates.items())
@@ -65,8 +65,8 @@ def cmd_status(cfg: Config) -> int:
           # UI-LIE-FIX: per-channel truth (M3), not the legacy global. `fanops status` is an
           # operator-facing line; lying here was the same bug as the Studio status banner.
           f"backend={cfg.effective_publish_mode()} "
-          # WS2 (audit xc-3): one awaiting_<kind>= per GATE_KINDS (the single source) so a stuck moment_casting
-          # gate is visible on `fanops status` — previously only moments/moment_hooks/captions printed.
+          # WS2 (audit xc-3): one awaiting_<kind>= per GATE_KINDS (the single source) so a stuck gate
+          # is visible on `fanops status`; the surface can never omit a gate kind (it derives from GATE_KINDS).
           + " ".join(f"awaiting_{k}={len(pending(cfg, kind=k))}" for k in GATE_KINDS))
     return 0
 

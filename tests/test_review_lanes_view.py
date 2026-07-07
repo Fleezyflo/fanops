@@ -8,8 +8,7 @@ pytest.importorskip("flask")
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState,
-                           AccountSelection, SelectionMethod, account_selection_id, Fmt)
+from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt)
 
 NOW = datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc)
 def _z(dt): return dt.isoformat().replace("+00:00", "Z")
@@ -27,9 +26,8 @@ def _seed(cfg):
         led.add_moment(Moment(id="m0", parent_id="src1", content_token="0-7", start=0, end=7, reason="early", state=MomentState.decided))
         led.add_moment(Moment(id="m1", parent_id="src1", content_token="8-15", start=8, end=15, reason="late", state=MomentState.decided))
         led.add_clip(Clip(id="c0", parent_id="m0", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        # @a is cast on m0 (llm); @b has no selection (fans to all)
-        led.add_account_selection(AccountSelection(id=account_selection_id("src1", "a"), source_id="src1",
-                                                   account="a", moment_ids=["m0"], method=SelectionMethod.llm))
+        # P11/MOL-152: @a is cast on m0 via Moment.affinities (the single-owner gate input); @b owns nothing.
+        led.moments["m0"].affinities = ["a"]
         led.add_post(Post(id="p_a_m0", parent_id="c0", account="a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="dryrun://p_a_m0"))
 
 def _seed_with_post(cfg):

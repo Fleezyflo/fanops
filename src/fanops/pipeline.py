@@ -16,7 +16,7 @@ from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
-from fanops.casting import request_moment_casting, ingest_moment_casting, affinity_admits
+from fanops.casting import affinity_admits
 from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
                                   approved_disabled_count)
 from fanops.intro_match import request_intro_match, ingest_intro_match
@@ -140,42 +140,6 @@ def _stage_moment_hooks(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledge
                 led = ingest_moment_hooks(led, cfg, s.id, accounts=accts)   # AGENT-5: intersect author-echoed handle keys with real accounts
             except Exception as e:
                 _quarantine(led.sources, s.id, SourceState.error, "moment_hooks", e, log)
-    return led
-
-
-def _stage_casting(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
-    """M1 (Option C) per-account moment SELECTION (default ON via cfg.account_casting): an LLM gate chooses,
-    per account, that account's OWN set of moments from the decided pool, writing Moment.affinities BEFORE
-    the render loop. The crosspost affinity gate then fans a cast moment ONLY to its accounts. request is
-    write-once; ingest applies the selection once the responder answers (a no-op until then). Per-source
-    quarantine, fail-open (log-only — affinities just stay []). OFF -> no gate, byte-identical fan-out. NB:
-    the LLM gate is the SOLE production selector (the old token-overlap heuristic casting.cast_moments was
-    removed in WS-M1/MOM-7; the operator cast_add/cast_remove override is the manual selection path)."""
-    if not cfg.account_casting:
-        return led
-    for s in list(led.sources.values()):
-        rel = [m for m in led.moments.values() if m.parent_id == s.id
-               and m.state in (MomentState.decided, MomentState.clipped)]
-        # P1 backfill: process a source with DECIDED moments (the normal path) OR one stranded with
-        # CLIPPED-uncast moments (raced past the gate before the answer landed) — write-once keeps it
-        # idempotent (a source already cast has non-empty affinities -> skipped). OFF firewall: this whole
-        # block is account_casting-guarded.
-        has_decided = any(m.state is MomentState.decided for m in rel)
-        has_clipped_uncast = any(m.state is MomentState.clipped and not m.affinities for m in rel)
-        if not has_decided and not has_clipped_uncast:
-            continue
-        try:
-            led = request_moment_casting(led, cfg, s.id, accts)
-            led = ingest_moment_casting(led, cfg, s.id, accts)
-        except Exception as e:
-            # xc-2: a request/ingest failure (e.g. an OSError opening the gate) must be VISIBLE, not just logged —
-            # route it through the same degraded_reason channel ingest uses, so the operator sees the casting
-            # downgrade. Crosspost independently DEFERS this source this pass via casting_gate_failed_to_open
-            # (it won't silently fan-to-all); the gate re-opens next pass.
-            log("casting", s.id, "error", err=str(e)[:120])
-            cur = led.sources.get(s.id)
-            if cur is not None:
-                led.sources[s.id] = cur.model_copy(update={"degraded_reason": f"casting failed this pass: {str(e)[:120]}"})
     return led
 
 
@@ -322,9 +286,9 @@ def _publish_safe(cfg: Config, log) -> None:
 
 # WS2 (audit x-f2/xc-3): the ONE canonical list of agent-gate kinds. Every surface that enumerates gates —
 # the awaiting summary, the convergence check, the LOUD blocked-note, the run.log breadcrumb, `fanops status` —
-# derives from THIS so a future 5th gate cannot be silently omitted from any of them (the bug was a 4th gate,
-# moment_casting, added to the awaiting dict but never to the operator-facing surfaces). Order = pipeline order.
-# gate-kinds-drift-risk (high): GATE_KINDS itself was the LAST hand-copy — a 5th gate added to responder._SCHEMA
+# derives from THIS so a future gate cannot be silently omitted from any of them (the historic bug was a gate
+# added to the awaiting dict but never to the operator-facing surfaces). Order = pipeline order.
+# gate-kinds-drift-risk (high): GATE_KINDS itself was the LAST hand-copy — a new gate added to responder._SCHEMA
 # (the answerable-gate registry) but forgotten here would be silently starved (pending_gate_count / convergence
 # iterate GATE_KINDS). Derive it FROM _SCHEMA so the two are ONE source and cannot drift. dict insertion order ==
 # pipeline order (_SCHEMA is declared in pipeline order), so this is byte-identical to the old literal today.
@@ -346,7 +310,6 @@ class AwaitingCounts(TypedDict):
     when all are 0). Keys mirror GATE_KINDS / responder._SCHEMA / agentstep.pending kinds."""
     moments: int
     moment_hooks: int
-    moment_casting: int
     captions: int
 
 
@@ -406,8 +369,8 @@ def _build_summary(cfg: Config, before: set) -> RunSummary:
         # All three agent-gate kinds the responder answers (responder._SCHEMA): moments (pick) blocks the
         # hook gate, moment_hooks blocks the clip/caption stages, captions blocks crosspost — so `fanops
         # run` must see every one to know it has NOT converged.
-        # WS2: built from GATE_KINDS (the single source) so every gate — incl. moment_casting (P1: the run loop
-        # must WAIT for casting) and any future kind — is counted without a per-call edit here.
+        # WS2: built from GATE_KINDS (the single source) so every gate — and any future kind — is counted
+        # without a per-call edit here.
         "awaiting": {k: len(pending(cfg, kind=k)) for k in GATE_KINDS},
     }
     write_digest(led, cfg)                               # read-only reporting, same snapshot, OUTSIDE the lock
@@ -469,7 +432,6 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
                 led = route_moments(led, cfg)
             except Exception as e:
                 log("router", "-", "error", err=str(e)[:120])
-        led = _stage_casting(led, cfg, accts, log)
         led = _stage_render_and_caption(led, cfg, accts, aspects, log)
         led = _stage_structural_hooks(led, cfg, log)
         led = _stage_refresh_caption_requests(led, cfg, accts, log)

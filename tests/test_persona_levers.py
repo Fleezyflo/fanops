@@ -5,13 +5,9 @@
 # with only `voice` set composes to that voice VERBATIM, so every existing persona's payload is byte-identical.
 import json
 from fanops.config import Config
-from fanops.ledger import Ledger
-from fanops.models import Source, Moment, MomentState
 from fanops.accounts import Accounts, Account
 from fanops.personas import (Persona, compose_persona_instruction, add_persona, update_persona, Personas,
                              resolved_cut_spec, CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES)
-from fanops.agentstep import request_path
-from fanops.casting import request_moment_casting
 import pytest
 
 
@@ -98,34 +94,15 @@ def test_unlinked_account_levers_stay_empty(tmp_path):
     assert a.content_focus == [] and a.selection_scope is None and compose_persona_instruction(a) == "x"
 
 
-# ---- payload firewall: the casting request carries the composed instruction; only-voice == byte-identical ----
-def _seed(cfg, accts):
-    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps({"accounts": accts}))
-    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
-    for mid in ("m0", "m1"):
-        led.add_moment(Moment(id=mid, parent_id="src_1", content_token=mid, start=0, end=7, reason="r",
-                              signal_score=1.0, transcript_excerpt="", state=MomentState.decided))
-    led.save(); return Ledger.load(cfg)
+# ---- directive firewall: the composed casting instruction; only-voice == byte-identical ----
+def test_casting_directive_only_voice_is_byte_identical(tmp_path):
+    from fanops.personas import casting_directive
+    # firewall: no levers -> the casting directive == raw voice (the string the picker brief reads).
+    assert str(casting_directive(Account(handle="a", persona="bold fan"))) == "bold fan"
 
-def test_casting_payload_only_voice_is_byte_identical(tmp_path):
-    cfg = Config(root=tmp_path)
-    led = _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-                       "persona": "bold fan"}])
-    request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    payload = json.loads(request_path(cfg, "moment_casting", "src_1").read_text())
-    p0 = payload["personas"][0]                                     # firewall: no levers -> the casting directive == raw voice
-    assert p0["handle"] == "a" and p0["persona"] == "bold fan"
-
-def test_casting_payload_carries_lever_direction(tmp_path):
-    cfg = Config(root=tmp_path)
-    led = _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-                       "persona": "bold fan", "persona_id": "p"}])
-    cfg.personas_path.write_text(json.dumps({"personas": [
-        {"id": "p", "voice": "bold fan", "content_focus": ["punchlines", "hype"]}]}))
-    request_moment_casting(led, cfg, "src_1", Accounts.load(cfg))
-    payload = json.loads(request_path(cfg, "moment_casting", "src_1").read_text())
-    persona_str = payload["personas"][0]["persona"]
+def test_casting_directive_carries_lever_direction(tmp_path):
+    from fanops.personas import casting_directive
+    persona_str = str(casting_directive(Persona(id="p", voice="bold fan", content_focus=["punchlines", "hype"])))
     assert "punchline" in persona_str and "hype moments" in persona_str  # substantive, not adjectives
 
 

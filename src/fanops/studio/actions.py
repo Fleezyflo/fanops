@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ledger import Ledger
-from fanops.models import CaptionSet, ClipState, MomentCastingDecision, MomentDecision, MomentHookDecision, Post, PostState
+from fanops.models import CaptionSet, ClipState, MomentDecision, MomentHookDecision, Post, PostState
 from fanops.ids import child_id, surface_key, _hash
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
@@ -25,7 +25,7 @@ from fanops.studio.actions_casting import cast_add, cast_remove  # noqa: F401
 from fanops.studio.actions_segments import set_segments, clear_segments  # noqa: F401
 
 SNOOZE_DAYS = 365
-_GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "moment_casting": MomentCastingDecision, "captions": CaptionSet}
+_GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
 
 def _normalize_z(new_time: str) -> str:
     """Parse an ISO time, COERCE naive -> UTC (iso_z would otherwise treat naive as LOCAL time),

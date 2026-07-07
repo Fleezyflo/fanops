@@ -63,7 +63,7 @@ def test_affinity_admits_on_matrix(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
     assert affinity_admits(cfg, _moment(affinities=[]), "b") is True       # uncast -> fan to all
-    assert affinity_admits(cfg, None, "a") is True                          # defensive: no moment -> admit
+    assert affinity_admits(cfg, None, "a") is False                         # P11: no moment -> DENY (scrutiny, never admit-all)
     assert affinity_admits(cfg, _moment(affinities=["a"]), "a") is True    # cast & member
     assert affinity_admits(cfg, _moment(affinities=["a"]), "b") is False   # cast & NOT member -> skip
 
