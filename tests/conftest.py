@@ -97,6 +97,12 @@ def vcr_config():
         "filter_query_parameters": [("access_token", "DUMMY"), ("input_token", "DUMMY")],
         "filter_headers": [("authorization", "DUMMY"), ("Authorization", "DUMMY")],
         "filter_post_data_parameters": [("access_token", "DUMMY")],
+        # MATCH on method + path ONLY — deliberately NOT on the query string. The token rides the query
+        # (access_token/input_token); it is scrubbed to DUMMY on write, but a replay in CI carries a
+        # DIFFERENT (or absent) token, so matching on query would never match the recorded DUMMY and every
+        # replay would miss (the CI `unit` failure: "Matchers failed: query"). Path+method uniquely
+        # identifies each recorded Graph edge here, so this is exact without leaking the secret into the key.
+        "match_on": ["method", "path"],
         # record_mode is NOT pinned here — it is driven by the CLI `--record-mode` flag (default "none"
         # via pytest-recording, so a missing cassette is an error, not a silent live call). Pinning it to
         # "none" here would (a) override --record-mode=once so recording never happens, and (b) on a

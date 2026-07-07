@@ -24,6 +24,8 @@ from fanops.config import Config
 from fanops.meta_graph import resolve_meta_creds, insights_metrics_for, _is_scope_error
 import requests
 
+# Replay matches on method+path only (see conftest.vcr_config match_on) so these pass with NO token,
+# which is CI's condition — the token rides the query and is scrubbed to DUMMY, never in the match key.
 pytestmark = pytest.mark.vcr
 
 
