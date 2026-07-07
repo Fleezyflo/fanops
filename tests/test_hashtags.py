@@ -124,3 +124,33 @@ def test_corpus_only_keeps_a_platform_discovery_tag():
     # instead of letting curated tags eat all 4 slots.
     out = vet_hashtags([], Platform.instagram, "en", corpus=["#myscene", "#another", "#third"])
     assert "#reels" in out
+
+
+# --- MOL-174: niche-driven hashtag floor (not global rap hardcode) --------------------------------
+
+def test_gossip_niche_not_backfilled_with_hiphop():
+    out = vet_hashtags([], Platform.tiktok, "en", genre="gossip")
+    assert "#hiphop" not in out and "#rapper" not in out
+    assert any("gossip" in t or "celebrity" in t or "drama" in t for t in out)
+
+
+def test_vetted_menu_is_niche_driven():
+    from fanops.hashtags import vetted_menu
+    assert "#hiphop" in vetted_menu(genre="rap")
+    assert "#hiphop" not in vetted_menu(genre="gossip")
+    assert any("gossip" in t or "celebrity" in t for t in vetted_menu(genre="gossip"))
+
+
+def test_composition_backfill_niche_aware():
+    from fanops.hashtags import _composition
+    rap_fill = _composition(Platform.tiktok, "en", genre="rap")
+    gossip_fill = _composition(Platform.tiktok, "en", genre="gossip")
+    assert "#hiphop" in rap_fill and "#rapper" in rap_fill
+    assert "#hiphop" not in gossip_fill and "#rapper" not in gossip_fill
+    assert any("gossip" in t or "celebrity" in t for t in gossip_fill)
+
+
+def test_rap_niche_still_works():
+    out = vet_hashtags([], Platform.tiktok, "en", genre="hiphop")
+    assert "#hiphop" in out
+    assert any(t in out for t in ("#rapper", "#rap", "#bars"))

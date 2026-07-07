@@ -187,7 +187,7 @@ def test_prompt_includes_content_block_when_present():
 
 def test_prompt_byte_identical_without_content():
     out = caption_prompt(_BASE_PAYLOAD)
-    assert "do NOT invent tags:" in out                         # original menu-only wording stands
+    assert "do not invent" in out.lower()                       # menu-only rule (MOL-174: reach × clip relevance)
     assert "clip-specific" not in out.lower()                   # no content block when absent
 
 
