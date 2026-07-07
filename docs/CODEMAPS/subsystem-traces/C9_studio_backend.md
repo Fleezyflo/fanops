@@ -77,8 +77,8 @@ through a named `actions.*` function, never touching `led.posts[...]` directly f
   traversal defense is `_bounded`, applied by the caller). Called by `/media/<post_id>`
   (`app.py:489`).
 - `_parse_gate_form(kind, form)` (`app.py:82-128`) — **pure read** (no I/O). Maps the raw Gates-tab
-  HTML form into `answer_gate`'s expected data shape for each of the 4 gate kinds
-  (`captions`/`moments`/`moment_hooks`/`moment_casting`). Values stay strings; Pydantic coerces and
+  HTML form into `answer_gate`'s expected data shape for each gate kind
+  (`captions`/`moments`/`moment_hooks`). Values stay strings; Pydantic coerces and
   validates downstream (`actions.answer_gate`), so a non-numeric timestamp surfaces as a clean
   `ActionResult` error rather than a 500. Called by `/gates/answer/<kind>/<key>` (`app.py:484`).
 - `_time_arg()` (`app.py:133-136`) — parses `request.form["new_time"]` (a `datetime-local` naive
@@ -236,7 +236,7 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
   column — **guarded**: rejects (never silently widens) when `ch_account`/`ch_source` are missing
   (line 174-177), so a stale/hand-crafted POST can't sweep a sibling source.
 - `POST /cast/add/<moment_id>` / `POST /cast/remove/<moment_id>` (lines 181-200) →
-  `actions.cast_add`/`cast_remove` (operator override of LLM casting).
+  `actions.cast_add`/`cast_remove` (operator override of `Moment.affinities`, P13).
 - `_render_surface_edit(post_id, result)` (lines 203-213) — shared re-render for the per-surface
   editor after a time/hook mutation.
 - `POST /reschedule/<post_id>` (lines 215-219) — legacy back-compat route, inline result only.
@@ -431,15 +431,10 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
   349-405) — the stitch-plan M3/M4 approval lifecycle; `release_stitches` is the **only** transition
   out of `ClipState.stitch_draft`, re-checked in-lock.
 
-### `actions_casting.py` — operator cast override
+### `actions_casting.py` — operator cast override (P13)
 
-- `cast_add(cfg, source_id, account, moment_id)` (lines 13-30) — one transaction; rejects a moment
-  that isn't a decided child of `source_id` (blocks a hand-crafted POST from minting a selection
-  for a foreign moment); unions the moment into the account's `AccountSelection`, stamping
-  `method=SelectionMethod.operator` (a human decision supersedes llm/migrated provenance).
-- `cast_remove(cfg, source_id, account, moment_id)` (lines 33-52) — removes one moment; if the
-  removal empties the selection, **drops the whole record** (`led.drop_account_selection`) rather
-  than leaving an illegal empty `operator` row.
+- `cast_add(cfg, source_id, account, moment_id)` — appends handle to `Moment.affinities` (sorted-set union); rejects foreign moments. Idempotent re-add.
+- `cast_remove(cfg, source_id, account, moment_id)` — removes handle from `affinities`; empty set → fan-to-all path (`affinities==[]`).
 
 ### `actions_common.py` — shared mutation-layer primitives
 
@@ -604,14 +599,10 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 
 ### `preview_media.py` — WYSIWYG preview media resolution
 
-- `preview_media_path(cfg, led, post_id)` (lines 10-47) — **pure read + lock-free ffmpeg burn on
-  demand**. Resolution ladder: (1) `post.render_id` → existing `Render.path` if it exists on disk;
-  (2) if `post.variant_hook` and `cfg.creative_variation`, compute the deterministic render path
-  via `account_render_spec` and return it if already rendered, else **actually render it now**
-  via `render_account_file(..., caller="preview")` (a real ffmpeg call, not just a lookup) so the
-  Review WYSIWYG can show the burned hook before approval; (3) fall back to `media_urls[0]` (local
-  file only) or the base `clip.path`. All exception paths are swallowed with `except Exception:
-  pass` (lines 31-32, 36-38) — fail-open to the next rung of the ladder, never a crash.
+- `preview_media_path(cfg, led, post_id)` (`preview_media.py:8-27`) — **pure read, lock-free**.
+  Resolution ladder: (1) `post.render_id` → existing `Render.path` on disk; (2) `post.media_urls[0]`
+  when it is a local `file://` or bare path; (3) base `clip.path`. Owner-moment hook is already
+  burned at `render_moment` — no on-demand ffmpeg burn and no `cfg.creative_variation` branch.
 
 ## Cluster-specific analysis
 

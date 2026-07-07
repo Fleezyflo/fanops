@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-19 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle + Account-First (SCHEMA_VERSION=8, born-awaiting_approval, day-bucket archive, batches/renders/selection_facts maps) -->
+<!-- Generated: 2026-06-19 | Updated: 2026-07-07 (SCHEMA v11, P11 casting teardown) | Token estimate: ~1080 -->
 # FanOps Data
 
 No database. ONE JSON ledger + operator-editable control files, all under the data tree.
@@ -27,25 +27,23 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
   guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log` + `stitch_plans`
   (M3 structural-hooks) + `batches` (Account-First: named, account-targeted ingest groups) + `renders`
-  (per-account Render foundation: the per-account shippable artifacts) + `selection_facts` (M4: durable
-  per-(moment, account) selection audit). Versioned:
-  `SCHEMA_VERSION=8` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
-  v2→v3 `_migrate_v3_created_at` backfills `created_at` — Source from file mtime, Post from a tz-aware
-  `scheduled_time` else the migration stamp; v3→v4 `_migrate_v4_metrics_series` back-fills ONE 'legacy'-tagged
-  metrics_series row per post that already carries metrics; v4→v5 the additive `{**raw, "batches": raw.get(
-  "batches", {})}` lambda injects the empty `batches` map; v5→v6 injects the empty `renders` map (per-account
-  Render foundation); v6→v7 injects the empty `selection_facts` map (M4 filing/naming/tracking); v7→v8 the
-  latest additive step; all idempotent, never raise, do NOT backfill
-  `published_at` — old ledgers load clean, proven on the real 51-post ledger); a NEWER on-disk version →
-  `_NewerSchema` refuses to load (exit 2) rather than silently drop fields. New OPTIONAL entity fields
-  (Moment.{hook_strategy, intro_matches, affinities}, StitchPlan.*, Source.{created_at, batch_id}, Post.
-  {created_at, published_at, batch_id, variant_hook}, Batch.*, Render.*, SelectionFact.*) ride pydantic defaults. Inner dicts of
-  variant_streaks/tag_log remain untyped (known gap).
+  (per-account Render foundation: the per-account shippable artifacts). Versioned:
+  `SCHEMA_VERSION=11` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
+  v2→v3 `_migrate_v3_created_at` backfills `created_at`; v3→v4 `_migrate_v4_metrics_series`; v4→v5 injects
+  `batches`; v5→v6 injects `renders`; v6→v7 injects `selection_facts`; v7→v8 additive step; v8→v9 lifts
+  legacy `Moment.affinities` into `account_selections` (RF1, later dropped); v10→v11 **drops**
+  `account_selections` + `selection_facts` (P12/MOL-154, post–P11 casting teardown). All hops idempotent,
+  never raise; old ledgers load clean. A NEWER on-disk version → `_NewerSchema` refuses to load (exit 2).
+  New OPTIONAL entity fields (Moment.{hook_strategy, intro_matches, affinities, clip_profile, framing},
+  StitchPlan.*, Source.{created_at, batch_id}, Post.{created_at, published_at, batch_id, top_bias,
+  publish_hour, publish_dow}, Batch.*, Render.*) ride pydantic defaults. Inner dicts of variant_streaks/tag_log
+  remain untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)
 
 ```
-Source: catalogued -> transcribed -> signalled -> moments_requested -> moments_decided | error
+Source: catalogued -> transcribed -> signalled -> moments_requested -> picks_decided -> moments_decided
+        | moments_empty (visible, non-terminal — model returned []) | error
         | retired (M1 retire_source: cascade-drop descendants, file KEPT on disk) | discovered (M1 rebuild_catalog orphan — inert until confirmed)
 Moment: decided -> clipped | retired | error    (M2: router stamps .hook_strategy on a `decided` moment, renders nothing;
         M6: .intro_matches holds the LLM-vision matcher's ranked intro pairings for an intro_tease-reserved moment)
@@ -92,8 +90,8 @@ by) + `rationale` (operator-facing WHY) — both optional, ride defaults).
   handle's IG vs TikTok to their own ids (a handle's channels are different integrations).
   Writable atomically via `write_account_id()` (ecc audit: python + security). Guarded by `accounts.lock`.
 
-- **personas.json:** first-class `Persona` records (`models`/`personas.py`) — `voice`/`tag_lean`/`hashtag_corpus`
-  per persona; `Account.persona_id` links one and its voice/lean/corpus HYDRATE the account at load (fail-open,
+- **personas.json:** first-class `Persona` records (`personas.py`) — `voice`/`hashtag_corpus` + lever fields
+  (`content_focus`, `selection_scope`, `hook_angle`); `Account.persona_id` links one and its voice/corpus/levers HYDRATE the account at load (fail-open,
   byte-identical when unlinked). Edited in the Studio Personas tab; mutated under `personas.lock` (reuses the ledger flock shape).
 
 - **tuning.json** (OPTIONAL, fail-open): lift_weights override for track.lift_score.
