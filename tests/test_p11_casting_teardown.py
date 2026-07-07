@@ -82,8 +82,8 @@ def test_casting_bias_removed(tmp_path):
         import fanops.casting_bias  # noqa: F401
     cfg = Config(root=tmp_path)
     assert not hasattr(cfg, "casting_bias")
-    from fanops.models import MomentCastingRequest
-    assert "reach_prior" not in MomentCastingRequest.model_fields
+    import fanops.models as m
+    assert "MomentCastingRequest" not in dir(m) and "MomentCastingDecision" not in dir(m)
 
 
 # ---- cast_moments confirmed already-absent (WS-M1/MOM-7) ----
