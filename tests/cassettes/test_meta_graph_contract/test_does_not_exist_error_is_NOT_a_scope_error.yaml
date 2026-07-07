@@ -1,0 +1,88 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.34.2
+    method: GET
+    uri: https://graph.facebook.com/v21.0/cmr0pc4qe0002oa74c714sk8n/insights?access_token=DUMMY&metric=reach%2Cviews
+  response:
+    body:
+      string: '{"error":{"message":"Unsupported get request. Object with ID ''cmr0pc4qe0002oa74c714sk8n''
+        does not exist, cannot be loaded due to missing permissions, or does not support
+        this operation. Please read the Graph API documentation at https:\/\/developers.facebook.com\/docs\/graph-api","type":"GraphMethodException","code":100,"error_subcode":33,"fbtrace_id":"A-2W3kfm4GUN_jB6WkR5dLm"}}'
+    headers:
+      Access-Control-Allow-Origin:
+      - '*'
+      Alt-Svc:
+      - h3=":443"; ma=86400
+      Cache-Control:
+      - no-store
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json; charset=UTF-8
+      Date:
+      - Tue, 07 Jul 2026 15:28:07 GMT
+      Expires:
+      - Sat, 01 Jan 2000 00:00:00 GMT
+      Pragma:
+      - no-cache
+      Proxy-Status:
+      - http_request_error; e_proxy="AcShCzZVqtS9HZ-rU1yU1L1k8ampZ8iE0keOP1KaAqM7DKVMJApNRqxoCvVjNxrYHrzAyab_tlDxCzG9yBv_";
+        e_fb_twtaskhandle="AcT8PlpdMu8wvI9-GqqXInvZZ61uAf2rICxHElAhOitfYKc0X-MLLDR-alNnrgtjfLy0fmbkAuxVCl4a38d8aefOCjGbQ2hwWkuX_6Qi9DDZIOc";
+        e_upip="AcT0K16L8nYot0YdekLQjN4_BxaGbLfRSfmq-2PqXJn9kbRlGE9I4a9hSuI0iaB5J6RHcIotysEpRDX8oZMxTA4-RinNWnjHW7M0Q1EQrqk";
+        e_fb_zone="AcTjdMnkO_tZSWrSr3BRKMUOd4mD8Z-6EItx_XK6FRbfeZS8_V1D67Zb0nR1VMaB";
+        e_clientaddr="AcS9kttcxR1KTFCaorF33ZDaCcbfdHr6GpFWkuC-Uoej3W7HQ1GFGGtlS00oVMHKBj1Il8g2Bc22VK1G-_0JfIP0e59t0oET8aGboPmaPPMBY53h";
+        e_fb_vipaddr="AcRJ3QaMk7HfimosSkRgxLJ6rLYOggpJXRpqdXvuQ60IkIoNjjh0F8zyg3OE5aPuhdoV0RKfdRI47FsR6iUhzqaAms0lQuPgcnK4Rg",
+        http_request_error; e_proxy="AcSRTzpgykaBQJWvXeLVuevwvNYZ7RQYyJbu23zH4A38C-1AWAF4j5aPOxB4KBo_Z1iETN5JBVmIRrI";
+        e_fb_twtaskhandle="AcRLg6yZm_qRZfgYbliSBTkAC_1WHDQJxSM6reVGH-RNKatansSWzrghSdPN8P8ntCTw37ufLYE6TbNpmBFVDiPqF8wWv7kCmQo";
+        e_upip="AcQ-hlwjIfn22Bu-29VkRZ2tP3tDulIhglUmO5HXo0Vtoschmw6Duq8xPeX0j_O1qUzndNgkF_HE0cYOatLScwKTx7mm9qY2gGPvBQ";
+        e_fb_zone="AcQDlypK8oInngsZWsaUlynQ9eBCdH_GlUj1JqwK-GamArE7TTF2q-Un-GdGrQ";
+        e_clientaddr="AcTi1IYgK5BnaKSDmSZ1-L6ZLTHJF8-QWhy92V08Z0ECqjwt1cNE1OFS-pMednShHm2z11-RdOWo3M7n";
+        e_fb_vipaddr="AcTbUYrHj8qs_flsImIGz7nUJbU551FsWW2yf6mA3RH9pVlGMm00G6gEZv4Lwihx2dJHhl_a8w"
+      Strict-Transport-Security:
+      - max-age=15552000; preload
+      Vary:
+      - Origin
+      - Accept-Encoding
+      WWW-Authenticate:
+      - OAuth "Facebook Platform" "invalid_request" "Unsupported get request. Object
+        with ID 'cmr0pc4qe0002oa74c714sk8n' does not exist, cannot be loaded due to
+        missing permissions, or does not support this operation. Please read the Graph
+        API documentation at https://developers.facebook.com/docs/graph-api"
+      X-FB-Connection-Quality:
+      - EXCELLENT; q=0.9, rtt=21, rtx=0, c=10, mss=1380, tbw=3473, tp=-1, tpl=-1,
+        uplat=151, ullat=0
+      X-FB-Debug:
+      - 70ZQqPHm89kaWmNlgXgBDXGLkVz3zO0vaiaiSrdquIz1aFx2bim19+nzjycoriUrDgdDWBJoI0BqiFBimYXetw==
+      content-length:
+      - '381'
+      cross-origin-resource-policy:
+      - cross-origin
+      debug-link:
+      - https://www.meta.com/debug/?mid=1b58965a90b35b0e1d734ce192a458f9
+      error-mid:
+      - 1b58965a90b35b0e1d734ce192a458f9
+      facebook-api-version:
+      - v25.0
+      x-ad-api-version-warning:
+      - The call has been auto-upgraded to v25.0 as v21.0 has been deprecated.
+      x-app-usage:
+      - '{"call_count":2,"total_cputime":0,"total_time":0}'
+      x-fb-request-id:
+      - A-2W3kfm4GUN_jB6WkR5dLm
+      x-fb-rev:
+      - '1042742319'
+      x-fb-trace-id:
+      - B1IZFMcTmg/
+    status:
+      code: 400
+      message: Bad Request
+version: 1

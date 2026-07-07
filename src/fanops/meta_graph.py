@@ -355,14 +355,26 @@ _GRAPH_INSIGHTS_MAP = {
 
 def _is_scope_error(body) -> bool:
     """True iff a Graph error body is a PERMISSION/scope refusal (missing instagram_manage_insights) vs a
-    transient failure. Meta signals it as an OAuthException (code 10 / 200) or a 'permission'-worded message.
-    Conservative: only a clear permission signal trips the loud path; anything else stays transient (None)."""
+    transient/data failure. Meta signals a genuine scope refusal as an `OAuthException` (permission codes
+    10 / 200 / 803). It is DELIBERATELY NOT keyed on the word 'permission' in the message alone: Meta's
+    `GraphMethodException` for a bad object id (code 100 / error_subcode 33) reads "...cannot be loaded due
+    to missing permissions, or does not support this operation..." — a DATA error (wrong/non-IG id), not a
+    scope refusal. Substring-matching 'permission' there is what false-blocked IG insights when a Postiz id
+    reached the insights edge (see tests/test_meta_graph_contract.py + its recorded cassette). Contract is
+    pinned to the REAL Graph error shapes, not a guess: a scope refusal is an OAuthException; a code-100 /
+    GraphMethodException is transient (None), so the row re-resolves its real IG media id next pass."""
     err = body.get("error") if isinstance(body, dict) else None
     if not isinstance(err, dict):
         return False
-    if err.get("type") == "OAuthException" or err.get("code") in (10, 200, 803):
+    # A GraphMethodException (code 100) is a bad-request/does-not-exist DATA error — never a scope refusal,
+    # even though its message contains the word "permissions".
+    if err.get("type") == "GraphMethodException" or err.get("code") == 100:
+        return False
+    # A genuine scope refusal: OAuthException with a Meta permission code.
+    if err.get("type") == "OAuthException" and err.get("code") in (10, 200, 803):
         return True
-    return "permission" in str(err.get("message", "")).lower()
+    # Fallback: an explicit permission-worded OAuth-typed error (message text alone is insufficient).
+    return err.get("type") == "OAuthException" and "permission" in str(err.get("message", "")).lower()
 
 def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=None, creds: Optional[MetaCreds] = None):
     """Leg 2 read-half: THE complete performance of one live IG media from Graph media-insights — the SOLE
