@@ -15,7 +15,7 @@ from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post, Render, validate_account_handle,
                            StitchPlan, StitchState, Batch, ImportedMedia,
-                           SourceState, MomentState, ClipState, PostState, normalize_account_handle)
+                           SourceState, MomentState, ClipState, PostState)
 from fanops.ids import child_id
 
 
@@ -86,7 +86,7 @@ _ACCTSEL_METHOD_RANK = {"operator": 5, "llm": 4, "migrated": 3, "heuristic": 2, 
 
 def _account_selection_id(source_id: str, account: str) -> str:
     """Historical v8->v9 migration only — content-addressed one-per-(source, account) id."""
-    return child_id("acctsel", source_id, normalize_account_handle(account))
+    return child_id("acctsel", source_id, account)
 
 
 def _pick_account_selection(rows: list[dict]) -> dict:
