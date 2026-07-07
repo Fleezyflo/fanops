@@ -71,11 +71,11 @@ def _mpo(s, e, owner, reason="r"):
 # MOL-169 (RF-D4): overlap-dedup is a WITHIN-owner near-duplicate filter. Two DIFFERENT owners at the
 # same timecode are two LEGITIMATE moments (single-owner rebuild) — dropping one is the ghost the
 # picking rebuild killed. Cross-owner overlap must never drop a pick.
-def test_drop_overlaps_same_owner_drops_near_dupe():
+def test_within_persona_overlap_deduped():
     kept = _drop_overlaps([_mpo(0, 18, "a"), _mpo(5, 20, "a"), _mpo(40, 58, "a")])
     assert [(p.start, p.end) for p in kept] == [(0, 18), (40, 58)]   # within-owner dedup unchanged
 
-def test_drop_overlaps_different_owners_both_kept():
+def test_cross_persona_overlap_kept():
     # a's window and b's window overlap in time but are DIFFERENT owners -> BOTH kept (the fix).
     kept = _drop_overlaps([_mpo(0, 18, "a"), _mpo(5, 20, "b")])
     assert len(kept) == 2
