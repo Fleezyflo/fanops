@@ -79,7 +79,14 @@ was silently done by the orchestrator itself.
 ## Full-repo scope
 
 Scope is the whole repo, not just the listed Linear tasks. `scripts/repo_sweep.py` (read-only) enumerates the
-mess — open PRs, merge conflicts, stale branches, leftover artifacts — so the orchestrator can drive each to
-resolution **via sub-agents**. "Done" = every task landed AND the sweep reports a pristine repo.
+mess — open PRs, merge conflicts, unresolved merges, stale branches, leftover artifacts — so the orchestrator
+can drive each to resolution **via sub-agents**.
+
+**DONE-gate:** `python scripts/repo_sweep.py --require-pristine` exits `0` only when every task is landed
+(no open PRs) AND the repo is pristine; otherwise it exits `3` and lists what's outstanding (fail-safe: if it
+cannot even measure the repo, it exits `3`, never a false "done"). The orchestrator MUST run it as its final
+action and may not claim completion until it is green — this removes the orchestrator's ability to *declare*
+done prematurely. (What it cannot do: force the agent loop to keep looping — Cursor Cloud has no top-level
+`stop` hook — so "keep driving" remains the orchestrator's brief contract, made checkable by this gate.)
 
 Runtime files under `state/` are git-ignored (per-run); only this SPEC and the empty `state/` dir are tracked.

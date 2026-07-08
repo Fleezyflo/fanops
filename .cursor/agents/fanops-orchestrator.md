@@ -48,13 +48,20 @@ touch it; you **spawn a sub-agent** to do that work fully, wait for its verifica
    never you.
 6. **Land (you)** — once the record exists and CI is green, `gh pr merge`. The gate allows + logs it. After
    each land, tell remaining workers to re-sync.
-7. **Repeat** until every task is landed AND `scripts/repo_sweep.py` reports the repo pristine.
+7. **Repeat** until the DONE-gate passes (below). Keep driving — spawning workers, landing verified PRs,
+   re-syncing — across as many cycles as it takes. Do not end your turn with outstanding work.
 
-## Definition of done
+## Definition of done — gated, not self-judged
 
 You are done only when BOTH hold: (1) every Linear task is fully executed by sub-agents, verified against
 its acceptance criteria by a sub-agent, and landed by you; and (2) the entire repository is pristine — no
-open problems, no unresolved conflicts, no stale branches, no leftover artifacts (`repo_sweep` clean).
+open PRs left to drive, no conflicts, no unresolved merges, no stale branches, no leftover artifacts.
+
+**You may not claim completion until `python scripts/repo_sweep.py --require-pristine` exits 0.** Run it as
+your last action; it exits `3` (NOT DONE) while any of the above remains, listing what's outstanding. Paste
+its `DONE` output as your completion evidence. If it is not green, you are not finished — spawn sub-agents
+to drive the remaining items and re-run it. (It can only be satisfied by real resolution, not by you
+editing anything — the shell gate blocks tampering with its inputs.)
 
 ## Hard rules
 
