@@ -238,6 +238,22 @@ def cmd_publish_queue(cfg: Config) -> int:
     print(f"-- {len(rows)} post(s). Post each clip by hand, then: fanops resolve <post_id> published --url <live-url>")
     return 0
 
+def cmd_health(cfg: Config, args=None) -> int:
+    """MOL-299: dependency health from the unified model — human text or --json."""
+    from fanops.health_model import build_health_report, report_is_healthy
+    rep = build_health_report(cfg)
+    if args is not None and getattr(args, "json", False):
+        print(json.dumps(rep.to_json_dict(), indent=2))
+    else:
+        print("fanops health")
+        for d in rep.deps:
+            mark = "ok" if d.ok else "DOWN"
+            print(f"  [{mark}] {d.name}: {d.detail}")
+        for n in rep.notes:
+            print(f"  - {n}")
+    return 0 if report_is_healthy(rep) else 1
+
+
 def cmd_doctor(cfg: Config, args=None) -> int:
     # Read-only first-run health screen (Phase 3b). Prints PASS/FAIL per setup gate + notes; exits 1
     # if any check fails (setup incomplete), else 0. Performs nothing — pure diagnosis + pointers.
@@ -245,18 +261,21 @@ def cmd_doctor(cfg: Config, args=None) -> int:
     # accounts.json (handle, platform) drift state with a proposed fix; never auto-writes).
     if args is not None and getattr(args, "fix_routing", False):
         return _cmd_doctor_fix_routing(cfg)
-    from fanops.doctor import doctor_report
-    rep = doctor_report(cfg)
+    from fanops.health_model import build_health_report, report_is_healthy
+    rep = build_health_report(cfg)
+    if args is not None and getattr(args, "json", False):
+        print(json.dumps(rep.to_json_dict(), indent=2))
+        return 0 if report_is_healthy(rep) else 1
     print("fanops doctor")
     failed = 0
-    for c in rep["checks"]:
+    for c in rep.checks:
         mark = "PASS" if c["ok"] else "FAIL"
         line = f"  [{mark}] {c['label']}"
         if not c["ok"]:
             failed += 1
             line += f"  -> {c['hint']}"
         print(line)
-    for n in rep["notes"]:
+    for n in rep.notes:
         print(f"  - {n}")
     return 1 if failed else 0
 
@@ -582,6 +601,9 @@ def main(argv: list[str] | None = None) -> int:
     p_doctor = sub.add_parser("doctor", help="read-only first-run health screen (toolchain/accounts/key/go-live readiness)")
     p_doctor.add_argument("--fix-routing", action="store_true",
                           help="(R2) READ-ONLY: list every accounts.json (handle, platform) routing-drift state with a proposed fix")
+    p_doctor.add_argument("--json", action="store_true", help="machine-readable health JSON (exit 1 when unhealthy)")
+    p_health = sub.add_parser("health", help="runtime dependency health (docker/postiz/zernio) from the unified model")
+    p_health.add_argument("--json", action="store_true", help="machine-readable JSON (exit 1 when unhealthy)")
     sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
     p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
     audit_sub = p_audit.add_subparsers(dest="audit_cmd")
@@ -813,6 +835,7 @@ def _dispatch(cfg: Config, args) -> int:
             from fanops.lever_docs import cmd_lever_docs
             return cmd_lever_docs(cfg)
         return 2
+    if args.cmd == "health":   return cmd_health(cfg, args)
     if args.cmd == "doctor":   return cmd_doctor(cfg, args)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
