@@ -11,6 +11,11 @@
 
 ## Executive verdict
 
+> **Historical note (2026-06-27):** Findings #1–#3 and the casting-stage narrative below describe the **removed**
+> LLM casting stage (`request_moment_casting`, `AccountSelection`, `account_selection_admits` — deleted P11/MOL-152).
+> Current routing is single-owner `Moment.affinities` + `casting.affinity_admits` only — see
+> [fresh-ingestion-trace.md](fresh-ingestion-trace.md) §3. Retained here as the dated audit record.
+
 The FanOps clip+cross-post lifecycle is fundamentally sound from ingest to culmination — the load-bearing invariants (content-addressing, one-writer flock transaction, no-auto-publish, no-double-post, casting-no-leak, learning-validation-as-correctness-gate, byte-identical OFF paths) all hold, and the engineering discipline is high: bounded subprocesses kept out of the ledger lock, typed fail-open/fail-closed boundaries with rationale, and per-unit quarantine so one bad source/moment/clip/post can never wedge a pass. The single real structural weakness is the casting→crosspost seam: a persona-LESS but ACTIVE account is silently dropped from the casting brief (casting.py:108-109) and then DENIED on every moment of any cast source (casting.py:215-219), producing zero posts for a legitimate account with NO degraded_reason and NO crosspost breadcrumb — the fan-to-all fallback contract holds at moment granularity but breaks at account granularity (xc-1/c5-f1, HIGH). Two MEDIUM observability gaps compound it: a captioned clip can be consumed to `queued` with zero posts and no crosspost-stage trace when selection denies all surfaces on an unbatched source (c8-f2), and a stuck `moment_casting` gate is invisible at every operator surface — the loud blocked-note, the run.log breadcrumb, and `fanops status` all omit it (xc-3) even though convergence correctly covers it. Everything else is LOW-severity doc drift, provenance smell, or concurrency-flag-gated (default-OFF) local correctness erosion that fails open to a valid centered crop. No CRITICAL findings, no data-loss path in the default configuration, no publish-safety hole.
 
 ## Top risks (ranked)
@@ -182,8 +187,12 @@ This is the end-to-end narrated map of one `advance()` pass plus the human-gated
 
 ---
 
-### Stage 5 — Per-account moment casting (`request_moment_casting` / `ingest_moment_casting`)
-**Contract.** The source's `decided`-or-stranded-`clipped` moments + each active persona-bearing account's `casting_directive` → (a) a write-once `moment_casting__<source_id>.request.json` gate; (b) on ingest, `Moment.affinities`, a durable `AccountSelection` per picked account, a `SelectionFact` per (moment,account) (`casting.py:105-172`). Writes ONLY affinities + side-records — no Source/Moment flip. Sits at `pipeline.py:468`, AFTER moment_hooks, BEFORE render+caption and crosspost.
+### Stage 5 — Per-account moment casting (`request_moment_casting` / `ingest_moment_casting`) — **REMOVED P11/MOL-152**
+
+> The stage below is a 2026-06-27 audit record of the deleted LLM casting gate. Live routing is owner-stamped
+> at pick time + `affinity_admits` — see [fresh-ingestion-trace.md](fresh-ingestion-trace.md) §3.
+
+**Contract.** The source's `decided`-or-stranded-`clipped` moments + each active persona-bearing account's `casting_directive` → (a) a write-once `moment_casting__<source_id>.request.json` gate; (b) on ingest, `Moment.affinities`, a durable `AccountSelection` per picked account, a `SelectionFact` per (moment,account) (`casting.py:105-172`, historical). Writes ONLY affinities + side-records — no Source/Moment flip. Sat at `pipeline.py:468`, AFTER moment_hooks, BEFORE render+caption and crosspost.
 
 **Briefing.** Agent gate (`moment_casting`). Payload = MomentCastingRequest carrying real moment `reason`/`hook`/`excerpt`/`signal`/window fenced as DATA + each persona's compiled `casting_directive` (voice + content_focus/energy clauses — the M1 lever-registry projection). Prompt = `moment_casting_prompt` ("for EACH account choose which moments belong on THAT account's feed"). This gate is TEXT-ONLY (not in `_VISION_GATES`) — the selector sees text, not frames. Provenance emitted (model + prompt_sha + brief_sha).
 
