@@ -400,12 +400,8 @@ def test_claude_json_meta_finalizer_success_avoids_schema_error(mocker):
     out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
     assert out == {"x": 11}
 
-<<<<<<< HEAD
 def test_no_finalizer_when_structured_output_present(mocker):
     # MOL-234: happy-path negative — finalizer must NOT fire when structured_output is already valid.
-=======
-def test_claude_json_meta_no_finalizer_when_structured_output_present(mocker):
->>>>>>> origin/main
     from fanops.llm import claude_json_meta
     run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
         "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 3}, "num_turns": 2}), "stderr": ""})())
