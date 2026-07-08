@@ -258,6 +258,7 @@ class TestJsonCandidates:
         assert any('"score": 9' in c for c in cands)
 
     def test_fenced_blocks_before_bare_braces(self):
+        # fenced-block candidates come BEFORE bare-brace candidates
         text = '{"bare": true}\n```json\n{"fenced": true}\n```'
         cands = _json_candidates(text)
         fenced_idx = next(i for i, c in enumerate(cands) if '"fenced"' in c)
@@ -269,6 +270,7 @@ class TestJsonCandidates:
         assert _json_candidates("no braces here") == []
 
     def test_array_not_included(self):
+        # object-only: bare arrays at top level are NOT returned
         cands = _json_candidates("[1, 2, 3]")
         assert all("[" not in c or "{" in c for c in cands)
 
@@ -278,6 +280,8 @@ class TestJsonCandidates:
         assert any('"inner": 1' in c for c in cands)
 
     def test_fenced_block_without_lang_tag(self):
+        # Only ```json tagged fences activate fenced-block extraction;
+        # the braces are still reachable via the balanced-brace scan.
         text = '```\n{"x": 1}\n```'
         cands = _json_candidates(text)
         assert any('"x": 1' in c for c in cands)
@@ -309,12 +313,17 @@ class TestExtractJsonObject:
         assert _extract_json_object("") is None
 
     def test_prefers_fenced_over_bare(self):
+        # When both a fenced object and a bare object are present,
+        # the fenced one (listed first by _json_candidates) is returned.
         text = '{"bare": 1}\n```json\n{"fenced": 2}\n```'
-        assert _extract_json_object(text) == {"fenced": 2}
+        result = _extract_json_object(text)
+        assert result == {"fenced": 2}
 
     def test_skips_invalid_falls_through_to_valid(self):
+        # If the first candidate is invalid JSON, fall through to a valid one.
         text = '```json\nnot-valid\n```\n{"fallback": true}'
-        assert _extract_json_object(text) == {"fallback": True}
+        result = _extract_json_object(text)
+        assert result == {"fallback": True}
 
     def test_nested_object(self):
         text = '{"outer": {"inner": [1, 2]}}'
