@@ -5,7 +5,7 @@ read_response checks it matches the latest request (FIX F21 — a stale response
 On the LLM path the responder SELF-STAMPS the authoritative request_id and VERIFIES the model's echo,
 logging a rid_mismatch breadcrumb on divergence (AGENT-1) — the echo is no longer silently trusted."""
 from __future__ import annotations
-import json, os
+import contextlib, json, os
 from pathlib import Path
 from typing import Type, TypeVar
 from pydantic import BaseModel, ValidationError
@@ -114,6 +114,20 @@ def discard_gates_for(cfg: Config, kind: str, key_prefix: str) -> int:
         discard_gate(cfg, kind, req.name[len(kind) + 2:-len(".request.json")])
         n += 1
     return n
+
+def _attempts_path(cfg: Config, kind: str, key: str) -> Path:
+    return _dir(cfg) / f"{kind}__{key}.attempts.json"
+
+def bump_attempts(cfg: Config, kind: str, key: str) -> int:
+    p = _attempts_path(cfg, kind, key)
+    try: n = json.loads(p.read_text()).get("n", 0)
+    except Exception: n = 0
+    n += 1
+    p.write_text(json.dumps({"n": n}))
+    return n
+
+def clear_attempts(cfg: Config, kind: str, key: str) -> None:
+    with contextlib.suppress(FileNotFoundError): _attempts_path(cfg, kind, key).unlink()
 
 def pending(cfg: Config, *, kind: str) -> list[str]:
     out = []
