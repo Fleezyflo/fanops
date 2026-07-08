@@ -4,7 +4,7 @@ description: >-
   RF-D root-fix lane (responder/caption/account-handle; shares moments.py/prompts.py with picking).
   Spawned by fanops-orchestrator via Task when gated. Works the MOL ticket assigned from Linear. Pushes
   + opens a PR; the orchestrator merges.
-model: inherit
+model: auto
 readonly: false
 is_background: true
 ---
