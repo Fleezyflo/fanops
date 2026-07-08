@@ -122,6 +122,11 @@ _NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "med
 # Sprint 2: per-(backend, integration) publish throttle — in-process only (daemon is single-process).
 _publish_throttle_last: dict[tuple[str, str], float] = {}
 
+# Indirection so the throttle/retry WAIT is stubbable (mirrors llm.py's `_sleep`). Production points at the
+# real time.sleep; the test suite neutralizes it globally (tests/conftest.py autouse) so no test ever burns
+# real wall-clock seconds on the publish throttle. The throttle LOGIC still runs (per_min unchanged).
+_sleep = time.sleep
+
 
 def reset_publish_throttle() -> None:
     """Test-only: clear the in-process publish throttle state."""
@@ -146,7 +151,7 @@ def _publish_throttle_wait(cfg: Config, provider: str, account_id: str | None) -
     if last is not None:
         wait = min_gap - (now - last)
         if wait > 0:
-            time.sleep(wait)
+            _sleep(wait)
     _publish_throttle_last[key] = time.monotonic()
 
 
@@ -294,7 +299,7 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
                 if _is_fatal_auth_error(exc):
                     raise                                  # bad key/401: halt, don't burn the queue (H8)
                 if _is_transient_publish_error(exc) and attempt < _PUBLISH_TRANSIENT_MAX - 1:
-                    time.sleep(delay + random.uniform(0, delay * 0.5)); delay = min(delay * 2, 8.0)
+                    _sleep(delay + random.uniform(0, delay * 0.5)); delay = min(delay * 2, 8.0)
                     continue
                 if post.state is not PostState.needs_reconcile:   # C1/#17: don't downgrade an ambiguous-live park
                     if _is_transient_publish_error(exc):
