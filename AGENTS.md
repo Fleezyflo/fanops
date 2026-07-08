@@ -165,7 +165,8 @@ CI is red for a reason you can't fix quickly, or any guardrail would be violated
 
 ## Delegation-only orchestration (fanops-orchestrator)
 
-For running a wave of Linear tasks under a strict coordinator, the `fanops-orchestrator` agent
+To run a wave, see the quickstart **`ORCHESTRATION.md`** (one command: `python scripts/orchestrate.py
+start | status | done`). Under the hood, the `fanops-orchestrator` agent
 (`.cursor/agents/fanops-orchestrator.md`) **delegates every unit of work to sub-agents** and personally
 runs ONLY the git land commands. The contract is machine-enforced by `.cursor/hooks.json` +
 `.cursor/hooks/orchestration_gate.py` (cloud-executed, `failClosed`): `gh pr merge` is refused unless a
