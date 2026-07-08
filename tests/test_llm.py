@@ -318,12 +318,14 @@ class TestExtractJsonObject:
         # When both a fenced object and a bare object are present,
         # the fenced one (listed first by _json_candidates) is returned.
         text = '{"bare": 1}\n```json\n{"fenced": 2}\n```'
-        assert _extract_json_object(text) == {"fenced": 2}
+        result = _extract_json_object(text)
+        assert result == {"fenced": 2}
 
     def test_skips_invalid_falls_through_to_valid(self):
         # If the first candidate is invalid JSON, fall through to a valid one.
         text = '```json\nnot-valid\n```\n{"fallback": true}'
-        assert _extract_json_object(text) == {"fallback": True}
+        result = _extract_json_object(text)
+        assert result == {"fallback": True}
 
     def test_nested_object(self):
         text = '{"outer": {"inner": [1, 2]}}'
