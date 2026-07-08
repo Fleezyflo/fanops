@@ -1,39 +1,32 @@
-Codemap update — 2026-06-21 (IG account-connection resolution)
-================================================================
-Prior scan: 2026-06-19 (feat/content-lifecycle, post-approval lifecycle).
+Codemap sync — 2026-07-08 (auto-sync to eff0c8f)
+=================================================
+Prior scan: 2026-07-07 (P11 casting + SCHEMA v11 drift, commit a0886fb).
 
-Trigger: connected perca.late + cisumwolfhom to Postiz; root-caused the day-long
-connect failure (wrong INSTAGRAM_APP_SECRET in the Postiz container env).
+Trigger: MOL-228 merged `LlmSchemaError` to main; deterministic extractors re-run;
+semantic pass against current src/fanops/.
+
+EXTRACTORS (re-created + run)
+- .reports/ast_extract.py — stdlib AST structural index (was missing from repo)
+- .reports/build_graphs.py — import/call graphs + unreferenced leads
+- .reports/structural_index.json — 109/109 modules
+- .reports/import_graph.json, call_graph.json, unreferenced_candidates.json
 
 CODEMAPS UPDATED
-- docs/CODEMAPS/account-connection.md  (REWRITTEN, < 30% threshold → in place)
-    * Verified state: all THREE fan accounts now connected + mapped
-      (markmakmouly cmqeb1uuv0001o579bjcdj7my, perca.late cmqno51tb0001p68ez9tx5a6k,
-       cisumwolfhom cmqno5ops0003p68ea2k3kgzs).
-    * "BLOCKER (unresolved)" -> "RESOLVED connect failure": root cause = wrong
-      INSTAGRAM_APP_SECRET in container env; Meta's "redirect_uri identical" is its
-      generic bad-client-secret error; fix = correct secret in compose + docker compose up -d.
-    * App-id reference corrected to the IG app id 976142145032195 (OAuth client_id).
-    * Non-stock cookie/data[] patches reclassified NOT-required-for-connect (stock connected).
+- data.md — SCHEMA_VERSION 11; selection_facts/account_selections dropped v10→v11;
+  Post.variant_hook / SelectionFact removed from live model
+- architecture.md — SCHEMA v11; casting = affinity_admits only; re-burn = Moment.hook
+- full-trace-index.md — regen date; callable-count note (name-based graph)
+- fresh-ingestion-trace.md — verified @ eff0c8f; LlmSchemaError row
+- C1_data_model.md — removed live refs to AccountSelection/selection_facts ledger APIs;
+  SelectionMethod enum gone
+- C4_moments_casting_personas.md — Accounts.active/validate callers; no casting.py helpers
+- C5_caption_hooks_hashtags.md — _target_pick_count = prompt ceiling only; LlmSchemaError
+- C6_crosspost_publish_post.md — _youtube_title reads Moment.hook; _materialize_variant_media no-op;
+  _mark_context_limit without moment_casting
+- C9_studio_backend.md — reburn_hook/approve_with_hook/preview_media P9 owner-moment model
+- C10_studio_views.md — gate_rows omits moment_casting
 
-CODEMAPS NOT CHANGED (verified still accurate)
-- docs/CODEMAPS/architecture.md   (no connection-state claims; FanOps structure unchanged)
-- docs/CODEMAPS/data.md           (data model + accounts.json schema unchanged)
-- docs/CODEMAPS/dependencies.md   (Postiz dependency unchanged; only a config VALUE was wrong)
-
-SCAN DELTA
-- Source changes this session: NONE (git status --porcelain src/ empty) -> structural
-  codemaps remain current; no regeneration needed.
-- Data changes: MohFlow-FanOps/00_control/accounts.json (perca.late + cisumwolfhom
-  integrations['instagram'] populated via accounts.write_integration).
-- New dependencies: none. New routes/services: none.
-
-COMPANION DOCS (rewritten same session, narrative)
-- docs/INSTAGRAM_CONNECT.md  (full guide: root cause, proof, fix, false-elimination warnings)
-- docs/POSTIZ_SETUP.md       (Instagram callout corrected)
-
-STALENESS NOTE
-- No doc > 90 days stale. The previous account-connection codemap + guide enshrined a WRONG
-  root cause (redirect/scopes/multi-hop) and an actively harmful false elimination
-  ("INSTAGRAM_APP_SECRET valid") — both corrected. Lesson: do not record an unproven
-  hypothesis as a ruled-out fact in a codemap.
+UNCHANGED (already correct or dated audit snapshots)
+- lifecycle-full-picture.md — superseded banner present; body kept as 2026-06-27 audit
+- insights-culmination.md, persona-levers.md, hashtag-lifecycle.md — P11 removals already noted
+- system-lens-map.md — FANOPS_CREATIVE_VARIATION / casting_bias strikethroughs current
