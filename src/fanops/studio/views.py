@@ -446,7 +446,7 @@ def _half_live_state(cfg: Config) -> tuple[bool, str]:
     from fanops.log import get_logger
     try:
         if cfg.is_live and not cfg.live_route_exists:
-            raw = (os.getenv("FANOPS_POSTER") or "").strip() or "(unset)"
+            raw = cfg.poster_backend_raw or "(unset)"
             return True, (f"LIVE flag is set but nothing routes live — FANOPS_POSTER={raw} is ignored "
                             "(it's a legacy bridge, not the switch). Check .env / the Go-Live tab: route a "
                             "channel to a provider with creds, or flip back to dryrun.")

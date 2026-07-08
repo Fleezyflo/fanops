@@ -32,6 +32,15 @@ def _parse_int(v: object, default: int) -> int:
     return int(v)  # ValidationError on bad input
 
 
+def _parse_int_failopen(v: object, default: int) -> int:
+    if v is None or (isinstance(v, str) and not str(v).strip()):
+        return default
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        return default
+
+
 def _parse_float(v: object, default: float) -> float:
     if v is None or (isinstance(v, str) and not str(v).strip()):
         return default
@@ -141,11 +150,11 @@ class Settings(BaseSettings):
 
     @field_validator("FANOPS_UPLOAD_MAX_MB", mode="before")
     @classmethod
-    def _upload_mb(cls, v): return _parse_int(v, 2048)
+    def _upload_mb(cls, v): return _parse_int_failopen(v, 2048)
 
     @field_validator("FANOPS_ZERNIO_MAX_UPLOAD_MB", mode="before")
     @classmethod
-    def _zernio_mb(cls, v): return _parse_int(v, 4)
+    def _zernio_mb(cls, v): return _parse_int_failopen(v, 4)
 
     @field_validator("FANOPS_POSTIZ_PUBLISH_PER_MIN", mode="before")
     @classmethod
