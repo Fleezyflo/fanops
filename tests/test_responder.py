@@ -364,9 +364,9 @@ def test_gate_stamps_authoritative_rid_ignores_model_echo(tmp_path, monkeypatch)
     assert not any("rid_mismatch" in ev for ev in events)
 
 
-def test_validation_error_marks_source_degraded(tmp_path, monkeypatch):
-    # MOL-226: a present-but-invalid model response (ValidationError) must LABEL the source degraded,
-    # not leave it silently stalled — mirrors the context-limit labelling contract.
+def test_deterministic_schema_failure_marks_source_degraded_not_silent_pending(tmp_path, monkeypatch):
+    # MOL-238 T2.1: inverse of test_llm_responder_invalid_output_leaves_gate_pending_not_raise — one
+    # deterministic schema failure (ValidationError, below ceiling) stamps degraded_reason but is NOT terminal.
     from fanops.ledger import Ledger
     from fanops.models import Source, SourceState
     from fanops.agentstep import write_request, response_path
@@ -383,6 +383,7 @@ def test_validation_error_marks_source_degraded(tmp_path, monkeypatch):
     assert not response_path(cfg, "moments", "src_1").exists()   # gate stays pending
     src = Ledger.load(cfg).sources["src_1"]
     assert src.degraded_reason and "invalid" in src.degraded_reason.lower()   # LABELLED, not silent-pending
+    assert src.state != SourceState.error   # pre-terminal: surfaced-but-recoverable, not terminal
 
 
 def test_llm_schema_error_marks_source_degraded(tmp_path, monkeypatch):
@@ -456,8 +457,8 @@ def _seed_source_and_moments_gate(cfg, key="src_1", state=None):
 def _bad_pick_model(kind, payload):
     return {"picks": [{"start": 1.0, "end": 4.0}]}   # missing reason -> ValidationError
 
-def test_deterministic_gate_ceiling_terminates_source_after_n(tmp_path, monkeypatch):
-    # MOL-235: N ValidationError failures on the same gate promote source to SourceState.error.
+def test_deterministic_gate_terminates_source_after_ceiling(tmp_path, monkeypatch):
+    # MOL-240 T2.2: after _GATE_DETERMINISTIC_MAX deterministic failures, source lands SourceState.error.
     from fanops.ledger import Ledger
     from fanops.models import SourceState
     from fanops.agentstep import response_path, _attempts_path
@@ -501,8 +502,8 @@ def test_schema_error_ceiling_terminates_source(tmp_path, monkeypatch):
     assert src.state == SourceState.error and src.error_reason and "moments" in src.error_reason
 
 
-def test_transient_failure_never_burns_ceiling(tmp_path, monkeypatch):
-    # MOL-235: transient failures never write attempts sidecar or hit SourceState.error.
+def test_transient_failure_does_not_trip_ceiling(tmp_path, monkeypatch):
+    # MOL-242 T2.3: transient failures (> ceiling) never bump .attempts.json or hit SourceState.error.
     from fanops.ledger import Ledger
     from fanops.models import SourceState
     from fanops.agentstep import response_path, _attempts_path
@@ -573,6 +574,43 @@ def test_ceiling_never_writes_response(tmp_path, monkeypatch):
     for _ in range(_GATE_DETERMINISTIC_MAX + 2):
         r.answer_pending(cfg)
         assert not response_path(cfg, "moments", "src_1").exists()
+
+
+def test_degraded_and_terminal_gate_surface_to_operator(tmp_path, monkeypatch, capsys):
+    # MOL-245 T2.4: degraded (pre-terminal) in digest subsection; ceiling-terminal in status + digest
+    # Failures + Studio Run recoverable list.
+    from fanops.cli import main
+    from fanops.digest import render_digest
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.studio import views
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg, key="gate_src")
+    r = LlmResponder(cfg, model=_bad_pick_model)
+    assert r.answer_pending(cfg) == 0
+    src = Ledger.load(cfg).sources["gate_src"]
+    assert src.degraded_reason and src.state != SourceState.error
+    md = render_digest(Ledger.load(cfg), cfg)
+    deg = md.split("## Degraded (pre-terminal)")[1].split("##")[0]
+    assert "gate_src" in deg and "schema invalid" in deg
+    for _ in range(_GATE_DETERMINISTIC_MAX - 1):
+        r.answer_pending(cfg)
+    src = Ledger.load(cfg).sources["gate_src"]
+    assert src.state == SourceState.error and src.error_reason
+    rc = main(["status"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "sources_error=1" in out
+    md = render_digest(Ledger.load(cfg), cfg)
+    fail = md.split("## Failures")[1].split("##")[0]
+    assert "gate_src" in fail and "moments" in fail
+    if "## Degraded (pre-terminal)" in md:
+        assert "gate_src" not in md.split("## Degraded (pre-terminal)")[1].split("##")[0]
+    errored = views.pipeline_status(cfg)["errored"]
+    assert any(row["id"] == "gate_src" and "moments" in (row.get("error_reason") or "") for row in errored)
+
 
 
 def test_context_limit_marks_source_degraded_for_captions_gate(tmp_path):
