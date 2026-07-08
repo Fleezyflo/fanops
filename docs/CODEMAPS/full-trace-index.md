@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
+<!-- Generated: 2026-07-08 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py @ 6e9794a | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.
@@ -15,8 +15,8 @@ this file is the raw coverage ledger and anomaly index.
 |---|---|---|
 | `structural_index.json` | Every module's imports/functions/classes/methods/module-level calls/line numbers, AST-parsed | `.reports/` |
 | `import_graph.json` | Per-module `imports_from` / `imported_by`, resolved incl. relative imports | `.reports/` |
-| `call_graph.json` | Name-based reverse call graph: 1,067 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
-| `unreferenced_candidates.json` | 55 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
+| `call_graph.json` | Name-based reverse call graph: 1,331 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
+| `unreferenced_candidates.json` | 354 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
 | `ruff_report.json` | Full-repo `ruff check` — **0 findings against src/** (2 historical findings were in the analysis scratch script itself, fixed) | `.reports/` |
 | `ast_extract.py` / `build_graphs.py` | The two extractor scripts themselves (stdlib-only, re-runnable) | `.reports/` |
 
@@ -38,7 +38,7 @@ union − 109 paths = ∅, zero paths assigned twice).
 | C1 | Core data model & persistence | models, ledger, ledger_wipe, ids, config, controlio, control, errors, log, stage_lock (10) | [C1_data_model.md](subsystem-traces/C1_data_model.md) | 386 |
 | C2 | Ingest & source acquisition | ingest, discover, adjust, bands, frames, audio_energy, vocals, intro_match, transcribe (9) | [C2_ingest.md](subsystem-traces/C2_ingest.md) | 180 |
 | C3 | Clip production & framing | clip, framing, keyframes, stitch_render, overlay, impact_cut, compose, produce (8) | [C3_clip_production_framing.md](subsystem-traces/C3_clip_production_framing.md) | 434 |
-| C4 | Moments, casting & personas | moments, casting, personas, persona_directives, persona_levers, persona_research, persona_store, accounts, batches (9) | [C4_moments_casting_personas.md](subsystem-traces/C4_moments_casting_personas.md) | 235 |
+| C4 | Moments, casting & personas | moments, casting, personas, persona_directives, persona_levers, persona_research, persona_store, accounts, batches (9) | [C4_moments_casting_personas.md](subsystem-traces/C4_moments_casting_personas.md) | 261 |
 | C5 | Caption, hooks & hashtags | caption, hashtags, fanops_hashtags, tagging, hookcheck, hookscore, text, prompts, llm (9) | [C5_caption_hooks_hashtags.md](subsystem-traces/C5_caption_hooks_hashtags.md) | 277 |
 | C6 | Crosspost, publish & post | crosspost, pipeline, router, responder, signals, agentstep, autopilot, postiz_lifecycle, post/{__init__,compress,dryrun,media,metrics,postiz,providers,run,zernio} (17) | [C6_crosspost_publish_post.md](subsystem-traces/C6_crosspost_publish_post.md) | 417 |
 | C7 | Metrics, reconcile & learning | reconcile, track, meta_graph, metrics_schedule, validation_gate, learn_doctor, moment_hook_learning, variant_learning, variant_amplify, variant_transfer, p4_dim_bias, timing_bias (12) | [C7_metrics_learning.md](subsystem-traces/C7_metrics_learning.md) | 203 |
@@ -161,10 +161,10 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 
 | Cluster | Files | Approx. traced symbols |
 |---|---|---|
-| C1 | 10 | ~90 (full state-machine + ~55 env vars enumerated) |
+| C1 | 10 | ~90 (full state-machine + ~55 env vars enumerated; SCHEMA v11) |
 | C2 | 9 | ~55 |
 | C3 | 8 | ~95 (incl. full reframe/render ladder) |
-| C4 | 10 | ~75 |
+| C4 | 9 | ~75 |
 | C5 | 9 | ~68 |
 | C6 | 17 | ~140 (largest single cluster by file count) |
 | C7 | 12 | ~68 |
@@ -172,14 +172,14 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C9 | 17 | ~150 (largest single cluster by trace length, 892 lines) |
 | C10 | 5 | ~60 |
 
-Totals reconcile against the deterministic count: 889 top-level functions + 178 class methods
-(113 classes) = 1,067 callables in `call_graph.json`, matching the AST extractor's structural
-index exactly (108/108 modules parsed with zero AST errors).
+Totals reconcile against the deterministic count: 1,149 top-level functions + 182 class methods
+= 1,331 callables in `call_graph.json`, matching the AST extractor's structural index exactly
+(109/109 modules parsed with zero AST errors).
 
 ## How to regenerate
 
 ```bash
-cd "/Users/molhamhomsi/Moh Flow Fanops"
+cd /workspace   # repo root
 python3 .reports/ast_extract.py src > .reports/structural_index.json
 python3 .reports/build_graphs.py
 ruff check src/

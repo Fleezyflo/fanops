@@ -4,18 +4,18 @@
 
 | File | Lines | Read fully |
 |---|---|---|
-| `src/fanops/models.py` | 656 | Yes |
-| `src/fanops/ledger.py` | 699 | Yes |
+| `src/fanops/models.py` | 670 | Yes |
+| `src/fanops/ledger.py` | 682 | Yes |
 | `src/fanops/ledger_wipe.py` | 224 | Yes |
 | `src/fanops/ids.py` | 26 | Yes |
-| `src/fanops/config.py` | 962 | Yes |
+| `src/fanops/config.py` | 977 | Yes |
 | `src/fanops/controlio.py` | 40 | Yes |
 | `src/fanops/control.py` | 55 | Yes |
 | `src/fanops/errors.py` | 112 | Yes |
 | `src/fanops/log.py` | 30 | Yes |
 | `src/fanops/stage_lock.py` | 73 | Yes |
 
-Total: 2,877 lines, 10/10 files, zero omissions. Cross-checked against `.reports/structural_index.json` and `.reports/call_graph.json`. The `fcntl.flock`-based locking claim was independently spot-verified against source (`grep -n "flock" ledger.py stage_lock.py`) — confirmed accurate.
+Total: 2,877 lines, 10/10 files, zero omissions. Cross-checked against `.reports/structural_index.json` and `.reports/call_graph.json` @ `6e9794a`. The `fcntl.flock`-based locking claim was independently spot-verified against source (`grep -n "flock" ledger.py stage_lock.py`) — confirmed accurate.
 
 ## Data model (entities/fields/relationships)
 
@@ -137,12 +137,11 @@ ImportedMedia — standalone, no lineage
 ### `models.py` — purpose
 Defines every persisted unit (Source→Moment→Clip→Post + Render/StitchPlan/Batch/ImportedMedia), all state enums, and every LLM agent-step request/response contract. Pure data + validators; no I/O.
 
-**Enums** (11 total): `SourceState`, `MomentState`, `ClipState`, `RenderState`, `PostState`, `Platform`, `Fmt`, `HookSource`, `SelectionMethod`, `StitchState`, `BatchState`.
+**Enums** (10 total): `SourceState`, `MomentState`, `ClipState`, `RenderState`, `PostState`, `Platform`, `Fmt`, `HookSource`, `StitchState`, `BatchState`. (`SelectionMethod` removed with `AccountSelection` v11.)
 
 **Functions:**
 - `is_real_submission_id(sid) -> bool` (models.py:307-316) — returns False if `sid` is falsy or starts with `"fanops_"`. Called by `track.pull_metrics` / status logic.
-- `normalize_account_handle(handle) -> str` (models.py:442-445) — strips whitespace and leading `@`. Pure. Called by ledger.py's selection dedup/add paths.
-- `account_selection_id(source_id, account) -> str` (models.py:448-451) — `child_id("acctsel", source_id, normalize_account_handle(account))`. Pure, deterministic. Called throughout ledger.py.
+- `normalize_account_handle(handle) -> str` (models.py:445-448) — strips whitespace and leading `@`. Pure. Called by ledger migration helpers (`_account_selection_id` in v8→v9 hop only).
 - `stitch_plan_id(clip_id, asset_ids, strategy_key, plan_params) -> str` (models.py:474-480) — content-addressed id. Pure.
 - `batch_id(name, created_at) -> str` (models.py:497-501) — `content_id("batch", name, created_at)`. Pure.
 
@@ -180,25 +179,27 @@ Single source of truth persistence layer: one JSON document holding id→unit ma
 - `save()` (ledger.py:407-414) — standalone save, acquires lock itself.
 - `Ledger.snapshot(cfg, now=None) -> Path` (classmethod, ledger.py:421-434) — timestamped byte-copy under lock.
 - `Ledger.restore_snapshot(cfg, snapshot_path)` (classmethod, ledger.py:436-447) — atomic restore under lock.
-- Idempotent adds (ledger.py:450-459): `add_source`, `add_moment`, `add_clip`, `add_post`, `add_render`, `get_render`, `add_selection_fact`, `get_selection_fact`, `add_imported_media`, `get_imported_media`.
-- `add_account_selection(s)` (ledger.py:460-468) — normalizes handle, dedups @-aliases, overwrites canonical slot.
-- `account_selection_for`, `selections_of_source`, `drop_account_selection` (ledger.py:469-474) — query/delete helpers.
-- `moment_ids_selected_for(source_id, account) -> set` (ledger.py:475-482) — read-model only, never the gate.
-- `cast_handles_for(source_id, moment_id) -> list` (ledger.py:483-491) — display helper for Review matrix.
-- Typed state setters (ledger.py:497-500): `set_source_state`, `set_moment_state`, `set_clip_state`, `set_post_state` — immutable `model_copy`.
-- `approve_post(uid, *, now_iso, suggested_iso=None)` (ledger.py:503-519) — the human-approval gate.
-- `reject_post(uid)` (ledger.py:520-523) — no-op unless awaiting_approval.
-- `unapprove_post(uid)` (ledger.py:524-527) — no-op unless queued.
-- Queries (ledger.py:530-555): `already_seen`, `sources_in_state`, `clips_in_state`, `posts_in_state`, `moments_of`, `clips_of`, `posts_of`, `posts_of_account`, `selection_facts_of_account`, `selection_facts_of_moment` — O(n) scans.
-- `reconcile_moments(source_id, keep)` (ledger.py:558-576) — upsert+cascade-delete core.
-- `_prune_orphan_selection_ids(source_id)` (ledger.py:578-595) — post-reconcile selection cleanup.
-- `_delete_moment_cascade(moment_id)` (ledger.py:614-636) — cascade delete/retire logic.
-- `retire_clip`, `is_retired_clip`, `is_retired_moment` (ledger.py:639-647).
-- `retire_source(source_id)` (ledger.py:650-657) — cascades via empty-keep reconcile; leaves file on disk deliberately.
-- `is_retired_source(source_id)` (ledger.py:658-660).
-- `rebuild_catalog(cfg)` (ledger.py:662-679) — reconciles disk vs ledger, orphan files become `discovered` sources.
-- `add_stitch_plan`, `approve_stitch_plan`, `dismiss_stitch_plan` (ledger.py:682-691) — guarded state-check no-ops.
-- `add_batch`, `get_batch`, `batches_for_account` (ledger.py:694-699).
+- Idempotent adds (ledger.py:485-492): `add_source`, `add_moment`, `add_clip`, `add_post`, `add_render`, `get_render`, `add_imported_media`, `get_imported_media`.
+- Typed state setters (ledger.py:498-501): `set_source_state`, `set_moment_state`, `set_clip_state`, `set_post_state` — immutable `model_copy`.
+- `approve_post(uid, *, now_iso, suggested_iso=None)` (ledger.py:504-519) — the human-approval gate.
+- `reject_post(uid)` (ledger.py:521-523) — no-op unless awaiting_approval.
+- `unapprove_post(uid)` (ledger.py:525-527) — no-op unless queued.
+- Queries (ledger.py:531-547): `already_seen`, `sources_in_state`, `clips_in_state`, `posts_in_state`, `moments_of`, `clips_of`, `posts_of`, `posts_of_account` — O(n) scans.
+- `reconcile_moments(source_id, keep)` (ledger.py:555-576) — upsert+cascade-delete core.
+- `_delete_moment_cascade(moment_id)` (ledger.py:591-636) — cascade delete/retire logic.
+- `retire_clip`, `is_retired_clip`, `is_retired_moment` (ledger.py:622-628).
+- `retire_source(source_id)` (ledger.py:633-640) — cascades via empty-keep reconcile; leaves file on disk deliberately.
+- `is_retired_source(source_id)` (ledger.py:641-643).
+- `rebuild_catalog(cfg)` (ledger.py:645-663) — reconciles disk vs ledger, orphan files become `discovered` sources.
+- `add_stitch_plan`, `approve_stitch_plan`, `dismiss_stitch_plan` (ledger.py:665-675) — guarded state-check no-ops.
+- `add_batch`, `get_batch`, `batches_for_account` (ledger.py:677-681).
+
+> **Removed v11 (P12/MOL-154):** `add_account_selection`, `account_selection_for`, `selections_of_source`,
+> `drop_account_selection`, `moment_ids_selected_for`, `cast_handles_for`, `add_selection_fact`,
+> `get_selection_fact`, `selection_facts_of_*`, `_prune_orphan_selection_ids` — the durable
+> `account_selections`/`selection_facts` maps and their Ledger API are gone; crosspost reads
+> `Moment.affinities` via `casting.affinity_admits` only. v8→v9 migration helpers (`_account_selection_id`,
+> `_migrate_v8_account_selections`) remain for upgrading old ledgers through the hop chain.
 
 Class attributes: `_LIVE_CLIP_STATES`, `_LIVE_POST_STATES`, `_PROTECTED_POST_STATES` (ledger.py:601-612).
 
@@ -270,7 +271,7 @@ Per-stage producer lock (mutex) keyed by `(stage, source_id)`.
 
 ## Cross-cutting: locking/atomicity/persistence contract
 
-**File format:** one JSON document at `00_control/ledger.json` with `{"schema_version": int, "sources": {}, "moments": {}, "clips": {}, "posts": {}, "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {}, "renders": {}, "selection_facts": {}, "account_selections": {}, "imported_media": {}}`.
+**File format:** one JSON document at `00_control/ledger.json` with `{"schema_version": int, "sources": {}, "moments": {}, "clips": {}, "posts": {}, "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {}, "renders": {}, "imported_media": {}}`. (Pre-v11 ledgers may carry transient `account_selections`/`selection_facts` during migration hops; v11+ on-disk shape drops both maps.)
 
 **Locking strategy — confirmed `fcntl.flock`-based, exactly per CLAUDE.md:**
 - `ledger._file_lock` (ledger.py:224-256): `fcntl.flock(fd, LOCK_EX|LOCK_NB)` poll loop, 30s default timeout, `LockBusyError` on timeout. Kernel releases lock on process death — self-healing, unlike an `O_EXCL` sentinel file.

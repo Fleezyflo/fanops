@@ -1,7 +1,7 @@
 <!-- Generated: 2026-07-03 | Source: 10 exhaustive Sonnet-agent subsystem traces (docs/CODEMAPS/subsystem-traces/C1-C10) cross-referenced against deterministic AST/call-graph analysis (.reports/) | Token estimate: ~1400 -->
 # FanOps Anomaly Ledger
 
-Every anomaly, dead-code lead, and silent-failure site found across the full 108-module trace
+Every anomaly, dead-code lead, and silent-failure site found across the full 109-module trace
 (see [full-trace-index.md](full-trace-index.md) for the trace methodology and coverage proof).
 Grouped by cluster, in file:line order. This is the flat, complete ledger — the index file
 summarizes and ranks; this file is exhaustive.
