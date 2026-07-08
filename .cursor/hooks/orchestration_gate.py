@@ -29,6 +29,14 @@ from pathlib import Path
 
 _MOL_RE = re.compile(r"(?i)\bmol-(\d+)\b")
 
+# Paths whose modification would forge a verification record or DISABLE the enforcement itself.
+# Writing to any of these via shell is refused for everyone (workers edit src, never the machinery/state).
+_PROTECTED_PATHS = (".orchestration/state/", ".cursor/hooks.json", ".cursor/hooks/", ".githooks/")
+_MUTATING = re.compile(
+    r"(>>?|\btee\b|\bsed\s+-i|\bperl\s+-i|\bawk\b[^|]*>|"
+    r"\b(cp|mv|rm|ln|dd|truncate|install|chmod|chown|touch|mkdir|rmdir)\b|"
+    r"\bgit\s+(rm|checkout|restore|clean|mv)\b)")
+
 
 def _root(arg_root=None) -> Path:
     return Path(arg_root or os.environ.get("CURSOR_PROJECT_DIR") or os.getcwd())
@@ -46,8 +54,9 @@ def classify_command(cmd: str) -> str:
     if re.search(r"\bgit\s+push\b[^|&]*\borigin\s+main\b", cl): return "destructive"
     # case-SENSITIVE: only `-B` (force re-cut) is destructive; `-b`/`worktree add -b … origin/main` is sanctioned
     if re.search(r"\bgit\s+checkout\s+-B\b[^|&]*origin/main\b", c): return "destructive"
-    # land to main
+    # land to main — both `gh pr merge` AND the raw API merge (`gh api … pulls/<n>/merge`)
     if re.search(r"\bgh\s+pr\s+merge\b", cl): return "land"
+    if re.search(r"\bgh\s+api\b", cl) and re.search(r"pulls/\d+/merge\b", cl): return "land"
     # read-only inspection
     if re.match(r"^(git\s+(status|log|diff|show|branch|fetch|remote|rev-parse|ls-files|merge-base)"
                 r"|gh\s+(pr|run|issue)\s+(list|view|checks|diff|status)"
@@ -56,9 +65,32 @@ def classify_command(cmd: str) -> str:
 
 
 def parse_pr_merge(cmd: str):
-    """Return the PR number string from a `gh pr merge <n>` command, else None."""
-    m = re.search(r"\bgh\s+pr\s+merge\b(?:\s+--\S+)*\s+(\d+)", " ".join((cmd or "").split()))
+    """Return the PR number string from a `gh pr merge <n>` OR `gh api … pulls/<n>/merge` command."""
+    c = " ".join((cmd or "").split())
+    m = re.search(r"\bgh\s+pr\s+merge\b(?:\s+--?\S+)*\s+(\d+)", c)
+    if m: return m.group(1)
+    m = re.search(r"pulls/(\d+)/merge\b", c)
     return m.group(1) if m else None
+
+
+def protected_write_target(cmd: str):
+    """If a command would MUTATE a protected path (verification state or the enforcement machinery),
+    return that path; else None. This closes the 'forge a verification record / disable the gate via
+    shell' bypass (e.g. `echo … > .orchestration/state/verified/X.json`, `rm .cursor/hooks.json`)."""
+    c = " ".join((cmd or "").split())
+    if not _MUTATING.search(c): return None
+    for pp in _PROTECTED_PATHS:
+        if pp in c: return pp
+    return None
+
+
+def prefer_units(branch: str, title: str = "", body: str = "") -> list:
+    """Authoritative unit(s) for a land: the branch's MOL id if present, else the title's, else the body's.
+    Prevents an incidental `MOL-x` mention in a PR body from demanding (or dodging) verification."""
+    for src in (branch, title, body):
+        u = unit_ids_from_text(src)
+        if u: return u
+    return []
 
 
 def unit_ids_from_text(text: str) -> list:
@@ -81,8 +113,11 @@ def is_unit_verified(unit_id: str, root) -> tuple:
         return False, f"corrupt verification record for {unit_id}: {type(exc).__name__}"
     if rec.get("passed") is not True: return False, f"{unit_id} verification not passed"
     verifier = str(rec.get("verifier") or "").strip()
+    executor = str(rec.get("executor") or "").strip()
     if not verifier or verifier.lower() == "orchestrator":
         return False, f"{unit_id} verifier must be a sub-agent, not the orchestrator (got {verifier!r})"
+    if executor and verifier == executor:
+        return False, f"{unit_id} verifier must DIFFER from the executor (no self-verification: {verifier!r})"
     return True, "verified"
 
 
@@ -117,7 +152,7 @@ def _pr_units(pr_number: str) -> list:
                              capture_output=True, text=True, timeout=30)
         if out.returncode != 0: return []
         d = json.loads(out.stdout)
-        return unit_ids_from_text(" ".join([d.get("headRefName", ""), d.get("title", ""), d.get("body", "")]))
+        return prefer_units(d.get("headRefName", ""), d.get("title", ""), d.get("body", ""))
     except Exception:
         return []
 
@@ -134,6 +169,13 @@ def _emit(permission: str, agent_message: str = "", user_message: str = "") -> i
 
 def handle_before_shell(data: dict, root) -> int:
     cmd = data.get("command", "")
+    pp = protected_write_target(cmd)
+    if pp:
+        return _emit("deny", agent_message=(
+            f"REFUSED (orchestration gate): this command would modify a PROTECTED path ({pp}). The "
+            "verification state and the enforcement machinery (.cursor/hooks*, .githooks) may not be "
+            "written from the shell — that would forge a verification record or disable the gate. A "
+            "verifier SUB-AGENT records verification via the Write tool per .orchestration/SPEC.md."))
     kind = classify_command(cmd)
     if kind == "destructive":
         return _emit("deny", agent_message=(
@@ -176,9 +218,11 @@ def main(argv=None) -> int:
         raw = sys.stdin.read()
         data = json.loads(raw) if raw.strip() else {}
     except Exception:
-        # malformed payload on a security event -> non-zero so failClosed blocks (never silent-allow a land)
-        print(json.dumps({"permission": "deny", "agent_message": "orchestration gate: unreadable hook payload"}))
-        return 0
+        # Per-event fail posture: the SECURITY event (before-shell) fails CLOSED (deny) on a bad payload;
+        # the ledger events fail OPEN (allow) — a ledger hiccup must never block delegation.
+        if args.event == "before-shell":
+            return _emit("deny", agent_message="orchestration gate: unreadable hook payload (failing closed)")
+        return _emit("allow")
     if args.event == "before-shell": return handle_before_shell(data, args.root)
     if args.event == "subagent-start": return handle_subagent_start(data, args.root)
     if args.event == "subagent-stop": return handle_subagent_stop(data, args.root)

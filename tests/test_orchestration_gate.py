@@ -158,3 +158,74 @@ def test_cli_subagent_start_records_ledger(tmp_path):
     assert p.exists() and "scope MOL-190" in p.read_text()
     # a spawn is always allowed (delegation is the point)
     assert out.get("permission", "allow") == "allow"
+
+
+# ==== FORTIFICATION ==========================================================
+
+def test_land_via_gh_api_merge_is_classified_land():
+    # bypass closed: merging through the API, not `gh pr merge`
+    assert og.classify_command("gh api --method PUT repos/o/r/pulls/398/merge") == "land"
+    assert og.classify_command("gh api -X PUT repos/o/r/pulls/398/merge -f merge_method=squash") == "land"
+
+
+def test_parse_pr_merge_handles_gh_api_form():
+    assert og.parse_pr_merge("gh api --method PUT repos/o/r/pulls/398/merge") == "398"
+
+
+def test_protected_write_target_flags_gate_and_state_tampering():
+    # forging a verification record via shell
+    assert og.protected_write_target("echo '{}' > .orchestration/state/verified/MOL-1.json")
+    # disabling the gate itself
+    assert og.protected_write_target("rm .cursor/hooks.json")
+    assert og.protected_write_target("sed -i s/deny/allow/ .cursor/hooks/orchestration_gate.py")
+    assert og.protected_write_target("git checkout -- .githooks/pre-push")
+    # reading a protected path is fine; editing a normal src file is fine (workers do that)
+    assert og.protected_write_target("cat .cursor/hooks.json") is None
+    assert og.protected_write_target("sed -i s/a/b/ src/fanops/models.py") is None
+
+
+def test_cli_before_shell_denies_forging_verification_record(tmp_path):
+    _, out = _run_cli("before-shell",
+                      {"command": "echo '{\"passed\":true,\"verifier\":\"x\"}' > .orchestration/state/verified/MOL-1.json"},
+                      tmp_path)
+    assert out.get("permission") == "deny"
+
+
+def test_cli_before_shell_denies_disabling_the_gate(tmp_path):
+    _, out = _run_cli("before-shell", {"command": "rm -f .cursor/hooks.json"}, tmp_path)
+    assert out.get("permission") == "deny"
+
+
+def test_cli_before_shell_allows_worker_editing_src_via_shell(tmp_path):
+    # we deliberately do NOT block src edits (workers do them); only the machinery/state is protected
+    _, out = _run_cli("before-shell", {"command": "sed -i s/a/b/ src/fanops/models.py"}, tmp_path)
+    assert out.get("permission") == "allow"
+
+
+def test_is_unit_verified_false_when_verifier_equals_executor(tmp_path):
+    _write_record(tmp_path, "MOL-190", executor="subagent:same", verifier="subagent:same")
+    ok, reason = og.is_unit_verified("MOL-190", tmp_path)
+    assert ok is False and "differ" in reason.lower()
+
+
+def test_prefer_units_uses_branch_then_title_then_body():
+    assert og.prefer_units("cursor/mol-190-x", "title MOL-7", "body MOL-8") == ["MOL-190"]
+    assert og.prefer_units("cursor/feature", "MOL-7 fix", "body MOL-8") == ["MOL-7"]
+    assert og.prefer_units("cursor/feature", "no id", "closes MOL-8") == ["MOL-8"]
+    assert og.prefer_units("cursor/feature", "no id", "nothing") == []
+
+
+def test_malformed_payload_denies_shell_but_allows_subagent_events(tmp_path):
+    import io
+    from contextlib import redirect_stdout
+    def run_raw(event, raw):
+        old, sys.stdin = sys.stdin, io.StringIO(raw)
+        buf = io.StringIO()
+        try:
+            with redirect_stdout(buf):
+                og.main([event, "--root", str(tmp_path)])
+        finally:
+            sys.stdin = old
+        return json.loads(buf.getvalue().strip())
+    assert run_raw("before-shell", "{bad json").get("permission") == "deny"      # security: fail closed
+    assert run_raw("subagent-start", "{bad json").get("permission") == "allow"   # ledger: fail open
