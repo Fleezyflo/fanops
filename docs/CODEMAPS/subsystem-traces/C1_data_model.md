@@ -270,7 +270,7 @@ Per-stage producer lock (mutex) keyed by `(stage, source_id)`.
 
 ## Cross-cutting: locking/atomicity/persistence contract
 
-**File format:** one JSON document at `00_control/ledger.json` with `{"schema_version": int, "sources": {}, "moments": {}, "clips": {}, "posts": {}, "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {}, "renders": {}, "selection_facts": {}, "account_selections": {}, "imported_media": {}}`.
+**File format:** one JSON document at `00_control/ledger.json` with `{"schema_version": int, "sources": {}, "moments": {}, "clips": {}, "posts": {}, "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {}, "renders": {}, "imported_media": {}}` (SCHEMA v11 — `selection_facts`/`account_selections` dropped at v10→v11, P12/MOL-154).
 
 **Locking strategy — confirmed `fcntl.flock`-based, exactly per CLAUDE.md:**
 - `ledger._file_lock` (ledger.py:224-256): `fcntl.flock(fd, LOCK_EX|LOCK_NB)` poll loop, 30s default timeout, `LockBusyError` on timeout. Kernel releases lock on process death — self-healing, unlike an `O_EXCL` sentinel file.
